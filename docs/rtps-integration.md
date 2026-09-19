@@ -149,9 +149,12 @@ use_rtps(action="publish", topic="/turtle1/cmd_vel",
 
 ## RtpsRobot: a ROS 2 robot over pure RTPS
 
-`RtpsRobot` is the pure-RTPS sibling of `RosBridgedRobot`. It forwards to
-`use_rtps`, so it drives a ROS 2 mobile base with nothing but a pip wheel - and
-because it publishes real DDS samples, it can act as the robot itself.
+`RtpsRobot` is the pure-RTPS sibling of `RosBridgedRobot`. It publishes through
+the same participant `use_rtps` does (`strands_robots.rtps.participant`), so it
+drives a ROS 2 mobile base with nothing but a pip wheel - and because it
+publishes real DDS samples, it can act as the robot itself. A `cmd_vel` command
+reaches the shared operator gate whichever of the two asked, under one label, so
+an approval or a refusal means the same thing on both.
 
 ```python
 from strands import Agent

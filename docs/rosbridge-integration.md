@@ -93,7 +93,10 @@ plain JSON dicts, exactly as rosbridge transmits them.
 For mobile bases that expose the standard `cmd_vel` / odometry / scan topic
 trio, `RosbridgeRobot` wraps that wiring so a remote ROS 1 or remote robot
 drives like any other strands robot - the same `Agent(tools=[robot])` pattern
-used for simulated and hardware arms.
+used for simulated and hardware arms. It forwards through the same transport
+`use_rosbridge` does (`strands_robots.rosbridge`), so a `cmd_vel` command reaches
+the shared operator gate whichever of the two asked, under one label: an approval
+or a refusal means the same thing on both.
 
 ### Constructor
 
@@ -192,8 +195,8 @@ scan = robot.get_scan()  # read one laser scan (error if no scan_topic)
 |--------|------------|-------|
 | `drive(linear, angular, duration=, count=)` | publish `Twist` to `cmd_vel_topic` | `duration` holds the command at `publish_rate` Hz; no `duration` latches until stop |
 | `stop()` | publish zero `Twist` | needs no prior state; gated on the surface like `drive()` |
-| `get_pose()` | echo `odom_topic` | returns up to 1 sample |
-| `get_scan()` | echo `scan_topic` | error when no `scan_topic` configured |
+| `get_pose(timeout=5.0)` | echo `odom_topic` | returns up to 1 sample; a non-positive or non-finite `timeout` is refused by name |
+| `get_scan(timeout=5.0)` | echo `scan_topic` | error when no `scan_topic` configured; same `timeout` domain |
 | `.tools` | - | per-instance named agent tools |
 
 ### from_curiosity

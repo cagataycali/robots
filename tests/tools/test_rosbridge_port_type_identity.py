@@ -37,6 +37,7 @@ from typing import Any
 
 import pytest
 
+import strands_robots.rosbridge as transport_mod
 import strands_robots.tools.use_rosbridge as rb_mod
 from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
 from strands_robots.utils import tcp_port_error
@@ -123,8 +124,8 @@ def fake_roslibpy(monkeypatch: pytest.MonkeyPatch) -> _types.ModuleType:
     mod.Ros = _RecordingRos  # type: ignore[attr-defined]
     mod.Topic = _RecordingTopic  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "roslibpy", mod)
-    monkeypatch.setattr(rb_mod._backend, "_available", True)
-    monkeypatch.setattr(rb_mod._backend, "_connections", {})
+    monkeypatch.setattr(transport_mod._backend, "_available", True)
+    monkeypatch.setattr(transport_mod._backend, "_connections", {})
     return mod
 
 
@@ -146,7 +147,7 @@ class TestAnIntSubclassPortDials:
         assert type(ros.port) is int
         assert ros.port == 9090
 
-    @pytest.mark.parametrize("action", sorted(rb_mod._ACTIONS))
+    @pytest.mark.parametrize("action", sorted(transport_mod._ACTIONS))
     def test_every_action_dials_rather_than_raising(self, action: str, fake_roslibpy: _types.ModuleType) -> None:
         """Every action begins with a dial, so every action leaked this.
 
@@ -181,7 +182,7 @@ class TestAnIntSubclassPortDials:
 
         assert len(_RecordingRos.instances) == 2
         assert {(r.host, r.port) for r in _RecordingRos.instances} == {("127.0.0.1", 9090), ("127.0.0.1", 9091)}
-        assert all(type(key[1]) is int for key in rb_mod._backend._connections)
+        assert all(type(key[1]) is int for key in transport_mod._backend._connections)
 
 
 class TestNeitherCallOrderMatters:

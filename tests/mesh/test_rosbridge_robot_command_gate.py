@@ -50,7 +50,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import strands_robots.mesh as mesh_pkg
-import strands_robots.tools.use_rosbridge as rb_mod
+import strands_robots.rosbridge as transport_mod
 from strands_robots.mesh import RosbridgeRobot
 
 # ``/turtle1/cmd_vel`` matches the ``/cmd_vel`` blocklist entry on the
@@ -120,10 +120,10 @@ def _install_doubles(monkeypatch: pytest.MonkeyPatch) -> None:
     module.Topic = _FakeTopic  # type: ignore[attr-defined]
     module.Message = dict  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "roslibpy", module)
-    monkeypatch.setattr(rb_mod._backend, "_available", None)
-    monkeypatch.setattr(rb_mod._backend, "_connections", {})
+    monkeypatch.setattr(transport_mod._backend, "_available", None)
+    monkeypatch.setattr(transport_mod._backend, "_connections", {})
     # publish sleeps for the advertise settle and for the inter-message period.
-    monkeypatch.setattr(rb_mod.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(transport_mod.time, "sleep", lambda *_: None)
 
 
 def _published() -> list[tuple[str, dict[str, Any]]]:

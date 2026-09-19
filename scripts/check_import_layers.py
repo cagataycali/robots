@@ -75,7 +75,10 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     ("registry", ("assets", "registry")),
-    ("drivers|mesh", ("device_connect", "drivers", "mesh", "ros_telemetry", "rtps", "teleop_mixin")),
+    (
+        "drivers|mesh",
+        ("device_connect", "drivers", "mesh", "rosbridge", "ros_telemetry", "rtps", "teleop_mixin"),
+    ),
     ("sim|policies", ("inference", "policies", "simulation", "training")),
     (
         "app",
@@ -112,8 +115,6 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     # instead of a transport of their own.
     ("strands_robots.mesh.ackermann_robot", "strands_robots.tools.use_ros"),
     ("strands_robots.mesh.ros_bridge", "strands_robots.tools.use_ros"),
-    ("strands_robots.mesh.rosbridge_robot", "strands_robots.tools.use_rosbridge"),
-    ("strands_robots.mesh.rtps_robot", "strands_robots.tools.use_rtps"),
 )
 
 

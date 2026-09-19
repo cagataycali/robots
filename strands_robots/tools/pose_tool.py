@@ -34,17 +34,23 @@ import json
 import logging
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
 from strands import tool
 from strands.types.tools import ToolContext
 
 from strands_robots._command_gate import gate_motion
 from strands_robots._path_validation import resolve_output_path, validate_save_path
+from strands_robots.drivers.feetech.bus import (
+    SO_ARM_MOTORS,
+    FeetechBus,
+    MotorCalibration,
+    load_calibration,
+)
 from strands_robots.drivers.feetech.protocol import (
-    MAX_GOAL_POSITION,
     SIGN_BIT,
     WORD_LENGTH,
     Register,
@@ -391,43 +397,38 @@ class PoseManager:
         return True, "Pose is valid"
 
 
-class MotorConfig(TypedDict):
-    """Configuration for a single servo motor."""
+def _units(port: str | None, calibration: dict[str, MotorCalibration] | None = None) -> FeetechBus:
+    """The bus this tool converts and bounds one arm's targets through.
 
-    id: int
-    range: tuple[int, int]
-    resolution: int
+    One authority for both directions of the conversion and for the bounds a
+    target is refused against, and it is the same class
+    :class:`~strands_robots.drivers.feetech.driver.FeetechDriver` drives an SO
+    arm through - so this tool and that driver quote one servo the same way.
+    The scale comes from the arm's own calibration, which is measured per arm:
+    the fixed per-joint degree table this replaced declared ``+-90`` across a
+    full turn of the encoder, so a joint moved twice as far as it was asked to
+    and reported half the angle it moved.
 
+    The port is not this bus's to open. It is carried so a reader can see the
+    two objects describe one arm; only the unit methods are called here, and
+    :class:`MotorController` opens the port itself.
 
-# Default motor configurations for SO-101.
-#
-# Module-level rather than built inside ``MotorController.__init__`` because the
-# ``range`` of each joint is consulted twice: by
-# :meth:`MotorController.degrees_to_position`, which converts a target into a
-# ``Goal_Position``, and by :func:`_joint_target_error`, which refuses a target
-# that conversion could not represent. A second copy of these bounds could
-# disagree with the one the servo is actually driven from, which is the failure
-# the guard exists to prevent.
-#
-# ``resolution`` is the STS/SMS full scale for every joint, which is what an
-# SO-101's servos are; it is read from the codec that decides the wire format
-# rather than restated, so a bus of a different series cannot be described here
-# by changing one number and leaving the byte order behind.
-_DEFAULT_MOTOR_CONFIGS: dict[str, MotorConfig] = {
-    "shoulder_pan": {"id": 1, "range": (-180, 180), "resolution": MAX_GOAL_POSITION},
-    "shoulder_lift": {"id": 2, "range": (-90, 90), "resolution": MAX_GOAL_POSITION},
-    "elbow_flex": {"id": 3, "range": (-150, 150), "resolution": MAX_GOAL_POSITION},
-    "wrist_flex": {"id": 4, "range": (-90, 90), "resolution": MAX_GOAL_POSITION},
-    "wrist_roll": {"id": 5, "range": (-180, 180), "resolution": MAX_GOAL_POSITION},
-    "gripper": {"id": 6, "range": (0, 100), "resolution": MAX_GOAL_POSITION},
-}
+    Args:
+        port: The serial device the controller opens.
+        calibration: This arm's measured travel, as ``lerobot-calibrate``
+            recorded it, or ``None`` for the servo's full rotation.
+
+    Returns:
+        A bus over :data:`~strands_robots.drivers.feetech.bus.SO_ARM_MOTORS`.
+    """
+    return FeetechBus(port=port, motors=SO_ARM_MOTORS, calibration=calibration)
 
 
 def _joints_that_did_not_answer(controller: "MotorController", positions: dict[str, float]) -> list[str]:
     """Name the configured joints missing from a whole-arm reading.
 
     :meth:`MotorController.read_all_positions` skips a motor whose reply did
-    not verify, so its result is a subset of ``motor_configs`` and carries no
+    not verify, so its result is a subset of the arm's motors and carries no
     record of what fell out. The gap is derived the same way
     :meth:`MotorController._smooth_move` derives its own: compare what came
     back against what was expected.
@@ -436,14 +437,14 @@ def _joints_that_did_not_answer(controller: "MotorController", positions: dict[s
     cannot come to disagree about what a complete reading is.
 
     Args:
-        controller: The arm whose ``motor_configs`` defines the expected set.
+        controller: The arm whose motors define the expected set.
         positions: The reading returned for that arm.
 
     Returns:
         Sorted names of the configured joints absent from ``positions``, empty
         when every joint answered.
     """
-    return sorted(set(controller.motor_configs) - set(positions))
+    return sorted(set(controller.units.motors) - set(positions))
 
 
 # The degree-valued target each action reads. An action absent from this map
@@ -462,37 +463,44 @@ def _target_unit(motor_name: str) -> str:
         motor_name: The motor the target is for.
 
     Returns:
-        ``"percent"`` for the gripper, which is configured 0-100, else
-        ``"degrees"``.
+        ``"percent"`` for a motor normalized 0-100, else ``"degrees"``. Read off
+        the motor's ``norm_mode`` rather than off its name, which is the same
+        decision :meth:`~strands_robots.drivers.feetech.bus.FeetechBus.to_value`
+        dispatches on.
     """
-    return "percent" if motor_name == "gripper" else "degrees"
+    spec = SO_ARM_MOTORS.get(motor_name)
+    return "percent" if spec is not None and spec.norm_mode == "range_0_100" else "degrees"
 
 
-def _joint_target_error(action: str, label: str, motor_name: str | None, value: Any) -> str | None:
+def _joint_target_error(
+    action: str, label: str, motor_name: str | None, value: Any, travel: Mapping[str, tuple[float, float]]
+) -> str | None:
     """Error text when ``value`` is not a target ``motor_name`` can be driven to.
 
-    ``degrees_to_position`` clamps its argument into the joint's configured
-    ``range`` before scaling it onto the 12-bit ``Goal_Position`` register, so
-    every value outside that range shares one encoding: the mechanical limit.
-    That makes the clamp a silent rewrite rather than a safety net -- the arm
-    travels to the end stop, and the caller is told it moved to the value it
-    asked for, because the success text echoes the request. ``nan`` lands there
-    too, since ``min(max_deg, nan)`` returns ``max_deg``.
+    A target past the end of the arm's travel is one the joint cannot hold: it
+    travels to the stop and the caller is told it moved to the value asked for,
+    because the success text echoes the request. ``nan`` is refused here too,
+    since no comparison against bounds rejects it.
 
     Finiteness, numeric-ness and ``bool`` are delegated to
     :func:`~strands_robots.utils.finite_number_error` so an off-domain target is
-    reported in the words every other surface uses; only the per-joint bounds
-    are decided here, because they are a property of the arm this module drives.
+    reported in the words every other surface uses; the per-joint bounds are
+    read from ``travel`` rather than decided here, because they are a property
+    of the arm and are measured per arm.
 
-    A motor absent from :data:`_DEFAULT_MOTOR_CONFIGS` has no bounds to check
-    against and is left to :func:`_unknown_motor_error`, which refuses the name
-    itself before the operator is asked.
+    A motor absent from ``travel`` has no bounds to check against and is left to
+    :func:`_unknown_motor_error`, which refuses the name itself before the
+    operator is asked.
 
     Args:
         action: The requested action, used as the message prefix.
         label: How the target is named in the message.
         motor_name: The motor the target is for.
         value: The caller-supplied target.
+        travel: Each motor's bounds, from
+            :meth:`~strands_robots.drivers.feetech.bus.FeetechBus.value_bounds`
+            - the same bus the target is converted through, so a target this
+            accepts is one that conversion can represent.
 
     Returns:
         An error message, or ``None`` when the target can be honored.
@@ -500,19 +508,21 @@ def _joint_target_error(action: str, label: str, motor_name: str | None, value: 
     if error := finite_number_error(value, label, action):
         return error
     name = motor_name or ""
-    config = _DEFAULT_MOTOR_CONFIGS.get(name)
-    if config is None:
+    bounds = travel.get(name)
+    if bounds is None:
         return None
-    low, high = config["range"]
+    low, high = bounds
     if not low <= value <= high:
         return (
-            f"{action}: {label} must be within [{low}, {high}] {_target_unit(name)} "
-            f"(the configured travel of '{name}'), got {refusal_str(value)}."
+            f"{action}: {label} must be within [{low:g}, {high:g}] {_target_unit(name)} "
+            f"(the measured travel of '{name}'), got {refusal_str(value)}."
         )
     return None
 
 
-def _joint_delta_error(action: str, motor_name: str | None, delta: Any) -> str | None:
+def _joint_delta_error(
+    action: str, motor_name: str | None, delta: Any, travel: Mapping[str, tuple[float, float]]
+) -> str | None:
     """Error text when ``delta`` is not a displacement ``motor_name`` can travel.
 
     Bounded by the joint's *full travel* rather than by its endpoints, which is
@@ -522,11 +532,12 @@ def _joint_delta_error(action: str, motor_name: str | None, delta: Any) -> str |
     magnitude larger than the whole range is unhonorable from every starting
     position, which is checkable without that reading.
 
-    The resulting absolute target is left to ``degrees_to_position``, whose clamp
-    remains the last resort for a target computed from a live position reading
-    rather than supplied by the caller.
+    The resulting absolute target is left to
+    :meth:`~strands_robots.drivers.feetech.bus.FeetechBus.to_counts`, which
+    refuses a target the encoder cannot hold - the last resort for a target
+    computed from a live position reading rather than supplied by the caller.
 
-    A motor absent from :data:`_DEFAULT_MOTOR_CONFIGS` has no travel to bound a
+    A motor absent from ``travel`` has no travel to bound a
     displacement against, so this domain defers exactly as
     :func:`_joint_target_error` does - to :func:`_unknown_motor_error`, which
     refuses the name before the operator is asked, so no ``Goal_Position`` is
@@ -536,6 +547,7 @@ def _joint_delta_error(action: str, motor_name: str | None, delta: Any) -> str |
         action: The requested action, used as the message prefix.
         motor_name: The motor the displacement is for.
         delta: The caller-supplied displacement.
+        travel: Each motor's bounds, as :func:`_joint_target_error` reads them.
 
     Returns:
         An error message, or ``None`` when the displacement can be honored.
@@ -543,14 +555,14 @@ def _joint_delta_error(action: str, motor_name: str | None, delta: Any) -> str |
     if error := finite_number_error(delta, "delta", action):
         return error
     name = motor_name or ""
-    config = _DEFAULT_MOTOR_CONFIGS.get(name)
-    if config is None:
+    bounds = travel.get(name)
+    if bounds is None:
         return None
-    low, high = config["range"]
+    low, high = bounds
     span = high - low
     if abs(delta) > span:
         return (
-            f"{action}: delta must be at most {span} {_target_unit(name)} in magnitude "
+            f"{action}: delta must be at most {span:g} {_target_unit(name)} in magnitude "
             f"(the full travel of '{name}', so no starting position could honor more), got {refusal_str(delta)}."
         )
     return None
@@ -563,6 +575,7 @@ def _pose_target_error(
     position: Any,
     delta: Any,
     positions: Any,
+    travel: Mapping[str, tuple[float, float]],
 ) -> str | None:
     """Error text for a degree-valued target ``action`` reads but cannot honor.
 
@@ -577,6 +590,7 @@ def _pose_target_error(
         position: The absolute target for ``move_motor``.
         delta: The displacement for ``incremental_move``.
         positions: The per-motor targets for ``move_multiple``.
+        travel: Each motor's bounds, as :func:`_joint_target_error` reads them.
 
     Returns:
         The first error message, or ``None`` when every target read is usable.
@@ -591,26 +605,26 @@ def _pose_target_error(
         if not isinstance(positions, dict):
             return None
         for name, value in positions.items():
-            if error := _joint_target_error(action, f"positions[{name!r}]", name, value):
+            if error := _joint_target_error(action, f"positions[{name!r}]", name, value, travel):
                 return error
         return None
 
     if param == "position":
         if position is None:
             return None
-        return _joint_target_error(action, "position", motor_name, position)
+        return _joint_target_error(action, "position", motor_name, position, travel)
 
     if delta is None:
         return None
-    return _joint_delta_error(action, motor_name, delta)
+    return _joint_delta_error(action, motor_name, delta, travel)
 
 
-def _stored_pose_target_error(pose: RobotPose) -> str | None:
+def _stored_pose_target_error(pose: RobotPose, travel: Mapping[str, tuple[float, float]]) -> str | None:
     """Error text when a stored pose names a target its joint cannot be driven to.
 
-    A pose read back from disk reaches a servo through the same
-    :meth:`MotorController.degrees_to_position` as a caller-supplied one, so it
-    is bounded by the same configured travel. The bounds are not restated here:
+    A pose read back from disk reaches a servo through the same conversion as a
+    caller-supplied one, so it is bounded by the same measured travel. The
+    bounds are not restated here:
     every position is delegated to :func:`_joint_target_error`, so a stored
     target and an argument target are held to one authority and cannot drift.
 
@@ -626,13 +640,14 @@ def _stored_pose_target_error(pose: RobotPose) -> str | None:
 
     Args:
         pose: The stored pose whose positions are about to be driven.
+        travel: Each motor's bounds, as :func:`_joint_target_error` reads them.
 
     Returns:
         The first error message, or ``None`` when every stored target is usable.
     """
     for name, value in pose.positions.items():
         label = f"pose {pose.name!r} positions[{name!r}]"
-        if error := _joint_target_error("load_pose", label, name, value):
+        if error := _joint_target_error("load_pose", label, name, value, travel):
             return error
     return None
 
@@ -722,7 +737,7 @@ def _parse_status_packet(raw: bytes, motor_id: int, param_count: int) -> tuple[i
 class MotorController:
     """Low-level motor control for fine movements."""
 
-    def __init__(self, port: str, baudrate: int = 1000000):
+    def __init__(self, port: str, baudrate: int = 1000000, calibration: dict[str, MotorCalibration] | None = None):
         """Bind a controller to one serial port.
 
         Args:
@@ -733,6 +748,11 @@ class MotorController:
                 refuses only a negative, so an unusable value opens the port at a
                 speed no servo answers and every read then times out, which is
                 indistinguishable from an unplugged arm.
+            calibration: This arm's measured travel, as ``lerobot-calibrate``
+                recorded it. ``None`` reads and commands the servo's full
+                rotation, which is off by however far the arm's stops sit inside
+                it - so an arm that HAS been calibrated should be given its
+                records.
 
         Raises:
             ValueError: ``baudrate`` is not a positive integer.
@@ -742,10 +762,8 @@ class MotorController:
         self.port = port
         self.baudrate = baudrate
         self.serial_conn: serial.Serial | None = None
-
-        self.motor_configs: dict[str, MotorConfig] = {
-            name: config.copy() for name, config in _DEFAULT_MOTOR_CONFIGS.items()
-        }
+        #: Which servos this arm has, and the scale each is driven and read on.
+        self.units = _units(port, calibration)
 
     def connect(self) -> tuple[bool, str]:
         """Connect to robot.
@@ -766,75 +784,27 @@ class MotorController:
         if self.serial_conn and self.serial_conn.is_open:
             self.serial_conn.close()
 
-    def degrees_to_position(self, motor_name: str, degrees: float) -> int:
-        """Convert a target in the motor's own unit to a ``Goal_Position`` count.
-
-        The motor's configured ``range`` is the scale: its endpoints map onto the
-        ends of the encoder, so the same arithmetic serves a joint quoted in
-        degrees and the gripper quoted 0-100 percent open - the unit is a
-        property of the bounds, not of the name. Reading the bounds is what makes
-        the guard in :func:`_joint_target_error` meaningful, since it refuses a
-        target against those same bounds.
-
-        Args:
-            motor_name: A motor in :attr:`motor_configs`.
-            degrees: The target, in the unit that motor's ``range`` is quoted in.
-                A value outside the range is clamped to it.
-
-        Returns:
-            A count in ``0..resolution``.
-
-        Raises:
-            ValueError: ``motor_name`` is not in :attr:`motor_configs`.
-        """
-        if motor_name not in self.motor_configs:
-            raise ValueError(f"Unknown motor: {motor_name}")
-
-        config = self.motor_configs[motor_name]
-        min_deg, max_deg = config["range"]
-
-        # Clamp to range
-        degrees = max(min_deg, min(max_deg, degrees))
-
-        # Convert to encoder counts. Each config's resolution is the STS/SMS
-        # full scale, which is the series every motor in
-        # ``_DEFAULT_MOTOR_CONFIGS`` is.
-        normalized = (degrees - min_deg) / (max_deg - min_deg)
-        return int(normalized * config["resolution"])
-
-    def position_to_degrees(self, motor_name: str, position: int) -> float:
-        """Convert a ``Goal_Position`` count back to the motor's own unit.
-
-        The inverse of :meth:`degrees_to_position`, off the same configured
-        ``range``, so a reading is quoted on the scale the joint is driven on.
-
-        Args:
-            motor_name: A motor in :attr:`motor_configs`.
-            position: The count the servo reported.
-
-        Returns:
-            The position in the unit that motor's ``range`` is quoted in.
-
-        Raises:
-            ValueError: ``motor_name`` is not in :attr:`motor_configs`.
-        """
-        if motor_name not in self.motor_configs:
-            raise ValueError(f"Unknown motor: {motor_name}")
-
-        config = self.motor_configs[motor_name]
-        min_deg, max_deg = config["range"]
-
-        normalized = position / config["resolution"]
-        return min_deg + normalized * (max_deg - min_deg)
-
     def move_motor(self, motor_name: str, position_degrees: float) -> bool:
-        """Move a single motor to position in degrees."""
+        """Move a single motor to a target in its own unit.
+
+        Args:
+            motor_name: A motor on :attr:`units`.
+            position_degrees: The target, in degrees for a joint or percent open
+                for the gripper - the unit that motor is normalized in.
+
+        Returns:
+            True when the goal position reached the bus. False when the port is
+            closed, the motor is not on this arm, or the target is one the
+            encoder cannot hold: :meth:`~strands_robots.drivers.feetech.bus.FeetechBus.to_counts`
+            refuses it rather than clamping it to the mechanical limit, because a
+            clamp cannot be told apart from a typo once the arm is at the stop.
+        """
         if not self.serial_conn or not self.serial_conn.is_open:
             return False
 
         try:
-            motor_id = self.motor_configs[motor_name]["id"]
-            position = self.degrees_to_position(motor_name, position_degrees)
+            motor_id = self.units.motors[motor_name].motor_id
+            position = self.units.to_counts(motor_name, position_degrees)
 
             packet = write_packet(motor_id, Register.GOAL_POSITION, encode_word(position))
             self.serial_conn.write(packet)
@@ -863,12 +833,12 @@ class MotorController:
             non-empty list means the arm is NOT fully de-energized.
         """
         if not self.serial_conn or not self.serial_conn.is_open:
-            return list(self.motor_configs)
+            return list(self.units.motors)
 
         failed: list[str] = []
-        for motor_name, config in self.motor_configs.items():
+        for motor_name, spec in self.units.motors.items():
             try:
-                packet = write_packet(config["id"], Register.TORQUE_ENABLE, b"\x00")
+                packet = write_packet(spec.motor_id, Register.TORQUE_ENABLE, b"\x00")
                 self.serial_conn.write(packet)
             except OSError as e:
                 # Narrow to the transport: ``serial.SerialException`` subclasses
@@ -889,7 +859,7 @@ class MotorController:
         just past its homing zero as more than a full turn away from it.
 
         Args:
-            motor_name: Which configured motor to read.
+            motor_name: Which motor of :attr:`units` to read.
 
         Returns:
             The joint angle in degrees, or ``None`` when the bus is closed or no
@@ -904,7 +874,7 @@ class MotorController:
             return None
 
         try:
-            motor_id = self.motor_configs[motor_name]["id"]
+            motor_id = self.units.motors[motor_name].motor_id
 
             packet = read_packet(motor_id, Register.PRESENT_POSITION, WORD_LENGTH)
             self.serial_conn.write(packet)
@@ -924,7 +894,7 @@ class MotorController:
                 )
                 return None
             counts = decode_sign_magnitude(decode_word(bytes(reply)), SIGN_BIT[Register.PRESENT_POSITION])
-            return self.position_to_degrees(motor_name, counts)
+            return self.units.to_value(motor_name, counts)
         except Exception as e:
             logger.error(f"Failed to read motor {motor_name}: {e}")
 
@@ -933,7 +903,7 @@ class MotorController:
     def read_all_positions(self) -> dict[str, float]:
         """Read all motor positions."""
         positions = {}
-        for motor_name in self.motor_configs:
+        for motor_name in self.units.motors:
             pos = self.read_motor_position(motor_name)
             if pos is not None:
                 positions[motor_name] = pos
@@ -1099,8 +1069,8 @@ def _dashboard_grant(tool_input: dict[str, Any]) -> bool:
 def _unknown_motor_error(action: str, label: str, name: Any) -> str | None:
     """Refuse a motor name the arm's table does not carry.
 
-    :class:`MotorController` builds its table from :data:`_DEFAULT_MOTOR_CONFIGS`
-    for every port, so whether a name is known is decided by the call alone;
+    Every SO arm carries :data:`~strands_robots.drivers.feetech.bus.SO_ARM_MOTORS`,
+    so whether a name is known is decided by the call alone;
     the controller raising ``Unknown motor`` after the port is opened is the
     same verdict, reached late. This is also where :func:`_joint_target_error`
     and :func:`_joint_delta_error` send an unknown name, neither having bounds
@@ -1114,9 +1084,9 @@ def _unknown_motor_error(action: str, label: str, name: Any) -> str | None:
     Returns:
         An error message, or ``None`` when the motor is in the table.
     """
-    if name in _DEFAULT_MOTOR_CONFIGS:
+    if name in SO_ARM_MOTORS:
         return None
-    known = ", ".join(_DEFAULT_MOTOR_CONFIGS)
+    known = ", ".join(SO_ARM_MOTORS)
     return f"{action}: {label} names an unknown motor {refusal_str(name)}; this arm has {known}."
 
 
@@ -1124,6 +1094,7 @@ def _motion_input_error(
     action: str,
     pose_manager: PoseManager,
     *,
+    travel: Mapping[str, tuple[float, float]],
     pose_name: str | None,
     motor_name: str | None,
     position: float | None,
@@ -1147,6 +1118,7 @@ def _motion_input_error(
     Args:
         action: One of :data:`MOTION_ACTIONS`.
         pose_manager: The library ``load_pose`` reads from.
+        travel: Each motor's bounds, as :func:`_joint_target_error` reads them.
         pose_name: As supplied.
         motor_name: As supplied.
         position: As supplied.
@@ -1165,7 +1137,7 @@ def _motion_input_error(
         is_valid, msg = pose_manager.validate_pose(pose)
         if not is_valid:
             return f"Pose validation failed: {msg}"
-        return _stored_pose_target_error(pose)
+        return _stored_pose_target_error(pose, travel)
     if action == "move_motor":
         if not motor_name or position is None:
             return "motor_name and position required"
@@ -1217,6 +1189,7 @@ def pose_tool(
     action: str,
     robot_id: str = "so101_follower",
     port: str | None = "/dev/ttyACM0",
+    calibration: str | None = None,
     pose_name: str | None = None,
     motor_name: str | None = None,
     position: float | None = None,
@@ -1255,13 +1228,19 @@ def pose_tool(
         - "reset_to_home": Move to safe home position
 
     Calibration:
-        This tool performs no calibration - every action above drives or reads a
-        motor through the calibration already on disk. Recording one is
-        LeRobot's own procedure, run from the shell with ``lerobot-calibrate``
-        (after ``lerobot-find-port`` and ``lerobot-setup-motors``), which writes
-        the JSON under ``HF_LEROBOT_CALIBRATION``; the interactive prompt
-        LeRobot shows when a device has none is answered by a
-        ``lerobot_teleoperate`` session's ``auto_accept_calibration``.
+        This tool records no calibration - it reads the one on disk. Pass
+        ``calibration`` the JSON ``lerobot-calibrate`` wrote for this arm and
+        every degree and percent here is the number LeRobot quotes for the same
+        servo, and every target is bounded by the travel that run measured.
+        Omitting it reads and commands the servo's full rotation instead, which
+        is off by however far this arm's stops sit inside that rotation.
+
+        Recording one is LeRobot's own procedure, run from the shell with
+        ``lerobot-calibrate`` (after ``lerobot-find-port`` and
+        ``lerobot-setup-motors``), which writes the JSON under
+        ``HF_LEROBOT_CALIBRATION``; the interactive prompt LeRobot shows when a
+        device has none is answered by a ``lerobot_teleoperate`` session's
+        ``auto_accept_calibration``.
 
     Args:
         action: Action to perform
@@ -1269,10 +1248,14 @@ def pose_tool(
             file's name, so a value resolving outside the storage directory is
             refused rather than written there.
         port: Serial port for robot communication
+        calibration: Path of the calibration JSON ``lerobot-calibrate`` wrote
+            for this arm, e.g. what
+            :func:`~strands_robots.drivers.feetech.bus.lerobot_calibration_path`
+            returns. Unset reads and commands the servo's full rotation.
         pose_name: Name for pose operations
         motor_name: Motor name for single motor operations
         position: Target position in degrees (or 0-100% for gripper). A finite
-            number within the motor's configured travel - a value outside it is
+            number within the motor's measured travel - a value outside it is
             refused rather than clamped to the mechanical limit, because the
             clamp cannot be told apart from a typo and the success text echoes
             the value asked for.
@@ -1336,14 +1319,22 @@ def pose_tool(
     if option_error := _smooth_move_option_error(action, smooth=smooth, steps=steps, step_delay=step_delay):
         return {"status": "error", "content": [{"text": option_error}]}
 
-    # Every degree-valued target is scaled onto ``Goal_Position`` by
-    # ``degrees_to_position``, which clamps into the joint's configured range -
-    # so a target outside it is not refused but silently rewritten to the
-    # mechanical limit, while the success text echoes the value asked for. It is
-    # refused here, before the port is opened, so the arm never travels to an
-    # end stop on a request that could not be honored.
+    # The arm's own travel, which every target below is converted and bounded
+    # against. Read here, before the port is opened, so a calibration that is
+    # not one is reported as this tool's error envelope rather than raised
+    # part-way through a motion.
+    try:
+        records = load_calibration(calibration) if calibration is not None else None
+        units = _units(port, records)
+        travel = {name: units.value_bounds(name) for name in units.motors}
+    except (OSError, ValueError) as e:
+        return {"status": "error", "content": [{"text": f"{action}: {e}"}]}
+
+    # A target outside that travel is one the joint cannot hold: the arm goes to
+    # its end stop while the success text echoes the value asked for. It is
+    # refused here, before the port is opened.
     if target_error := _pose_target_error(
-        action, motor_name=motor_name, position=position, delta=delta, positions=positions
+        action, motor_name=motor_name, position=position, delta=delta, positions=positions, travel=travel
     ):
         return {"status": "error", "content": [{"text": target_error}]}
 
@@ -1455,6 +1446,10 @@ def pose_tool(
                 for key, value in (
                     ("action", action),
                     ("port", port),
+                    # The calibration decides where a degree target puts the
+                    # joint, so the same number under a different file is a
+                    # different pose: the operator approves both together.
+                    ("calibration", calibration),
                     ("pose_name", pose_name),
                     ("motor_name", motor_name),
                     ("position", position),
@@ -1473,6 +1468,7 @@ def pose_tool(
             if input_error := _motion_input_error(
                 action,
                 pose_manager,
+                travel=travel,
                 pose_name=pose_name,
                 motor_name=motor_name,
                 position=position,
@@ -1485,7 +1481,7 @@ def pose_tool(
                 # as inert as a call that never happened.
                 return {"status": "error", "content": [{"text": f"pose_tool: {refusal}"}]}
 
-        controller = MotorController(port)
+        controller = MotorController(port, calibration=records)
 
         if action == "connect":
             connected, error = controller.connect()
@@ -1546,7 +1542,7 @@ def pose_tool(
                                 {
                                     "text": (
                                         f"Read {len(positions)} of "
-                                        f"{len(controller.motor_configs)} joints; no verified "
+                                        f"{len(controller.units.motors)} joints; no verified "
                                         f"reply from: {', '.join(silent)}. The positions below "
                                         f"are the rest of the arm, not its full pose.\n{pos_text}"
                                     )
@@ -1595,7 +1591,7 @@ def pose_tool(
                                     f"Not storing '{pose_name}': no verified reply from "
                                     f"{', '.join(silent)}, so this would persist "
                                     f"{len(current_positions)} of "
-                                    f"{len(controller.motor_configs)} joints under a name that "
+                                    f"{len(controller.units.motors)} joints under a name that "
                                     "promises the whole arm."
                                 )
                             }
@@ -1659,7 +1655,7 @@ def pose_tool(
             # here, before the port is opened, for the reason the argument check
             # gives above: the arm must not travel to an end stop on a target
             # that could not be honored.
-            if stored_error := _stored_pose_target_error(pose):
+            if stored_error := _stored_pose_target_error(pose, travel):
                 return {"status": "error", "content": [{"text": stored_error}]}
 
             connected, error = controller.connect()
@@ -1817,7 +1813,7 @@ def pose_tool(
                     {
                         "text": (
                             "Emergency stop executed - torque disabled on "
-                            f"{len(controller.motor_configs)} motors. The arm is limp and will "
+                            f"{len(controller.units.motors)} motors. The arm is limp and will "
                             "fall under gravity; anything held has been dropped."
                         )
                     }

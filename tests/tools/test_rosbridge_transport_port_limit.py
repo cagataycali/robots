@@ -30,6 +30,7 @@ from pathlib import Path
 
 import pytest
 
+import strands_robots.rosbridge as transport_mod
 import strands_robots.tools.use_rosbridge as ur
 from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
 from strands_robots.tools.use_rosbridge import use_rosbridge
@@ -74,7 +75,7 @@ class TestTheToolReportsItThroughTheEnvelope:
         assert "rosbridge WebSocket transport" in text
         assert f"1-{ADDRESSABLE_PORT}" in text
 
-    @pytest.mark.parametrize("action", sorted(ur._ACTIONS))
+    @pytest.mark.parametrize("action", sorted(transport_mod._ACTIONS))
     def test_every_action_refuses_it(self, action: str) -> None:
         """The port is read by whichever action dials, so none may accept it."""
         result = use_rosbridge(
@@ -96,8 +97,8 @@ class TestTheToolReportsItThroughTheEnvelope:
         def fail(*args: object, **kwargs: object) -> bool:
             raise AssertionError("the backend must not be probed for a port refused up front")
 
-        monkeypatch.setattr(ur._backend, "available", fail)
-        monkeypatch.setattr(ur._backend, "connect", fail)
+        monkeypatch.setattr(transport_mod._backend, "available", fail)
+        monkeypatch.setattr(transport_mod._backend, "connect", fail)
 
         result = use_rosbridge(action="status", host="127.0.0.1", port=UNADDRESSABLE_PORT, timeout=0.05)
 
@@ -141,11 +142,11 @@ class TestTheSharedDomainIsNotNarrowedToMatch:
         assert tcp_port_error(UNADDRESSABLE_PORT, "port", "ctx") is None
 
     def test_the_transport_bound_is_one_below_the_shared_ceiling(self) -> None:
-        assert ur._TRANSPORT_MAX_PORT == UNADDRESSABLE_PORT - 1
+        assert transport_mod._TRANSPORT_MAX_PORT == UNADDRESSABLE_PORT - 1
 
     def test_the_helper_accepts_everything_the_transport_can_carry(self) -> None:
-        assert ur._transport_port_error(ADDRESSABLE_PORT, "port", "ctx") is None
-        assert ur._transport_port_error(1, "port", "ctx") is None
+        assert transport_mod._transport_port_error(ADDRESSABLE_PORT, "port", "ctx") is None
+        assert transport_mod._transport_port_error(1, "port", "ctx") is None
 
     def test_only_the_rosbridge_surfaces_carry_the_narrower_bound(self) -> None:
         """A transport bound that leaked onto another surface would be a bug.
@@ -159,12 +160,12 @@ class TestTheSharedDomainIsNotNarrowedToMatch:
         root = Path(ur.__file__).resolve().parent.parent
         sources = {
             path.name: path.read_text(encoding="utf-8")
-            for glob in ("tools/*.py", "mesh/*_robot.py")
+            for glob in ("tools/*.py", "mesh/*_robot.py", "rosbridge.py")
             for path in sorted(root.glob(glob))
         }
         carriers = {name for name, text in sources.items() if "_transport_port_error" in text}
 
-        assert carriers == {"use_rosbridge.py", "rosbridge_robot.py"}
+        assert carriers == {"rosbridge.py", "rosbridge_robot.py"}
 
 
 class TestTheTransportPremise:

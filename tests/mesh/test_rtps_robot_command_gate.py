@@ -1,19 +1,19 @@
 """An :class:`RtpsRobot` command must reach the ``use_rtps`` operator gate.
 
 The sibling of ``tests/mesh/test_ros_bridge_command_gate.py``, for the other
-transport that reaches a ROS 2 graph. ``use_rtps`` gained the shared
+transport that reaches a ROS 2 graph. The RTPS transport gained the shared
 operator-approval gate of :mod:`strands_robots._command_gate`, so an
 :class:`RtpsRobot` whose transport dropped the injected context would turn its
 whole command surface - including the ``stop`` halt and the trailing zero of a
 timed drive - into a per-call refusal whose only offered remedy is the blanket
 ``BYPASS_TOOL_CONSENT``.
 
-``tests/mesh/test_rtps_robot.py`` cannot see that: it patches the ``use_rtps``
-symbol at the mesh boundary, which is the boundary the gate lives behind. These
-tests keep the real ``use_rtps`` and double the DDS backend beneath it instead -
-the same boundary ``tests/tools/test_use_rtps.py`` doubles - so the gate and the
-transport wiring under test both run unmodified while no sample reaches a real
-DDS graph.
+``tests/mesh/test_rtps_robot.py`` cannot see that: it patches the
+``rtps_action`` symbol at the mesh boundary, which is the boundary the gate
+lives behind. These tests keep the real participant and double the DDS backend
+beneath it instead - the same boundary ``tests/tools/test_use_rtps.py`` doubles -
+so the gate and the transport wiring under test both run unmodified while no
+sample reaches a real DDS graph.
 
 What that buys over the structural checks in ``tests/mesh/test_mobile_base.py``:
 those decide forwarding by scanning the transport's source for a
@@ -40,7 +40,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import strands_robots.rtps.idl as idl_mod
-import strands_robots.tools.use_rtps as rtps_mod
+import strands_robots.rtps.participant as participant_mod
 from strands_robots.mesh import RtpsRobot
 
 _TWIST = "geometry_msgs/msg/Twist"
@@ -89,7 +89,7 @@ _BUNDLE: dict[str, type] = {_TWIST: _Twist, _POINT: _Point}
 class _FakeWriter:
     """A DDS writer double that also records the surface it was opened for.
 
-    ``use_rtps`` resolves the declared interface and then asks the backend for a
+    The participant resolves the declared interface and then asks the backend for a
     writer on ``(topic, type)``, so recording that pair is what lets a case
     assert the robot's declared ``cmd_vel_type`` reached the wire and not only
     its topic.
@@ -112,7 +112,7 @@ class _FakeBundle:
     """The IDL bundle double: resolves :data:`_BUNDLE`, refuses everything else.
 
     :func:`strands_robots.rtps.idl.get_type` raises ``KeyError`` for a type it
-    does not carry, and ``use_rtps`` turns that into a reported error. A double
+    does not carry, and the participant turns that into a reported error. A double
     that resolved every string would be strictly more permissive than the
     resolver it stands in for.
     """
@@ -138,10 +138,10 @@ def _install_doubles(monkeypatch: pytest.MonkeyPatch) -> tuple[_FakeWriter, _Fak
     monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
     monkeypatch.delenv("STRANDS_ROS2_COMMAND_ALLOW", raising=False)
     writer, bundle = _FakeWriter(), _FakeBundle()
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
-    monkeypatch.setattr(rtps_mod._backend, "writer", writer.open)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(participant_mod._backend, "writer", writer.open)
     # publish sleeps for the reader settle and for the inter-message period.
-    monkeypatch.setattr(rtps_mod.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(participant_mod.time, "sleep", lambda *_: None)
     monkeypatch.setattr(idl_mod, "get_type", bundle.get_type)
     return writer, bundle
 
@@ -287,7 +287,7 @@ class TestTheDeclaredInterfaceReachesTheGatedPublish:
 
     The cases above stand the DDS backend and the IDL bundle down, so nothing
     there distinguishes the robot's declared ``cmd_vel_type`` from whatever the
-    resolver hands back. ``use_rtps`` resolves the type, asks the backend for a
+    resolver hands back. The participant resolves the type, asks the backend for a
     writer on ``(topic, type)`` and names the type in its own success report, so
     all three are observable - and a declaration the bundle cannot carry has to
     be reported rather than published.
@@ -332,7 +332,7 @@ class TestTheDeclaredInterfaceReachesTheGatedPublish:
     def test_a_registered_interface_of_the_wrong_shape_writes_no_sample(self) -> None:
         """A type the bundle carries can still have nowhere to put a velocity.
 
-        ``geometry_msgs/msg/Point`` passes the tool's ``pkg/msg/Name`` check and
+        ``geometry_msgs/msg/Point`` passes the participant's ``pkg/msg/Name`` check and
         resolves, and has no ``linear``/``angular`` member - so the sample cannot
         be built and the wire stays quiet. This is the declaration a resolver
         that answered every type string would report as a completed drive.

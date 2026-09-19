@@ -14,6 +14,13 @@ advertise and publish a topic that a real ROS 2 node (rviz, nav2, a teleop
 joystick) will consume, and subscribe to command topics - indistinguishable on
 the wire from physical hardware.
 
+This module is the agent-facing envelope: the numeric-option domains an agent
+can get wrong, the operator gate, and the tool docstring a model reads. The
+participant itself - the shared ``DomainParticipant``, the cached writers and
+readers, the IDL sample builder - is
+:mod:`strands_robots.rtps.participant`, which
+:class:`~strands_robots.mesh.rtps_robot.RtpsRobot` publishes through as well.
+
 Actions:
     status      - report whether the cyclonedds backend is available.
     types       - list the ROS 2 message types in the local IDL bundle.
@@ -42,22 +49,14 @@ Examples:
 
 from __future__ import annotations
 
-import dataclasses
-import json
-import logging
-import threading
-import time
-import typing
 from typing import Any
 
 from strands import tool
 from strands.types.tools import ToolContext
 
 from strands_robots._command_gate import gate_command
-from strands_robots.rtps.mangling import dds_type_name, ros_topic_error
+from strands_robots.rtps.participant import GATE_TOOL, _err, never_gated, rtps_action
 from strands_robots.tools._numeric_options import numeric_option_error
-
-logger = logging.getLogger(__name__)
 
 # Which numeric options each action actually consumes. ``status``, ``types``,
 # ``advertise`` and ``subscribe`` read none of them, so the guard below is driven
@@ -67,128 +66,6 @@ _ACTION_NUMERIC_OPTIONS: dict[str, tuple[str, ...]] = {
     "publish": ("count", "rate"),
     "echo": ("timeout", "count"),
 }
-
-
-class _RtpsBackend:
-    """Process-wide cyclonedds participant + per-topic readers/writers.
-
-    A single DomainParticipant is shared (cheap, and keeps one presence on the
-    graph). Writers and readers are cached per (topic, type) so repeated
-    publish/echo calls reuse the same DDS entities - and a long-lived advertised
-    writer keeps "being a robot" between tool calls. All access is serialised.
-    """
-
-    def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self._participant: Any = None
-        self._writers: dict[tuple[str, str], Any] = {}
-        self._readers: dict[tuple[str, str], Any] = {}
-        self._available: bool | None = None
-
-    def available(self) -> bool:
-        try:
-            from strands_robots.rtps.idl import have_cyclonedds
-
-            return have_cyclonedds()
-        except ImportError:
-            return False
-
-    def _participant_obj(self) -> Any:
-        if self._participant is None:
-            from cyclonedds.domain import DomainParticipant
-
-            self._participant = DomainParticipant()
-        return self._participant
-
-    def writer(self, ros_topic: str, ros_type: str) -> Any:
-        """Get-or-create a DataWriter for (topic, type), ROS-mangled."""
-        key = (ros_topic, ros_type)
-        if key not in self._writers:
-            from cyclonedds.pub import DataWriter
-            from cyclonedds.topic import Topic
-
-            from strands_robots.rtps.idl import get_type
-            from strands_robots.rtps.mangling import dds_topic_name
-
-            idl_cls = get_type(ros_type)
-            topic = Topic(self._participant_obj(), dds_topic_name(ros_topic), idl_cls)
-            self._writers[key] = DataWriter(self._participant_obj(), topic)
-        return self._writers[key]
-
-    def reader(self, ros_topic: str, ros_type: str) -> Any:
-        """Get-or-create a DataReader for (topic, type), ROS-mangled."""
-        key = (ros_topic, ros_type)
-        if key not in self._readers:
-            from cyclonedds.sub import DataReader
-            from cyclonedds.topic import Topic
-
-            from strands_robots.rtps.idl import get_type
-            from strands_robots.rtps.mangling import dds_topic_name
-
-            idl_cls = get_type(ros_type)
-            topic = Topic(self._participant_obj(), dds_topic_name(ros_topic), idl_cls)
-            self._readers[key] = DataReader(self._participant_obj(), topic)
-        return self._readers[key]
-
-    @property
-    def lock(self) -> threading.RLock:
-        return self._lock
-
-
-_backend = _RtpsBackend()
-
-
-def _ok(text: str) -> dict[str, Any]:
-    return {"status": "success", "content": [{"text": text}]}
-
-
-def _err(text: str) -> dict[str, Any]:
-    return {"status": "error", "content": [{"text": f"use_rtps: {text}"}]}
-
-
-def _sample_to_dict(sample: Any) -> Any:
-    """Recursively convert an IDL dataclass sample to a plain dict."""
-    if dataclasses.is_dataclass(sample) and not isinstance(sample, type):
-        return {f.name: _sample_to_dict(getattr(sample, f.name)) for f in dataclasses.fields(sample)}
-    if isinstance(sample, (list, tuple)):
-        return [_sample_to_dict(x) for x in sample]
-    return sample
-
-
-def _resolve_field_types(idl_cls: Any) -> dict[str, Any]:
-    """Return {field_name: resolved_type} for a dataclass.
-
-    ``from __future__ import annotations`` (and cyclonedds's own annotations)
-    make ``dataclasses.Field.type`` a *string*, so nested-message detection must
-    resolve real types via ``typing.get_type_hints``. Falls back to the raw
-    ``Field.type`` if hint resolution fails (e.g. exotic cyclonedds aliases).
-    """
-    try:
-        hints = typing.get_type_hints(idl_cls)
-    except Exception:
-        hints = {}
-    return {f.name: hints.get(f.name, f.type) for f in dataclasses.fields(idl_cls)}
-
-
-def _build_sample(idl_cls: Any, fields: dict[str, Any]) -> Any:
-    """Construct an IDL dataclass instance from a (possibly nested) field dict.
-
-    Nested message fields are built recursively from their annotated dataclass
-    type, so ``{"linear": {"x": 2.0}}`` becomes ``Twist(linear=Vector3(x=2.0))``.
-    Unknown field names raise so a typo fails loudly rather than silently
-    publishing zeros.
-    """
-    kwargs: dict[str, Any] = {}
-    field_types = _resolve_field_types(idl_cls)
-    for name, value in fields.items():
-        if name not in field_types:
-            raise ValueError(f"unknown field {name!r} for {idl_cls.__name__} (have: {sorted(field_types)})")
-        ftype = field_types[name]
-        if isinstance(value, dict) and dataclasses.is_dataclass(ftype):
-            kwargs[name] = _build_sample(ftype, value)
-        else:
-            kwargs[name] = value
-    return idl_cls(**kwargs)
 
 
 @tool(context=True)
@@ -226,104 +103,36 @@ def use_rtps(
     Returns:
         A Strands tool result dict ``{"status": ..., "content": [{"text": ...}]}``.
     """
-    fields = fields or {}
-
-    # Validate before mangling so a malformed agent-supplied name fails with a
-    # clear message. The rule is read from the mangling that will map the name,
-    # not restated here: a second spelling could accept a name the mangling
-    # refuses (the caller then gets the refusal from a layer they did not call)
-    # or accept one it maps anyway, which is worse - the participant joins a DDS
-    # topic no ROS 2 node can create, and DDS reports nothing because matching
-    # is by name.
-    if topic is not None and (clause := ros_topic_error(topic)) is not None:
-        return _err(f"invalid topic name: {topic!r} ({clause})")
-    if type is not None:
-        try:
-            dds_type_name(type)
-        except ValueError as exc:
-            return _err(f"invalid interface type: {exc}")
-
-    # Numeric options are checked here, alongside the names and ahead of the
-    # backend probe, so the same caller mistake is reported identically whether
-    # or not cyclonedds is installed - and so a refusal happens before a writer
-    # joins the graph.
+    # Numeric options are checked here, ahead of the participant's backend probe,
+    # so the same caller mistake is reported identically whether or not
+    # cyclonedds is installed - and so a refusal happens before a writer joins
+    # the graph. They are the agent-supplied half of the call, which is why the
+    # table above lives beside this tool rather than in the participant.
     numeric_error = numeric_option_error(action, _ACTION_NUMERIC_OPTIONS, timeout=timeout, count=count, rate=rate)
     if numeric_error:
         return _err(numeric_error)
 
-    if action == "status":
-        if _backend.available():
-            return _ok("backend: cyclonedds (RTPS participant) - no rclpy / ROS 2 distro needed")
-        from strands_robots.rtps.idl import _INSTALL_HINT
+    # Each verb forwards the options it reads and no others, and only ``publish``
+    # is handed a gate that can reach an operator: the read paths cannot prompt
+    # at all, rather than being trusted not to. An action outside this vocabulary
+    # falls through to the participant, which names it in its refusal.
+    if action == "publish":
+        return rtps_action(
+            action=action,
+            topic=topic,
+            type=type,
+            fields=fields,
+            count=count,
+            rate=rate,
+            gate=lambda target: gate_command("publish", target, tool_context=tool_context, tool=GATE_TOOL),
+        )
+    if action in ("subscribe", "echo"):
+        return rtps_action(action=action, topic=topic, type=type, count=count, timeout=timeout, gate=never_gated)
+    if action == "advertise":
+        return rtps_action(action=action, topic=topic, type=type, gate=never_gated)
+    if action in ("status", "types"):
+        return rtps_action(action=action, gate=never_gated)
+    return rtps_action(action=action, topic=topic, type=type, gate=never_gated)
 
-        return _ok("backend: none - " + _INSTALL_HINT)
 
-    if not _backend.available():
-        from strands_robots.rtps.idl import _INSTALL_HINT
-
-        return _err(_INSTALL_HINT)
-
-    try:
-        from strands_robots.rtps.idl import REGISTRY, get_type
-
-        if action == "types":
-            return _ok("RTPS IDL bundle types:\n" + "\n".join(sorted(REGISTRY)))
-
-        # The operator gate is consulted here - after the backend probe, so a
-        # transport that cannot publish never prompts, and before the lock, so a
-        # human deciding does not hold the process-wide DDS lock and no writer
-        # joins the graph on a refusal. Only ``publish`` can command: ``advertise``
-        # creates a publisher without writing a sample, and the rest only read.
-        # The well-formedness condition mirrors the publish branch's own, so an
-        # incomplete call is reported without asking an operator about it.
-        if action == "publish" and topic and type:
-            refusal = gate_command("publish", topic, tool_context, tool="use_rtps")
-            if refusal is not None:
-                return _err(refusal)
-
-        with _backend.lock:
-            if action == "advertise":
-                if not topic or not type:
-                    return _err("advertise requires topic and type")
-                get_type(type)  # validate type is in the bundle before creating the writer
-                _backend.writer(topic, type)
-                return _ok(f"advertised {topic} ({type}) - now a publisher on the ROS 2 graph")
-
-            if action == "publish":
-                if not topic or not type:
-                    return _err("publish requires topic and type")
-                idl_cls = get_type(type)
-                sample = _build_sample(idl_cls, fields)
-                writer = _backend.writer(topic, type)
-                # Brief settle so freshly-matched readers receive the first sample.
-                time.sleep(0.3)
-                period = 1.0 / rate if rate > 0 else 0.0
-                for _ in range(count):
-                    writer.write(sample)
-                    if period:
-                        time.sleep(period)
-                return _ok(f"published {count} message(s) to {topic} ({type})")
-
-            if action in ("subscribe", "echo"):
-                if not topic or not type:
-                    return _err(f"{action} requires topic and type")
-                reader = _backend.reader(topic, type)
-                if action == "subscribe":
-                    return _ok(f"subscribed to {topic} ({type})")
-                # echo: poll the reader until count samples arrive or timeout.
-                samples: list[Any] = []
-                # time.monotonic(): a wall-clock step during the poll would
-                # return short of ``count`` samples that were still arriving.
-                deadline = time.monotonic() + timeout
-                while len(samples) < count and time.monotonic() < deadline:
-                    for sample in reader.take(N=count - len(samples)):
-                        samples.append(_sample_to_dict(sample))
-                    if len(samples) < count:
-                        time.sleep(0.05)
-                return _ok(f"echo {topic} ({type}):\n{json.dumps(samples, indent=2, default=str)}")
-
-            return _err(f"unknown action: {action}")
-    except ImportError as exc:
-        return _err(str(exc))
-    except (KeyError, ValueError, AttributeError, TypeError) as exc:
-        return _err(f"{action} failed: {exc}")
+__all__ = ["use_rtps"]

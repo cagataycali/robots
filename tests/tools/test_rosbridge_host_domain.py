@@ -135,7 +135,7 @@ def test_an_empty_host_is_still_refused_by_the_domain_that_replaced_the_falsines
 @pytest.mark.parametrize(
     ("module_name", "owner"),
     [
-        ("strands_robots.tools.use_rosbridge", "use_rosbridge"),
+        ("strands_robots.rosbridge", "rosbridge_action"),
         ("strands_robots.mesh.rosbridge_robot", "__init__"),
     ],
 )

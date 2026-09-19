@@ -511,6 +511,34 @@ class FeetechBus:
             )
         return counts
 
+    def value_bounds(self, name: str) -> tuple[float, float]:
+        """The span of one motor's measured travel, in the unit a caller reads.
+
+        Derived from :meth:`to_value` at the ends of the record rather than from
+        arithmetic of its own, so a bound and the reading it bounds cannot
+        disagree. A caller that refuses a target before driving it - as
+        :mod:`strands_robots.tools.pose_tool` does, before it asks the operator -
+        bounds it with this.
+
+        With no calibration the record spans the servo's whole rotation, so the
+        bound is what the encoder can hold rather than where this arm stops:
+        wide, and true about the servo. Calibrating narrows it to the arm.
+
+        Args:
+            name: A motor on this bus.
+
+        Returns:
+            ``(low, high)``, low first - the order is not the record's, because
+            a gripper whose ``drive_mode`` is reversed reads 100 percent at
+            ``range_min``.
+
+        Raises:
+            ValueError: ``name`` is not on this bus.
+        """
+        _spec, record = self._calibrated(name)
+        first, second = self.to_value(name, record.range_min), self.to_value(name, record.range_max)
+        return (first, second) if first <= second else (second, first)
+
     # ------------------------------------------------------------------ #
     # Lifecycle.                                                          #
     # ------------------------------------------------------------------ #

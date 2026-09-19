@@ -39,9 +39,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import strands_robots.rosbridge as rosbridge_transport_mod
+import strands_robots.rtps.participant as rtps_participant_mod
 import strands_robots.tools.use_ros as ros_mod
-import strands_robots.tools.use_rosbridge as rosbridge_mod
-import strands_robots.tools.use_rtps as rtps_mod
+from strands_robots.mesh import RosbridgeRobot, RtpsRobot
 from strands_robots.tools.use_ros import use_ros
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.tools.use_rtps import use_rtps
@@ -58,11 +59,14 @@ _COMMAND_VERBS = frozenset({"publish", "service_call", "action_send_goal"})
 
 # Each agent-callable transport, with the module holding its backend probe and
 # the interface type spelling that transport accepts. rosbridge speaks ROS 1
-# two-segment types; the other two speak ROS 2 three-segment types.
+# two-segment types; the other two speak ROS 2 three-segment types. ``use_rtps``
+# and ``use_rosbridge`` are envelopes over transports a layer down, which an
+# ``RtpsRobot`` and a ``RosbridgeRobot`` reach as well, so their probes are the
+# transports' rather than the tools'.
 _TRANSPORTS: tuple[tuple[str, Any, Any, str], ...] = (
     ("use_ros", use_ros, ros_mod, "geometry_msgs/msg/Twist"),
-    ("use_rtps", use_rtps, rtps_mod, "geometry_msgs/msg/Twist"),
-    ("use_rosbridge", use_rosbridge, rosbridge_mod, "geometry_msgs/Twist"),
+    ("use_rtps", use_rtps, rtps_participant_mod, "geometry_msgs/msg/Twist"),
+    ("use_rosbridge", use_rosbridge, rosbridge_transport_mod, "geometry_msgs/Twist"),
 )
 
 _TOOLS_DIR = Path(ros_mod.__file__).resolve().parent
@@ -86,7 +90,7 @@ def _hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
     monkeypatch.delenv("STRANDS_ROS2_COMMAND_ALLOW", raising=False)
-    for module in (ros_mod, rtps_mod, rosbridge_mod):
+    for module in (ros_mod, rtps_participant_mod, rosbridge_transport_mod):
         monkeypatch.setattr(module._backend, "available", lambda: True)
 
 
@@ -215,6 +219,81 @@ class TestTheGateRunsAfterArgumentValidation:
         result = tool(action="publish", topic=_BLOCKED, timeout=_DIAL_TIMEOUT, tool_context=ctx)
         assert result["status"] == "error"
         assert not ctx.interrupt.called, f"{label} asked the operator about an incomplete call"
+
+
+#: A transport whose mechanics are shared by an agent tool and a library class,
+#: with the entry point both reach it through, a factory for the class, and the
+#: tool call that reaches the same surface. The structural pin below reads the
+#: tool package, so it cannot see the second caller at all - these rows are the
+#: same argument one layer down.
+_SHARED_TRANSPORTS: tuple[tuple[str, Any, Any, Any, str], ...] = (
+    (
+        "rtps",
+        rtps_participant_mod.rtps_action,
+        lambda: RtpsRobot.from_rtps(node_name="rover", cmd_vel_topic=_BLOCKED),
+        use_rtps,
+        "geometry_msgs/msg/Twist",
+    ),
+    (
+        "rosbridge",
+        rosbridge_transport_mod.rosbridge_action,
+        lambda: RosbridgeRobot("rover", _BLOCKED, "/odom"),
+        use_rosbridge,
+        "geometry_msgs/Twist",
+    ),
+)
+
+
+class TestEveryCallerOfOneTransportAsksTheSameQuestion:
+    """A transport is not always a tool: two of them have a second caller.
+
+    :mod:`strands_robots.rtps.participant` carries the DDS mechanics for the
+    ``use_rtps`` tool *and* for :class:`~strands_robots.mesh.RtpsRobot`, and
+    :mod:`strands_robots.rosbridge` carries the WebSocket mechanics for the
+    ``use_rosbridge`` tool *and* for
+    :class:`~strands_robots.mesh.RosbridgeRobot`. Either robot puts a ``Twist``
+    on the same physical ``cmd_vel`` without going through an agent tool at all.
+    The structural pin above reads the tool package, so it cannot see that
+    second caller. Two pins per shared transport: a transport nobody can command
+    through without deciding about the operator, and one label for the decision
+    however it was reached.
+    """
+
+    @pytest.mark.parametrize(("label", "entry_point", "_factory", "_tool", "_msg_type"), _SHARED_TRANSPORTS)
+    def test_the_transport_refuses_to_command_without_a_gate_argument(
+        self, label: str, entry_point: Any, _factory: Any, _tool: Any, _msg_type: str
+    ) -> None:
+        """The gate is a required argument, so a caller cannot omit it silently.
+
+        A default would be the un-gated sibling all over again: whichever value
+        it took, a new caller would inherit it by writing nothing.
+        """
+        gate = inspect.signature(entry_point).parameters["gate"]
+        assert gate.default is inspect.Parameter.empty, f"{label}: a defaulted gate is a gate a caller can forget"
+        assert gate.kind is inspect.Parameter.KEYWORD_ONLY
+
+    @pytest.mark.parametrize(("label", "_entry_point", "factory", "tool", "msg_type"), _SHARED_TRANSPORTS)
+    def test_a_robot_and_the_tool_prompt_the_operator_identically(
+        self, label: str, _entry_point: Any, factory: Any, tool: Any, msg_type: str
+    ) -> None:
+        """One blocklisted topic, one question - whichever caller reached it.
+
+        The label keys the interrupt id ``<tool>-command-approval`` and the audit
+        source ``<tool>_tool``, so two spellings would file one incident's rows
+        under two names and an operator would be asked the same thing twice over.
+        Both callers decline here, so the assertion is made before any socket is
+        dialed or any writer joins a DDS graph.
+        """
+        tool_ctx, robot_ctx = MagicMock(), MagicMock()
+        tool_ctx.interrupt.return_value = "n"
+        robot_ctx.interrupt.return_value = "n"
+
+        assert _publish(tool, msg_type, tool_ctx)["status"] == "error"
+        assert factory().drive(linear=1.0, tool_context=robot_ctx)["status"] == "error"
+
+        assert robot_ctx.interrupt.call_args == tool_ctx.interrupt.call_args, (
+            f"{label}: the two callers ask the operator different questions about one surface"
+        )
 
 
 def _commanding_transport_modules() -> dict[str, set[str]]:

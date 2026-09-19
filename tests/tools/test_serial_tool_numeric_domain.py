@@ -31,9 +31,9 @@ one failed differently and none of the failures was reportable:
   ``0`` was accepted outright.
 
 :mod:`~strands_robots.tools.pose_tool` writes the same ``Goal_Position`` register
-through the same mask and is unaffected: it clamps to each motor's declared range
-in ``degrees_to_position`` before encoding, so its mask can only ever see a value
-that fits. That is the contract these tests give the raw-bus tool.
+through the same mask and is unaffected: ``FeetechBus.to_counts`` refuses a
+target the encoder cannot hold before encoding it, so its mask can only ever see
+a value that fits. That is the contract these tests give the raw-bus tool.
 
 They pin the domain, the per-action scoping (an option an action never reads must
 not be refused), the guard's placement before the port is opened, that a value

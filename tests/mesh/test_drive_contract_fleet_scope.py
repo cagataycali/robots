@@ -56,13 +56,21 @@ import strands_robots.mesh.rtps_robot as rtps_mod
 
 
 class _Recorder:
-    """Records the kwargs of each forwarded transport call."""
+    """Records the payload of each forwarded transport call.
+
+    The operator gate a bridge hands its transport is dropped: it is the channel
+    the human decision arrives on, not part of what goes on the wire, and it
+    closes over the call's ``tool_context``, so it is a fresh object every call.
+    Keeping it would make ``_clamps_velocity`` - which reads a ceiling as two
+    over-ceiling requests forwarding the *same* thing - compare closure identity
+    and report every gated bridge as unclamped.
+    """
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
     def __call__(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(kwargs)
+        self.calls.append({name: value for name, value in kwargs.items() if name != "gate"})
         return {"status": "success", "content": [{"text": "ok"}]}
 
 
@@ -75,11 +83,11 @@ _BRIDGES: list[tuple[str, Any, str, Callable[[], Any]]] = [
         "use_ros",
         lambda: ros_bridge_mod.RosBridgedRobot("rover", "/cmd_vel", "/odom", publish_rate=10.0),
     ),
-    ("RtpsRobot", rtps_mod, "use_rtps", lambda: rtps_mod.RtpsRobot("rover", "/cmd_vel", publish_rate=10.0)),
+    ("RtpsRobot", rtps_mod, "rtps_action", lambda: rtps_mod.RtpsRobot("rover", "/cmd_vel", publish_rate=10.0)),
     (
         "RosbridgeRobot",
         rosbridge_mod,
-        "use_rosbridge",
+        "rosbridge_action",
         lambda: rosbridge_mod.RosbridgeRobot("rover", "/cmd_vel", "/odom", publish_rate=10.0),
     ),
 ]

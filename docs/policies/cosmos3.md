@@ -224,7 +224,9 @@ The `diffusers` backend's raw unified action is **quantile-normalized to
 `[-1, 1]`** and encodes a *relative end-effector pose delta* per step, **not
 joint radians** - fed straight to MuJoCo joint actuators it is meaningless.
 Three geometric steps (`cosmos3-sim` extra: `mink` + `mujoco`, numpy>=2,
-co-installable with the other extras) turn it into joint targets:
+co-installable with the other extras) turn it into joint targets. The fence below
+also reads a robot model, which `robot_descriptions` ships and no cosmos3 extra
+declares, so add `sim-mujoco` when you run it:
 
 1. **De-normalize** - invert the quantile transform with the embodiment's
    bundled `q01`/`q99` action stats:

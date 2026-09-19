@@ -37,6 +37,8 @@ from typing import Any
 
 import pytest
 
+import strands_robots.rosbridge as rosbridge_transport_mod
+import strands_robots.rtps.participant as participant_mod
 import strands_robots.tools.use_ros as ros_mod
 import strands_robots.tools.use_rosbridge as rosbridge_mod
 import strands_robots.tools.use_rtps as rtps_mod
@@ -58,8 +60,8 @@ def _texts(result: dict[str, Any]) -> str:
 def _every_backend_available(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default every transport to a present backend; opt out where needed."""
     monkeypatch.setattr(ros_mod._backend, "available", lambda: True)
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
-    monkeypatch.setattr(rosbridge_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(rosbridge_transport_mod._backend, "available", lambda: True)
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +214,7 @@ def test_every_rosbridge_action_declares_the_options_it_reads() -> None:
     An action missing from the table is silently unguarded, which is how this
     transport shipped with none at all - so the table must stay exhaustive.
     """
-    assert set(rosbridge_mod._ACTION_NUMERIC_OPTIONS) == set(rosbridge_mod._ACTIONS)
+    assert set(rosbridge_mod._ACTION_NUMERIC_OPTIONS) == set(rosbridge_transport_mod._ACTIONS)
     for action, options in rosbridge_mod._ACTION_NUMERIC_OPTIONS.items():
         assert "timeout" in options, action
 
@@ -366,7 +368,7 @@ def rosbridge_published_at(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     module.Message = dict  # type: ignore[attr-defined]
     module.Service = object  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "roslibpy", module)
-    monkeypatch.setattr(rosbridge_mod._backend, "_connections", {})
+    monkeypatch.setattr(rosbridge_transport_mod._backend, "_connections", {})
     return stamps
 
 
@@ -450,14 +452,14 @@ def test_every_rosbridge_action_refuses_a_non_positive_timeout(
 
     assert result["status"] == "error"
     assert f"{action}: timeout must be > 0, got -1.0." in _texts(result)
-    assert rosbridge_mod._backend._connections == {}, "refused, yet the bridge was dialed"
+    assert rosbridge_transport_mod._backend._connections == {}, "refused, yet the bridge was dialed"
 
 
 def test_a_rosbridge_refusal_names_the_option_with_no_roslibpy_installed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The guard runs ahead of the availability probe, so the message is stable."""
-    monkeypatch.setattr(rosbridge_mod._backend, "available", lambda: False)
+    monkeypatch.setattr(rosbridge_transport_mod._backend, "available", lambda: False)
 
     result = _publish_over_rosbridge(count=6, rate=0.0)
 

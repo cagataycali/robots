@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+import strands_robots.rosbridge as transport_mod
 import strands_robots.tools.use_rosbridge as rb_mod
 
 use_rosbridge = rb_mod.use_rosbridge
@@ -42,9 +43,9 @@ def dial(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int, float]]:
         dials.append((host, port, timeout))
         raise TimeoutError(f"rosbridge at ws://{host}:{port} did not reconnect within {timeout}s")
 
-    monkeypatch.setattr(rb_mod._backend, "available", lambda: True)
-    monkeypatch.setattr(rb_mod._backend, "connect", connect)
-    monkeypatch.setattr(rb_mod._backend, "_connections", {})
+    monkeypatch.setattr(transport_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(transport_mod._backend, "connect", connect)
+    monkeypatch.setattr(transport_mod._backend, "_connections", {})
     return dials
 
 
@@ -64,8 +65,8 @@ def test_the_refusal_is_the_same_without_roslibpy(
     call: dict[str, Any], expected: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setitem(sys.modules, "roslibpy", None)
-    monkeypatch.setattr(rb_mod._backend, "_available", None)
-    monkeypatch.setattr(rb_mod._backend, "_connections", {})
+    monkeypatch.setattr(transport_mod._backend, "_available", None)
+    monkeypatch.setattr(transport_mod._backend, "_connections", {})
 
     result = use_rosbridge(**call)
 

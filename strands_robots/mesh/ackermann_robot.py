@@ -439,9 +439,16 @@ class AckermannRosRobot:
         return self._publish_servo(0.0, 0.0, count=1, tool_context=tool_context)
 
     def get_scan(self, timeout: float = 5.0) -> dict[str, Any]:
-        """Read one sample from the laser-scan topic (error when unconfigured)."""
+        """Read one sample from the laser-scan topic (error when unconfigured).
+
+        Grades ``timeout`` at this seam, on the domain every bridge's read
+        shares, so the refusal names the verb the caller invoked rather than the
+        transport's own ``echo``.
+        """
         if not self.scan_topic:
             return self._error("get_scan: no scan_topic configured for this robot")
+        if wait_err := positive_finite_number_error(timeout, "timeout", "get_scan"):
+            return self._error(wait_err)
         return use_ros(
             action="echo",
             topic=self.scan_topic,

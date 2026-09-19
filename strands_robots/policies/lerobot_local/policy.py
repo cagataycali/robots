@@ -30,6 +30,7 @@ from ...utils import (
 )
 from .. import Policy, align_action_values, chunk_count_error
 from .._log_safety import sanitize_log_value
+from .._rng import reseed_client_rngs
 from .._state_keys import drop_velocity_siblings
 from .embodiment import (
     ZeroActionMonitor,
@@ -930,14 +931,30 @@ class LerobotLocalPolicy(Policy):
         history) to prevent cross-episode contamination.
 
         Args:
-            seed: Per-episode master seed (added in #187 for the
-                ``Policy.reset(seed=...)`` contract). Currently
-                unused - LeRobot policies don't expose RNG state via a
-                seed kwarg, and reproducibility is handled by
-                ``set_eval_seed`` upstream of the call. Reserved for
-                future per-policy RNG plumbing.
+            seed: Per-episode master seed (the ``Policy.reset(seed=...)``
+                contract, #187). Applied through
+                :func:`~strands_robots.policies._rng.reseed_client_rngs`, the
+                same reseed ``set_eval_seed`` performs, because the process
+                that runs ``reset`` is the one holding the sampler: a lerobot
+                policy draws its flow-matching / diffusion noise from the
+                process-global torch RNG, which no seed kwarg of its own
+                reaches. In-process that reseed is redundant with the runner's
+                own ``set_eval_seed(episode_seed)``, and applying the same
+                value twice lands on the same state. Over a
+                :class:`~strands_robots.inference.server.PolicyServer` it is
+                the only seeding the inference process gets - the client's
+                ``set_eval_seed`` cannot reach it - so without this a seeded
+                episode was reproducible locally and not remotely, the same
+                failure #187 fixed for the ZMQ service policies.
+
+        Raises:
+            ValueError: If *seed* is neither ``None`` nor an integer in
+                ``[0, MAX_EVAL_SEED]``, per
+                :func:`~strands_robots.policies._rng.reseed_client_rngs` - a
+                seed that cannot be applied is refused rather than leaving the
+                caller believing the episode is reproducible.
         """
-        del seed  # explicit no-op, not silently ignored
+        reseed_client_rngs(seed)
         if self._policy is not None and hasattr(self._policy, "reset"):
             self._policy.reset()
             logger.debug("Policy internal state reset")
@@ -3170,6 +3187,18 @@ class LerobotLocalPolicy(Policy):
             )
             out[feat] = v
             used_feats.add(feat)
+        # Hard error if the policy still has image slots the robot cannot fill -
+        # the same refusal _resolve_camera_targets raises at its step 4, so a
+        # state-only observation is refused by name on this path too instead of
+        # reaching lerobot's bare KeyError on the first declared image key.
+        unfilled = [feat for feat in declared_img_feats if feat not in used_feats]
+        if unfilled:
+            cam_names = [k for k, _ in image_items]
+            raise ValueError(
+                f"Robot supplies {len(cam_names)} camera(s) {cam_names} but the policy "
+                f"requires image input(s) {declared_img_feats}; unmatched policy keys: {unfilled}. "
+                f"Add the missing camera(s) to the observation or pass camera_key_map."
+            )
 
         # 2) Collect scalar joint values into observation.state.
         scalar_keys = observed_state_keys(observation_dict)
@@ -3574,7 +3603,12 @@ class LerobotLocalPolicy(Policy):
             for key, value in observation_dict.items()
             if key not in self.robot_state_keys and isinstance(value, np.ndarray) and value.ndim >= 2
         ]
-        if cam_items:
+        # Resolve whenever the policy declares image inputs, not only when the
+        # observation carries a frame: with zero cameras the under-supplied
+        # refusal below (step 4 of _resolve_camera_targets) is the only thing
+        # standing between a state-only observation and lerobot's bare KeyError
+        # on the first declared image key.
+        if cam_items or self._policy_image_keys():
             targets = self._resolve_camera_targets([key for key, _ in cam_items])
             for key, value in cam_items:
                 feat_name = targets.get(key)

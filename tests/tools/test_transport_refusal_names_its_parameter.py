@@ -29,6 +29,7 @@ from typing import Any
 
 import pytest
 
+import strands_robots.rosbridge as transport_mod
 import strands_robots.tools.use_rosbridge as ur
 from strands_robots.utils import tcp_port_error
 
@@ -98,7 +99,7 @@ class TestTheRefusalNamesTheParameterItWasGiven:
 
     @pytest.mark.parametrize("param", ["bridge_port", "ws_port", "rosbridge_port"])
     def test_a_differently_spelled_parameter_is_named(self, param: str) -> None:
-        message = ur._transport_port_error(UNADDRESSABLE_PORT, param, "publish")
+        message = transport_mod._transport_port_error(UNADDRESSABLE_PORT, param, "publish")
 
         assert message is not None
         assert param in message
@@ -109,7 +110,7 @@ class TestTheRefusalNamesTheParameterItWasGiven:
         The boundary matters: ``bridge_port 65535`` *contains* the substring
         ``port 65535``, so only a standalone ``port`` token is the wrong name.
         """
-        message = ur._transport_port_error(UNADDRESSABLE_PORT, "bridge_port", "publish")
+        message = transport_mod._transport_port_error(UNADDRESSABLE_PORT, "bridge_port", "publish")
 
         assert message is not None
         assert re.search(rf"\bport {UNADDRESSABLE_PORT}", message) is None
@@ -124,7 +125,7 @@ class TestTheRefusalNamesTheParameterItWasGiven:
         param = "bridge_port"
 
         wide = tcp_port_error(70000, param, "publish")
-        narrow = ur._transport_port_error(UNADDRESSABLE_PORT, param, "publish")
+        narrow = transport_mod._transport_port_error(UNADDRESSABLE_PORT, param, "publish")
 
         assert wide is not None and narrow is not None
         assert param in wide
@@ -181,11 +182,11 @@ class TestTheShippingCallersSeeNoChange:
 
     @pytest.mark.parametrize("context", ["publish", "service_call", "RosbridgeRobot"])
     def test_the_port_spelling_still_reads_exactly_as_before(self, context: str) -> None:
-        message = ur._transport_port_error(UNADDRESSABLE_PORT, "port", context)
+        message = transport_mod._transport_port_error(UNADDRESSABLE_PORT, "port", context)
 
         assert message == (
             f"{context}: port {UNADDRESSABLE_PORT!r} is a legal TCP port that the rosbridge "
-            f"WebSocket transport cannot address (it addresses 1-{ur._TRANSPORT_MAX_PORT}; "
+            f"WebSocket transport cannot address (it addresses 1-{transport_mod._TRANSPORT_MAX_PORT}; "
             "autobahn's URL builder excludes the top of the range)"
         )
 
@@ -212,10 +213,10 @@ class TestTheDomainIsUnchanged:
 
     @pytest.mark.parametrize("port", [1, 8080, ADDRESSABLE_PORT])
     def test_an_addressable_port_is_still_accepted(self, port: int) -> None:
-        assert ur._transport_port_error(port, "port", "ctx") is None
+        assert transport_mod._transport_port_error(port, "port", "ctx") is None
 
     def test_the_unaddressable_port_is_still_refused(self) -> None:
-        assert ur._transport_port_error(UNADDRESSABLE_PORT, "port", "ctx") is not None
+        assert transport_mod._transport_port_error(UNADDRESSABLE_PORT, "port", "ctx") is not None
 
     def test_the_shared_owner_still_carries_the_whole_port_space(self) -> None:
         assert tcp_port_error(UNADDRESSABLE_PORT, "port", "ctx") is None
@@ -223,6 +224,8 @@ class TestTheDomainIsUnchanged:
 
 def test_the_helper_still_returns_none_for_a_usable_port_under_any_spelling() -> None:
     """The parameter name is diagnostic only - it cannot change the verdict."""
-    verdicts: set[Any] = {ur._transport_port_error(ADDRESSABLE_PORT, p, "ctx") for p in ("port", "bridge_port", "x")}
+    verdicts: set[Any] = {
+        transport_mod._transport_port_error(ADDRESSABLE_PORT, p, "ctx") for p in ("port", "bridge_port", "x")
+    }
 
     assert verdicts == {None}

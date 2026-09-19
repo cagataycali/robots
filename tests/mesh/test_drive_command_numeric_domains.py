@@ -78,11 +78,11 @@ _TRANSPORTS: list[tuple[str, Any, str, Callable[..., Any], dict[str, Any]]] = [
         lambda **kw: ros_bridge_mod.RosBridgedRobot("rover", "/cmd_vel", "/odom", **kw),
         _TWIST_FIELDS,
     ),
-    ("rtps", rtps_mod, "use_rtps", lambda **kw: rtps_mod.RtpsRobot("rover", "/cmd_vel", **kw), _TWIST_FIELDS),
+    ("rtps", rtps_mod, "rtps_action", lambda **kw: rtps_mod.RtpsRobot("rover", "/cmd_vel", **kw), _TWIST_FIELDS),
     (
         "rosbridge",
         rosbridge_mod,
-        "use_rosbridge",
+        "rosbridge_action",
         lambda **kw: rosbridge_mod.RosbridgeRobot("rover", "/cmd_vel", "/odom", **kw),
         _TWIST_FIELDS,
     ),
@@ -230,7 +230,7 @@ def test_a_non_numeric_command_value_does_not_escape_the_bound_agent_tool(
     if param == "duration" and value is None:
         pytest.skip("an omitted duration means no hold, which is valid")
     rec = _Recorder()
-    monkeypatch.setattr(rosbridge_mod, "use_rosbridge", rec)
+    monkeypatch.setattr(rosbridge_mod, "rosbridge_action", rec)
     rover = rosbridge_mod.RosbridgeRobot("rover", "/cmd_vel", "/odom")
     drive_tool: Any = next(t for t in rover.tools if t.tool_name == "drive_rover")
 
@@ -245,7 +245,7 @@ def test_a_non_numeric_command_value_does_not_escape_the_bound_agent_tool(
 def test_a_boolean_velocity_is_refused_rather_than_commanded(monkeypatch: pytest.MonkeyPatch, value: bool) -> None:
     """``bool`` is an int subclass, so ``True`` would command 1.0 m/s in silence."""
     rec = _Recorder()
-    monkeypatch.setattr(rosbridge_mod, "use_rosbridge", rec)
+    monkeypatch.setattr(rosbridge_mod, "rosbridge_action", rec)
     rover = rosbridge_mod.RosbridgeRobot("rover", "/cmd_vel", "/odom")
 
     result = rover.drive(linear=value)
@@ -275,7 +275,7 @@ def test_a_refused_command_leaves_the_trailing_stop_rule_intact(monkeypatch: pyt
     for a refused one.
     """
     rec = _Recorder()
-    monkeypatch.setattr(rosbridge_mod, "use_rosbridge", rec)
+    monkeypatch.setattr(rosbridge_mod, "rosbridge_action", rec)
     rover = rosbridge_mod.RosbridgeRobot("rover", "/cmd_vel", "/odom", publish_rate=10.0)
 
     assert rover.drive(linear=0.5, duration=1.0)["status"] == "success"

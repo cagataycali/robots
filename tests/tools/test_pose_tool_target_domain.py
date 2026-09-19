@@ -3,34 +3,33 @@
 """Contract tests for the degree-valued targets ``pose_tool`` drives a joint to.
 
 ``position``, ``delta`` and the values of ``positions`` all reach a servo the
-same way: ``MotorController.degrees_to_position`` clamps them into the motor's
-configured ``range`` and scales the result onto the 12-bit ``Goal_Position``
-register. The clamp is what makes an off-domain target dangerous rather than
-merely wrong, and it is why this module measures the refusals against that
-conversion instead of only asserting on them:
+same way: ``FeetechBus.to_counts`` scales them onto the 12-bit ``Goal_Position``
+register against the travel this arm's calibration measured. That conversion is
+on the far side of the operator's approval and of the open port, which is why
+this module measures the refusals against it instead of only asserting on them:
 
-* **Every refused value shared an encoding with a mechanical limit.**
+* **A target outside the travel has no encoding at all.**
   ``TestWhyTheTargetsAreRefused`` shows ``nan``, ``inf`` and an out-of-range
-  target all converting to ``Goal_Position`` 0 or 4095 - a full-travel command
-  to an end stop. ``nan`` gets there because ``min(max_deg, nan)`` returns
-  ``max_deg``, so the guard that looks like a safety net is the thing that
-  fabricates the command.
+  target each refused by the conversion rather than folded onto an end stop.
+  Reaching that refusal costs a motion the operator has already approved and a
+  port already open, and the caller learns only that the joint "failed".
 
-* **And the caller was told it went where it asked.** The success text echoes
-  the *requested* value, so the pre-guard behaviour reported
-  ``"Moved shoulder_pan to nan deg"`` for a move to +180. That is the property
+* **Refusing early is what keeps the caller's own value in the message.** The
+  success text echoes the *requested* value, so before the guard a move to
+  ``nan`` reported ``"Moved shoulder_pan to nan deg"``. That is the property
   ``TestTheBusIsNotTouched`` pins: a refused target produces no write at all.
 
 The two deferrals on the ``delta`` path are pinned here as well, because each is
 only sound if the thing it defers TO refuses. An unknown motor has no travel to
 bound a displacement against, and ``incremental_move``'s own position read is
 what refuses it; a displacement *inside* the travel can still compute an absolute
-target outside the range, and ``degrees_to_position``'s clamp is what bounds that.
+target outside the range, and the conversion is what refuses that.
 
 The domain itself is delegated to :func:`~strands_robots.utils.finite_number_error`
 so an off-type or non-finite target is reported in the words every other surface
 uses; only the per-joint bounds are decided in this module, because they are a
-property of the arm it drives. That split is asserted in
+property of the arm it drives - measured per arm, and read from the same bus
+the target is converted through. That split is asserted in
 ``TestTheBoundsHaveOneAuthority`` rather than left to convention.
 
 Every test that reaches the motor path takes ``fake_serial`` and passes an
@@ -48,13 +47,14 @@ from typing import Any
 import pytest
 import serial
 
+from strands_robots.drivers.feetech.bus import SO_ARM_MOTORS
 from strands_robots.tools.pose_tool import (
-    _DEFAULT_MOTOR_CONFIGS,
     _TARGET_OPTION_BY_ACTION,
     MotorController,
     _joint_delta_error,
     _joint_target_error,
     _pose_target_error,
+    _units,
     pose_tool,
 )
 from strands_robots.utils import finite_number_error
@@ -75,6 +75,11 @@ _PORT = "/dev/fake-pose-target"
 # is the one motor whose targets are a percentage rather than degrees.
 _JOINT = "shoulder_pan"
 _JOINT_RANGE = (-180, 180)
+
+# The travel the guards read for an arm with no calibration on disk: the servo's
+# whole rotation, and the whole of the gripper's percent domain. Built from the
+# bus the tool itself builds, so this module restates no bound.
+_TRAVEL = {name: _units(_PORT).value_bounds(name) for name in SO_ARM_MOTORS}
 
 # Targets no joint can be driven to. Each is refused for one of two reasons -
 # it is not a finite number, or it is outside the joint's configured travel -
@@ -120,41 +125,43 @@ def _texts(result: dict[str, Any]) -> str:
 
 
 def _goal_position(motor_name: str, degrees: Any) -> int:
-    """The ``Goal_Position`` ``degrees`` would be written as, clamp included."""
-    return MotorController(_PORT).degrees_to_position(motor_name, degrees)
+    """The ``Goal_Position`` ``degrees`` is encoded as.
+
+    Raises whatever the conversion raises for a value it cannot represent, which
+    is what several cells below are about.
+    """
+    return MotorController(_PORT).units.to_counts(motor_name, degrees)
 
 
 class TestWhyTheTargetsAreRefused:
     """The domain is justified by what the conversion does with the value."""
 
-    @pytest.mark.parametrize("target", [math.nan, math.inf, 5000, 180.5])
-    def test_an_over_range_target_encodes_as_the_upper_end_stop(self, target):
-        """Each collides with the *same* command: full travel to the limit.
+    @pytest.mark.parametrize("target", [math.nan, math.inf, 5000, 180.5, -math.inf, -5000, -180.5, 10**400])
+    def test_a_target_outside_the_travel_has_no_encoding(self, target):
+        """The conversion refuses it, so what waits past the guard is a failure.
 
-        This is the whole reason a clamp cannot stand in for a refusal - the
-        encoding is lossy in the one direction that matters, so ``nan`` and a
-        deliberate ``180`` are indistinguishable once on the wire.
+        Not a wrong count - none exists. Getting there is the whole reason for
+        refusing early: the operator has approved the motion and the port is
+        open, and the joint is then reported as simply "failed".
         """
-        assert _goal_position(_JOINT, target) == _goal_position(_JOINT, _JOINT_RANGE[1])
-        assert _goal_position(_JOINT, target) == 4095
+        with pytest.raises((ValueError, OverflowError, TypeError)):
+            _goal_position(_JOINT, target)
 
-    @pytest.mark.parametrize("target", [-math.inf, -5000, -180.5])
-    def test_an_under_range_target_encodes_as_the_lower_end_stop(self, target):
-        assert _goal_position(_JOINT, target) == _goal_position(_JOINT, _JOINT_RANGE[0])
-        assert _goal_position(_JOINT, target) == 0
-
-    def test_nan_reaches_the_limit_through_the_clamp_itself(self):
-        """``min(max_deg, nan)`` returns ``max_deg``, so the clamp fabricates it."""
-        assert min(_JOINT_RANGE[1], math.nan) == _JOINT_RANGE[1]
-        assert _goal_position(_JOINT, math.nan) == 4095
+    def test_nan_passes_every_comparison_a_bound_could_make(self):
+        """So only an explicit check refuses it; a range test never will."""
+        low, high = _TRAVEL[_JOINT]
+        assert not low <= math.nan <= high
+        assert not math.nan < low
+        assert not math.nan > high
+        assert _joint_target_error("move_motor", "position", _JOINT, math.nan, _TRAVEL) is not None
 
     def test_a_bool_would_have_been_read_as_one_degree(self):
         """``True`` is an ``int`` subclass, so it encodes as a real 1-degree move."""
         assert _goal_position(_JOINT, True) == _goal_position(_JOINT, 1)
 
     @pytest.mark.parametrize("target", _USABLE_TARGETS)
-    def test_an_in_range_target_is_not_the_end_stop_it_is_distinguishable_from(self, target):
-        """An accepted target keeps its own encoding, which is the point."""
+    def test_an_in_range_target_keeps_an_encoding_of_its_own(self, target):
+        """An accepted target is distinguishable from the end stops."""
         encoded = _goal_position(_JOINT, target)
         assert 0 <= encoded <= 4095
         if target not in _JOINT_RANGE:
@@ -237,7 +244,10 @@ class TestUsableTargetsStillReachTheServo:
         """The bounds are inclusive - they are reachable positions, not limits."""
         for bound in _JOINT_RANGE:
             assert (
-                _pose_target_error("move_motor", motor_name=_JOINT, position=bound, delta=None, positions=None) is None
+                _pose_target_error(
+                    "move_motor", motor_name=_JOINT, position=bound, delta=None, positions=None, travel=_TRAVEL
+                )
+                is None
             )
 
 
@@ -248,25 +258,40 @@ class TestOnlyTheTargetTheActionReadsIsChecked:
     def test_an_action_reading_no_target_is_not_refused(self, action):
         assert (
             _pose_target_error(
-                action, motor_name=_JOINT, position=math.nan, delta=math.nan, positions={_JOINT: math.nan}
+                action,
+                motor_name=_JOINT,
+                position=math.nan,
+                delta=math.nan,
+                positions={_JOINT: math.nan},
+                travel=_TRAVEL,
             )
             is None
         )
 
     def test_move_motor_ignores_an_unusable_delta(self):
         """It commands an absolute position; ``delta`` is not its parameter."""
-        assert _pose_target_error("move_motor", motor_name=_JOINT, position=0.0, delta=math.nan, positions=None) is None
+        assert (
+            _pose_target_error(
+                "move_motor", motor_name=_JOINT, position=0.0, delta=math.nan, positions=None, travel=_TRAVEL
+            )
+            is None
+        )
 
     def test_incremental_move_ignores_an_unusable_position(self):
         assert (
-            _pose_target_error("incremental_move", motor_name=_JOINT, position=math.nan, delta=0.0, positions=None)
+            _pose_target_error(
+                "incremental_move", motor_name=_JOINT, position=math.nan, delta=0.0, positions=None, travel=_TRAVEL
+            )
             is None
         )
 
     @pytest.mark.parametrize("action", list(_TARGET_OPTION_BY_ACTION))
     def test_an_absent_target_is_left_to_the_required_check(self, action):
         """The action reports the whole missing pair; this guard must not pre-empt it."""
-        assert _pose_target_error(action, motor_name=_JOINT, position=None, delta=None, positions=None) is None
+        assert (
+            _pose_target_error(action, motor_name=_JOINT, position=None, delta=None, positions=None, travel=_TRAVEL)
+            is None
+        )
 
     def test_a_missing_position_still_reports_the_required_pair(self, fake_serial, cwd_tmp):
         result = _call(action="move_motor", port=_PORT, motor_name=_JOINT)
@@ -275,20 +300,27 @@ class TestOnlyTheTargetTheActionReadsIsChecked:
 
 
 class TestTheBoundsHaveOneAuthority:
-    """The servo and the guard must not read two copies of the same range."""
+    """The servo and the guard must not read two copies of the same travel."""
 
-    def test_the_controller_is_configured_from_the_module_table(self):
-        controller = MotorController(_PORT)
-        assert {name: cfg["range"] for name, cfg in controller.motor_configs.items()} == {
-            name: cfg["range"] for name, cfg in _DEFAULT_MOTOR_CONFIGS.items()
-        }
+    @pytest.mark.parametrize("joint", sorted(SO_ARM_MOTORS))
+    def test_the_bound_is_the_last_value_the_conversion_can_encode(self, joint):
+        """Accepted exactly when encodable - one rule, not two.
 
-    def test_each_controller_gets_its_own_copy(self):
-        """Hoisting the table must not make one instance's edit global."""
-        first = MotorController(_PORT)
-        first.motor_configs[_JOINT]["range"] = (-1, 1)
-        assert MotorController(_PORT).motor_configs[_JOINT]["range"] == _JOINT_RANGE
-        assert _DEFAULT_MOTOR_CONFIGS[_JOINT]["range"] == _JOINT_RANGE
+        The guard and the servo read the same
+        :class:`~strands_robots.drivers.feetech.bus.FeetechBus`, so a target this
+        domain accepts has a count and one it refuses has none. A second copy of
+        the bounds could accept a target the conversion then refuses on the far
+        side of the operator's approval.
+        """
+        bus = MotorController(_PORT).units
+        low, high = _TRAVEL[joint]
+        assert bus.value_bounds(joint) == (low, high)
+
+        assert 0 <= bus.to_counts(joint, low) <= bus.motors[joint].resolution
+        assert 0 <= bus.to_counts(joint, high) <= bus.motors[joint].resolution
+        for outside in (low - 1, high + 1):
+            with pytest.raises(ValueError):
+                bus.to_counts(joint, outside)
 
     def test_the_shared_domain_owns_finiteness_and_type(self):
         """Only the per-joint bounds are decided here; the rest is delegated.
@@ -306,7 +338,9 @@ class TestTheBoundsHaveOneAuthority:
             if expected is None:
                 continue
             assert (
-                _pose_target_error("move_motor", motor_name=_JOINT, position=value, delta=None, positions=None)
+                _pose_target_error(
+                    "move_motor", motor_name=_JOINT, position=value, delta=None, positions=None, travel=_TRAVEL
+                )
                 == expected
             )
 
@@ -353,16 +387,18 @@ class TestNeighbouringTargetProducersStayOutOfScope:
     :func:`_joint_target_error` as well, and
     ``test_pose_tool_stored_pose_target_domain`` grades that path.
 
-    ``degrees_to_position`` therefore keeps its clamp. It is unreachable from
-    ``move_motor`` / ``move_multiple``, whose targets are absolute and are held
-    to the joint's endpoints - but NOT from ``incremental_move``, whose delta is
-    held to the full travel instead, so a displacement inside that travel can
-    still compute an absolute target outside the range.
-    ``TestTheComputedTargetDeferralHolds`` measures that path.
+    The conversion is therefore the last line rather than a clamp. It is
+    unreachable from ``move_motor`` / ``move_multiple``, whose targets are
+    absolute and are held to the joint's travel - but NOT from
+    ``incremental_move``, whose delta is held to the full span instead, so a
+    displacement inside that span can still compute an absolute target outside
+    the travel. ``TestTheComputedTargetDeferralHolds`` measures that path.
     """
 
-    def test_the_clamp_is_still_present_for_the_paths_that_rely_on_it(self):
-        assert _goal_position(_JOINT, 5000) == 4095
+    def test_a_target_past_the_travel_is_refused_by_the_conversion_not_clamped(self):
+        """It has no count, so no end-stop command can be fabricated from it."""
+        with pytest.raises(ValueError, match="outside the travel the encoder can hold"):
+            _goal_position(_JOINT, 5000)
 
     def test_load_pose_is_not_routed_through_the_target_guard(self):
         assert "load_pose" not in _TARGET_OPTION_BY_ACTION
@@ -371,14 +407,18 @@ class TestNeighbouringTargetProducersStayOutOfScope:
     def test_an_unknown_motor_is_left_to_the_existing_path(self, fake_serial, cwd_tmp):
         """No configured range means no bounds to check it against."""
         assert (
-            _pose_target_error("move_motor", motor_name="no_such_joint", position=5000, delta=None, positions=None)
+            _pose_target_error(
+                "move_motor", motor_name="no_such_joint", position=5000, delta=None, positions=None, travel=_TRAVEL
+            )
             is None
         )
 
     def test_an_unknown_motor_with_a_non_finite_target_is_still_refused(self):
         """Finiteness needs no range, so the shared domain still applies."""
         assert (
-            _pose_target_error("move_motor", motor_name="no_such_joint", position=math.nan, delta=None, positions=None)
+            _pose_target_error(
+                "move_motor", motor_name="no_such_joint", position=math.nan, delta=None, positions=None, travel=_TRAVEL
+            )
             is not None
         )
 
@@ -460,7 +500,7 @@ class TestTheUnknownMotorDeferralHolds:
     """A displacement for a motor with no configured travel, and what refuses it.
 
     :func:`_joint_delta_error` returns ``None`` for a motor absent from
-    ``_DEFAULT_MOTOR_CONFIGS``: there is no travel to bound a displacement
+    the travel map: there is no travel to bound a displacement
     against, so it has nothing to say and defers - exactly as its sibling
     :func:`_joint_target_error` does for an absolute target.
 
@@ -472,16 +512,16 @@ class TestTheUnknownMotorDeferralHolds:
 
     def test_an_unknown_motor_has_no_travel_to_bound_the_delta_against(self):
         """The domain defers rather than inventing a bound it cannot know."""
-        assert _joint_delta_error("incremental_move", "no_such_joint", 5000) is None
+        assert _joint_delta_error("incremental_move", "no_such_joint", 5000, _TRAVEL) is None
 
     def test_both_helpers_defer_for_the_same_absent_configuration(self):
         """Whatever the domain does here it does for the absolute target too."""
-        assert _joint_target_error("move_motor", "position", "no_such_joint", 5000) is None
-        assert _joint_delta_error("incremental_move", "no_such_joint", 5000) is None
+        assert _joint_target_error("move_motor", "position", "no_such_joint", 5000, _TRAVEL) is None
+        assert _joint_delta_error("incremental_move", "no_such_joint", 5000, _TRAVEL) is None
 
     def test_finiteness_still_applies_without_a_configured_range(self):
         """Only the per-joint bound needs a configuration; the shared domain does not."""
-        assert _joint_delta_error("incremental_move", "no_such_joint", math.nan) is not None
+        assert _joint_delta_error("incremental_move", "no_such_joint", math.nan, _TRAVEL) is not None
 
     def test_the_action_refuses_the_unknown_motor_without_commanding_it(self, reading_serial, cwd_tmp):
         """The deferral's target: a read that cannot address an unconfigured motor."""
@@ -502,10 +542,11 @@ class TestTheComputedTargetDeferralHolds:
 
     The delta is bounded by the joint's *full travel* rather than by its
     endpoints, because a displacement is relative and the endpoints are not. So
-    ``current + delta`` can leave the configured range for a delta this domain
-    accepts, and ``degrees_to_position``'s clamp is what bounds it - making
-    ``incremental_move`` the one caller-driven path from which that clamp is
-    still reachable.
+    ``current + delta`` can leave the travel for a delta this domain accepts, and
+    the conversion is what refuses it - making ``incremental_move`` the one
+    caller-driven path that reaches that refusal. The joint is then reported as
+    uncommanded, where a clamp would have driven it to the end stop and echoed
+    the displacement back as if it had been honored.
     """
 
     def test_a_displacement_inside_the_full_travel_is_accepted(self):
@@ -515,16 +556,16 @@ class TestTheComputedTargetDeferralHolds:
         # And larger than either endpoint, so a domain written against those
         # would refuse it: this is what makes the travel rule observable.
         assert abs(_INSIDE_TRAVEL_DELTA) > _JOINT_RANGE[1]
-        assert _joint_delta_error("incremental_move", _JOINT, _INSIDE_TRAVEL_DELTA) is None
+        assert _joint_delta_error("incremental_move", _JOINT, _INSIDE_TRAVEL_DELTA, _TRAVEL) is None
 
-    def test_the_computed_absolute_target_leaves_the_configured_range(self):
-        """And the premise for the clamp: the sum is outside the endpoints."""
-        start = MotorController(_PORT).position_to_degrees(_JOINT, _NEAR_UPPER_RAW)
-        assert start + _INSIDE_TRAVEL_DELTA > _JOINT_RANGE[1]
+    def test_the_computed_absolute_target_leaves_the_travel(self):
+        """The premise for the refusal: the sum is past the end of the travel."""
+        start = MotorController(_PORT).units.to_value(_JOINT, _NEAR_UPPER_RAW)
+        assert start + _INSIDE_TRAVEL_DELTA > _TRAVEL[_JOINT][1]
 
-    def test_the_clamp_bounds_it_while_the_caller_is_told_it_moved(self, reading_serial, cwd_tmp):
-        """So the end stop is commanded, and the text still echoes the request."""
+    def test_the_joint_is_reported_uncommanded_rather_than_driven_to_the_stop(self, reading_serial, cwd_tmp):
+        """No goal position is written, and the caller is told the move failed."""
         result = _call(action="incremental_move", motor_name=_JOINT, delta=_INSIDE_TRAVEL_DELTA, port=_PORT)
-        assert result["status"] == "success"
-        assert _goal_positions(reading_serial) == [_goal_position(_JOINT, _JOINT_RANGE[1])]
-        assert f"+{_INSIDE_TRAVEL_DELTA}" in _texts(result)
+        assert result["status"] == "error"
+        assert _JOINT in _texts(result)
+        assert _goal_positions(reading_serial) == []
