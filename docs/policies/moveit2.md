@@ -14,8 +14,7 @@ string for control.
 
 Unlike cuRobo's in-process CUDA library, MoveIt2 runs **out-of-process**: the
 ROS 2 stack and `moveit_py` live entirely in a sidecar, so the Python venv
-running `strands_robots` stays free of ROS 2 deps. The only client-side
-requirements are `pyzmq` + `msgpack` (the `[moveit2]` extra).
+running `strands_robots` stays free of ROS 2 deps.
 
 ## Install
 
@@ -23,8 +22,7 @@ requirements are `pyzmq` + `msgpack` (the `[moveit2]` extra).
 pip install 'strands-robots[moveit2]'   # client side: pyzmq + msgpack only
 ```
 
-The ROS 2 / `moveit_py` deps stay out of `pyproject.toml` - they live in the
-sidecar. Bring the sidecar up via the docker-compose recipe or natively:
+Bring the sidecar up via the docker-compose recipe or natively:
 
 ```bash
 # Option 1 - docker compose (pinned, reproducible)
@@ -39,15 +37,10 @@ python -m strands_robots.policies.moveit2.server.zmq_node \
     --port 5556 --planning-group panda_arm
 ```
 
-The sidecar plans for the robot named by `--moveit-config-package` /
-`--robot-name`, which default to the panda config MoveIt 2 itself ships - so the
-command above plans out of the box, and its planning group is `panda_arm`.
-Point both at your own config package for your robot. `pyzmq` + `msgpack` come
-from the `[moveit2]` extra; install them into the interpreter that launches the
-sidecar (on a distro with [PEP 668] system packages, that means a venv, or the
-distro's own python3-zmq / python3-msgpack).
-
-[PEP 668]: https://peps.python.org/pep-0668/
+`--moveit-config-package` / `--robot-name` default to the panda config MoveIt 2
+ships, so the command above plans out of the box on planning group `panda_arm`;
+point both at your own config package for your robot. Install `pyzmq` +
+`msgpack` into the interpreter that launches the sidecar.
 
 See [`policies/moveit2/server/README.md`](https://github.com/strands-labs/robots/blob/main/strands_robots/policies/moveit2/server/README.md)
 for the sidecar deployment and forking guidance.
@@ -87,22 +80,19 @@ MoveIt2Policy(
 ```
 
 `timeout_ms` is applied as `RCVTIMEO` and `SNDTIMEO` on the REQ socket, so only
-a positive whole number of milliseconds up to `2**31 - 1` names a budget. An
-integral `float` or NumPy integer is accepted and stored as an `int`. `0` is
-ZMQ's "return immediately" spelling and `-1` its "block forever" one; both are
-refused at construction, because each makes `ping()` unable to report a
-reachable sidecar as reachable.
+a positive whole number of milliseconds up to `2**31 - 1` names a budget (an
+integral `float` or NumPy integer is stored as an `int`). ZMQ's `0` ("return
+immediately") and `-1` ("block forever") are refused at construction: each makes
+`ping()` unable to report a reachable sidecar as reachable.
 
-`api_token` falls back to the `MOVEIT2_API_TOKEN` environment variable when not
-passed. The client emits a plaintext-over-TCP warning when `host` is a non-
-loopback address (the token travels unencrypted; terminate TLS at a proxy or
-keep the sidecar on loopback).
+The client warns about plaintext over TCP when `host` is a non-loopback address:
+the token travels unencrypted, so terminate TLS at a proxy or keep the sidecar
+on loopback.
 
 ## Goal kwargs
 
 `MoveIt2Policy` shares the non-VLA goal vocabulary with the rest of the planner
-family (see [cuRobo](curobo.md)), so a goal can flow across providers without
-coupling to a backend:
+family (see [cuRobo](curobo.md)), so a goal flows across providers:
 
 | Key | Type | Meaning |
 |-----|------|---------|
@@ -144,55 +134,48 @@ response = {"trajectory": list[list[float]],
 ```
 
 Trajectory rows are `[time_from_start_seconds, q0, q1, ..., qN]`, and
-`joint_names` names the joint each of `q0 .. qN` belongs to, in column order -
-the planning group's own vocabulary, read from the trajectory message. The
-client drops the leading time column when packing per-step action dicts and
-keys the remaining columns, in order of preference, by the
-`set_robot_state_keys(...)` roster when the row is that wide, else by
-`joint_names` (each passed through the constructor's `joint_name_map`), else by
-positional `joint_<i>` labels when the sidecar returned no roster. A plan
-covers the planning group, which is narrower than the robot that carries it
-(`panda_arm` plans 7 joints; the Panda declares 8 action keys), so the second
-path is the one a simulation rollout takes: the planner is the only party that
-knows which joint a column commands, and its names are used as given rather
-than guessed from the robot's roster. A name the robot does not drive stays
-unresolved and the runner refuses it; a roster that is not as wide as the row,
-or not a list of distinct names, is refused by the client before it keys a
-command. A `success=False` response raises `RuntimeError`. The sidecar also
-exposes `ping` (health check) and `reset` (per-episode hook).
+`joint_names` names the joint each column belongs to, in column order - the
+planning group's own vocabulary, read from the trajectory message. The client
+drops the time column and keys the rest by the `set_robot_state_keys(...)`
+roster when the row is that wide, else by `joint_names` (through the
+constructor's `joint_name_map`), else by positional `joint_<i>` labels. A group
+is narrower than the robot carrying it (`panda_arm` plans 7 joints; the Panda
+declares 8 action keys), so a rollout takes the second path: only the planner
+knows which joint a column commands, so its names are used as given, never
+guessed from the robot's roster. A name the robot does not
+drive stays unresolved and the runner refuses it. A `success=False` response
+raises `RuntimeError`. The sidecar also exposes `ping` (health check) and
+`reset` (per-episode hook).
 
-A `success=True` response must carry at least one waypoint, and every row must
-carry at least one joint column - a plan that commands nothing is a planning
-failure, not a successful no-op plan. The sidecar reports such a plan as
-`planner_returned_empty`, and the client refuses one that arrives as
-`success=True` anyway, so `get_actions` never returns an empty list or an action
-dict that moves no joint.
+A `success=True` response must carry at least one waypoint, and every row at
+least one joint column - a plan that commands nothing is a planning failure, not
+a successful no-op. The sidecar reports it as `planner_returned_empty`, and the
+client refuses one that arrives as `success=True` anyway, so `get_actions` never
+returns an empty list or an action dict that moves no joint.
 
 ### Failure reporting
 
-REQ/REP is lockstep, so the sidecar answers every request it receives: a
-request it cannot serve comes back as a failure response, never by dropping the
-reply and exiting. A planning failure is reported in the `plan` response as
-`success=False` plus a `status` naming the stage that failed:
+REQ/REP is lockstep, so the sidecar answers every request: one it cannot serve
+comes back as a failure response, never by dropping the reply and exiting. A
+planning failure is `success=False` plus a `status` naming the stage:
 
 | `status` prefix | Meaning |
 | --- | --- |
 | `unknown_planning_group:` | The requested group does not resolve. |
-| `start_state_error:` | The current robot state is not readable (no `/joint_states` yet, state monitor not warmed up). |
+| `start_state_error:` | The robot state is not readable - no `/joint_states` yet. |
 | `missing_goal:` | Neither `target_pose` nor `target_joints` was supplied. |
-| `invalid_goal:` | The goal was rejected - a joint the group does not have, an unresolvable pose link, or a `target_pose` that is not 7 values. |
-| `planner_exception:` / `planner_returned_empty` | Planning ran and failed. `planner_returned_empty` also covers a plan that serialised to no waypoint, or to waypoints with no joint position; those carry a `:detail` suffix naming which. |
+| `invalid_goal:` | A joint the group lacks, an unresolvable pose link, or a `target_pose` that is not 7 values. |
+| `planner_exception:` / `planner_returned_empty` | Planning ran and failed. `planner_returned_empty` also covers a plan that serialised to no waypoint, or to waypoints with no joint position - a `:detail` suffix names which. |
 | `trajectory_error:` | The planned trajectory did not serialise. |
 
 Client-side validation checks `target_joints` key *syntax*, not whether the
-group actually has those joints, so a joint-name typo is reported by the
-sidecar as `invalid_goal:` rather than rejected before the call. Anything
-outside the `plan` contract - an unknown endpoint, a request that does not
-decode or that decodes to something other than a map, an unexpected error in a
-forked handler - comes back as `{"error": ...}`, which the client raises as
-`RuntimeError`. Both malformed-payload cases share the `malformed_request:`
-prefix, so a client has one class to match whether the bytes were undecodable
-or decoded to an integer.
+group has those joints, so a joint-name typo comes back as `invalid_goal:`
+rather than being rejected before the call. Anything outside the `plan` contract
+- an unknown endpoint, a payload that does not decode or decodes to something
+other than a map, an unexpected error in a forked handler - comes back as
+`{"error": ...}`, which the client raises as `RuntimeError`. Both
+malformed-payload cases share the `malformed_request:` prefix, so a client has
+one class to match either way.
 
 ## In simulation
 
@@ -233,30 +216,25 @@ sim.run_policy(
 ```
 
 That rollout takes the Panda's flange from 283.3 mm away to 4.6 mm from the
-commanded `target_pose`. The planned columns are keyed by the joint names the
-sidecar returns, so without the `joint_name_map` the actions would name
+commanded `target_pose`. Without the `joint_name_map` the actions would name
 `panda_joint1..7`, which the MuJoCo Panda does not drive, and the runner would
-refuse the rollout as one that moved no joint - loudly, rather than commanding
-whichever joints happen to lead the robot's roster. The start configuration is
-read from the observation -
-the flat `observation.state` vector when a caller passes one, and the per-joint
-scalars a simulation publishes otherwise - and is read in order onto the joints
-the planning group plans over, so a robot that publishes joints the group does
-not plan (the two Panda fingers) is planned for anyway; the sidecar logs which
-values it ignored. The Cartesian goal is expressed in the robot model's own
-frame, for the planning group's end-effector link.
+refuse the rollout as one that moved no joint rather than commanding whichever
+joints lead the robot's roster. The start configuration comes from the
+observation - `observation.state` when a caller passes one, the per-joint
+scalars a simulation publishes otherwise - read in order onto the joints the
+group plans, so a robot that publishes joints the group does not plan (the two
+Panda fingers) is planned for anyway; the sidecar logs the values it ignored.
+The Cartesian goal is in the robot model's own frame, for the group's
+end-effector link.
 
-`policy_config` and `policy_kwargs` are two different sinks. `policy_config`
-is expanded into the policy **constructor**; the per-call goal belongs in
-`policy_kwargs`, which the runner hands to every `get_actions()` call. Passing
-`target_pose=` directly to `run_policy` raises `TypeError` - it has no such
-parameter and no `**kwargs`.
+`policy_config` is expanded into the policy **constructor**; the per-call goal
+belongs in `policy_kwargs`, which the runner hands to every `get_actions()`
+call. Passing `target_pose=` directly to `run_policy` raises `TypeError`.
 
-The mesh path forwards the same goal vocabulary:
-`mesh.tell(peer, "...", policy_provider="moveit2", target_pose=[...])`.
-`Robot.start_task` forwards the same keywords through `**policy_kwargs` to
-`create_policy`, so the hardware path accepts the goal vocabulary the mesh
-dispatch collects from the wire command.
+The mesh and hardware paths carry the same vocabulary:
+`mesh.tell(peer, "...", policy_provider="moveit2", target_pose=[...])`, and
+`Robot.start_task` forwards those keywords through `**policy_kwargs` to
+`create_policy`.
 
 ## See also
 
