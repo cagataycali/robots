@@ -624,9 +624,11 @@ class TestUncommandingActionIsReachable:
 
         policy = CuroboPolicy.__new__(CuroboPolicy)
         policy.action_horizon = horizon
-        # Empty, so the decode takes its positional ``joint_<i>`` fallback -
-        # the same path a planner whose robot keys were never set would take.
+        # Both rosters empty, so the decode takes its positional ``joint_<i>``
+        # fallback - the same path a planner whose robot keys were never set
+        # and whose observation named no joint would take.
         policy._robot_state_keys = []
+        policy._observation_joint_keys = []
         policy._cached_trajectory = trajectory
         policy._cached_cursor = 0
         return policy._next_chunk()
