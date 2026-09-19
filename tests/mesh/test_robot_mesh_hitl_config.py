@@ -25,10 +25,8 @@ import strands_robots.tools.robot_mesh as rmt
 
 @pytest.fixture(autouse=True)
 def _reset_caches():
-    rmt._reset_rate_limits()
     rmt._reset_interrupt_actions_cache()
     yield
-    rmt._reset_rate_limits()
     rmt._reset_interrupt_actions_cache()
 
 

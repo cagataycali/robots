@@ -47,11 +47,9 @@ _ABSENT_ID = "ghost-9999"
 def _isolate():
     """Each test starts from an empty peer registry and un-cached gate config."""
     clear_peers()
-    rmt._reset_rate_limits()
     rmt._reset_interrupt_actions_cache()
     yield
     clear_peers()
-    rmt._reset_rate_limits()
     rmt._reset_interrupt_actions_cache()
 
 

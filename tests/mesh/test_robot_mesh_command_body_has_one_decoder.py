@@ -87,7 +87,6 @@ def _call_tool(monkeypatch: pytest.MonkeyPatch, action: str, command: str) -> tu
     monkeypatch.setenv("STRANDS_MESH_HITL_ACTIONS", "none")
     rows: list[Any] = []
     monkeypatch.setattr(rmt, "_audit_tool_action", lambda *a: rows.append(a))
-    rmt._reset_rate_limits()
     return _tool()(action=action, target="peer-b", command=command), rows
 
 

@@ -143,3 +143,38 @@ def _device_connect_modules_are_put_back() -> Iterator[None]:
     finally:
         if held_modules() != held:
             restore(held)
+
+
+@pytest.fixture(autouse=True)
+def _mesh_rate_limit_history_is_left_empty() -> Iterator[None]:
+    """Leave no rate-limit slots consumed once a test is over.
+
+    ``strands_robots.tools.robot_mesh`` bounds LLM-driven nuisance with a
+    process-global sliding window (``_RATE_HISTORY``, 30 ``tell`` calls per
+    60 s). Every accepted tool call consumes a slot for the life of the
+    process, so a test that spends the window makes the *next* test's call
+    return "rate limit exceeded" instead of doing the thing it asserts.
+
+    Measured with ``tests/test_hitl_operator_response_audit.py`` running ahead
+    of ``tests/mesh/test_robot_mesh_tool.py`` (the ordering ``--dist loadfile``
+    produces and a serial run does not): that file drains ``tell`` to exactly
+    its limit of 30 to make the post-approval re-check deterministic, and four
+    cells in the victim then failed on the refusal - one reading ``'error' ==
+    'success'``, two on "rate limit exceeded" where a dispatch error was
+    expected, one on a call that never reached the mesh at all.
+
+    Ten test modules used to reset the window in a fixture of their own,
+    each with a docstring saying the cases must stay independent of collection
+    order. Clearing here rather than in each caller makes that a property of
+    the session: the window a test spends is refunded by the session, not by
+    ten callers remembering to. Resets *inside* a test - a case that needs two
+    accepted calls of one action - stay where they are; they are the test's
+    own subject, not isolation.
+
+    The module is looked up rather than imported so a session that never
+    touches the mesh does not pull it in.
+    """
+    yield
+    module = sys.modules.get("strands_robots.tools.robot_mesh")
+    if module is not None:
+        module._reset_rate_limits()
