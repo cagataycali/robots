@@ -47,7 +47,9 @@ name the robot does not drive stays unresolved and is refused by the runner; a
 roster of another width, or one that is not a list of distinct names, is
 refused by the client. When the MoveIt config and the driven robot are two
 descriptions of one arm with two vocabularies, the new `joint_name_map`
-constructor argument renames the planner's joints onto the robot's action keys;
+constructor argument renames the planner's joints onto the robot's action keys -
+one action key per planner joint, since the action dict is keyed by those values
+and two joints sharing a key would command one where two were planned;
 the documented Panda fence passes one, since MoveIt 2's own panda config plans
 `panda_joint1..7` and the MuJoCo Panda drives `joint1..7`.
 

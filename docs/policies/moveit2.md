@@ -143,7 +143,8 @@ is narrower than the robot carrying it (`panda_arm` plans 7 joints; the Panda
 declares 8 action keys), so a rollout takes the second path: only the planner
 knows which joint a column commands, so its names are used as given, never
 guessed from the robot's roster. A name the robot does not
-drive stays unresolved and the runner refuses it. A `success=False` response
+drive stays unresolved and the runner refuses it; two planned joints sharing one
+mapped action key are refused before they key a command. A `success=False` response
 raises `RuntimeError`. The sidecar also exposes `ping` (health check) and
 `reset` (per-episode hook).
 

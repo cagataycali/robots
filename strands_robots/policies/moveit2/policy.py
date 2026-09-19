@@ -84,7 +84,10 @@ class MoveIt2Policy(Policy):
             two vocabularies - MoveIt 2's own panda config plans
             ``panda_joint1``, the MuJoCo Panda drives ``joint1``. A name the
             map does not cover passes through unchanged. Keys and values are
-            held to the same charset as ``target_joints`` keys.
+            held to the same charset as ``target_joints`` keys, and the values
+            must be distinct: the action dict is keyed by them, so two planner
+            joints mapped onto one key would command one joint where two were
+            planned.
         **kwargs: Forward-compatibility absorber for the smart-string
             resolution path (e.g. ``zmq://host:port`` extras the factory
             adds). Per the #300 contract, providers MUST ignore unknown
@@ -420,7 +423,11 @@ class MoveIt2Policy(Policy):
             RuntimeError: If ``joint_names`` is not a list of distinct
                 non-blank names as wide as the row. The roster arrives from a
                 peer process, so it is held to the same shape as
-                ``robot_state_keys`` before it keys a command.
+                ``robot_state_keys`` before it keys a command. Also if two
+                names collide once ``joint_name_map`` is applied - a distinct
+                roster does not stay distinct through a map whose value equals
+                another name's passthrough, and an action dict keyed by the
+                result would command fewer joints than were planned.
         """
         if self._robot_state_keys and len(self._robot_state_keys) == n:
             return list(self._robot_state_keys)
@@ -453,7 +460,16 @@ class MoveIt2Policy(Policy):
 
     @staticmethod
     def _validate_joint_name_map(joint_name_map: Any) -> None:
-        """Validate ``joint_name_map`` is a str-to-str mapping of joint names."""
+        """Validate ``joint_name_map`` is an injective str-to-str map of joint names.
+
+        Injective because the values key the action dict: two planner joints
+        mapped onto one action key collapse into one command, dropping a
+        planned column while the survivor carries another column's value.
+        Refused here rather than at resolve time because a duplicated value
+        names the colliding pair on its own - the roster is not needed, and by
+        resolve time a repeated key has two possible causes (see
+        :meth:`_resolve_joint_keys`).
+        """
         import re
 
         if joint_name_map is None:
