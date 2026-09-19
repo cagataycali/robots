@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 INTERRUPT_NAME = "sim_motion"
 MODEL_ENV = "STRANDS_MODEL_ID"
-DEFAULT_MODEL = "global.anthropic.claude-fable-5-1"
 MAX_PROMPT_CHARS = 8_000
 
 SYSTEM_PROMPT = """You are the strands-robots dashboard agent. You operate simulated robots for an operator
@@ -41,12 +40,24 @@ operator first; if they decline, say so and stop. Never work around a refusal or
 MOTION_TOOLS: frozenset[str] = frozenset({"sim_set_joints"})
 
 
+def model_id() -> str:
+    """``STRANDS_MODEL_ID`` if the operator set one, else whatever model the SDK defaults to.
+
+    The console holds no model name of its own: a second copy diverges from the
+    installed SDK's default the moment either moves, and the operator meets that
+    divergence as a ValidationException on their first turn.
+    """
+    from strands.models.bedrock import DEFAULT_BEDROCK_MODEL_ID
+
+    return os.environ.get(MODEL_ENV) or DEFAULT_BEDROCK_MODEL_ID
+
+
 def default_model() -> Any:
-    """A Bedrock model from ``STRANDS_MODEL_ID`` (the same variable the CLI honours)."""
+    """A Bedrock model on :func:`model_id` (``STRANDS_MODEL_ID``, the variable the CLI honours)."""
     from strands.models import BedrockModel
 
     return BedrockModel(
-        model_id=os.environ.get(MODEL_ENV) or DEFAULT_MODEL,
+        model_id=model_id(),
         region_name=os.environ.get("BEDROCK_REGION") or os.environ.get("AWS_REGION") or "us-east-1",
     )
 
@@ -107,7 +118,7 @@ class MotionGate(HookProvider):
         }
         response = event.interrupt(INTERRUPT_NAME, reason=reason)
         approved, always = response_approves(response)
-        from strands_robots.tools._hitl_audit import log_operator_response
+        from strands_robots._hitl_audit import log_operator_response
 
         log_operator_response("dashboard_agent_console", name, session_id, approved=approved, response=response)
         if approved:

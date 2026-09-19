@@ -30,10 +30,8 @@ def _console_factory(app: Any) -> Any:
 @router.get("/api/agent")
 async def agent_info(request: Request, _: dict = Depends(access.require_session)) -> dict[str, Any]:
     """Which model the console will use and which tools ask first."""
-    import os
-
     return {
-        "model": os.environ.get(agent_console.MODEL_ENV) or agent_console.DEFAULT_MODEL,
+        "model": agent_console.model_id(),
         "asks_first": sorted(agent_console.MOTION_TOOLS),
         "interrupt": agent_console.INTERRUPT_NAME,
     }

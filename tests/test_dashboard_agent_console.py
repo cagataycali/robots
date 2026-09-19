@@ -66,7 +66,7 @@ class FakeEvent:
 
 
 def test_gate_asks_only_for_motion_tools(monkeypatch):
-    monkeypatch.setattr("strands_robots.tools._hitl_audit.log_operator_response", lambda *a, **k: None)
+    monkeypatch.setattr("strands_robots._hitl_audit.log_operator_response", lambda *a, **k: None)
     gate = agent_console.MotionGate(agent_console.Grants())
     ev = FakeEvent("sim_state", {"session_id": "abc"})
     gate._gate(ev)
@@ -77,7 +77,7 @@ def test_gate_asks_only_for_motion_tools(monkeypatch):
 
 
 def test_gate_interrupt_carries_what_a_yes_moves(monkeypatch):
-    monkeypatch.setattr("strands_robots.tools._hitl_audit.log_operator_response", lambda *a, **k: None)
+    monkeypatch.setattr("strands_robots._hitl_audit.log_operator_response", lambda *a, **k: None)
     gate = agent_console.MotionGate(agent_console.Grants())
     ev = FakeEvent(
         "sim_set_joints", {"session_id": "abc", "positions": {"2": 1.0, "3": -0.25}}, answer={"approve": True}
@@ -91,7 +91,7 @@ def test_gate_interrupt_carries_what_a_yes_moves(monkeypatch):
 
 def test_gate_no_cancels_and_is_audited(monkeypatch):
     rows = []
-    monkeypatch.setattr("strands_robots.tools._hitl_audit.log_operator_response", lambda *a, **k: rows.append((a, k)))
+    monkeypatch.setattr("strands_robots._hitl_audit.log_operator_response", lambda *a, **k: rows.append((a, k)))
     gate = agent_console.MotionGate(agent_console.Grants())
     ev = FakeEvent("sim_set_joints", {"session_id": "abc", "positions": {"2": 1.0}}, answer={"approve": False})
     gate._gate(ev)
@@ -102,7 +102,7 @@ def test_gate_no_cancels_and_is_audited(monkeypatch):
 
 
 def test_gate_always_grants_that_session_only(monkeypatch):
-    monkeypatch.setattr("strands_robots.tools._hitl_audit.log_operator_response", lambda *a, **k: None)
+    monkeypatch.setattr("strands_robots._hitl_audit.log_operator_response", lambda *a, **k: None)
     grants = agent_console.Grants()
     gate = agent_console.MotionGate(grants)
     ev = FakeEvent(
@@ -231,7 +231,22 @@ def app(monkeypatch, tmp_path):
 def test_agent_info(app):
     with TestClient(app) as c:
         info = c.get("/api/agent").json()
-    assert info["asks_first"] == ["sim_set_joints"] and info["interrupt"] == "sim_motion" and info["model"]
+    assert info["asks_first"] == ["sim_set_joints"] and info["interrupt"] == "sim_motion"
+    assert info["model"] == agent_console.model_id()
+
+
+@pytest.mark.parametrize("configured", [None, "eu.anthropic.claude-haiku-4-5-20251001-v1:0"])
+def test_the_console_names_a_model_the_installed_sdk_knows(app, monkeypatch, configured):
+    """Unset, the model is the SDK's own default - the console keeps no second copy of it."""
+    from strands.models.bedrock import DEFAULT_BEDROCK_MODEL_ID
+
+    monkeypatch.delenv(agent_console.MODEL_ENV, raising=False)
+    if configured is not None:
+        monkeypatch.setenv(agent_console.MODEL_ENV, configured)
+    expected = configured or DEFAULT_BEDROCK_MODEL_ID
+    with TestClient(app) as c:
+        assert c.get("/api/agent").json()["model"] == expected
+    assert agent_console.default_model().config["model_id"] == expected
 
 
 def test_ws_turn_interrupt_resume(app):
