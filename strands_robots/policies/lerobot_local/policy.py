@@ -3170,6 +3170,18 @@ class LerobotLocalPolicy(Policy):
             )
             out[feat] = v
             used_feats.add(feat)
+        # Hard error if the policy still has image slots the robot cannot fill -
+        # the same refusal _resolve_camera_targets raises at its step 4, so a
+        # state-only observation is refused by name on this path too instead of
+        # reaching lerobot's bare KeyError on the first declared image key.
+        unfilled = [feat for feat in declared_img_feats if feat not in used_feats]
+        if unfilled:
+            cam_names = [k for k, _ in image_items]
+            raise ValueError(
+                f"Robot supplies {len(cam_names)} camera(s) {cam_names} but the policy "
+                f"requires image input(s) {declared_img_feats}; unmatched policy keys: {unfilled}. "
+                f"Add the missing camera(s) to the observation or pass camera_key_map."
+            )
 
         # 2) Collect scalar joint values into observation.state.
         scalar_keys = observed_state_keys(observation_dict)
@@ -3574,7 +3586,12 @@ class LerobotLocalPolicy(Policy):
             for key, value in observation_dict.items()
             if key not in self.robot_state_keys and isinstance(value, np.ndarray) and value.ndim >= 2
         ]
-        if cam_items:
+        # Resolve whenever the policy declares image inputs, not only when the
+        # observation carries a frame: with zero cameras the under-supplied
+        # refusal below (step 4 of _resolve_camera_targets) is the only thing
+        # standing between a state-only observation and lerobot's bare KeyError
+        # on the first declared image key.
+        if cam_items or self._policy_image_keys():
             targets = self._resolve_camera_targets([key for key, _ in cam_items])
             for key, value in cam_items:
                 feat_name = targets.get(key)

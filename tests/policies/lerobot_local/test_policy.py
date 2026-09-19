@@ -701,7 +701,7 @@ class TestGetActions:
         assert len(actions) == 1
 
     def test_processor_bridge_preprocess_bypasses_batch_builder(self):
-        policy = _make_loaded_policy(action_dim=3)
+        policy = _make_loaded_policy(action_dim=3, include_images=False)
         policy.set_robot_state_keys(["a", "b", "c"])
 
         mock_bridge = MagicMock()
@@ -931,7 +931,7 @@ class TestBuildBatchFromLerobotFormat:
 
 class TestBuildBatchFromStrandsFormat:
     def test_numpy_floating_state(self):
-        policy = _make_loaded_policy(state_dim=2)
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
         policy.set_robot_state_keys(["a", "b"])
         observation = {"a": np.float32(1.5), "b": np.float64(2.5)}
         batch = policy._build_batch_from_strands_format(observation, {})
