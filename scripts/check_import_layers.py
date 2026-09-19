@@ -111,7 +111,6 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     # drivers|mesh -> tools. The mesh robots call the ``@tool`` entry point
     # instead of a transport of their own.
     ("strands_robots.mesh.rosbridge_robot", "strands_robots.tools.use_rosbridge"),
-    ("strands_robots.mesh.rtps_robot", "strands_robots.tools.use_rtps"),
 )
 
 

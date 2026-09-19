@@ -78,7 +78,7 @@ _TRANSPORTS: list[tuple[str, Any, str, Callable[..., Any], dict[str, Any]]] = [
         lambda **kw: ros_bridge_mod.RosBridgedRobot("rover", "/cmd_vel", "/odom", **kw),
         _TWIST_FIELDS,
     ),
-    ("rtps", rtps_mod, "use_rtps", lambda **kw: rtps_mod.RtpsRobot("rover", "/cmd_vel", **kw), _TWIST_FIELDS),
+    ("rtps", rtps_mod, "rtps_action", lambda **kw: rtps_mod.RtpsRobot("rover", "/cmd_vel", **kw), _TWIST_FIELDS),
     (
         "rosbridge",
         rosbridge_mod,

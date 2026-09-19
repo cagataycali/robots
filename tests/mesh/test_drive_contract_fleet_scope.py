@@ -75,7 +75,7 @@ _BRIDGES: list[tuple[str, Any, str, Callable[[], Any]]] = [
         "ros_action",
         lambda: ros_bridge_mod.RosBridgedRobot("rover", "/cmd_vel", "/odom", publish_rate=10.0),
     ),
-    ("RtpsRobot", rtps_mod, "use_rtps", lambda: rtps_mod.RtpsRobot("rover", "/cmd_vel", publish_rate=10.0)),
+    ("RtpsRobot", rtps_mod, "rtps_action", lambda: rtps_mod.RtpsRobot("rover", "/cmd_vel", publish_rate=10.0)),
     (
         "RosbridgeRobot",
         rosbridge_mod,

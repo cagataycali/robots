@@ -2,10 +2,10 @@
 
 :class:`RtpsRobot` is the pure-RTPS sibling of :class:`RosBridgedRobot`. Where
 the ROS bridge forwards to ``use_ros`` (which needs a sourced ROS 2 distro),
-``RtpsRobot`` forwards to ``use_rtps`` - a DDS participant built on the
-pip-installable ``cyclonedds`` binding alone. It therefore works on macOS,
-Jetson, and CI with nothing but a pip wheel, and interoperates with every ROS 2
-distro over RTPS.
+``RtpsRobot`` publishes through :mod:`strands_robots.rtps.participant` - a DDS
+participant built on the pip-installable ``cyclonedds`` binding alone. It
+therefore works on macOS, Jetson, and CI with nothing but a pip wheel, and
+interoperates with every ROS 2 distro over RTPS.
 
 Because an RTPS participant publishes real DDS samples, an :class:`RtpsRobot`
 can do something the client-only bridge cannot: **act as a robot**. Advertise a
@@ -25,7 +25,8 @@ Typical usage::
     agent = Agent(tools=turtle.tools)
     agent("drive forward for two seconds")
 
-Scope mirrors ``use_rtps``: topics only, and types bounded by the IDL bundle
+Scope mirrors the ``use_rtps`` tool built on the same participant: topics only,
+and types bounded by the IDL bundle
 (``geometry_msgs/msg/Twist`` for ``drive``). This transport has no services and
 no actions, so an :class:`RtpsRobot` exposes no ``init_services`` handshake and
 no goal-level navigation - the base class asks the transport what it can do
@@ -40,13 +41,14 @@ from typing import Any, cast
 
 from strands.types.tools import ToolContext
 
+from strands_robots._command_gate import gate_command
 from strands_robots.mesh._mobile_base import MobileBaseRobot
 from strands_robots.rtps.mangling import ROS_TOPIC_RE
-from strands_robots.tools.use_rtps import use_rtps
+from strands_robots.rtps.participant import GATE_TOOL, never_gated, rtps_action
 from strands_robots.utils import partial_construction_repr
 
 _TWIST_TYPE = "geometry_msgs/msg/Twist"
-# ``use_rtps`` writes to a DDS topic directly, so a topic must be absolute -
+# The participant writes to a DDS topic directly, so a topic must be absolute -
 # a stricter grammar than the ROS 2 bridge's, which also accepts relative and
 # private (``~``) names for rclpy to resolve. Read from the mangling that maps
 # the name rather than restated, so this seam cannot admit a name the DDS write
@@ -55,22 +57,26 @@ _RTPS_TOPIC_RE = ROS_TOPIC_RE
 _RTPS_NAME_RE = re.compile(r"^[A-Za-z0-9_/~]+\Z")
 
 
-class _UseRtpsTransport:
-    """Transport that forwards to the pure-DDS ``use_rtps`` tool.
+class _RtpsTransport:
+    """Transport that publishes through the shared RTPS participant.
 
-    Resolves ``use_rtps`` through this module's globals on every call so the
-    symbol stays patchable at ``strands_robots.mesh.rtps_robot.use_rtps``.
+    Resolves :func:`~strands_robots.rtps.participant.rtps_action` through this
+    module's globals on every call so the seam stays patchable at
+    ``strands_robots.mesh.rtps_robot.rtps_action``.
 
-    Deliberately implements only ``publish`` and ``echo``: ``use_rtps`` has no
-    service or action surface, and declaring ``service_call`` here would let a
+    Deliberately implements only ``publish`` and ``echo``: RTPS carries no
+    service or action protocol, and declaring ``service_call`` here would let a
     caller wire an ``init_services`` handshake that could never run.
 
-    ``use_rtps`` gates its commanding actions behind the operator approval in
-    ``strands_robots._command_gate``, so :meth:`publish` forwards the
-    ``tool_context`` the protocol carries. A transport that silently dropped an
-    operator decision would be the same class of defect as one that declared a
-    capability it does not have: the prompt would be unreachable and the command
-    would fail closed with the blanket bypass as its only remedy.
+    ``publish`` is the one verb that commands, so it consults the shared
+    operator gate in :mod:`strands_robots._command_gate` itself, under the same
+    :data:`~strands_robots.rtps.participant.GATE_TOOL` label the ``use_rtps``
+    tool uses: the blocklist is a statement about a physical surface, so an
+    operator must be asked the same question whichever surface reached it. A
+    transport that dropped the operator decision would be the same class of
+    defect as one that declared a capability it does not have - the prompt would
+    be unreachable and the command would fail closed with the blanket bypass as
+    its only remedy.
     """
 
     twist_type = _TWIST_TYPE
@@ -85,19 +91,21 @@ class _UseRtpsTransport:
         rate: float,
         tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
-        # ``publish`` is a commanding action, so the operator decision has to
-        # reach ``use_rtps``: the base carries the context this far for every
-        # transport, and dropping it here would make the gate fail closed with
-        # no prompt.
-        return use_rtps(
-            action="publish", topic=topic, type=type, fields=fields, count=count, rate=rate, tool_context=tool_context
+        return rtps_action(
+            action="publish",
+            topic=topic,
+            type=type,
+            fields=fields,
+            count=count,
+            rate=rate,
+            gate=lambda target: gate_command("publish", target, tool_context=tool_context, tool=GATE_TOOL),
         )
 
     def echo(self, *, topic: str, type: str | None, count: int, timeout: float) -> dict[str, Any]:
-        return use_rtps(action="echo", topic=topic, type=type, count=count, timeout=timeout)
+        return rtps_action(action="echo", topic=topic, type=type, count=count, timeout=timeout, gate=never_gated)
 
     def advertise(self, *, topic: str, type: str) -> dict[str, Any]:
-        return use_rtps(action="advertise", topic=topic, type=type)
+        return rtps_action(action="advertise", topic=topic, type=type, gate=never_gated)
 
 
 class RtpsRobot(MobileBaseRobot):
@@ -152,7 +160,7 @@ class RtpsRobot(MobileBaseRobot):
         super().__init__(
             node_name,
             cmd_vel_topic,
-            _UseRtpsTransport(),
+            _RtpsTransport(),
             cmd_vel_type=cmd_vel_type,
             max_linear=max_linear,
             max_angular=max_angular,
@@ -184,7 +192,7 @@ class RtpsRobot(MobileBaseRobot):
         list`` and rviz. No other transport has an equivalent, so this stays on
         the subclass rather than becoming a base-class capability of one.
         """
-        return cast(_UseRtpsTransport, self.transport).advertise(topic=self.cmd_vel_topic, type=self.cmd_vel_type)
+        return cast(_RtpsTransport, self.transport).advertise(topic=self.cmd_vel_topic, type=self.cmd_vel_type)
 
     def __repr__(self) -> str:
         try:

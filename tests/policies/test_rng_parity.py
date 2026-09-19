@@ -1,9 +1,10 @@
 """#331: shared client-side RNG reseed helper + provider parity.
 
 Pins that ``reseed_client_rngs`` reseeds Python ``random`` + NumPy (and torch
-when present) deterministically, and that both Gr00tPolicy and Cosmos3Policy
-route their reset reseed through it so they behave identically for #187
-reproducibility.
+when present) deterministically, and that every provider holding its sampler in
+this process - Gr00tPolicy, Cosmos3Policy, LerobotLocalPolicy - routes its
+reset reseed through it, so they behave identically for #187 reproducibility
+whether the rollout drives them in-process or over a ``PolicyServer``.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import random
 
 import numpy as np
+import pytest
 
 from strands_robots.policies._rng import reseed_client_rngs
 
@@ -49,21 +51,59 @@ def test_distinct_seeds_diverge():
     assert a != b
 
 
-def test_both_providers_route_reset_through_shared_helper():
-    """Source-level parity pin: both reset() methods call reseed_client_rngs
-    so they cannot drift apart again (the #331 root cause)."""
+#: Every provider that samples in the process ``reset`` runs in, so the seed it
+#: is handed is the only seeding that process gets. A rollout reaches them
+#: through ``set_eval_seed`` when the policy is local, and through nothing at
+#: all when the policy is served by a
+#: :class:`~strands_robots.inference.server.PolicyServer` - the client's
+#: reseed cannot cross a socket - so ``reset`` is where reproducibility is won
+#: or lost for all three alike.
+RESEEDING_PROVIDERS = [
+    ("strands_robots.policies.cosmos3.policy", "Cosmos3Policy"),
+    ("strands_robots.policies.groot.policy", "Gr00tPolicy"),
+    ("strands_robots.policies.lerobot_local.policy", "LerobotLocalPolicy"),
+]
+
+
+@pytest.mark.parametrize(("module_path", "class_name"), RESEEDING_PROVIDERS, ids=lambda v: v.rsplit(".", 1)[-1])
+def test_every_in_process_sampler_routes_reset_through_shared_helper(module_path: str, class_name: str) -> None:
+    """Parity pin: one reseed path for every provider, so they cannot drift (#331)."""
+    import importlib
     import inspect
 
-    from strands_robots.policies.cosmos3 import policy as cosmos_mod
-    from strands_robots.policies.groot import policy as groot_mod
+    reset_src = inspect.getsource(getattr(importlib.import_module(module_path), class_name).reset)
+    assert "reseed_client_rngs" in reset_src, f"{class_name}.reset must use the shared reseed helper (#331)"
+    # Neither the old global-only NumPy mutation nor a discarded seed.
+    assert "np.random.seed(seed)" not in reset_src, (
+        f"{class_name}.reset must not reseed only the global NumPy RNG (#331)"
+    )
+    assert "del seed" not in reset_src, (
+        f"{class_name}.reset must apply the seed, not discard it: a policy whose sampler draws from the "
+        "process-global torch RNG is reproducible only if reset seeds that RNG, and over a PolicyServer "
+        "this reset is the only seeding the inference process receives"
+    )
 
-    cosmos_src = inspect.getsource(cosmos_mod.Cosmos3Policy.reset)
-    groot_src = inspect.getsource(groot_mod.Gr00tPolicy.reset)
-    assert "reseed_client_rngs" in cosmos_src, "Cosmos3Policy.reset must use the shared reseed helper (#331)"
-    assert "reseed_client_rngs" in groot_src, "Gr00tPolicy.reset must use the shared reseed helper (#331)"
-    # The old global-only mutation must be gone from cosmos3.
-    assert "np.random.seed(seed)" not in cosmos_src, (
-        "Cosmos3Policy.reset must not reseed only the global NumPy RNG anymore (#331)"
+
+def test_lerobot_local_reset_reseeds_the_process_it_samples_in() -> None:
+    """Behaviour behind the parity pin: the same seed replays the same stream.
+
+    A lerobot policy takes its flow-matching / diffusion noise from the
+    process-global torch RNG and exposes no seed kwarg of its own, so a seeded
+    episode is reproducible only when ``reset`` seeds that process. Pinned
+    without a checkpoint because the reseed is not a property of any weights.
+    """
+    from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
+
+    policy = LerobotLocalPolicy()
+    draws = []
+    for _ in range(2):
+        policy.reset(seed=4242)
+        draws.append(([random.random() for _ in range(3)], np.random.rand(3).tolist()))
+    assert draws[0] == draws[1], "reset(seed) must replay one stream, or a seeded episode is not reproducible"
+
+    policy.reset(seed=4243)
+    assert ([random.random() for _ in range(3)], np.random.rand(3).tolist()) != draws[0], (
+        "a different seed must give a different stream"
     )
 
 

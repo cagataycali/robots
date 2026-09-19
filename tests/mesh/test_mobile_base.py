@@ -552,11 +552,11 @@ def _shipped_transports() -> list[tuple[type, Any]]:
     matrix below.
     """
     from strands_robots.mesh.ros_bridge import _UseRosTransport
-    from strands_robots.mesh.rtps_robot import _UseRtpsTransport
+    from strands_robots.mesh.rtps_robot import _RtpsTransport
     from strands_robots.tools.use_ros import use_ros
     from strands_robots.tools.use_rtps import use_rtps
 
-    return [(_UseRosTransport, use_ros), (_UseRtpsTransport, use_rtps)]
+    return [(_UseRosTransport, use_ros), (_RtpsTransport, use_rtps)]
 
 
 def _tool_takes_a_context(agent_tool: Any) -> bool:

@@ -291,6 +291,12 @@ class TestTheContract:
                 frozenset({"drivers|mesh", "sim|policies", "app"}),
             ),
             (
+                "strands_robots.rtps.participant",
+                "drivers|mesh",
+                frozenset(),
+                frozenset({"drivers|mesh", "tools"}),
+            ),
+            (
                 "strands_robots.ros",
                 "drivers|mesh",
                 frozenset(),
@@ -316,13 +322,14 @@ class TestTheContract:
         in general - the mixin's ``teleoperator`` read is late because that module
         imports lerobot, and promoting it to module scope has to fail here.
 
-        ``ros`` is the in-process ``rclpy`` transport three surfaces share: the
-        ``use_ros`` tool, the ``RosBridgedRobot`` that drives a ROS 2 base and the
-        ``AckermannRosRobot`` that steers a car over the same node. It lived in
-        the tool, so both robots imported the ``@tool`` to publish a ``Twist`` -
-        two of the four ``drivers|mesh -> tools`` edges. Its ``tools`` caller is
-        what makes the placement load-bearing: moving it back up would restore
-        the inversion, and the equality above would refuse it.
+        ``rtps.participant`` is the DDS mechanics two surfaces share: the
+        ``use_rtps`` tool and the ``RtpsRobot`` that drives a ROS 2 base over the
+        same wire. They lived in the tool, so the robot imported the ``@tool`` to
+        reach a DataWriter. ``ros`` is the same shape one transport over: the
+        in-process ``rclpy`` node the ``use_ros`` tool, the ``RosBridgedRobot``
+        and the ``AckermannRosRobot`` all publish through. Each one's ``tools``
+        caller is what makes the placement load-bearing: moving it back up would
+        restore the inversion, and the equality above would refuse it.
         """
         assert name in graph.modules
         assert mod.LAYER_NAMES[mod.layer_of(name)] == layer
