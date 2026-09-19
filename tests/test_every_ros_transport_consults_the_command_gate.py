@@ -40,10 +40,10 @@ from unittest.mock import MagicMock
 import pytest
 
 import strands_robots.ros as ros_transport_mod
+import strands_robots.rosbridge as rosbridge_transport_mod
 import strands_robots.rtps.participant as rtps_participant_mod
 import strands_robots.tools.use_ros as ros_mod
-import strands_robots.tools.use_rosbridge as rosbridge_mod
-from strands_robots.mesh import RosBridgedRobot, RtpsRobot
+from strands_robots.mesh import RosBridgedRobot, RosbridgeRobot, RtpsRobot
 from strands_robots.tools.use_ros import use_ros
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.tools.use_rtps import use_rtps
@@ -60,13 +60,13 @@ _COMMAND_VERBS = frozenset({"publish", "service_call", "action_send_goal"})
 
 # Each agent-callable transport, with the module holding its backend probe and
 # the interface type spelling that transport accepts. rosbridge speaks ROS 1
-# two-segment types; the other two speak ROS 2 three-segment types. ``use_ros``
-# and ``use_rtps`` are envelopes over transports two layers down, which the mesh
-# robots publish through as well, so each probe is that transport's.
+# two-segment types; the other two speak ROS 2 three-segment types. All three
+# are envelopes over transports a layer down, which the mesh robots publish
+# through as well, so each probe is that transport's rather than the tool's.
 _TRANSPORTS: tuple[tuple[str, Any, Any, str], ...] = (
     ("use_ros", use_ros, ros_transport_mod, "geometry_msgs/msg/Twist"),
     ("use_rtps", use_rtps, rtps_participant_mod, "geometry_msgs/msg/Twist"),
-    ("use_rosbridge", use_rosbridge, rosbridge_mod, "geometry_msgs/Twist"),
+    ("use_rosbridge", use_rosbridge, rosbridge_transport_mod, "geometry_msgs/Twist"),
 )
 
 _TOOLS_DIR = Path(ros_mod.__file__).resolve().parent
@@ -90,7 +90,7 @@ def _hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
     monkeypatch.delenv("STRANDS_ROS2_COMMAND_ALLOW", raising=False)
-    for module in (ros_transport_mod, rtps_participant_mod, rosbridge_mod):
+    for module in (ros_transport_mod, rtps_participant_mod, rosbridge_transport_mod):
         monkeypatch.setattr(module._backend, "available", lambda: True)
 
 
@@ -242,21 +242,32 @@ _SHARED_TRANSPORTS: tuple[tuple[str, Any, Any, Any, str], ...] = (
         use_rtps,
         "geometry_msgs/msg/Twist",
     ),
+    (
+        "rosbridge",
+        rosbridge_transport_mod.rosbridge_action,
+        lambda: RosbridgeRobot("rover", _BLOCKED, "/odom"),
+        use_rosbridge,
+        "geometry_msgs/Twist",
+    ),
 )
 
 
 class TestEveryCallerOfOneTransportAsksTheSameQuestion:
-    """A transport is not always a tool: two of them have a second caller.
+    """A transport is not always a tool: every one of them has a second caller.
 
     :mod:`strands_robots.ros` carries the in-process ``rclpy`` mechanics for the
     ``use_ros`` tool *and* for :class:`~strands_robots.mesh.RosBridgedRobot` and
     :class:`~strands_robots.mesh.AckermannRosRobot`;
     :mod:`strands_robots.rtps.participant` carries the DDS mechanics for the
-    ``use_rtps`` tool *and* for :class:`~strands_robots.mesh.RtpsRobot`. Each of
-    those robots reaches the same physical ``cmd_vel`` without going through an
-    agent tool at all. Two pins per shared transport: a transport nobody can
-    command through without deciding about the operator, and one label for the
-    decision however it was reached.
+    ``use_rtps`` tool *and* for :class:`~strands_robots.mesh.RtpsRobot`; and
+    :mod:`strands_robots.rosbridge` carries the WebSocket mechanics for the
+    ``use_rosbridge`` tool *and* for
+    :class:`~strands_robots.mesh.RosbridgeRobot`. Each of those robots reaches
+    the same physical ``cmd_vel`` without going through an agent tool at all,
+    and the structural pin above reads the tool package, so it cannot see that
+    second caller. Two pins per shared transport: a transport nobody can command
+    through without deciding about the operator, and one label for the decision
+    however it was reached.
     """
 
     @pytest.mark.parametrize(("label", "entry_point", "_factory", "_tool", "_msg_type"), _SHARED_TRANSPORTS)
@@ -281,8 +292,8 @@ class TestEveryCallerOfOneTransportAsksTheSameQuestion:
         The label keys the interrupt id ``<tool>-command-approval`` and the audit
         source ``<tool>_tool``, so two spellings would file one incident's rows
         under two names and an operator would be asked the same thing twice over.
-        Both callers decline here, so the assertion is made before anything joins
-        a graph.
+        Both callers decline here, so the assertion is made before any socket is
+        dialed or anything joins a graph.
         """
         tool_ctx, robot_ctx = MagicMock(), MagicMock()
         tool_ctx.interrupt.return_value = "n"

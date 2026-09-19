@@ -10,9 +10,10 @@ Reference platform: the NASA Curiosity Mars rover Gazebo simulation
 (ROS1 Noetic) - see :meth:`from_curiosity` and
 ``examples/rosbridge/curiosity_agent.py``.
 
-All I/O forwards through :func:`strands_robots.tools.use_rosbridge.use_rosbridge`;
-the class owns no transport state. rosbridge is unauthenticated by default -
-use on trusted networks.
+All I/O forwards through :func:`strands_robots.rosbridge.rosbridge_action` - the
+same transport the ``use_rosbridge`` tool is an agent envelope over - so the
+class owns no transport state. rosbridge is unauthenticated by default - use on
+trusted networks.
 
 Typical usage::
 
@@ -34,9 +35,10 @@ from typing import Any
 from strands import tool
 from strands.types.tools import AgentTool, ToolContext
 
+from strands_robots._command_gate import gate_command
 from strands_robots.mesh._mobile_base import LATCHED_VELOCITY, failed_halt_error
 from strands_robots.mesh.ros_bridge import _check_topic
-from strands_robots.tools.use_rosbridge import _HOST_RE, _transport_port_error, use_rosbridge
+from strands_robots.rosbridge import _HOST_RE, GATE_TOOL, _transport_port_error, never_gated, rosbridge_action
 from strands_robots.utils import (
     dial_host_error,
     finite_number_error,
@@ -110,7 +112,7 @@ class RosbridgeRobot:
         if (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
             raise ValueError(port_error)
         # Refused at construction rather than at first use: this bridge forwards
-        # every call through use_rosbridge, so a port the transport cannot carry
+        # every call through the rosbridge transport, so a port it cannot carry
         # is a dead bridge, and the point the port is named is the only place a
         # caller can act on that.
         if (transport_error := _transport_port_error(port, "port", type(self).__name__)) is not None:
@@ -182,10 +184,13 @@ class RosbridgeRobot:
     ) -> dict[str, Any]:
         """Publish ``count`` Twist messages, carrying the operator context.
 
-        ``use_rosbridge`` gates a publish aimed at a safety-critical command
-        surface, and ``cmd_vel`` is one, so the context has to reach it: without
-        one the gate has nothing to ask an operator with and fails closed on
-        every command this robot sends.
+        A publish aimed at a safety-critical command surface is gated, and
+        ``cmd_vel`` is one, so the context has to reach the gate: without one it
+        has nothing to ask an operator with and fails closed on every command
+        this robot sends. The label is the transport's own
+        :data:`~strands_robots.rosbridge.GATE_TOOL`, the one the ``use_rosbridge``
+        tool uses too, so the same physical topic files one interrupt id and one
+        audit source whichever surface reached it.
 
         Args:
             linear: Linear velocity for ``linear.x``.
@@ -194,9 +199,9 @@ class RosbridgeRobot:
             tool_context: Operator context forwarded to the transport.
 
         Returns:
-            The ``use_rosbridge`` publish result dict.
+            The transport's publish result dict.
         """
-        return use_rosbridge(
+        return rosbridge_action(
             action="publish",
             host=self.host,
             port=self.port,
@@ -205,7 +210,7 @@ class RosbridgeRobot:
             fields={"linear": {"x": float(linear)}, "angular": {"z": float(angular)}},
             count=count,
             rate=self.publish_rate,
-            tool_context=tool_context,
+            gate=lambda kind, target: gate_command(kind, target, tool_context=tool_context, tool=GATE_TOOL),
         )
 
     def drive(
@@ -260,24 +265,24 @@ class RosbridgeRobot:
                 Must be a positive whole number; ``0`` or a negative count
                 publishes nothing, so reporting a successful drive for it hides
                 a command that never left the process.
-            tool_context: Operator context forwarded to ``use_rosbridge``, whose
-                gate prompts before a publish to a safety-critical command
+            tool_context: Operator context forwarded to the shared operator gate,
+                which prompts before a publish to a safety-critical command
                 surface. Without it the gate fails closed, so a command this
                 bridge could otherwise have carried is refused with no operator
                 ever asked.
 
         Returns:
-            The ``use_rosbridge`` publish result dict, or an
+            The transport's publish result dict, or an
             ``{"status": "error"}`` result naming the parameter when a value
             cannot be honored - in which case nothing is published.
         """
         # A velocity command is the one call on this bridge that physically
         # moves the robot, so every knob it carries is checked before anything
         # reaches the wire, through the same shared domains the sibling bridges
-        # use. ``use_rosbridge`` validates the topic and interface type but
-        # never sees ``duration`` at all (it receives only the derived message
-        # count), and the ``count`` values it does refuse are reported against
-        # a transport this caller never invoked.
+        # use. The transport validates the topic and interface type but never
+        # sees ``duration`` at all (it receives only the derived message count),
+        # and it grades no numeric option of its own - those domains belong to
+        # the caller that named them.
         cmd_err = (
             finite_number_error(linear, "linear", "drive")
             or finite_number_error(angular, "angular", "drive")
@@ -325,7 +330,7 @@ class RosbridgeRobot:
 
         Never gated on this bridge's own state: a halt does not depend on a
         prior command having succeeded, and there is no enable handshake to
-        satisfy. It is not exempt from the transport tool's command gate, which
+        satisfy. It is not exempt from the transport's command gate, which
         is keyed on the surface rather than the payload - zero means
         "stationary" on a ``Twist`` but commands motion to the zero pose on a
         joint-command topic, so a payload-shaped carve-out could not be written
@@ -333,16 +338,23 @@ class RosbridgeRobot:
         any other command instead, which is why it forwards the context.
 
         Args:
-            tool_context: Operator context forwarded to ``use_rosbridge``.
+            tool_context: Operator context forwarded to the operator gate.
 
         Returns:
-            The ``use_rosbridge`` publish result dict.
+            The transport's publish result dict.
         """
         return self._publish_twist(0.0, 0.0, count=1, tool_context=tool_context)
 
     def get_pose(self, timeout: float = 5.0) -> dict[str, Any]:
-        """Read one odometry/pose sample from ``odom_topic``."""
-        return use_rosbridge(
+        """Read one odometry/pose sample from ``odom_topic``.
+
+        Refuses a ``timeout`` it cannot wait out before the bridge is dialed: on
+        an already-connected bridge a non-positive wait returns at once, so an
+        unchecked value would report success with no sample in it.
+        """
+        if wait_err := positive_finite_number_error(timeout, "timeout", "get_pose"):
+            return self._error(wait_err)
+        return rosbridge_action(
             action="echo",
             host=self.host,
             port=self.port,
@@ -350,13 +362,19 @@ class RosbridgeRobot:
             type=self.odom_type,
             count=1,
             timeout=timeout,
+            gate=never_gated,
         )
 
     def get_scan(self, timeout: float = 5.0) -> dict[str, Any]:
-        """Read one laser-scan sample (error when no ``scan_topic`` configured)."""
+        """Read one laser-scan sample (error when no ``scan_topic`` configured).
+
+        Grades ``timeout`` on the same domain as :meth:`get_pose`.
+        """
         if not self.scan_topic:
             return self._error("get_scan: no scan_topic configured for this robot")
-        return use_rosbridge(
+        if wait_err := positive_finite_number_error(timeout, "timeout", "get_scan"):
+            return self._error(wait_err)
+        return rosbridge_action(
             action="echo",
             host=self.host,
             port=self.port,
@@ -364,6 +382,7 @@ class RosbridgeRobot:
             type=self.scan_type,
             count=1,
             timeout=timeout,
+            gate=never_gated,
         )
 
     @property

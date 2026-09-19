@@ -363,10 +363,10 @@ class TestAVerifiedReplyStillReads:
 
     def test_reading_every_motor_reads_each_one(self, bus) -> None:
         controller, fake = bus
-        for name, config in controller.motor_configs.items():
-            fake.queue_read(_position_reply(motor_id=config["id"]))
-            assert name  # every configured motor is answered by its own ID
-        assert len(controller.read_all_positions()) == len(controller.motor_configs)
+        for name, spec in controller.units.motors.items():
+            fake.queue_read(_position_reply(motor_id=spec.motor_id))
+            assert name  # every motor on the arm is answered by its own ID
+        assert len(controller.read_all_positions()) == len(controller.units.motors)
 
 
 # --------------------------------------------------------------------------- #

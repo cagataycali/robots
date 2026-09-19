@@ -565,15 +565,29 @@ class MobileBaseRobot:
     # -- sensing ------------------------------------------------------------
 
     def get_pose(self, timeout: float = 5.0) -> dict[str, Any]:
-        """Read one sample from the robot's odometry/pose topic."""
+        """Read one sample from the robot's odometry/pose topic.
+
+        ``timeout`` is graded here rather than in the transport, for the reason
+        ``drive`` grades its own knobs: a transport reached by more than one
+        surface honors the wait it is handed and states no domain of its own. A
+        non-positive or non-finite wait would come back empty from an already
+        connected transport and be reported as a successful read of no samples.
+        """
         if not self.odom_topic:
             return self._error("get_pose: no odom_topic configured for this robot")
+        if wait_err := positive_finite_number_error(timeout, "timeout", "get_pose"):
+            return self._error(wait_err)
         return self.transport.echo(topic=self.odom_topic, type=self.odom_type, count=1, timeout=timeout)
 
     def get_scan(self, timeout: float = 5.0) -> dict[str, Any]:
-        """Read one sample from the robot's laser-scan topic."""
+        """Read one sample from the robot's laser-scan topic.
+
+        Grades ``timeout`` on the same domain as :meth:`get_pose`.
+        """
         if not self.scan_topic:
             return self._error("get_scan: no scan_topic configured for this robot")
+        if wait_err := positive_finite_number_error(timeout, "timeout", "get_scan"):
+            return self._error(wait_err)
         return self.transport.echo(topic=self.scan_topic, type=self.scan_type, count=1, timeout=timeout)
 
     # -- agent tools --------------------------------------------------------

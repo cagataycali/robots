@@ -227,7 +227,7 @@ GUARDS: tuple[Guard, ...] = (
     ),
     Guard(
         "tools/pose_tool.py",
-        lambda v: pose_tool._joint_target_error("wave", "target", "elbow", v),
+        lambda v: pose_tool._joint_target_error("wave", "target", "elbow", v, {"elbow": (-90.0, 90.0)}),
         Unprintable(),
         OPAQUE,
     ),

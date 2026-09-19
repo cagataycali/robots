@@ -34,6 +34,8 @@ import threading
 import time
 from typing import Any
 
+from strands_robots.drivers.microduck import MICRODUCK_API_VERSION
+
 # The exact RobotState literal from duck-ipc-proto's own serialization test,
 # except joints/targets which carry 0..14 so the mouth-drop (index 9) is visible.
 STATE_PARAMS: dict[str, Any] = {
@@ -58,11 +60,29 @@ class MockRobotd:
         methods: Every method name received, in order.
     """
 
-    def __init__(self, *, api_version: int = 16, state_interval: float = 0.01) -> None:
+    def __init__(
+        self,
+        *,
+        api_version: int = MICRODUCK_API_VERSION,
+        state_interval: float = 0.01,
+        skills: tuple[str, ...] = ("ground_pick", "kick_left", "kick_right", "sit_toggle", "roulade"),
+        mode: str = "walk",
+        sitting: bool | None = False,
+        decline: dict[str, str] | None = None,
+        path: str | None = None,
+    ) -> None:
+        """``decline`` maps a method name to the ``reason`` its IntentResult refuses with.
+
+        ``path`` binds the socket at a caller-chosen location (a forward's local end).
+        """
         self._api_version = api_version
         self._state_interval = state_interval
+        self.skills = list(skills)
+        self.mode = mode
+        self.sitting = sitting
+        self.decline = dict(decline or {})
         self._dir = tempfile.mkdtemp(prefix="mock-robotd-")
-        self.path = os.path.join(self._dir, "robotd.sock")
+        self.path = path or os.path.join(self._dir, "robotd.sock")
         self.received: list[bytes] = []
         self.methods: list[str] = []
         self._lock = threading.Lock()
@@ -148,11 +168,44 @@ class MockRobotd:
                 },
             )
         elif method == "robot.subscribe":
+            self._send(conn, {"jsonrpc": "2.0", "id": request_id, "result": self._policies()})
+            self._streaming.set()
+        elif method == "robot.policies":
+            self._send(conn, {"jsonrpc": "2.0", "id": request_id, "result": self._policies()})
+        elif method == "robot.mode":
+            self._send(conn, {"jsonrpc": "2.0", "id": request_id, "result": {"mode": self.mode}})
+        elif method == "robot.modelApi":
+            self._send(
+                conn, {"jsonrpc": "2.0", "id": request_id, "result": {"api_version": 3, "duck_control": "0.14.1"}}
+            )
+        elif method == "robot.model":
+            self._send(conn, {"jsonrpc": "2.0", "id": request_id, "result": {"name": "microduck", "joints": 15}})
+        elif method in self.decline:
             self._send(
                 conn,
-                {"jsonrpc": "2.0", "id": request_id, "result": {"accepted": True, "walk": "alpha_walking.onnx"}},
+                {"jsonrpc": "2.0", "id": request_id, "result": {"accepted": False, "reason": self.decline[method]}},
             )
-            self._streaming.set()
+        elif method == "robot.look":
+            params = obj.get("params") or {}
+            self._send(
+                conn,
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "accepted": True,
+                        "head": {"neck_pitch": 0.1, "head_pitch": 0.0, "head_yaw": 0.2, "head_roll": 0.0},
+                        "clamped": abs(float(params.get("y", 0.0))) > 1.0,
+                    },
+                },
+            )
+        elif method == "robot.setMode":
+            self.mode = str((obj.get("params") or {}).get("mode", self.mode))
+            self._send(conn, {"jsonrpc": "2.0", "id": request_id, "result": {"accepted": True}})
+        elif method == "robot.do":
+            if (obj.get("params") or {}).get("skill") == "sit_toggle" and self.sitting is not None:
+                self.sitting = not self.sitting
+            self._send(conn, {"jsonrpc": "2.0", "id": request_id, "result": {"accepted": True}})
         elif method == "robot.health":
             self._send(
                 conn,
@@ -164,6 +217,20 @@ class MockRobotd:
             )
         else:  # robot.do / robot.enable / robot.relax / robot.stop / robot.init
             self._send(conn, {"jsonrpc": "2.0", "id": request_id, "result": {"accepted": True}})
+
+    def _policies(self) -> dict[str, Any]:
+        """The v28+ ``robot.policies``/``robot.subscribe`` result shape."""
+        result: dict[str, Any] = {
+            "accepted": True,
+            "walk": "alpha_walking.onnx",
+            "stand": "stand.onnx",
+            "skills": list(self.skills),
+            "mode": self.mode,
+            "homed": True,
+        }
+        if self.sitting is not None:
+            result["sitting"] = self.sitting
+        return result
 
     def _stream_states(self, conn: socket.socket) -> None:
         if not self._streaming.wait(timeout=5.0):

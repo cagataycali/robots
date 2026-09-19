@@ -1,6 +1,6 @@
 """Behavior tests for RosbridgeRobot - a ROS1/rosbridge robot as a strands robot.
 
-roslibpy-free: the module's ``use_rosbridge`` reference is monkeypatched with
+roslibpy-free: the module's ``rosbridge_action`` reference is monkeypatched with
 a recorder, so forwarding, clamps, the trailing-zero safety rule, and the
 Curiosity wiring are exercised with no rosbridge server anywhere.
 """
@@ -30,7 +30,7 @@ class _Recorder:
 @pytest.fixture
 def rec(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     recorder = _Recorder()
-    monkeypatch.setattr(rbr_mod, "use_rosbridge", recorder)
+    monkeypatch.setattr(rbr_mod, "rosbridge_action", recorder)
     return recorder
 
 

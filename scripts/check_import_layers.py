@@ -75,7 +75,10 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     ("registry", ("assets", "registry")),
-    ("drivers|mesh", ("device_connect", "drivers", "mesh", "ros", "ros_telemetry", "rtps", "teleop_mixin")),
+    (
+        "drivers|mesh",
+        ("device_connect", "drivers", "mesh", "ros", "rosbridge", "ros_telemetry", "rtps", "teleop_mixin"),
+    ),
     ("sim|policies", ("inference", "policies", "simulation", "training")),
     (
         "app",
@@ -104,14 +107,10 @@ LAYER_OF_MEMBER: dict[str, int] = {member: index for index, (_name, members) in 
 LAYER_NAMES: tuple[str, ...] = tuple(name for name, _members in LAYERS)
 
 #: The runtime imports that still point upward, ``(importer, imported)``. Each
-#: line is a cut this lane has not made yet; the grader fails on an edge that is
-#: not here, and on an entry here that no longer exists, so the roster can only
-#: shrink deliberately.
-KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
-    # drivers|mesh -> tools. The mesh robots call the ``@tool`` entry point
-    # instead of a transport of their own.
-    ("strands_robots.mesh.rosbridge_robot", "strands_robots.tools.use_rosbridge"),
-)
+#: line would be a cut this lane has not made yet; the grader fails on an edge
+#: that is not here, and on an entry here that no longer exists, so the roster
+#: can only shrink deliberately. It is empty: every layer imports downward only.
+KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

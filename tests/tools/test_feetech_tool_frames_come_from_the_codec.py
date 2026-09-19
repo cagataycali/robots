@@ -135,7 +135,7 @@ def _read_frame(built: MotorController) -> bytes:
 
 
 def _move_frame(built: MotorController) -> bytes:
-    return write_packet(MOTOR_ID, Register.GOAL_POSITION, encode_word(built.degrees_to_position(MOTOR, MOVE_DEGREES)))
+    return write_packet(MOTOR_ID, Register.GOAL_POSITION, encode_word(built.units.to_counts(MOTOR, MOVE_DEGREES)))
 
 
 def _release_frame(built: MotorController) -> bytes:
@@ -183,7 +183,7 @@ class TestThePositionReadTakesItsSignFromTheCodec:
 
         reported = built.read_motor_position(MOTOR)
 
-        assert reported == pytest.approx(built.position_to_degrees(MOTOR, counts))
+        assert reported == pytest.approx(built.units.to_value(MOTOR, counts))
 
     def test_a_joint_past_its_zero_reads_below_its_own_range(self, controller: tuple[MotorController, Any]) -> None:
         """The consequence in the caller's unit, with no magic float.
@@ -194,7 +194,7 @@ class TestThePositionReadTakesItsSignFromTheCodec:
         """
         built, port = controller
         port.replies.append(_status_frame(MOTOR_ID, 0x8064))
-        floor, _ceiling = built.motor_configs[MOTOR]["range"]
+        floor, _ceiling = built.units.value_bounds(MOTOR)
 
         reported = built.read_motor_position(MOTOR)
 

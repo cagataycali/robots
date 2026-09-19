@@ -271,12 +271,13 @@ class TestPortDomainParity:
         assert refused is owner_refuses
 
 
-# The surfaces where a caller or an agent supplies a port: the agent tools and
-# the mesh robot bridges. The other places this package mentions the port space
-# are a CLI ``argparse`` check and a generic env-var range helper, which have
-# their own failure channels and are not caller-facing entry points.
-_PORT_TAKING_GLOBS = ("tools/*.py", "mesh/*_robot.py")
-_ROUTED_MODULES = {"use_rosbridge.py", "rosbridge_robot.py", "gr00t_inference.py"}
+# The surfaces where a caller or an agent supplies a port: the agent tools, the
+# mesh robot bridges, and the rosbridge transport both of its callers dial
+# through. The other places this package mentions the port space are a CLI
+# ``argparse`` check and a generic env-var range helper, which have their own
+# failure channels and are not caller-facing entry points.
+_PORT_TAKING_GLOBS = ("tools/*.py", "mesh/*_robot.py", "rosbridge.py")
+_ROUTED_MODULES = {"rosbridge.py", "rosbridge_robot.py", "gr00t_inference.py"}
 
 
 def _port_taking_sources() -> dict[Path, str]:

@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+import strands_robots.rosbridge as transport_mod
 import strands_robots.tools.use_rosbridge as rb_mod
 
 use_rosbridge = rb_mod.use_rosbridge
@@ -138,8 +139,8 @@ def fake_roslibpy(monkeypatch: pytest.MonkeyPatch) -> _types.ModuleType:
     mod.Message = dict  # type: ignore[attr-defined]
     mod.ServiceRequest = dict  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "roslibpy", mod)
-    monkeypatch.setattr(rb_mod._backend, "_connections", {})
-    monkeypatch.setattr(rb_mod._backend, "_available", None)
+    monkeypatch.setattr(transport_mod._backend, "_connections", {})
+    monkeypatch.setattr(transport_mod._backend, "_available", None)
     return mod
 
 
@@ -201,7 +202,7 @@ def test_an_invalid_service_name_is_refused_before_the_bridge_is_dialed(
     assert result["status"] == "error"
     assert "invalid service name" in _texts(result)
     assert fake_roslibpy.Ros.instances == []  # type: ignore[attr-defined]
-    assert rb_mod._backend._connections == {}
+    assert transport_mod._backend._connections == {}
 
 
 # A topic that is not a safety-critical command surface. The tests below exercise
@@ -246,8 +247,8 @@ def test_invalid_port_rejected(bad_port: int) -> None:
 
 def test_status_reports_missing_roslibpy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "roslibpy", None)  # import raises deterministically
-    monkeypatch.setattr(rb_mod._backend, "_available", None)
-    monkeypatch.setattr(rb_mod._backend, "_connections", {})
+    monkeypatch.setattr(transport_mod._backend, "_available", None)
+    monkeypatch.setattr(transport_mod._backend, "_connections", {})
     result = use_rosbridge(action="status")
     assert result["status"] == "success"
     assert "backend: none" in _texts(result)
@@ -270,8 +271,8 @@ def test_status_reports_unreachable_bridge(fake_roslibpy: _types.ModuleType) -> 
 
 def test_actions_error_without_roslibpy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "roslibpy", None)
-    monkeypatch.setattr(rb_mod._backend, "_available", None)
-    monkeypatch.setattr(rb_mod._backend, "_connections", {})
+    monkeypatch.setattr(transport_mod._backend, "_available", None)
+    monkeypatch.setattr(transport_mod._backend, "_connections", {})
     result = use_rosbridge(action="list_topics")
     assert result["status"] == "error"
     assert "strands-robots[rosbridge]" in _texts(result)
@@ -480,7 +481,7 @@ class TestListTopicsWhenRosapiNamesFewerTypes:
         lines = _texts(use_rosbridge(action="list_topics")).splitlines()
         assert "/rosout [rosgraph_msgs/Log]" in lines
         assert "/curiosity_mars_rover/odom [nav_msgs/Odometry]" in lines
-        assert f"/tf [{rb_mod.TYPE_NOT_REPORTED}]" in lines
+        assert f"/tf [{transport_mod.TYPE_NOT_REPORTED}]" in lines
 
     def test_a_count_mismatch_is_named_in_a_warning(
         self, fake_roslibpy: _types.ModuleType, caplog: pytest.LogCaptureFixture
@@ -499,7 +500,7 @@ class TestListTopicsWhenRosapiNamesFewerTypes:
         with caplog.at_level(logging.WARNING, logger=rb_mod.__name__):
             result = use_rosbridge(action="list_topics")
         assert [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING] == []
-        assert rb_mod.TYPE_NOT_REPORTED not in _texts(result)
+        assert transport_mod.TYPE_NOT_REPORTED not in _texts(result)
 
 
 def test_list_services_sorted(fake_roslibpy: _types.ModuleType) -> None:

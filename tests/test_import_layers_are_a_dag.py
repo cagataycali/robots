@@ -302,6 +302,12 @@ class TestTheContract:
                 frozenset(),
                 frozenset({"drivers|mesh", "tools"}),
             ),
+            (
+                "strands_robots.rosbridge",
+                "drivers|mesh",
+                frozenset(),
+                frozenset({"drivers|mesh", "tools"}),
+            ),
         ],
     )
     def test_a_contract_several_layers_share_sits_under_all_of_them(
@@ -325,11 +331,14 @@ class TestTheContract:
         ``rtps.participant`` is the DDS mechanics two surfaces share: the
         ``use_rtps`` tool and the ``RtpsRobot`` that drives a ROS 2 base over the
         same wire. They lived in the tool, so the robot imported the ``@tool`` to
-        reach a DataWriter. ``ros`` is the same shape one transport over: the
+        reach a DataWriter. ``ros`` is the same shape one transport over - the
         in-process ``rclpy`` node the ``use_ros`` tool, the ``RosBridgedRobot``
-        and the ``AckermannRosRobot`` all publish through. Each one's ``tools``
-        caller is what makes the placement load-bearing: moving it back up would
-        restore the inversion, and the equality above would refuse it.
+        and the ``AckermannRosRobot`` all publish through - and ``rosbridge`` is
+        the same story over a WebSocket, with the ``RosbridgeRobot`` importing
+        the ``@tool`` and two of its private names to dial a socket. For each of
+        them the ``tools`` caller is what makes the placement load-bearing:
+        moving one back up would restore the inversion, and the equality above
+        would refuse it.
         """
         assert name in graph.modules
         assert mod.LAYER_NAMES[mod.layer_of(name)] == layer
