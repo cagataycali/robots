@@ -192,7 +192,11 @@ every request, and the server applies it to the wrapped policy immediately
 before inference. Chunk-seam blending therefore happens server-side against the
 correct, deterministic step offset - identical to a local rollout. Per-episode
 `reset(seed)` and `set_control_frequency(hz)` are forwarded too, so seeded
-episodes stay reproducible.
+episodes stay reproducible. The forwarded seed is what makes them so: a policy
+samples from the RNG of the process it runs in, and the rollout's own
+`set_eval_seed` seeds the robot host, not the inference host - so the wrapped
+policy's `reset(seed)` is the only seeding the server process gets, and every
+provider that samples in-process applies it there.
 
 Both forwarded values are validated by the policy itself, so a remote caller
 reaches exactly the accepted domain an in-process one does: `hz` must be a

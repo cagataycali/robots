@@ -291,6 +291,12 @@ class TestTheContract:
                 frozenset({"drivers|mesh", "sim|policies", "app"}),
             ),
             (
+                "strands_robots.rtps.participant",
+                "drivers|mesh",
+                frozenset(),
+                frozenset({"drivers|mesh", "tools"}),
+            ),
+            (
                 "strands_robots.rosbridge",
                 "drivers|mesh",
                 frozenset(),
@@ -316,13 +322,15 @@ class TestTheContract:
         in general - the mixin's ``teleoperator`` read is late because that module
         imports lerobot, and promoting it to module scope has to fail here.
 
-        ``rosbridge`` is the WebSocket transport two surfaces share: the
+        ``rtps.participant`` is the DDS mechanics two surfaces share: the
+        ``use_rtps`` tool and the ``RtpsRobot`` that drives a ROS 2 base over the
+        same wire. They lived in the tool, so the robot imported the ``@tool`` to
+        reach a DataWriter. ``rosbridge`` is the same story over a WebSocket: the
         ``use_rosbridge`` tool and the ``RosbridgeRobot`` that drives a ROS 1 or
-        remote base over the same bridge. It lived in the tool, so the robot
-        imported the ``@tool`` - and two of its private names - to dial a socket.
-        Its ``tools`` caller is what makes the placement load-bearing: moving it
-        back up would restore the inversion, and the equality above would refuse
-        it.
+        remote base over one bridge, with the robot importing the ``@tool`` - and
+        two of its private names - to dial a socket. For both, the ``tools``
+        caller is what makes the placement load-bearing: moving either back up
+        would restore the inversion, and the equality above would refuse it.
         """
         assert name in graph.modules
         assert mod.LAYER_NAMES[mod.layer_of(name)] == layer

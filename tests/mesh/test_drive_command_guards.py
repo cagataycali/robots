@@ -44,7 +44,7 @@ class _Wire:
 # (label, module, forwarded-symbol name, factory) for each transport.
 _TRANSPORTS: list[tuple[str, Any, str, Callable[..., Any]]] = [
     ("ros", ros_mod, "use_ros", lambda **kw: RosBridgedRobot("tb", "/cmd_vel", "/odom", **kw)),
-    ("rtps", rtps_mod, "use_rtps", lambda **kw: RtpsRobot("tb", "/cmd_vel", **kw)),
+    ("rtps", rtps_mod, "rtps_action", lambda **kw: RtpsRobot("tb", "/cmd_vel", **kw)),
 ]
 _TRANSPORT_IDS = [t[0] for t in _TRANSPORTS]
 

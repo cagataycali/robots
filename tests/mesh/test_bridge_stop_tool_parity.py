@@ -59,7 +59,7 @@ def _rosbridge(rec: _Recorder, monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 def _rtps(rec: _Recorder, monkeypatch: pytest.MonkeyPatch) -> Any:
-    monkeypatch.setattr(rtps_mod, "use_rtps", rec)
+    monkeypatch.setattr(rtps_mod, "rtps_action", rec)
     return RtpsRobot.from_rtps(node_name="rover", cmd_vel_topic="/cmd_vel")
 
 

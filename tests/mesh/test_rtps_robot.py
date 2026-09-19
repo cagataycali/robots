@@ -1,6 +1,6 @@
-"""Behavior tests for RtpsRobot - forwards to use_rtps, mocked here.
+"""Behavior tests for RtpsRobot - publishes through the participant, mocked here.
 
-ROS-free and cyclonedds-free: the forwarded ``use_rtps`` symbol is patched, so
+ROS-free and cyclonedds-free: the forwarded ``rtps_action`` symbol is patched, so
 the tests assert the robot builds the right RTPS calls (topic, type, Twist field
 mapping, duration->count) and exposes correctly-named per-instance tools.
 """
@@ -26,7 +26,7 @@ class _Recorder:
 @pytest.fixture
 def rec(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     recorder = _Recorder()
-    monkeypatch.setattr("strands_robots.mesh.rtps_robot.use_rtps", recorder)
+    monkeypatch.setattr("strands_robots.mesh.rtps_robot.rtps_action", recorder)
     return recorder
 
 
