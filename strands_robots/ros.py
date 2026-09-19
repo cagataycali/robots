@@ -44,14 +44,11 @@ cannot move it.
 
 from __future__ import annotations
 
-import logging
 import re
 import threading
 import time
 from collections.abc import Callable
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 #: How a caller asks its operator about one command. Called with the verb and
 #: the topic, service or action name the command is aimed at, and returns a
