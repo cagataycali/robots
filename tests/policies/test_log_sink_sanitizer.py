@@ -284,15 +284,20 @@ def test_curobo_joint_state_object_with_a_multiline_repr_cannot_split_the_record
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Alert 711. ``%r`` over a list escapes ``str`` elements only, so one
-    element with a multi-line ``repr`` put the break back on the wire."""
-    policy = _stub()
+    element with a multi-line ``repr`` put the break back on the wire. The sink
+    now renders the observation's KEY ROSTER rather than the unreadable value,
+    so the payload is a joint name carrying the break - the same alert, at the
+    provenance the message actually names."""
+    policy = _stub(_robot_state_keys=[])
     with caplog.at_level(logging.WARNING):
-        result = CuroboPolicy._extract_joint_state(policy, {"observation.state": [MultilineRepr()]})
+        result = CuroboPolicy._extract_joint_state(
+            policy, {"observation.state": [MultilineRepr()], FORGED: 0.0}
+        )
 
     assert result is None, "the degraded-extraction path is the one under test"
     rendered = _rendered(caplog)
     assert not _has_raw_break(rendered), f"record still splits: {rendered!r}"
-    assert "JointState(\\nWARNING:root:actuators disabled)" in rendered
+    assert "wrist\\nWARNING:root:actuators disabled" in rendered
 
 
 def test_moveit2_joint_state_object_with_a_multiline_repr_cannot_split_the_record(
@@ -300,14 +305,16 @@ def test_moveit2_joint_state_object_with_a_multiline_repr_cannot_split_the_recor
 ) -> None:
     """Alert 712. Same shape as the cuRobo sink, and the same fix, so a
     provider that grows a third copy of this message is graded here too."""
-    policy = _stub()
+    policy = _stub(_robot_state_keys=[])
     with caplog.at_level(logging.WARNING):
-        result = MoveIt2Policy._extract_joint_state(policy, {"observation.state": [MultilineRepr()]})
+        result = MoveIt2Policy._extract_joint_state(
+            policy, {"observation.state": [MultilineRepr()], FORGED: 0.0}
+        )
 
     assert result is None, "the degraded-extraction path is the one under test"
     rendered = _rendered(caplog)
     assert not _has_raw_break(rendered), f"record still splits: {rendered!r}"
-    assert "JointState(\\nWARNING:root:actuators disabled)" in rendered
+    assert "wrist\\nWARNING:root:actuators disabled" in rendered
 
 
 def test_wbc_reset_seed_with_a_multiline_repr_cannot_split_the_record(
@@ -406,10 +413,10 @@ _SANITIZED_SINKS: dict[str, dict[str, list[str]]] = {
     },
     "curobo/policy.py": {
         "CuroboPolicy._apply_world_update": ["repr(shown)"],
-        "CuroboPolicy._extract_joint_state": ["e", "repr(state)"],
+        "CuroboPolicy._extract_joint_state": ["e", "repr(sorted(observation_dict))"],
     },
     "moveit2/policy.py": {
-        "MoveIt2Policy._extract_joint_state": ["e", "repr(state)"],
+        "MoveIt2Policy._extract_joint_state": ["e", "repr(sorted(observation_dict))"],
     },
     # Alert 1159, outside the #2853 census: the ``seed`` the inference server
     # forwards verbatim off the wire (``PolicyServer`` owns no domain for it)

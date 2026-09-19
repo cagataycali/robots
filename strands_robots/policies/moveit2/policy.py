@@ -42,6 +42,7 @@ import os
 from typing import Any
 
 from strands_robots.policies._log_safety import sanitize_log_value
+from strands_robots.policies._state_keys import joint_positions_from_observation
 from strands_robots.policies.base import Policy
 from strands_robots.utils import name_list_error, tcp_port_error
 
@@ -327,25 +328,24 @@ class MoveIt2Policy(Policy):
     # Helpers
 
     def _extract_joint_state(self, observation_dict: dict[str, Any]) -> list[float] | None:
-        """Pull ``observation.state`` out of the observation dict.
+        """Pull the start configuration out of the observation dict.
 
-        Accepts list / tuple / numpy array; returns a plain Python list of
-        floats so msgpack serialises without numpy support on the wire.
+        Reads the flat ``observation.state`` vector when present and the
+        per-joint scalars the sim backends emit otherwise, via
+        :func:`~strands_robots.policies._state_keys.joint_positions_from_observation` -
+        the same reader cuRobo uses, because two providers on one ``Policy``
+        contract must read one observation as one state vector. Returns a plain
+        Python list of floats so msgpack serialises without numpy support on
+        the wire; ``None`` (no state at all) lets the sidecar use its own state
+        estimate from ``/joint_states``.
         """
-        state = observation_dict.get("observation.state")
-        if state is None:
-            return None
         try:
-            # ``tolist`` for numpy arrays; ``list(map(float, ...))`` for
-            # lists / tuples; both produce JSON-shaped output.
-            if hasattr(state, "tolist"):
-                state = state.tolist()
-            return [float(x) for x in state]
+            return joint_positions_from_observation(observation_dict, self._robot_state_keys)
         except (TypeError, ValueError) as e:
             logger.warning(
-                "MoveIt2Policy: failed to extract joint_state from observation.state=%s (%s); "
+                "MoveIt2Policy: failed to read a joint state from the observation keys %s (%s); "
                 "letting sidecar use its own state estimate",
-                sanitize_log_value(repr(state)),
+                sanitize_log_value(repr(sorted(observation_dict))),
                 sanitize_log_value(e),
             )
             return None

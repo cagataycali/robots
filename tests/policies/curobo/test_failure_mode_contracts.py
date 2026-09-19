@@ -14,7 +14,7 @@ wrong or when it runs against a minimal / non-cuRobo planner:
   context, not an opaque cuRobo trace.
 * An implausibly long interpolated plan is refused up-front (the
   ``_MAX_TRAJECTORY_WAYPOINTS`` guard) instead of being cached.
-* ``_build_start_state(None)`` defers to the planner's own retract config.
+* ``_build_start_state(None)`` returns ``None`` (``get_actions`` refuses first).
 * ``_resolve_tool_frames`` raises a clear ``RuntimeError`` when the planner has
   no ``kinematics`` or an empty ``tool_frames`` list.
 * ``_planner_tensor_kwargs`` falls back to a sane device/dtype when the
@@ -155,7 +155,8 @@ class TestPlanningErrors:
 
 class TestFallbacks:
     def test_build_start_state_none_defers_to_planner(self) -> None:
-        """No start joint state -> ``None`` so the planner uses its retract config."""
+        """No start joint state -> ``None``; reached only by a direct call, since
+        ``get_actions`` refuses a plan with no start configuration."""
         p = CuroboPolicy(motion_gen=_StubPlanner())
         assert p._build_start_state(None) is None
 

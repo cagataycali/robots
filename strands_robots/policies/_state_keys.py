@@ -27,8 +27,15 @@ docstring for why an operator naming ``elbow.vel`` is stating the model's input.
 
 from __future__ import annotations
 
+import numbers
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 #: Suffix the sim backends append to a joint's additive velocity companion.
 VELOCITY_SUFFIX = ".vel"
+
+#: Flat state vector a direct-API caller / a dataset row carries.
+FLAT_STATE_KEY = "observation.state"
 
 
 def drop_velocity_siblings(scalar_keys: list[str]) -> list[str]:
@@ -53,3 +60,66 @@ def drop_velocity_siblings(scalar_keys: list[str]) -> list[str]:
     """
     present = set(scalar_keys)
     return [k for k in scalar_keys if not (k.endswith(VELOCITY_SUFFIX) and k[: -len(VELOCITY_SUFFIX)] in present)]
+
+
+def observation_joint_keys(observation: Mapping[str, Any], robot_state_keys: Sequence[str] = ()) -> list[str]:
+    """The per-joint scalar keys of an observation, in the order they form a vector.
+
+    ``robot_state_keys`` wins when the caller declared one and the observation
+    carries every name in it. Otherwise the ordering is the observation's own
+    insertion order over its numeric scalars, minus the velocity siblings -
+    the rule :func:`drop_velocity_siblings` states.
+
+    Args:
+        observation: The observation dict handed to ``get_actions``.
+        robot_state_keys: Ordering declared through ``set_robot_state_keys``.
+
+    Returns:
+        The joint keys in vector order; empty when the observation carries none.
+    """
+    names = list(robot_state_keys)
+    if names and all(name in observation for name in names):
+        return names
+    return drop_velocity_siblings(
+        [k for k, v in observation.items() if isinstance(v, numbers.Real) and not isinstance(v, bool)]
+    )
+
+
+def joint_positions_from_observation(
+    observation: Mapping[str, Any], robot_state_keys: Sequence[str] = ()
+) -> list[float] | None:
+    """Read this step's joint positions out of an observation.
+
+    One state arrives in two shapes, and a provider that reads only one of them
+    reads the other as no state at all: the flat ``observation.state`` vector a
+    direct-API caller passes, and the per-joint scalars the sim backends emit
+    (:mod:`strands_robots.simulation.mujoco.rendering` writes ``obs[joint] =
+    qpos`` beside ``obs[f"{joint}.vel"] = qvel``, and writes no flat vector).
+    The planner providers read only the flat key, so every simulated rollout
+    planned from no start state at all.
+
+    The flat vector wins when present; otherwise the scalars are read in
+    :func:`observation_joint_keys` order.
+
+    Args:
+        observation: The observation dict handed to ``get_actions``.
+        robot_state_keys: Ordering declared through ``set_robot_state_keys``.
+
+    Returns:
+        The joint positions in that order, or ``None`` when the observation
+        carries neither shape.
+
+    Raises:
+        TypeError: If the flat value is not iterable, or a value under it is
+            not a number. The caller decides whether that degrades or refuses.
+        ValueError: If a value cannot be read as a float.
+    """
+    flat = observation.get(FLAT_STATE_KEY)
+    if flat is not None:
+        if hasattr(flat, "tolist"):
+            flat = flat.tolist()
+        return [float(x) for x in flat]
+    names = observation_joint_keys(observation, robot_state_keys)
+    if not names:
+        return None
+    return [float(observation[k]) for k in names]

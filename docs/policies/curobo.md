@@ -20,9 +20,17 @@ v0.1 squatter). Install from the upstream source repository, then this
 package:
 
 ```bash
+uv pip install torch                     # cuRobo's own install declares no torch
 git clone https://github.com/NVlabs/curobo.git
-pip install -e ./curobo
+uv pip install -e ./curobo
+uv pip install 'cuda-core[cu12]'         # its CUDA kernel backend, no compilation
 ```
+
+Verified against cuRobo `main` at `78fd485` on CUDA 12.8. Neither trailing
+install is optional: without torch the constructor raises
+`ModuleNotFoundError`, and without a kernel backend the first plan raises
+`RuntimeError: No curobo kernel backend available!` (compile one instead with
+`CUROBO_USE_PYBIND=1 pip install -e ./curobo --no-build-isolation`).
 
 The `[curobo]` extra exists but is empty - reserved for a future stable cuRobo
 PyPI wheel - so `pip install "strands-robots[curobo]"` exits 0 and installs
@@ -125,6 +133,19 @@ commands nothing is a planning failure, not a successful no-op plan.
 from strands_robots import Robot
 
 sim = Robot("panda")              # sim-by-default; needs a CUDA GPU for cuRobo
+# cuRobo plans from the robot's current configuration and refuses one outside
+# the joint limits - the Panda model rests at zero, which is outside its own
+# elbow range, so start from the model's home keyframe.
+sim.set_joint_positions(
+    dict(
+        zip(
+            sim.robot_joint_names("panda"),
+            [0.0, 0.0, 0.0, -1.5708, 0.0, 1.5708, -0.7853, 0.04, 0.04],
+            strict=True,
+        )
+    ),
+    robot_name="panda",
+)
 sim.run_policy(
     robot_name="panda",
     instruction="",               # ignored by the planner
@@ -135,6 +156,14 @@ sim.run_policy(
     control_frequency=50.0,
 )
 ```
+
+That rollout takes the Panda's tool frame from 231 mm away to 6.2 mm from the
+commanded `target_pose`. The start configuration is read from the observation -
+the flat `observation.state` vector when a caller passes one, and the per-joint
+scalars a simulation publishes otherwise - and is projected onto the joints
+cuRobo plans over, which excludes any joint the robot configuration locks (the
+two Panda fingers). An observation carrying neither shape is refused rather than
+planned from a default pose.
 
 `policy_config` and `policy_kwargs` are two different sinks. `policy_config`
 is expanded into the policy **constructor**; the per-call goal belongs in

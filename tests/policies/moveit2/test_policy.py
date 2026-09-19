@@ -715,7 +715,7 @@ class TestMoveIt2JointStateExtraction:
                 )
             )
         assert sent[0]["data"]["joint_state"] is None
-        assert "failed to extract joint_state" in caplog.text
+        assert "failed to read a joint state" in caplog.text
 
 
 class TestMoveIt2GoalTypeRejection:

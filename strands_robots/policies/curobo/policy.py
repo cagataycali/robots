@@ -71,6 +71,7 @@ import re
 from typing import Any
 
 from strands_robots.policies._log_safety import sanitize_log_value
+from strands_robots.policies._state_keys import joint_positions_from_observation, observation_joint_keys
 from strands_robots.policies.base import Policy, chunk_count_error
 from strands_robots.utils import name_list_error, require_optional
 
@@ -382,6 +383,10 @@ class CuroboPolicy(Policy):
         # ``action_horizon`` rows per call until exhausted, then re-plan
         # on the next call.
         self._robot_state_keys: list[str] = []
+        #: Joint keys the last observation published its own positions under -
+        #: the roster that keys a waypoint the declared one cannot (see
+        #: :meth:`_resolve_joint_keys`).
+        self._observation_joint_keys: list[str] = []
         self._cached_trajectory: list[list[float]] = []
         self._cached_cursor: int = 0
 
@@ -449,9 +454,10 @@ class CuroboPolicy(Policy):
         """Configure the joint names this policy emits actions for.
 
         Used to map the per-row joint values cuRobo returns onto per-joint
-        action dicts. When unset, ``get_actions`` falls back to
-        ``observation.state`` length and emits ``"joint_<i>"`` keys
-        (consistent with :class:`MockPolicy` / :class:`MoveIt2Policy`).
+        action dicts, and to order the per-joint observation scalars the start
+        configuration is read from. When unset, ``get_actions`` falls back to
+        the trajectory row width and emits ``"joint_<i>"`` keys (consistent
+        with :class:`MockPolicy` / :class:`MoveIt2Policy`).
 
         Raises:
             ValueError: If ``robot_state_keys`` is not an ordered list of
@@ -596,6 +602,14 @@ class CuroboPolicy(Policy):
         # chunk. Otherwise re-plan from the current state.
         if not self._cache_has_waypoints() or replan:
             joint_state = self._extract_joint_state(observation_dict)
+            if joint_state is None:
+                raise ValueError(
+                    "CuroboPolicy.get_actions found no joint state in the observation "
+                    f"(keys={sorted(observation_dict)}). cuRobo plans FROM a start "
+                    "configuration, so there is nothing to plan from: supply a flat "
+                    "'observation.state' vector, or per-joint scalars keyed by joint "
+                    "name (what the simulation backends emit)."
+                )
             self._plan_and_cache(
                 joint_state=joint_state,
                 target_pose=target_pose,
@@ -867,18 +881,83 @@ class CuroboPolicy(Policy):
             return
         update_fn(world_update)
 
+    def _plan_space_rosters(self) -> tuple[list[str], list[str]]:
+        """The planner's two joint rosters: what it plans over, what it writes.
+
+        A cuRobo robot configuration locks joints - ``franka.yml`` locks the two
+        finger joints - so the planner READS one roster and WRITES another:
+        ``kinematics.joint_names`` is the plan space a start state must match
+        (7 for the Panda), and ``kinematics.all_articulated_joint_names`` is the
+        layout of every waypoint it returns (9). A robot's observation and its
+        declared action keys speak the robot's own roster, so both directions
+        need the projection between the two, and both read it from here.
+
+        Returns:
+            ``(plan_space, waypoint_layout)``. ``waypoint_layout`` is empty when
+            the planner exposes no second roster or does not contain the whole
+            plan space - a stub planner, or a configuration locking nothing -
+            in which case no projection is possible and none is attempted.
+        """
+        kinematics = getattr(self._motion_planner, "kinematics", None)
+        active = list(getattr(kinematics, "joint_names", None) or [])
+        articulated = list(getattr(kinematics, "all_articulated_joint_names", None) or [])
+        if not active or not articulated or not all(name in articulated for name in active):
+            return active, []
+        return active, articulated
+
+    def _plan_space_state(self, joint_state: list[float]) -> list[float]:
+        """Project an observed joint vector onto the planner's plan space.
+
+        A robot reports every joint it has, so handing that vector through
+        unchanged made cuRobo concatenate a 9-wide start onto its 7-wide plan
+        space and fail inside the vendor library ("Expected size 9 but got size
+        7"). The locked entries are dropped using cuRobo's own two rosters (see
+        :meth:`_plan_space_rosters`), so no joint-name translation between a
+        cuRobo configuration and a robot description is guessed at here.
+
+        Args:
+            joint_state: Positions read from the observation, in the robot's
+                own joint order.
+
+        Returns:
+            The positions of the joints the planner plans over, in plan order -
+            unchanged when the vector already matches the plan space, or when
+            the planner declares no roster to project through.
+
+        Raises:
+            ValueError: If the vector matches neither roster, since which joints
+                it names is then unknown and planning from the wrong
+                configuration is worse than not planning at all.
+        """
+        active, articulated = self._plan_space_rosters()
+        if not active or len(joint_state) == len(active):
+            return joint_state
+        if len(joint_state) == len(articulated):
+            return [joint_state[articulated.index(name)] for name in active]
+        raise ValueError(
+            f"CuroboPolicy: the observation carries {len(joint_state)} joint positions, "
+            f"but the planner plans over {len(active)} joints ({active}) and writes "
+            f"waypoints for {len(articulated)} ({articulated}). Supply a state vector "
+            "matching either roster - the robot's full articulated set, or the plan space."
+        )
+
     def _build_start_state(self, joint_state: list[float] | None) -> Any:
         """Build a cuRobo :class:`JointState` from a Python list.
 
         Targets the ``main`` API: ``curobo.types.JointState`` (was
         ``curobo.types.state.JointState``) and ``curobo.types.DeviceCfg``
-        (was ``curobo.types.base.TensorDeviceType``).
+        (was ``curobo.types.base.TensorDeviceType``). The vector is projected
+        onto the planner's plan space first - see :meth:`_plan_space_state`.
         """
         if joint_state is None:
-            # Without a start state, defer to whatever the planner has
-            # configured (its retract config, typically). Stub planners
-            # ignore the start state anyway.
+            # Reached only by a direct call - ``get_actions`` refuses a
+            # stateless plan before here, because cuRobo's ``plan_pose``
+            # dereferences the start state (``current_state.ndim``) and a
+            # ``None`` dies inside the vendor library naming no parameter.
             return None
+        # Projected before the tensor conversion, so a planner reached through
+        # the stub seam below is handed the same plan-space vector cuRobo is.
+        joint_state = self._plan_space_state(joint_state)
         try:
             import torch  # type: ignore[import-not-found]
             from curobo.types import DeviceCfg, JointState  # type: ignore[import-not-found]
@@ -1049,24 +1128,24 @@ class CuroboPolicy(Policy):
             return [list(map(float, row)) for row in position]
 
     def _extract_joint_state(self, observation_dict: dict[str, Any]) -> list[float] | None:
-        """Pull ``observation.state`` out of the observation dict.
+        """Pull this step's start configuration out of the observation dict.
 
-        Accepts list / tuple / numpy array / torch tensor; returns a plain
-        Python list of floats so cuRobo's tensor builders get a known
-        input shape.
+        Reads the flat ``observation.state`` vector (list / tuple / numpy array
+        / torch tensor) when present and the per-joint scalars the sim backends
+        emit otherwise, via
+        :func:`~strands_robots.policies._state_keys.joint_positions_from_observation` -
+        the two shapes are one state, and reading only the flat one read every
+        simulated observation as no start state. Returns a plain Python list of
+        floats so cuRobo's tensor builders get a known input shape.
         """
-        state = observation_dict.get("observation.state")
-        if state is None:
-            return None
+        self._observation_joint_keys = observation_joint_keys(observation_dict, self._robot_state_keys)
         try:
-            if hasattr(state, "tolist"):
-                state = state.tolist()
-            return [float(x) for x in state]
+            return joint_positions_from_observation(observation_dict, self._robot_state_keys)
         except (TypeError, ValueError) as e:
             logger.warning(
-                "CuroboPolicy: failed to extract joint_state from observation.state=%s (%s); "
-                "letting planner use its own retract configuration",
-                sanitize_log_value(repr(state)),
+                "CuroboPolicy: failed to read a joint state from the observation keys %s (%s); "
+                "get_actions refuses the plan rather than planning from no start state",
+                sanitize_log_value(repr(sorted(observation_dict))),
                 sanitize_log_value(e),
             )
             return None
@@ -1074,12 +1153,24 @@ class CuroboPolicy(Policy):
     def _resolve_joint_keys(self, n: int) -> list[str]:
         """Resolve the joint key names for an n-element trajectory row.
 
-        If ``set_robot_state_keys`` was called with a matching length,
-        use those names; otherwise fall back to positional ``joint_<i>``
-        labels (consistent with :class:`MockPolicy` and :class:`MoveIt2Policy`).
+        Three candidates, in order:
+
+        1. ``set_robot_state_keys`` names, when the row is that wide.
+        2. The keys the observation published its own joint positions under,
+           when the row is that wide. A cuRobo configuration writes waypoints
+           for every articulated joint (9 for the Panda) while a robot declares
+           one action key per actuator (8, the two fingers sharing one), so the
+           declared roster can be a different width than the plan it has to key
+           - and a robot accepts commands under the joint names it reports state
+           under, so that roster keys the row without inventing a name.
+        3. Positional ``joint_<i>`` labels (consistent with :class:`MockPolicy`
+           and :class:`MoveIt2Policy`) - a last resort, and one no robot
+           resolves, which is why the named rosters are tried first.
         """
         if self._robot_state_keys and len(self._robot_state_keys) == n:
             return list(self._robot_state_keys)
+        if len(self._observation_joint_keys) == n:
+            return list(self._observation_joint_keys)
         return [f"joint_{i}" for i in range(n)]
 
     @staticmethod
