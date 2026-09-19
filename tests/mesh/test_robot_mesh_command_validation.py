@@ -12,9 +12,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
-from strands_robots.tools.robot_mesh import _reset_rate_limits, robot_mesh
+from strands_robots.tools.robot_mesh import robot_mesh
 
 
 def _call(**kwargs):
@@ -25,15 +23,6 @@ def _call(**kwargs):
 
 def _text(out) -> str:
     return out["content"][0]["text"]
-
-
-@pytest.fixture(autouse=True)
-def _isolate_rate_limits():
-    """Each validation case consumes a per-action rate-limit slot; reset so
-    the cases stay independent of collection order."""
-    _reset_rate_limits()
-    yield
-    _reset_rate_limits()
 
 
 def test_broadcast_without_command_is_rejected():

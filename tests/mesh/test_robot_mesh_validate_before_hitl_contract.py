@@ -68,10 +68,8 @@ _ACTION_IDS = [a for a, _, _, _ in _PRE_VALIDATED_ACTIONS]
 def _reset_caches() -> Any:
     """Each gated call consumes a per-action rate-limit slot; reset so the cases
     stay independent of collection order."""
-    rmt._reset_rate_limits()
     rmt._reset_interrupt_actions_cache()
     yield
-    rmt._reset_rate_limits()
     rmt._reset_interrupt_actions_cache()
 
 

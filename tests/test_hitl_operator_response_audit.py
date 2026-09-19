@@ -186,7 +186,6 @@ def _drive_robot_mesh(response: object) -> dict[str, Any] | None:
     fn = getattr(mesh_mod.robot_mesh, "__wrapped__", None) or mesh_mod.robot_mesh
     mesh = MagicMock()
     mesh.emergency_stop.return_value = [{"status": "ok"}]
-    mesh_mod._reset_rate_limits()
     with (
         patch.object(mesh_mod, "_gateway_mesh", lambda: None),
         patch.object(mesh_mod, "_resolve_mesh", return_value=mesh),
@@ -645,7 +644,6 @@ def _drive_robot_mesh_racing_the_rate_limit(response: object) -> tuple[dict[str,
     fn = getattr(mesh_mod.robot_mesh, "__wrapped__", None) or mesh_mod.robot_mesh
     mesh = MagicMock()
     mesh.tell.return_value = {"status": "ok"}
-    mesh_mod._reset_rate_limits()
     mesh_mod._reset_interrupt_actions_cache()
 
     taken = 0

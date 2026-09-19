@@ -36,7 +36,6 @@ import pytest
 
 from strands_robots.tools.robot_mesh import (
     _ACTION_NUMERIC_OPTIONS,
-    _reset_rate_limits,
     robot_mesh,
 )
 from strands_robots.utils import positive_count_error, positive_finite_number_error
@@ -105,15 +104,6 @@ class RecordingMesh:
     def unsubscribe(self, name: str) -> bool:
         self.calls.append(("unsubscribe", name))
         return True
-
-
-@pytest.fixture(autouse=True)
-def _isolate_rate_limits():
-    """Each accepted call consumes a per-action rate-limit slot; reset so the
-    cases stay independent of collection order."""
-    _reset_rate_limits()
-    yield
-    _reset_rate_limits()
 
 
 @pytest.fixture

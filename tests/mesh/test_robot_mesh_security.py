@@ -39,12 +39,10 @@ def _reset_state(monkeypatch, tmp_path):
     # breaks hermeticity and stretches a rate-limit burst past its window.
     # These tests pin the defence layers, not transport - forbid the gateway.
     monkeypatch.setattr(rmt, "_gateway_mesh", lambda: None)
-    rmt._reset_rate_limits()
     from strands_robots.mesh import audit
 
     audit._SEQ_COUNTER = 0
     yield
-    rmt._reset_rate_limits()
 
 
 def _make_ctx(response: str = "y", *, raises: bool = False) -> MagicMock:
@@ -311,7 +309,6 @@ class TestRateLimitTOCTOU:
 
     def test_concurrent_approvals_capped_at_configured_limit(self, monkeypatch):
         # Lower the limit to make the race deterministic.
-        rmt._reset_rate_limits()
 
         # Pretend the limit is 2 per 60s.
         monkeypatch.setitem(rmt._RATE_LIMITS, "emergency_stop", (2, 60.0))
@@ -332,7 +329,6 @@ class TestRateLimitTOCTOU:
         assert "raced past" in race_err
 
     def test_atomic_helper_does_not_consume_on_full_bucket(self, monkeypatch):
-        rmt._reset_rate_limits()
         monkeypatch.setitem(rmt._RATE_LIMITS, "broadcast", (1, 60.0))
         assert rmt._rate_limit_check_and_record("broadcast") is None
         # Full -- second call rejects.
@@ -395,7 +391,6 @@ class TestRateLimitWindowExpiry:
     def test_check_clears_after_window_elapses(self, monkeypatch):
         clock = _FakeClock()
         monkeypatch.setattr(rmt.time, "monotonic", clock)
-        rmt._reset_rate_limits()
 
         # Fill emergency_stop (cap 3 / 60s window) at t=0.
         for _ in range(3):
@@ -414,7 +409,6 @@ class TestRateLimitWindowExpiry:
     def test_check_and_record_frees_slot_after_window(self, monkeypatch):
         clock = _FakeClock()
         monkeypatch.setattr(rmt.time, "monotonic", clock)
-        rmt._reset_rate_limits()
 
         # Atomically reserve all 3 slots at t=0; the 4th is rejected.
         for _ in range(3):

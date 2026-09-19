@@ -58,10 +58,8 @@ def _clean_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Iterator[Non
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
     monkeypatch.setitem(rmt._RATE_LIMITS, ACTION, (LIMIT, 60.0))
-    rmt._reset_rate_limits()
     rmt._reset_interrupt_actions_cache()
     yield
-    rmt._reset_rate_limits()
     rmt._reset_interrupt_actions_cache()
 
 
