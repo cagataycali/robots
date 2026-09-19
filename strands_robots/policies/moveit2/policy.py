@@ -42,7 +42,7 @@ import os
 from typing import Any
 
 from strands_robots.policies._log_safety import sanitize_log_value
-from strands_robots.policies._state_keys import joint_positions_from_observation
+from strands_robots.policies._state_keys import joint_positions_from_observation, observation_joint_keys
 from strands_robots.policies.base import Policy
 from strands_robots.utils import name_list_error, tcp_port_error
 
@@ -118,6 +118,8 @@ class MoveIt2Policy(Policy):
         self.port = port
         self.planning_group = planning_group
         self._robot_state_keys: list[str] = []
+        #: Joint keys of the last observation read, in vector order.
+        self._observation_joint_keys: list[str] = []
 
         resolved_token = api_token or os.environ.get("MOVEIT2_API_TOKEN")
         self._client: MoveIt2InferenceClient = MoveIt2InferenceClient(
@@ -339,6 +341,7 @@ class MoveIt2Policy(Policy):
         the wire; ``None`` (no state at all) lets the sidecar use its own state
         estimate from ``/joint_states``.
         """
+        self._observation_joint_keys = observation_joint_keys(observation_dict, self._robot_state_keys)
         try:
             return joint_positions_from_observation(observation_dict, self._robot_state_keys)
         except (TypeError, ValueError) as e:
@@ -384,12 +387,26 @@ class MoveIt2Policy(Policy):
     def _resolve_joint_keys(self, n: int) -> list[str]:
         """Resolve the joint key names for an n-element trajectory row.
 
-        If ``set_robot_state_keys`` was called with a matching length,
-        use those names; otherwise fall back to positional ``joint_<i>``
-        labels (consistent with :class:`MockPolicy`).
+        Three candidates, in order:
+
+        1. ``set_robot_state_keys`` names, when the row is that wide.
+        2. The keys the observation published its own joint positions under -
+           whole when the row is that wide, else its leading ``n``. A plan
+           covers the planning group, which is narrower than the robot that
+           carries it (``panda_arm`` plans 7 joints; a Panda publishes 9 and
+           declares 8 action keys, the two fingers sharing one), so neither
+           roster is the plan's width. A robot accepts commands under the joint
+           names it reports state under, so this keys the row without inventing
+           a name, and a group that is not the leading joints is caught by the
+           runner's unresolved-key guard rather than silently mis-keyed.
+        3. Positional ``joint_<i>`` labels (consistent with :class:`MockPolicy`)
+           - a last resort, and one no robot resolves, which is why the named
+           rosters are tried first.
         """
         if self._robot_state_keys and len(self._robot_state_keys) == n:
             return list(self._robot_state_keys)
+        if len(self._observation_joint_keys) >= n > 0:
+            return list(self._observation_joint_keys[:n])
         return [f"joint_{i}" for i in range(n)]
 
     @staticmethod

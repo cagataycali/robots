@@ -27,10 +27,16 @@ container start. Port `5556` is published to the host loopback.
 
 ```bash
 source /opt/ros/jazzy/setup.bash         # or your distro
-pip install pyzmq msgpack                # the only non-ROS deps
+sudo apt install ros-jazzy-moveit-py ros-jazzy-moveit-configs-utils \
+    ros-jazzy-moveit-planners-ompl ros-jazzy-moveit-resources-panda-moveit-config
 python -m strands_robots.policies.moveit2.server.zmq_node \
-    --port 5556 --planning-group arm
+    --port 5556 --planning-group panda_arm
 ```
+
+`--moveit-config-package` / `--robot-name` default to the panda config MoveIt 2
+ships, so that command plans out of the box; point them at your own config
+package and pass its group name. `pyzmq` + `msgpack` (the `[moveit2]` extra)
+have to be importable by the interpreter that launches the sidecar.
 
 Use this when you're iterating on the sidecar code or attaching to a
 specific MoveIt2 config (custom URDF/SRDF, custom planning pipelines).
@@ -65,10 +71,9 @@ deployment typically involves:
 * Validating `world_update` against a known schema before pushing to
   the planning scene.
 * Checking `request.get("api_token")` against a secret.
-* Plugging the per-call start state from `joint_state` into a
-  `RobotState` (the reference impl trusts `set_start_state_to_current_state`).
-* Replacing `frame_id="base_link"` and `pose_link="end_effector_link"`
-  with values from your URDF.
+* Mapping `joint_state` onto the planning group by joint name rather than in
+  order (the reference impl reads it in order and logs the trailing values it
+  ignored).
 * Bounding plan time / `MotionPlanRequest` parameters.
 
 Each of these has a TODO-style comment in `zmq_node.py`.

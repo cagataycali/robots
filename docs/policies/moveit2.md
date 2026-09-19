@@ -33,10 +33,21 @@ docker compose up
 
 # Option 2 - native ROS 2 (dev loop)
 source /opt/ros/jazzy/setup.bash         # or your distro
-pip install pyzmq msgpack                # the only non-ROS deps
+sudo apt install ros-jazzy-moveit-py ros-jazzy-moveit-configs-utils \
+    ros-jazzy-moveit-planners-ompl ros-jazzy-moveit-resources-panda-moveit-config
 python -m strands_robots.policies.moveit2.server.zmq_node \
-    --port 5556 --planning-group arm
+    --port 5556 --planning-group panda_arm
 ```
+
+The sidecar plans for the robot named by `--moveit-config-package` /
+`--robot-name`, which default to the panda config MoveIt 2 itself ships - so the
+command above plans out of the box, and its planning group is `panda_arm`.
+Point both at your own config package for your robot. `pyzmq` + `msgpack` come
+from the `[moveit2]` extra; install them into the interpreter that launches the
+sidecar (on a distro with [PEP 668] system packages, that means a venv, or the
+distro's own python3-zmq / python3-msgpack).
+
+[PEP 668]: https://peps.python.org/pep-0668/
 
 See [`policies/moveit2/server/README.md`](https://github.com/strands-labs/robots/blob/main/strands_robots/policies/moveit2/server/README.md)
 for the sidecar deployment and forking guidance.
@@ -50,7 +61,7 @@ policy = create_policy(
     "moveit2",                     # alias: "moveit"
     host="127.0.0.1",
     port=5556,
-    planning_group="arm",
+    planning_group="panda_arm",     # the group name in your MoveIt config
 )
 
 actions = policy.get_actions_sync(
@@ -176,16 +187,38 @@ or decoded to an integer.
 from strands_robots import Robot
 
 sim = Robot("panda")              # sim-by-default
+# MoveIt plans from the state the client sends and refuses a start state in
+# collision - the Panda model rests at zero, which is outside its own elbow
+# range, so start from the model's home keyframe.
+sim.set_joint_positions(
+    dict(
+        zip(
+            sim.robot_joint_names("panda"),
+            [0.0, 0.0, 0.0, -1.5708, 0.0, 1.5708, -0.7853, 0.04, 0.04],
+            strict=True,
+        )
+    ),
+    robot_name="panda",
+)
 sim.run_policy(
     robot_name="panda",
     instruction="",               # ignored by the planner
     policy_provider="moveit2",
-    policy_config={"host": "127.0.0.1", "port": 5556, "planning_group": "arm"},
-    policy_kwargs={"target_pose": [0.3, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0]},
+    policy_config={"host": "127.0.0.1", "port": 5556, "planning_group": "panda_arm"},
+    policy_kwargs={"target_pose": [0.3, 0.0, 0.5, 0.0, 1.0, 0.0, 0.0]},
     duration=10.0,
     control_frequency=50.0,
 )
 ```
+
+That rollout takes the Panda's flange from 283.3 mm away to 4.6 mm from the
+commanded `target_pose`. The start configuration is read from the observation -
+the flat `observation.state` vector when a caller passes one, and the per-joint
+scalars a simulation publishes otherwise - and is read in order onto the joints
+the planning group plans over, so a robot that publishes joints the group does
+not plan (the two Panda fingers) is planned for anyway; the sidecar logs which
+values it ignored. The Cartesian goal is expressed in the robot model's own
+frame, for the planning group's end-effector link.
 
 `policy_config` and `policy_kwargs` are two different sinks. `policy_config`
 is expanded into the policy **constructor**; the per-call goal belongs in
