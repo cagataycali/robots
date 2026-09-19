@@ -290,9 +290,7 @@ def test_curobo_joint_state_object_with_a_multiline_repr_cannot_split_the_record
     provenance the message actually names."""
     policy = _stub(_robot_state_keys=[])
     with caplog.at_level(logging.WARNING):
-        result = CuroboPolicy._extract_joint_state(
-            policy, {"observation.state": [MultilineRepr()], FORGED: 0.0}
-        )
+        result = CuroboPolicy._extract_joint_state(policy, {"observation.state": [MultilineRepr()], FORGED: 0.0})
 
     assert result is None, "the degraded-extraction path is the one under test"
     rendered = _rendered(caplog)
@@ -307,9 +305,7 @@ def test_moveit2_joint_state_object_with_a_multiline_repr_cannot_split_the_recor
     provider that grows a third copy of this message is graded here too."""
     policy = _stub(_robot_state_keys=[])
     with caplog.at_level(logging.WARNING):
-        result = MoveIt2Policy._extract_joint_state(
-            policy, {"observation.state": [MultilineRepr()], FORGED: 0.0}
-        )
+        result = MoveIt2Policy._extract_joint_state(policy, {"observation.state": [MultilineRepr()], FORGED: 0.0})
 
     assert result is None, "the degraded-extraction path is the one under test"
     rendered = _rendered(caplog)
