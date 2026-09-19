@@ -940,17 +940,85 @@ class WBCPolicy(Policy):
         if main_path is None or not Path(main_path).is_file():
             raise RuntimeError(self._checkpoint_not_found_message(checkpoint, main_path))
         self.policy_session = ort.InferenceSession(main_path)  # type: ignore[attr-defined]
+        self._reject_mismatched_observation_width(self.policy_session, main_path)
 
         if self._walk:
             walk_path = self._resolve_onnx_path(self._config.walk_policy_path, checkpoint, _WALK_POLICY_FILENAME)
             if walk_path is not None and Path(walk_path).is_file():
                 self.walk_session = ort.InferenceSession(walk_path)  # type: ignore[attr-defined]
+                self._reject_mismatched_observation_width(self.walk_session, walk_path)
             else:
                 logger.info(
                     "WBCPolicy walk=True but no walk policy found (resolved: %r); "
                     "using the main policy for locomotion too.",
                     walk_path,
                 )
+
+    def _reject_mismatched_observation_width(self, session: Any, path: str) -> None:
+        """Raise if the loaded graph declares an input width this policy does not feed.
+
+        The observation assembled per query is ``single_obs_dim`` x
+        ``obs_history_len`` wide, and that number is the ONLY thing the two
+        decoupled-WBC G1 families disagree on: the non-gait Balance/Walk graphs
+        declare ``[batch, 516]`` (86 x 6) and the gait-clock family
+        ``[batch, 570]`` (95 x 6), while BOTH declare a 15-wide output. So the
+        output-width check in :meth:`_run_session` passes every wrong-family
+        checkpoint, which then fails on the first rollout tick with an
+        onnxruntime ``Got invalid dimensions for input`` that names neither this
+        policy, the family that was loaded, nor the one that was wanted - after
+        the world has been built and the robot has started falling. The graph
+        states its own width at load, which is where the mismatch is decided,
+        the same way :meth:`_reject_sonic_inference_stack` decides the wrong
+        weight family up front.
+
+        A graph whose batch-1 dimension is symbolic or absent is left alone: it
+        accepts the width it is fed, so there is nothing to disagree with.
+
+        Args:
+            session: The freshly constructed ONNX session.
+            path: The resolved checkpoint path, named in the message.
+
+        Raises:
+            RuntimeError: If the graph declares a concrete input width other
+                than the one this config feeds.
+        """
+        expected = self._config.single_obs_dim * self._config.obs_history_len
+        declared = self._declared_input_width(session)
+        if declared is None or declared == expected:
+            return
+        raise RuntimeError(
+            f"{type(self).__name__} checkpoint {path!r} declares an ONNX input width of "
+            f"{declared}, but this policy feeds {expected} values per query "
+            f"(single_obs_dim={self._config.single_obs_dim} x "
+            f"obs_history_len={self._config.obs_history_len}). The decoupled-WBC G1 "
+            "checkpoints differ only here: the Balance/Walk weights are the non-gait "
+            "516-wide family (86 x 6, provider 'wbc') and the gait-clock weights are "
+            "570-wide (95 x 6, provider 'wbc_gait'). Both emit 15 actions, so this width "
+            "is the only thing that tells them apart - load the checkpoint with the "
+            "provider whose observation layout matches it, or supply a config whose "
+            "single_obs_dim x obs_history_len is the declared width."
+        )
+
+    @staticmethod
+    def _declared_input_width(session: Any) -> int | None:
+        """The concrete width of the graph's first input, or ``None`` if unstated.
+
+        Duck-typed like :meth:`_session_input_name`, so a stub session without
+        ``get_inputs`` or without a ``shape`` states no width and is not graded.
+        An ONNX shape entry is an ``int`` for a fixed dimension and a ``str``
+        (or ``None``) for a symbolic one such as ``batch_size``.
+        """
+        get_inputs = getattr(session, "get_inputs", None)
+        if get_inputs is None:
+            return None
+        inputs = get_inputs()
+        if not inputs:
+            return None
+        shape = getattr(inputs[0], "shape", None)
+        if not shape or len(shape) < 2:
+            return None
+        last = shape[-1]
+        return last if isinstance(last, int) else None
 
     @staticmethod
     def _reject_sonic_inference_stack(checkpoint: str | None) -> None:

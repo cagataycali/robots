@@ -42,7 +42,11 @@ sim.run_policy(robot_name="unitree_g1", policy_object=policy,
 
 The shipped `GR00T-WholeBodyControl-Balance.onnx` / `-Walk.onnx` weights are the
 *non-gait* 516-wide family and do **not** load into this variant; supply a
-gait-clock checkpoint whose ONNX input is `[batch, 570]`.
+gait-clock checkpoint whose ONNX input is `[batch, 570]`. Handing one to
+`create_policy("wbc_gait", ...)` is refused where the checkpoint is opened,
+naming the width the graph declares and the width this variant feeds: both
+families emit 15 actions, so the input width is the only thing that tells them
+apart.
 
 The new ingredient is the phase clock - a small stateful generator
 (`GaitClock`) that turns the velocity command + step frequency into the
