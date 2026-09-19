@@ -1,7 +1,7 @@
 ### Added: the Agent tab - a Strands Agent whose hands are the simulations
 
 `/ws/agent` is one operator conversation with a Strands `Agent`
-(`dashboard/agent_console.py`, model from `STRANDS_MODEL_ID`). Its tools
+(`dashboard/agent_console.py`, model from `STRANDS_MODEL_ID`, else the SDK's own default). Its tools
 (`robots`, `sim_sessions`, `sim_start`, `sim_state`, `sim_set_joints`,
 `sim_reset`, `sim_stop`, `emergency_stop`) go through the same `Safety`
 object as the buttons, so the e-stop refuses the agent the way it refuses a
