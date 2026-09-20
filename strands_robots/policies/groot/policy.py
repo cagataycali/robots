@@ -253,7 +253,7 @@ class ActionMapping:
 #: row. Naming the slot makes the composition explicit in the caller's own
 #: mapping, in both directions and in either inference mode, and it does not
 #: depend on dict ordering the way a bare repeat would.
-_SLOT_RE = re.compile(r"^(?P<key>[^\[\]]+)\[(?P<slot>\d+)\]$")
+_SLOT_RE = re.compile(r"^(?P<key>[^\[\]]+)\[(?P<slot>\d+)\]\Z")
 
 
 def _split_slot(key: str, *, what: str) -> tuple[str, int | None]:
