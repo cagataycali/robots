@@ -61,9 +61,11 @@ class _Recording:
 
 
 def _replay(monkeypatch: pytest.MonkeyPatch, sim: FakeSim, recording: _Recording, **kw: Any) -> dict[str, Any]:
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", lambda repo_id, episode, root: (recording, 0, 1), raising=False)
+    monkeypatch.setattr(
+        dataset_source, "load_lerobot_episode", lambda repo_id, episode, root: (recording, 0, 1), raising=False
+    )
     return PolicyRunner(sim).replay(repo_id="fake/recording", robot_name="fake_robot", speed=1000.0, **kw)
 
 

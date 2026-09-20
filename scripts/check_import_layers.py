@@ -56,7 +56,10 @@ PACKAGE = "strands_robots"
 #: ``app`` because it is the same recording concern written incrementally, while
 #: ``dataset_metadata`` sits in ``core`` because reading what a dataset recorded
 #: is a fact the sim facade, the checker and the judge each verify, where writing
-#: one is a session the app owns; and
+#: one is a session the app owns, and ``dataset_source`` beside it for the same
+#: reason: which directory a ``repo_id`` names and where an episode's frames
+#: start are questions the recorder, three sim backends, the rollout runner and
+#: the teleoperation tool all have to answer identically; and
 #: ``teleop_mixin`` sits with ``drivers|mesh`` because it is an input-device
 #: concern shared by three hosts in three layers - the hardware ``Robot``, the
 #: MuJoCo ``Simulation`` and the Device Connect sim driver - so it belongs under
@@ -77,6 +80,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "_serial_discovery",
             "bus_access",
             "dataset_metadata",
+            "dataset_source",
             "episode_labels",
             "locomotion_envelope",
             "recording_errors",
@@ -145,7 +149,6 @@ KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.simulation.isaac.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.mujoco.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.newton.recording", "strands_robots.dataset_recorder"),
-    ("strands_robots.simulation.policy_runner", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.recording", "strands_robots.streaming_dataset"),
     ("strands_robots.teleop_mixin", "strands_robots.teleoperator"),

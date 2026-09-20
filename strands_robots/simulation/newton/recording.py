@@ -107,7 +107,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         Args:
             repo_id: HuggingFace dataset id (``owner/name``) or a local path. The
                 directory it records into is resolved by
-                :func:`~strands_robots.dataset_recorder.resolve_dataset_dir` -
+                :func:`~strands_robots.dataset_source.resolve_dataset_dir` -
                 the same resolver ``DatasetRecorder.create`` uses - so an
                 ``owner/name`` id lands in ``$HF_LEROBOT_HOME/{repo_id}`` while a
                 value that is itself a path is taken as the directory. That home
@@ -129,7 +129,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 equal that dataset's on-disk rate, which a resume cannot change.
             root: Explicit on-disk dataset directory, used verbatim - it replaces
                 the ``repo_id`` resolution above rather than being joined to it.
-                See :func:`~strands_robots.dataset_recorder.resolve_dataset_dir`
+                See :func:`~strands_robots.dataset_source.resolve_dataset_dir`
                 for the full precedence.
             push_to_hub: Publish to the Hub at ``stop_recording``. Must be a
                 boolean - a publication posture is not read by truthiness

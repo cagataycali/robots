@@ -141,12 +141,12 @@ def test_malformed_action_key_map_rejected_before_dataset_load(bad_map, expected
     actuator. The loader is monkeypatched to fail loudly if it is ever reached,
     pinning that a malformed map costs no multi-minute dataset fetch.
     """
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
     def _must_not_load(*args, **kwargs):
         raise AssertionError("dataset loader reached despite a malformed action_key_map")
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", _must_not_load, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", _must_not_load, raising=False)
 
     sim = Simulation()
     sim.create_world(ground_plane=True)

@@ -49,7 +49,7 @@ from typing import Any
 
 import pytest
 
-from strands_robots import dataset_recorder as dataset_recorder_module
+from strands_robots import dataset_source
 from strands_robots.simulation import policy_runner as policy_runner_module
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.policy_runner import PolicyRunner
@@ -209,7 +209,7 @@ def replay_harness(monkeypatch):
 
         monkeypatch.setattr(policy_runner_module, "time", clock)
         monkeypatch.setattr(
-            dataset_recorder_module,
+            dataset_source,
             "load_lerobot_episode",
             lambda repo_id, episode=0, root=None: (dataset, 0, FRAMES),
         )

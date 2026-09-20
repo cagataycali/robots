@@ -28,7 +28,7 @@ import pytest
 import requests
 from huggingface_hub.errors import OfflineModeIsEnabled
 
-from strands_robots.dataset_recorder import resolve_dataset_dir
+from strands_robots.dataset_source import resolve_dataset_dir
 from strands_robots.simulation.policy_runner import PolicyRunner
 from strands_robots.simulation.recording import DatasetRecordingMixin
 from tests.simulation.test_policy_runner import FakeSim
@@ -93,9 +93,9 @@ class TestTheRootIsResolvedFromThisSessionsRecording:
     def test_a_recording_at_the_default_location_keeps_the_absent_root(self, tmp_path, monkeypatch) -> None:
         # lerobot reads $HF_LEROBOT_HOME once at import, so redirect the home
         # this repo resolves through rather than the environment.
-        import strands_robots.dataset_recorder as dr
+        import strands_robots.dataset_source as dataset_source
 
-        monkeypatch.setattr(dr, "_lerobot_home", lambda: tmp_path)
+        monkeypatch.setattr(dataset_source, "_lerobot_home", lambda: tmp_path)
         default = Path(resolve_dataset_dir("lab/wave", None))
         default.mkdir(parents=True)
         state = {"last_dataset_repo_id": "lab/wave", "last_dataset_root": str(default)}
@@ -120,9 +120,9 @@ class TestTheRootIsResolvedFromThisSessionsRecording:
     def test_a_dataset_at_the_default_location_is_not_shadowed(self, tmp_path, monkeypatch) -> None:
         # An absent root has always read the default location, so a recording
         # elsewhere must not move the directory under a call that worked.
-        import strands_robots.dataset_recorder as dr
+        import strands_robots.dataset_source as dataset_source
 
-        monkeypatch.setattr(dr, "_lerobot_home", lambda: tmp_path / "home")
+        monkeypatch.setattr(dataset_source, "_lerobot_home", lambda: tmp_path / "home")
         (Path(resolve_dataset_dir("lab/wave", None)) / "meta").mkdir(parents=True)
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
@@ -251,10 +251,10 @@ class TestTheDatasetsOnDiskAreNamed:
             (parent / name).mkdir(parents=True)
 
     def test_a_typo_is_answered_with_the_datasets_beside_it(self, tmp_path, monkeypatch) -> None:
-        from strands_robots import dataset_recorder
+        from strands_robots import dataset_source
 
         self._make(tmp_path / "lab", ["wave"], decoys=["notes"])
-        monkeypatch.setattr(dataset_recorder, "_lerobot_home", lambda: tmp_path)
+        monkeypatch.setattr(dataset_source, "_lerobot_home", lambda: tmp_path)
         text = _runner({})._replay_load_failure("lab/waev", None, _RepositoryNotFoundError(HUB_404))
         assert f"Datasets on disk in {tmp_path / 'lab'}: wave." in text
         assert "notes" not in text

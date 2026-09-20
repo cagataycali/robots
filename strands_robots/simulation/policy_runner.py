@@ -3369,7 +3369,7 @@ class PolicyRunner:
             root: Local dataset directory. When omitted it is resolved from
                 ``repo_id`` by the rule recording writes through, so an id that
                 is itself a path replays the directory it recorded to
-                (:func:`~strands_robots.dataset_recorder.local_dataset_dir`).
+                (:func:`~strands_robots.dataset_source.local_dataset_dir`).
             speed: Playback speed multiplier (1.0 = real time). Must be a
                 positive, finite number (any real scalar, including a NumPy
                 scalar such as ``np.float32(2.0)``); a non-positive,
@@ -3480,7 +3480,7 @@ class PolicyRunner:
         episode = int(episode)
 
         try:
-            from strands_robots.dataset_recorder import load_lerobot_episode
+            from strands_robots.dataset_source import load_lerobot_episode
         except ImportError:
             return {"status": "error", "content": [{"text": "lerobot not installed"}]}
 
@@ -3795,7 +3795,7 @@ class PolicyRunner:
         """Resolve the directory a replay reads when the caller named only the id.
 
         An explicit ``root`` and an id that is itself a path are left to
-        :func:`~strands_robots.dataset_recorder.load_lerobot_episode`, which
+        :func:`~strands_robots.dataset_source.load_lerobot_episode`, which
         resolves them by the rule recording wrote through. An ``owner/name`` id
         with no root normally keeps its absent root (LeRobot's Hub snapshot
         cache) - except when THIS sim recorded that very id to a directory
@@ -3809,7 +3809,7 @@ class PolicyRunner:
         """
         if root:
             return root, ""
-        from strands_robots.dataset_recorder import local_dataset_dir, resolve_dataset_dir
+        from strands_robots.dataset_source import local_dataset_dir, resolve_dataset_dir
 
         if local_dataset_dir(repo_id) is not None:
             return None, ""
@@ -3862,7 +3862,7 @@ class PolicyRunner:
         unreachable = not hub_miss and any(c.__name__ in _HUB_UNREACHABLE_ERRORS for c in type(error).__mro__)
         if not (hub_miss or unreachable):
             return text
-        from strands_robots.dataset_recorder import resolve_dataset_dir
+        from strands_robots.dataset_source import resolve_dataset_dir
 
         checked = resolve_dataset_dir(repo_id, root)
         if unreachable:

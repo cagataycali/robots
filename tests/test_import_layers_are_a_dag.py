@@ -292,6 +292,35 @@ class TestTheContract:
         }
         assert layers == {"sim|policies", "app", "tools"}, f"read from {sorted(layers)}"
 
+    def test_where_a_dataset_lives_sits_below_the_session_that_writes_one(self, graph: Any) -> None:
+        """Addressing a dataset is not writing one, so the address sits lower.
+
+        One ``repo_id`` has one directory and one episode range, and the recorder
+        session, the three sim backends, the rollout runner and the teleoperation
+        tool all have to resolve them the same way -- a second derivation is a
+        read that misses the write. ``resolve_dataset_dir`` and
+        ``load_lerobot_episode`` lived with the writer in ``app``, so the rollout
+        runner deferred an import of the recorder to find out where its own
+        recording went. ``dataset_source`` holds them now, under all four, and
+        its own imports are what let it: ``quiet_video_backend``,
+        ``non_negative_whole_number_error``, and LeRobot itself inside the two
+        functions that open a dataset.
+        """
+        source = "strands_robots.dataset_source"
+        assert source in graph.modules
+        core = mod.LAYER_NAMES.index("core")
+        assert mod.layer_of(source) == core
+        for kind in ("runtime", "typing_only", "late"):
+            above = sorted(t for t in getattr(graph, kind).get(source, frozenset()) if mod.layer_of(t) != core)
+            assert above == [], f"{kind} imports above core: {above}"
+        layers = {
+            mod.LAYER_NAMES[mod.layer_of(importer)]
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            if source in targets
+        }
+        assert layers == {"sim|policies", "app", "tools"}, f"read from {sorted(layers)}"
+
     def test_the_path_sandbox_reads_nothing_from_the_package(self, graph: Any) -> None:
         """A core guard is standard-library-only, which is what lets it sit there.
 

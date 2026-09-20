@@ -324,9 +324,9 @@ def test_j5_replay_applies_recorded_actions_to_arm(sim, monkeypatch):
         return episode, 0, n_frames
 
     # Monkey-patch the module-level loader that replay() calls
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", fake_loader, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", fake_loader, raising=False)
 
     from strands_robots.simulation.policy_runner import PolicyRunner
 

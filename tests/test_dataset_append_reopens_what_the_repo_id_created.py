@@ -1,7 +1,7 @@
 """The ``repo_id`` that created a dataset reopens it for appending.
 
 ``DatasetRecorder.create`` resolves the dataset directory once, through
-:func:`~strands_robots.dataset_recorder.resolve_dataset_dir`, and forwards the
+:func:`~strands_robots.dataset_source.resolve_dataset_dir`, and forwards the
 result to LeRobot as an explicit ``root``. ``resume`` -- the multi-episode append
 entry point, and the only writable one for an existing dataset -- forwarded the
 caller's ``root`` unresolved instead. An absent one therefore stayed absent, and
@@ -48,6 +48,7 @@ from typing import Any, NamedTuple
 import pytest
 
 from strands_robots import dataset_recorder as dr
+from strands_robots import dataset_source
 
 
 class _Meta:
@@ -105,7 +106,7 @@ def writer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> type[_WriterThatR
     module.LeRobotDataset = _WriterThatRefusesAnAbsentRoot  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "lerobot.datasets.lerobot_dataset", module)
     home = tmp_path / "home"
-    monkeypatch.setattr(dr, "_lerobot_home", lambda: home)
+    monkeypatch.setattr(dataset_source, "_lerobot_home", lambda: home)
     work = tmp_path / "work"
     work.mkdir()
     monkeypatch.chdir(work)

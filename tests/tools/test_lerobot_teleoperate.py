@@ -284,7 +284,7 @@ def test_build_record_command_always_pins_dataset_root_when_root_omitted() -> No
     root (resolved from the repo_id under $HF_LEROBOT_HOME) keeps the on-disk
     dataset at the requested location regardless of the stamp.
     """
-    from strands_robots.dataset_recorder import resolve_dataset_dir
+    from strands_robots.dataset_source import resolve_dataset_dir
 
     cmd = build_lerobot_command(
         action="start",
@@ -362,7 +362,7 @@ def test_record_result_reports_pinned_dataset_root(monkeypatch: pytest.MonkeyPat
     from the result rather than deriving it from the requested repo_id, which
     lerobot HEAD would have stamped.
     """
-    from strands_robots.dataset_recorder import resolve_dataset_dir
+    from strands_robots.dataset_source import resolve_dataset_dir
 
     monkeypatch.setattr(tele_mod.subprocess, "Popen", lambda *a, **k: _FakeProc(pid=os.getpid()))
     result = lerobot_teleoperate(

@@ -667,11 +667,12 @@ def test_start_recording_resolves_namespaced_repo_id_under_hf_cache(sim_with_two
     dir, pre-seeding the resolved cache dir, and asserting overwrite=True wipes
     exactly that resolved path."""
     import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
     monkeypatch.setattr(dr, "has_lerobot_dataset", lambda: True)
-    # Path resolution lives in dataset_recorder.resolve_dataset_dir(); pin the
+    # Path resolution lives in dataset_source.resolve_dataset_dir(); pin the
     # HF-cache home it uses so the resolved dir is deterministic under tmp_path.
-    monkeypatch.setattr(dr, "_lerobot_home", lambda: tmp_path / ".cache" / "huggingface" / "lerobot")
+    monkeypatch.setattr(dataset_source, "_lerobot_home", lambda: tmp_path / ".cache" / "huggingface" / "lerobot")
     monkeypatch.setattr(dr.DatasetRecorder, "create", classmethod(lambda cls, **kw: object()))
 
     cache_dir = tmp_path / ".cache" / "huggingface" / "lerobot" / "user" / "name"

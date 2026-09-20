@@ -679,7 +679,7 @@ def build_lerobot_command(
                 raise ValueError(error)
             if error := _flag_error("record", flag_options):
                 raise ValueError(error)
-            from strands_robots.dataset_recorder import resolve_dataset_dir
+            from strands_robots.dataset_source import resolve_dataset_dir
 
             cmd = ["python", "-m", "lerobot.scripts.lerobot_record"]
             cmd.extend(
@@ -1144,7 +1144,7 @@ def lerobot_teleoperate(
             # regardless, so this is the authoritative on-disk location.
             resolved_dataset_root: str | None = None
             if dataset_repo_id:
-                from strands_robots.dataset_recorder import resolve_dataset_dir
+                from strands_robots.dataset_source import resolve_dataset_dir
 
                 resolved_dataset_root = str(resolve_dataset_dir(dataset_repo_id, dataset_root))
 

@@ -1,7 +1,7 @@
 """The ``repo_id`` that recorded a dataset reads it back.
 
 Every writing entry point resolves the dataset directory through
-:func:`~strands_robots.dataset_recorder.resolve_dataset_dir` and hands LeRobot
+:func:`~strands_robots.dataset_source.resolve_dataset_dir` and hands LeRobot
 the result as an explicit ``root``, because a ``repo_id`` that is itself a path
 (absolute, ``./``-prefixed, or with no ``owner/name`` slash) is a local
 directory here and is **not** one to LeRobot, which resolves any absent root to
@@ -57,7 +57,7 @@ from typing import Any, NamedTuple
 
 import pytest
 
-from strands_robots import dataset_recorder as dr
+from strands_robots import dataset_source
 from strands_robots import streaming_dataset as sd
 
 
@@ -116,7 +116,7 @@ def reader(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> type[_ReaderThatF
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", _ReaderThatFindsOnlyWhereItLooks, raising=False)
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setattr(dr, "_lerobot_home", lambda: home)
+    monkeypatch.setattr(dataset_source, "_lerobot_home", lambda: home)
     _ReaderThatFindsOnlyWhereItLooks.home = home
     _ReaderThatFindsOnlyWhereItLooks.kwargs = {}
     work = tmp_path / "work"
@@ -127,7 +127,7 @@ def reader(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> type[_ReaderThatF
 
 def _replay(repo_id: str, root: str | None) -> tuple[Any, Any]:
     """Read an episode the way ``Simulation.replay_episode`` does."""
-    ds, start, length = dr.load_lerobot_episode(repo_id, 0, root)
+    ds, start, length = dataset_source.load_lerobot_episode(repo_id, 0, root)
     return ds, (start, length)
 
 
@@ -178,7 +178,7 @@ def test_a_path_like_repo_id_reads_the_directory_it_recorded_to(
     is ``/abs/dir`` -- joining an absolute right-hand operand discards the left --
     so LeRobot's own resolution already lands on it, with or without this fix.
     """
-    recorded_at = plant(dr.resolve_dataset_dir(case.repo_id, None))
+    recorded_at = plant(dataset_source.resolve_dataset_dir(case.repo_id, None))
 
     ds, reported = read.open(case.repo_id, None)
 

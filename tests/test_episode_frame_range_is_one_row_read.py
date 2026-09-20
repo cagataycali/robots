@@ -71,7 +71,7 @@ from typing import Any
 
 import pytest
 
-from strands_robots import dataset_recorder as dr
+from strands_robots import dataset_source
 
 # Distinct lengths, so *which* episode was resolved is visible in the returned
 # range rather than inferred from a count.
@@ -176,7 +176,7 @@ class TestTheRangeIsReadFromTheEpisodesOwnRow:
     @pytest.mark.parametrize("episode", [0, 1, 2])
     def test_only_the_requested_episodes_row_is_read(self, install_fake, episode):
         dataset = install_fake(_FakeDataset(_rows_0_6()))
-        dr.load_lerobot_episode("local/probe", episode=episode, root="/probe")
+        dataset_source.load_lerobot_episode("local/probe", episode=episode, root="/probe")
         assert dataset.episodes.reads == [episode], (
             f"resolving episode {episode} read metadata rows {dataset.episodes.reads}; "
             "the range is stated on that episode's own row, so one read answers it"
@@ -186,7 +186,7 @@ class TestTheRangeIsReadFromTheEpisodesOwnRow:
         counts = []
         for episode in range(len(_LENGTHS)):
             dataset = install_fake(_FakeDataset(_rows_0_6()))
-            dr.load_lerobot_episode("local/probe", episode=episode, root="/probe")
+            dataset_source.load_lerobot_episode("local/probe", episode=episode, root="/probe")
             counts.append(len(dataset.episodes.reads))
         assert len(set(counts)) == 1, (
             f"metadata row reads per episode were {counts}; a constant-time read does not "
@@ -207,18 +207,18 @@ class TestTheResolvedRangeIsUnchanged:
     @pytest.mark.parametrize("episode", [0, 1, 2])
     def test_the_recorded_range_is_returned(self, install_fake, episode):
         install_fake(_FakeDataset(_rows_0_6()))
-        _, start, length = dr.load_lerobot_episode("local/probe", episode=episode, root="/probe")
+        _, start, length = dataset_source.load_lerobot_episode("local/probe", episode=episode, root="/probe")
         assert (start, length) == (_STARTS[episode], _LENGTHS[episode])
 
     def test_a_pre_0_6_dataset_still_resolves_through_the_tensor_index(self, install_fake):
         dataset = install_fake(_FakeDataset(_rows_length_only(), tensor_index=True))
-        _, start, length = dr.load_lerobot_episode("local/probe", episode=2, root="/probe")
+        _, start, length = dataset_source.load_lerobot_episode("local/probe", episode=2, root="/probe")
         assert (start, length) == (_STARTS[2], _LENGTHS[2])
         assert dataset.frame_reads == [], "the tensor rung answered, so no frame scan was needed"
 
     def test_a_dataset_with_neither_still_accumulates_lengths(self, install_fake):
         dataset = install_fake(_FakeDataset(_rows_length_only()))
-        _, start, length = dr.load_lerobot_episode("local/probe", episode=2, root="/probe")
+        _, start, length = dataset_source.load_lerobot_episode("local/probe", episode=2, root="/probe")
         assert (start, length) == (_STARTS[2], _LENGTHS[2])
         assert dataset.frame_reads == [], "the accumulation answered, so no frame scan was needed"
 
@@ -235,7 +235,7 @@ class TestTheResolvedRangeIsUnchanged:
         rows = _rows_0_6()
         rows[1]["length"] = _LENGTHS[1] + 5
         install_fake(_FakeDataset(rows))
-        _, start, length = dr.load_lerobot_episode("local/probe", episode=1, root="/probe")
+        _, start, length = dataset_source.load_lerobot_episode("local/probe", episode=1, root="/probe")
         assert (start, length) == (_STARTS[1], _LENGTHS[1]), (
             "the row's length column disagreed with its range columns; the range is what "
             "the frame slice is taken from, so it is the field a reader must resolve"
@@ -243,7 +243,7 @@ class TestTheResolvedRangeIsUnchanged:
 
     def test_the_frame_scan_is_not_reached_for_a_0_6_dataset(self, install_fake):
         dataset = install_fake(_FakeDataset(_rows_0_6()))
-        dr.load_lerobot_episode("local/probe", episode=2, root="/probe")
+        dataset_source.load_lerobot_episode("local/probe", episode=2, root="/probe")
         assert dataset.frame_reads == [], (
             "the frame scan decodes the dataset one frame at a time; an episode whose row "
             "states its range must never reach it"
@@ -263,7 +263,7 @@ def _readers_of_the_frame_range() -> dict[str, str]:
     added later under the same rule instead of inheriting an exemption by being
     absent from a tuple.
     """
-    root = pathlib.Path(dr.__file__).parent
+    root = pathlib.Path(dataset_source.__file__).parent
     found: dict[str, str] = {}
     for path in sorted(root.rglob("*.py")):
         text = path.read_text(encoding="utf-8")
@@ -310,7 +310,7 @@ class TestPremises:
     """
 
     def test_the_declared_lerobot_range_is_the_0_6_series(self):
-        pyproject = pathlib.Path(dr.__file__).parent.parent / "pyproject.toml"
+        pyproject = pathlib.Path(dataset_source.__file__).parent.parent / "pyproject.toml"
         declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         extras = declared["project"]["optional-dependencies"]
         pins = [dep for group in extras.values() for dep in group if dep.startswith("lerobot[")]
@@ -371,7 +371,7 @@ class TestAgainstARealDataset:
     @pytest.mark.parametrize("episode", [0, 1, 2])
     def test_the_loader_resolves_the_recorded_range(self, recorded, episode):
         expected = (_STARTS[episode], _STARTS[episode] + _LENGTHS[episode])
-        _, start, length = dr.load_lerobot_episode("local/probe", episode=episode, root=str(recorded))
+        _, start, length = dataset_source.load_lerobot_episode("local/probe", episode=episode, root=str(recorded))
         assert (start, start + length) == expected, (
             "the loader answers the same question the recorded row states, so the range "
             "either resolves from the row or not at all"

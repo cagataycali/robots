@@ -233,14 +233,14 @@ class LeRobotDataCollector:
     def _default_root(self) -> str | None:
         """Resolve the on-disk dir LeRobot would use when ``--root`` is unset.
 
-        Delegates to :func:`strands_robots.dataset_recorder.resolve_dataset_dir`,
+        Delegates to :func:`strands_robots.dataset_source.resolve_dataset_dir`,
         which mirrors ``LeRobotDataset.create``'s default of
         ``$HF_LEROBOT_HOME/{repo_id}`` (honouring the ``HF_LEROBOT_HOME``
         environment override), so the re-run cleanup in :meth:`_new_recorder`
         can also clear the HF-cache default (issue #143), not just an explicit
         ``--root``.
         """
-        from strands_robots.dataset_recorder import resolve_dataset_dir
+        from strands_robots.dataset_source import resolve_dataset_dir
 
         return str(resolve_dataset_dir(self.repo_id))
 
@@ -1103,6 +1103,6 @@ class LeRobotDataCollector:
 
     def load_back(self, episode: int = 0):
         """Reload a recorded episode locally (no Hub). Returns (dataset, start, length)."""
-        from strands_robots.dataset_recorder import load_lerobot_episode
+        from strands_robots.dataset_source import load_lerobot_episode
 
         return load_lerobot_episode(repo_id=self.repo_id, episode=episode, root=self.root)

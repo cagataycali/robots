@@ -279,7 +279,7 @@ class TestThePremise:
 class TestLoadLerobotEpisodeRefusesAnUnusableIndex:
     @pytest.mark.parametrize("value", UNUSABLE)
     def test_it_raises_value_error_naming_the_parameter(self, value, fake_lerobot):
-        from strands_robots.dataset_recorder import load_lerobot_episode
+        from strands_robots.dataset_source import load_lerobot_episode
 
         with pytest.raises(ValueError) as excinfo:
             load_lerobot_episode("fake/repo", value)
@@ -289,7 +289,7 @@ class TestLoadLerobotEpisodeRefusesAnUnusableIndex:
 
     @pytest.mark.parametrize("value", UNUSABLE)
     def test_the_refusal_is_the_shared_rule_verbatim(self, value, fake_lerobot):
-        from strands_robots.dataset_recorder import load_lerobot_episode
+        from strands_robots.dataset_source import load_lerobot_episode
 
         expected = non_negative_whole_number_error(value, "episode", "load_lerobot_episode")
         assert expected is not None
@@ -300,7 +300,7 @@ class TestLoadLerobotEpisodeRefusesAnUnusableIndex:
     @pytest.mark.parametrize("value", UNUSABLE)
     def test_no_dataset_is_constructed(self, value, fake_lerobot):
         """The refusal lands before the hub download, not after it."""
-        from strands_robots.dataset_recorder import load_lerobot_episode
+        from strands_robots.dataset_source import load_lerobot_episode
 
         with pytest.raises(ValueError):
             load_lerobot_episode("fake/repo", value)
@@ -309,13 +309,13 @@ class TestLoadLerobotEpisodeRefusesAnUnusableIndex:
 
     def test_a_bool_no_longer_resolves_an_episode(self, fake_lerobot):
         """The load-bearing row: ``True`` resolved episode 1 pre-fix."""
-        from strands_robots.dataset_recorder import load_lerobot_episode
+        from strands_robots.dataset_source import load_lerobot_episode
 
         with pytest.raises(ValueError):
             load_lerobot_episode("fake/repo", True)
 
     def test_the_dataset_is_no_longer_blamed_for_a_non_integral_index(self, fake_lerobot):
-        from strands_robots.dataset_recorder import load_lerobot_episode
+        from strands_robots.dataset_source import load_lerobot_episode
 
         with pytest.raises(ValueError) as excinfo:
             load_lerobot_episode("fake/repo", 2.5)
@@ -326,7 +326,7 @@ class TestLoadLerobotEpisodeRefusesAnUnusableIndex:
     @pytest.mark.parametrize("value", ["0", [0], None])
     def test_a_non_numeric_index_no_longer_raises_type_error(self, value, fake_lerobot):
         """The loader documents ``ValueError`` as its refusal channel."""
-        from strands_robots.dataset_recorder import load_lerobot_episode
+        from strands_robots.dataset_source import load_lerobot_episode
 
         with pytest.raises(ValueError):
             load_lerobot_episode("fake/repo", value)
@@ -335,7 +335,7 @@ class TestLoadLerobotEpisodeRefusesAnUnusableIndex:
 class TestLoadLerobotEpisodeAcceptedDomain:
     @pytest.mark.parametrize("value,expected_episode", ACCEPTED)
     def test_an_accepted_index_resolves_that_episode(self, value, expected_episode, fake_lerobot):
-        from strands_robots.dataset_recorder import load_lerobot_episode
+        from strands_robots.dataset_source import load_lerobot_episode
 
         _, start, length = load_lerobot_episode("fake/repo", value)
         assert _STARTS[start] == expected_episode
@@ -347,7 +347,7 @@ class TestLoadLerobotEpisodeAcceptedDomain:
         The guard coerces with ``int()`` once it has round-tripped the value,
         so an accepted index reaches ``episode_data_index`` directly.
         """
-        from strands_robots.dataset_recorder import load_lerobot_episode
+        from strands_robots.dataset_source import load_lerobot_episode
 
         _, start, length = load_lerobot_episode("fake/repo", 2.0)
         assert (start, length) == (30, 30)
@@ -355,7 +355,7 @@ class TestLoadLerobotEpisodeAcceptedDomain:
 
     def test_an_out_of_range_whole_number_is_still_a_range_refusal(self, fake_lerobot):
         """Range is the dataset's business; the domain guard does not take it."""
-        from strands_robots.dataset_recorder import load_lerobot_episode
+        from strands_robots.dataset_source import load_lerobot_episode
 
         with pytest.raises(ValueError, match="out of range"):
             load_lerobot_episode("fake/repo", 99)
@@ -415,7 +415,7 @@ class TestTheLoaderAndTheFacadeAgree:
 
     @pytest.mark.parametrize("value", UNUSABLE)
     def test_both_refuse_every_unusable_index(self, value, fake_lerobot):
-        from strands_robots.dataset_recorder import load_lerobot_episode
+        from strands_robots.dataset_source import load_lerobot_episode
 
         runner, _ = _runner()
         assert runner.replay(repo_id="fake/repo", episode=value)["status"] == "error"
@@ -437,7 +437,7 @@ class TestTheRefusalAddsNothingLocal:
     @pytest.mark.parametrize("value", UNUSABLE)
     def test_neither_surface_narrows_or_widens_the_shared_domain(self, value, fake_lerobot):
         """No carve-out: the accepted set is exactly the shared rule's."""
-        from strands_robots.dataset_recorder import load_lerobot_episode
+        from strands_robots.dataset_source import load_lerobot_episode
 
         runner, _ = _runner()
         shared_refuses = non_negative_whole_number_error(value, "episode", "replay") is not None
@@ -458,7 +458,7 @@ class TestTheRefusalAddsNothingLocal:
 _REPLAY_EPISODE_SURFACES = {
     ("strands_robots/simulation/policy_runner.py", "replay"),
     ("strands_robots/simulation/base.py", "replay_episode"),
-    ("strands_robots/dataset_recorder.py", "load_lerobot_episode"),
+    ("strands_robots/dataset_source.py", "load_lerobot_episode"),
     # The episode-label surfaces resolve the same quantity: which recorded
     # episode a verdict/annotation/read is about. Each applies the shared rule
     # itself (the judge tools return the refusal as a structured error dict).

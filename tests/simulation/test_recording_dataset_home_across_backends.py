@@ -2,7 +2,7 @@
 
 ``start_recording`` is reimplemented per backend, and each copy has to answer the
 same question before it touches the disk: which directory does ``repo_id`` /
-``root`` name? :func:`~strands_robots.dataset_recorder.resolve_dataset_dir` is
+``root`` name? :func:`~strands_robots.dataset_source.resolve_dataset_dir` is
 the one answer -- it is what ``DatasetRecorder.create`` itself resolves with, so
 a backend that computes its own is deciding where a dataset lives while the
 recorder writes somewhere else.
@@ -61,7 +61,8 @@ from pathlib import Path
 import pytest
 
 import strands_robots.dataset_recorder as dr
-from strands_robots.dataset_recorder import resolve_dataset_dir
+import strands_robots.dataset_source as dataset_source
+from strands_robots.dataset_source import resolve_dataset_dir
 from strands_robots.simulation.models import SimRobot, SimWorld
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 
@@ -119,7 +120,7 @@ def relocated_home(monkeypatch, tmp_path):
     through.
     """
     home = tmp_path / "relocated" / "lerobot"
-    monkeypatch.setattr(dr, "_lerobot_home", lambda: home)
+    monkeypatch.setattr(dataset_source, "_lerobot_home", lambda: home)
     monkeypatch.setattr(dr, "lerobot_dataset_import_error", lambda: None)
     monkeypatch.setattr(dr, "has_lerobot_dataset", lambda: True)
     _StubRecorder.calls = []

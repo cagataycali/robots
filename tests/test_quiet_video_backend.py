@@ -241,9 +241,9 @@ class TestTheRecorderPassesTheAnswer:
         assert _FakeDataset.last_resume_kwargs["video_backend"] == "pyav"
 
     def test_read_back_kwargs_follow_the_signature(self, monkeypatch):
-        from strands_robots import dataset_recorder as dr
+        from strands_robots import dataset_source
 
-        monkeypatch.setattr(dr, "quiet_video_backend", lambda: "pyav")
+        monkeypatch.setattr(dataset_source, "quiet_video_backend", lambda: "pyav")
 
         class _NoBackend:
             def __init__(self, repo_id, root=None):
@@ -253,7 +253,7 @@ class TestTheRecorderPassesTheAnswer:
             def __init__(self, repo_id, root=None, video_backend=None):
                 pass
 
-        assert dr._quiet_backend_kwargs(_NoBackend) == {}
-        assert dr._quiet_backend_kwargs(_WithBackend) == {"video_backend": "pyav"}
-        monkeypatch.setattr(dr, "quiet_video_backend", lambda: None)
-        assert dr._quiet_backend_kwargs(_WithBackend) == {}
+        assert dataset_source._quiet_backend_kwargs(_NoBackend) == {}
+        assert dataset_source._quiet_backend_kwargs(_WithBackend) == {"video_backend": "pyav"}
+        monkeypatch.setattr(dataset_source, "quiet_video_backend", lambda: None)
+        assert dataset_source._quiet_backend_kwargs(_WithBackend) == {}

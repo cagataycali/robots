@@ -2,7 +2,7 @@
 
 A `repo_id` without a `root` is not a neutral shorthand in a unit test. Both
 `DatasetRecorder.create` and every backend's `start_recording` resolve the pair
-through :func:`~strands_robots.dataset_recorder.resolve_dataset_dir`, which
+through :func:`~strands_robots.dataset_source.resolve_dataset_dir`, which
 falls back to ``$HF_LEROBOT_HOME/{repo_id}`` -- by default
 ``~/.cache/huggingface/lerobot/{repo_id}`` -- and `_prepare_create_target` then
 **resolves and inspects that shared path** before any injected fake dataset

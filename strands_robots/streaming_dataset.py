@@ -19,7 +19,7 @@ import warnings
 from collections.abc import Callable
 from typing import Any
 
-from strands_robots.dataset_recorder import local_dataset_dir
+from strands_robots.dataset_source import local_dataset_dir
 from strands_robots.utils import (
     boolean_flag_error,
     finite_number_error,

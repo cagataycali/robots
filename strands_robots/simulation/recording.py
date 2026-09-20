@@ -1201,7 +1201,7 @@ class DatasetRecordingMixin:
         """Resolve the directory a recording writes to, stashed with its id.
 
         Every backend's ``start_recording`` resolves its target with
-        :func:`~strands_robots.dataset_recorder.resolve_dataset_dir` - the same
+        :func:`~strands_robots.dataset_source.resolve_dataset_dir` - the same
         resolver ``DatasetRecorder.create()`` uses, so the facade and the
         recorder agree on where a dataset lives (honouring ``$HF_LEROBOT_HOME``)
         - and stashes it as ``last_dataset_root`` for the consumers that run
@@ -1221,7 +1221,7 @@ class DatasetRecordingMixin:
         Returns:
             The resolved directory, for the caller's overwrite/resume logic.
         """
-        from strands_robots.dataset_recorder import resolve_dataset_dir
+        from strands_robots.dataset_source import resolve_dataset_dir
 
         dataset_dir = resolve_dataset_dir(repo_id, root)
         state = self._recording_state()
@@ -1848,7 +1848,7 @@ class DatasetRecordingMixin:
             repo_id: HF dataset id (e.g. ``"lerobot/svla_so100_pickplace"``) or
                 a ``repo_id`` that is itself a path, which streams the directory
                 it recorded to with no ``root`` restated
-                (:func:`~strands_robots.dataset_recorder.local_dataset_dir`).
+                (:func:`~strands_robots.dataset_source.local_dataset_dir`).
             **kwargs: Forwarded to
                 :meth:`StreamingDatasetReader.open` - e.g. ``root``,
                 ``delta_timestamps``, ``episodes``, ``shuffle`` (which decides

@@ -1,7 +1,7 @@
 """A dataset is written into the directory ``create`` prepared for it.
 
 ``DatasetRecorder.create`` does two things with a dataset directory. It resolves
-one through :func:`~strands_robots.dataset_recorder.resolve_dataset_dir` and
+one through :func:`~strands_robots.dataset_source.resolve_dataset_dir` and
 hands it to ``_prepare_create_target``, which inspects it and - under
 ``overwrite=True`` - deletes it; then it calls ``LeRobotDataset.create``, which
 resolves a directory of its own from ``repo_id`` whenever ``root`` is absent.
@@ -48,8 +48,9 @@ from typing import Any, ClassVar, NamedTuple
 
 import pytest
 
-from strands_robots import dataset_recorder as dr
-from strands_robots.dataset_recorder import DatasetRecorder, resolve_dataset_dir
+from strands_robots import dataset_source
+from strands_robots.dataset_recorder import DatasetRecorder
+from strands_robots.dataset_source import resolve_dataset_dir
 
 
 class _Writer:
@@ -105,7 +106,7 @@ def bench(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Bench:
     home.mkdir()
     work = tmp_path / "workdir"
     work.mkdir()
-    monkeypatch.setattr(dr, "_lerobot_home", lambda: home)
+    monkeypatch.setattr(dataset_source, "_lerobot_home", lambda: home)
     monkeypatch.setattr(_Writer, "home", home)
     monkeypatch.chdir(work)
     module = types.ModuleType("lerobot.datasets.lerobot_dataset")

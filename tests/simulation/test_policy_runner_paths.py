@@ -72,12 +72,12 @@ def test_replay_unknown_robot_name_errors_before_loading(monkeypatch):
     """
     sim = _MinimalSim(robots=["r0"])
 
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
     def _must_not_load(*args, **kwargs):
         raise AssertionError("load_lerobot_episode reached despite unknown robot")
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", _must_not_load, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", _must_not_load, raising=False)
 
     r = PolicyRunner(sim).replay(repo_id="some/dataset", robot_name="ghost")
     assert r["status"] == "error"
@@ -91,9 +91,9 @@ def test_replay_dataset_loader_raises_is_handled(monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("simulated HF download failure")
 
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", boom, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", boom, raising=False)
 
     r = PolicyRunner(sim).replay(repo_id="bad/dataset")
     assert r["status"] == "error"
@@ -111,12 +111,12 @@ def test_replay_speed_zero_rejected_before_loading(monkeypatch):
     """
     sim = _MinimalSim(robots=["r0"])
 
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
     def _must_not_load(*args, **kwargs):
         raise AssertionError("load_lerobot_episode reached despite invalid speed")
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", _must_not_load, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", _must_not_load, raising=False)
 
     r = PolicyRunner(sim).replay(repo_id="some/dataset", robot_name="r0", speed=0.0)
     assert r["status"] == "error"
@@ -130,12 +130,12 @@ def test_replay_negative_speed_rejected_before_loading(monkeypatch):
     """
     sim = _MinimalSim(robots=["r0"])
 
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
     def _must_not_load(*args, **kwargs):
         raise AssertionError("load_lerobot_episode reached despite invalid speed")
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", _must_not_load, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", _must_not_load, raising=False)
 
     r = PolicyRunner(sim).replay(repo_id="some/dataset", robot_name="r0", speed=-1.0)
     assert r["status"] == "error"
@@ -146,12 +146,12 @@ def test_replay_bool_speed_rejected(monkeypatch):
     """``bool`` is an ``int`` subclass; ``True`` must not slip through as 1.0x."""
     sim = _MinimalSim(robots=["r0"])
 
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
     def _must_not_load(*args, **kwargs):
         raise AssertionError("load_lerobot_episode reached despite bool speed")
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", _must_not_load, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", _must_not_load, raising=False)
 
     r = PolicyRunner(sim).replay(repo_id="some/dataset", robot_name="r0", speed=True)
     assert r["status"] == "error"
@@ -170,12 +170,12 @@ def test_replay_nan_speed_rejected_before_loading(monkeypatch):
     """
     sim = _MinimalSim(robots=["r0"])
 
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
     def _must_not_load(*args, **kwargs):
         raise AssertionError("load_lerobot_episode reached despite non-finite speed")
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", _must_not_load, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", _must_not_load, raising=False)
 
     for bad in (float("nan"), float("inf")):
         r = PolicyRunner(sim).replay(repo_id="some/dataset", robot_name="r0", speed=bad)
@@ -209,9 +209,9 @@ def test_replay_numpy_scalar_speed_accepted(monkeypatch):
 
     sim = _MinimalSim(robots=["r0"])
 
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", loader, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", loader, raising=False)
 
     # speed=100.0 magnitude keeps the test fast; use a NumPy float32 scalar.
     r = PolicyRunner(sim).replay(repo_id="fake/tiny", robot_name="r0", speed=np.float32(100.0))
@@ -245,9 +245,9 @@ def test_replay_with_tensor_like_actions(monkeypatch):
 
     sim = _MinimalSim(robots=["r0"])
 
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", loader, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", loader, raising=False)
 
     r = PolicyRunner(sim).replay(repo_id="fake/tensor", speed=100.0)  # fast
     assert r["status"] == "success"
@@ -281,9 +281,9 @@ def test_replay_rejects_action_vector_wider_than_action_keys(monkeypatch):
 
     sim = _MinimalSim(robots=["r0"])
 
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", loader, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", loader, raising=False)
 
     r = PolicyRunner(sim).replay(repo_id="fake/fat", speed=100.0)
     assert r["status"] == "error"
@@ -333,9 +333,9 @@ def test_replay_reads_actions_without_video_decode(monkeypatch):
 
     sim = _MinimalSim(robots=["r0"])
 
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", loader, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", loader, raising=False)
 
     r = PolicyRunner(sim).replay(repo_id="fake/brokenvideo", speed=100.0)
     assert r["status"] == "success"
@@ -361,9 +361,9 @@ def test_replay_frame_read_failure_returns_error_dict(monkeypatch):
 
     sim = _MinimalSim(robots=["r0"])
 
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
-    monkeypatch.setattr(dr, "load_lerobot_episode", loader, raising=False)
+    monkeypatch.setattr(dataset_source, "load_lerobot_episode", loader, raising=False)
 
     r = PolicyRunner(sim).replay(repo_id="fake/corrupt", speed=100.0)
     assert r["status"] == "error"
@@ -621,11 +621,14 @@ class _ColumnDataset:
 
 def _replay_rows(monkeypatch, rows):
     """Replay ``rows`` as one episode on a 3-joint sim, returning (sim, result)."""
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.dataset_source as dataset_source
 
     sim = _MinimalSim(robots=["r0"])
     monkeypatch.setattr(
-        dr, "load_lerobot_episode", lambda repo_id, episode, root: (_ColumnDataset(rows), 0, len(rows)), raising=False
+        dataset_source,
+        "load_lerobot_episode",
+        lambda repo_id, episode, root: (_ColumnDataset(rows), 0, len(rows)),
+        raising=False,
     )
     return sim, PolicyRunner(sim).replay(repo_id="fake/columns", speed=1000.0)
 

@@ -586,10 +586,10 @@ def _patch_lerobot_dataset(monkeypatch, fake_cls) -> None:
 
 
 def test_load_episode_uses_episode_data_index_fast_path(monkeypatch):
-    from strands_robots import dataset_recorder as dr
+    from strands_robots import dataset_source
 
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetWithIndex)
-    ds, start, length = dr.load_lerobot_episode("user/data", episode=1)
+    ds, start, length = dataset_source.load_lerobot_episode("user/data", episode=1)
 
     assert start == 10
     assert length == 15
@@ -597,31 +597,31 @@ def test_load_episode_uses_episode_data_index_fast_path(monkeypatch):
 
 
 def test_load_episode_first_episode_window(monkeypatch):
-    from strands_robots import dataset_recorder as dr
+    from strands_robots import dataset_source
 
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetWithIndex)
-    _, start, length = dr.load_lerobot_episode("user/data", episode=0)
+    _, start, length = dataset_source.load_lerobot_episode("user/data", episode=0)
 
     assert start == 0
     assert length == 10
 
 
 def test_load_episode_falls_back_to_meta_lengths(monkeypatch):
-    from strands_robots import dataset_recorder as dr
+    from strands_robots import dataset_source
 
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetMetaLengths)
     # episode 2 starts after episodes 0 (10) + 1 (15) = 25, with length 5.
-    _, start, length = dr.load_lerobot_episode("user/data", episode=2)
+    _, start, length = dataset_source.load_lerobot_episode("user/data", episode=2)
 
     assert start == 25
     assert length == 5
 
 
 def test_load_episode_scans_frames_as_last_resort(monkeypatch):
-    from strands_robots import dataset_recorder as dr
+    from strands_robots import dataset_source
 
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetScan)
-    _, start, length = dr.load_lerobot_episode("user/data", episode=1)
+    _, start, length = dataset_source.load_lerobot_episode("user/data", episode=1)
 
     # episode 1 occupies frames 3 and 4.
     assert start == 3
@@ -629,15 +629,15 @@ def test_load_episode_scans_frames_as_last_resort(monkeypatch):
 
 
 def test_load_episode_rejects_out_of_range(monkeypatch):
-    from strands_robots import dataset_recorder as dr
+    from strands_robots import dataset_source
 
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetWithIndex)
     with pytest.raises(ValueError, match="out of range"):
-        dr.load_lerobot_episode("user/data", episode=3)
+        dataset_source.load_lerobot_episode("user/data", episode=3)
 
 
 def test_load_episode_rejects_empty_episode(monkeypatch):
-    from strands_robots import dataset_recorder as dr
+    from strands_robots import dataset_source
 
     class _EmptyEpisode:
         def __init__(self, repo_id, root=None) -> None:
@@ -645,15 +645,15 @@ def test_load_episode_rejects_empty_episode(monkeypatch):
 
     _patch_lerobot_dataset(monkeypatch, _EmptyEpisode)
     with pytest.raises(ValueError, match="no frames"):
-        dr.load_lerobot_episode("user/data", episode=0)
+        dataset_source.load_lerobot_episode("user/data", episode=0)
 
 
 def test_load_episode_scan_breaks_after_target_episode(monkeypatch):
-    from strands_robots import dataset_recorder as dr
+    from strands_robots import dataset_source
 
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetScan)
     # episode 0 occupies frames 0,1,2; the scan must stop at frame 3 (episode 1).
-    _, start, length = dr.load_lerobot_episode("user/data", episode=0)
+    _, start, length = dataset_source.load_lerobot_episode("user/data", episode=0)
 
     assert start == 0
     assert length == 3
@@ -1535,7 +1535,7 @@ def test_load_lerobot_episode_rejects_negative_index():
     any dataset construction, so the contract holds even without lerobot
     installed and without a network round-trip.
     """
-    from strands_robots.dataset_recorder import load_lerobot_episode
+    from strands_robots.dataset_source import load_lerobot_episode
 
     with pytest.raises(ValueError, match="non-negative"):
         load_lerobot_episode("any/repo", episode=-1)
@@ -2422,13 +2422,13 @@ class _FakeDatasetOverwriteCreate:
 
 
 def test_resolve_dataset_dir_prefers_explicit_root():
-    from strands_robots.dataset_recorder import resolve_dataset_dir
+    from strands_robots.dataset_source import resolve_dataset_dir
 
     assert resolve_dataset_dir("user/data", root="/tmp/somewhere") == Path("/tmp/somewhere")
 
 
 def test_resolve_dataset_dir_treats_bare_repo_id_as_local_path():
-    from strands_robots.dataset_recorder import resolve_dataset_dir
+    from strands_robots.dataset_source import resolve_dataset_dir
 
     # No owner/name slash -> a local directory path, not $HF_LEROBOT_HOME/<id>.
     assert resolve_dataset_dir("my_local_dataset") == Path("my_local_dataset")
@@ -2539,7 +2539,7 @@ def test_create_overwrite_replaces_file_target_then_creates_fresh(tmp_path, monk
 def test_resolve_dataset_dir_falls_back_to_default_home_when_lerobot_absent(monkeypatch):
     import importlib
 
-    from strands_robots.dataset_recorder import resolve_dataset_dir
+    from strands_robots.dataset_source import resolve_dataset_dir
 
     # Removing HF_LEROBOT_HOME from lerobot's constants module makes
     # `from lerobot.utils.constants import HF_LEROBOT_HOME` raise ImportError,
