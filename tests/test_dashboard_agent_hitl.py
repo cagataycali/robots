@@ -8,14 +8,13 @@ from __future__ import annotations
 
 import pytest
 
-from strands_robots.dashboard import agent_hitl
+import strands_robots._motion_grants as motion_grants
+from strands_robots._motion_grants import consume_grant, deposit_grant
 from strands_robots.dashboard.agent_hitl import (
     INTERRUPT_NAME,
     MOTION_ACTIONS,
     MotionInterruptHook,
     cancel_sentence,
-    consume_grant,
-    deposit_grant,
     motion_intent,
     response_approves,
 )
@@ -35,8 +34,8 @@ TASK_INPUT = {"action": "task", "target": "arm-1", "instruction": "wave", "durat
 def _no_env_grant(monkeypatch):
     monkeypatch.delenv(MOTION_ENV, raising=False)
     # Grants are process-global; leave each test a clean slate.
-    with agent_hitl._grants_lock:
-        agent_hitl._grants.clear()
+    with motion_grants._grants_lock:
+        motion_grants._grants.clear()
 
 
 # --- motion_intent: which calls pause ---------------------------------------

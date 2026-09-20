@@ -31,6 +31,7 @@ from strands.types.interrupt import Interrupt
 from strands.types.tools import ToolUse
 
 from strands_robots import hardware_robot as hardware_robot_module
+from strands_robots._motion_grants import consume_grant, deposit_grant
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState
 from tests._daemon_executor import DaemonThreadExecutor
@@ -228,10 +229,9 @@ class TestPreApprovalIsSilent:
 
 class TestTheDashboardGrantIsSpentOnce:
     def test_a_grant_the_hook_deposited_is_spent_instead_of_asking_twice(self, dispatched) -> None:
-        agent_hitl = pytest.importorskip("strands_robots.dashboard.agent_hitl")
         hw, calls = dispatched
         tool_input = {"action": "start", **MOTION["start"]}
-        agent_hitl.deposit_grant("test_arm", tool_input)
+        deposit_grant("test_arm", tool_input)
 
         first = _drain(hw.stream({"toolUseId": "g1", "input": dict(tool_input)}, {}))
         second = _drain(hw.stream({"toolUseId": "g2", "input": dict(tool_input)}, {}))
@@ -240,7 +240,15 @@ class TestTheDashboardGrantIsSpentOnce:
         assert second[-1].tool_result["status"] == "error", "the grant was spent by the first call"
         assert calls == [("start", "wave")]
 
-    def test_a_missing_dashboard_extra_means_no_grant_not_a_crash(self, dispatched, monkeypatch) -> None:
+    def test_a_grant_survives_the_dashboard_extra_being_absent(self, dispatched, monkeypatch) -> None:
+        """The store is read where it lives, so the web extra is not on the motion path.
+
+        The grant used to be read out of ``strands_robots.dashboard``, whose
+        package ``__init__`` requires fastapi, uvicorn, webauthn and PyJWT. A
+        spend therefore imported a web server to look up a ``set`` -- and where
+        the extra was absent the import failed, so "has a human already said
+        yes?" was answered by an ImportError rather than by the store.
+        """
         import builtins
 
         hw, calls = dispatched
@@ -252,10 +260,15 @@ class TestTheDashboardGrantIsSpentOnce:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", _no_dashboard)
-        events = _stream(hw, "execute", _state("y"))
+        tool_input = {"action": "start", **MOTION["start"]}
+        deposit_grant("test_arm", tool_input)
+        try:
+            events = _drain(hw.stream({"toolUseId": "g3", "input": dict(tool_input)}, {}))
+        finally:
+            consume_grant("test_arm", tool_input)
 
         assert events[-1].tool_result["status"] == "success"
-        assert calls == [("execute", MOTION["execute"]["instruction"])]
+        assert calls == [("start", "wave")]
 
 
 class TestReadsAndStopsAreNeverGated:

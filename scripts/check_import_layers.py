@@ -68,6 +68,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "_dyld",
             "_hitl_audit",
             "_mesh_switch",
+            "_motion_grants",
             "_mujoco_gl",
             "_path_validation",
             "_serial_discovery",
@@ -131,15 +132,12 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 #:
 #: The rest are cuts this lane has not made. The six ``simulation`` reads of the
 #: recording modules are the roadmap's own placement of recording in ``app``
-#: (strands-labs/robots#3818), so they are debt rather than a mislabel;
-#: ``registry.policies`` and ``drivers.ur`` reach up to build a policy; and the
-#: three ``dashboard.agent_hitl`` reads are a safety answer stored above three
-#: of its four callers.
+#: (strands-labs/robots#3818), so they are debt rather than a mislabel; and
+#: ``registry.policies`` and ``drivers.ur`` reach up to build a policy.
 KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.__main__", "strands_robots.dashboard.cli"),
     ("strands_robots._hitl_audit", "strands_robots.mesh.audit"),
     ("strands_robots.drivers.ur", "strands_robots.policies"),
-    ("strands_robots.hardware_robot", "strands_robots.dashboard.agent_hitl"),
     ("strands_robots.registry.policies", "strands_robots.policies"),
     ("strands_robots.simulation.base", "strands_robots.verify_dataset"),
     ("strands_robots.simulation.isaac.recording", "strands_robots.dataset_recorder"),
@@ -149,8 +147,6 @@ KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.simulation.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.recording", "strands_robots.streaming_dataset"),
     ("strands_robots.teleop_mixin", "strands_robots.teleoperator"),
-    ("strands_robots.tools.pose_tool", "strands_robots.dashboard.agent_hitl"),
-    ("strands_robots.tools.serial_tool", "strands_robots.dashboard.agent_hitl"),
 )
 
 
