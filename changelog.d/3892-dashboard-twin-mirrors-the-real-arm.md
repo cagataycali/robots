@@ -12,7 +12,9 @@ with `disable_torque=False`, because the default close writes `Torque_Enable=0`
 to every motor. Angles are the uncalibrated estimate `(ticks - 2048) · 2π /
 4096`, labelled as such in the snapshot's new `bus` field next to the raw
 ticks, read rate and age. A bus that stops answering shows `stale`, then
-`error` with the reason; a port that will not open is a `502` naming it and
+`error` with the reason, and so does a pose outside the model's joint ranges -
+that write is refused whole, so the twin would otherwise freeze while the bus
+still read at 20 Hz; a port that will not open is a `502` naming it and
 nothing is left holding the device - nor when the port opens but the engine
 behind it fails to build or render. `GET /api/sim/ports` lists what a mirror
 could read, servo buses first, opening nothing.

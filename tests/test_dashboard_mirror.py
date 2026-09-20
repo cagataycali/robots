@@ -227,6 +227,31 @@ class TestMirrorSession:
         assert s.snapshot.error == src.error
         s.stop()
 
+    def test_a_pose_the_model_refuses_is_not_reported_as_mirroring(self):
+        # set_joint_positions refuses the WHOLE write when one angle is outside the
+        # joint's range, so the twin stays on the last accepted pose. Measured on the
+        # real so101: joint 2 at -1.80 rad (range +-1.745) left qpos on the previous
+        # pose while the state read "mirroring" and the bus read 20 Hz, age 10 ms.
+        class Fussy(FakeEngine):
+            REFUSAL = "set_joint_positions: position outside the joint's range, nothing written: j1=-1.8 outside [-1.745, 1.745] rad"
+
+            def set_joint_positions(self, positions, robot_name=None, hold=False):
+                if any(abs(float(v)) > 1.745 for v in positions.values()):
+                    return {"status": "error", "content": [{"text": self.REFUSAL}]}
+                return super().set_joint_positions(positions, robot_name=robot_name, hold=hold)
+
+        src = FakeSource()
+        s = sim_session.SimSession("so101", engine_factory=Fussy, source=src)
+        s.wait_ready()
+        assert _wait(lambda: s.snapshot.state == "mirroring")
+        src.set((0.1, -1.8, 0.3))
+        assert _wait(lambda: s.snapshot.state == "error"), f"reported {s.snapshot.state} for a refused write"
+        assert "nothing written" in s.snapshot.error
+        assert s.snapshot.bus["error"] is None, "the bus is healthy; the model refused the pose"
+        src.set((0.1, -1.0, 0.3))  # the arm comes back inside the range
+        assert _wait(lambda: s.snapshot.state == "mirroring" and s.snapshot.error is None)
+        s.stop()
+
     def test_the_arm_decides_the_pose(self):
         src = FakeSource()
         s = sim_session.SimSession("so101", engine_factory=FakeEngine, source=src)

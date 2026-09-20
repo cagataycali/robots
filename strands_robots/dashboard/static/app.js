@@ -246,7 +246,8 @@ function mountSession(s) {
     el.classList.toggle("stale", m.state === "stale" || m.state === "error");
     el.querySelector(".state").textContent = m.state;
     el.querySelector(".t").textContent = m.bus ? `${m.bus.hz} Hz bus` : `t=${m.sim_time.toFixed(2)}s`;
-    if (m.bus) el.querySelector(".bus").textContent = m.bus.error ? m.bus.error : m.bus.age_ms == null ? "waiting for the bus" : `read ${m.bus.age_ms} ms ago · torque untouched`;
+    // m.error is why the twin is not following - a bus that went away, or a pose the model refused.
+    if (m.bus) { const b = el.querySelector(".bus"); b.textContent = m.error || m.bus.error || (m.bus.age_ms == null ? "waiting for the bus" : `read ${m.bus.age_ms} ms ago · torque untouched`); b.title = b.textContent; }
     el.querySelector(".fps").textContent = m.fps ? `${m.fps} fps` : "";
     m.qpos.forEach((q, i) => { if (vals[i]) { vals[i].textContent = q.toFixed(3); bars[i].style.transform = `translateX(${Math.max(-1, Math.min(1, q / Math.PI)) * 40}px)`; } });
     lockoutLine(m.lockout);

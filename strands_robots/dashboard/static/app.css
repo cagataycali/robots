@@ -135,4 +135,4 @@ button.primary:hover, form button[type=submit]:hover, #login:hover { filter: bri
 /* a mirror session reads the real arm; stale = the bus stopped answering */
 .pill.mirror { color: var(--cyan); border-color: var(--cyan); }
 .session.stale .pill.state { color: #ffcf7a; border-color: #ffcf7a; }
-.session .foot .bus { color: var(--ink-2); font-size: 0.72rem; margin-right: auto; white-space: nowrap; }
+.session .foot .bus { color: var(--ink-2); font-size: 0.72rem; margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -19,7 +19,8 @@ A session can also be a MIRROR: given a ``source`` (see
 tick it takes the source's joint angles, writes them into ``qpos`` and runs
 the kinematics, so the render and the twin show the real arm where it is. A
 mirror refuses ``set_joints`` and ``reset`` - the arm decides the pose - and a
-source that stops answering shows as ``stale`` rather than as a frozen pose.
+source that stops answering, or a pose the model refuses, shows as ``stale`` or
+``error`` with the reason rather than as a frozen pose reported as healthy.
 
 Nothing here knows about the mesh, hardware, or HTTP.
 """
@@ -270,9 +271,10 @@ class SimSession:
                 self._drain(engine)
                 now = time.monotonic()
                 mirrored: str | None = None
+                mirror_error: str | None = None
                 if self._source is not None:
                     # A mirror never steps: the arm decides, the kinematics follow.
-                    mirrored = self._follow(engine, names)
+                    mirrored, mirror_error = self._follow(engine, names)
                     last_wall = now
                 elif not self._frozen.is_set():
                     # Real time: step as many physics ticks as wall time asks for, capped
@@ -302,7 +304,7 @@ class SimSession:
                     state="frozen" if self._frozen.is_set() else (mirrored or "running"),
                     poses=_pack_poses(engine.mj_data),
                     bus=None if self._source is None else self._source.health(),
-                    error=self._source.error if mirrored == "error" and self._source is not None else None,
+                    error=mirror_error,
                 )
                 time.sleep(1.0 / _TELEMETRY_HZ)
         except Exception as exc:
@@ -319,19 +321,32 @@ class SimSession:
             except Exception:
                 logger.debug("engine close failed", exc_info=True)
 
-    def _follow(self, engine: Any, names: tuple[str, ...]) -> str:
-        """Write the source's angles into the model. ``mirroring``, ``stale`` or ``error``."""
+    def _follow(self, engine: Any, names: tuple[str, ...]) -> tuple[str, str | None]:
+        """Write the source's angles into the model: this tick's state, and why it is not ``mirroring``.
+
+        ``("stale", None)`` while no fresh reading arrives, ``("error", reason)``
+        when the bus stopped answering - and ``("error", refusal)`` when the
+        model refuses the pose. That write is all-or-nothing: one joint past its
+        ``jnt_range`` writes nothing, so the twin stays on the last accepted
+        pose, and answering ``mirroring`` for that tick would show a frozen twin
+        beside a healthy 20 Hz bus with the reason nowhere on the page. An arm a
+        few degrees of calibration offset outside the model's range trips this on
+        every sweep, and it clears again by itself when the arm comes back inside.
+        """
         source = self._source
         assert source is not None
         if source.error:
-            return "error"
+            return "error", source.error
         if self._frozen.is_set():
-            return "frozen"
+            return "frozen", None
         q = source.qpos()
         if q is None:
-            return "stale"
-        engine.set_joint_positions(dict(zip(names, q, strict=False)), robot_name=self.robot, hold=True)
-        return "mirroring"
+            return "stale", None
+        wrote = engine.set_joint_positions(dict(zip(names, q, strict=False)), robot_name=self.robot, hold=True)
+        if dict(wrote).get("status") == "error":
+            texts = [b["text"] for b in dict(wrote).get("content") or [] if isinstance(b, dict) and b.get("text")]
+            return "error", " ".join(str(t) for t in texts) or "the model refused the pose"
+        return "mirroring", None
 
     def _drain(self, engine: Any) -> None:
         while True:
