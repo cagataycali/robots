@@ -1180,9 +1180,10 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 state only (used by control loops that do not need pixels).
 
         Returns:
-            Mapping of short joint name to joint position (float), plus one
-            entry per registered camera (name -> RGB ndarray) when
-            ``skip_images`` is False. A robot with a floating base additionally
+            Mapping of short joint name to joint position (float) paired with
+            its velocity under ``<joint>.vel`` (rad/s, the same reading
+            :meth:`get_robot_state` reports), plus one entry per registered
+            camera (name -> RGB ndarray) when ``skip_images`` is False. A robot with a floating base additionally
             carries ``base_pos`` (world x,y,z incl. height), ``base_quat``
             (orientation, w,x,y,z), ``base_lin_vel`` (m/s, WORLD frame) and
             ``base_ang_vel`` (rad/s, BODY frame - matching the MuJoCo backend and
@@ -1224,10 +1225,24 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 idx = self._joint_coord_index.get((robot_name, jname))
                 if idx is not None and idx < len(joint_q):
                     obs[jname] = float(joint_q[idx])
-        # Joint-position sensor noise applies only to the float joint entries;
-        # camera frames are added afterwards (and carry their own jitter via the
-        # render path), so the result holds mixed float/ndarray values.
-        obs_out: dict[str, Any] = dict(self._apply_joint_pos_noise(obs))
+                    # Velocity companion (``<name>.vel``), read from joint_qd via
+                    # the per-joint DOF index - the two indices differ once a
+                    # robot has a multi-coordinate joint, so the position index
+                    # cannot be reused. Emitted for every position entry (0.0
+                    # when the DOF index is unavailable, as get_robot_state
+                    # reports it) because a velocity-feedback policy reads the
+                    # pair BY NAME: the MicroduckPolicy observation builder
+                    # indexes obs[f"{joint}.vel"] for all 14 joints, and WBC /
+                    # ProtoMotions read the same spelling. Without it a
+                    # locomotion policy that runs on the MuJoCo backend raised
+                    # KeyError on the first tick here.
+                    d_idx = self._joint_dof_index.get((robot_name, jname))
+                    obs[f"{jname}.vel"] = float(joint_qd[d_idx]) if d_idx is not None and d_idx < len(joint_qd) else 0.0
+        # Joint sensor noise applies only to the float joint entries (positions
+        # and their ``.vel`` companions, each on its own std); camera frames are
+        # added afterwards (and carry their own jitter via the render path), so
+        # the result holds mixed float/ndarray values.
+        obs_out: dict[str, Any] = dict(self._apply_joint_noise(obs))
         # Floating-base IMU-style signals for a robot with a free root (a
         # humanoid / mobile base): ``base_quat`` (orientation, w,x,y,z) and
         # ``base_ang_vel`` (rad/s), consumed by WBC / locomotion controllers.

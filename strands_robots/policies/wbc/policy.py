@@ -623,16 +623,15 @@ class WBCPolicy(Policy):
         (an upright stance cue) rather than fabricating motion.
 
         Velocity availability: WBC is a velocity-feedback balance controller, so
-        ``dqj`` and ``base_ang_vel`` are genuine inputs - not optional. The
-        current MuJoCo backend's unified observation exposes joint *positions*
-        only (no ``<name>.vel`` keys, no ``observation.velocity``), so a plain
-        ``sim.run_policy`` rollout feeds WBC zero joint velocities. We emit a
-        one-time warning when that happens (a dead velocity channel can
+        ``dqj`` and ``base_ang_vel`` are genuine inputs - not optional. Both sim
+        backends' unified observation pairs each joint position with a
+        ``<name>.vel`` reading, so a plain ``sim.run_policy`` rollout closes the
+        velocity loop. An observation that carries neither those keys nor
+        ``observation.velocity`` / ``base_ang_vel`` (a hardware or teleop bridge
+        that reports positions only) feeds WBC zeros for dqj/base_ang_vel; we
+        emit a one-time warning when that happens (a dead velocity channel can
         destabilise the gait) rather than silently pretending the controller is
-        fully observed. To supply real velocities, drive the policy from an
-        observation that includes ``<name>.vel`` per-joint keys (or
-        ``observation.velocity`` + ``base_ang_vel``), e.g. a teleop/IMU bridge
-        or a future backend velocity field.
+        fully observed.
         """
         # qj/dqj observe the whole body (n_obs_joints), in WBC_G1_ALL_JOINTS order.
         obs_names = self._obs_joint_names
@@ -686,10 +685,8 @@ class WBCPolicy(Policy):
 
         Missing values default to zero (a still, nominal stance) - a
         *measured-state* default, distinct from the forbidden zero-*torque*
-        fallback. NOTE: if the sim exposes no joint velocities (the current
-        MuJoCo backend's unified observation is positions only, with no
-        ``<name>.vel`` keys), ``dqj`` reads as zeros - see :meth:`_extract_state`
-        for the consequence and the recommended teleop/IMU velocity source.
+        fallback. NOTE: an observation with no ``<name>.vel`` keys reads ``dqj``
+        as zeros - see :meth:`_extract_state` for the consequence.
         """
         m = len(names)
 
