@@ -62,28 +62,45 @@ Gr00tPolicy(
 )
 ```
 
-`strict` and `strict_keys` each select a posture rather than scaling a
-quantity, so a non-boolean is refused at construction in **either** mode -
-naming the parameter and the value given - rather than read by truthiness.
-Every non-empty string is truthy, so `strict_keys="false"` used to select the
-strict posture and then report it as `strict_keys=True`; `None` and `0` took
-the permissive branch while spelling neither. `True`, `False` and NumPy
-booleans are stored as given. The check is not scoped to local mode even though
-only local mode reads either flag, because local mode needs Isaac-GR00T
-installed: a caller composing a `policy_config` against a service-mode policy
-would otherwise get no answer until they moved to a GPU host.
+`strict` and `strict_keys` each select a posture, so a non-boolean is refused
+at construction in **either** mode - naming the parameter and the value - rather
+than read by truthiness, under which `strict_keys="false"` selected the strict
+posture. The check is not scoped to local mode, the only mode that reads either
+flag, because local mode needs Isaac-GR00T installed: a caller composing a
+`policy_config` would otherwise get no answer until they moved to a GPU host.
 
 `timeout_ms` is the service-mode wait budget for one request (send and
 receive), default 15000. A request that expires raises `ConnectionError`
 naming the `tcp://` URI, the endpoint, the budget, and - from a 1 s TCP probe
-of the port - which side the wait was on: connection refused means no server
-is there, so the report is "start one" (`gr00t_inference(action='start',
-port=N)` or `python -m gr00t.eval.run_gr00t_server --port N`); a listening but
-silent port means a checkpoint still loading or a wedged forward pass, so the
-report is "read its log, and raise `timeout_ms` if the model is simply
-slower". Lower it to fail fast while you are still finding the right host and
-port - a typo costs the full budget, because ZMQ connects lazily and never
-reports a refusal on its own.
+of the port - which side the wait was on: connection refused means no server is
+there, so the report is "start one" (`gr00t_inference(action='start', port=N)`
+or `python -m gr00t.eval.run_gr00t_server --port N`); a listening but silent
+port means a checkpoint still loading or a wedged forward pass, so the report
+names its log and this budget. Lower it to fail fast on a wrong host or port -
+a typo costs the full budget, because ZMQ connects lazily.
+
+## Grouped vectors
+
+Every SO-ARM embodiment declares grouped keys - `state.single_arm` is five
+joints wide, `action.single_arm` five columns - while a robot publishes one
+reading per joint (`'1'` .. `'6'` from a MuJoCo SO-101). Name the slot each
+reading fills:
+
+```python
+policy = create_policy(
+    "groot", data_config="so101_dualcam", host="localhost",
+    observation_mapping={"room": "video.room", "wrist": "video.wrist",
+                         **{f"{i}": f"state.single_arm[{i - 1}]" for i in range(1, 6)},
+                         "6": "state.gripper[0]"},
+    action_mapping={**{f"action.single_arm[{i - 1}]": f"{i}" for i in range(1, 6)},
+                    "action.gripper[0]": "6"},
+)
+```
+
+Slots compose the state vector in slot order, and each takes that one column of
+the action chunk. A gap, a repeated slot, a reading the observation lacks, or a
+slot the chunk does not carry is refused by name: a zero component is
+indistinguishable from a real measurement.
 
 ## Strict key matching
 

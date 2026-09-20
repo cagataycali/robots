@@ -21,6 +21,7 @@ mappings.  No positional guessing.  One step in, one step out.
 import importlib.util
 import logging
 import os
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -133,7 +134,10 @@ class ObservationMapping:
 
     Attributes:
         video: ``{robot_camera: model_video_key}``.
-        state: ``{robot_state: model_state_key}``.
+        state: ``{robot_state: model_state_key}``, where a model key may name
+            one slot of a grouped vector (``"single_arm[3]"``) so several robot
+            readings compose it - see :data:`_SLOT_RE`. A camera frame is not a
+            vector of readings, so a slot on a video key is refused.
         language_key: Model's language key (e.g. ``"task"``).
     """
 
@@ -152,7 +156,8 @@ class ObservationMapping:
                 )
 
         model_state = set(modality_configs["state"].modality_keys)
-        for robot_key, model_key in self.state.items():
+        for robot_key, slotted in self.state.items():
+            model_key = _split_slot(slotted, what="Observation mapping")[0]
             if model_key not in model_state:
                 raise ValueError(
                     f"Observation mapping: robot '{robot_key}' -> model state "
@@ -180,7 +185,10 @@ class ActionMapping:
     loaded.
 
     Attributes:
-        actions: ``{model_action_key: robot_actuator}`` - bare, no prefix.
+        actions: ``{model_action_key: robot_actuator}`` - bare, no prefix. A
+            model key may name one column of a grouped action vector
+            (``"single_arm[3]"``), which is how a five-wide chunk reaches five
+            actuators - see :data:`_SLOT_RE`.
     """
 
     actions: dict[str, str] = field(default_factory=dict)
@@ -195,7 +203,8 @@ class ActionMapping:
         """
         declared = list(modality_configs["action"].modality_keys)
         model_action = {key.removeprefix("action.") for key in declared}
-        for model_key in self.actions:
+        for slotted in self.actions:
+            model_key = _split_slot(slotted, what="Action mapping")[0]
             if model_key.removeprefix("action.") not in model_action:
                 raise ValueError(f"Action mapping: model key '{model_key}' not in model: {sorted(declared)}")
 
@@ -231,6 +240,48 @@ class ActionMapping:
 # Holding an action key in the declared spelling instead would make that lookup
 # unsatisfiable against a prefixed release: every actuator would miss its mapping
 # and be emitted under ``unmapped.<bare>`` with nothing reporting it.
+
+
+#: A model key may name one slot of the model's own vector, ``"single_arm[3]"``.
+#:
+#: GR00T embodiments declare grouped vectors - ``state.single_arm`` is five
+#: joints wide, ``action.single_arm`` five columns - while a robot publishes one
+#: reading per joint (a sim SO-101 observation carries ``'1'`` .. ``'6'``, a
+#: driver carries its own names). A 1:1 name map cannot bridge that: several
+#: robot keys naming one model key kept whichever the iteration order reached
+#: last, and one robot key receiving a five-wide action column got the whole
+#: row. Naming the slot makes the composition explicit in the caller's own
+#: mapping, in both directions and in either inference mode, and it does not
+#: depend on dict ordering the way a bare repeat would.
+_SLOT_RE = re.compile(r"^(?P<key>[^\[\]]+)\[(?P<slot>\d+)\]$")
+
+
+def _split_slot(key: str, *, what: str) -> tuple[str, int | None]:
+    """Split a model key into its name and the vector slot it names, if any.
+
+    Args:
+        key: A model key, with or without a ``[i]`` suffix.
+        what: The mapping being read, for the refusal text.
+
+    Returns:
+        ``(model key, slot)``; ``slot`` is None for an unslotted key, which
+        names the model key's whole vector as it always has.
+
+    Raises:
+        ValueError: If the key carries a bracket that is not a slot. A
+            ``"single_arm[]"`` or ``"single_arm[x]"`` read as a whole-vector
+            key would map the group the caller meant to index, so it is
+            refused by name rather than honoured as something else.
+    """
+    if "[" not in key and "]" not in key:
+        return key, None
+    match = _SLOT_RE.match(key)
+    if match is None:
+        raise ValueError(
+            f"{what}: '{key}' is not a model key or a slot of one. A slot is spelled "
+            "'<key>[<index>]' with a non-negative index, for example 'single_arm[3]'."
+        )
+    return match.group("key"), int(match.group("slot"))
 
 
 def _declared_by_bare(declared: list[str], modality: str) -> dict[str, str]:
@@ -269,7 +320,12 @@ def _canonical_model_keys(requested: Iterable[str], declared: list[str], modalit
     """
     index = _declared_by_bare(declared, modality)
     prefix = f"{modality}."
-    return {key: index.get(key.removeprefix(prefix), key) for key in requested}
+    canonical: dict[str, str] = {}
+    for key in requested:
+        bare, slot = _split_slot(key, what=f"Observation mapping ({modality})")
+        declared_spelling = index.get(bare.removeprefix(prefix), bare)
+        canonical[key] = declared_spelling if slot is None else f"{declared_spelling}[{slot}]"
+    return canonical
 
 
 def _canonicalize_observation_mapping(mapping: ObservationMapping, modality_configs: dict) -> ObservationMapping:
@@ -300,6 +356,7 @@ def _bare_action_keys(actions: dict[str, str]) -> dict[str, str]:
     reduced: dict[str, str] = {}
     for model_key, robot_key in actions.items():
         bare = model_key.removeprefix("action.")
+        _split_slot(bare, what="Action mapping")  # refuse a malformed slot here
         if bare in reduced and reduced[bare] != robot_key:
             raise ValueError(
                 f"Action mapping: model key '{bare}' is mapped twice, to robot keys "
@@ -456,9 +513,18 @@ def _parse_observation_mapping(flat: dict[str, str]) -> ObservationMapping:
 
     for robot_key, model_key in flat.items():
         if model_key.startswith("video."):
-            video[robot_key] = model_key.removeprefix("video.")
+            bare, slot = _split_slot(model_key.removeprefix("video."), what="Observation mapping")
+            if slot is not None:
+                raise ValueError(
+                    f"Observation mapping: '{robot_key}' -> '{model_key}' names a slot of a video "
+                    "key. A slot composes a grouped state vector out of several readings; a camera "
+                    "frame is one array, so map it to the video key itself."
+                )
+            video[robot_key] = bare
         elif model_key.startswith("state."):
-            state[robot_key] = model_key.removeprefix("state.")
+            bare = model_key.removeprefix("state.")
+            _split_slot(bare, what="Observation mapping")  # refuse a malformed slot here
+            state[robot_key] = bare
         else:
             raise ValueError(f"Mapping value must start with 'video.' or 'state.', got '{model_key}' for '{robot_key}'")
 
@@ -468,6 +534,161 @@ def _parse_observation_mapping(flat: dict[str, str]) -> ObservationMapping:
 def _parse_action_mapping(flat: dict[str, str]) -> ActionMapping:
     """Parse ``{"action.X": "robot_key"}`` → ActionMapping, keys reduced to bare."""
     return ActionMapping(actions=_bare_action_keys(flat))
+
+
+def _compose_state_batches(state_map: dict[str, str], robot_obs: dict[str, Any]) -> dict[str, np.ndarray]:
+    """Build one ``(1, 1, D)`` state tensor per model key from the robot's readings.
+
+    A model key mapped by a single unslotted robot key carries that reading's
+    own width, as it always has. A model key whose entries name slots
+    (:data:`_SLOT_RE`) is composed from them in slot order, which is what makes
+    a grouped vector reachable from per-joint scalars.
+
+    Args:
+        state_map: ``{robot_key: model_key | "model_key[slot]"}``.
+        robot_obs: The robot observation the readings come from.
+
+    Returns:
+        ``{model_key: (1, 1, D) float32}``.
+
+    Raises:
+        ValueError: If several robot keys name one model key without slots
+            (only one of them could be sent, and which one is dict order); if
+            slotted and unslotted entries are mixed for one key; if two entries
+            name one slot; if the slots do not cover ``0..n-1``; or if a slot's
+            reading is absent from the observation or is not a scalar. A
+            composed vector is refused rather than zero-filled, because a zero
+            component is indistinguishable from a real reading of zero.
+    """
+    grouped: dict[str, list[tuple[int | None, str]]] = {}
+    for robot_key, slotted in state_map.items():
+        model_key, slot = _split_slot(slotted, what="Observation mapping")
+        grouped.setdefault(model_key, []).append((slot, robot_key))
+
+    composed: dict[str, np.ndarray] = {}
+    for model_key, entries in grouped.items():
+        slots = [slot for slot, _ in entries]
+        if all(slot is None for slot in slots):
+            if len(entries) > 1:
+                raise ValueError(
+                    f"Observation mapping: robot keys {sorted(key for _, key in entries)} all name "
+                    f"model state key '{model_key}' as a whole vector, so only one of them can be "
+                    "sent. Name the slot each one fills instead, "
+                    f"for example '{model_key}[0]'."
+                )
+            robot_key = entries[0][1]
+            if robot_key in robot_obs:
+                composed[model_key] = _to_state_batch(robot_obs[robot_key])
+            else:
+                logger.warning("Robot key '%s' missing in obs", robot_key)
+            continue
+        if any(slot is None for slot in slots):
+            raise ValueError(
+                f"Observation mapping: model state key '{model_key}' is named both as a whole "
+                f"vector and by slot ({sorted(key for _, key in entries)}). Name every slot, or "
+                "map the whole vector from one reading."
+            )
+        composed[model_key] = _state_vector_from_slots(model_key, entries, robot_obs)
+    return composed
+
+
+def _state_vector_from_slots(
+    model_key: str,
+    entries: list[tuple[int | None, str]],
+    robot_obs: dict[str, Any],
+) -> np.ndarray:
+    """Compose one ``(1, 1, D)`` state tensor out of per-slot scalar readings."""
+    by_slot: dict[int, str] = {}
+    for slot, robot_key in entries:
+        assert slot is not None
+        if slot in by_slot:
+            raise ValueError(
+                f"Observation mapping: slot '{model_key}[{slot}]' is named twice, by robot keys "
+                f"'{by_slot[slot]}' and '{robot_key}'. One slot carries one reading."
+            )
+        by_slot[slot] = robot_key
+
+    width = max(by_slot) + 1
+    missing = sorted(set(range(width)) - set(by_slot))
+    if missing:
+        raise ValueError(
+            f"Observation mapping: model state key '{model_key}' is mapped by slots "
+            f"{sorted(by_slot)}, which leave {missing} unfilled. A composed vector has no gaps - "
+            "every slot below the highest one mapped must name a reading, or the readings above "
+            "the gap reach the model in the wrong component."
+        )
+
+    values: list[float] = []
+    for slot in range(width):
+        robot_key = by_slot[slot]
+        if robot_key not in robot_obs:
+            raise ValueError(
+                f"Observation mapping: slot '{model_key}[{slot}]' names robot key '{robot_key}', "
+                f"which the observation does not carry (it has {sorted(robot_obs)}). A missing "
+                "component is refused rather than zero-filled, because a zero is indistinguishable "
+                "from a real reading."
+            )
+        reading = np.asarray(robot_obs[robot_key], dtype=np.float32)
+        if reading.size != 1:
+            raise ValueError(
+                f"Observation mapping: slot '{model_key}[{slot}]' names robot key '{robot_key}', "
+                f"whose reading has {reading.size} values. A slot carries one component; map a "
+                "vector reading to the model key itself."
+            )
+        values.append(float(reading.reshape(-1)[0]))
+    return np.asarray(values, dtype=np.float32).reshape(1, 1, width)
+
+
+def _mapped_action_steps(
+    normalized: dict[str, np.ndarray],
+    actions: dict[str, str],
+    horizon: int,
+) -> list[dict[str, Any]]:
+    """Translate a normalized action chunk into per-timestep actuator dicts.
+
+    The single owner of the translation, so the local and service unpack paths
+    key a chunk identically. A mapped key naming a slot takes that one column of
+    a grouped action vector, which is how a five-wide chunk reaches five
+    actuators; an output key no mapping names is still emitted under
+    ``unmapped.<key>``.
+
+    Args:
+        normalized: ``{bare_model_key: (horizon, ...) array}``.
+        actions: ``{bare_model_key | "key[slot]": robot_actuator}``.
+        horizon: The chunk's shared time-axis length.
+
+    Returns:
+        One dict per timestep.
+
+    Raises:
+        ValueError: If a slot lies outside the width the model emitted for that
+            key - the column the caller mapped does not exist, so applying
+            another one would drive the wrong actuator.
+    """
+    mapped_keys = {_split_slot(key, what="Action mapping")[0] for key in actions}
+    steps: list[dict[str, Any]] = []
+    for t in range(horizon):
+        step: dict[str, Any] = {}
+        for model_key, robot_key in actions.items():
+            bare, slot = _split_slot(model_key, what="Action mapping")
+            if bare not in normalized:
+                continue
+            row = normalized[bare][t]
+            if slot is None:
+                step[robot_key] = _coerce_action_row(row)
+                continue
+            values = np.atleast_1d(np.asarray(row))
+            if slot >= values.shape[0]:
+                raise ValueError(
+                    f"Action mapping: '{bare}[{slot}]' -> '{robot_key}', but the model emitted "
+                    f"{values.shape[0]} column(s) for '{bare}'. Map a slot the chunk carries."
+                )
+            step[robot_key] = _coerce_action_row(values[slot])
+        for bare in normalized:
+            if bare not in mapped_keys:
+                step[f"unmapped.{bare}"] = _coerce_action_row(normalized[bare][t])
+        steps.append(step)
+    return steps
 
 
 def _coerce_action_row(row: Any) -> float | list[float]:
@@ -574,17 +795,21 @@ class Gr00tPolicy(Policy):
             refused by name rather than reported as Isaac-GR00T being absent.
         strict: Strict input validation.
         api_token: ZMQ auth token. Falls back to ``GROOT_API_TOKEN`` env var if not provided.
-        observation_mapping: ``{robot_key: "video.X" | "state.X"}``. Honoured in
-            either mode: the video/state split comes from the caller's own value
-            prefixes, so no model metadata is needed. Service mode cannot
+        observation_mapping: ``{robot_key: "video.X" | "state.X"}``, where a
+            state key may name one slot of a grouped vector (``"state.single_arm[3]"``)
+            so several per-joint readings compose it - see :data:`_SLOT_RE`.
+            Honoured in either mode: the video/state split comes from the caller's
+            own value prefixes, so no model metadata is needed. Service mode cannot
             cross-check it against the server, so a key the server does not have
             surfaces there as a server-side error rather than a refusal here.
             With a local checkpoint loaded, each model key is restated in the
             spelling that model declares - bare on N1.6/N1.7, prefixed on N1.5 -
             so either spelling is accepted here and one that names no declared
             key is refused by name.
-        action_mapping: ``{"action.X": "robot_key"}``. Honoured in either mode,
-            on the same terms. Either spelling of a model key is accepted and
+        action_mapping: ``{"action.X": "robot_key"}``, where a model key may
+            name one column of a grouped action vector (``"action.single_arm[3]"``),
+            which is how a five-wide chunk reaches five actuators. Honoured in
+            either mode, on the same terms. Either spelling of a model key is accepted and
             reduced to a bare name, which is the form the unpack paths match
             against; naming one key in both spellings is refused rather than
             silently collapsed.
@@ -618,6 +843,22 @@ class Gr00tPolicy(Policy):
             action_mapping={
                 "action.single_arm": "joint_position",
                 "action.gripper": "gripper_position",
+            },
+        )
+
+        # A robot publishing one reading per joint composes the same grouped
+        # vectors by slot - what a sim SO-101 observation ('1' .. '6') needs.
+        policy = Gr00tPolicy(
+            data_config="so101_dualcam",
+            observation_mapping={
+                "room": "video.room",
+                "wrist": "video.wrist",
+                **{f"{i}": f"state.single_arm[{i - 1}]" for i in range(1, 6)},
+                "6": "state.gripper[0]",
+            },
+            action_mapping={
+                **{f"action.single_arm[{i - 1}]": f"{i}" for i in range(1, 6)},
+                "action.gripper[0]": "6",
             },
         )
     """
@@ -1168,12 +1409,8 @@ class Gr00tPolicy(Policy):
                     ref = _reference_video_shape(robot_obs, mapped_video_keys)
                     video_dict[model_key] = np.zeros((1, 1, *ref), dtype=np.uint8)
 
-        # State
-        for robot_key, model_key in self._obs_mapping.state.items():
-            if robot_key in robot_obs:
-                state_dict[model_key] = _to_state_batch(robot_obs[robot_key])
-            else:
-                logger.warning("Robot key '%s' missing in obs", robot_key)
+        # State - several robot keys may compose one grouped model vector by slot.
+        state_dict.update(_compose_state_batches(self._obs_mapping.state, robot_obs))
 
         # Zero-fill unmapped model state keys (only if DOF was discovered)
         if mmc is not None:
@@ -1224,20 +1461,7 @@ class Gr00tPolicy(Policy):
 
         assert self._action_mapping is not None, "Action mapping not initialized"
         horizon = _action_chunk_horizon(squeezed)
-        mapped_keys = set(self._action_mapping.actions.keys())
-
-        actions: list[dict[str, Any]] = []
-        for t in range(horizon):
-            step: dict[str, Any] = {}
-            for model_key, robot_key in self._action_mapping.actions.items():
-                if model_key in squeezed:
-                    step[robot_key] = _coerce_action_row(squeezed[model_key][t])
-            for model_key in squeezed:
-                if model_key not in mapped_keys:
-                    step[f"unmapped.{model_key}"] = _coerce_action_row(squeezed[model_key][t])
-            actions.append(step)
-
-        return actions
+        return _mapped_action_steps(squeezed, self._action_mapping.actions, horizon)
 
     # Service inference
 
@@ -1353,21 +1577,10 @@ class Gr00tPolicy(Policy):
 
         # If we have action mappings, use them for consistent key translation
         if self._action_mapping and self._action_mapping.actions:
-            mapped_keys = set(self._action_mapping.actions.keys())
-            actions: list[dict[str, Any]] = []
-            for t in range(horizon):
-                step: dict[str, Any] = {}
-                for model_key, robot_key in self._action_mapping.actions.items():
-                    if model_key in normalized:
-                        step[robot_key] = _coerce_action_row(normalized[model_key][t])
-                for model_key in normalized:
-                    if model_key not in mapped_keys:
-                        step[f"unmapped.{model_key}"] = _coerce_action_row(normalized[model_key][t])
-                actions.append(step)
-            return actions
+            return _mapped_action_steps(normalized, self._action_mapping.actions, horizon)
 
         # No mapping - return bare model keys
-        actions = []
+        actions: list[dict[str, Any]] = []
         for t in range(horizon):
             step = {}
             for k, v in normalized.items():
