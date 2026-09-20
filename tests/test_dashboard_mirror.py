@@ -383,10 +383,13 @@ class TestMirrorRoutes:
 
         with client.websocket_connect(f"/ws/telemetry/{sid}") as ws:
             ticks(4000)  # 2.99 rad, past every so101 range
-            assert "nothing written" in until(ws, "refused")["error"]
+            refused = until(ws, "refused")
+            assert "nothing written" in refused["error"]
             ticks(2048)  # the arm comes back inside
-            assert until(ws, "mirroring")["error"] is None  # the same socket, never reopened
-        assert client.delete(f"/api/sim/{sid}").status_code == 200
+            recovered = until(ws, "mirroring")  # the same socket, never reopened
+            assert recovered["error"] is None
+        stopped = client.delete(f"/api/sim/{sid}")
+        assert stopped.status_code == 200
 
     def test_a_bus_that_will_not_open_is_502_with_the_reason(self, client, fake_bus, tmp_path, monkeypatch):
         dev = tmp_path / "cu.fake"
