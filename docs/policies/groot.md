@@ -132,6 +132,12 @@ steps a longer value carries are commands the model produced, so dropping them
 would execute part of a trajectory and re-query as if the whole chunk had run.
 The refusal is the same whichever key the producer serialized first.
 
+In service mode the chunk is read out of the reply's own encoding first. The
+reference server packs every array with `msgpack_numpy` (`nd` / `type` / `shape`
+/ `data`), so those maps are decoded back to arrays here; an envelope declaring
+an object dtype is refused instead, because only `pickle` reads one and this
+client never unpickles a reply.
+
 ## Versions
 
 | Version | Transport | Notes |
