@@ -17,8 +17,6 @@ on import.
 import logging
 
 from strands_robots.drivers.base import (
-    DEFAULT_DRIVER,
-    DRIVER_CHOICES,
     DRIVER_SURFACE,
     HardwareDriver,
     drifted_driver_parameters,
@@ -131,8 +129,6 @@ def _register_shipped_drivers() -> None:
 _register_shipped_drivers()
 
 __all__ = [
-    "DEFAULT_DRIVER",
-    "DRIVER_CHOICES",
     "DRIVER_SURFACE",
     "HardwareDriver",
     "drifted_driver_parameters",

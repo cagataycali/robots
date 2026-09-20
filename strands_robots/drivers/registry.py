@@ -4,7 +4,7 @@ Three questions, kept apart because they have different answers:
 
 * *Which driver?* :func:`resolve_driver` - a name, from the caller's ``driver=``
   or the robot's registry entry, defaulting to
-  :data:`~strands_robots.drivers.base.DEFAULT_DRIVER`.
+  :data:`~strands_robots.registry.DEFAULT_DRIVER`.
 * *Which class?* :func:`get_native_driver_class` - the class a native driver
   package registered for this robot, or ``None``.
 * *Which drivers could?* :func:`list_driver_coverage` - for every registered
@@ -25,8 +25,15 @@ from __future__ import annotations
 
 import logging
 
-from strands_robots.drivers.base import DEFAULT_DRIVER, DRIVER_CHOICES, missing_driver_members
-from strands_robots.registry import get_driver, get_hardware_type, list_robots, resolve_name
+from strands_robots.drivers.base import missing_driver_members
+from strands_robots.registry import (
+    DEFAULT_DRIVER,
+    DRIVER_CHOICES,
+    get_driver,
+    get_hardware_type,
+    list_robots,
+    resolve_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +52,7 @@ def driver_choice_error(value: object, param: str, context: str) -> str | None:
 
     Returns:
         A reason naming the accepted values, or ``None`` when ``value`` is
-        one of :data:`~strands_robots.drivers.base.DRIVER_CHOICES`.
+        one of :data:`~strands_robots.registry.DRIVER_CHOICES`.
     """
     if isinstance(value, str) and value in DRIVER_CHOICES:
         return None
@@ -57,7 +64,7 @@ def resolve_driver(canonical: str, explicit: str | None = None) -> str:
 
     Precedence, highest first: the caller's explicit choice, the robot's
     registry ``hardware.driver``, then
-    :data:`~strands_robots.drivers.base.DEFAULT_DRIVER`. ``"auto"`` and ``None``
+    :data:`~strands_robots.registry.DEFAULT_DRIVER`. ``"auto"`` and ``None``
     both mean "no explicit choice", so they defer to the registry.
 
     Args:
@@ -70,7 +77,7 @@ def resolve_driver(canonical: str, explicit: str | None = None) -> str:
 
     Raises:
         ValueError: If ``explicit`` is not one of
-            :data:`~strands_robots.drivers.base.DRIVER_CHOICES`.
+            :data:`~strands_robots.registry.DRIVER_CHOICES`.
     """
     reason = driver_choice_error(explicit, "driver", "resolve_driver") if explicit is not None else None
     if reason is not None:
@@ -184,7 +191,7 @@ def list_driver_coverage() -> dict[str, tuple[str, ...]]:
       package's own :data:`~strands_robots.drivers._SHIPPED_DRIVERS`, or by any
       driver package that has called :func:`register_native_driver`.
 
-    Both names are :data:`~strands_robots.drivers.base.DRIVER_CHOICES` values, so
+    Both names are :data:`~strands_robots.registry.DRIVER_CHOICES` values, so
     an entry reads as the set of ``driver=`` arguments that can build that robot.
     Which one *wins* for a robot that has both is :func:`resolve_driver`'s
     answer, not this one's: coverage is about what exists, resolution about what
@@ -220,7 +227,7 @@ def _native_driver_refusal(robot_type: str) -> str | None:
     lerobot robot type at all, which is the gap their native drivers exist to
     close. When ``driver="lerobot"`` is chosen for such a robot -- and it is
     chosen by default, because :func:`resolve_driver` falls back to
-    :data:`~strands_robots.drivers.base.DEFAULT_DRIVER` for a robot that
+    :data:`~strands_robots.registry.DEFAULT_DRIVER` for a robot that
     declares nothing -- lerobot cannot build it, and answering with the names of
     the robots lerobot *does* know answers the wrong question. The driver that
     builds this robot ships in this package, one keyword away.

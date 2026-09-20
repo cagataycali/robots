@@ -17,10 +17,16 @@ deadlock an interpreter, so its graph must be acyclic. A **typing-only** import
 nothing at import time and are the two sanctioned ways to break a cycle, so
 they are reported and excluded from the acyclicity requirement.
 
-*No inversions.* Every runtime edge that points at a higher layer is an
-inversion. They are enumerated in :data:`KNOWN_UPWARD_EDGES`, module pair by
-module pair, so the roster is a ratchet: removing an inversion means deleting
-its line, and adding one fails the grader until someone writes it down.
+*No inversions.* Every edge that points at a higher layer is an inversion, and
+direction is graded on two of the three kinds - because direction is a claim
+about who depends on whom, which a deferred import does not change: a function
+that imports the dashboard on its first call still cannot do its job without
+the dashboard. So a runtime inversion is enumerated in
+:data:`KNOWN_UPWARD_EDGES` and a deferred one in
+:data:`KNOWN_DEFERRED_UPWARD_EDGES`, module pair by module pair. Both rosters
+are ratchets: removing an inversion means deleting its line, and adding one
+fails the grader until someone writes it down. Typing-only imports are reported
+and not graded - an annotation is not a dependency at any point in the run.
 
 Usage::
 
@@ -111,6 +117,41 @@ LAYER_NAMES: tuple[str, ...] = tuple(name for name, _members in LAYERS)
 #: that is not here, and on an entry here that no longer exists, so the roster
 #: can only shrink deliberately. It is empty: every layer imports downward only.
 KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
+
+#: The deferred imports that point upward, ``(importer, imported)``. A late
+#: import is exempt from the acyclicity requirement and not from the layering
+#: one, so these are the inversions that survive: a module that reaches up from
+#: inside a function body, once, on first call.
+#:
+#: Sanctioned, and staying: ``__main__`` is the command that starts the
+#: dashboard, so it reads its CLI; ``_hitl_audit`` writes the operator's answer
+#: through the mesh safety log; ``teleop_mixin`` defers ``teleoperator`` because
+#: that module imports lerobot. Each is pinned individually in
+#: ``tests/test_import_layers_are_a_dag.py``.
+#:
+#: The rest are cuts this lane has not made. The six ``simulation`` reads of the
+#: recording modules are the roadmap's own placement of recording in ``app``
+#: (strands-labs/robots#3818), so they are debt rather than a mislabel;
+#: ``registry.policies`` and ``drivers.ur`` reach up to build a policy; and the
+#: three ``dashboard.agent_hitl`` reads are a safety answer stored above three
+#: of its four callers.
+KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
+    ("strands_robots.__main__", "strands_robots.dashboard.cli"),
+    ("strands_robots._hitl_audit", "strands_robots.mesh.audit"),
+    ("strands_robots.drivers.ur", "strands_robots.policies"),
+    ("strands_robots.hardware_robot", "strands_robots.dashboard.agent_hitl"),
+    ("strands_robots.registry.policies", "strands_robots.policies"),
+    ("strands_robots.simulation.base", "strands_robots.verify_dataset"),
+    ("strands_robots.simulation.isaac.recording", "strands_robots.dataset_recorder"),
+    ("strands_robots.simulation.mujoco.recording", "strands_robots.dataset_recorder"),
+    ("strands_robots.simulation.newton.recording", "strands_robots.dataset_recorder"),
+    ("strands_robots.simulation.policy_runner", "strands_robots.dataset_recorder"),
+    ("strands_robots.simulation.recording", "strands_robots.dataset_recorder"),
+    ("strands_robots.simulation.recording", "strands_robots.streaming_dataset"),
+    ("strands_robots.teleop_mixin", "strands_robots.teleoperator"),
+    ("strands_robots.tools.pose_tool", "strands_robots.dashboard.agent_hitl"),
+    ("strands_robots.tools.serial_tool", "strands_robots.dashboard.agent_hitl"),
+)
 
 
 @dataclass(frozen=True)
@@ -327,13 +368,14 @@ def unassigned_members(graph: ImportGraph) -> tuple[str, ...]:
     return tuple(sorted(members - set(LAYER_OF_MEMBER)))
 
 
-def upward_edges(graph: ImportGraph) -> tuple[tuple[str, str], ...]:
-    """Return every runtime import that points at a higher layer.
+def upward_edges(graph: ImportGraph, kind: str = "runtime") -> tuple[tuple[str, str], ...]:
+    """Return every import of one kind that points at a higher layer.
 
     :param graph: The graph to read.
+    :param kind: ``"runtime"``, ``"typing_only"`` or ``"late"``.
     """
     found = []
-    for importer, targets in graph.runtime.items():
+    for importer, targets in getattr(graph, kind).items():
         source_layer = layer_of(importer)
         if source_layer is None:
             continue
@@ -369,36 +411,38 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(__file__).resolve().parent.parent / PACKAGE
     graph = build_graph(root)
     runtime_cycles = cycles(graph.runtime, frozenset(graph.modules))
-    inversions = upward_edges(graph)
-    known = set(KNOWN_UPWARD_EDGES)
-    missing = sorted(known - set(inversions))
-    new = sorted(set(inversions) - known)
+    graded = (
+        ("runtime", upward_edges(graph), KNOWN_UPWARD_EDGES),
+        ("deferred", upward_edges(graph, "late"), KNOWN_DEFERRED_UPWARD_EDGES),
+    )
     orphans = unassigned_members(graph)
 
     print(f"{PACKAGE}: {len(graph.modules)} modules, {len(LAYERS)} layers")
     for kind in ("runtime", "typing_only", "late"):
         print(f"  {kind:12s} edges: {graph.edge_count(kind)}")
     print(f"  runtime cycles: {len(runtime_cycles)}")
-    counts: dict[str, int] = defaultdict(int)
-    for edge in inversions:
-        counts[_pair_label(edge)] += 1
-    print(f"  upward runtime edges: {len(inversions)} (declared {len(KNOWN_UPWARD_EDGES)})")
-    for label, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
-        print(f"    {label:30s} {count}")
-    if args.verbose:
-        for importer, target in inversions:
-            print(f"    {importer} -> {target}")
+    for name, inversions, declared in graded:
+        counts: dict[str, int] = defaultdict(int)
+        for edge in inversions:
+            counts[_pair_label(edge)] += 1
+        print(f"  upward {name} edges: {len(inversions)} (declared {len(declared)})")
+        for label, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
+            print(f"    {label:30s} {count}")
+        if args.verbose:
+            for importer, target in inversions:
+                print(f"    {importer} -> {target}")
 
     failed = False
     for component in runtime_cycles:
         failed = True
         print(f"FAIL: runtime import cycle over {len(component)} modules: {', '.join(component)}")
-    for importer, target in new:
-        failed = True
-        print(f"FAIL: undeclared upward import {importer} -> {target} ({_pair_label((importer, target))})")
-    for importer, target in missing:
-        failed = True
-        print(f"FAIL: declared upward import no longer exists, delete it: {importer} -> {target}")
+    for name, inversions, declared in graded:
+        for importer, target in sorted(set(inversions) - set(declared)):
+            failed = True
+            print(f"FAIL: undeclared upward {name} import {importer} -> {target} ({_pair_label((importer, target))})")
+        for importer, target in sorted(set(declared) - set(inversions)):
+            failed = True
+            print(f"FAIL: declared upward {name} import no longer exists, delete it: {importer} -> {target}")
     for member in orphans:
         failed = True
         print(f"FAIL: {PACKAGE}.{member} is in no layer; add it to LAYERS")

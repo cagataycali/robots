@@ -27,13 +27,11 @@ import pytest
 
 import strands_robots.drivers.registry as drivers_registry_mod
 from strands_robots.drivers import (
-    DEFAULT_DRIVER,
-    DRIVER_CHOICES,
     get_native_driver_class,
     list_driver_coverage,
     resolve_driver,
 )
-from strands_robots.registry import get_hardware_type, list_robots
+from strands_robots.registry import DEFAULT_DRIVER, DRIVER_CHOICES, get_hardware_type, list_robots
 
 
 def test_every_registered_robot_is_reported_exactly_once() -> None:

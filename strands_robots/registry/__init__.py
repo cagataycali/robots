@@ -21,7 +21,8 @@ Usage::
 
 Architecture (this package re-exports the public API of its sibling modules):
     - :mod:`~strands_robots.registry.loader` - JSON loading + mtime hot-reload
-      + validation.
+      + validation, and the vocabularies a declared entry is validated
+      against (:data:`DEFAULT_DRIVER`, :data:`DRIVER_CHOICES`).
     - :mod:`~strands_robots.registry.robots` - robot query/resolve/list functions.
     - :mod:`~strands_robots.registry.policies` - policy resolve/import/kwargs
       functions.
@@ -40,7 +41,13 @@ from .discovery import (
     is_discoverable,
     list_discoverable,
 )
-from .loader import invalidate_cache, normalize_robot_name, reload
+from .loader import (
+    DEFAULT_DRIVER,
+    DRIVER_CHOICES,
+    invalidate_cache,
+    normalize_robot_name,
+    reload,
+)
 from .policies import (
     build_policy_kwargs,
     get_policy_provider,
@@ -80,6 +87,8 @@ __all__ = [
     "get_hardware_type",
     "list_robots",
     "LIST_ROBOTS_MODES",
+    "DEFAULT_DRIVER",
+    "DRIVER_CHOICES",
     "list_robots_by_category",
     "list_aliases",
     "format_robot_table",
