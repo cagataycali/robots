@@ -567,6 +567,47 @@ def observed_state_keys(observation: Mapping[str, Any]) -> list[str]:
     return [k for k, v in observation.items() if k != "task" and not (isinstance(v, np.ndarray) and v.ndim >= 2)]
 
 
+def _state_key_mismatch_detail(missing: list[str], observation: Mapping[str, Any], *, total: bool) -> str:
+    """Describe declared ``state_keys`` absent from the observation, with the remedy.
+
+    One text for both reactions to the same degradation - the warning
+    :func:`_warn_state_key_mismatch` emits and the ``strict_keys`` refusal
+    :class:`PackStateProcessorStep` raises - so a caller who turned the warning
+    into an error reads the same sentence rather than a second wording of it.
+
+    Args:
+        missing: Declared ``state_keys`` absent from ``observation``, in
+            declared order.
+        observation: The observation being packed, read for the keys it does
+            carry.
+        total: Whether NO declared key was present (see
+            :func:`_warn_state_key_mismatch`).
+
+    Returns:
+        The degradation and the registry-checked remedy, one line.
+    """
+    observed = observed_state_keys(observation)
+    shown = missing[:_REMEDY_KEYS_INLINE_MAX]
+    ellipsis = "..." if len(missing) > _REMEDY_KEYS_INLINE_MAX else ""
+    if total:
+        detail = (
+            f"None of the {len(missing)} declared state_keys {shown}{ellipsis} are present in the "
+            f"observation. Observed joint/state keys: {observed}. No observation.state was packed, "
+            "so the model receives no proprioceptive input and the failure surfaces downstream. "
+            "The embodiment's declared keys describe a different robot/sim - or a different naming "
+            "convention for the same one - than the observation reporting them."
+        )
+    else:
+        detail = (
+            f"{len(missing)} declared state_keys are not present in the observation: "
+            f"{shown}{ellipsis}. Observed joint/state keys: {observed}. Present joints keep their "
+            "model index and the missing dims are zero-filled in place, but the sim/robot does not "
+            "report those joints - commonly a mimic/tendon gripper actuator whose name differs from "
+            "the observation's finger-joint names."
+        )
+    return f"{detail} {state_key_remedy(observed)}"
+
+
 def _warn_state_key_mismatch(missing: list[str], observation: Mapping[str, Any], *, total: bool) -> None:
     """Warn once that declared ``state_keys`` are absent from the observation.
 
@@ -589,30 +630,11 @@ def _warn_state_key_mismatch(missing: list[str], observation: Mapping[str, Any],
             reported as an unbindable configuration rather than as a
             zero-filled dimension.
     """
-    observed = observed_state_keys(observation)
-    sig = (tuple(missing), tuple(observed))
+    sig = (tuple(missing), tuple(observed_state_keys(observation)))
     if sig in _WARNED_STATE_KEY_MISMATCH:
         return
     _WARNED_STATE_KEY_MISMATCH.add(sig)
-    shown = missing[:_REMEDY_KEYS_INLINE_MAX]
-    ellipsis = "..." if len(missing) > _REMEDY_KEYS_INLINE_MAX else ""
-    if total:
-        detail = (
-            f"None of the {len(missing)} declared state_keys {shown}{ellipsis} are present in the "
-            f"observation. Observed joint/state keys: {observed}. No observation.state was packed, "
-            "so the model receives no proprioceptive input and the failure surfaces downstream. "
-            "The embodiment's declared keys describe a different robot/sim - or a different naming "
-            "convention for the same one - than the observation reporting them."
-        )
-    else:
-        detail = (
-            f"{len(missing)} declared state_keys are not present in the observation: "
-            f"{shown}{ellipsis}. Observed joint/state keys: {observed}. Present joints keep their "
-            "model index and the missing dims are zero-filled in place, but the sim/robot does not "
-            "report those joints - commonly a mimic/tendon gripper actuator whose name differs from "
-            "the observation's finger-joint names."
-        )
-    logger.warning("lerobot_local: %s %s", detail, state_key_remedy(observed))
+    logger.warning("lerobot_local: %s", _state_key_mismatch_detail(missing, observation, total=total))
 
 
 def register_pack_state_step() -> type | None:
@@ -670,6 +692,17 @@ def register_pack_state_step() -> type | None:
                 ``state_keys``, subtracted from the arm columns so the packed
                 state is mid-centered like LeRobot's ``DEGREES`` mode. Empty
                 (the default) = mid 0.
+            strict_keys: Raise instead of packing a zero-filled dim for a
+                declared key the observation does not carry. The same posture
+                :class:`~strands_robots.policies.lerobot_local.policy.LerobotLocalPolicy`
+                takes on its own state path, so the flag means one thing
+                whichever path composes the vector.
+            missing_keys_sink: List the step writes the zero-filled declared
+                keys into, in declared order. The policy owns it and reports it
+                as ``missing_state_keys_used``: this step runs inside LeRobot's
+                pipeline, so a degradation it absorbs is invisible to the
+                envelope a caller gates on unless it is written somewhere the
+                policy reads.
         """
 
         state_keys: list[str] = field(default_factory=list)
@@ -685,6 +718,12 @@ def register_pack_state_step() -> type | None:
         # subtracted from arm columns so observation.state is mid-centered like
         # lerobot motors_bus DEGREES mode. Empty = mid 0 (prior behavior).
         joint_mids: list[float] = field(default_factory=list)
+        # Refuse a zero-filled dim instead of packing one, mirroring
+        # LerobotLocalPolicy._collect_state_values under strict_keys=True.
+        strict_keys: bool = False
+        # The caller's list, written (not replaced) with the declared keys this
+        # step zero-filled, so the policy can report the degradation it packed.
+        missing_keys_sink: list[str] = field(default_factory=list)
 
         def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
             """Compose the declared scalar joint keys into ``observation.state`` (passthrough when already packed)."""
@@ -756,6 +795,13 @@ def register_pack_state_step() -> type | None:
                 return observation
 
             if missing:
+                if self.strict_keys:
+                    raise ValueError(
+                        "strict_keys=True: " + _state_key_mismatch_detail(missing, observation, total=False)
+                    )
+                # Written in place: the list is the policy's, so replacing it
+                # would leave the policy holding the empty one it passed in.
+                self.missing_keys_sink[:] = missing
                 _warn_state_key_mismatch(missing, observation, total=False)
 
             # Convert sim units (radians + gripper joint range) to the model's

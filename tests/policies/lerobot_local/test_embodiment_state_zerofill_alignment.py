@@ -22,6 +22,15 @@ These tests pin the corrected behaviour: a missing state_key is zero-filled IN
 PLACE (present joints keep their model index), the degradation is warned once,
 a fully-present key set is unchanged, an all-missing set is left untouched for a
 clearer downstream error, and the aloha embodiment declares the 14 actuator keys.
+
+The warning was the ONLY report: the step packs inside LeRobot's pipeline and had
+no route back to the policy, so ``missing_state_keys_used`` - the flag
+``run_policy`` reports and a collection loop gates on - read False for every
+embodiment-driven run, and ``strict_keys=True`` packed the zero anyway. Measured
+on this same trigger with the real checkpoint ``lerobot/act_aloha_sim_transfer_
+cube_human``: two of fourteen dims carrying no reading under a ``success``
+envelope whose binding flags all read healthy. :class:`TestTheZeroFillIsReported`
+pins the two surfaces the generic path already honours.
 """
 
 import numpy as np
@@ -127,6 +136,76 @@ class TestPackStateZeroFillInPlace:
         out = _step(["a", "b"], 2).observation(dict(obs))
         assert "observation.state" not in out
         assert out == obs
+
+
+class TestTheZeroFillIsReported:
+    """The caller's flag and the caller's strict posture see what the step filled."""
+
+    @staticmethod
+    def _bridge(state_keys, expected_dim, **applied):
+        """A bridge carrying only the injected pack-state step, plus that step.
+
+        ``applied`` goes to ``apply_embodiment``, so a case that does not depend
+        on the strict posture passes nothing and reads the default.
+        """
+        from types import SimpleNamespace
+
+        from strands_robots.policies.lerobot_local.processor import ProcessorBridge
+
+        bridge = ProcessorBridge(preprocessor=SimpleNamespace(steps=[]))
+        bridge.apply_embodiment(
+            E.EmbodimentMap(name="pack_test", state_keys=list(state_keys), dim_policy="pad"),
+            input_features={
+                "observation.state": SimpleNamespace(type=SimpleNamespace(name="STATE"), shape=(expected_dim,))
+            },
+            **applied,
+        )
+        packers = [s for s in bridge._preprocessor.steps if getattr(s, "_registry_name", None) == "strands_pack_state"]
+        assert len(packers) == 1, bridge._preprocessor.steps
+        return bridge, packers[0]
+
+    @staticmethod
+    def _policy():
+        """A policy with no model loaded, read only for its telemetry flag."""
+        from unittest.mock import patch
+
+        from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
+
+        with patch.object(LerobotLocalPolicy, "_load_model"):
+            return LerobotLocalPolicy(pretrained_name_or_path=None, policy_type="act")
+
+    def test_the_policy_flag_reports_the_filled_dims(self):
+        """FAILS pre-fix: the flag read False while two dims carried no reading."""
+        E._WARNED_STATE_KEY_MISMATCH.clear()
+        bridge, step = self._bridge(ALOHA_14, 14)
+        step.observation(_sim_obs_no_gripper())
+        policy = self._policy()
+        policy._processor_bridge = bridge
+        assert policy.missing_state_keys_used is True
+        assert bridge.state_missing_keys == ("left/gripper", "right/gripper")
+
+    def test_strict_keys_refuses_instead_of_filling(self):
+        """strict_keys is one posture on every state path, not two."""
+        E._WARNED_STATE_KEY_MISMATCH.clear()
+        _bridge, step = self._bridge(ALOHA_14, 14, strict_keys=True)
+        with pytest.raises(ValueError) as exc:
+            step.observation(_sim_obs_no_gripper())
+        msg = str(exc.value)
+        assert "strict_keys=True" in msg
+        assert "left/gripper" in msg and "right/gripper" in msg
+        assert "set_robot_state_keys" in msg
+
+    def test_a_fully_bound_observation_packs_and_reports_nothing(self):
+        """The control: strict_keys set, every declared key present -> no raise, flag clear."""
+        E._WARNED_STATE_KEY_MISMATCH.clear()
+        keys = ["a", "b", "c"]
+        bridge, step = self._bridge(keys, 3, strict_keys=True)
+        out = step.observation({"a": 1.0, "b": 2.0, "c": 3.0})
+        np.testing.assert_allclose(out["observation.state"].numpy(), [1.0, 2.0, 3.0], atol=1e-5)
+        assert bridge.state_missing_keys == ()
+        policy = self._policy()
+        policy._processor_bridge = bridge
+        assert policy.missing_state_keys_used is False
 
 
 class TestAlohaEmbodimentActuatorConvention:

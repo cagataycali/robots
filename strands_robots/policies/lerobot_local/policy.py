@@ -824,7 +824,10 @@ class LerobotLocalPolicy(Policy):
         # Telemetry parallel to generic_state_keys_used: flipped True the
         # first time a resolved state key is missing from the observation
         # so run_policy / eval_policy can surface a machine-checkable signal.
-        self.missing_state_keys_used = False
+        # Read through the property below, which also reports the declarative
+        # path's zero-fills - the pack-state step packs those inside LeRobot's
+        # pipeline, where this object never sees them.
+        self._missing_state_keys_used = False
 
         # Action diagnostics: surface a model<->embodiment action-dim mismatch
         # (zero-filled actuators) and a persistent near-zero action stream
@@ -853,6 +856,27 @@ class LerobotLocalPolicy(Policy):
     def provider_name(self) -> str:
         """Registry key for this provider (``"lerobot_local"``)."""
         return "lerobot_local"
+
+    @property
+    def missing_state_keys_used(self) -> bool:
+        """Whether a declared state key absent from the observation was zero-filled.
+
+        ``run_policy`` / ``eval_policy`` report this, and a collection loop gates
+        on it: True on an otherwise successful run means the model conditioned on
+        a dim that carries no reading (aloha's ``left/gripper`` actuator name
+        against an observation that reports finger JOINTS, canonically).
+
+        Two paths compose ``observation.state`` and both are reported here.
+        :meth:`_collect_state_values` zero-fills on this object, so it sets the
+        backing flag directly; the declarative ``embodiment`` path zero-fills
+        inside LeRobot's pipeline, in the injected pack-state step, which records
+        the keys on the bridge for this read. Without the second term the flag
+        read False for every embodiment-driven run - the path the docs recommend.
+        """
+        if self._missing_state_keys_used:
+            return True
+        bridge = self._processor_bridge
+        return bool(bridge is not None and bridge.state_missing_keys)
 
     @property
     def supports_rtc(self) -> bool:
@@ -1983,7 +2007,11 @@ class LerobotLocalPolicy(Policy):
            model's declared input/output features (fail-fast on dim or key
            mismatch).
         3. Injects ``rename_map`` + a ``strands_pack_state`` step into the
-           preprocessor pipeline via :meth:`ProcessorBridge.apply_embodiment`.
+           preprocessor pipeline via :meth:`ProcessorBridge.apply_embodiment`,
+           carrying ``strict_keys`` so the step refuses a declared state key the
+           observation does not carry instead of zero-filling its dim (the same
+           posture :meth:`_collect_state_values` takes on the generic path).
+           ``camera_key_map`` is routed in step 2 under the same flag.
 
         If no embodiment is declared AND no ``robot_state_keys`` are set, this is
         a no-op and the policy uses the legacy heuristic remap path.
@@ -2077,7 +2105,9 @@ class LerobotLocalPolicy(Policy):
             )
 
         # Inject into the pipeline (rename_map + pack-state step).
-        self._processor_bridge.apply_embodiment(embodiment, input_features=self._input_features)
+        self._processor_bridge.apply_embodiment(
+            embodiment, input_features=self._input_features, strict_keys=self.strict_keys
+        )
 
         self._embodiment = embodiment
         # Action-side mapping: prefer the embodiment's declared action_keys so
@@ -3063,7 +3093,7 @@ class LerobotLocalPolicy(Policy):
             )
             if self.strict_keys:
                 raise ValueError("strict_keys=True: " + msg)
-            self.missing_state_keys_used = True
+            self._missing_state_keys_used = True
             if not self._state_missing_keys_warned:
                 logger.warning("%s", sanitize_log_value(msg))
                 self._state_missing_keys_warned = True

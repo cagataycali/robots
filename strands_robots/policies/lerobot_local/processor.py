@@ -298,6 +298,10 @@ class ProcessorBridge:
         # missing' preprocessor failure with the expected camera source
         # keys and what the runtime observation actually provided.
         self._obs_rename: dict[str, str] = {}
+        # Declared state keys the injected pack-state step zero-filled. The
+        # step writes into this list, so a degradation absorbed inside LeRobot's
+        # pipeline reaches the policy that reports it.
+        self._state_missing_keys: list[str] = []
 
     @classmethod
     def from_pretrained(
@@ -684,7 +688,7 @@ class ProcessorBridge:
         )
         return preprocessor, postprocessor
 
-    def apply_embodiment(self, embodiment, input_features: dict | None = None) -> None:
+    def apply_embodiment(self, embodiment, input_features: dict | None = None, *, strict_keys: bool = False) -> None:
         """Inject a declarative :class:`EmbodimentMap` into the loaded pipeline.
 
         This is the heart of the mapping:
@@ -709,6 +713,9 @@ class ProcessorBridge:
             input_features: Model ``config.input_features`` (for state dim). When
                 provided, the pack-state step's ``expected_dim`` is set from the
                 model's declared ``observation.state`` shape.
+            strict_keys: Passed to the pack-state step, which then refuses a
+                declared state key the observation does not carry instead of
+                packing a zero for it.
 
         Note:
             Both steps land on the PREprocessor, so a bridge carrying only a
@@ -781,6 +788,8 @@ class ProcessorBridge:
                     gripper_index=embodiment.gripper_index,
                     gripper_joint_range=list(embodiment.gripper_joint_range),
                     joint_mids=list(embodiment.joint_mids),
+                    strict_keys=strict_keys,
+                    missing_keys_sink=self._state_missing_keys,
                 ),
             )
 
@@ -795,6 +804,17 @@ class ProcessorBridge:
             embodiment.dim_policy,
             len(steps),
         )
+
+    @property
+    def state_missing_keys(self) -> tuple[str, ...]:
+        """Declared state keys the pack-state step zero-filled, in declared order.
+
+        Empty until a packed observation was missing one. Read by
+        :class:`~strands_robots.policies.lerobot_local.policy.LerobotLocalPolicy`
+        for ``missing_state_keys_used``, the flag ``run_policy`` reports and a
+        collection loop gates on.
+        """
+        return tuple(self._state_missing_keys)
 
     @property
     def has_preprocessor(self) -> bool:
