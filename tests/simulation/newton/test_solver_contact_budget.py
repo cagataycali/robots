@@ -25,6 +25,7 @@ import pytest
 from strands_robots.simulation.newton.backend import (
     CONTACT_BUDGET_FLOOR,
     CONTACTS_PER_SHAPE,
+    ensure_newton,
     solver_contact_budget,
 )
 
@@ -74,8 +75,7 @@ _HAS_NEWTON = importlib.util.find_spec("newton") is not None and importlib.util.
 def _has_cuda() -> bool:
     if not _HAS_NEWTON:
         return False
-    import warp as wp
-
+    _, wp = ensure_newton()
     return bool(wp.get_cuda_device_count())
 
 
