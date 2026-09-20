@@ -245,7 +245,7 @@ class TestMirrorSession:
         s.wait_ready()
         assert _wait(lambda: s.snapshot.state == "mirroring")
         src.set((0.1, -1.8, 0.3))
-        assert _wait(lambda: s.snapshot.state == "error"), f"reported {s.snapshot.state} for a refused write"
+        assert _wait(lambda: s.snapshot.state == "refused"), f"reported {s.snapshot.state} for a refused write"
         assert "nothing written" in s.snapshot.error
         assert s.snapshot.bus["error"] is None, "the bus is healthy; the model refused the pose"
         src.set((0.1, -1.0, 0.3))  # the arm comes back inside the range

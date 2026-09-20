@@ -56,7 +56,7 @@ class Snapshot:
 
     id: str
     robot: str
-    state: str  # starting | running | mirroring | stale | frozen | error | stopped
+    state: str  # starting | running | mirroring | stale | refused | frozen | error | stopped
     sim_time: float
     steps: int
     joint_names: tuple[str, ...]
@@ -325,7 +325,7 @@ class SimSession:
         """Write the source's angles into the model: this tick's state, and why it is not ``mirroring``.
 
         ``("stale", None)`` while no fresh reading arrives, ``("error", reason)``
-        when the bus stopped answering - and ``("error", refusal)`` when the
+        when the bus stopped answering, and ``("refused", refusal)`` when the
         model refuses the pose. That write is all-or-nothing: one joint past its
         ``jnt_range`` writes nothing, so the twin stays on the last accepted
         pose, and answering ``mirroring`` for that tick would show a frozen twin
@@ -345,7 +345,7 @@ class SimSession:
         wrote = engine.set_joint_positions(dict(zip(names, q, strict=False)), robot_name=self.robot, hold=True)
         if dict(wrote).get("status") == "error":
             texts = [b["text"] for b in dict(wrote).get("content") or [] if isinstance(b, dict) and b.get("text")]
-            return "error", " ".join(str(t) for t in texts) or "the model refused the pose"
+            return "refused", " ".join(str(t) for t in texts) or "the model refused the pose"
         return "mirroring", None
 
     def _drain(self, engine: Any) -> None:
