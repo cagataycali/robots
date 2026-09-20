@@ -4,7 +4,7 @@ import pytest
 
 from strands_robots.registry import get_policy_provider, list_policy_providers, resolve_policy
 from strands_robots.registry.loader import _load, _validate, reload
-from strands_robots.registry.policies import build_policy_kwargs, import_policy_class
+from strands_robots.registry.policies import build_policy_kwargs
 from strands_robots.registry.robots import (
     LIST_ROBOTS_MODES,
     format_robot_table,
@@ -266,32 +266,6 @@ class TestProviderLookup:
         config = get_policy_provider("random")
         assert config is not None
         assert config["class"] == "MockPolicy"
-
-
-# import_policy_class tests
-
-
-class TestImportPolicyClass:
-    """import_policy_class() should dynamically load the right class."""
-
-    def test_import_mock(self):
-        """Importing 'mock' should return MockPolicy."""
-        from strands_robots.policies import MockPolicy
-
-        cls = import_policy_class("mock")
-        assert cls is MockPolicy
-
-    def test_import_unknown_raises(self):
-        """Unknown provider should raise ValueError."""
-        with pytest.raises(ValueError, match="Unknown policy provider"):
-            import_policy_class("nonexistent_provider_xyz_999")
-
-    def test_import_via_alias(self):
-        """Importing via alias should return the same class."""
-        from strands_robots.policies import MockPolicy
-
-        cls = import_policy_class("random")
-        assert cls is MockPolicy
 
 
 # build_policy_kwargs tests

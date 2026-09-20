@@ -8,7 +8,7 @@ while importing the provider's module - before any provider machinery runs - and
 the bare ``ModuleNotFoundError: No module named 'torch'`` that escaped named
 neither the provider the caller asked for nor the way to fix it.
 
-:func:`~strands_robots.registry.policies.import_policy_class` is the single
+:func:`~strands_robots.policies.factory.import_policy_class` is the single
 funnel every provider class is imported through, so the translation lives there
 and the remedy no longer depends on WHERE a provider imports its dependency.
 
@@ -36,7 +36,8 @@ from typing import Any
 
 import pytest
 
-import strands_robots.registry.policies as policies_mod
+import strands_robots.policies.factory as factory_mod
+import strands_robots.registry.loader as loader
 from strands_robots.policies import create_policy
 
 #: Extra that ships ``lerobot_local``'s dependency, as declared in policies.json.
@@ -66,11 +67,11 @@ def _absent(module: str) -> Any:
 def _repo_root() -> pathlib.Path:
     """Return the repository root, derived from the package under test.
 
-    ``policies.py`` sits at ``<root>/strands_robots/registry/``, so the root is
+    ``factory.py`` sits at ``<root>/strands_robots/policies/``, so the root is
     two parents up from the package directory. Derived from the module rather
     than from a path literal so the guard follows the package.
     """
-    root = pathlib.Path(policies_mod.__file__).resolve().parents[2]
+    root = pathlib.Path(factory_mod.__file__).resolve().parents[2]
     assert (root / "pyproject.toml").is_file(), f"repo root not resolved: {root}"
     return root
 
@@ -81,25 +82,25 @@ class TestAMissingDependencyReportsItsRemedy:
     def test_it_names_the_provider_the_missing_module_and_the_install_command(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(policies_mod.importlib, "import_module", _absent("torch"))
+        monkeypatch.setattr(factory_mod.importlib, "import_module", _absent("torch"))
         with pytest.raises(ImportError) as excinfo:
-            policies_mod.import_policy_class("lerobot_local")
+            factory_mod.import_policy_class("lerobot_local")
         message = str(excinfo.value)
         assert "lerobot_local" in message, message
         assert "torch" in message, message
         assert f"strands-robots[{_LEROBOT_EXTRA}]" in message, message
 
     def test_the_original_import_error_is_kept_as_the_cause(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(policies_mod.importlib, "import_module", _absent("torch"))
+        monkeypatch.setattr(factory_mod.importlib, "import_module", _absent("torch"))
         with pytest.raises(ImportError) as excinfo:
-            policies_mod.import_policy_class("lerobot_local")
+            factory_mod.import_policy_class("lerobot_local")
         cause = excinfo.value.__cause__
         assert isinstance(cause, ModuleNotFoundError), cause
         assert getattr(cause, "name", None) == "torch"
 
     def test_create_policy_propagates_the_actionable_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The report reaches the caller through the public entry point."""
-        monkeypatch.setattr(policies_mod.importlib, "import_module", _absent("torch"))
+        monkeypatch.setattr(factory_mod.importlib, "import_module", _absent("torch"))
         with pytest.raises(ImportError) as excinfo:
             create_policy("lerobot_local", pretrained_name_or_path="allenai/MolmoAct2-SO100_101")
         message = str(excinfo.value)
@@ -109,9 +110,9 @@ class TestAMissingDependencyReportsItsRemedy:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Without a declared extra the module is still named, not swallowed."""
-        monkeypatch.setattr(policies_mod.importlib, "import_module", _absent("pyzmq_stand_in"))
+        monkeypatch.setattr(factory_mod.importlib, "import_module", _absent("pyzmq_stand_in"))
         with pytest.raises(ImportError) as excinfo:
-            policies_mod.import_policy_class("groot")
+            factory_mod.import_policy_class("groot")
         message = str(excinfo.value)
         assert "groot" in message, message
         assert "pyzmq_stand_in" in message, message
@@ -129,9 +130,9 @@ class TestNoProviderIsSubstituted:
     def test_a_missing_dependency_raises_rather_than_substituting(
         self, provider: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(policies_mod.importlib, "import_module", _absent("torch"))
+        monkeypatch.setattr(factory_mod.importlib, "import_module", _absent("torch"))
         with pytest.raises(ImportError) as excinfo:
-            policies_mod.import_policy_class(provider)
+            factory_mod.import_policy_class(provider)
         assert "mock" not in str(excinfo.value).lower()
 
     @pytest.mark.parametrize("provider", _SUBSTITUTION_CANDIDATES)
@@ -139,14 +140,14 @@ class TestNoProviderIsSubstituted:
         self, provider: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Nothing the funnel returns on the failure path is a policy at all."""
-        monkeypatch.setattr(policies_mod.importlib, "import_module", _absent("torch"))
+        monkeypatch.setattr(factory_mod.importlib, "import_module", _absent("torch"))
         returned: list[Any] = []
         # The refusal itself is asserted by the cases above; this one is only about
         # what the funnel RETURNS, so the ImportError is suppressed rather than
         # required -- a tree that stopped raising would still have to append nothing
         # for this to pass, which is the substitution being ruled out.
         with contextlib.suppress(ImportError):
-            returned.append(policies_mod.import_policy_class(provider))
+            returned.append(factory_mod.import_policy_class(provider))
         assert returned == [], f"the funnel returned {returned!r} for {provider!r} instead of reporting"
 
 
@@ -158,7 +159,7 @@ class TestAnUnknownProviderIsStillUnknown:
 
     def test_an_unknown_name_is_a_value_error_naming_the_available_providers(self) -> None:
         with pytest.raises(ValueError) as excinfo:
-            policies_mod.import_policy_class("no_such_provider_at_all")
+            factory_mod.import_policy_class("no_such_provider_at_all")
         message = str(excinfo.value)
         assert "no_such_provider_at_all" in message, message
         assert "Available" in message, message
@@ -172,9 +173,9 @@ class TestAnUnknownProviderIsStillUnknown:
         dependency. Reported as an unknown provider it sent a caller whose name
         was correct to go and check the name.
         """
-        monkeypatch.setattr(policies_mod.importlib, "import_module", _absent("some_missing_dep"))
+        monkeypatch.setattr(factory_mod.importlib, "import_module", _absent("some_missing_dep"))
         with pytest.raises(ImportError) as excinfo:
-            policies_mod.import_policy_class("not_in_the_registry")
+            factory_mod.import_policy_class("not_in_the_registry")
         message = str(excinfo.value)
         assert "some_missing_dep" in message, message
         assert "Unknown policy provider" not in message, message
@@ -189,9 +190,7 @@ class TestTheDeclaredExtrasAreReal:
     """
 
     def test_every_provider_extra_is_declared_in_pyproject(self) -> None:
-        registry = json.loads(
-            (pathlib.Path(policies_mod.__file__).parent / "policies.json").read_text(encoding="utf-8")
-        )
+        registry = json.loads((loader._REGISTRY_DIR / "policies.json").read_text(encoding="utf-8"))
         pyproject = tomllib.loads((_repo_root() / "pyproject.toml").read_text(encoding="utf-8"))
         declared = set(pyproject["project"]["optional-dependencies"])
         named = {name: cfg["extra"] for name, cfg in registry["providers"].items() if cfg.get("extra") is not None}
@@ -204,6 +203,13 @@ class TestTheDeclaredExtrasAreReal:
 class TestAUsableProviderStillImports:
     """Over-reach control: the translation only fires on a failed import."""
 
-    def test_a_provider_with_no_optional_dependency_imports_unchanged(self) -> None:
-        cls = policies_mod.import_policy_class("mock")
-        assert cls.__name__ == "MockPolicy"
+    @pytest.mark.parametrize("spelling", ["mock", "random"])
+    def test_a_provider_with_no_optional_dependency_imports_unchanged(self, spelling: str) -> None:
+        """Every spelling the registry declares reaches the same class.
+
+        ``random`` is a declared shorthand for ``mock``, so it exercises the
+        canonicalisation the funnel performs before the module lookup.
+        """
+        from strands_robots.policies import MockPolicy
+
+        assert factory_mod.import_policy_class(spelling) is MockPolicy

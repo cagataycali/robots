@@ -19,6 +19,7 @@ import re
 
 import pytest
 
+import strands_robots.policies.factory as factory_mod
 import strands_robots.registry.policies as policies_mod
 from strands_robots.registry.policies import build_policy_kwargs, resolve_policy
 
@@ -140,21 +141,25 @@ class TestAbsoluteHuggingFaceFallback:
 
 
 class TestImportPolicyClassAutoDiscovery:
-    """import_policy_class falls back to submodule discovery when not in JSON."""
+    """import_policy_class falls back to submodule discovery when not in JSON.
+
+    The funnel lives in ``policies.factory``; what it reads is this module's
+    registry, which is what ``_inject_registry`` empties.
+    """
 
     def test_capitalized_class_name_is_discovered(self, monkeypatch):
         """With an empty registry, 'mock' is found via MockPolicy in the submodule."""
         from strands_robots.policies import MockPolicy
 
         _inject_registry(monkeypatch, {})
-        assert policies_mod.import_policy_class("mock") is MockPolicy
+        assert factory_mod.import_policy_class("mock") is MockPolicy
 
     def test_policy_subclass_scan_finds_class_when_name_mismatches(self, monkeypatch):
         """When 'NamePolicy' does not exist, the module is scanned for a Policy subclass."""
         from strands_robots.policies import Policy
 
         _inject_registry(monkeypatch, {})
-        cls = policies_mod.import_policy_class("lerobot_local")
+        cls = factory_mod.import_policy_class("lerobot_local")
         assert issubclass(cls, Policy) and cls is not Policy
 
 

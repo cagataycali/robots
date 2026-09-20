@@ -2665,8 +2665,8 @@ class Robot(TeleopMixin, AgentTool):
         :func:`~strands_robots.policies.factory.provider_can_be_created`, which
         walks the same three stages ``create_policy`` does - a provider the
         public ``register_policy()`` API registered at runtime (by name or
-        alias), a smart string (HF id, ``zmq://`` URL), then the registry's own
-        account of what ``import_policy_class`` accepts - so a runtime-registered
+        alias), a smart string (HF id, ``zmq://`` URL), then what
+        :func:`~strands_robots.policies.factory.import_policy_class` accepts - so a runtime-registered
         provider, a declared alias (``lerobot``, ``random``, ``c3``) and an
         auto-discovered module (``composite``, ``persistent``) are not refused
         for being absent from

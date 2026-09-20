@@ -48,9 +48,9 @@ import pytest
 import strands_robots.hardware_robot as hardware_robot
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState, TaskStatus
+from strands_robots.policies.factory import import_policy_class
 from strands_robots.registry.policies import (
     get_policy_provider,
-    import_policy_class,
     list_policy_providers,
 )
 from strands_robots.utils import tcp_port_error

@@ -206,6 +206,33 @@ class TestTheContract:
         seam = "strands_robots.drivers.registry"
         assert "strands_robots.registry" in graph.runtime[seam], f"{seam} reads no registry, so this is vacuous"
 
+    def test_the_registry_reads_no_policy_to_import_one(self, graph: Any) -> None:
+        """The registry declares providers; the factory imports their classes.
+
+        ``import_policy_class`` walked ``policies.json`` and then fell back to
+        scanning ``strands_robots.policies.<name>`` for a
+        :class:`~strands_robots.policies.Policy` subclass -- ``issubclass``
+        against a class two layers above the registry, so the declarative layer
+        deferred an import of the behaviour it is meant to only describe. It
+        lives in ``policies.factory`` now, where ``Policy`` is already a
+        module-level name, and the registry answers the same question without
+        importing anything (``policy_provider_resolves``).
+
+        Graded across all three import kinds: the edge that existed was a late
+        import inside the function, which the runtime graph alone does not see.
+        """
+        offenders = sorted(
+            (importer, target)
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            if importer.split(".")[:2] == ["strands_robots", "registry"]
+            for target in targets
+            if target == "strands_robots.policies" or target.startswith("strands_robots.policies.")
+        )
+        assert offenders == [], f"the registry reaches up for a policy: {offenders}"
+        factory = "strands_robots.policies.factory"
+        assert "strands_robots.registry" in graph.runtime[factory], f"{factory} reads no registry, so this is vacuous"
+
     def test_no_driver_imports_a_policy(self, graph: Any) -> None:
         """The cut this contract was first used to make, named on its own.
 

@@ -124,7 +124,7 @@ def _resolved_outside_the_registry() -> dict[str, str]:
     import pkgutil
 
     import strands_robots.policies as policies_pkg
-    from strands_robots.registry.policies import import_policy_class
+    from strands_robots.policies.factory import import_policy_class
 
     reported = _reported_spellings()
     resolved: dict[str, str] = {}
@@ -404,7 +404,7 @@ def test_the_persistent_spelling_resolves_but_is_not_buildable_here() -> None:
     :func:`create_policy` has already bound, so no keyword can reach it. That is
     what makes reporting it as a provider wrong rather than merely incomplete.
     """
-    from strands_robots.registry.policies import import_policy_class
+    from strands_robots.policies.factory import import_policy_class
 
     assert import_policy_class("persistent").__name__ == "PersistentPolicy"
     with pytest.raises(TypeError, match="provider"):
@@ -418,7 +418,7 @@ def test_a_module_with_no_policy_subclass_is_not_a_spelling(module_name: str) ->
     Fails if the derivation is widened to module names, which would demand the
     docs name modules ``create_policy`` refuses.
     """
-    from strands_robots.registry.policies import import_policy_class
+    from strands_robots.policies.factory import import_policy_class
 
     with pytest.raises(ValueError, match="Unknown policy provider"):
         import_policy_class(module_name)

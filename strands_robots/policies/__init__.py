@@ -48,6 +48,7 @@ from strands_robots.policies.composite import CompositePolicy
 from strands_robots.policies.factory import (
     UntrustedRemoteCodeError,
     create_policy,
+    import_policy_class,
     list_aliases,
     list_providers,
     policy_mapping_error,
@@ -76,6 +77,7 @@ __all__ = [
     "Cosmos3Policy",
     "CompositePolicy",
     "create_policy",
+    "import_policy_class",
     "preflight_policy",
     "policy_overrides_preflight",
     "policy_provider_error",

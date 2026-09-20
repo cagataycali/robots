@@ -235,7 +235,7 @@ class TestBundle:
 
 class TestRegistry:
     def test_resolves_from_registry(self):
-        from strands_robots.registry.policies import import_policy_class
+        from strands_robots.policies.factory import import_policy_class
 
         assert import_policy_class("microduck") is MicroduckPolicy
 

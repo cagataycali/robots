@@ -167,7 +167,7 @@ class TestEveryProviderThatResolvesStillRuns:
     @pytest.mark.parametrize("provider", AUTO_DISCOVERED)
     def test_an_auto_discovered_module_is_not_refused(self, provider: str) -> None:
         """``import_policy_class`` resolves these with no registry entry to read."""
-        from strands_robots.registry.policies import import_policy_class
+        from strands_robots.policies.factory import import_policy_class
 
         assert import_policy_class(provider) is not None
         assert HwRobot._policy_provider_error(provider, "start_task") is None
@@ -256,7 +256,7 @@ class TestTheResolutionPredicateMatchesTheImporterItSpeaksFor:
         "provider", sorted(set(list_policy_providers()) | set(list_policy_aliases()) | set(AUTO_DISCOVERED))
     )
     def test_every_name_the_importer_resolves_is_reported_as_resolving(self, provider: str) -> None:
-        from strands_robots.registry.policies import import_policy_class
+        from strands_robots.policies.factory import import_policy_class
 
         try:
             imported = import_policy_class(provider) is not None
@@ -269,7 +269,7 @@ class TestTheResolutionPredicateMatchesTheImporterItSpeaksFor:
 
     @pytest.mark.parametrize("provider", UNRESOLVABLE)
     def test_a_name_the_importer_refuses_is_reported_as_unresolvable(self, provider: str) -> None:
-        from strands_robots.registry.policies import import_policy_class
+        from strands_robots.policies.factory import import_policy_class
 
         with pytest.raises(ValueError, match="Unknown policy provider"):
             import_policy_class(provider)

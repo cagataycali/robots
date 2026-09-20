@@ -137,12 +137,11 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 #: The rest are cuts this lane has not made. The six ``simulation`` reads of the
 #: recording modules are the roadmap's own placement of recording in ``app``
 #: (strands-labs/robots#3818), so they are debt rather than a mislabel; and
-#: ``registry.policies`` and ``drivers.ur`` reach up to build a policy.
+#: ``drivers.ur`` reaches up to build a policy.
 KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.__main__", "strands_robots.dashboard.cli"),
     ("strands_robots._hitl_audit", "strands_robots.mesh.audit"),
     ("strands_robots.drivers.ur", "strands_robots.policies"),
-    ("strands_robots.registry.policies", "strands_robots.policies"),
     ("strands_robots.simulation.isaac.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.mujoco.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.newton.recording", "strands_robots.dataset_recorder"),
