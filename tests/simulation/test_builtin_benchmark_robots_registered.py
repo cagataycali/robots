@@ -21,7 +21,7 @@ fail at build time if any built-in robot name no longer resolves to a real
 registry entry.
 
 They are registry-only - no MuJoCo, no GL, no asset download - so they run in
-any environment (mirroring ``tests/test_registry_integrity.py``, which reads
+any environment (mirroring ``tests/registry/test_integrity.py``, which reads
 only ``robots.json``). ``get_robot`` runs the production resolution path
 (alias -> canonical -> lookup) and returns ``None`` for an unknown name;
 ``resolve_name`` alone is insufficient because it echoes an unknown name back

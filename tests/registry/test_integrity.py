@@ -198,3 +198,192 @@ def test_arm_joint_counts_match_embodiment_state_keys(registry: dict) -> None:
         if declared != len(emb.state_keys):
             mismatches.append(f"{name}: registry joints={declared} != embodiment state_keys={len(emb.state_keys)}")
     assert not mismatches, "Registry joints disagree with embodiment state dim:\n  " + "\n  ".join(mismatches)
+
+
+def test_robot_descriptions_module_names_are_import_safe(registry: dict) -> None:
+    """Every ``robot_descriptions_module`` must match the import-safe pattern
+    the downloader enforces (``^[a-z0-9_+]+$``).
+
+    Regression: the downloader's validation regex originally was
+    ``^[a-z0-9_]+$``, which rejected the legitimate upstream module
+    ``tiago++_mj_description`` ("skipped: invalid module name") - so tiago_dual
+    never linked its assets. '+' is now allowed; this guards both the registry
+    entries and the regex staying in sync.
+    """
+    import re
+
+    pattern = re.compile(r"^[a-z0-9_+]+$")
+    offenders = []
+    for name, info in registry.items():
+        mod = info.get("asset", {}).get("robot_descriptions_module")
+        if mod and not pattern.match(mod):
+            offenders.append((name, mod))
+    assert not offenders, f"robot_descriptions_module names not import-safe: {offenders}"
+
+
+def test_rebot_b601_family_is_drivable_real(registry: dict) -> None:
+    """The Seeed reBot B601-DM family (single + bimanual) must be reachable via
+    ``Robot(name, mode="real")``.
+
+    LeRobot registers ``rebot_b601_follower`` and ``bi_rebot_b601_follower``
+    (the latter only when the optional ``motorbridge`` SDK is present). Without
+    a strands registry entry mapping a canonical name to those LeRobot types,
+    ``Robot("rebot_b601", mode="real")`` raises ``ValueError: Unsupported robot
+    type`` even though the policy embodiment configs already ship for it. This
+    pins the registry mapping so the hardware stays reachable. Deterministic:
+    it reads only robots.json, so it guards CI hosts without LeRobot installed.
+    """
+    from strands_robots.registry.robots import get_hardware_type, resolve_name
+
+    expected = {
+        "rebot_b601": "rebot_b601_follower",
+        "bi_rebot_b601": "bi_rebot_b601_follower",
+    }
+    for canonical, lerobot_type in expected.items():
+        assert canonical in registry, f"{canonical!r} missing from registry"
+        assert registry[canonical]["hardware"]["lerobot_type"] == lerobot_type
+        # The lerobot_type itself and the canonical name both resolve home.
+        assert resolve_name(canonical) == canonical
+        assert resolve_name(lerobot_type) == canonical
+        assert get_hardware_type(canonical) == lerobot_type
+
+
+# Valid values for gripper.closed / gripper.open: which END of the gripper's
+# set-point range the state maps to. Kept in sync with
+# strands_robots/simulation/motion_primitives_base.py::_CTRLRANGE_ENDS.
+_GRIPPER_ENDS = {"low", "high"}
+
+
+def test_gripper_metadata_shape(registry: dict) -> None:
+    """Optional ``gripper`` blocks are shape-checked when present (GH #1658).
+
+    The motion primitives treat this metadata as AUTHORITATIVE over the
+    gripper name heuristic, so a malformed block would either brick
+    ``set_gripper``/``move_to`` for that robot or silently misclassify an
+    arm DOF as a gripper. Shape contract::
+
+        "gripper": {
+            "actuators": ["<actuator short name>", ...],   # non-empty
+            "closed": "low" | "high",                       # ctrlrange end
+            "open":   "low" | "high"                        # must differ
+        }
+
+    Actuator names are the namespace-stripped names in the robot's SHIPPED
+    sim MJCF (``asset.model_xml``), matched case-insensitively at runtime.
+    """
+    problems: list[str] = []
+    for name, info in registry.items():
+        gripper = info.get("gripper")
+        if gripper is None:
+            continue
+        if not isinstance(gripper, dict):
+            problems.append(f"{name}.gripper must be a dict, got {type(gripper).__name__}")
+            continue
+        unknown = set(gripper) - {"actuators", "closed", "open"}
+        if unknown:
+            problems.append(f"{name}.gripper has unknown keys: {sorted(unknown)}")
+        actuators = gripper.get("actuators")
+        if not (isinstance(actuators, list) and actuators and all(isinstance(a, str) and a.strip() for a in actuators)):
+            problems.append(f"{name}.gripper.actuators must be a non-empty list of non-empty strings: {actuators!r}")
+        closed = gripper.get("closed", "low")
+        opened = gripper.get("open", "high")
+        if closed not in _GRIPPER_ENDS:
+            problems.append(f"{name}.gripper.closed must be one of {sorted(_GRIPPER_ENDS)}: {closed!r}")
+        if opened not in _GRIPPER_ENDS:
+            problems.append(f"{name}.gripper.open must be one of {sorted(_GRIPPER_ENDS)}: {opened!r}")
+        if closed in _GRIPPER_ENDS and opened in _GRIPPER_ENDS and closed == opened:
+            problems.append(f"{name}.gripper: 'closed' and 'open' must map to different ctrlrange ends")
+    assert not problems, "Malformed gripper metadata:\n  " + "\n  ".join(problems)
+
+
+def test_tool_frame_metadata_shape(registry: dict) -> None:
+    """Optional ``tool_frame`` blocks are shape-checked when present.
+
+    The MuJoCo backend adds this site to the model before attaching the robot
+    and ``move_to`` drives it, so a malformed block would refuse ``add_robot``
+    for that robot (loudly, by design - never a silent fall-back to the wrist).
+    Shape contract, checked at runtime by
+    ``strands_robots.simulation.tool_frame.tool_frame_from_block``::
+
+        "tool_frame": {
+            "body": "<model body name>",        # un-namespaced
+            "pos":  [x, y, z],                  # meters, in that body's frame
+            "site": "<site name>"               # optional, default "tcp"
+        }
+    """
+    from strands_robots.simulation.tool_frame import tool_frame_from_block
+
+    problems: list[str] = []
+    for name, info in registry.items():
+        if "tool_frame" not in info:
+            continue
+        frame, reason = tool_frame_from_block(name, info["tool_frame"])
+        if reason is not None:
+            problems.append(reason)
+        elif frame is not None and (frame.body == "world" or "/" in frame.body):
+            problems.append(f"{name}.tool_frame.body must be one of the model's own bodies: {frame.body!r}")
+    assert not problems, "Malformed tool_frame metadata:\n  " + "\n  ".join(problems)
+
+
+def test_shipped_tool_frame_entries(registry: dict) -> None:
+    """Pin the tool frame for the robot whose shipped model has no site.
+
+    ``trs_so_arm100/so_arm100.xml`` declares zero sites, so end-effector
+    discovery fell through to the ``Wrist_Pitch_Roll`` body - about 16 cm
+    short of the jaw tips - and ``move_to`` on the README's first robot missed
+    every low target. The declared point sits between the jaw tips, ~7 mm in
+    from the fingertips, the same convention as the SO-101's shipped
+    ``gripper`` site. Losing this entry silently demotes so100 to the wrist.
+    """
+    frame = registry["so100"]["tool_frame"]
+    assert frame["body"] == "Fixed_Jaw"
+    assert frame["site"] == "tcp"
+    x, y, z = frame["pos"]
+    assert abs(x) < 0.005 and -0.11 < y < -0.09 and abs(z) < 0.005, frame["pos"]
+
+
+def test_shipped_gripper_metadata_entries(registry: dict) -> None:
+    """Pin the gripper metadata for the robots we ship policy configs for.
+
+    The actuator names were verified against each robot's shipped sim model
+    (``asset.model_xml``); losing an entry silently demotes that robot to the
+    name heuristic, which FAILS for so101 (actuators named ``1``..``6``) and
+    panda (tendon-driven ``actuator8``) - their grippers would become
+    undrivable through ``set_gripper``.
+    """
+    expected = {
+        "so100": ["Jaw"],  # trs_so_arm100/so_arm100.xml
+        "so101": ["6"],  # robotstudio so101_new_calib.xml (actuators named 1..6)
+        "panda": ["actuator8"],  # franka_emika_panda/panda.xml (tendon 'split', 0=closed 255=open)
+    }
+    for name, actuators in expected.items():
+        gripper = registry[name].get("gripper")
+        assert gripper is not None, f"{name} lost its registry gripper metadata"
+        assert gripper["actuators"] == actuators, f"{name}.gripper.actuators changed: {gripper['actuators']}"
+        assert gripper["closed"] == "low" and gripper["open"] == "high", name
+
+
+def test_joint_labels_shape(registry: dict) -> None:
+    """Optional ``joint_labels`` blocks are ``{asset joint: label}`` with one
+    label per declared joint, labels unique and non-empty. ``get_robot_state``
+    prints the label beside the joint and ``set_joint_positions`` resolves a
+    label to its joint, so a malformed block would either mislabel a joint or
+    let two labels name one.
+    """
+    problems: list[str] = []
+    for name, info in registry.items():
+        labels = info.get("joint_labels")
+        if labels is None:
+            continue
+        if not isinstance(labels, dict):
+            problems.append(f"{name}.joint_labels must be a dict, got {type(labels).__name__}")
+            continue
+        if not all(isinstance(k, str) and k and isinstance(v, str) and v for k, v in labels.items()):
+            problems.append(f"{name}.joint_labels must map non-empty strings to non-empty strings: {labels!r}")
+            continue
+        if len(set(labels.values())) != len(labels):
+            problems.append(f"{name}.joint_labels has duplicate labels: {sorted(labels.values())}")
+        joints = info.get("joints")
+        if isinstance(joints, int) and len(labels) != joints:
+            problems.append(f"{name}.joint_labels has {len(labels)} entries for a {joints}-joint robot")
+    assert not problems, "\n".join(problems)

@@ -3,7 +3,7 @@
 The function merges three sources into one kwargs dict: the generic parameters
 (``policy_host``, ``policy_port``, ...), the provider's registry ``defaults``,
 and the provider-specific keys the caller passes through ``**extra``.  Only one
-merge order is honest, and the suite already states it -- ``test_registry.py``'s
+merge order is honest, and the suite already states it -- ``test_public_api.py``'s
 ``test_explicit_value_overrides_default`` asserts "An explicit param must win
 over the JSON default for the same key", and the sibling ``resolve_policy``
 implements exactly that with its trailing ``kwargs.update(extra_kwargs)``.
@@ -135,7 +135,7 @@ class TestTheGenericParameterStillBeatsTheDefault:
     """The middle tier of the chain is unchanged."""
 
     def test_policy_host_still_overrides_the_json_default(self):
-        """Restates test_registry.py's existing contract for the middle tier."""
+        """Restates test_public_api.py's existing contract for the middle tier."""
         assert build_policy_kwargs("cosmos3", policy_host="gpu-box")["host"] == "gpu-box"
 
     def test_policy_port_still_reaches_a_provider_that_declares_port(self):

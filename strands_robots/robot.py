@@ -560,7 +560,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
               env default. ``STRANDS_MESH=false`` is a hard kill switch.
         peer_id: Optional mesh peer identifier. Auto-generated when omitted.
         driver: Which implementation drives the robot in ``mode="real"``, one of
-            :data:`~strands_robots.drivers.base.DRIVER_CHOICES`. ``"auto"``
+            :data:`~strands_robots.registry.DRIVER_CHOICES`. ``"auto"``
             (default) states no preference: it honours the robot's registry
             ``hardware.driver`` and otherwise builds the lerobot driver, so a
             call that does not mention ``driver`` behaves exactly as before.
@@ -588,7 +588,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
 
     Raises:
         ValueError: If ``mode`` is not 'sim'/'real'/'auto', if ``driver`` is not
-                    one of :data:`~strands_robots.drivers.base.DRIVER_CHOICES`,
+                    one of :data:`~strands_robots.registry.DRIVER_CHOICES`,
                     if ``driver="strands"`` names a robot with no registered
                     native driver, if ``cameras=``
                     is passed in sim mode, if the robot name is empty

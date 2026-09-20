@@ -44,14 +44,28 @@ class _FakePoint:
 class _FakeComponent:
     """Stand-in for a moveit_py PlanningComponent."""
 
-    def __init__(self, *, plan_points: list[_FakePoint] | None, plan_raises: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        plan_points: list[_FakePoint] | None,
+        plan_raises: bool = False,
+        joint_names: list[str] | None = None,
+    ) -> None:
         self._plan_points = plan_points
         self._plan_raises = plan_raises
+        # A JointTrajectory names the joint each position column belongs to.
+        # Derived from the first point's width unless the test says otherwise.
+        width = len(plan_points[0].positions) if plan_points else 0
+        self.joint_names = list(joint_names) if joint_names is not None else [f"j{i}" for i in range(width)]
         self.goal: dict[str, Any] = {}
         self.start_state_set = False
+        self.start_state: Any = None
 
     def set_start_state_to_current_state(self) -> None:
         self.start_state_set = True
+
+    def set_start_state(self, robot_state: Any) -> None:
+        self.start_state = robot_state
 
     def set_goal_state(self, **kwargs: Any) -> None:
         self.goal = kwargs
@@ -61,24 +75,80 @@ class _FakeComponent:
             raise RuntimeError("ompl exploded")
         if self._plan_points is None:
             return None
-        joint_traj = types.SimpleNamespace(points=self._plan_points)
-        trajectory = types.SimpleNamespace(joint_trajectory=joint_traj)
+        # ``plan_result.trajectory`` is a moveit.core RobotTrajectory, which
+        # carries no joint_trajectory of its own: the ROS message (and with it
+        # the waypoints) is reached through get_robot_trajectory_msg().
+        msg = types.SimpleNamespace(
+            joint_trajectory=types.SimpleNamespace(joint_names=self.joint_names, points=self._plan_points)
+        )
+        trajectory = types.SimpleNamespace(get_robot_trajectory_msg=lambda: msg)
         return types.SimpleNamespace(trajectory=trajectory)
+
+
+class _FakeGroup:
+    """Stand-in for a moveit_py JointModelGroup."""
+
+    def __init__(self, joints: list[str], eef_name: str) -> None:
+        self.active_joint_model_names = joints
+        self.link_model_names = [f"link_{name}" for name in joints]
+        self.eef_name = eef_name
+
+
+class _FakeRobotModel:
+    def __init__(self, *, joints: list[str], eef_name: str) -> None:
+        self.model_frame = "world"
+        self.joint_model_group_names = ["arm"]
+        self._group = _FakeGroup(joints, eef_name)
+
+    def get_joint_model_group(self, _group: str) -> _FakeGroup:
+        return self._group
+
+
+class _FakeRobotState:
+    """Stand-in for moveit.core.robot_state.RobotState."""
+
+    def __init__(self, robot_model: Any) -> None:
+        self.robot_model = robot_model
+        self.joint_positions: dict[str, float] = {}
+        self.updated = False
+
+    def update(self) -> None:
+        self.updated = True
 
 
 class _FakeMoveItPy:
     # ``component`` is duck-typed: the doubles below differ in which moveit_py
     # interaction they fail at, and the sidecar only ever calls the three
     # methods they all provide.
-    def __init__(self, component: Any, *, unknown_group: bool = False) -> None:
+    def __init__(
+        self,
+        component: Any,
+        *,
+        unknown_group: bool = False,
+        joints: list[str] | None = None,
+        eef_name: str = "tool0",
+    ) -> None:
         self._component = component
         self._unknown_group = unknown_group
+        self._model = _FakeRobotModel(joints=joints or ["j0", "j1"], eef_name=eef_name)
 
     def get_planning_component(self, group: str) -> _FakeComponent:
         if self._unknown_group:
             raise KeyError(group)
         assert self._component is not None  # only None in the unknown_group path
         return self._component
+
+    def get_robot_model(self) -> _FakeRobotModel:
+        return self._model
+
+
+@pytest.fixture(autouse=True)
+def fake_robot_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install a fake ``moveit.core.robot_state`` exposing ``RobotState``."""
+    module = types.ModuleType("moveit.core.robot_state")
+    module.RobotState = _FakeRobotState  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "moveit.core.robot_state", module)
+    monkeypatch.setitem(utils._lazy_modules, "moveit.core.robot_state", module)
 
 
 @pytest.fixture(autouse=True)
@@ -114,6 +184,10 @@ def test_parse_args_defaults_match_client_protocol() -> None:
     assert args.port == 5556  # MoveIt2Policy default port
     assert args.planning_group == "arm"
     assert args.log_level == "INFO"
+    # The reference deployment plans out of the box: both default to the panda
+    # config MoveIt 2 itself ships, which is what docker-compose.yml passes too.
+    assert args.robot_name == "panda"
+    assert args.moveit_config_package == "moveit_resources_panda_moveit_config"
 
 
 def test_parse_args_overrides_are_applied() -> None:
@@ -149,7 +223,7 @@ def test_plan_missing_goal_is_rejected() -> None:
     resp = zmq_node._plan(
         moveit_py,
         planning_group="arm",
-        joint_state=[0.1, 0.2],  # hint accepted but unused -> exercises debug branch
+        joint_state=[0.1, 0.2],
         target_pose=None,
         target_joints=None,
         world_update=None,
@@ -183,6 +257,34 @@ def test_plan_with_target_joints_succeeds_and_serialises_rows() -> None:
     assert resp["trajectory"][1][1:] == [0.5, 0.6]
 
 
+def test_plan_names_the_joint_each_column_belongs_to() -> None:
+    """The response carries the trajectory message's ``joint_names`` in column order.
+
+    A plan covers the planning group, which is narrower than the robot that
+    carries it, so the client cannot know from the robot's roster which joint
+    a column commands - only the planner does. The names are the message's
+    own, so a client keying rows by them never re-keys a column onto a joint
+    the group did not plan.
+    """
+    component = _FakeComponent(
+        plan_points=[_FakePoint(sec=0, nanosec=0, positions=[0.5, 0.6, 0.7])],
+        joint_names=["shoulder", "elbow", "wrist"],
+    )
+    resp = zmq_node._plan(
+        _FakeMoveItPy(component=component),
+        planning_group="arm",
+        joint_state=None,
+        target_pose=None,
+        target_joints={"shoulder": 0.5},
+        world_update=None,
+    )
+    assert resp["success"] is True
+    assert resp["joint_names"] == ["shoulder", "elbow", "wrist"]
+    assert all(isinstance(name, str) for name in resp["joint_names"])
+    # One name per position column, in the column's order.
+    assert len(resp["joint_names"]) == len(resp["trajectory"][0]) - 1
+
+
 def test_plan_with_target_pose_builds_posestamped() -> None:
     component = _FakeComponent(plan_points=[_FakePoint(sec=2, nanosec=0, positions=[1.0])])
     moveit_py = _FakeMoveItPy(component=component)
@@ -196,10 +298,95 @@ def test_plan_with_target_pose_builds_posestamped() -> None:
     )
     assert resp["success"] is True
     pose = component.goal["pose_stamped_msg"]
-    assert component.goal["pose_link"] == "end_effector_link"
-    assert pose.header.frame_id == "base_link"
+    # Frame and link come from the robot model: neither "base_link" nor
+    # "end_effector_link" is in MoveIt 2's own panda description, and
+    # set_goal_state accepts a link the model does not have, failing later
+    # with "Unable to construct goal representation".
+    assert component.goal["pose_link"] == "tool0"
+    assert pose.header.frame_id == "world"
     assert (pose.pose.position.x, pose.pose.position.y, pose.pose.position.z) == (0.1, 0.2, 0.3)
     assert pose.pose.orientation.w == 1.0
+
+
+def test_pose_goal_falls_back_to_the_groups_last_link_without_an_end_effector() -> None:
+    component = _FakeComponent(plan_points=[_FakePoint(sec=0, nanosec=0, positions=[1.0])])
+    moveit_py = _FakeMoveItPy(component=component, joints=["j0", "j1"], eef_name="")
+    zmq_node._plan(
+        moveit_py,
+        planning_group="arm",
+        joint_state=None,
+        target_pose=[0.1, 0.2, 0.3, 1.0, 0.0, 0.0, 0.0],
+        target_joints=None,
+        world_update=None,
+    )
+    assert component.goal["pose_link"] == "link_j1"
+
+
+# ---------------------------------------------------------------------------
+# _plan: the start state is the one the request carries
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("joint_state", "expected"),
+    [
+        pytest.param([0.1, 0.2], {"j0": 0.1, "j1": 0.2}, id="one_value_per_group_joint"),
+        # A robot publishes every joint it has; the group plans over a subset
+        # (a Panda publishes two fingers panda_arm does not plan).
+        pytest.param([0.1, 0.2, 0.04, 0.04], {"j0": 0.1, "j1": 0.2}, id="trailing_values_are_ignored"),
+    ],
+)
+def test_plan_starts_from_the_state_the_request_carries(joint_state: list[float], expected: dict[str, float]) -> None:
+    """The request's own state is the start state, not MoveIt's current one.
+
+    Nothing publishes ``/joint_states`` when the robot is not a ROS 2 robot, so
+    ``set_start_state_to_current_state`` silently succeeds at the description's
+    default pose - for the panda a self-collision that aborts every plan.
+    """
+    component = _FakeComponent(plan_points=[_FakePoint(sec=0, nanosec=0, positions=[0.5, 0.6])])
+    moveit_py = _FakeMoveItPy(component=component, joints=["j0", "j1"])
+    resp = zmq_node._plan(
+        moveit_py,
+        planning_group="arm",
+        joint_state=joint_state,
+        target_pose=None,
+        target_joints={"j0": 0.5},
+        world_update=None,
+    )
+    assert resp["success"] is True
+    assert component.start_state_set is False
+    assert component.start_state.joint_positions == expected
+    assert component.start_state.updated is True
+
+
+def test_plan_refuses_a_state_narrower_than_the_planning_group() -> None:
+    component = _FakeComponent(plan_points=[_FakePoint(sec=0, nanosec=0, positions=[0.5, 0.6])])
+    moveit_py = _FakeMoveItPy(component=component, joints=["j0", "j1"])
+    resp = zmq_node._plan(
+        moveit_py,
+        planning_group="arm",
+        joint_state=[0.1],
+        target_pose=None,
+        target_joints={"j0": 0.5},
+        world_update=None,
+    )
+    assert resp["success"] is False
+    assert resp["status"].startswith("start_state_error:")
+    assert "plans over 2 joints (j0, j1)" in resp["status"]
+
+
+def test_plan_without_a_state_asks_moveit_for_its_own() -> None:
+    component = _FakeComponent(plan_points=[_FakePoint(sec=0, nanosec=0, positions=[0.5, 0.6])])
+    moveit_py = _FakeMoveItPy(component=component, joints=["j0", "j1"])
+    resp = zmq_node._plan(
+        moveit_py,
+        planning_group="arm",
+        joint_state=None,
+        target_pose=None,
+        target_joints={"j0": 0.5},
+        world_update=None,
+    )
+    assert resp["success"] is True
+    assert component.start_state_set is True
+    assert component.start_state is None
 
 
 def test_plan_planner_exception_is_caught() -> None:
@@ -235,23 +422,29 @@ def test_plan_empty_result_reported() -> None:
 # ---------------------------------------------------------------------------
 # _build_moveit_py: builder wiring (moveit_py + config builder faked)
 # ---------------------------------------------------------------------------
-def test_build_moveit_py_wires_optional_packages(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_moveit_py_names_the_config_package_and_fills_the_pipeline_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runtime is built for the named robot, with the params MoveItPy reads.
+
+    ``MoveItConfigsBuilder`` takes the config package as ``package_name`` - it
+    has no ``package=`` description parameter and its ``moveit_cpp`` takes a
+    file path, so a package name passed to either names no package and the
+    builder raises before a socket is bound. And the dict it produces lists
+    ``planning_pipelines`` flat, while ``MoveItCpp`` reads the nested
+    ``pipeline_names`` parameter and refuses to construct without it.
+    """
     calls: dict[str, Any] = {}
 
     class _Builder:
-        def robot_description(self, package: str) -> _Builder:
-            calls["robot_description"] = package
-            return self
-
-        def moveit_cpp(self, file_path: str) -> _Builder:
-            calls["moveit_cpp"] = file_path
-            return self
-
         def to_moveit_configs(self) -> Any:
-            return types.SimpleNamespace(to_dict=lambda: {"k": "v"})
+            return types.SimpleNamespace(
+                to_dict=lambda: {"default_planning_pipeline": "ompl", "planning_pipelines": ["ompl", "chomp"]}
+            )
 
-    def _ConfigsBuilder(robot_name: str) -> _Builder:
+    def _ConfigsBuilder(robot_name: str, package_name: str | None = None) -> _Builder:
         calls["robot_name"] = robot_name
+        calls["package_name"] = package_name
         return _Builder()
 
     class _MoveItPy:
@@ -259,8 +452,8 @@ def test_build_moveit_py_wires_optional_packages(monkeypatch: pytest.MonkeyPatch
             calls["node_name"] = node_name
             calls["config_dict"] = config_dict
 
-        def get_planning_component_names(self) -> list[str]:
-            return ["arm"]
+        def get_robot_model(self) -> Any:
+            return types.SimpleNamespace(joint_model_group_names=["arm"])
 
     planning_mod = types.ModuleType("moveit.planning")
     planning_mod.MoveItPy = _MoveItPy  # type: ignore[attr-defined]
@@ -276,21 +469,46 @@ def test_build_moveit_py_wires_optional_packages(monkeypatch: pytest.MonkeyPatch
         monkeypatch.setitem(sys.modules, name, module)
         # ``_build_moveit_py`` gates these through ``require_optional``, which
         # memoises what it imports, so the memo has to be restored as well.
-        # Left leaking, these fakes answer every later require_optional for the
-        # module in the same session: measured, with the gate hoisted out of
-        # the seam this file substitutes, all 36 cells still passed.
         monkeypatch.setitem(utils._lazy_modules, name, module)
 
-    args = zmq_node._parse_args(
-        ["--robot-description-package", "my_robot_desc", "--moveit-config-package", "my_moveit_cfg"]
-    )
+    args = zmq_node._parse_args(["--robot-name", "my_robot", "--moveit-config-package", "my_moveit_cfg"])
     result = zmq_node._build_moveit_py(args)
 
     assert isinstance(result, _MoveItPy)
-    assert calls["robot_name"] == "moveit2_sidecar"
-    assert calls["robot_description"] == "my_robot_desc"
-    assert calls["moveit_cpp"] == "my_moveit_cfg"
-    assert calls["config_dict"] == {"k": "v"}
+    assert calls["robot_name"] == "my_robot"
+    assert calls["package_name"] == "my_moveit_cfg"
+    # Only the default pipeline: loading one whose plugin is not installed is
+    # fatal, and the config package advertises every pipeline MoveIt 2 knows.
+    assert calls["config_dict"]["planning_pipelines"] == {
+        "pipeline_names": ["ompl"],
+        "default_planning_pipeline": "ompl",
+    }
+    assert calls["config_dict"]["plan_request_params"]["planning_pipeline"] == "ompl"
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        pytest.param({}, "ompl", id="no_default_declared"),
+        pytest.param({"default_planning_pipeline": "pilz"}, "pilz", id="declared_default_is_honoured"),
+    ],
+)
+def test_planning_pipeline_params_load_only_the_default_pipeline(config: dict[str, Any], expected: str) -> None:
+    filled = zmq_node._planning_pipeline_params(dict(config))
+    assert filled["planning_pipelines"]["pipeline_names"] == [expected]
+    assert filled["plan_request_params"]["planning_pipeline"] == expected
+
+
+def test_planning_pipeline_params_leave_a_forks_own_values_alone() -> None:
+    """A fork supplying either parameter through its own YAML keeps it."""
+    own = {
+        "default_planning_pipeline": "ompl",
+        "planning_pipelines": {"pipeline_names": ["ompl", "stomp"]},
+        "plan_request_params": {"planning_pipeline": "stomp"},
+    }
+    filled = zmq_node._planning_pipeline_params(dict(own))
+    assert filled["planning_pipelines"] == {"pipeline_names": ["ompl", "stomp"]}
+    assert filled["plan_request_params"] == {"planning_pipeline": "stomp"}
 
 
 # ---------------------------------------------------------------------------
@@ -441,8 +659,9 @@ class _StageFailingComponent:
         if self._bad_trajectory:
             return types.SimpleNamespace(trajectory=None)
         point = _FakePoint(sec=0, nanosec=0, positions=self._positions)
-        joint_traj = types.SimpleNamespace(points=[point])
-        return types.SimpleNamespace(trajectory=types.SimpleNamespace(joint_trajectory=joint_traj))
+        names = [f"j{i}" for i in range(len(self._positions))]
+        msg = types.SimpleNamespace(joint_trajectory=types.SimpleNamespace(joint_names=names, points=[point]))
+        return types.SimpleNamespace(trajectory=types.SimpleNamespace(get_robot_trajectory_msg=lambda: msg))
 
 
 def _plan_or_fail(moveit_py: Any, **goal: Any) -> dict[str, Any]:
@@ -637,7 +856,7 @@ def test_plan_happy_path_still_serialises_rows() -> None:
 
     result = _plan_or_fail(_FakeMoveItPy(component=component), target_joints={"j0": 0.1})
 
-    assert result == {"trajectory": [[0.0, 0.1, 0.2]], "success": True, "status": "ok"}
+    assert result == {"trajectory": [[0.0, 0.1, 0.2]], "joint_names": ["j0", "j1"], "success": True, "status": "ok"}
 
 
 # ---------------------------------------------------------------------------
@@ -861,5 +1080,5 @@ def test_a_well_formed_request_is_unaffected_by_the_map_check(monkeypatch: pytes
     assert rc == 0
     assert responses[0] == {"status": "ok"}
     assert responses[1] == {"status": "ok"}
-    assert responses[2] == {"trajectory": [[0.0, 0.1]], "success": True, "status": "ok"}
+    assert responses[2] == {"trajectory": [[0.0, 0.1]], "joint_names": ["j0"], "success": True, "status": "ok"}
     assert responses[3] == {"error": "unknown_endpoint:bogus"}

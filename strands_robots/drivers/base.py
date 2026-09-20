@@ -222,20 +222,6 @@ class HardwareDriver(Protocol):
         """
 
 
-#: The driver a robot gets when nothing says otherwise. Every robot in the
-#: package registry is a lerobot robot today, so the default keeps them working
-#: without a per-robot declaration.
-DEFAULT_DRIVER = "lerobot"
-
-#: Accepted ``driver=`` values. ``"auto"`` expresses no preference: it reads the
-#: registry and falls back to :data:`DEFAULT_DRIVER`. Mirrors the
-#: :data:`~strands_robots.registry.LIST_ROBOTS_MODES` pattern - a value outside
-#: this tuple is refused by name rather than silently treated as the default,
-#: because a typo that resolves to a working driver is a caller who never learns
-#: the driver they asked for does not exist.
-DRIVER_CHOICES = ("auto", DEFAULT_DRIVER, "strands")
-
-
 #: Every member :class:`HardwareDriver` requires, derived from the Protocol
 #: itself so the two can never disagree. A second hand-written list would be a
 #: second source of truth, and the one that drifts is always the copy.

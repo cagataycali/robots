@@ -50,7 +50,10 @@ below asks for, and must not move a number a contributor then has to chase.
 from __future__ import annotations
 
 import ast
+import functools
 import pathlib
+from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 
 import pytest
 
@@ -259,7 +262,7 @@ def survey(root: pathlib.Path) -> tuple[dict[str, list[int]], dict[str, list[int
     return ungated, gated, other_backend
 
 
-def unaccounted_modules(gated: dict[str, list[int]], expected: frozenset[str]) -> tuple[set[str], set[str]]:
+def unaccounted_modules(gated: Mapping[str, Sequence[int]], expected: frozenset[str]) -> tuple[set[str], set[str]]:
     """Return (in-scope modules with no gated assertion, gated modules not expected).
 
     Both sides are keyed on modules. A count of gated assertions is a different
@@ -271,9 +274,31 @@ def unaccounted_modules(gated: dict[str, list[int]], expected: frozenset[str]) -
     return set(expected) - set(gated), set(gated) - set(expected)
 
 
+_Frozen = Mapping[str, tuple[int, ...]]
+
+
+@functools.cache
+def _tree_survey() -> tuple[_Frozen, _Frozen, tuple[str, ...]]:
+    """:func:`survey` over this module's own tree, walked once per session.
+
+    Four cells ask the same question of the same tree, and the tree does not
+    change during a pytest session, so the walk is paid once and each cell
+    reads the answer. What is held is the small result set - the module labels
+    and line numbers - never the parsed trees. Frozen so that a cell cannot
+    mutate what the next one reads; :func:`survey` keeps its per-root signature
+    for the planted-source cells, which each walk their own ``tmp_path``.
+    """
+    ungated, gated, other_backend = survey(_tests_root())
+    return (
+        MappingProxyType({label: tuple(lines) for label, lines in ungated.items()}),
+        MappingProxyType({label: tuple(lines) for label, lines in gated.items()}),
+        tuple(other_backend),
+    )
+
+
 class TestEveryMuJoCoGlDependentReadIsGated:
     def test_no_module_reads_a_rendered_value_without_the_probe(self) -> None:
-        ungated, _, _ = survey(_tests_root())
+        ungated, _, _ = _tree_survey()
         assert not ungated, (
             f"these modules read a value that needs an offscreen GL context without gating it "
             f"on the shared GL probe: {ungated}. On a headless host without EGL/OSMesa a render "
@@ -291,7 +316,7 @@ class TestEveryMuJoCoGlDependentReadIsGated:
         ``gated`` and is reported here by name, and a scan rooted somewhere
         unexpected reports every entry as missing.
         """
-        _, gated, _ = survey(_tests_root())
+        _, gated, _ = _tree_survey()
         missing, unexpected = unaccounted_modules(gated, EXPECTED_IN_SCOPE)
         assert not missing and not unexpected, (
             f"the survey no longer accounts for EXPECTED_IN_SCOPE: {sorted(missing)} contribute no "
@@ -304,7 +329,7 @@ class TestEveryMuJoCoGlDependentReadIsGated:
 class TestTheScopeIsTheMujocoRequirement:
     def test_another_backends_render_assertion_is_out_of_scope(self) -> None:
         """The discriminator, pinned: no mujoco requirement, so a different probe."""
-        _, _, other_backend = survey(_tests_root())
+        _, _, other_backend = _tree_survey()
         assert OTHER_BACKEND in other_backend
         tree = ast.parse((_tests_root().parent / OTHER_BACKEND).read_text(encoding="utf-8"))
         assert render_success_assertions(tree)
@@ -577,7 +602,7 @@ class TestTheRuleCoversTheTreesCameraImageReads:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         assert camera_image_reads(tree), "the camera-image read this module is listed for is gone"
         assert not render_success_assertions(tree), "no render envelope here - the read is the whole dependency"
-        _, gated, _ = survey(_tests_root())
+        _, gated, _ = _tree_survey()
         assert "tests/simulation/mujoco/test_reset_forwards_derived_state.py" in gated
 
     def test_a_proprioception_read_in_the_tree_is_not_in_scope(self) -> None:

@@ -149,7 +149,71 @@ class MsgSerializer:
             return ModalityConfig(**filtered)
         if "__ndarray_class__" in obj:
             return np.load(io.BytesIO(obj["as_npy"]), allow_pickle=False)
+        if (nd := obj.get(b"nd", obj.get("nd"))) is not None:
+            return MsgSerializer._decode_msgpack_numpy(obj, nd=bool(nd))
         return obj
+
+    @staticmethod
+    def _decode_msgpack_numpy(obj: dict, *, nd: bool) -> Any:
+        """Decode the ``msgpack_numpy`` array envelope the reference server replies with.
+
+        The two directions of this wire are not symmetric.
+        ``gr00t.policy.server_client.MsgSerializer`` decodes BOTH envelopes -
+        this module's ``__ndarray_class__`` / ``as_npy`` pair and its own - so a
+        request packed by :meth:`_encode` is read by the reference server, but a
+        reply is always packed by ``msgpack_numpy.encode``: a map carrying
+        ``nd`` / ``type`` / ``kind`` / ``shape`` / ``data``. Decoding only our
+        own envelope left every array in a reply as that raw map, so a
+        well-formed ``get_action`` chunk of ``(1, 16, 5)`` float32 reached
+        MODULE strands_robots.policies.groot.policy as a dict, where
+        ``np.asarray`` made it a 0-D object array and
+        ``_unpack_service_actions`` refused it as ``scalar (0-D) action
+        value(s) ... The action chunk is malformed`` - blaming the model for a
+        chunk the client never decoded.
+
+        Args:
+            obj: The decoded msgpack map, keyed with the byte strings
+                ``msgpack_numpy`` packs (``str`` keys are read too, so a peer
+                that packs them as text is understood as well).
+            nd: The envelope's ``nd`` flag: an array when true, one NumPy scalar
+                when false - the two shapes ``msgpack_numpy.encode`` emits.
+
+        Returns:
+            The array (writable, like the ``as_npy`` path above, so a caller can
+            normalise a chunk in place) or the scalar it encodes.
+
+        Raises:
+            ValueError: If the envelope declares an object dtype - which
+                ``msgpack_numpy`` serialises with ``pickle``, the arbitrary-code
+                surface every other path here forbids with ``allow_pickle=False``
+                - or if ``data`` / ``shape`` do not describe one array.
+                :meth:`Gr00tInferenceClient._decode_reply` turns it into a
+                report naming the peer and the endpoint.
+        """
+        kind = obj.get(b"kind", obj.get("kind"))
+        dtype_str = obj.get(b"type", obj.get("type"))
+        data = obj.get(b"data", obj.get("data"))
+        if kind in (b"O", "O"):
+            raise ValueError(
+                "Refusing to decode an object-dtype ndarray payload (pickle-bearing); a GR00T action chunk is numeric."
+            )
+        if not isinstance(dtype_str, str) or not isinstance(data, bytes | bytearray):
+            raise ValueError(
+                f"Malformed ndarray payload: 'nd' present but type={dtype_str!r} and "
+                f"data={type(data).__name__} do not describe an array."
+            )
+        dtype = np.dtype(dtype_str)
+        if dtype.hasobject:
+            raise ValueError(
+                f"Refusing to decode dtype {dtype_str!r}: it holds Python objects, which only pickle can read."
+            )
+        flat = np.frombuffer(bytes(data), dtype=dtype).copy()
+        if not nd:
+            return flat[0]
+        shape = obj.get(b"shape", obj.get("shape"))
+        if not isinstance(shape, list | tuple):
+            raise ValueError(f"Malformed ndarray payload: shape={shape!r} is not a sequence of lengths.")
+        return flat.reshape(tuple(shape))
 
     @staticmethod
     def _encode(obj):

@@ -34,19 +34,20 @@ services:
         exec python -m strands_robots.policies.moveit2.server.zmq_node \
             --host "${SIDECAR_HOST:-0.0.0.0}" \
             --port "${SIDECAR_PORT:-5556}" \
-            --planning-group "${PLANNING_GROUP:-arm}" \
+            --planning-group "${PLANNING_GROUP:-panda_arm}" \
             ${MOVEIT_CONFIG_PACKAGE:+--moveit-config-package "$MOVEIT_CONFIG_PACKAGE"} \
-            ${ROBOT_DESCRIPTION_PACKAGE:+--robot-description-package "$ROBOT_DESCRIPTION_PACKAGE"}
+            ${ROBOT_NAME:+--robot-name "$ROBOT_NAME"}
     environment:
       # Loopback only by default. Override at compose-up time when
       # exposing to a LAN.
       SIDECAR_HOST: "${SIDECAR_HOST:-0.0.0.0}"
       SIDECAR_PORT: "${SIDECAR_PORT:-5556}"
-      PLANNING_GROUP: "${PLANNING_GROUP:-arm}"
-      # Optional MoveIt2 config overrides. Forks usually pin these to
-      # their own URDF/SRDF package.
+      PLANNING_GROUP: "${PLANNING_GROUP:-panda_arm}"
+      # MoveIt2 config the sidecar plans for. Forks pin these to their own
+      # config package; ROBOT_NAME names the description inside it
+      # (config/<ROBOT_NAME>.urdf.xacro).
       MOVEIT_CONFIG_PACKAGE: "${MOVEIT_CONFIG_PACKAGE:-moveit_resources_panda_moveit_config}"
-      ROBOT_DESCRIPTION_PACKAGE: "${ROBOT_DESCRIPTION_PACKAGE:-moveit_resources_panda_description}"
+      ROBOT_NAME: "${ROBOT_NAME:-panda}"
     ports:
       # 127.0.0.1 host-side guard: a misconfigured docker daemon won't
       # expose ZMQ to the LAN. Change to "5556:5556" for LAN exposure.

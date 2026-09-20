@@ -29,6 +29,24 @@ from pathlib import Path
 
 from ._overlay import parse_user_robots, user_registry_source
 
+#: The driver a robot gets when nothing says otherwise. Every robot in the
+#: package registry is a lerobot robot today, so the default keeps them working
+#: without a per-robot declaration.
+DEFAULT_DRIVER = "lerobot"
+
+#: Accepted ``hardware.driver`` and ``driver=`` values. ``"auto"`` expresses no
+#: preference: it reads the registry and falls back to :data:`DEFAULT_DRIVER`.
+#: Mirrors the :data:`~strands_robots.registry.LIST_ROBOTS_MODES` pattern - a
+#: value outside this tuple is refused by name rather than silently treated as
+#: the default, because a typo that resolves to a working driver is a caller who
+#: never learns the driver they asked for does not exist.
+#:
+#: Declared here, with the loader that validates a declared entry against it,
+#: rather than in the driver seam that implements the names: the seam reads the
+#: registry, so a vocabulary stored up there is one the layer that validates it
+#: has to reach up for.
+DRIVER_CHOICES = ("auto", DEFAULT_DRIVER, "strands")
+
 logger = logging.getLogger(__name__)
 
 _REGISTRY_DIR = Path(__file__).parent
@@ -151,17 +169,13 @@ def _validate_robots(data: dict) -> None:
 
     Raises:
         ValueError: On a duplicate alias, an alias colliding with a canonical
-            robot name, or a ``hardware.driver`` outside
-            :data:`~strands_robots.drivers.base.DRIVER_CHOICES`.
+            robot name, or a ``hardware.driver`` outside :data:`DRIVER_CHOICES`.
     """
-    # Imported lazily because the driver seam reads the registry, so importing
-    # it at module scope would close an import cycle across the two packages. A
-    # driver name is validated here rather than where it
-    # is read, because every reader - the factory, a tool, a driver package -
-    # would otherwise have to re-check it, and the one that forgets accepts a
-    # typo as "no preference" and quietly builds the default driver.
-    from strands_robots.drivers.base import DRIVER_CHOICES
-
+    # A driver name is validated here rather than where it is read, because
+    # every reader - the factory, a tool, a driver package - would otherwise
+    # have to re-check it, and the one that forgets accepts a typo as "no
+    # preference" and quietly builds the default driver.
+    #
     # Keyed by the lookup key, not the declared spelling: two aliases that
     # differ only in case or separator are ONE key to every reader, so raw
     # comparison passes a pair that the alias map then silently collapses to

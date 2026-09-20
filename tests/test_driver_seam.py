@@ -39,8 +39,6 @@ import strands_robots.drivers.registry as drivers_registry_mod
 import strands_robots.registry.robots as registry_robots_mod
 from strands_robots import Robot
 from strands_robots.drivers import (
-    DEFAULT_DRIVER,
-    DRIVER_CHOICES,
     DRIVER_SURFACE,
     HardwareDriver,
     get_native_driver_class,
@@ -50,7 +48,7 @@ from strands_robots.drivers import (
     resolve_driver,
     shipped_robot_names,
 )
-from strands_robots.registry import get_driver, get_robot
+from strands_robots.registry import DEFAULT_DRIVER, DRIVER_CHOICES, get_driver, get_robot
 from strands_robots.registry.loader import _validate
 
 # A robot every real-mode test builds. Registered, has a lerobot type, and its

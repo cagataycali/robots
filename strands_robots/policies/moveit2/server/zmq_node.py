@@ -11,7 +11,11 @@ Run it with::
     source /opt/ros/jazzy/setup.bash         # or your distro, with moveit_py
     pip install 'strands-robots[moveit2]'    # pyzmq + msgpack, the only non-ROS deps
     python -m strands_robots.policies.moveit2.server.zmq_node \\
-        --port 5556 --planning-group arm
+        --port 5556 --planning-group panda_arm
+
+``--moveit-config-package`` / ``--robot-name`` default to the panda config
+MoveIt 2 itself ships, so that command plans out of the box; point them at your
+own config package and pass its group name.
 
 The sidecar is single-threaded REQ/REP - one in-flight plan request at a
 time. That matches the ``MoveItPy.plan()`` API which is itself
@@ -32,11 +36,15 @@ Wire protocol::
                          "target_joints": dict[str, float] | None,
                          "world_update": dict | None}}
     response = {"trajectory": list[list[float]],
+                "joint_names": list[str],        # on success
                 "success": bool,
                 "status": str}
 
 The trajectory rows are ``[time_from_start_seconds, q0, q1, ..., qN]`` -
 the time column lets the client / runner schedule waypoints precisely.
+``joint_names`` names the joint each of ``q0 .. qN`` belongs to, in column
+order: the planning group's own vocabulary, read from the trajectory message
+rather than guessed from the robot the client drives.
 
 Notes for forks:
 
@@ -129,14 +137,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Default MoveIt2 planning-group name. Per-request overrides win.",
     )
     parser.add_argument(
-        "--robot-description-package",
-        default=None,
-        help="ROS 2 package providing the URDF/SRDF (``MoveItPyConfigBuilder``).",
+        "--robot-name",
+        default="panda",
+        help="Robot name inside the MoveIt config package - it names the "
+        "description ``MoveItConfigsBuilder`` loads (``config/<robot-name>"
+        ".urdf.xacro``). Default matches --moveit-config-package.",
     )
     parser.add_argument(
         "--moveit-config-package",
-        default=None,
-        help="moveit_py config package (e.g. ``moveit_resources_panda_moveit_config``).",
+        default="moveit_resources_panda_moveit_config",
+        help="MoveIt config package for the robot to plan for. Default is the "
+        "panda config MoveIt 2 itself ships, so the reference deployment "
+        "plans out of the box.",
     )
     parser.add_argument(
         "--log-level",
@@ -145,6 +157,47 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Log level for the sidecar. ROS 2 spinner logs are independent.",
     )
     return parser.parse_args(argv)
+
+
+def _planning_pipeline_params(moveit_config: dict[str, Any]) -> dict[str, Any]:
+    """Add the two parameters ``MoveItPy`` needs and the config builder omits.
+
+    ``MoveItConfigsBuilder.to_moveit_configs().to_dict()`` describes the
+    pipelines a launch file *could* start: ``planning_pipelines`` is a flat
+    list of names. ``MoveItCpp`` reads the ones it should load from the nested
+    ``planning_pipelines.pipeline_names`` parameter instead, and refuses to
+    construct without it ("Failed to load planning pipelines from parameter
+    server"), so the list is re-keyed here. Only the default pipeline is
+    loaded: the config package advertises every pipeline MoveIt 2 knows, and
+    loading one whose plugin is not installed is fatal to construction.
+
+    ``plan_request_params`` is what a no-argument ``PlanningComponent.plan()``
+    reads, and the builder never writes it. Both are written only when absent,
+    so a fork can supply either through its own ``moveit_cpp`` YAML.
+
+    Args:
+        moveit_config: The dict from ``to_moveit_configs().to_dict()``.
+
+    Returns:
+        The same dict, with the two parameters filled in.
+    """
+    pipeline = moveit_config.get("default_planning_pipeline") or "ompl"
+    if not isinstance(moveit_config.get("planning_pipelines"), dict):
+        moveit_config["planning_pipelines"] = {
+            "pipeline_names": [pipeline],
+            "default_planning_pipeline": pipeline,
+        }
+    moveit_config.setdefault(
+        "plan_request_params",
+        {
+            "planning_attempts": 1,
+            "planning_pipeline": pipeline,
+            "planning_time": 5.0,
+            "max_velocity_scaling_factor": 1.0,
+            "max_acceleration_scaling_factor": 1.0,
+        },
+    )
+    return moveit_config
 
 
 def _build_moveit_py(args: argparse.Namespace) -> Any:
@@ -165,16 +218,92 @@ def _build_moveit_py(args: argparse.Namespace) -> Any:
     from moveit.planning import MoveItPy
     from moveit_configs_utils import MoveItConfigsBuilder
 
-    builder = MoveItConfigsBuilder(robot_name="moveit2_sidecar")
-    if args.robot_description_package:
-        builder = builder.robot_description(package=args.robot_description_package)
-    if args.moveit_config_package:
-        builder = builder.moveit_cpp(file_path=args.moveit_config_package)
-
-    moveit_config = builder.to_moveit_configs().to_dict()
+    builder = MoveItConfigsBuilder(robot_name=args.robot_name, package_name=args.moveit_config_package)
+    moveit_config = _planning_pipeline_params(builder.to_moveit_configs().to_dict())
     moveit_py = MoveItPy(node_name="strands_robots_moveit2_sidecar", config_dict=moveit_config)
-    logger.info("MoveItPy initialised; planning groups: %s", moveit_py.get_planning_component_names())
+    logger.info(
+        "MoveItPy initialised for %r from %r; planning groups: %s",
+        args.robot_name,
+        args.moveit_config_package,
+        list(moveit_py.get_robot_model().joint_model_group_names),
+    )
     return moveit_py
+
+
+def _tip_link(moveit_py: Any, planning_group: str) -> str:
+    """The link a Cartesian goal for ``planning_group`` is expressed for.
+
+    Read from the robot model rather than hardcoded: the group's end-effector
+    parent, falling back to its last link for a group that declares no
+    end effector. A name that is not in the model is not refused by
+    ``set_goal_state`` - it plans and fails with "Unable to construct goal
+    representation", which is why this is derived and not a constant.
+
+    Args:
+        moveit_py: The ``MoveItPy`` runtime.
+        planning_group: Group the goal is for.
+
+    Returns:
+        The link name to pass as ``pose_link``.
+    """
+    group = moveit_py.get_robot_model().get_joint_model_group(planning_group)
+    return group.eef_name or list(group.link_model_names)[-1]
+
+
+def _start_state(moveit_py: Any, planning_group: str, joint_state: list[float]) -> Any:
+    """Build the ``RobotState`` the request's ``joint_state`` describes.
+
+    The client sends the robot's own proprioception, which is the only start
+    state available when the robot is not a ROS 2 robot: nothing publishes
+    ``/joint_states``, and MoveIt's own current state is then the description's
+    default pose - for the panda a self-collision the
+    ``CheckStartStateCollision`` adapter aborts every plan on.
+
+    ``joint_state`` is an unnamed vector on the wire, so it is read in order
+    onto the group's active joints. A robot that publishes more joints than the
+    group plans over (a Panda publishes its two fingers; ``panda_arm`` has
+    seven joints) is read from the front and the trailing values are logged as
+    ignored rather than dropped silently - a payload in a different order shows
+    up in that log and in the plan's own first waypoint. Too few values is
+    refused: there is no configuration to plan from.
+
+    Args:
+        moveit_py: The ``MoveItPy`` runtime.
+        planning_group: Group whose active joints the values are read onto.
+        joint_state: Joint positions, in the group's joint order.
+
+    Returns:
+        A ``RobotState`` at the described configuration.
+
+    Raises:
+        ValueError: If the payload carries fewer values than the group has
+            active joints.
+    """
+    require_optional("moveit.core.robot_state", system_install=ROS_SIDECAR_INSTALL_HINT, purpose=_SIDECAR_PURPOSE)
+    from moveit.core.robot_state import RobotState
+
+    model = moveit_py.get_robot_model()
+    joints = list(model.get_joint_model_group(planning_group).active_joint_model_names)
+    if len(joint_state) < len(joints):
+        raise ValueError(
+            f"joint_state carries {len(joint_state)} values but planning group {planning_group!r} "
+            f"plans over {len(joints)} joints ({', '.join(joints)})"
+        )
+    if len(joint_state) > len(joints):
+        logger.info(
+            "joint_state carries %d values for the %d joints of %r; read the first %d, ignored %s",
+            len(joint_state),
+            len(joints),
+            planning_group,
+            len(joints),
+            joint_state[len(joints) :],
+        )
+    state = RobotState(model)
+    # Assigned as a mapping on purpose: ``set_joint_group_positions`` segfaults
+    # on a RobotState that has not been given values yet (moveit_py 2.12).
+    state.joint_positions = dict(zip(joints, (float(v) for v in joint_state), strict=False))
+    state.update()
+    return state
 
 
 def _plan(
@@ -199,8 +328,10 @@ def _plan(
     stage that failed in ``status``:
 
     * ``unknown_planning_group`` - the group name does not resolve.
-    * ``start_state_error`` - the current robot state is not readable
-      (no ``/joint_states`` yet, monitor not warmed up).
+    * ``start_state_error`` - the start state is not usable: a
+      ``joint_state`` whose value count does not match the group's active
+      joints, or - when the request carries none - a current robot state
+      that is not readable (no ``/joint_states`` yet, monitor not warmed up).
     * ``missing_goal`` - neither goal field was supplied.
     * ``invalid_goal`` - the goal was rejected: a joint the group does
       not have, an unresolvable pose link, or a ``target_pose`` that is
@@ -222,16 +353,13 @@ def _plan(
         return {"trajectory": [], "success": False, "status": f"unknown_planning_group:{e}"}
 
     try:
-        component.set_start_state_to_current_state()
+        if joint_state is None:
+            component.set_start_state_to_current_state()
+        else:
+            component.set_start_state(robot_state=_start_state(moveit_py, planning_group, joint_state))
     except Exception as e:  # noqa: BLE001 - report the failing stage structurally
-        logger.exception("Reading the current robot state failed: %s", e)
+        logger.exception("Reading the start robot state failed: %s", e)
         return {"trajectory": [], "success": False, "status": f"start_state_error:{e}"}
-
-    if joint_state is not None:
-        # Forks that need start-state override should plug their own
-        # ``RobotState`` builder here. Reference implementation trusts
-        # the planner's current state.
-        logger.debug("joint_state hint received but unused in reference impl: %s", joint_state)
 
     try:
         if target_joints is not None:
@@ -239,7 +367,7 @@ def _plan(
         elif target_pose is not None:
             x, y, z, qw, qx, qy, qz = target_pose
             pose = PoseStamped()
-            pose.header.frame_id = "base_link"  # Forks: parameterise this.
+            pose.header.frame_id = moveit_py.get_robot_model().model_frame
             pose.pose.position.x = x
             pose.pose.position.y = y
             pose.pose.position.z = z
@@ -247,7 +375,7 @@ def _plan(
             pose.pose.orientation.x = qx
             pose.pose.orientation.y = qy
             pose.pose.orientation.z = qz
-            component.set_goal_state(pose_stamped_msg=pose, pose_link="end_effector_link")
+            component.set_goal_state(pose_stamped_msg=pose, pose_link=_tip_link(moveit_py, planning_group))
         else:
             return {
                 "trajectory": [],
@@ -271,7 +399,11 @@ def _plan(
     # ``trajectory_msgs/JointTrajectoryPoint``. Each has
     # ``time_from_start`` (Duration) + ``positions`` (list[float]).
     try:
-        trajectory_msg = plan_result.trajectory
+        trajectory_msg = plan_result.trajectory.get_robot_trajectory_msg()
+        # The message names the joint each position column belongs to. Sent
+        # with the rows so the client keys them by name instead of by the
+        # position a column happens to hold in whatever roster it has.
+        joint_names = [str(name) for name in trajectory_msg.joint_trajectory.joint_names]
         rows: list[list[float]] = []
         for point in trajectory_msg.joint_trajectory.points:
             t = point.time_from_start.sec + point.time_from_start.nanosec * 1e-9
@@ -291,7 +423,7 @@ def _plan(
         logger.warning("The plan serialised to nothing commandable (%s); reporting it as a planning failure.", detail)
         return {"trajectory": [], "success": False, "status": f"planner_returned_empty:{detail}"}
 
-    return {"trajectory": rows, "success": True, "status": "ok"}
+    return {"trajectory": rows, "joint_names": joint_names, "success": True, "status": "ok"}
 
 
 def main(argv: list[str] | None = None) -> int:

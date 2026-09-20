@@ -111,15 +111,32 @@ _NAMED_BY_ISSUES: frozenset[str] = frozenset(
 
 
 @pytest.fixture(scope="module")
-def roster() -> tuple[str, ...]:
-    """Every grader a preflight run of this tree collects."""
-    return _cwtg.roster(_REPO_ROOT)
+def derived() -> tuple[str, ...]:
+    """The half of the roster read off the tree - the one walk this module pays."""
+    return _cwtg.derive_graders(_REPO_ROOT)
 
 
 @pytest.fixture(scope="module")
-def derived() -> tuple[str, ...]:
-    """The half of the roster read off the tree."""
-    return _cwtg.derive_graders(_REPO_ROOT)
+def roster(derived: tuple[str, ...]) -> tuple[str, ...]:
+    """Every grader a preflight run of this tree collects.
+
+    :func:`check_whole_tree_graders.roster` reaches the tree through
+    :func:`check_whole_tree_graders.derive_graders`, so calling it here walked
+    the tree a second time for the same answer the fixture above already
+    holds. It is handed that derivation instead, which leaves exactly the half
+    that is ``roster``'s own under test: the union with
+    :data:`check_whole_tree_graders.UNDERIVABLE_GRADERS` and the sort. The
+    seam refuses any other root, so a call that stopped asking about this tree
+    would fail here rather than read a cached answer for the wrong one.
+    """
+
+    def _already_derived(root: Path) -> tuple[str, ...]:
+        assert root == _REPO_ROOT, f"roster() derived {root}, not the tree this module walked"
+        return derived
+
+    with pytest.MonkeyPatch.context() as seam:
+        seam.setattr(_cwtg, "derive_graders", _already_derived)
+        return _cwtg.roster(_REPO_ROOT)
 
 
 def _selects(source: str, module_path: Path) -> bool:

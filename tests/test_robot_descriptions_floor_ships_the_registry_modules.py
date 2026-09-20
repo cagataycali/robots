@@ -46,7 +46,7 @@ the download_assets tool``, naming a remedy that cannot supply the module either
 
 :data:`_FIRST_RELEASE_WITH_EVERY_REGISTRY_MODULE` is the single owner of the
 number; the pyproject comment points back here rather than restating the
-measurement. ``tests/test_registry_integrity.py`` already pins that every
+measurement. ``tests/registry/test_integrity.py`` already pins that every
 declared module name is import-*safe* (matches the allowed character pattern);
 this file pins that it is import-*able* on the oldest install packaging admits.
 """

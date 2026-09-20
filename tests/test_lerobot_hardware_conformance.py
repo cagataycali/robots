@@ -1,7 +1,7 @@
 """LeRobot hardware conformance - every ``hardware.lerobot_type`` in the strands
 registry must name a robot type that LeRobot actually registers.
 
-This closes the gap left by ``test_registry_integrity.test_hardware_only_robots
+This closes the gap left by ``registry.test_integrity.test_hardware_only_robots
 _declare_lerobot_type``, which only checks that ``lerobot_type`` is a non-empty
 string. That weaker check passed four entries (hope_jr, omx, bi_openarm,
 earthrover) whose ``lerobot_type`` did NOT match any LeRobot

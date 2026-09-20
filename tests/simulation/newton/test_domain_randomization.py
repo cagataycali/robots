@@ -148,16 +148,16 @@ class TestSetObsNoiseValidation:
         assert host._obs_noise_rng is not None
 
 
-class TestJointPosNoise:
+class TestJointNoise:
     def test_disabled_returns_input_unchanged(self):
         host = _NoiseHost()
         obs = {"Rotation": 0.5, "Pitch": -0.2}
-        assert host._apply_joint_pos_noise(obs) is obs
+        assert host._apply_joint_noise(obs) is obs
 
     def test_adds_noise_with_requested_std(self):
         host = _NoiseHost()
         host.set_obs_noise(joint_pos_std=0.05, seed=0)
-        samples = [host._apply_joint_pos_noise({"j": 1.0})["j"] for _ in range(20000)]
+        samples = [host._apply_joint_noise({"j": 1.0})["j"] for _ in range(20000)]
         assert abs(float(np.std(samples)) - 0.05) < 0.005
         assert abs(float(np.mean(samples)) - 1.0) < 0.005
 
@@ -165,9 +165,22 @@ class TestJointPosNoise:
         a, b = _NoiseHost(), _NoiseHost()
         a.set_obs_noise(joint_pos_std=0.1, seed=7)
         b.set_obs_noise(joint_pos_std=0.1, seed=7)
-        seq_a = [a._apply_joint_pos_noise({"j": 0.0})["j"] for _ in range(50)]
-        seq_b = [b._apply_joint_pos_noise({"j": 0.0})["j"] for _ in range(50)]
+        seq_a = [a._apply_joint_noise({"j": 0.0})["j"] for _ in range(50)]
+        seq_b = [b._apply_joint_noise({"j": 0.0})["j"] for _ in range(50)]
         assert seq_a == seq_b
+
+    def test_velocity_companions_draw_from_the_velocity_std(self):
+        """``<joint>.vel`` is a rad/s reading, so it takes ``joint_vel_std``.
+
+        The observation's joint block holds both quantities, and spending the
+        position std on a velocity (or vice versa) mislabels the noise the
+        caller configured.
+        """
+        host = _NoiseHost()
+        host.set_obs_noise(joint_pos_std=0.0, joint_vel_std=0.2, seed=0)
+        samples = [host._apply_joint_noise({"j": 1.0, "j.vel": 0.0}) for _ in range(20000)]
+        assert {s["j"] for s in samples} == {1.0}
+        assert abs(float(np.std([s["j.vel"] for s in samples])) - 0.2) < 0.02
 
 
 class TestStateNoise:

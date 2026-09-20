@@ -28,7 +28,7 @@ not a deferred feature.
 
 ``mode="real"`` on this robot resolves here by default: the registry entries
 declare ``hardware.driver = "strands"``, because the alternative
-(:data:`~strands_robots.drivers.base.DEFAULT_DRIVER`) cannot build a robot
+(:data:`~strands_robots.registry.DEFAULT_DRIVER`) cannot build a robot
 lerobot has no type for.
 """
 

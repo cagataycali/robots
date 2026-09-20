@@ -27,10 +27,16 @@ container start. Port `5556` is published to the host loopback.
 
 ```bash
 source /opt/ros/jazzy/setup.bash         # or your distro
-pip install pyzmq msgpack                # the only non-ROS deps
+sudo apt install ros-jazzy-moveit-py ros-jazzy-moveit-configs-utils \
+    ros-jazzy-moveit-planners-ompl ros-jazzy-moveit-resources-panda-moveit-config
 python -m strands_robots.policies.moveit2.server.zmq_node \
-    --port 5556 --planning-group arm
+    --port 5556 --planning-group panda_arm
 ```
+
+`--moveit-config-package` / `--robot-name` default to the panda config MoveIt 2
+ships, so that command plans out of the box; point them at your own config
+package and pass its group name. `pyzmq` + `msgpack` (the `[moveit2]` extra)
+have to be importable by the interpreter that launches the sidecar.
 
 Use this when you're iterating on the sidecar code or attaching to a
 specific MoveIt2 config (custom URDF/SRDF, custom planning pipelines).
@@ -45,12 +51,16 @@ request  = {"endpoint": "plan",
                      "target_joints": dict[str, float] | None,
                      "world_update": dict | None}}
 response = {"trajectory": list[list[float]],
+            "joint_names": list[str],        # on success
             "success": bool,
             "status": str}
 ```
 
-Trajectory rows are `[time_from_start_seconds, q0, q1, ..., qN]`. The
-client drops the time column when packing per-step action dicts —
+Trajectory rows are `[time_from_start_seconds, q0, q1, ..., qN]`, and
+`joint_names` names the joint each of `q0 .. qN` belongs to, in column order,
+read from the trajectory message. The client drops the time column when
+packing per-step action dicts and keys the columns by those names when the
+robot's declared roster is not the row's width —
 `MoveIt2Policy._unpack_trajectory` in `../policy.py`.
 
 The reference implementation also exposes `ping` (health check) and
@@ -65,10 +75,9 @@ deployment typically involves:
 * Validating `world_update` against a known schema before pushing to
   the planning scene.
 * Checking `request.get("api_token")` against a secret.
-* Plugging the per-call start state from `joint_state` into a
-  `RobotState` (the reference impl trusts `set_start_state_to_current_state`).
-* Replacing `frame_id="base_link"` and `pose_link="end_effector_link"`
-  with values from your URDF.
+* Mapping `joint_state` onto the planning group by joint name rather than in
+  order (the reference impl reads it in order and logs the trailing values it
+  ignored).
 * Bounding plan time / `MotionPlanRequest` parameters.
 
 Each of these has a TODO-style comment in `zmq_node.py`.

@@ -4,8 +4,11 @@ Two sources, both read without side effects:
 
 * :func:`strands_robots.registry.robots.list_robots` - every registered robot
   with its category, joint count and whether it has a sim asset / a hardware
-  backend. ``model_local`` says whether the sim asset is already on this disk
-  (``resolve_model`` searches local paths only - it never downloads).
+  backend. ``model_local`` says whether the sim asset is already on this disk:
+  ``resolve_model`` is asked with ``allow_download=False``, so a listing reads
+  the disk and never fetches what is not there. The downloading default is for
+  a caller about to load the model; here it turned one GET on a cold cache into
+  a clone of every upstream asset repository the registry names.
 * :func:`strands_robots.mesh.session.get_peers` - the in-process peer table,
   when the mesh extra is importable. The dashboard does not join the mesh
   itself here; it reports what this process already knows, and says ``"off"``
@@ -37,7 +40,7 @@ def registry_robots(mode: str = "all") -> list[dict[str, Any]]:
         row = dict(entry)
         if row.get("has_sim"):
             try:
-                row["model_local"] = resolve_model(row["name"]) is not None
+                row["model_local"] = resolve_model(row["name"], allow_download=False) is not None
             except Exception:  # a broken asset dir is a row, not an outage
                 logger.debug("resolve_model failed for %s", row["name"], exc_info=True)
                 row["model_local"] = False
@@ -81,5 +84,5 @@ async def robot(name: str, _: dict = Depends(access.require_session)) -> dict[st
     if entry is None:
         raise HTTPException(404, f"unknown robot: {name}")
     canonical = resolve_name(name)
-    model = resolve_model(canonical) if entry.get("asset") else None
+    model = resolve_model(canonical, allow_download=False) if entry.get("asset") else None
     return {"name": canonical, "entry": entry, "model_path": model}

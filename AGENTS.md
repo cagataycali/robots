@@ -1851,7 +1851,7 @@ hatch run format            # ruff check --fix, ruff format
     1. `asset.robot_descriptions_module` (preferred)
     2. `asset.source` with `type: "github"`
     3. `asset.auto_download: false` (explicit opt-out)
-  Enforced by `tests/test_registry_integrity.py`.
+  Enforced by `tests/registry/test_integrity.py`.
 
 
 ## Review Learnings (PR #85 - MuJoCo Backend)

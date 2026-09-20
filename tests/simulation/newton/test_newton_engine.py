@@ -72,8 +72,14 @@ class TestRobotManagement:
 
 class TestObservationAction:
     def test_observation_keys_match_joints(self, engine_with_so100):
+        """Each joint contributes a position and its ``<joint>.vel`` companion.
+
+        The pairing (not the key count) is the contract a policy reads; see
+        ``test_observation_pairs_joint_velocity.py`` for what consumes it.
+        """
         obs = engine_with_so100.get_observation("so100")
-        assert set(obs) == set(engine_with_so100.robot_joint_names("so100"))
+        joints = set(engine_with_so100.robot_joint_names("so100"))
+        assert set(obs) == joints | {f"{j}.vel" for j in joints}
         assert all(isinstance(v, float) for v in obs.values())
 
     def test_send_action_moves_joint(self, engine_with_so100):
@@ -159,7 +165,8 @@ class TestSolverParity:
             sim.add_robot("so100")
             assert sim.step(5)["status"] == "success"
             obs = sim.get_observation("so100")
-            assert len(obs) == 6
+            joints = sim.robot_joint_names("so100")
+            assert set(obs) == set(joints) | {f"{j}.vel" for j in joints}
             assert all(np.isfinite(v) for v in obs.values())
         finally:
             sim.destroy()

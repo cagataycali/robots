@@ -63,8 +63,13 @@ def _capture_send_decode_recv(policy: MoveIt2Policy, response: dict) -> list[dic
     return sent
 
 
-def _ok_trajectory_response(horizon: int = 4, ndof: int = 6) -> dict:
-    """Construct a successful sidecar response with a synthetic trajectory."""
+def _ok_trajectory_response(horizon: int = 4, ndof: int = 6, joint_names: list[str] | None = None) -> dict:
+    """Construct a successful sidecar response with a synthetic trajectory.
+
+    ``joint_names`` is the roster the reference sidecar sends beside the rows;
+    left out here by default so the pins that grade the no-roster path (an
+    older sidecar) keep grading it.
+    """
     trajectory = []
     for t in range(horizon):
         # [time, q0, q1, ...] - matches the wire protocol from issue #302.
@@ -72,7 +77,10 @@ def _ok_trajectory_response(horizon: int = 4, ndof: int = 6) -> dict:
         for i in range(ndof):
             row.append(0.01 * (t + 1) * (i + 1))
         trajectory.append(row)
-    return {"trajectory": trajectory, "success": True, "status": "ok"}
+    response = {"trajectory": trajectory, "success": True, "status": "ok"}
+    if joint_names is not None:
+        response["joint_names"] = list(joint_names)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +494,93 @@ class TestMoveIt2PolicyWireRoundTrip:
         for step in actions:
             assert set(step.keys()) == {"joint_0", "joint_1", "joint_2"}
 
+    # A plan covers the planning group, which is narrower than the robot that
+    # carries it, so the row is keyed by the names the sidecar returned with
+    # it - never by the position a column would hold in the robot's roster.
+    # The observation below publishes a base joint ahead of the arm; a group
+    # planning the arm must not command the base.
+    _OBSERVATION_WITH_LEADING_BASE = {"base": 0.0, "j1": 0.1, "j2": 0.2, "j3": 0.3}
+
+    def test_rows_are_keyed_by_the_names_the_sidecar_returned(self):
+        p = self._make_policy()
+        p.set_robot_state_keys(["base", "j1", "j2", "j3"])  # the robot's 4 keys; the plan is 3 wide
+        _capture_send_decode_recv(p, _ok_trajectory_response(horizon=2, ndof=3, joint_names=["j1", "j2", "j3"]))
+
+        actions = asyncio.run(p.get_actions(dict(self._OBSERVATION_WITH_LEADING_BASE), "", target_joints={"j1": 0.5}))
+        assert len(actions) == 2
+        for step in actions:
+            assert list(step.keys()) == ["j1", "j2", "j3"]
+        assert "base" not in actions[0]
+
+    def test_a_reply_without_names_never_keys_a_row_onto_the_leading_observation_joints(self):
+        """Without a roster the row is ``joint_<i>`` - a loud miss, not a silent re-key onto ``base``."""
+        p = self._make_policy()
+        p.set_robot_state_keys(["base", "j1", "j2", "j3"])
+        _capture_send_decode_recv(p, _ok_trajectory_response(horizon=2, ndof=3))
+
+        actions = asyncio.run(p.get_actions(dict(self._OBSERVATION_WITH_LEADING_BASE), "", target_joints={"j1": 0.5}))
+        for step in actions:
+            assert set(step.keys()) == {"joint_0", "joint_1", "joint_2"}
+            assert "base" not in step
+
+    def test_declared_robot_state_keys_still_win_when_the_row_is_that_wide(self):
+        """``set_robot_state_keys`` is the caller's declaration; a roster of the same width defers to it."""
+        p = self._make_policy()
+        p.set_robot_state_keys(["a", "b", "c"])
+        _capture_send_decode_recv(p, _ok_trajectory_response(horizon=1, ndof=3, joint_names=["j1", "j2", "j3"]))
+
+        actions = asyncio.run(p.get_actions({"observation.state": [0.0] * 3}, "", target_joints={"j1": 0.5}))
+        assert list(actions[0].keys()) == ["a", "b", "c"]
+
+    def test_joint_name_map_renames_the_planner_vocabulary_onto_the_robot(self):
+        """MoveIt's panda plans ``panda_joint<i>``; the MuJoCo Panda drives ``joint<i>``."""
+        p = MoveIt2Policy(
+            host="127.0.0.1",
+            port=19999,
+            joint_name_map={"panda_joint1": "joint1", "panda_joint2": "joint2"},
+        )
+        _capture_send_decode_recv(
+            p, _ok_trajectory_response(horizon=1, ndof=3, joint_names=["panda_joint1", "panda_joint2", "panda_joint3"])
+        )
+
+        actions = asyncio.run(p.get_actions({"observation.state": [0.0] * 9}, "", target_joints={"panda_joint1": 0.5}))
+        # A name the map does not cover passes through unchanged.
+        assert list(actions[0].keys()) == ["joint1", "joint2", "panda_joint3"]
+
+    @pytest.mark.parametrize(
+        ("joint_names", "match"),
+        [
+            pytest.param(["j1", "j2"], "names 2 joints .* 3 joint positions", id="narrower_than_the_row"),
+            pytest.param(["j1", "j2", "j3", "j4"], "names 4 joints .* 3 joint positions", id="wider_than_the_row"),
+            pytest.param(["j1", "j1", "j2"], "joint_names", id="duplicate_name"),
+            pytest.param(["j1", "", "j2"], "joint_names", id="blank_name"),
+            pytest.param("j1j2j3", "joint_names", id="one_string_not_a_list"),
+        ],
+    )
+    def test_a_roster_that_cannot_key_the_row_is_refused(self, joint_names, match):
+        """The roster comes from a peer process, so it is graded before it keys a command."""
+        p = self._make_policy()
+        response = _ok_trajectory_response(horizon=1, ndof=3)
+        response["joint_names"] = joint_names
+        _capture_send_decode_recv(p, response)
+
+        with pytest.raises(RuntimeError, match=match):
+            asyncio.run(p.get_actions({"observation.state": [0.0] * 3}, "", target_joints={"j1": 0.5}))
+
+    @pytest.mark.parametrize(
+        "joint_name_map",
+        [
+            pytest.param(["panda_joint1", "joint1"], id="a_list_not_a_dict"),
+            pytest.param({"panda joint1": "joint1"}, id="key_with_a_space"),
+            pytest.param({"panda_joint1": "joint1; rm -rf /"}, id="value_with_shell_metacharacters"),
+            pytest.param({"panda_joint1": 1}, id="value_not_a_string"),
+            pytest.param({1: "joint1"}, id="key_not_a_string"),
+        ],
+    )
+    def test_joint_name_map_is_validated_at_construction(self, joint_name_map):
+        with pytest.raises(ValueError, match="joint_name_map"):
+            MoveIt2Policy(host="127.0.0.1", port=19999, joint_name_map=joint_name_map)
+
     # A plan that commands nothing is refused, not returned as a no-op.
     #
     # The sidecar is a separate process, so the client cannot assume it grades
@@ -843,3 +938,73 @@ class TestClientTeardownNonBlocking:
         worker.start()
         # Pre-fix (infinite linger) this blocks forever; post-fix it is instant.
         assert done.wait(timeout=10.0), "client teardown blocked on a queued request to a dead server"
+
+
+class TestJointNameMapDistinctness:
+    """A colliding joint_name_map must never silently drop a planned column.
+
+    Two collision paths, both must-fix before ``joint_name_map`` ships as a
+    public constructor argument:
+
+    1. A non-injective map (copy-paste typo): ``{"a": "x", "b": "x"}``.
+    2. A map value that lands on another roster name's passthrough:
+       roster ``["a", "b"]`` with map ``{"a": "b"}`` -> keys ``["b", "b"]``.
+    """
+
+    @pytest.mark.parametrize(
+        ("joint_name_map", "match"),
+        [
+            pytest.param(
+                {"panda_joint1": "joint2", "panda_joint2": "joint2"},
+                "not injective.*both.*map to.*joint2",
+                id="duplicate_value_copy_paste_typo",
+            ),
+            pytest.param(
+                {"a": "x", "b": "y", "c": "x"},
+                "not injective.*both.*map to.*x",
+                id="duplicate_value_three_entries",
+            ),
+        ],
+    )
+    def test_non_injective_map_is_refused_at_construction(self, joint_name_map, match):
+        """A non-injective map is caught before any plan is ever resolved."""
+        with pytest.raises(ValueError, match=match):
+            MoveIt2Policy(host="127.0.0.1", port=19999, joint_name_map=joint_name_map)
+
+    def test_map_value_colliding_with_passthrough_is_refused_at_resolve_time(self):
+        """roster ["a", "b"] + map {"a": "b"} -> keys ["b", "b"] is refused."""
+        p = MoveIt2Policy(
+            host="127.0.0.1",
+            port=19999,
+            joint_name_map={"a": "b"},
+        )
+        _capture_send_decode_recv(p, _ok_trajectory_response(horizon=1, ndof=2, joint_names=["a", "b"]))
+
+        with pytest.raises(RuntimeError, match="duplicate action key.*b"):
+            asyncio.run(
+                p.get_actions(
+                    {"observation.state": [0.0] * 2},
+                    "",
+                    target_joints={"a": 0.5},
+                )
+            )
+
+    def test_injective_map_still_works(self):
+        """A well-formed injective map is unaffected by the new guard."""
+        p = MoveIt2Policy(
+            host="127.0.0.1",
+            port=19999,
+            joint_name_map={"panda_joint1": "joint1", "panda_joint2": "joint2"},
+        )
+        _capture_send_decode_recv(
+            p, _ok_trajectory_response(horizon=1, ndof=2, joint_names=["panda_joint1", "panda_joint2"])
+        )
+
+        actions = asyncio.run(
+            p.get_actions(
+                {"observation.state": [0.0] * 9},
+                "",
+                target_joints={"panda_joint1": 0.5},
+            )
+        )
+        assert list(actions[0].keys()) == ["joint1", "joint2"]

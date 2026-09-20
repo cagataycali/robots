@@ -5,17 +5,22 @@ Two properties of ``strands_robots``, both read from the source by
 
 * the **runtime** module-scope import graph has no cycle - a cycle there is what
   makes an import order load-bearing and an interpreter deadlock possible;
-* every runtime edge that points at a higher layer is written down in
-  ``KNOWN_UPWARD_EDGES``. The pin is an equality, so an inversion added to the
-  package fails until someone declares it, and an inversion removed from the
-  package fails until someone deletes its line. The roster is a ratchet, not a
-  suppression list.
+* every edge that points at a higher layer is written down - a runtime one in
+  ``KNOWN_UPWARD_EDGES``, a deferred one (inside a function body) in
+  ``KNOWN_DEFERRED_UPWARD_EDGES``. Each pin is an equality, so an inversion
+  added to the package fails until someone declares it, and an inversion removed
+  from the package fails until someone deletes its line. The rosters are
+  ratchets, not suppression lists.
 
-Typing-only imports (``if TYPE_CHECKING:``) and late imports (inside a function)
-are reported by the script and deliberately excluded from the acyclicity
-requirement: they cost nothing at import time and are the two sanctioned ways to
-break a cycle, which is exactly what ``simulation.base`` and
-``simulation.policy_runner`` use them for.
+The two properties grade different import kinds because they measure different
+things. Acyclicity is about import-time mechanics, so typing-only imports
+(``if TYPE_CHECKING:``) and late imports are exempt - they cost nothing on
+import and are the two sanctioned ways to break a cycle, which is exactly what
+``simulation.base`` and ``simulation.policy_runner`` use them for. Direction is
+about who depends on whom, which deferring does not change: a function that
+imports the dashboard on its first call still cannot do its job without the
+dashboard, so a late import is graded. A typing-only import is not - an
+annotation is not a dependency at any point in the run.
 """
 
 from __future__ import annotations
@@ -165,6 +170,42 @@ class TestTheContract:
         assert sorted(found - declared) == [], "undeclared inversion; fix it or declare it"
         assert sorted(declared - found) == [], "declared inversion is gone; delete its line"
 
+    def test_the_deferred_upward_edges_are_exactly_the_declared_ones(self, graph: Any) -> None:
+        """The same ratchet over the inversions the one above cannot see.
+
+        Deferring an import moves when the dependency is paid, not whether it
+        exists, so an inversion inside a function body is an inversion. Twelve
+        survive the runtime roster being empty, which is why "no upward edges"
+        needs this cell to mean what it sounds like.
+        """
+        found = set(mod.upward_edges(graph, "late"))
+        declared = set(mod.KNOWN_DEFERRED_UPWARD_EDGES)
+        assert sorted(found - declared) == [], "undeclared deferred inversion; fix it or declare it"
+        assert sorted(declared - found) == [], "declared deferred inversion is gone; delete its line"
+
+    def test_the_registry_owns_the_vocabulary_it_validates(self, graph: Any) -> None:
+        """A declared field's legal values sit with the loader that refuses the rest.
+
+        ``hardware.driver`` is a registry field, and the loader refuses a value
+        outside ``DRIVER_CHOICES`` at load time rather than leaving every reader
+        - the factory, a tool, a driver package - to re-check it. The vocabulary
+        lived in the driver seam one layer up, so the layer that validates a
+        declared entry reached up for the list of what may be declared. The seam
+        reads the registry already, so the names went down and both reads now
+        point the same way.
+        """
+        offenders = sorted(
+            (importer, target)
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            if importer.split(".")[:2] == ["strands_robots", "registry"]
+            for target in targets
+            if target.split(".")[:2] == ["strands_robots", "drivers"]
+        )
+        assert offenders == [], f"the registry reaches into the driver seam: {offenders}"
+        seam = "strands_robots.drivers.registry"
+        assert "strands_robots.registry" in graph.runtime[seam], f"{seam} reads no registry, so this is vacuous"
+
     def test_no_driver_imports_a_policy(self, graph: Any) -> None:
         """The cut this contract was first used to make, named on its own.
 
@@ -303,6 +344,12 @@ class TestTheContract:
         teleoperation mixin (read by the Device Connect sim driver and the MuJoCo
         ``Simulation`` as well as by ``Robot``) and the recording frame error
         (raised in ``app``, caught by the rollout drivers a layer down).
+
+        Eight deferred edges still point into it - the recording modules the
+        roadmap itself places here, read from ``simulation``, and the mixin's
+        lerobot-deferred ``teleoperator`` read - declared in
+        ``KNOWN_DEFERRED_UPWARD_EDGES`` and graded by the equality above rather
+        than by this cell.
         """
         app = mod.LAYER_NAMES.index("app")
         offenders = sorted(edge for edge in mod.upward_edges(graph) if mod.layer_of(edge[1]) == app)
