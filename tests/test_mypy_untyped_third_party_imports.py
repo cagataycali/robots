@@ -45,8 +45,8 @@ _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
 # First-party modules that import an untyped third-party package (pyarrow).
 _PYARROW_IMPORTERS = (
+    "strands_robots/dataset_metadata.py",
     "strands_robots/dataset_recorder.py",
-    "strands_robots/verify_dataset.py",
 )
 
 # First-party modules that import the Unitree DDS SDK (unitree_sdk2py), which is
@@ -75,7 +75,7 @@ def test_pyarrow_is_declared_untyped_in_mypy_overrides():
     covered = _ignore_missing_imports_modules()
     missing = {m for m in ("pyarrow", "pyarrow.*") if m not in covered}
     assert not missing, (
-        f"pyarrow imports (dataset_recorder / verify_dataset) need an "
+        f"pyarrow imports (dataset_metadata / dataset_recorder) need an "
         f"ignore_missing_imports mypy override; missing entries: {sorted(missing)}"
     )
 

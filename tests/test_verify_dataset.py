@@ -1422,7 +1422,7 @@ def test_read_dataset_episode_indices_dedups_and_skips_columnless_parquet(tmp_pa
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
 
-    from strands_robots.verify_dataset import read_dataset_episode_indices
+    from strands_robots.dataset_metadata import read_dataset_episode_indices
 
     ep_dir = tmp_path / "meta" / "episodes"
     (ep_dir / "chunk-000").mkdir(parents=True)
@@ -1461,7 +1461,7 @@ def test_read_dataset_episode_indices_keeps_readable_shards_when_one_is_corrupt(
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
 
-    from strands_robots.verify_dataset import read_dataset_episode_indices
+    from strands_robots.dataset_metadata import read_dataset_episode_indices
 
     ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
     ep_dir.mkdir(parents=True)
@@ -1485,7 +1485,7 @@ def test_read_dataset_episode_indices_raises_when_no_shard_is_readable(tmp_path)
     """
     pytest.importorskip("pyarrow")
 
-    from strands_robots.verify_dataset import read_dataset_episode_indices
+    from strands_robots.dataset_metadata import read_dataset_episode_indices
 
     ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
     ep_dir.mkdir(parents=True)

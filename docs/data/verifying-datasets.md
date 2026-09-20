@@ -20,7 +20,8 @@ header in `meta/info.json`. `status` is `"error"` when the parquet count differs
 when the two disagree (`sources_agree` is then `False`), so a dataset matching `expected` on one
 source alone still fails. The `{"json": {...}}` block carries `expected`, `actual`,
 `info_total_episodes`, `info_problems`, `sources_agree`, `episode_indices` and `total_frames` for CI
-gating; `read_dataset_episode_indices(root)` exposes the same facts in pure pyarrow, with no
+gating; `strands_robots.dataset_metadata.read_dataset_episode_indices(root)` exposes the same
+facts in pure pyarrow, with no
 `LeRobotDataset` instantiated.
 
 A header that is present but is not a count at all - `2.5`, `"2"`, `true`, or a number outside double

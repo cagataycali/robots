@@ -53,7 +53,10 @@ PACKAGE = "strands_robots"
 #: The placements that are a judgement rather than a reading of the tree:
 #: ``assets`` sits with ``registry`` because it resolves the asset paths the
 #: registry declares; ``streaming_dataset`` sits with ``dataset_recorder`` in
-#: ``app`` because it is the same recording concern written incrementally; and
+#: ``app`` because it is the same recording concern written incrementally, while
+#: ``dataset_metadata`` sits in ``core`` because reading what a dataset recorded
+#: is a fact the sim facade, the checker and the judge each verify, where writing
+#: one is a session the app owns; and
 #: ``teleop_mixin`` sits with ``drivers|mesh`` because it is an input-device
 #: concern shared by three hosts in three layers - the hardware ``Robot``, the
 #: MuJoCo ``Simulation`` and the Device Connect sim driver - so it belongs under
@@ -73,6 +76,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "_path_validation",
             "_serial_discovery",
             "bus_access",
+            "dataset_metadata",
             "episode_labels",
             "locomotion_envelope",
             "recording_errors",
@@ -139,7 +143,6 @@ KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots._hitl_audit", "strands_robots.mesh.audit"),
     ("strands_robots.drivers.ur", "strands_robots.policies"),
     ("strands_robots.registry.policies", "strands_robots.policies"),
-    ("strands_robots.simulation.base", "strands_robots.verify_dataset"),
     ("strands_robots.simulation.isaac.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.mujoco.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.newton.recording", "strands_robots.dataset_recorder"),
