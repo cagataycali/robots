@@ -13,5 +13,6 @@ to every motor. Angles are the uncalibrated estimate `(ticks - 2048) · 2π /
 4096`, labelled as such in the snapshot's new `bus` field next to the raw
 ticks, read rate and age. A bus that stops answering shows `stale`, then
 `error` with the reason; a port that will not open is a `502` naming it and
-nothing is left holding the device. `GET /api/sim/ports` lists what a mirror
+nothing is left holding the device - nor when the port opens but the engine
+behind it fails to build or render. `GET /api/sim/ports` lists what a mirror
 could read, servo buses first, opening nothing.

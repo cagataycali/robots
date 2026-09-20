@@ -105,7 +105,9 @@ with no calibration applied - right up to the offset a calibration would
 record, and labelled `estimate` in the snapshot's `bus` field along with the
 raw ticks, the read rate and the age of the last reading. A bus that stops
 answering shows **stale**, then **error** with the reason; a port that will
-not open is a `502` naming it, and nothing is left holding the device.
+not open is a `502` naming it, and nothing is left holding the device -
+nor when the port opens but the engine behind it fails to build or
+render: the session reports **error** and the port is released.
 
 ## Configuration
 

@@ -210,6 +210,18 @@ class SimSession:
             self._snapshot = Snapshot(**current)
 
     def _run(self) -> None:
+        # The source is opened before the worker starts and outlives every engine
+        # attempt, so it is released here and not beside the engine: a factory
+        # that refuses, a renderer that fails, a loop that dies and a stop all
+        # leave through this frame, and a mirror's port is held exclusively
+        # until they do.
+        try:
+            self._serve()
+        finally:
+            if self._source is not None:
+                self._source.close()
+
+    def _serve(self) -> None:
         try:
             engine = self._factory(self.robot)
         except Exception as exc:
@@ -300,8 +312,6 @@ class SimSession:
             self._close(engine)
 
     def _close(self, engine: Any) -> None:
-        if self._source is not None:
-            self._source.close()
         close = getattr(engine, "close", None)
         if callable(close):
             try:

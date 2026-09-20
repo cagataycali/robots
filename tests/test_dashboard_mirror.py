@@ -248,6 +248,33 @@ class TestMirrorSession:
         assert _wait(lambda: s.snapshot.state == "mirroring")
         s.stop()
 
+    def test_an_engine_that_will_not_build_releases_the_port(self):
+        # The source holds the serial device exclusively. A session whose engine
+        # never exists (missing asset, MuJoCo init error) has no engine to close,
+        # and the port must not stay held until the process restarts.
+        def refusing(robot):
+            raise FileNotFoundError(f"no model for {robot}")
+
+        src = FakeSource()
+        s = sim_session.SimSession("so101", engine_factory=refusing, source=src)
+        assert s.wait_ready()
+        assert s.snapshot.state == "error"
+        assert "FileNotFoundError" in s.snapshot.error
+        assert src.closed.wait(2.0), "the mirror source is still open after the engine failed to build"
+        s.stop()
+
+    def test_an_engine_that_will_not_render_releases_the_port(self):
+        class Blind(FakeEngine):
+            def get_frame(self, camera_name="default", width=None, height=None):
+                raise RuntimeError("no GL context")
+
+        src = FakeSource()
+        s = sim_session.SimSession("so101", engine_factory=Blind, source=src)
+        assert s.wait_ready()
+        assert s.snapshot.state == "error"
+        assert src.closed.wait(2.0), "the mirror source is still open after the first render failed"
+        s.stop()
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch, fake_bus):
