@@ -48,13 +48,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 import strands_robots
+from strands_robots.dataset_metadata import read_dataset_episode_indices
 from strands_robots.tools.episode_judge import _read_info
 from strands_robots.tools.run_policy import _read_parquet_truth
 from strands_robots.training.lerobot import (
     _dataset_codebase_version,
     _dataset_quantile_stats_present,
 )
-from strands_robots.verify_dataset import read_dataset_episode_indices, verify_dataset
+from strands_robots.verify_dataset import verify_dataset
 
 _HEALTHY: dict[str, Any] = {
     "total_episodes": 2,

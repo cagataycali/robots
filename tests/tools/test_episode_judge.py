@@ -149,7 +149,7 @@ class TestEveryToolAnswersWithAnEnvelopeWhenPyarrowIsAbsent:
     ``pyarrow`` ships with the lerobot extra, so a judge process that only
     reads datasets recorded elsewhere can be running without it. Two of these
     tools reach a parquet read - ``load_episode`` through
-    :func:`strands_robots.verify_dataset.read_dataset_episode_indices`, which
+    :func:`strands_robots.dataset_metadata.read_dataset_episode_indices`, which
     documents ImportError for exactly this, and ``sample_frames`` through this
     module's own frame reader - so the module's "every tool returns the
     envelope and never raises" contract has to hold for the missing dependency

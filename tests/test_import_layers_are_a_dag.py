@@ -239,6 +239,32 @@ class TestTheContract:
         )
         assert offenders == []
 
+    def test_the_parquet_episode_truth_sits_below_every_reader_of_a_dataset(self, graph: Any) -> None:
+        """What a dataset recorded is read in ``core``, by three layers at once.
+
+        ``meta/episodes/**/*.parquet`` is the ground truth three surfaces check:
+        the sim facade's ``verify_dataset_episodes``, the ``verify-dataset``
+        checker and the episode judge. The read lived inside the checker, in
+        ``app``, so the sim facade reached UP one layer for the count it certifies
+        a collection run with - the shape that makes a recording backend depend
+        on a CLI. ``dataset_metadata`` holds it now, and its own imports are what
+        let it sit there: ``declared_count`` and nothing else internal.
+        """
+        reader = "strands_robots.dataset_metadata"
+        assert reader in graph.modules
+        core = mod.LAYER_NAMES.index("core")
+        assert mod.layer_of(reader) == core
+        for kind in ("runtime", "typing_only", "late"):
+            above = sorted(t for t in getattr(graph, kind).get(reader, frozenset()) if mod.layer_of(t) != core)
+            assert above == [], f"{kind} imports above core: {above}"
+        layers = {
+            mod.LAYER_NAMES[mod.layer_of(importer)]
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            if reader in targets
+        }
+        assert layers == {"sim|policies", "app", "tools"}, f"read from {sorted(layers)}"
+
     def test_the_path_sandbox_reads_nothing_from_the_package(self, graph: Any) -> None:
         """A core guard is standard-library-only, which is what lets it sit there.
 

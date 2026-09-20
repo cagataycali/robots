@@ -4289,7 +4289,7 @@ class SimEngine(ABC):
                 ],
             }
 
-        from strands_robots.verify_dataset import read_dataset_episode_indices
+        from strands_robots.dataset_metadata import read_dataset_episode_indices
 
         try:
             info = read_dataset_episode_indices(root)
