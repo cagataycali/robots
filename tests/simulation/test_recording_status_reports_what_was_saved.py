@@ -123,7 +123,7 @@ class TestEveryLifecycleStateAnswersInOneShape:
         [
             (_Sim(None), "No world", {"world": False, "recording": False}),
             (_Sim({}), "nothing saved in this session", {"world": True, "recording": False}),
-            (_open_session(), "[recording] 37 steps captured", {"world": True, "recording": True}),
+            (_open_session(), "[recording] 37 steps buffered in the open episode", {"world": True, "recording": True}),
             (_Sim({"last_save": _SAVE}), "Last saved: lab/so101_ep", {"world": True, "recording": False}),
         ],
         ids=["no-world", "nothing-saved", "recording", "after-a-save"],

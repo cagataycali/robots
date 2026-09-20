@@ -65,7 +65,7 @@ def test_second_start_is_refused_and_the_first_recording_still_saves(sim, tmp_pa
     assert sim.start_recording(repo_id="lab/live", root=root1, fps=30)["status"] == "success"
     r = sim.run_policy("so101", policy_provider="mock", duration=0.5, control_frequency=30.0)
     assert r["status"] == "success", _text(r)
-    assert "[recording] 15 steps captured" in _text(sim.get_recording_status())
+    assert "[recording] 15 steps buffered in the open episode" in _text(sim.get_recording_status())
 
     second = sim.start_recording(repo_id="lab/other", root=root2, fps=30)
     assert second["status"] == "error"
@@ -83,7 +83,7 @@ def test_second_start_is_refused_and_the_first_recording_still_saves(sim, tmp_pa
     }
 
     # Untouched: the 15 frames are still there and stop saves them.
-    assert "[recording] 15 steps captured" in _text(sim.get_recording_status())
+    assert "[recording] 15 steps buffered in the open episode" in _text(sim.get_recording_status())
     stop = sim.stop_recording()
     assert stop["status"] == "success", _text(stop)
     assert "lab/live -- 15 frames, 1 episode(s)" in _text(stop)
@@ -188,7 +188,7 @@ def test_newton_refuses_a_second_start_and_keeps_the_live_session(tmp_path):
     # The live session is exactly as it was: same recorder, same buffered frames.
     assert state["dataset_recorder"] is live
     assert len(state["trajectory"]) == 15
-    assert "[recording] 15 steps captured" in _text(engine.get_recording_status())
+    assert "[recording] 15 steps buffered in the open episode" in _text(engine.get_recording_status())
 
 
 @pytest.mark.parametrize("module_name", ENGINE_MIXINS)

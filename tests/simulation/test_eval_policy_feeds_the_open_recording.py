@@ -49,7 +49,7 @@ def test_eval_policy_under_an_open_recording_writes_one_dataset_episode_per_epis
     assert r["status"] == "success", _text(r)
     assert "Recorded 2 episode(s), 30 frames to lab/eval" in _text(r)
     assert _json(r)["recording"] == {"repo_id": "lab/eval", "episodes": 2, "frames": 30}
-    assert "[recording] 30 steps captured" in _text(sim.get_recording_status())
+    assert "[recording] 30 steps buffered in the open episode" in _text(sim.get_recording_status())
 
     stop = sim.stop_recording()
     assert stop["status"] == "success", _text(stop)
@@ -131,7 +131,7 @@ def test_a_caller_supplied_on_frame_is_kept_and_an_unfed_recorder_is_named(sim, 
         "does not call add_frame. Omit on_frame and the evaluation feeds the recorder itself"
     ) in _text(r)
     assert _json(r)["recording"] == {"repo_id": "lab/own", "episodes": 0, "frames": 0}
-    assert "[recording] 0 steps captured" in _text(sim.get_recording_status())
+    assert "[recording] 0 steps buffered in the open episode" in _text(sim.get_recording_status())
 
 
 def test_a_caller_on_frame_that_does_feed_is_reported_as_recorded(sim, tmp_path):
@@ -155,7 +155,7 @@ def test_run_policy_still_records_on_its_own(sim, tmp_path):
     assert sim.start_recording(repo_id="lab/rp", root=str(tmp_path / "ds"), fps=30)["status"] == "success"
     r = sim.run_policy("so101", policy_provider="mock", duration=0.5, control_frequency=30.0)
     assert r["status"] == "success", _text(r)
-    assert "[recording] 15 steps captured" in _text(sim.get_recording_status())
+    assert "[recording] 15 steps buffered in the open episode" in _text(sim.get_recording_status())
     assert "15 frames, 1 episode(s)" in _text(sim.stop_recording())
 
 
