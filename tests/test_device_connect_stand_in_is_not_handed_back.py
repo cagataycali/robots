@@ -23,12 +23,27 @@ by *what it holds* rather than by when it was taken: a real module goes back, a
 module bound to a fake does not, and a newer real module is left where the
 sibling that imported it can still reach it. The cells here grade each rule on
 a synthetic package, then the two measured orderings on the real files.
+
+Those two cells run real test files in a child interpreter, and the child does
+so without the parent session's coverage hook. ``pytest-cov`` hands its
+measurement to every child through ``COV_CORE_*`` and a ``.pth`` file that
+starts coverage before the child's own ``pytest`` reads ``--no-cov``, so the
+flag on the child's command line changes nothing. Both files are collected by
+the parent session as well, so the child's measurement is the parent's paid a
+second time for lines it already has: with only those three variables added the
+two-file child went from 9.6 s to 44.2 s locally, and the two cells were 124 s
+of a 2642 s CI suite (#3869). :func:`_child_environment` is the one place the
+handoff is dropped, and :class:`TestTheNestedRunStartsNoCoverage` grades that
+the nested run starts no coverage - with a control showing the hook does start
+under the ambient environment, so a rename on pytest-cov's side is reported
+rather than silently paid.
 """
 
 from __future__ import annotations
 
 import importlib
 import importlib.machinery
+import os
 import re
 import subprocess
 import sys
@@ -279,6 +294,25 @@ def test_what_the_installing_files_left_behind():
 """
 
 
+#: The names ``pytest-cov`` sets so a child interpreter measures coverage too
+#: (``COV_CORE_SOURCE``, ``COV_CORE_CONFIG``, ``COV_CORE_DATAFILE``, ...). Its
+#: ``.pth`` file reads the first of them at interpreter start, ahead of any
+#: command-line flag the child is given.
+_COVERAGE_HANDOFF_PREFIX = "COV_CORE_"
+
+
+def _child_environment() -> dict[str, str]:
+    """This process's environment without the parent session's coverage handoff.
+
+    The nested run re-runs files the parent session collects itself, so a child
+    that measures coverage measures lines the parent already has, at four times
+    the child's unmeasured wall-clock. Everything else passes through: the
+    interpreter's own ``PATH``, ``MUJOCO_GL`` and the Device Connect settings
+    are what make the nested run the same run as the parent's.
+    """
+    return {name: value for name, value in os.environ.items() if not name.startswith(_COVERAGE_HANDOFF_PREFIX)}
+
+
 def _run_pytest(*args: str, cwd: Path) -> str:
     finished = subprocess.run(
         [
@@ -298,6 +332,7 @@ def _run_pytest(*args: str, cwd: Path) -> str:
         capture_output=True,
         text=True,
         cwd=cwd,
+        env=_child_environment(),
         timeout=600,
     )
     return finished.stdout + finished.stderr
@@ -339,3 +374,54 @@ class TestTheMeasuredOrderings:
             cwd=_REPO_ROOT,
         )
         assert _counted(report, "failed") == 0 and _counted(report, "passed") > 0, report[-4000:]
+
+
+#: A test module run by :func:`_run_pytest`, grading the coverage it was started under.
+_WHETHER_THE_NESTED_RUN_IS_MEASURED = """
+import coverage
+
+
+def test_the_nested_run_is_not_measured():
+    assert coverage.Coverage.current() is None, "the child inherited the parent session's coverage hook"
+"""
+
+
+class TestTheNestedRunStartsNoCoverage:
+    """The child interpreter runs the real files once, unmeasured, at the speed measured here."""
+
+    @pytest.fixture(autouse=True)
+    def _a_parent_session_that_measures(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The handoff exactly as ``pytest-cov`` writes it, whether or not this session is measured."""
+        monkeypatch.setenv("COV_CORE_SOURCE", "strands_robots")
+        monkeypatch.setenv("COV_CORE_CONFIG", ":")
+        monkeypatch.setenv("COV_CORE_DATAFILE", str(tmp_path / ".coverage"))
+
+    def test_the_nested_run_starts_no_coverage(self, tmp_path: Path) -> None:
+        pytest.importorskip("pytest_cov")
+        probe = tmp_path / "test_whether_measured.py"
+        probe.write_text(textwrap.dedent(_WHETHER_THE_NESTED_RUN_IS_MEASURED), encoding="utf-8")
+
+        report = _run_pytest(str(probe), cwd=_REPO_ROOT)
+
+        assert _counted(report, "failed") == 0 and _counted(report, "passed") == 1, report[-4000:]
+
+    def test_only_the_handoff_is_dropped(self) -> None:
+        """``MUJOCO_GL`` and the Device Connect settings are what make the nested run the parent's run."""
+        environment = _child_environment()
+
+        assert [name for name in environment if name.startswith("COV_CORE_")] == []
+        assert {name: value for name, value in os.environ.items() if not name.startswith("COV_CORE_")} == environment
+
+    def test_the_ambient_environment_would_have_started_it(self) -> None:
+        """The control: the hook is real, so the cell above is refusing something."""
+        pytest.importorskip("pytest_cov")
+        finished = subprocess.run(
+            [sys.executable, "-c", "import coverage; print(coverage.Coverage.current() is not None)"],
+            capture_output=True,
+            text=True,
+            env=dict(os.environ),
+            timeout=120,
+            check=True,
+        )
+
+        assert finished.stdout.strip() == "True", finished.stderr[-2000:]
