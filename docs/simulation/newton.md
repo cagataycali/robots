@@ -117,7 +117,11 @@ no-op until then.
   the arm. `remove_camera(name)` / `list_cameras()` round out the API and
   `describe()["cameras"]` lists every registered camera.
 - `run_policy` / `eval_policy` / `replay_episode` / `start_policy` are
-  inherited from the `SimEngine` ABC - no backend-specific re-implementation.
+  inherited from the `SimEngine` ABC - no backend-specific re-implementation. A
+  policy needing an action controller only MuJoCo can install is refused there
+  rather than rolled out without it: `run_policy` with a `WBCPolicy` reports the
+  missing torque shim and names both remedies (the MuJoCo backend, or
+  `wbc_install_torque_control=False` for a torque-actuated scene).
   `start_policy` is the ABC's synchronous passthrough to `run_policy` here;
   only the MuJoCo backend runs a policy on a background thread. All four are
   advertised in `describe()["methods"]`, as is every other base-contract

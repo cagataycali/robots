@@ -42,6 +42,7 @@ import inspect
 import logging
 import sys
 import textwrap
+import threading
 from typing import cast
 
 import numpy as np
@@ -49,6 +50,7 @@ import pytest
 
 from strands_robots.policies import MockPolicy
 from strands_robots.policies.wbc import (
+    WBC_G1_ALL_JOINTS,
     WBCConfig,
     WBCPolicy,
     WBCTorqueController,
@@ -412,3 +414,147 @@ class TestAutoInstallHookThroughWrappers:
         assert undo is not None
         assert cast(WBCTorqueController, sim._world._backend_state["action_controller"]).policy is wbc
         undo()
+
+
+# ---------------------------------------------------------------------------
+# A backend that cannot install the shim
+# ---------------------------------------------------------------------------
+
+
+class _OtherBackendSim(SimEngine):
+    """A minimal engine that inherits the base hook instead of overriding it.
+
+    The shipped Newton and Isaac engines are in exactly this position: the shim
+    is written against a compiled ``MjModel`` / ``MjData`` pair, so neither can
+    install it. ``get_observation`` answers the WBC-shaped frame the policy
+    reads, so the rollout the base default refuses is one that would otherwise
+    have run.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.sends = 0
+
+    def create_world(self, timestep=None, gravity=None, ground_plane=True):  # type: ignore[no-untyped-def]
+        return {"status": "success"}
+
+    def destroy(self):  # type: ignore[no-untyped-def]
+        return {"status": "success"}
+
+    def reset(self):  # type: ignore[no-untyped-def]
+        return {"status": "success"}
+
+    def step(self, n_steps: int = 1):  # type: ignore[no-untyped-def]
+        return {"status": "success"}
+
+    def get_state(self):  # type: ignore[no-untyped-def]
+        return {"sim_time": 0.0, "step_count": self.sends}
+
+    def add_robot(self, name, **kw):  # type: ignore[no-untyped-def]
+        return {"status": "success"}
+
+    def remove_robot(self, name):  # type: ignore[no-untyped-def]
+        return {"status": "success"}
+
+    def list_robots(self) -> list[str]:
+        return ["unitree_g1"]
+
+    def robot_joint_names(self, robot_name: str) -> list[str]:
+        return list(WBC_G1_ALL_JOINTS)
+
+    def add_object(self, name, **kw):  # type: ignore[no-untyped-def]
+        return {"status": "success"}
+
+    def remove_object(self, name):  # type: ignore[no-untyped-def]
+        return {"status": "success"}
+
+    def get_observation(self, robot_name=None, *, skip_images=False):  # type: ignore[no-untyped-def]
+        obs: dict[str, object] = {
+            "base_pos": [0.0, 0.0, 0.793],
+            "base_quat": [1.0, 0.0, 0.0, 0.0],
+            "base_ang_vel": [0.0, 0.0, 0.0],
+            "base_lin_vel": [0.0, 0.0, 0.0],
+        }
+        for name in WBC_G1_ALL_JOINTS:
+            obs[name] = 0.0
+            obs[f"{name}.vel"] = 0.0
+        return obs
+
+    def send_action(self, action, robot_name=None, n_substeps=1):  # type: ignore[no-untyped-def]
+        self.sends += 1
+
+    def render(self, camera_name="default", width=None, height=None):  # type: ignore[no-untyped-def]
+        return {"image": np.zeros((height or 48, width or 64, 3), dtype=np.uint8)}
+
+
+def _wrapped(shape: str, wbc: WBCPolicy):  # type: ignore[no-untyped-def]
+    """The policy object handed to ``run_policy``, for each declared shape."""
+    from strands_robots.policies.composite import CompositePolicy
+    from strands_robots.policies.persistent import PersistentPolicy
+
+    if shape == "bare":
+        return wbc
+    if shape == "composite":
+        return CompositePolicy(lower=wbc, upper=MockPolicy())
+    return PersistentPolicy("wbc", policy_object=wbc)
+
+
+def _run_on(sim: _OtherBackendSim, policy, **kwargs):  # type: ignore[no-untyped-def]
+    return sim.run_policy(
+        "unitree_g1", policy_object=policy, n_steps=3, control_frequency=50.0, fast_mode=True, **kwargs
+    )
+
+
+def _text_of(result: dict) -> str:
+    return " ".join(b.get("text", "") for b in result.get("content") or [] if isinstance(b, dict))
+
+
+class TestABackendThatCannotInstallTheShimRefusesInsteadOfFalling:
+    """The requirement is reported, not absorbed.
+
+    Only the MuJoCo engine overrides the hook, so every other backend ran WBC's
+    position targets straight into the stock servo gain and reported success.
+    Measured on the shipped Newton backend, stock ``Robot("unitree_g1",
+    backend="newton")``, walk weights, 50 Hz: no controller was registered for
+    any step, the pelvis sank 0.793 m -> 0.509 m in 0.8 s (0.074 m by 1 s) and
+    the envelope read ``status="success"`` with ``action_errors: 0``. The same
+    call on MuJoCo held 0.740 m and walked. The fall was the only report.
+    """
+
+    @pytest.mark.parametrize("shape", ["bare", "composite", "persistent"])
+    def test_the_rollout_is_refused_naming_the_backend_and_both_remedies(self, shape: str) -> None:
+        sim = _OtherBackendSim()
+        result = _run_on(sim, _wrapped(shape, _g1_policy()))
+
+        assert result["status"] == "error", _text_of(result)
+        text = _text_of(result)
+        assert "_OtherBackendSim" in text, text
+        assert 'backend="mujoco"' in text, text
+        assert "wbc_install_torque_control=False" in text, text
+        assert sim.sends == 0, "a refused rollout applies no action"
+        payload = next(b["json"] for b in result["content"] if "json" in b)
+        assert payload["steps_used"] == 0
+
+    def test_the_documented_opt_out_still_rolls_out(self) -> None:
+        """``wbc_install_torque_control=False`` is the torque-scene path, unchanged."""
+        sim = _OtherBackendSim()
+        result = _run_on(sim, _g1_policy(), wbc_install_torque_control=False)
+
+        assert result["status"] == "success", _text_of(result)
+        assert sim.sends == 3
+
+    def test_a_non_wbc_policy_is_untouched(self) -> None:
+        sim = _OtherBackendSim()
+        result = _run_on(sim, MockPolicy())
+
+        assert result["status"] == "success", _text_of(result)
+        assert sim.sends == 3
+
+    def test_the_mujoco_engine_installs_rather_than_reports(self) -> None:
+        """The override wins: a backend that can install one never refuses."""
+        sim = _mujoco_sim_with_world(*_build_g1_model())
+        outcome = sim._maybe_install_wbc_torque_control(_g1_policy(), "unitree_g1")
+
+        assert not isinstance(outcome, str), outcome
+        assert callable(outcome)
+        outcome()

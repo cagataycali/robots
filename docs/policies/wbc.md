@@ -204,7 +204,11 @@ that overrides SONIC's tuned PD, so writing targets to them directly makes the
 robot fall. `run_policy` therefore detects a `WBCPolicy` on a position-servo
 scene and installs the torque shim (`WBCTorqueController`, PD->torque) for the
 call, restoring the actuators afterwards so a second call behaves like the
-first. The shim's `physics_substeps_per_control` (upstream `control_decimation=4`
+first. That install is the MuJoCo engine's: the shim is written against a
+compiled `MjModel`, so on any other backend (`newton`, `isaac`) a WBC rollout is
+refused up front - naming `backend="mujoco"` and the opt-out below - instead of
+running without it. Unrefused it reported `status="success"` while the pelvis
+sank from 0.793 m to 0.074 m in one second. The shim's `physics_substeps_per_control` (upstream `control_decimation=4`
 at 0.005 s = one inference per 20 ms) must be a positive integer, because the
 gait clock integrates at the declared period. With the real weights and
 `target_velocity = [0.5, 0, 0]` the base advances ~1.9 m over 5 s at pelvis
