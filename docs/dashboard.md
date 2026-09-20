@@ -104,10 +104,12 @@ you left it and the footer says so. Angles are `(ticks - 2048) · 2π / 4096`
 with no calibration applied - right up to the offset a calibration would
 record, and labelled `estimate` in the snapshot's `bus` field along with the
 raw ticks, the read rate and the age of the last reading. A bus that stops
-answering shows **stale**, then **error** with the reason - as does a pose the
-model refuses, since one joint past its range writes nothing and the twin would
-otherwise sit still while the bus reads healthily. A port that will
-not open is a `502` naming it, and nothing is left holding the device -
+answering shows **stale**, then **error** with the reason. A pose the model
+refuses - one joint past its range writes nothing, so the twin would otherwise
+sit still while the bus reads healthily - shows **refused** with the joint
+named, and clears itself when the arm comes back inside: unlike **error** it
+ends nothing, so the telemetry socket and the page's twin live through it. A
+port that will not open is a `502` naming it, and nothing is left holding the device -
 nor when the port opens but the engine behind it fails to build or
 render: the session reports **error** and the port is released.
 

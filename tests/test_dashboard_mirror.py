@@ -347,6 +347,47 @@ class TestMirrorRoutes:
         assert stopped.status_code == 200
         assert fake_bus[0].calls[-1] == ("disconnect", False)
 
+    def test_the_telemetry_socket_lives_through_a_refused_sweep(self, client, fake_bus, tmp_path, monkeypatch):
+        # "refused" is transient, so it belongs to no terminal set: the telemetry loop
+        # breaks on ("stopped", "error") only. An arm a few degrees outside the model's
+        # range would otherwise close the socket on its first sweep and leave the page's
+        # twin, joint bars and bus line dead until a reload - after it comes back, too.
+        class Fussy(FakeEngine):
+            def set_joint_positions(self, positions, robot_name=None, hold=False):
+                if any(abs(float(v)) > 1.745 for v in positions.values()):
+                    return {
+                        "status": "error",
+                        "content": [{"text": "j0=2.99 outside [-1.745, 1.745] rad, nothing written"}],
+                    }
+                return super().set_joint_positions(positions, robot_name=robot_name, hold=hold)
+
+        dev = tmp_path / "cu.fake"
+        dev.touch()
+        monkeypatch.setattr(routes_sim, "_is_serial_device", lambda p: p == str(dev))
+        monkeypatch.setattr(sim_session, "_default_factory", Fussy)
+        sid = client.post("/api/sim", json={"robot": "so101", "mirror": {"port": str(dev)}}).json()["id"]
+        assert _wait(lambda: client.get(f"/api/sim/{sid}").json()["state"] == "mirroring")
+
+        def until(ws, state, reads=40):
+            """Read snapshots up to ``state``, failing on the first terminal one."""
+            for _ in range(reads):
+                m = ws.receive_json()
+                assert m["state"] != "error", f"a transient refusal ended the socket: {m['error']}"
+                if m["state"] == state:
+                    return m
+            raise AssertionError(f"{state} never arrived on the socket")
+
+        def ticks(value):
+            for motor in fake_bus[0].ticks:
+                fake_bus[0].ticks[motor] = value
+
+        with client.websocket_connect(f"/ws/telemetry/{sid}") as ws:
+            ticks(4000)  # 2.99 rad, past every so101 range
+            assert "nothing written" in until(ws, "refused")["error"]
+            ticks(2048)  # the arm comes back inside
+            assert until(ws, "mirroring")["error"] is None  # the same socket, never reopened
+        assert client.delete(f"/api/sim/{sid}").status_code == 200
+
     def test_a_bus_that_will_not_open_is_502_with_the_reason(self, client, fake_bus, tmp_path, monkeypatch):
         dev = tmp_path / "cu.fake"
         dev.touch()
