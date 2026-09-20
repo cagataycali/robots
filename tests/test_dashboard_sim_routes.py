@@ -746,6 +746,47 @@ class TestFleet:
         assert r["name"] == "so101" and r["entry"]["category"]
         assert client.get("/api/robots/nope").status_code == 404
 
+    @pytest.fixture()
+    def cold_cache(self, tmp_path, monkeypatch):
+        """No asset on any search path, and a downloader that records every call.
+
+        ``get_search_paths`` reads ``STRANDS_ASSETS_DIR`` and the working
+        directory at every lookup, so both are pointed at an empty tree; the
+        downloader is the seam every fetch goes through, patched where the
+        resolver looks it up.
+        """
+        from strands_robots.assets import manager
+
+        monkeypatch.setenv("STRANDS_ASSETS_DIR", str(tmp_path / "no-assets"))
+        monkeypatch.chdir(tmp_path)
+        attempts: list[str] = []
+
+        def refuse(name, info):
+            attempts.append(name)
+            return False
+
+        monkeypatch.setattr(manager, "_auto_download_robot", refuse)
+        return attempts
+
+    def test_a_listing_reads_the_disk_and_never_fetches(self, client, cold_cache):
+        """A GET of the fleet says what is on disk; it does not put anything there.
+
+        The registry names ~60 sim-capable robots, and the module docstring
+        promised a side-effect-free read. Through the downloading default it
+        was one clone of every upstream asset repository the registry names,
+        per cold cache: 4.4 GB and 63 s on one machine, the 35.6 s cell #3869
+        ranked among the suite's slowest.
+        """
+        f = client.get("/api/fleet").json()
+        assert cold_cache == [], f"a listing attempted a download: {cold_cache}"
+        sim_rows = [r for r in f["robots"] if r["has_sim"]]
+        assert sim_rows and all(r["model_local"] is False for r in sim_rows)
+
+    def test_a_robot_detail_reports_no_local_model_without_fetching(self, client, cold_cache):
+        r = client.get("/api/robots/so101").json()
+        assert cold_cache == [], f"a detail read attempted a download: {cold_cache}"
+        assert r["model_path"] is None
+
 
 class TestReadyMeansItRenders:
     """The first frame is built before ready, so a session that cannot render is

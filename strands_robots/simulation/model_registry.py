@@ -68,13 +68,20 @@ def register_urdf(data_config: str, urdf_path: str) -> None:
     logger.info("Registered model for '%s': %s", data_config, urdf_path)
 
 
-def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
+def resolve_model(name: str, prefer_scene: bool = True, *, allow_download: bool = True) -> str | None:
     """Resolve a robot name or data_config to an MJCF/URDF model path.
 
     Resolution order (local assets take priority):
     1. User-registered URDFs (custom user registrations)
     2. URDF search paths (STRANDS_ASSETS_DIR, CWD, etc.)
     3. Asset manager (robot_descriptions - fallback for standard robots)
+
+    Step 3 fetches an asset that is not on disk - the right default for a caller
+    about to load the model. ``allow_download=False`` hands the same decline to
+    :func:`~strands_robots.assets.manager.resolve_model_path`, so a caller that
+    *reports* on assets reads the disk and reaches neither the network nor the
+    ``robot_descriptions`` import that clones on a cold cache. Steps 1 and 2 are
+    filesystem reads either way.
     """
     _log_configuration_once()
 
@@ -85,11 +92,11 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
             return local
         # 3. Fall back to asset manager
         if _HAS_ASSET_MANAGER:
-            path = resolve_model_path(candidate, prefer_scene=prefer_scene)
+            path = resolve_model_path(candidate, prefer_scene=prefer_scene, allow_download=allow_download)
             if path and path.exists():
                 return str(path)
             if prefer_scene:
-                path = resolve_model_path(candidate, prefer_scene=False)
+                path = resolve_model_path(candidate, prefer_scene=False, allow_download=allow_download)
                 if path and path.exists():
                     return str(path)
         return None

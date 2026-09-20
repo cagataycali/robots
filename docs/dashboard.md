@@ -40,7 +40,7 @@ python -m strands_robots dashboard --host 0.0.0.0 --port 8090
 
 | Tab | What it shows | Where the rules live |
 |---|---|---|
-| Fleet | every robot the registry knows, sim and real, and the mesh peers when the `[mesh]` extra is installed | `strands_robots.registry` |
+| Fleet | every robot the registry knows, sim and real, whether its sim asset is already on this disk, and the mesh peers when the `[mesh]` extra is installed - a read of what is here; the page fetches nothing | `strands_robots.registry` |
 | Sim | a MuJoCo robot stepping in this process - an MJPEG stream and the same model in your browser | `strands_robots.simulation` |
 | Agent | a Strands Agent whose tools are the simulations on this page; anything that moves a robot pauses on a consent card | `dashboard.agent_console`, `dashboard.agent_hitl`, `dashboard.consent` |
 | Settings | the file `~/.strands_robots/dashboard/settings.json` - agent model, mesh endpoints, static token (shown only as set / unset) | `dashboard.settings` |

@@ -2,7 +2,8 @@
 
 Covers:
 * ``register_urdf`` runtime insertion
-* ``resolve_model`` happy path, unknown-name, and scene -> non-scene fallback
+* ``resolve_model`` happy path, unknown-name, scene -> non-scene fallback, and
+  the ``allow_download`` decline reaching the asset manager on both tries
 * ``resolve_urdf`` happy path, unknown-name, relative search-path resolution,
   and ``legacy_urdf`` (absolute + relative) registry entries
 * ``list_registered_urdfs`` resolution-status mapping
@@ -174,7 +175,7 @@ def test_resolve_model_falls_back_to_non_scene_asset(monkeypatch):
         def __str__(self) -> str:
             return "/fake/non_scene_model.xml"
 
-    def fake_resolve(name, prefer_scene=True):
+    def fake_resolve(name, prefer_scene=True, *, allow_download=True):
         # Scene variant missing, plain model present.
         return _FakePath(exists=not prefer_scene)
 
@@ -199,3 +200,44 @@ def test_resolve_model_prefers_registered_local_path(tmp_path):
     register_urdf("__pytest_local_first__", str(asset))
 
     assert resolve_model("__pytest_local_first__") == str(asset)
+
+
+class TestResolveModelHandsTheDeclineToTheAssetManager:
+    """``resolve_model(allow_download=False)`` reaches the asset manager as a decline.
+
+    :func:`strands_robots.assets.manager.resolve_model_path` already refuses to
+    fetch when told to, and a caller that reports on assets is told to prefer
+    it. ``resolve_model`` sits in front of it for every caller in the package,
+    so a decline that stopped here would leave those callers fetching: the
+    dashboard's ``/api/fleet`` did exactly that, cloning every upstream asset
+    repository the registry names on one GET against a cold cache.
+    """
+
+    @staticmethod
+    def _record(monkeypatch) -> list[bool | None]:
+        import strands_robots.simulation.model_registry as mr
+
+        seen: list[bool | None] = []
+
+        def fake_resolve(name, prefer_scene=True, *, allow_download=True):
+            seen.append(allow_download)
+            return None  # neither variant on disk, so both tries are made
+
+        monkeypatch.setattr(mr, "_HAS_ASSET_MANAGER", True)
+        monkeypatch.setattr(mr, "resolve_model_path", fake_resolve)
+        return seen
+
+    def test_a_decline_reaches_both_tries(self, monkeypatch):
+        import strands_robots.simulation.model_registry as mr
+
+        seen = self._record(monkeypatch)
+        assert mr.resolve_model("__pytest_declined__", allow_download=False) is None
+        assert seen == [False, False], f"the scene and non-scene tries must both decline: {seen}"
+
+    def test_the_downloading_default_is_unchanged(self, monkeypatch):
+        """Over-reach control: a caller about to load a model still fetches it."""
+        import strands_robots.simulation.model_registry as mr
+
+        seen = self._record(monkeypatch)
+        assert mr.resolve_model("__pytest_default__") is None
+        assert seen == [True, True]
