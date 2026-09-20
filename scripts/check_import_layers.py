@@ -52,14 +52,17 @@ PACKAGE = "strands_robots"
 #:
 #: The placements that are a judgement rather than a reading of the tree:
 #: ``assets`` sits with ``registry`` because it resolves the asset paths the
-#: registry declares; ``streaming_dataset`` sits with ``dataset_recorder`` in
-#: ``app`` because it is the same recording concern written incrementally, while
-#: ``dataset_metadata`` sits in ``core`` because reading what a dataset recorded
-#: is a fact the sim facade, the checker and the judge each verify, where writing
-#: one is a session the app owns, and ``dataset_source`` beside it for the same
-#: reason: which directory a ``repo_id`` names and where an episode's frames
-#: start are questions the recorder, three sim backends, the rollout runner and
-#: the teleoperation tool all have to answer identically; and
+#: registry declares; ``dataset_metadata`` sits in ``core`` because reading what
+#: a dataset recorded is a fact the sim facade, the checker and the judge each
+#: verify, where writing one is a session the app owns, with ``dataset_source``
+#: beside it for the same reason - which directory a ``repo_id`` names and where
+#: an episode's frames start are questions the recorder, three sim backends, the
+#: rollout runner and the teleoperation tool all have to answer identically -
+#: and ``streaming_dataset`` beside both because it is the third read of a
+#: recorded dataset, not a fourth way to write one: it opens a dataset and
+#: yields frames, its own imports are those two modules and ``utils``, no ``app``
+#: module reads it, and its one consumer inside the package is the sim facade's
+#: ``stream_dataset`` a layer below; and
 #: ``teleop_mixin`` sits with ``drivers|mesh`` because it is an input-device
 #: concern shared by three hosts in three layers - the hardware ``Robot``, the
 #: MuJoCo ``Simulation`` and the Device Connect sim driver - so it belongs under
@@ -86,6 +89,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "recording_errors",
             "refusal_codes",
             "rendering",
+            "streaming_dataset",
             "utils",
         ),
     ),
@@ -106,7 +110,6 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "hardware_ros_bridge",
             "hardware_rtps_bridge",
             "robot",
-            "streaming_dataset",
             "teleoperator",
             "verify_dataset",
         ),
@@ -138,10 +141,10 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 #: that module imports lerobot. Each is pinned individually in
 #: ``tests/test_import_layers_are_a_dag.py``.
 #:
-#: The rest are cuts this lane has not made. The six ``simulation`` reads of the
-#: recording modules are the roadmap's own placement of recording in ``app``
-#: (strands-labs/robots#3818), so they are debt rather than a mislabel; and
-#: ``drivers.ur`` reaches up to build a policy.
+#: The rest are cuts this lane has not made. The ``simulation`` reads of
+#: ``dataset_recorder`` are the roadmap's own placement of the recording session
+#: in ``app`` (strands-labs/robots#3818), so they are debt rather than a
+#: mislabel; and ``drivers.ur`` reaches up to build a policy.
 KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.__main__", "strands_robots.dashboard.cli"),
     ("strands_robots._hitl_audit", "strands_robots.mesh.audit"),
@@ -150,7 +153,6 @@ KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.simulation.mujoco.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.newton.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.recording", "strands_robots.dataset_recorder"),
-    ("strands_robots.simulation.recording", "strands_robots.streaming_dataset"),
     ("strands_robots.teleop_mixin", "strands_robots.teleoperator"),
 )
 

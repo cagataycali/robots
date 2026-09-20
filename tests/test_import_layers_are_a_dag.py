@@ -174,9 +174,10 @@ class TestTheContract:
         """The same ratchet over the inversions the one above cannot see.
 
         Deferring an import moves when the dependency is paid, not whether it
-        exists, so an inversion inside a function body is an inversion. Twelve
-        survive the runtime roster being empty, which is why "no upward edges"
-        needs this cell to mean what it sounds like.
+        exists, so an inversion inside a function body is an inversion. The ones
+        that survive the runtime roster being empty are declared pair by pair,
+        which is why "no upward edges" needs this cell to mean what it sounds
+        like.
         """
         found = set(mod.upward_edges(graph, "late"))
         declared = set(mod.KNOWN_DEFERRED_UPWARD_EDGES)
@@ -265,61 +266,6 @@ class TestTheContract:
             if target == "strands_robots.tools.g1" or target.startswith("strands_robots.tools.g1.")
         )
         assert offenders == []
-
-    def test_the_parquet_episode_truth_sits_below_every_reader_of_a_dataset(self, graph: Any) -> None:
-        """What a dataset recorded is read in ``core``, by three layers at once.
-
-        ``meta/episodes/**/*.parquet`` is the ground truth three surfaces check:
-        the sim facade's ``verify_dataset_episodes``, the ``verify-dataset``
-        checker and the episode judge. The read lived inside the checker, in
-        ``app``, so the sim facade reached UP one layer for the count it certifies
-        a collection run with - the shape that makes a recording backend depend
-        on a CLI. ``dataset_metadata`` holds it now, and its own imports are what
-        let it sit there: ``declared_count`` and nothing else internal.
-        """
-        reader = "strands_robots.dataset_metadata"
-        assert reader in graph.modules
-        core = mod.LAYER_NAMES.index("core")
-        assert mod.layer_of(reader) == core
-        for kind in ("runtime", "typing_only", "late"):
-            above = sorted(t for t in getattr(graph, kind).get(reader, frozenset()) if mod.layer_of(t) != core)
-            assert above == [], f"{kind} imports above core: {above}"
-        layers = {
-            mod.LAYER_NAMES[mod.layer_of(importer)]
-            for kind in ("runtime", "typing_only", "late")
-            for importer, targets in getattr(graph, kind).items()
-            if reader in targets
-        }
-        assert layers == {"sim|policies", "app", "tools"}, f"read from {sorted(layers)}"
-
-    def test_where_a_dataset_lives_sits_below_the_session_that_writes_one(self, graph: Any) -> None:
-        """Addressing a dataset is not writing one, so the address sits lower.
-
-        One ``repo_id`` has one directory and one episode range, and the recorder
-        session, the three sim backends, the rollout runner and the teleoperation
-        tool all have to resolve them the same way -- a second derivation is a
-        read that misses the write. ``resolve_dataset_dir`` and
-        ``load_lerobot_episode`` lived with the writer in ``app``, so the rollout
-        runner deferred an import of the recorder to find out where its own
-        recording went. ``dataset_source`` holds them now, under all four, and
-        its own imports are what let it: ``quiet_video_backend``,
-        ``non_negative_whole_number_error``, and LeRobot itself inside the two
-        functions that open a dataset.
-        """
-        source = "strands_robots.dataset_source"
-        assert source in graph.modules
-        core = mod.LAYER_NAMES.index("core")
-        assert mod.layer_of(source) == core
-        for kind in ("runtime", "typing_only", "late"):
-            above = sorted(t for t in getattr(graph, kind).get(source, frozenset()) if mod.layer_of(t) != core)
-            assert above == [], f"{kind} imports above core: {above}"
-        layers = {
-            mod.LAYER_NAMES[mod.layer_of(importer)]
-            for kind in ("runtime", "typing_only", "late")
-            for importer, targets in getattr(graph, kind).items()
-            if source in targets
-        }
-        assert layers == {"sim|policies", "app", "tools"}, f"read from {sorted(layers)}"
 
     def test_the_path_sandbox_reads_nothing_from_the_package(self, graph: Any) -> None:
         """A core guard is standard-library-only, which is what lets it sit there.
@@ -427,9 +373,9 @@ class TestTheContract:
         ``Simulation`` as well as by ``Robot``) and the recording frame error
         (raised in ``app``, caught by the rollout drivers a layer down).
 
-        Eight deferred edges still point into it - the recording modules the
+        The deferred edges that still point into it - the recorder session the
         roadmap itself places here, read from ``simulation``, and the mixin's
-        lerobot-deferred ``teleoperator`` read - declared in
+        lerobot-deferred ``teleoperator`` read - are declared in
         ``KNOWN_DEFERRED_UPWARD_EDGES`` and graded by the equality above rather
         than by this cell.
         """
@@ -451,6 +397,24 @@ class TestTheContract:
                 "core",
                 frozenset(),
                 frozenset({"app", "tools", "dashboard"}),
+            ),
+            (
+                "strands_robots.dataset_metadata",
+                "core",
+                frozenset(),
+                frozenset({"sim|policies", "app", "tools"}),
+            ),
+            (
+                "strands_robots.dataset_source",
+                "core",
+                frozenset(),
+                frozenset({"core", "sim|policies", "app", "tools"}),
+            ),
+            (
+                "strands_robots.streaming_dataset",
+                "core",
+                frozenset(),
+                frozenset({"sim|policies"}),
             ),
             (
                 "strands_robots.teleop_mixin",
@@ -478,7 +442,7 @@ class TestTheContract:
             ),
         ],
     )
-    def test_a_contract_several_layers_share_sits_under_all_of_them(
+    def test_a_contract_sits_under_every_layer_that_reads_it(
         self,
         graph: Any,
         name: str,
@@ -491,10 +455,27 @@ class TestTheContract:
         Each row states the same three things the ``_command_gate`` pin above
         states for the operator decision. The module sits in the named layer; it
         reads nothing above that layer at import time, which is what lets it sit
-        there; and its callers span more than one layer, which is why it has to.
-        A deferred read above the layer is listed explicitly rather than allowed
-        in general - the mixin's ``teleoperator`` read is late because that module
-        imports lerobot, and promoting it to module scope has to fail here.
+        there; and its callers are the layers that need it, which is why it sits
+        under them. A deferred read above the layer is listed explicitly rather
+        than allowed in general - the mixin's ``teleoperator`` read is late
+        because that module imports lerobot, and promoting it to module scope has
+        to fail here.
+
+        The three ``dataset`` rows are one concern read three ways: what a
+        dataset recorded (``dataset_metadata``, the ``meta/episodes`` parquet the
+        sim facade, the ``verify-dataset`` checker and the episode judge each
+        certify a run with), which directory a ``repo_id`` names and where an
+        episode's frames start (``dataset_source``), and the frames themselves
+        streamed back out of it (``streaming_dataset``). Each lived with the
+        writer in ``app``, so a recording backend depended on a CLI, the rollout
+        runner deferred an import of the recorder to find out where its own
+        recording went, and the sim facade's ``stream_dataset`` reached up for a
+        module no ``app`` module reads. Reading a dataset is not writing one:
+        the reads sit in ``core`` under every layer that performs one, while the
+        recorder session stays in ``app``. One caller layer is enough to justify
+        a placement - ``streaming_dataset`` has exactly the sim facade - and the
+        package root is not a layer (``layer_of`` answers ``None`` for it), so
+        its ``TYPE_CHECKING`` re-export of a public name is not a caller here.
 
         ``rtps.participant`` is the DDS mechanics two surfaces share: the
         ``use_rtps`` tool and the ``RtpsRobot`` that drives a ROS 2 base over the
@@ -517,10 +498,13 @@ class TestTheContract:
         late = {t for t in graph.late.get(name, frozenset()) if mod.layer_of(t) > index}
         assert late == set(deferred_above), f"{name} defers to {sorted(late)}, not {sorted(deferred_above)}"
         callers = {
-            mod.LAYER_NAMES[mod.layer_of(importer)]
+            mod.LAYER_NAMES[index]
             for kind in ("runtime", "typing_only", "late")
             for importer, targets in getattr(graph, kind).items()
             if name in targets
+            # The package root re-exports public names under TYPE_CHECKING and
+            # has no layer, which is how upward_edges reads it too.
+            if (index := mod.layer_of(importer)) is not None
         }
         assert callers == set(caller_layers), f"{name} is read from {sorted(callers)}, not {sorted(caller_layers)}"
 
