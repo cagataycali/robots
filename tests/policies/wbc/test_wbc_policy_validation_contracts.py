@@ -17,6 +17,11 @@ stubbed ONNX session so they run with no onnxruntime, GPU, or checkpoint:
   zero/standing command through the main (non-walk) session;
 * an ONNX output whose width disagrees with ``num_actions`` is a loud
   ``RuntimeError`` (never a truncated/garbage action);
+* an ONNX *input* whose declared width disagrees with the observation this
+  config feeds is refused when the checkpoint is LOADED, naming both widths -
+  the two decoupled-WBC G1 families differ only there, so loading the wrong one
+  otherwise reaches the first rollout tick as an onnxruntime "Got invalid
+  dimensions for input" naming neither the policy nor the fix;
 * a session lacking ``get_inputs`` falls back to a plain ``input_name`` attr;
 * a single non-numeric per-joint observation entry degrades to its neutral
   default instead of aborting the whole observation build;
@@ -31,12 +36,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import types
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
-from strands_robots.policies.wbc import WBC_G1_ALL_JOINTS, WBC_G1_LEG_WAIST_JOINTS, WBCConfig, WBCPolicy
+from strands_robots.policies.wbc import (
+    WBC_G1_ALL_JOINTS,
+    WBC_G1_LEG_WAIST_JOINTS,
+    WBCConfig,
+    WBCGaitPolicy,
+    WBCPolicy,
+)
+from strands_robots.policies.wbc import policy as wbc_policy
 
 _N = 15  # controlled leg + waist DOFs (action dim)
 _NO = 29  # observed joints (legs + waist + arms)
@@ -97,6 +111,40 @@ def _make_config(**overrides) -> WBCConfig:  # type: ignore[no-untyped-def]
     return WBCConfig(**base)  # type: ignore[arg-type]
 
 
+class _ShapedInput:
+    """An ONNX input descriptor that declares a shape (the real ones do)."""
+
+    def __init__(self, shape: list[Any]) -> None:
+        self.name = "input"
+        self.shape = shape
+
+
+class _ShapedSession:
+    """A session whose graph declares ``[batch, width]``, like a real checkpoint."""
+
+    def __init__(self, shape: list[Any]) -> None:
+        self._shape = shape
+
+    def get_inputs(self) -> list[_ShapedInput]:
+        return [_ShapedInput(self._shape)]
+
+    def run(self, output_names, feed):  # type: ignore[no-untyped-def]
+        return [np.zeros((1, _N), dtype=np.float32)]
+
+
+def _fake_onnxruntime(shapes: dict[str, list[Any]]) -> Any:
+    """An ``onnxruntime`` stand-in whose sessions declare per-file input shapes."""
+    return types.SimpleNamespace(InferenceSession=lambda path: _ShapedSession(shapes[Path(path).name]))
+
+
+def _checkpoint_dir(tmp_path: Any, *names: str) -> str:
+    d = tmp_path / "wbc-ckpt"
+    d.mkdir()
+    for name in names:
+        (d / name).touch()
+    return str(d)
+
+
 def _g1_keys() -> list[str]:
     """Real MuJoCo G1 key order: free base joint prepended to the 29 whole-body joints."""
     return ["floating_base_joint", *WBC_G1_ALL_JOINTS]
@@ -150,6 +198,62 @@ class TestSessionContract:
         p.set_robot_state_keys(_g1_keys())
         with pytest.raises(RuntimeError, match="output width"):
             asyncio.run(p.get_actions({k: 0.0 for k in _g1_keys()}, "", target_velocity=[0.0, 0.0, 0.0]))
+
+    @pytest.mark.parametrize(
+        ("policy_kwargs", "declared", "expected", "wrong_file"),
+        [
+            # The shipped Balance/Walk weights (516 = 86 x 6) into the gait variant,
+            # which feeds 570 = 95 x 6: the case a reader of the gait page hits.
+            ({"policy_cls": WBCGaitPolicy, "config": None}, 516, 570, "policy.onnx"),
+            # And the mirror: a gait checkpoint into the non-gait provider.
+            (
+                {"policy_cls": WBCPolicy, "config": _make_config(obs_history_len=6), "walk": False},
+                570,
+                516,
+                "policy.onnx",
+            ),
+            # The walk session is loaded by a second call site, so it is graded too.
+            (
+                {"policy_cls": WBCPolicy, "config": _make_config(obs_history_len=6), "walk": True},
+                570,
+                516,
+                "walk_policy.onnx",
+            ),
+        ],
+    )
+    def test_wrong_family_checkpoint_is_refused_at_load_naming_both_widths(
+        self, monkeypatch, tmp_path, policy_kwargs, declared, expected, wrong_file
+    ) -> None:  # type: ignore[no-untyped-def]
+        """A graph declaring a width this config does not feed never reaches a rollout."""
+        shapes = {
+            "policy.onnx": ["batch_size", expected],
+            "walk_policy.onnx": ["batch_size", expected],
+        }
+        shapes[wrong_file] = ["batch_size", declared]
+        monkeypatch.setattr(wbc_policy, "require_optional", lambda *a, **k: _fake_onnxruntime(shapes))
+        ckpt = _checkpoint_dir(tmp_path, "policy.onnx", "walk_policy.onnx")
+
+        cls = policy_kwargs.pop("policy_cls")
+        with pytest.raises(RuntimeError) as err:
+            cls(checkpoint=ckpt, **policy_kwargs)
+
+        message = str(err.value)
+        assert str(declared) in message and str(expected) in message, message
+        assert cls.__name__ in message, message
+
+    @pytest.mark.parametrize("declared", [["batch_size", 516], ["batch", "obs"], [516], None])
+    def test_a_matching_or_unstated_input_width_loads(self, monkeypatch, tmp_path, declared) -> None:  # type: ignore[no-untyped-def]
+        """The width this config feeds - and any width the graph leaves unstated - loads."""
+        monkeypatch.setattr(
+            wbc_policy,
+            "require_optional",
+            lambda *a, **k: _fake_onnxruntime({"policy.onnx": declared}),
+        )
+        ckpt = _checkpoint_dir(tmp_path, "policy.onnx")
+
+        p = WBCPolicy(checkpoint=ckpt, config=_make_config(obs_history_len=6), walk=False)
+
+        assert p.policy_session is not None
 
     def test_session_input_name_fallback_attribute(self) -> None:
         """A session without get_inputs falls back to its plain input_name attr."""

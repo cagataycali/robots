@@ -58,6 +58,7 @@ from strands.types.tools import ToolContext, ToolResult, ToolSpec, ToolUse
 
 from strands_robots import hardware_observe
 from strands_robots._command_gate import gate_motion
+from strands_robots._motion_grants import consume_grant
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import bus_lock, read_observation, write_action
 from strands_robots.policies.base import instruction_not_read_notice, provider_policy_class
@@ -3799,28 +3800,6 @@ class Robot(TeleopMixin, AgentTool):
         """Create a ToolResult dict with the given tool_use_id merged into result."""
         return cast(ToolResult, {"toolUseId": tool_use_id, **result})
 
-    def _dashboard_grant(self, tool_input: Mapping[str, Any]) -> bool:
-        """Spend a grant the dashboard's motion hook deposited for this exact call.
-
-        The dashboard registers :class:`~strands_robots.dashboard.agent_hitl.MotionInterruptHook`
-        on its agent, which asks the operator before the tool runs and records a
-        one-shot grant keyed on what they were shown. Asking again here would be
-        the same question twice, so a grant is consumed and the call proceeds.
-        The dashboard extra may be absent, and a missing module must read as
-        "no grant", never as a crash: the gate below then asks the operator.
-
-        Args:
-            tool_input: The call as the hook saw it - the tool's own input dict.
-
-        Returns:
-            True when a grant for this exact call existed and was spent.
-        """
-        try:
-            from strands_robots.dashboard import agent_hitl
-        except ImportError:
-            return False
-        return bool(agent_hitl.consume_grant(self.tool_name_str, tool_input))
-
     def _pre_gate_error(
         self, action: str, policy_port: Any, policy_provider: str, duration: Any
     ) -> dict[str, Any] | None:
@@ -3896,7 +3875,7 @@ class Robot(TeleopMixin, AgentTool):
                 caller turns it into a ``ToolInterruptEvent`` exactly as the
                 SDK does for a decorated tool.
         """
-        if self._dashboard_grant(tool_input):
+        if consume_grant(self.tool_name_str, tool_input):
             return None
         agent = invocation_state.get("agent")
         tool_context: ToolContext | None = None

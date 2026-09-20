@@ -260,6 +260,39 @@ class TestTheContract:
         }
         assert {"app", "tools"} <= callers, f"only {sorted(callers)} ask a human, so the rule above is vacuous"
 
+    def test_nothing_below_the_dashboard_reaches_into_it_but_the_command_that_starts_it(self, graph: Any) -> None:
+        """The web layer is the top of the stack, and deferring a read of it hides that.
+
+        ``dashboard`` is the only layer with nothing above it, so an edge into it
+        can only come from below. The equality above grades the runtime graph, and
+        every one of these was a late import inside a function, which is why the
+        package could report zero inversions while three modules two layers down
+        reached up into an OPTIONAL extra for a safety answer: the grant a human's
+        yes leaves behind was stored in the dashboard, and ``pose_tool``,
+        ``serial_tool`` and the ``Robot`` agent tool each read it through a
+        ``try: ... except ImportError: return False``. With the extra installed the
+        first gated call imported fastapi, uvicorn, webauthn and PyJWT on the
+        motion path; without it, "has a human already said yes?" was answered by a
+        failed import. The store sits in ``core`` now
+        (:mod:`strands_robots._motion_grants`), under all three of them.
+
+        ``__main__ -> dashboard.cli`` is the one edge that remains and the only
+        one that belongs: the CLI is what a reader runs to START the dashboard, so
+        the command has to name it. Listed rather than allowed by rule, so a
+        second one fails here.
+        """
+        dashboard = mod.LAYER_NAMES.index("dashboard")
+        offenders = sorted(
+            (importer, target)
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            for target in targets
+            if mod.layer_of(target) == dashboard and (mod.layer_of(importer) or 0) < dashboard
+        )
+        assert offenders == [("strands_robots.__main__", "strands_robots.dashboard.cli")], (
+            f"a layer below the dashboard imports one of its modules: {offenders}"
+        )
+
     def test_no_layer_below_app_reaches_into_it(self, graph: Any) -> None:
         """The ``app`` layer is a consumer of the package, not a dependency of it.
 
@@ -283,6 +316,12 @@ class TestTheContract:
                 "core",
                 frozenset(),
                 frozenset({"sim|policies", "app"}),
+            ),
+            (
+                "strands_robots._motion_grants",
+                "core",
+                frozenset(),
+                frozenset({"app", "tools", "dashboard"}),
             ),
             (
                 "strands_robots.teleop_mixin",
