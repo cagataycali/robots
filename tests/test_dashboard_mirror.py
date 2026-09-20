@@ -62,26 +62,28 @@ class FakeBus:
     configure_motors = write
 
 
+class BusFactory:
+    """Builds :class:`FakeBus` instances through the ``bus_factory`` seam, and keeps every one it built."""
+
+    def __init__(self, **failure):
+        self.made: list[FakeBus] = []
+        self._failure = failure
+
+    def __call__(self, port, motors):
+        bus = FakeBus(port, motors, **self._failure)
+        self.made.append(bus)
+        return bus
+
+    def __getitem__(self, index):
+        return self.made[index]
+
+
 @pytest.fixture()
 def fake_bus(monkeypatch):
-    made: list[FakeBus] = []
-
-    def factory(port, motors, **kw):
-        b = FakeBus(port, motors, **kw)
-        made.append(b)
-        return b
-
-    monkeypatch.setattr(mirror.BusMirror, "__init__", _init_with(factory), raising=True)
-    return made
-
-
-def _init_with(factory):
-    original = mirror.BusMirror.__init__
-
-    def __init__(self, port, motors=None, *, bus_factory=None, **kw):
-        original(self, port, motors, bus_factory=bus_factory or (lambda p, m: factory(p, m, **kw)))
-
-    return __init__
+    """Every mirror in a test - built here or by the create route - reads a fake bus, not a port."""
+    factory = BusFactory()
+    monkeypatch.setattr(mirror, "_lerobot_bus", factory)
+    return factory
 
 
 def _wait(pred, timeout=3.0):
@@ -135,20 +137,21 @@ class TestBusMirror:
         assert h["ticks"]["shoulder_pan"] == 2048
         m.close()
 
-    def test_a_port_that_will_not_open_is_an_error_not_a_pose(self, fake_bus):
-        m = mirror.BusMirror("/dev/fake", fail_connect=True)
+    def test_a_port_that_will_not_open_is_an_error_not_a_pose(self):
+        m = mirror.BusMirror("/dev/fake", bus_factory=BusFactory(fail_connect=True))
         assert m.wait_ready()
         assert m.error and "could not open /dev/fake" in m.error and "Failed to open the port" in m.error
         assert m.qpos() is None
         assert m.health()["connected"] is False
         m.close()
 
-    def test_a_bus_that_dies_mid_read_reports_it_and_stops(self, fake_bus):
-        m = mirror.BusMirror("/dev/fake", fail_after=2)
+    def test_a_bus_that_dies_mid_read_reports_it_and_stops(self):
+        dying = BusFactory(fail_after=2)
+        m = mirror.BusMirror("/dev/fake", bus_factory=dying)
         m.wait_ready()
         assert _wait(lambda: m.error is not None)
         assert "lost /dev/fake" in m.error and "Device not configured" in m.error
-        assert fake_bus[0].calls[-1] == ("disconnect", False)
+        assert dying[0].calls[-1] == ("disconnect", False)
         time.sleep(mirror.STALE_AFTER + 0.1)
         assert m.qpos() is None
         m.close()
@@ -267,7 +270,7 @@ class TestMirrorRoutes:
             assert r.status_code == 400, (bad, r.text)
         r = client.post("/api/sim", json={"robot": "so101", "mirror": "yes"})
         assert r.status_code == 400
-        assert fake_bus == []
+        assert fake_bus.made == []
 
     def test_a_mirror_session_reports_its_source_and_refuses_joints(self, client, fake_bus, tmp_path, monkeypatch):
         dev = tmp_path / "cu.fake"
@@ -288,16 +291,15 @@ class TestMirrorRoutes:
         with client.websocket_connect(f"/ws/telemetry/{sid}") as ws:
             m = ws.receive_json()
             assert m["source"] == f"real:{dev}" and m["bus"]["hz"] >= 0
-        assert client.delete(f"/api/sim/{sid}").status_code == 200
+        stopped = client.delete(f"/api/sim/{sid}")
+        assert stopped.status_code == 200
         assert fake_bus[0].calls[-1] == ("disconnect", False)
 
     def test_a_bus_that_will_not_open_is_502_with_the_reason(self, client, fake_bus, tmp_path, monkeypatch):
         dev = tmp_path / "cu.fake"
         dev.touch()
         monkeypatch.setattr(routes_sim, "_is_serial_device", lambda p: p == str(dev))
-        monkeypatch.setattr(
-            mirror.BusMirror, "__init__", _init_with(lambda p, m, **kw: FakeBus(p, m, fail_connect=True))
-        )
+        monkeypatch.setattr(mirror, "_lerobot_bus", BusFactory(fail_connect=True))
         r = client.post("/api/sim", json={"robot": "so101", "mirror": {"port": str(dev)}})
         assert r.status_code == 502
         assert "could not open" in r.text and "Failed to open the port" in r.text
