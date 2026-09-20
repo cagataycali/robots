@@ -349,14 +349,31 @@ async function loadAgent() {
   agentSocket();
 }
 
+/* The one place a view is entered: show it, then load what it needs. Every way
+   in - a tab, the loaded URL's fragment, a Back that returns to a fragment
+   show() wrote - comes through here, so the address bar and the screen cannot
+   disagree. */
+function route(view) {
+  show(view);
+  if (view === "fleet") loadFleet();
+  if (view === "sim") loadSim();
+  if (view === "agent") loadAgent();
+  if (view === "settings") loadSettings();
+}
+
+const shownView = () => views.find(v => !$(`#view-${v}`).hidden);
+
 $("#tabs").addEventListener("click", (ev) => {
   const v = ev.target.dataset.view; if (!v) return;
   if (!authenticated) return showLogin();
-  show(v);
-  if (v === "fleet") loadFleet();
-  if (v === "sim") loadSim();
-  if (v === "agent") loadAgent();
-  if (v === "settings") loadSettings();
+  route(v);
+});
+
+window.addEventListener("hashchange", () => {
+  const v = location.hash.slice(1);
+  if (!views.includes(v) || v === shownView()) return;  // show() writing its own hash
+  if (!authenticated) return showLogin();
+  route(v);
 });
 $("#settings-form").addEventListener("submit", saveSettings);
 
@@ -366,11 +383,7 @@ async function boot() {
   await loadStatus();
   if (!authenticated) return showLogin();
   await loadWho();
-  const v = views.includes(location.hash.slice(1)) ? location.hash.slice(1) : "fleet";
-  show(v);
-  if (v === "fleet") loadFleet();
-  if (v === "sim") loadSim();
-  if (v === "agent") loadAgent();
-  if (v === "settings") loadSettings();
+  const v = location.hash.slice(1);
+  route(views.includes(v) ? v : "fleet");
 }
 boot();
