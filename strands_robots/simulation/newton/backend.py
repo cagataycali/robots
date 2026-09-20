@@ -9,6 +9,7 @@ modules are present, and exposes the rigid-body solver registry consumed by
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Any
 
@@ -150,3 +151,42 @@ def articulated_solver_error(solver: str) -> str | None:
         f"Newton solver {solver!r} cannot drive an articulated robot: {reason}. "
         f"Solvers that can: {list(articulated_solvers())}."
     )
+
+
+# A rollout's contact count is not the contact count of the pose the world was
+# built in, which is all newton has to size its contact buffers from: it
+# "estimates a default from the initial state" and takes the LARGER of that
+# estimate and any value passed in. So an arm that starts in the air and later
+# rests on the table overflows the estimate, and the overflow is not a degraded
+# frame -- MuJoCo-Warp prints "broadphase overflow - please increase nconmax to
+# N" per step and writes past the buffer, killing the process with a raw
+# "Warp CUDA error 700: an illegal memory access was encountered" out of the
+# constraint solver. This floor is pose-independent, so it holds for every pose
+# a rollout reaches; the buffers are a few hundred KB, which is why a floor is
+# cheaper than a crash.
+CONTACT_BUDGET_FLOOR = 512
+CONTACTS_PER_SHAPE = 8
+
+
+def solver_contact_budget(solver_cls: Any, shape_count: int) -> dict[str, int]:
+    """Return the contact-buffer kwargs for one solver class.
+
+    Args:
+        solver_cls: The resolved Newton solver class.
+        shape_count: Number of collision shapes in the finalized model.
+
+    Returns:
+        ``{"nconmax": N, "njmax": N}`` for a solver whose constructor accepts
+        both -- ``SolverMuJoCo`` today -- and an empty dict for every other
+        solver, which would reject the keywords. Read off the signature rather
+        than matched by class name, so a solver that gains the keywords is
+        sized without a second edit here.
+    """
+    try:
+        accepted = set(inspect.signature(solver_cls.__init__).parameters)
+    except (TypeError, ValueError):  # pragma: no cover - unintrospectable callable
+        return {}
+    if not {"nconmax", "njmax"} <= accepted:
+        return {}
+    budget = max(CONTACT_BUDGET_FLOOR, CONTACTS_PER_SHAPE * max(int(shape_count), 0))
+    return {"nconmax": budget, "njmax": budget}

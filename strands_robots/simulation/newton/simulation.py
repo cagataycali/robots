@@ -70,6 +70,7 @@ from strands_robots.simulation.newton.backend import (
     articulated_solvers,
     ensure_newton,
     resolve_solver_class,
+    solver_contact_budget,
     solver_registry,
 )
 from strands_robots.simulation.newton.randomization import DomainRandomizationMixin
@@ -3046,7 +3047,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # Rigid-body solvers (notably SolverMuJoCo) require at least one joint.
         # An empty world (ground plane only) has none, so defer solver creation
         # until a robot is added; stepping is a no-op until then.
-        self._solver = solver_cls(self._model) if self._model.joint_dof_count > 0 else None
+        self._solver = (
+            solver_cls(self._model, **solver_contact_budget(solver_cls, self._model.shape_count))
+            if self._model.joint_dof_count > 0
+            else None
+        )
         self._state_0 = self._model.state()
         self._state_1 = self._model.state()
         self._control = self._model.control()
