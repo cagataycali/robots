@@ -89,6 +89,7 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 from pathlib import Path
 from typing import NamedTuple
 
@@ -305,21 +306,29 @@ def environment_resolvers(trees: dict[str, ast.AST]) -> dict[str, Resolver]:
     fixed point so ``hz_from_env`` is found even when it only delegates to
     ``_float_env``.
     """
-    functions = [
-        (node, _import_aliases(tree), _module_string_constants(tree))
-        for tree in trees.values()
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
+    # A module's aliases and constants, and a function's once-bound locals, do
+    # not depend on which resolvers are known yet, so each is read once here:
+    # per module for the first two, per function for the third. Reading the
+    # aliases beside each function instead walked the whole module once for
+    # every function it defines - 4,684 module walks over 311 files - and that
+    # was 84% of this cell's time under a profile; 26 s -> 6 s for the file.
+    functions: list[
+        tuple[ast.FunctionDef | ast.AsyncFunctionDef, dict[str, str], dict[str, str], dict[str, ast.AST]]
+    ] = []
+    for tree in trees.values():
+        aliases = _import_aliases(tree)
+        constants = _module_string_constants(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                functions.append((node, aliases, constants, _locals_bound_once(node)))
     resolvers: dict[str, Resolver] = {}
     grown = True
     while grown:
         grown = False
-        for function, aliases, constants in functions:
+        for function, aliases, constants, bound_once in functions:
             if function.name in resolvers:
                 continue
             parameters = [arg.arg for arg in function.args.posonlyargs + function.args.args]
-            bound_once = _locals_bound_once(function)
             for node in ast.walk(function):
                 key = _read_key(node, resolvers, aliases)
                 if key is None:
@@ -612,3 +621,37 @@ class TestAPageDocumentsANameOnlyByNamingIt:
     def test_a_shorthand_is_read_against_its_own_page(self) -> None:
         pages = {"a.md": "`STRANDS_MESH_POSE_HZ`", "b.md": "`_IMU_HZ`"}
         assert "STRANDS_MESH_IMU_HZ" not in documented_names(pages)
+
+
+def test_a_module_is_read_for_its_aliases_once_however_many_functions_it_defines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The alias walk is per module, not per function.
+
+    ``environment_resolvers`` used to read a module's import aliases beside
+    each of its functions, so a module with N functions was walked N times
+    before a single resolver was looked for: 4,684 walks over the package's
+    311 files, 84% of the whole-package cell. The population it grades is
+    unchanged by reading them once, so this holds the count rather than the
+    time, which a loaded runner cannot hold.
+    """
+    trees = _parse(
+        {
+            "a.py": "import os\n" + "\n".join(f"def f{i}(name):\n    return os.getenv(name)\n" for i in range(5)),
+            "b.py": "import os\n" + "\n".join(f"def g{i}(x):\n    return x\n" for i in range(7)),
+        }
+    )
+    labels = {id(tree): label for label, tree in trees.items()}
+    calls: list[str] = []
+    real = _import_aliases
+
+    def counting(tree: ast.AST) -> dict[str, str]:
+        calls.append(labels[id(tree)])
+        return real(tree)
+
+    monkeypatch.setattr(sys.modules[__name__], "_import_aliases", counting)
+
+    resolvers = environment_resolvers(trees)
+
+    assert set(resolvers) == {f"f{i}" for i in range(5)}, resolvers
+    assert sorted(calls) == ["a.py", "b.py"], f"aliases read {len(calls)} times for 2 modules: {calls}"
