@@ -45,13 +45,22 @@ from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark
 #     forward-progress terminal, not "did not fall" (a standing-still policy
 #     never satisfies it).
 #   - failure: the base topples more than ~53 deg off level (``base_tipped``,
-#     tol=0.7) OR its height collapses below 0.18 m (``base_below_z``, the Go2
-#     stands at ~0.32 m). Either fall mode terminates the episode early.
+#     tol=0.7) OR its height collapses below 0.22 m (``base_below_z``). Either
+#     fall mode terminates the episode early. The collapse line is grounded in
+#     the FOLD, not in half the stance: measured on the shipped asset, the Go2
+#     stands at 0.27 m in its own ``home`` keyframe and a Go2 whose legs fold
+#     under gravity comes to rest at 0.203 m with the trunk still LEVEL (3 deg
+#     off, so ``base_tipped`` never fires). A biped-style "roughly half the
+#     standing height" line (0.135 m) is unreachable for a quadruped - the
+#     trunk only gets that low in a splayed belly-flop (0.077 m) - so it scores
+#     a dead robot as a healthy full-horizon episode. 0.22 m sits 17 mm above
+#     the fold and 50 mm below the stance.
 #   - dense_reward: the legged_gym-style shaping stack - an exponential-kernel
 #     reward for tracking the commanded body-frame twist (vx=1.0, no lateral /
-#     yaw command), a squared base-height regularizer toward the 0.32 m nominal
-#     stance, and a flat-orientation regularizer. Composable, bounded, and
-#     dense so an RL/BC policy gets a gradient every step.
+#     yaw command), a squared base-height regularizer toward the 0.27 m nominal
+#     stance (the asset's own ``home`` keyframe, the same per-robot measurement
+#     the G1 and T1 specs take), and a flat-orientation regularizer. Composable,
+#     bounded, and dense so an RL/BC policy gets a gradient every step.
 #
 # All predicates read ``base_pos`` / ``base_quat`` / ``base_lin_vel`` /
 # ``base_ang_vel`` from ``get_observation`` - no per-embodiment base body name -
@@ -67,7 +76,7 @@ _GO2_WALK_FORWARD: dict[str, Any] = {
     "failure": {
         "any": [
             {"predicate": "base_tipped", "tol": 0.7},
-            {"predicate": "base_below_z", "z": 0.18},
+            {"predicate": "base_below_z", "z": 0.22},
         ]
     },
     "dense_reward": [
@@ -80,7 +89,7 @@ _GO2_WALK_FORWARD: dict[str, Any] = {
             "ang_weight": 0.5,
             "tracking_sigma": 0.25,
         },
-        {"predicate": "base_height", "target": 0.32, "weight": 0.5},
+        {"predicate": "base_height", "target": 0.27, "weight": 0.5},
         {"predicate": "base_orientation", "weight": 0.5},
     ],
 }
@@ -143,7 +152,7 @@ _G1_WALK_FORWARD: dict[str, Any] = {
 # forward at 1 m/s):
 #
 #   - The T1 stands at base height ~0.665 m (measured from its shipped home
-#     keyframe), between the Go2's ~0.32 m and the G1's ~0.79 m. So
+#     keyframe), between the Go2's 0.27 m and the G1's ~0.79 m. So
 #     ``base_height`` targets 0.66 m and the height-collapse failure fires below
 #     0.35 m - roughly half the standing height, well under the stance so a
 #     standing spawn never trips it, and well above 0. The G1's 0.4 m collapse
@@ -196,12 +205,13 @@ _T1_WALK_FORWARD: dict[str, Any] = {
 #     "strafed ~1 m left". A standing-still or purely-forward policy never
 #     satisfies it (it scores lateral progress, not "did not fall").
 #   - failure: the same fall modes as the forward task - topple past ~53 deg
-#     (``base_tipped``, tol=0.7) OR height collapse below 0.18 m
-#     (``base_below_z``, the Go2 stands at ~0.32 m).
+#     (``base_tipped``, tol=0.7) OR height collapse below 0.22 m
+#     (``base_below_z``, the fold-grounded line: stance 0.27 m, folded rest
+#     0.203 m).
 #   - dense_reward: the same legged_gym-style stack, but the tracked twist is a
 #     PURE lateral command (vx=0.0, vy=0.5, wz=0.0) - the ``vy`` term of
 #     ``base_velocity_tracking`` that the pure-``vx`` walk-forward tasks leave at
-#     zero - plus the 0.32 m base-height and flat-orientation regularizers.
+#     zero - plus the 0.27 m base-height and flat-orientation regularizers.
 _GO2_STRAFE_LEFT: dict[str, Any] = {
     "name": "go2_strafe_left",
     "instruction": "Strafe left at 0.5 m/s.",
@@ -212,7 +222,7 @@ _GO2_STRAFE_LEFT: dict[str, Any] = {
     "failure": {
         "any": [
             {"predicate": "base_tipped", "tol": 0.7},
-            {"predicate": "base_below_z", "z": 0.18},
+            {"predicate": "base_below_z", "z": 0.22},
         ]
     },
     "dense_reward": [
@@ -225,7 +235,7 @@ _GO2_STRAFE_LEFT: dict[str, Any] = {
             "ang_weight": 0.5,
             "tracking_sigma": 0.25,
         },
-        {"predicate": "base_height", "target": 0.32, "weight": 0.5},
+        {"predicate": "base_height", "target": 0.27, "weight": 0.5},
         {"predicate": "base_orientation", "weight": 0.5},
     ],
 }
@@ -245,15 +255,16 @@ _GO2_STRAFE_LEFT: dict[str, Any] = {
 #     translating-but-not-turning policy never satisfies it (it scores heading
 #     progress, not "did not fall" and not linear displacement).
 #   - failure: the same fall modes as the other Go2 tasks - topple past ~53 deg
-#     (``base_tipped``, tol=0.7) OR height collapse below 0.18 m
-#     (``base_below_z``, the Go2 stands at ~0.32 m). Pairing the fall predicate
+#     (``base_tipped``, tol=0.7) OR height collapse below 0.22 m
+#     (``base_below_z``, the fold-grounded line: stance 0.27 m, folded rest
+#     0.203 m). Pairing the fall predicate
 #     with the yaw success is deliberate: a toppled base has an ill-defined yaw,
 #     so ``base_tipped`` vetoes a "turned then fell" rollout.
 #   - dense_reward: the same legged_gym-style stack, but the tracked twist is a
 #     PURE yaw command (vx=0.0, vy=0.0, wz=0.5) - the ``wz`` term of
 #     ``base_velocity_tracking`` (with vx=vy=0 also rewarding zero drift, i.e.
 #     turning IN PLACE) that the walk-forward and strafe tasks leave at zero -
-#     plus the 0.32 m base-height and flat-orientation regularizers.
+#     plus the 0.27 m base-height and flat-orientation regularizers.
 _GO2_TURN_LEFT: dict[str, Any] = {
     "name": "go2_turn_left",
     "instruction": "Turn left in place at 0.5 rad/s.",
@@ -264,7 +275,7 @@ _GO2_TURN_LEFT: dict[str, Any] = {
     "failure": {
         "any": [
             {"predicate": "base_tipped", "tol": 0.7},
-            {"predicate": "base_below_z", "z": 0.18},
+            {"predicate": "base_below_z", "z": 0.22},
         ]
     },
     "dense_reward": [
@@ -277,7 +288,7 @@ _GO2_TURN_LEFT: dict[str, Any] = {
             "ang_weight": 0.5,
             "tracking_sigma": 0.25,
         },
-        {"predicate": "base_height", "target": 0.32, "weight": 0.5},
+        {"predicate": "base_height", "target": 0.27, "weight": 0.5},
         {"predicate": "base_orientation", "weight": 0.5},
     ],
 }

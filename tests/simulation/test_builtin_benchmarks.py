@@ -197,14 +197,14 @@ def test_go2_walk_forward_failure_fires_on_topple(sim):
 
 
 def test_go2_walk_forward_failure_fires_on_height_collapse(sim):
-    """failure includes base_below_z(0.18): a standing base continues, a
+    """failure includes base_below_z(0.22): a standing base continues, a
     collapsed one terminates."""
     register_builtin_benchmarks()
     bench = get_benchmark("go2_walk_forward")
     sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
-    _set_base_pose(sim, x=0.0, z=0.32)  # nominal Go2 stance
+    _set_base_pose(sim, x=0.0, z=0.27)  # the asset's home-keyframe stance
     assert bench.is_failure(sim) is False
-    _set_base_pose(sim, x=0.0, z=0.1)  # collapsed below 0.18
+    _set_base_pose(sim, x=0.0, z=0.1)  # collapsed below 0.22
     assert bench.is_failure(sim) is True
 
 
@@ -214,7 +214,7 @@ def test_go2_walk_forward_dense_reward_is_finite(sim):
     register_builtin_benchmarks()
     bench = get_benchmark("go2_walk_forward")
     sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
-    _set_base_pose(sim, x=0.0, z=0.32)
+    _set_base_pose(sim, x=0.0, z=0.27)
     info = bench.on_step(sim, {}, {})
     assert math.isfinite(info.reward)
     assert info.done is False
@@ -281,14 +281,14 @@ def test_g1_walk_forward_failure_fires_on_topple(sim):
 
 def test_g1_walk_forward_failure_fires_on_height_collapse(sim):
     """failure includes base_below_z(0.4): the ~0.79 m standing G1 continues, a
-    collapsed pelvis (below 0.4 m) terminates. The Go2's 0.18 m threshold would
+    collapsed pelvis (below 0.4 m) terminates. The Go2's 0.22 m threshold would
     NOT catch a humanoid that has folded to ~0.3 m - hence the biped threshold."""
     register_builtin_benchmarks()
     bench = get_benchmark("g1_walk_forward")
     sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
     _set_base_pose(sim, x=0.0, z=0.78)  # nominal G1 stance
     assert bench.is_failure(sim) is False
-    _set_base_pose(sim, x=0.0, z=0.3)  # collapsed below 0.4 (Go2's 0.18 would miss this)
+    _set_base_pose(sim, x=0.0, z=0.3)  # collapsed below 0.4 (Go2's 0.22 would miss this)
     assert bench.is_failure(sim) is True
 
 
@@ -399,7 +399,7 @@ def test_t1_walk_forward_dense_reward_is_finite(sim):
 # pure vy command scored by base_beyond_y (the vx/base_beyond_x tasks never
 # exercise the lateral axis).
 # ---------------------------------------------------------------------------
-def _set_base_y(sim, y: float, x: float = 0.0, z: float = 0.32, quat_wxyz=None) -> None:
+def _set_base_y(sim, y: float, x: float = 0.0, z: float = 0.27, quat_wxyz=None) -> None:
     """Set the (only) free joint to world (x, y, z) - a y-aware pose setter for
     the strafe task (the shared _set_base_pose fixes y=0)."""
     if quat_wxyz is None:
@@ -449,14 +449,14 @@ def test_go2_strafe_left_failure_fires_on_topple(sim):
 
 
 def test_go2_strafe_left_failure_fires_on_height_collapse(sim):
-    """failure includes base_below_z(0.18): a standing base continues, a
+    """failure includes base_below_z(0.22): a standing base continues, a
     collapsed one terminates."""
     register_builtin_benchmarks()
     bench = get_benchmark("go2_strafe_left")
     sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
-    _set_base_y(sim, y=0.0, z=0.32)  # nominal Go2 stance
+    _set_base_y(sim, y=0.0, z=0.27)  # the asset's home-keyframe stance
     assert bench.is_failure(sim) is False
-    _set_base_y(sim, y=0.0, z=0.1)  # collapsed below 0.18
+    _set_base_y(sim, y=0.0, z=0.1)  # collapsed below 0.22
     assert bench.is_failure(sim) is True
 
 
@@ -466,7 +466,7 @@ def test_go2_strafe_left_dense_reward_is_finite_and_tracks_vy(sim):
     register_builtin_benchmarks()
     bench = get_benchmark("go2_strafe_left")
     sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
-    _set_base_y(sim, y=0.0, z=0.32)
+    _set_base_y(sim, y=0.0, z=0.27)
     info = bench.on_step(sim, {}, {})
     assert math.isfinite(info.reward)
     assert info.done is False
@@ -476,7 +476,7 @@ def test_go2_strafe_left_dense_reward_is_finite_and_tracks_vy(sim):
 # go2_turn_left: the YAW counterpart - same quadruped/thresholds, a wz command
 # and a base_yaw_beyond heading goal (completes the vx/vy/wz vocabulary)
 # ---------------------------------------------------------------------------
-def _set_base_yaw(sim, deg: float, z: float = 0.32) -> None:
+def _set_base_yaw(sim, deg: float, z: float = 0.27) -> None:
     """Set the free joint to a KNOWN yaw heading at the origin (turn-in-place)."""
     model, data = sim._world._model, sim._world._data
     jid = next(j for j in range(model.njnt) if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE)
@@ -535,14 +535,14 @@ def test_go2_turn_left_failure_fires_on_topple(sim):
 
 
 def test_go2_turn_left_failure_fires_on_height_collapse(sim):
-    """failure includes base_below_z(0.18): a standing base continues, a
+    """failure includes base_below_z(0.22): a standing base continues, a
     collapsed one terminates."""
     register_builtin_benchmarks()
     bench = get_benchmark("go2_turn_left")
     sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
-    _set_base_yaw(sim, deg=90.0, z=0.32)  # nominal Go2 stance, turned
+    _set_base_yaw(sim, deg=90.0, z=0.27)  # the asset's home-keyframe stance, turned
     assert bench.is_failure(sim) is False
-    _set_base_yaw(sim, deg=90.0, z=0.1)  # collapsed below 0.18
+    _set_base_yaw(sim, deg=90.0, z=0.1)  # collapsed below 0.22
     assert bench.is_failure(sim) is True
 
 
@@ -552,7 +552,7 @@ def test_go2_turn_left_dense_reward_is_finite_and_tracks_wz(sim):
     register_builtin_benchmarks()
     bench = get_benchmark("go2_turn_left")
     sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
-    _set_base_yaw(sim, deg=0.0, z=0.32)
+    _set_base_yaw(sim, deg=0.0, z=0.27)
     info = bench.on_step(sim, {}, {})
     assert math.isfinite(info.reward)
     assert info.done is False
