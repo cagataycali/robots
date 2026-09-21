@@ -212,6 +212,15 @@ sim.create_world(terrain="rough")        # bumpy heightfield ground
 sim.add_robot("unitree_go2", keyframe="home")
 ```
 
+A floating base is seated on the surface at `add_robot` and on every `reset()`,
+and the seat is measured rather than assumed: the base is raised by the terrain
+height beneath it and then by whatever its own geoms are still inside the ground.
+That second term is what a height sample cannot see - the surface under a foot
+0.3 m out is not the surface under the base, and a model's flat pose does not
+always clear `z=0` (a LeKiwi's wheels sit 34.6 mm under its root body, a
+straight-legged quadruped's feet 120 mm) - so an episode starts with the robot
+resting on the terrain instead of being ejected out of it.
+
 The field spans the same +/-5 m footprint as the flat plane (the reachable
 workspace is unchanged), its surface ranges from 0 up to ~8 cm on a solid
 base slab (flush with `z=0` at its lowest point, so a robot never falls

@@ -185,3 +185,135 @@ def test_fixed_base_arm_on_terrain_is_skipped():
         assert sim.reset()["status"] == "success"  # no crash on the free-joint-less arm
     finally:
         sim.cleanup()
+
+
+# Three shapes the height sample under the BASE cannot seat, one mechanism each.
+#
+# 1. A flat pose that does not clear ``z=0``: the foot hangs 50 mm BELOW the
+#    plane the model is authored against. Real assets are built this way -
+#    LeKiwi's wheels sit 34.6 mm under its root body (its own scene recesses the
+#    floor to -0.1 m) - and the offset carries that burial onto the terrain.
+_BURIED_FLAT_POSE = """
+<mujoco model="seat_buried_flat">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002"/>
+  <worldbody>
+    <light name="main" pos="0 0 3" dir="0 0 -1"/>
+    <body name="base" pos="0 0 0.05">
+      <freejoint name="floating_base_joint"/>
+      <geom name="torso" type="box" size="0.1 0.05 0.03" rgba="0.3 0.3 0.8 1"/>
+      <body name="leg" pos="0 0 -0.05">
+        <joint name="knee" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
+        <geom name="foot" type="sphere" size="0.03" rgba="0.8 0.3 0.3 1"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator><motor name="knee_act" joint="knee"/></actuator>
+</mujoco>
+"""
+
+# 2. A base standing on feet 0.3 m out to either side, whose flat pose DOES
+#    clear ``z=0``: on a bumpy heightfield the surface under a foot is not the
+#    surface under the base, so an offset read under the base alone drives the
+#    uphill foot in. Spawned off-centre, where ``rough`` slopes that way.
+_WIDE_STANCE = """
+<mujoco model="seat_wide_stance">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002"/>
+  <worldbody>
+    <light name="main" pos="0 0 3" dir="0 0 -1"/>
+    <body name="base" pos="0 0 0.4">
+      <freejoint name="floating_base_joint"/>
+      <geom name="torso" type="box" size="0.1 0.05 0.03" rgba="0.3 0.3 0.8 1"/>
+      <body name="leg_front" pos="0.3 0 -0.36">
+        <joint name="knee_front" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
+        <geom name="foot_front" type="sphere" size="0.03" rgba="0.8 0.3 0.3 1"/>
+      </body>
+      <body name="leg_back" pos="-0.3 0 -0.36">
+        <joint name="knee_back" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
+        <geom name="foot_back" type="sphere" size="0.03" rgba="0.8 0.3 0.3 1"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="knee_front_act" joint="knee_front"/>
+    <motor name="knee_back_act" joint="knee_back"/>
+  </actuator>
+</mujoco>
+"""
+
+# 3. A leg reaching 180 mm below the base - the Unitree A1's straight-legged
+#    spawn (feet 120 mm under ``z=0``) - so the shin ends up INSIDE the
+#    heightfield prism and MuJoCo resolves it SIDEWAYS: measured ``dist``
+#    -25.0 mm with ``normal_z`` 0.000 while the surface stands 84.5 mm above the
+#    contact point. A seat that lifts by the penetration depth alone moves it
+#    25 mm and leaves it buried, which is the row that grades the second term.
+_DEEP_LEG = """
+<mujoco model="seat_deep_leg">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002"/>
+  <worldbody>
+    <light name="main" pos="0 0 3" dir="0 0 -1"/>
+    <body name="base" pos="0 0 0.05">
+      <freejoint name="floating_base_joint"/>
+      <geom name="torso" type="box" size="0.1 0.05 0.03" rgba="0.3 0.3 0.8 1"/>
+      <body name="leg" pos="0 0 -0.18">
+        <joint name="knee" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
+        <geom name="shin" type="capsule" fromto="0 0 0 0 0 0.14" size="0.025" rgba="0.8 0.3 0.3 1"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator><motor name="knee_act" joint="knee"/></actuator>
+</mujoco>
+"""
+
+
+def _deepest_ground_penetration(sim) -> float:
+    """Depth (m, ``>= 0``) the robot's own tree is inside the ground geoms.
+
+    Read off MuJoCo's contact list rather than off the seat's own helper, so the
+    assertions grade the physical state and not the arithmetic that produced it.
+    Scoped by ``body_rootid`` to the tree the free base moves.
+    """
+    model, data = sim._world._model, sim._world._data
+    mujoco.mj_forward(model, data)
+    base = next(j for j in range(model.njnt) if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE)
+    root = int(model.body_rootid[model.jnt_bodyid[base]])
+    deepest = 0.0
+    for con in data.contact[: int(data.ncon)]:
+        pair = (int(con.geom1), int(con.geom2))
+        ground = [g for g in pair if int(model.geom_type[g]) in _GROUND_GEOM_TYPES]
+        if len(ground) != 1:
+            continue
+        other = pair[1] if ground[0] == pair[0] else pair[0]
+        if int(model.body_rootid[model.geom_bodyid[other]]) != root:
+            continue
+        deepest = min(deepest, float(con.dist))
+    return -deepest
+
+
+@pytest.mark.parametrize(
+    "xml,terrain,position",
+    [
+        (_BURIED_FLAT_POSE, "pyramid", None),
+        (_WIDE_STANCE, "rough", [1.0, 0.0, 0.0]),
+        (_DEEP_LEG, "rough", None),
+    ],
+    ids=["buried_flat_pose", "wide_stance_on_bumps", "leg_inside_the_prism"],
+)
+def test_nothing_of_a_seated_robot_is_left_inside_the_terrain(xml, terrain, position):
+    """The seat is MEASURED, not assumed: no geom is left inside the ground.
+
+    The heightfield height beneath the base answers none of the three shapes
+    above, so each spawns buried under a height-sample-only seat - the one state
+    this seat exists to prevent - by 30.0 mm, 11.1 mm and 25.0 mm respectively.
+    """
+    sim = Simulation(tool_name="seat_measured_spawn", mesh=False)
+    sim.create_world(ground_plane=True, terrain=terrain, difficulty=2.0)
+    sim.add_robot("floater", urdf_path=_write(xml), position=position)
+    try:
+        assert _deepest_ground_penetration(sim) == pytest.approx(0.0, abs=1e-3)
+        assert sim.reset()["status"] == "success"
+        assert _deepest_ground_penetration(sim) == pytest.approx(0.0, abs=1e-3)
+    finally:
+        sim.cleanup()

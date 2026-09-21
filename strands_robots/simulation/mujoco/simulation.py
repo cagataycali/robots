@@ -508,6 +508,18 @@ def _resolve_policy_stop_timeout(policy_stop_timeout: float | None, default: flo
 # default and the per-robot mapping fallback cannot drift apart.
 _DEFAULT_ACTION_HORIZON = 8
 
+# Vertical seating of a floating base on terrain
+# (:meth:`MuJoCoSimEngine._seat_floating_bases_on_terrain`). A long geom can be
+# buried at more than one point, so clearing the deepest reveals the next and the
+# lift is iterated: measured, every floating-base asset in the registry is clear
+# within 3 passes on all four terrain kinds at difficulty 2.0, and a synthetic
+# leg buried 180 mm inside the heightfield prism takes 5. The tolerance is the
+# residual that ends it - a tenth of a millimetre, two orders below the contact
+# softness MuJoCo resolves in one step, because the lift converges on the
+# surface rather than landing exactly on it.
+_MAX_SEAT_PASSES = 8
+_SEAT_TOLERANCE_M = 1e-4
+
 
 # The ``create_world`` parameters a LIVE world can still adopt, paired with the
 # published action that applies each one in place without discarding the scene.
@@ -1375,10 +1387,13 @@ class MuJoCoSimEngine(
         effect) and must be a finite value ``> 0``.
 
         A floating-base robot added to a terrain world is spawned SEATED on
-        the local terrain surface (its base is raised by the heightfield
-        height beneath it) at ``add_robot`` and on every ``reset()``, rather
-        than at the flat-ground keyframe height that would leave its feet
-        buried below the raised terrain.
+        the local terrain surface at ``add_robot`` and on every ``reset()``,
+        rather than at the flat-ground keyframe height that would leave its feet
+        buried below the raised terrain. The seat is MEASURED: the base is raised
+        by the heightfield height beneath it and then by the depth its own geoms
+        are still inside the ground, because the surface under the base is not
+        the surface under a foot 0.3 m away and a model's flat pose does not
+        always clear ``z=0`` to begin with.
 
         A world can only be built once: a second call while one is live is
         refused rather than rebuilding under the live scene (``Robot("so101")``
@@ -3213,9 +3228,13 @@ class MuJoCoSimEngine(
         in the ground, with penetration that grows with the curriculum
         ``difficulty`` -- contradicting the terrain feature's stated purpose of
         spawning a locomotion robot ON non-flat ground. Offset each floating
-        base's ``z`` by the terrain height beneath its ``(x, y)`` so it is
-        seated on the surface (feet just clear of it), the correct initial
-        state for a locomotion policy and a terrain-difficulty curriculum.
+        base's ``z`` by the terrain height beneath its ``(x, y)``, then by the
+        depth its geoms are still buried by (:meth:`_ground_burial_depth`), so it
+        is seated ON the surface - the correct initial state for a locomotion
+        policy and a terrain-difficulty curriculum. The height under the base is
+        not the height under a foot, and a real asset's flat pose does not always
+        clear ``z=0``, so the height sample alone left every floating-base robot in
+        the registry measurably buried.
 
         A flat ground plane (``_ground_height_at`` returns ``0.0``) is a no-op,
         so non-terrain worlds are byte-for-byte unchanged; a fixed-base arm (no
@@ -3247,6 +3266,78 @@ class MuJoCoSimEngine(
             ground = self._ground_height_at(float(data.qpos[adr]), float(data.qpos[adr + 1]))
             if ground:
                 data.qpos[adr + 2] = float(data.qpos[adr + 2]) + ground
+            # That offset reads the surface under the BASE and assumes the
+            # model's flat pose already clears ``z=0`` -- neither holds for a
+            # real asset. A foot 0.2 m out stands on a different part of a
+            # ``rough`` heightfield than the base does, and an asset authored
+            # for a recessed floor (LeKiwi's wheels sit 34.6 mm below its root
+            # body) or spawned in its straight-legged zero pose (Unitree A1:
+            # 120 mm) does not clear flat ground to begin with. Both leave the
+            # robot buried after the offset, which is what this seat exists to
+            # prevent, so lift by the depth its own geoms are MEASURED to be
+            # buried by. Zero for a robot already clear of the surface, so a
+            # model authored to rest on it keeps its pose exactly.
+            for _ in range(_MAX_SEAT_PASSES):
+                buried = self._ground_burial_depth(int(model.jnt_bodyid[jid]))
+                if buried <= _SEAT_TOLERANCE_M:
+                    break
+                data.qpos[adr + 2] = float(data.qpos[adr + 2]) + buried
+
+    def _ground_burial_depth(self, base_body: int) -> float:
+        """Vertical lift (metres, ``>= 0``) that takes ``base_body``'s tree out of the ground.
+
+        Reads MuJoCo's own contact solve rather than a height sample, so the
+        answer covers every collidable geom the base carries wherever it stands.
+        Each contact between one of those geoms and a ground geom (the terrain
+        ``<hfield>``, or a ``<plane>``) contributes the lift IT needs, and the
+        largest wins:
+
+        * its penetration depth ``-dist``, the vertical need for a contact whose
+          normal points up (a foot resting into a plateau);
+        * the surface height above the contact POINT, for a contact whose normal
+          is horizontal - a geom inside the heightfield prism, pushed sideways
+          out of a bump's wall, whose ``dist`` says nothing about how far DOWN it
+          is. The Unitree A1's straight-legged spawn puts all four calves there:
+          ``dist`` -24.3 mm with ``normal_z`` 0.000, while the surface stands
+          64-87 mm above the contact point.
+
+        Ownership is by ``body_rootid``, not by namespace: a free-jointed task
+        object shipped inside the robot's own MJCF (a payload, a kick ball, a
+        Menagerie grasping cube) is its OWN kinematic root, and moving the base
+        does not move it - so its burial is not the base's to answer for, the
+        same distinction
+        :meth:`~strands_robots.simulation.mujoco.rendering.RenderingMixin._robot_free_base_joint_id`
+        draws when it names the base in the first place.
+
+        ``0.0`` when nothing of that tree is inside the ground, including when it
+        rests inside the margin band, where a contact is generated with a
+        POSITIVE ``dist`` and the geom is above the surface rather than in it.
+
+        Requires the caller's model lock, and runs ``mj_forward`` itself because
+        the contact list has to reflect the base pose written a moment earlier.
+        """
+        mj = self._mj
+        world = self._world
+        if world is None or world._model is None or world._data is None:
+            return 0.0
+        model, data = world._model, world._data
+        mj.mj_forward(model, data)
+        ground_types = (int(mj.mjtGeom.mjGEOM_HFIELD), int(mj.mjtGeom.mjGEOM_PLANE))
+        root = int(model.body_rootid[base_body])
+        lift = 0.0
+        for con in data.contact[: int(data.ncon)]:
+            pair = (int(con.geom1), int(con.geom2))
+            on_ground = [g for g in pair if int(model.geom_type[g]) in ground_types]
+            if len(on_ground) != 1:  # neither side is ground, or both are
+                continue
+            other = pair[1] if on_ground[0] == pair[0] else pair[0]
+            if int(model.body_rootid[model.geom_bodyid[other]]) != root:
+                continue  # another robot, a world object, or a carried prop
+            if float(con.dist) >= 0.0:  # in the margin band, not in the ground
+                continue
+            x, y, z = (float(v) for v in con.pos)
+            lift = max(lift, -float(con.dist), self._ground_height_at(x, y) - z)
+        return lift
 
     def remove_robot(self, name: str) -> dict[str, Any]:
         """Remove a robot and every element it injected (bodies, actuators,
