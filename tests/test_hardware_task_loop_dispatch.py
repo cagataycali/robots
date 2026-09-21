@@ -50,10 +50,16 @@ from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState, TaskStatus
 from tests.test_hardware_control_loop_rate_guard import _FakeArm
 
-# duration=0.2 at 50 Hz drives ten applied actions -- long enough that "the
-# rollout ran" is unambiguous, short enough to stay a unit test.
-_DURATION = 0.2
+# The horizon here is the step cap, not the clock. ``n_steps`` ends the loop at
+# exactly ten applied actions, so "driven once" is ten and "driven twice" is
+# twenty on any machine - ``_execute_task_async`` zeroes ``step_count`` per
+# task, so a second drive adds its own ten. Derived from the wall clock
+# (duration=0.2 at 50 Hz) the same count was whatever a loaded host fit into
+# 0.2 s: 8 and 9 applied actions under CPU contention, which reports a busy
+# machine as a dispatch defect. ``duration`` stays as a ceiling the cap reaches
+# first by two orders of magnitude, so a cap that stopped capping still ends.
 _EXPECTED_ACTIONS = 10
+_DURATION = 10.0
 
 
 @pytest.fixture
@@ -100,7 +106,7 @@ def hw() -> Iterator[Any]:
 
 def _drive(robot: Any) -> dict[str, Any]:
     """Run one rollout through the real dispatch, as ``stream`` would."""
-    return robot._run_control_loop("pick", 5555, "localhost", "mock", _DURATION)
+    return robot._run_control_loop("pick", 5555, "localhost", "mock", _DURATION, n_steps=_EXPECTED_ACTIONS)
 
 
 def _pool_spy(monkeypatch: pytest.MonkeyPatch) -> list[int]:
