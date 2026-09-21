@@ -460,12 +460,9 @@ class TestAHeadingGoalMustBeReachable:
         # Declared the way the module sees a shipped factory instead.
         _factory.__annotations__["yaw"] = "float"
         register_predicate("probe_heading_domain", _factory)
-        try:
-            with pytest.raises(ValueError, match="yaw"):
-                make_predicate("probe_heading_domain", yaw=180.0)
-            assert callable(make_predicate("probe_heading_domain", yaw=1.0))
-        finally:
-            PREDICATE_REGISTRY.pop("probe_heading_domain", None)
+        with pytest.raises(ValueError, match="yaw"):
+            make_predicate("probe_heading_domain", yaw=180.0)
+        assert callable(make_predicate("probe_heading_domain", yaw=1.0))
 
     def test_a_non_finite_goal_still_reports_finiteness(self):
         """The pre-existing reason is not displaced by the new one.

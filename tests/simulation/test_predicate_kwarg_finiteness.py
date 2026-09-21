@@ -325,7 +325,4 @@ def test_a_predicate_registered_without_annotations_is_exempt() -> None:
 
     name = "test_unannotated_exempt_from_finiteness"
     register_predicate(name, _factory)
-    try:
-        assert make_predicate(name, threshold=NAN) is not None
-    finally:
-        PREDICATE_REGISTRY.pop(name, None)
+    assert make_predicate(name, threshold=NAN) is not None

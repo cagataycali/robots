@@ -238,12 +238,9 @@ class TestTheDomainComposesWithTheFinitenessGuard:
             return check
 
         register_predicate("probe_tolerance_domain", _factory)
-        try:
-            with pytest.raises(ValueError, match="tol"):
-                make_predicate("probe_tolerance_domain", body="cube", tol=-0.1)
-            assert callable(make_predicate("probe_tolerance_domain", body="cube", tol=0.1))
-        finally:
-            PREDICATE_REGISTRY.pop("probe_tolerance_domain", None)
+        with pytest.raises(ValueError, match="tol"):
+            make_predicate("probe_tolerance_domain", body="cube", tol=-0.1)
+        assert callable(make_predicate("probe_tolerance_domain", body="cube", tol=0.1))
 
 
 class TestABooleanIsAnsweredBeforeTheCoercion:
@@ -324,10 +321,7 @@ class TestTheRuleIsMatchedOnAWholeNameNotASubstring:
         # variadic sink is only there to let the factory accept it.
         _factory.__annotations__[param] = "float"
         register_predicate(f"probe_substring_{param}", _factory)
-        try:
-            assert callable(make_predicate(f"probe_substring_{param}", body="cube", **{param: -1.0}))
-        finally:
-            PREDICATE_REGISTRY.pop(f"probe_substring_{param}", None)
+        assert callable(make_predicate(f"probe_substring_{param}", body="cube", **{param: -1.0}))
 
     def test_every_probe_value_has_the_shape_its_annotation_declares(self):
         """The annotation is matched whole too: a container param gets a container.

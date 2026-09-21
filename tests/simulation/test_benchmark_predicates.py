@@ -170,16 +170,12 @@ class TestRegistry:
             register_predicate("my_pred", "not a callable")  # type: ignore[arg-type]
 
     def test_register_predicate_custom(self):
-        try:
+        def factory(value: float):
+            return lambda _sim: value > 0
 
-            def factory(value: float):
-                return lambda _sim: value > 0
-
-            register_predicate("positive_constant", factory)
-            pred = make_predicate("positive_constant", value=1.5)
-            assert pred(None) is True
-        finally:
-            PREDICATE_REGISTRY.pop("positive_constant", None)
+        register_predicate("positive_constant", factory)
+        pred = make_predicate("positive_constant", value=1.5)
+        assert pred(None) is True
 
 
 # Body-position predicates

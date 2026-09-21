@@ -217,3 +217,35 @@ def _optional_module_memo_holds_no_stand_in() -> Iterator[None]:
     if memo is not None and memo != before:
         memo.clear()
         memo.update(before)
+
+
+@pytest.fixture(autouse=True)
+def _predicate_registry_is_left_as_found() -> Iterator[None]:
+    """Leave the predicate registry holding only what the session started with.
+
+    ``strands_robots.simulation.predicates.PREDICATE_REGISTRY`` is a
+    process-global dict, and :func:`register_predicate` is the documented way
+    to extend it. A test that registers one leaves it there for every later
+    test in the process, and a grader that reads the registry as the set of
+    shipped predicates then fails on a name that only a test knows.
+
+    Measured with ``tests/test_fleet_emergency_evacuation.py`` running ahead of
+    ``tests/simulation/test_predicate_docstring_completeness.py`` (the ordering
+    ``--dist loadfile`` produces and a serial run does not): the example under
+    test registers ``evacuation_abort_within``, and the docstring grader read it
+    as drift - ``bool docstring drift: missing=['evacuation_abort_within']``.
+
+    Seven call sites used to undo their own registration in a ``try``/
+    ``finally``; the session owns it now, so a registration is one line again
+    and the one path that forgot is covered too.
+
+    The module is looked up rather than imported so a session that never
+    touches the simulation package does not pull it in.
+    """
+    registry = getattr(sys.modules.get("strands_robots.simulation.predicates"), "PREDICATE_REGISTRY", None)
+    before = dict(registry) if registry is not None else {}
+    yield
+    registry = getattr(sys.modules.get("strands_robots.simulation.predicates"), "PREDICATE_REGISTRY", None)
+    if registry is not None and registry != before:
+        registry.clear()
+        registry.update(before)

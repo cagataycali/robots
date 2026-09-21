@@ -16,7 +16,6 @@ import pytest
 
 from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark
 from strands_robots.simulation.predicates import (
-    PREDICATE_REGISTRY,
     make_predicate,
     predicate_kind,
     register_predicate,
@@ -52,13 +51,10 @@ class TestPredicateKind:
         def factory():  # deliberately no -> annotation
             return lambda _sim: True
 
-        try:
-            register_predicate("unannotated_probe", factory)
-            assert predicate_kind("unannotated_probe") == "unknown"
-            bench = DeclarativeBenchmark.from_dict(_spec(success={"all": [{"predicate": "unannotated_probe"}]}))
-            assert bench is not None
-        finally:
-            PREDICATE_REGISTRY.pop("unannotated_probe", None)
+        register_predicate("unannotated_probe", factory)
+        assert predicate_kind("unannotated_probe") == "unknown"
+        bench = DeclarativeBenchmark.from_dict(_spec(success={"all": [{"predicate": "unannotated_probe"}]}))
+        assert bench is not None
 
 
 class TestRewardTermRejectedInBoolClause:

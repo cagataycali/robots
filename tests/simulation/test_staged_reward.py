@@ -295,21 +295,18 @@ def test_reset_clears_a_stateful_sub_term_in_whichever_slot_holds_it(slot: str) 
     latch = _Latch()
     name = "test_staged_reward_stateful_sub_term"
     register_predicate(name, lambda: latch)
-    try:
-        stage: dict[str, Any] = {
-            "reward": {"predicate": "constant", "value": 1.0},
-            "advance_when": {"predicate": "body_above_z", "body": "cube", "z": 0.2},
-        }
-        stage[slot] = {"predicate": name}
-        term = make_predicate(
-            "staged_reward",
-            stages=[stage, {"reward": {"predicate": "constant", "value": 0.0}}],
-        )
-        assert latch.resets == 0
-        term.reset()
-        assert latch.resets == 1
-    finally:
-        PREDICATE_REGISTRY.pop(name, None)
+    stage: dict[str, Any] = {
+        "reward": {"predicate": "constant", "value": 1.0},
+        "advance_when": {"predicate": "body_above_z", "body": "cube", "z": 0.2},
+    }
+    stage[slot] = {"predicate": name}
+    term = make_predicate(
+        "staged_reward",
+        stages=[stage, {"reward": {"predicate": "constant", "value": 0.0}}],
+    )
+    assert latch.resets == 0
+    term.reset()
+    assert latch.resets == 1
 
 
 def test_a_spec_authored_nested_machine_is_cleared_by_the_consumers_rule() -> None:
