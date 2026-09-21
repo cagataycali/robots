@@ -52,22 +52,17 @@ PACKAGE = "strands_robots"
 #:
 #: The placements that are a judgement rather than a reading of the tree:
 #: ``assets`` sits with ``registry`` because it resolves the asset paths the
-#: registry declares; ``dataset_metadata`` sits in ``core`` because reading what
-#: a dataset recorded is a fact the sim facade, the checker and the judge each
-#: verify, where writing one is a session the app owns, with ``dataset_source``
-#: beside it for the same reason - which directory a ``repo_id`` names and where
-#: an episode's frames start are questions the recorder, three sim backends, the
-#: rollout runner and the teleoperation tool all have to answer identically -
-#: and ``streaming_dataset`` beside both because it is the third read of a
-#: recorded dataset, not a fourth way to write one: it opens a dataset and
-#: yields frames, its own imports are those two modules and ``utils``, no ``app``
-#: module reads it, and its one consumer inside the package is the sim facade's
-#: ``stream_dataset`` a layer below, and ``dataset_transfer`` beside all three
-#: because uploading a finished dataset directory is neither a read of one nor a
-#: way to write one: it takes a path and a bucket name, shells out to the ``hf``
-#: CLI, holds no recorder state, and both its callers - the recorder's
-#: ``sync_to_bucket`` delegate in ``app`` and the idle-path bucket sync in the
-#: sim recording mixin - are above it; and
+#: registry declares; the five dataset modules sit in ``core`` because a dataset
+#: is a contract rather than a host - ``dataset_recorder`` writes one, and
+#: reading what it recorded (``dataset_metadata``), resolving the directory a
+#: ``repo_id`` names (``dataset_source``), streaming the frames back out
+#: (``streaming_dataset``) and uploading the finished directory
+#: (``dataset_transfer``) are the other four. The writer is the one that had to
+#: be argued: no ``app`` module imports it and none holds a recording session -
+#: ``start_recording`` exists only on the three sim backends a layer below -
+#: while its own five imports are all ``core``, so keeping it in ``app`` inverted
+#: the layering for its only caller and made three core modules look like they
+#: had an ``app`` reader when that reader was the recorder. And
 #: ``teleop_mixin`` sits with ``drivers|mesh`` because it is an input-device
 #: concern shared by three hosts in three layers - the hardware ``Robot``, the
 #: MuJoCo ``Simulation`` and the Device Connect sim driver - so it belongs under
@@ -88,6 +83,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "_serial_discovery",
             "bus_access",
             "dataset_metadata",
+            "dataset_recorder",
             "dataset_source",
             "dataset_transfer",
             "episode_labels",
@@ -109,7 +105,6 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "app",
         (
             "__main__",
-            "dataset_recorder",
             "doctor",
             "hardware_observe",
             "hardware_robot",
@@ -147,16 +142,11 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 #: that module imports lerobot. Each is pinned individually in
 #: ``tests/test_import_layers_are_a_dag.py``.
 #:
-#: The rest are cuts this lane has not made. The shared ``simulation.recording``
-#: read of ``dataset_recorder`` is the roadmap's own placement of the recording
-#: session in ``app`` (strands-labs/robots#3818), so it is debt rather than a
-#: mislabel - the three backends now reach it through that one probe rather than
-#: each holding their own; and ``drivers.ur`` reaches up to build a policy.
+#: The one cut left here is ``drivers.ur``, which reaches up to build a policy.
 KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.__main__", "strands_robots.dashboard.cli"),
     ("strands_robots._hitl_audit", "strands_robots.mesh.audit"),
     ("strands_robots.drivers.ur", "strands_robots.policies"),
-    ("strands_robots.simulation.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.teleop_mixin", "strands_robots.teleoperator"),
 )
 

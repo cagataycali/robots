@@ -1,9 +1,8 @@
 """LeRobotDataset recorder bridge for strands-robots.
 
-Wraps LeRobotDataset so that both real hardware (:mod:`strands_robots.robot`)
-and simulation (:mod:`strands_robots.simulation`) can produce training-ready
-datasets with
-a single add_frame() call per control step.
+Wraps LeRobotDataset so any control loop produces a training-ready dataset with
+one add_frame() call per step - a :mod:`strands_robots.simulation` backend's
+``start_recording``, or a script driving :mod:`strands_robots.robot` itself.
 
 Usage:
     recorder = DatasetRecorder.create(

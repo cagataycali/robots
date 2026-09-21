@@ -371,11 +371,11 @@ class TestTheContract:
         a contract stored with its first host rather than under all of them: the
         teleoperation mixin (read by the Device Connect sim driver and the MuJoCo
         ``Simulation`` as well as by ``Robot``) and the recording frame error
-        (raised in ``app``, caught by the rollout drivers a layer down).
+        (raised by the dataset writer, caught by the rollout drivers a layer
+        down).
 
-        The deferred edges that still point into it - the recorder session the
-        roadmap itself places here, read from ``simulation``, and the mixin's
-        lerobot-deferred ``teleoperator`` read - are declared in
+        The one deferred edge that still points into it - the mixin's
+        lerobot-deferred ``teleoperator`` read - is declared in
         ``KNOWN_DEFERRED_UPWARD_EDGES`` and graded by the equality above rather
         than by this cell.
         """
@@ -390,7 +390,7 @@ class TestTheContract:
                 "strands_robots.recording_errors",
                 "core",
                 frozenset(),
-                frozenset({"sim|policies", "app"}),
+                frozenset({"core", "sim|policies"}),
             ),
             (
                 "strands_robots._motion_grants",
@@ -408,7 +408,7 @@ class TestTheContract:
                 "strands_robots.dataset_source",
                 "core",
                 frozenset(),
-                frozenset({"core", "sim|policies", "app", "tools"}),
+                frozenset({"core", "sim|policies", "tools"}),
             ),
             (
                 "strands_robots.streaming_dataset",
@@ -420,7 +420,13 @@ class TestTheContract:
                 "strands_robots.dataset_transfer",
                 "core",
                 frozenset(),
-                frozenset({"sim|policies", "app"}),
+                frozenset({"core", "sim|policies"}),
+            ),
+            (
+                "strands_robots.dataset_recorder",
+                "core",
+                frozenset(),
+                frozenset({"sim|policies"}),
             ),
             (
                 "strands_robots.teleop_mixin",
@@ -449,7 +455,7 @@ class TestTheContract:
             (
                 "strands_robots.simulation.recording",
                 "sim|policies",
-                frozenset({"strands_robots.dataset_recorder"}),
+                frozenset(),
                 frozenset({"sim|policies", "tools"}),
             ),
         ],
@@ -473,23 +479,22 @@ class TestTheContract:
         because that module imports lerobot, and promoting it to module scope has
         to fail here.
 
-        The four ``dataset`` rows are one concern touched four ways: what a
+        The five ``dataset`` rows are one concern touched five ways: what a
         dataset recorded (``dataset_metadata``, the ``meta/episodes`` parquet the
         sim facade, the ``verify-dataset`` checker and the episode judge each
         certify a run with), which directory a ``repo_id`` names and where an
-        episode's frames start (``dataset_source``), the frames themselves
-        streamed back out of it (``streaming_dataset``), and a finalized
-        directory uploaded to a storage bucket (``dataset_transfer``, a path plus
-        a bucket name handed to the ``hf`` CLI). Each lived with the writer in
-        ``app``, so a recording backend depended on a CLI, the rollout runner
-        deferred an import of the recorder to find out where its own recording
-        went, the sim facade's ``stream_dataset`` reached up for a module no
-        ``app`` module reads, and the sim recording mixin deferred an import of
-        the recorder module to upload a directory the recorder never saw.
-        Neither reading a dataset nor shipping one is writing one: both sit in
-        ``core`` under every layer that performs them, while the recorder session
-        stays in ``app``. One caller layer is enough to justify a placement -
-        ``streaming_dataset`` has exactly the sim facade - and the package root is
+        episode's frames start (``dataset_source``), the frames streamed back out
+        of it (``streaming_dataset``), a finalized directory uploaded to a
+        storage bucket (``dataset_transfer``), and the writer that produced it
+        (``dataset_recorder``). Four of them lived with the writer in ``app``, so
+        a recording backend depended on a CLI and the sim facade's
+        ``stream_dataset`` reached up for a module no ``app`` module reads. The
+        writer is the fifth: its own imports are ``_dyld``, ``dataset_source``,
+        ``dataset_transfer``, ``recording_errors`` and ``utils`` - all ``core`` -
+        and nothing in ``app`` reads it, because a recording session exists only
+        on the three sim backends a layer below. One caller layer is enough to
+        justify a placement - ``streaming_dataset`` has exactly the sim facade,
+        the writer exactly the shared recording mixin - and the package root is
         not a layer (``layer_of`` answers ``None`` for it), so its
         ``TYPE_CHECKING`` re-export of a public name is not a caller here.
 
@@ -505,14 +510,13 @@ class TestTheContract:
         moving one back up would restore the inversion, and the equality above
         would refuse it.
 
-        ``simulation.recording`` is the row where the declared deferral is the
-        point. The recording lifecycle every backend mixes in sits in
-        ``sim|policies``; the recorder session it arms sits one layer up in
-        ``app``, which the roadmap places there, so the class is resolved inside
-        the call. Each of the three backends used to defer that read itself, and
-        an inversion repeated per backend is three places to keep a diagnosis in
-        step: the probe is shared here, so the whole ``sim|policies -> app``
-        inversion is this one edge.
+        ``simulation.recording`` is the row where the empty deferral set is the
+        point. The lifecycle every backend mixes in still resolves the recorder
+        class inside the call, because that import is what its probe diagnoses: a
+        partial install refuses from ``start_recording`` rather than breaking
+        ``import strands_robots.simulation``. It carried the last
+        ``sim|policies -> app`` inversion until the writer moved under it, and
+        the empty set is what stops that edge returning as a deferral.
         """
         assert name in graph.modules
         assert mod.LAYER_NAMES[mod.layer_of(name)] == layer

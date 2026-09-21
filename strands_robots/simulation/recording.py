@@ -1042,9 +1042,9 @@ class DatasetRecordingMixin:
         recorder_cls: Any = None
         unavailable: str | None = None
         try:
-            # Deferred: the recorder session sits in ``app`` (the roadmap's own
-            # placement, strands-labs/robots#3818) and this mixin a layer down,
-            # so the one read that inverts the layering is paid on first call.
+            # Deferred because the import is itself what this probe reports on:
+            # at module scope, a partial install would make `import
+            # strands_robots.simulation` fail rather than this verb refuse.
             from strands_robots.dataset_recorder import DatasetRecorder as recorder_cls
             from strands_robots.dataset_recorder import lerobot_dataset_import_error
 
