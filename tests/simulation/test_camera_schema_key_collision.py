@@ -212,14 +212,14 @@ class TestEveryBackendConsultsTheGuard:
             assert guard < source.index("_prepare_dataset_target("), backend
 
     def test_the_guard_runs_after_the_dataset_stack_probe(self):
-        # Reading the scene's cameras is an engine call, and the block that
-        # diagnoses a missing dataset stack is reachable on an install with no
-        # engine at all - see
+        # Reading the scene's cameras is an engine call, and the shared probe
+        # that diagnoses a missing dataset stack is reachable on an install with
+        # no engine at all - see
         # tests/simulation/test_recording_dataset_stack_unavailable_across_backends.py,
         # which drives it over a hand-built world. A guard placed ahead of that
-        # block turns "the lerobot extra is missing" into an engine failure.
+        # probe turns "the lerobot extra is missing" into an engine failure.
         for backend, source in self._recording_modules().items():
-            probe = source.index("if unavailable is not None:")
+            probe = source.index("_dataset_recorder_or_refusal(")
             guard = source.index("camera_schema_key_collision_error(")
             assert probe < guard, backend
 

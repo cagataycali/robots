@@ -1019,6 +1019,61 @@ class DatasetRecordingMixin:
         return world._backend_state
 
     @staticmethod
+    def _dataset_recorder_or_refusal(alternative: str) -> tuple[Any, dict[str, Any] | None]:
+        """Resolve ``DatasetRecorder``, or the refusal naming why it is missing.
+
+        Every backend's ``start_recording`` needs the same two facts before it
+        touches the scene: the recorder class, and - when lerobot's dataset
+        stack is not installed - a diagnosis that names the missing piece
+        instead of a bare ``ImportError`` from inside the first write. The three
+        backends each carried a verbatim copy of the probe, so a change to the
+        diagnosis had to be made three times and could drift in two of them.
+        Only the alternative to recording a dataset differs per backend, so
+        that sentence is the parameter.
+
+        Args:
+            alternative: What to do instead, appended to the refusal - the plain
+                MP4 path this backend offers under its own extra.
+
+        Returns:
+            ``(DatasetRecorder, None)`` when the stack is importable, otherwise
+            ``(None, refusal)`` where ``refusal`` is the tool reply to return.
+        """
+        recorder_cls: Any = None
+        unavailable: str | None = None
+        try:
+            # Deferred: the recorder session sits in ``app`` (the roadmap's own
+            # placement, strands-labs/robots#3818) and this mixin a layer down,
+            # so the one read that inverts the layering is paid on first call.
+            from strands_robots.dataset_recorder import DatasetRecorder as recorder_cls
+            from strands_robots.dataset_recorder import lerobot_dataset_import_error
+
+            unavailable = lerobot_dataset_import_error()
+        except ImportError as exc:
+            # strands_robots.dataset_recorder itself did not import (a partial or
+            # drifted install); report that rather than blaming the lerobot extra.
+            unavailable = f"strands_robots.dataset_recorder is unavailable ({exc})."
+        if unavailable is None and recorder_cls is None:
+            unavailable = "strands_robots.dataset_recorder did not provide DatasetRecorder."
+        if unavailable is None:
+            return recorder_cls, None
+        return None, {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        "start_recording produces a LeRobotDataset (parquet + video), which "
+                        "needs lerobot's dataset stack:\n"
+                        "\n"
+                        f"  {unavailable}\n"
+                        "\n"
+                        f"{alternative}"
+                    )
+                }
+            ],
+        }
+
+    @staticmethod
     def _arm_dataset_recorder(state: dict[str, Any], recorder: Any, *, resumed: bool = False) -> str:
         """Open a recording session on ``recorder``, and say what opening it means.
 

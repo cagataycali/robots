@@ -147,17 +147,16 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 #: that module imports lerobot. Each is pinned individually in
 #: ``tests/test_import_layers_are_a_dag.py``.
 #:
-#: The rest are cuts this lane has not made. The ``simulation`` reads of
-#: ``dataset_recorder`` are the roadmap's own placement of the recording session
-#: in ``app`` (strands-labs/robots#3818), so they are debt rather than a
-#: mislabel; and ``drivers.ur`` reaches up to build a policy.
+#: The rest are cuts this lane has not made. The shared ``simulation.recording``
+#: read of ``dataset_recorder`` is the roadmap's own placement of the recording
+#: session in ``app`` (strands-labs/robots#3818), so it is debt rather than a
+#: mislabel - the three backends now reach it through that one probe rather than
+#: each holding their own; and ``drivers.ur`` reaches up to build a policy.
 KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.__main__", "strands_robots.dashboard.cli"),
     ("strands_robots._hitl_audit", "strands_robots.mesh.audit"),
     ("strands_robots.drivers.ur", "strands_robots.policies"),
-    ("strands_robots.simulation.isaac.recording", "strands_robots.dataset_recorder"),
-    ("strands_robots.simulation.mujoco.recording", "strands_robots.dataset_recorder"),
-    ("strands_robots.simulation.newton.recording", "strands_robots.dataset_recorder"),
+    ("strands_robots.simulation.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.teleop_mixin", "strands_robots.teleoperator"),
 )
 

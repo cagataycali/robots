@@ -446,6 +446,12 @@ class TestTheContract:
                 frozenset(),
                 frozenset({"drivers|mesh", "tools"}),
             ),
+            (
+                "strands_robots.simulation.recording",
+                "sim|policies",
+                frozenset({"strands_robots.dataset_recorder"}),
+                frozenset({"sim|policies", "tools"}),
+            ),
         ],
     )
     def test_a_contract_sits_under_every_layer_that_reads_it(
@@ -498,6 +504,15 @@ class TestTheContract:
         them the ``tools`` caller is what makes the placement load-bearing:
         moving one back up would restore the inversion, and the equality above
         would refuse it.
+
+        ``simulation.recording`` is the row where the declared deferral is the
+        point. The recording lifecycle every backend mixes in sits in
+        ``sim|policies``; the recorder session it arms sits one layer up in
+        ``app``, which the roadmap places there, so the class is resolved inside
+        the call. Each of the three backends used to defer that read itself, and
+        an inversion repeated per backend is three places to keep a diagnosis in
+        step: the probe is shared here, so the whole ``sim|policies -> app``
+        inversion is this one edge.
         """
         assert name in graph.modules
         assert mod.LAYER_NAMES[mod.layer_of(name)] == layer

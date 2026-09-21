@@ -207,36 +207,11 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         if error := self._validate_recording_start_rate(fps, "start_recording"):
             return error
 
-        _DatasetRecorder: Any = None
-        unavailable: str | None = None
-        try:
-            from strands_robots.dataset_recorder import DatasetRecorder as _DatasetRecorder
-            from strands_robots.dataset_recorder import lerobot_dataset_import_error
-
-            unavailable = lerobot_dataset_import_error()
-        except ImportError as exc:
-            # strands_robots.dataset_recorder itself did not import (a partial or
-            # drifted install); report that rather than blaming the lerobot extra.
-            unavailable = f"strands_robots.dataset_recorder is unavailable ({exc})."
-        if unavailable is None and _DatasetRecorder is None:
-            unavailable = "strands_robots.dataset_recorder did not provide DatasetRecorder."
-
-        if unavailable is not None:
-            return {
-                "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            "start_recording produces a LeRobotDataset (parquet + video), which "
-                            "needs lerobot's dataset stack:\n"
-                            "\n"
-                            f"  {unavailable}\n"
-                            "\n"
-                            "For plain MP4 video, pass video={'path': ...} to run_policy instead."
-                        )
-                    }
-                ],
-            }
+        _DatasetRecorder, refusal = self._dataset_recorder_or_refusal(
+            "For plain MP4 video, pass video={'path': ...} to run_policy instead.",
+        )
+        if refusal is not None:
+            return refusal
 
         # A dataset column is named by camera_schema_key, which collapses a
         # camera's "/" namespace separator to "__" because a LeRobot feature name
