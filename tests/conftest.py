@@ -178,3 +178,42 @@ def _mesh_rate_limit_history_is_left_empty() -> Iterator[None]:
     module = sys.modules.get("strands_robots.tools.robot_mesh")
     if module is not None:
         module._reset_rate_limits()
+
+
+@pytest.fixture(autouse=True)
+def _optional_module_memo_holds_no_stand_in() -> Iterator[None]:
+    """Leave no stand-in module memoised once a test is over.
+
+    ``strands_robots.utils.require_optional`` memoises every optional
+    dependency it resolves in a process-global dict (``_lazy_modules``), and a
+    test stands in for a module nothing installs by rebinding ``sys.modules``.
+    ``monkeypatch.setitem`` restores the binding, but the memo is a second one
+    it cannot reach: the stand-in the package cached during the test is then
+    handed to every later caller in the process, whose production code calls a
+    fake the fixture already took away.
+
+    Measured with ``tests/policies/moveit2/test_zmq_sidecar.py`` running ahead
+    of the groot client files (the ordering ``--dist loadfile`` produces and a
+    serial run does not): that file's ZMQ stand-in carries
+    ``Context = SimpleNamespace(instance=...)``, the memo kept it, and 42 cells
+    across three files died in ``Gr00tInferenceClient.__init__`` /
+    ``MoveIt2Client`` on ``TypeError: 'types.SimpleNamespace' object is not
+    callable``.
+
+    Restoring here rather than in each caller makes it a property of the
+    session: the memo a test fills is emptied by the session, not by every
+    author of a stand-in remembering to. Entries a test installs *itself*
+    (``monkeypatch.setitem(utils._lazy_modules, ...)`` - the seam that injects a
+    fake into the package directly) are monkeypatch's to undo and are left
+    alone; this restores what the package cached on its own behalf.
+
+    The module is looked up rather than imported so a session that never
+    touches it does not pull it in.
+    """
+    memo = getattr(sys.modules.get("strands_robots.utils"), "_lazy_modules", None)
+    before = dict(memo) if memo is not None else {}
+    yield
+    memo = getattr(sys.modules.get("strands_robots.utils"), "_lazy_modules", None)
+    if memo is not None and memo != before:
+        memo.clear()
+        memo.update(before)
