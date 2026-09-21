@@ -19,6 +19,8 @@ be composed is refused by name rather than honoured as something narrower, since
 a zero or a dropped component is indistinguishable from a real reading.
 """
 
+import tracemalloc
+
 import numpy as np
 import pytest
 
@@ -97,3 +99,23 @@ def test_a_slot_the_chunk_does_not_carry_is_refused_with_its_width():
     policy = _policy(action_mapping={"action.gripper[3]": "6"})
     with pytest.raises(ValueError, match="the model emitted 1 column"):
         policy._unpack_service_actions({"action.gripper": np.zeros((1, 4, 1), np.float32)})
+
+
+def test_an_absurd_slot_index_is_refused_without_an_allocation_its_own_size():
+    """The slot index is caller input - ``run_policy`` forwards a ``policy_config``
+    verbatim - and a gap refusal that materialised ``range(width)`` sized its
+    allocation by the largest index named rather than by the mapping, so
+    ``single_arm[10**12]`` exhausted memory on the inference path before the
+    refusal could name it. The check is by count, and the message previews a
+    few of the gaps rather than listing every one."""
+    policy = _policy(observation_mapping={"1": "state.single_arm[0]", "2": "state.single_arm[1000000]"})
+
+    tracemalloc.start()
+    try:
+        with pytest.raises(ValueError, match=r"leave \[1, 2, 3, 4, 5, 6, 7, 8\] and 999991 more unfilled"):
+            policy._prepare_observation(_observation(), "pick up the cube")
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert peak < 1 << 20, f"a gap refusal allocated {peak} bytes for a mapping of two entries"

@@ -19,6 +19,7 @@ mappings.  No positional guessing.  One step in, one step out.
 """
 
 import importlib.util
+import itertools
 import logging
 import os
 import re
@@ -254,6 +255,11 @@ class ActionMapping:
 #: mapping, in both directions and in either inference mode, and it does not
 #: depend on dict ordering the way a bare repeat would.
 _SLOT_RE = re.compile(r"^(?P<key>[^\[\]]+)\[(?P<slot>\d+)\]\Z")
+
+#: How many unfilled slots a gap refusal lists before summarising the rest. The
+#: index is caller input with no upper bound, so the list is capped rather than
+#: sized by the largest index named - see :func:`_state_vector_from_slots`.
+_MISSING_SLOT_PREVIEW = 8
 
 
 def _split_slot(key: str, *, what: str) -> tuple[str, int | None]:
@@ -608,12 +614,21 @@ def _state_vector_from_slots(
             )
         by_slot[slot] = robot_key
 
+    # The slots cover ``0..width-1`` exactly when there are ``width`` of them,
+    # since a repeat was refused above. Decide that by count: the index is
+    # caller input with no upper bound, and materialising ``range(width)`` to
+    # subtract the mapped slots would size an allocation by the largest index
+    # named rather than by the mapping - ``single_arm[10**12]`` would exhaust
+    # memory here before the refusal below could name it. Only the preview in
+    # the message walks the range, and it stops after a few gaps.
     width = max(by_slot) + 1
-    missing = sorted(set(range(width)) - set(by_slot))
-    if missing:
+    if len(by_slot) != width:
+        gaps = width - len(by_slot)
+        preview = list(itertools.islice((i for i in range(width) if i not in by_slot), _MISSING_SLOT_PREVIEW))
+        shown = str(preview) if gaps <= _MISSING_SLOT_PREVIEW else f"{preview} and {gaps - len(preview)} more"
         raise ValueError(
             f"Observation mapping: model state key '{model_key}' is mapped by slots "
-            f"{sorted(by_slot)}, which leave {missing} unfilled. A composed vector has no gaps - "
+            f"{sorted(by_slot)}, which leave {shown} unfilled. A composed vector has no gaps - "
             "every slot below the highest one mapped must name a reading, or the readings above "
             "the gap reach the model in the wrong component."
         )
