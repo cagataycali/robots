@@ -417,6 +417,12 @@ class TestTheContract:
                 frozenset({"sim|policies"}),
             ),
             (
+                "strands_robots.dataset_transfer",
+                "core",
+                frozenset(),
+                frozenset({"sim|policies", "app"}),
+            ),
+            (
                 "strands_robots.teleop_mixin",
                 "drivers|mesh",
                 frozenset({"strands_robots.teleoperator"}),
@@ -461,21 +467,25 @@ class TestTheContract:
         because that module imports lerobot, and promoting it to module scope has
         to fail here.
 
-        The three ``dataset`` rows are one concern read three ways: what a
+        The four ``dataset`` rows are one concern touched four ways: what a
         dataset recorded (``dataset_metadata``, the ``meta/episodes`` parquet the
         sim facade, the ``verify-dataset`` checker and the episode judge each
         certify a run with), which directory a ``repo_id`` names and where an
-        episode's frames start (``dataset_source``), and the frames themselves
-        streamed back out of it (``streaming_dataset``). Each lived with the
-        writer in ``app``, so a recording backend depended on a CLI, the rollout
-        runner deferred an import of the recorder to find out where its own
-        recording went, and the sim facade's ``stream_dataset`` reached up for a
-        module no ``app`` module reads. Reading a dataset is not writing one:
-        the reads sit in ``core`` under every layer that performs one, while the
-        recorder session stays in ``app``. One caller layer is enough to justify
-        a placement - ``streaming_dataset`` has exactly the sim facade - and the
-        package root is not a layer (``layer_of`` answers ``None`` for it), so
-        its ``TYPE_CHECKING`` re-export of a public name is not a caller here.
+        episode's frames start (``dataset_source``), the frames themselves
+        streamed back out of it (``streaming_dataset``), and a finalized
+        directory uploaded to a storage bucket (``dataset_transfer``, a path plus
+        a bucket name handed to the ``hf`` CLI). Each lived with the writer in
+        ``app``, so a recording backend depended on a CLI, the rollout runner
+        deferred an import of the recorder to find out where its own recording
+        went, the sim facade's ``stream_dataset`` reached up for a module no
+        ``app`` module reads, and the sim recording mixin deferred an import of
+        the recorder module to upload a directory the recorder never saw.
+        Neither reading a dataset nor shipping one is writing one: both sit in
+        ``core`` under every layer that performs them, while the recorder session
+        stays in ``app``. One caller layer is enough to justify a placement -
+        ``streaming_dataset`` has exactly the sim facade - and the package root is
+        not a layer (``layer_of`` answers ``None`` for it), so its
+        ``TYPE_CHECKING`` re-export of a public name is not a caller here.
 
         ``rtps.participant`` is the DDS mechanics two surfaces share: the
         ``use_rtps`` tool and the ``RtpsRobot`` that drives a ROS 2 base over the

@@ -62,7 +62,12 @@ PACKAGE = "strands_robots"
 #: recorded dataset, not a fourth way to write one: it opens a dataset and
 #: yields frames, its own imports are those two modules and ``utils``, no ``app``
 #: module reads it, and its one consumer inside the package is the sim facade's
-#: ``stream_dataset`` a layer below; and
+#: ``stream_dataset`` a layer below, and ``dataset_transfer`` beside all three
+#: because uploading a finished dataset directory is neither a read of one nor a
+#: way to write one: it takes a path and a bucket name, shells out to the ``hf``
+#: CLI, holds no recorder state, and both its callers - the recorder's
+#: ``sync_to_bucket`` delegate in ``app`` and the idle-path bucket sync in the
+#: sim recording mixin - are above it; and
 #: ``teleop_mixin`` sits with ``drivers|mesh`` because it is an input-device
 #: concern shared by three hosts in three layers - the hardware ``Robot``, the
 #: MuJoCo ``Simulation`` and the Device Connect sim driver - so it belongs under
@@ -84,6 +89,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "bus_access",
             "dataset_metadata",
             "dataset_source",
+            "dataset_transfer",
             "episode_labels",
             "locomotion_envelope",
             "recording_errors",
@@ -152,7 +158,6 @@ KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.simulation.isaac.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.mujoco.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.simulation.newton.recording", "strands_robots.dataset_recorder"),
-    ("strands_robots.simulation.recording", "strands_robots.dataset_recorder"),
     ("strands_robots.teleop_mixin", "strands_robots.teleoperator"),
 )
 

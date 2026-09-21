@@ -31,7 +31,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-from strands_robots import dataset_recorder
+from strands_robots import dataset_transfer
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
@@ -39,7 +39,7 @@ _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
 def _bucket_cli_floor_spec() -> str:
     """The requirement string the library's bucket-sync guidance must quote."""
-    return dataset_recorder._HF_BUCKET_CLI_MIN_SPEC
+    return dataset_transfer._HF_BUCKET_CLI_MIN_SPEC
 
 
 def _extras() -> dict[str, list[str]]:
@@ -272,6 +272,7 @@ def test_no_userfacing_file_invokes_removed_lerobot_scripts_train() -> None:
 _STREAMED_TRAINING = _REPO_ROOT / "docs" / "data" / "reading-back.md"  # the streamed-training page (was README)
 _BUCKET_GUIDANCE = _REPO_ROOT / "docs" / "data" / "dataset-recorder.md"  # the sync_to_bucket page (was README)
 _DATASET_RECORDER = _REPO_ROOT / "strands_robots" / "dataset_recorder.py"
+_DATASET_TRANSFER = _REPO_ROOT / "strands_robots" / "dataset_transfer.py"  # the bucket-sync source
 
 
 def test_readme_streamed_training_invocation_is_current() -> None:
@@ -294,7 +295,7 @@ def test_hf_cli_install_guidance_pins_the_bucket_cli_floor() -> None:
     # without the `buckets`/`sync` subcommands; every install line next to
     # `sync_to_bucket` guidance must name the floor that ships them.
     floor = _bucket_cli_floor_spec()
-    for path in (_BUCKET_GUIDANCE, _DATASET_RECORDER):
+    for path in (_BUCKET_GUIDANCE, _DATASET_TRANSFER):
         text = path.read_text()
         assert "pip install -U huggingface_hub" not in text, (
             f"{path.name} recommends an unversioned huggingface_hub install; "
@@ -304,11 +305,11 @@ def test_hf_cli_install_guidance_pins_the_bucket_cli_floor() -> None:
 
 
 def test_shard_size_claim_names_both_lerobot_defaults() -> None:
-    text = _DATASET_RECORDER.read_text()
+    text = _DATASET_TRANSFER.read_text()
     # lerobot defaults: 100 MB data parquet / 200 MB video MP4 - "100 MB
     # default" alone understates the video shard size.
     assert "100 MB default" not in text, (
-        "dataset_recorder.py understates the shard defaults; lerobot uses 100 MB data parquet / 200 MB video MP4"
+        f"{_DATASET_TRANSFER.name} understates the shard defaults; lerobot uses 100 MB data parquet / 200 MB video MP4"
     )
     assert "100 MB data parquet / 200 MB video" in text
 
@@ -366,7 +367,7 @@ def test_wbc_extra_huggingface_hub_floor_ships_the_bucket_cli() -> None:
     # floor raise falsifies the substring while the property it stands for -
     # "the resolved `hf` CLI carries the buckets/sync subcommands" - still holds.
     lower = min(Version(s.version) for s in Requirement(spec).specifier if s.operator == ">=")
-    minimum = Version(".".join(str(part) for part in dataset_recorder._HF_BUCKET_CLI_MIN_VERSION))
+    minimum = Version(".".join(str(part) for part in dataset_transfer._HF_BUCKET_CLI_MIN_VERSION))
     assert lower >= minimum, (
         f"[wbc] huggingface_hub floor must be >= {minimum} (the `hf buckets`/`hf sync` "
         f"CLI subcommands the bucket-sync docs instruct first ship there); got {spec!r}"

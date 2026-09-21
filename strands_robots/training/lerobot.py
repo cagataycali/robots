@@ -491,7 +491,7 @@ def _format_version_major(version: str) -> int | None:
     Returns ``None`` for anything this cannot read a leading major out of, so an
     unrecognized version string fails OPEN (no problem reported) rather than
     blocking a possibly-loadable dataset on a cosmetic format - the same posture
-    as :func:`~strands_robots.dataset_recorder._huggingface_hub_version_error`.
+    as :func:`~strands_robots.dataset_transfer._huggingface_hub_version_error`.
     """
     match = re.match(r"v?(\d+)", version.strip())
     return int(match.group(1)) if match else None

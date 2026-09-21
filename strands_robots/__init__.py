@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 # the lazy attributes below (the runtime __getattr__ resolves them to Any
 # from the static analyzer's perspective). PEP 562.
 if TYPE_CHECKING:
-    from strands_robots.dataset_recorder import sync_dataset_to_bucket
+    from strands_robots.dataset_transfer import sync_dataset_to_bucket
     from strands_robots.device_connect import (
         ReachyMiniDriver,
         RobotDeviceDriver,
@@ -159,9 +159,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # Simulator-free dataset read-back: thin alias for StreamingDatasetReader.open.
     # Lazy so training/eval scripts pay the torch/lerobot import only on first call.
     "stream_dataset": ("strands_robots.streaming_dataset", "stream_dataset"),
-    # Lifecycle-independent bucket sync for on-disk LeRobotDataset dirs. Lazy
-    # because strands_robots.dataset_recorder imports numpy at module level.
-    "sync_dataset_to_bucket": ("strands_robots.dataset_recorder", "sync_dataset_to_bucket"),
+    # Lifecycle-independent bucket sync for on-disk LeRobotDataset dirs.
+    "sync_dataset_to_bucket": ("strands_robots.dataset_transfer", "sync_dataset_to_bucket"),
 }
 
 __all__ = [

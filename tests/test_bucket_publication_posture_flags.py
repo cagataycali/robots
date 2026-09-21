@@ -14,8 +14,11 @@ spelling an operator reaches for when opting out - appended ``--delete`` to
 non-boolean takes the other branch, so ``private=0`` dropped ``--private`` and
 created the bucket public. Both returned ``status="success"``.
 
-The module is imported under an alias so a test can reach the private
-``_hf_executable`` / ``_huggingface_hub_version_error`` probes it monkeypatches.
+The surface spans two modules - the recorder session that owns ``push_to_hub``
+and the ``sync_to_bucket`` delegate, and the ``dataset_transfer`` module under it
+that owns ``sync_dataset_to_bucket`` - so the structural sweep reads both. Each
+is imported under an alias so a test can reach the private ``_hf_executable`` /
+``_huggingface_hub_version_error`` probes it monkeypatches.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from typing import Any
 import pytest
 
 from strands_robots import dataset_recorder as recorder_mod
+from strands_robots import dataset_transfer as transfer_mod
 from strands_robots.utils import boolean_flag_error
 
 #: Flags on this module's publication surface. Each selects a posture on a
@@ -90,8 +94,8 @@ def wire(monkeypatch: pytest.MonkeyPatch) -> _RecordingSubprocess:
     import subprocess
 
     monkeypatch.setattr(subprocess, "run", rec.run)
-    monkeypatch.setattr(recorder_mod, "_hf_executable", lambda: "/usr/bin/hf")
-    monkeypatch.setattr(recorder_mod, "_huggingface_hub_version_error", lambda: None)
+    monkeypatch.setattr(transfer_mod, "_hf_executable", lambda: "/usr/bin/hf")
+    monkeypatch.setattr(transfer_mod, "_huggingface_hub_version_error", lambda: None)
     return rec
 
 
@@ -104,7 +108,7 @@ def finalized(tmp_path: pathlib.Path) -> pathlib.Path:
 
 def _sync(root: pathlib.Path, **kwargs: Any) -> dict[str, Any]:
     """Funnel so deliberately off-type flags need no per-call suppression."""
-    return recorder_mod.sync_dataset_to_bucket(root, "acme/robotdata", run_id="run1", **kwargs)
+    return transfer_mod.sync_dataset_to_bucket(root, "acme/robotdata", run_id="run1", **kwargs)
 
 
 class _FakeHubDataset:
@@ -229,7 +233,7 @@ class TestTheRefusalPrecedesEveryProbeAndSideEffect:
         def fatal() -> str:
             raise AssertionError("the refused call probed for the hf CLI")
 
-        monkeypatch.setattr(recorder_mod, "_hf_executable", fatal)
+        monkeypatch.setattr(transfer_mod, "_hf_executable", fatal)
         result = _sync(finalized, **{flag: "false"})
         assert result["status"] == "error"
         assert flag in result["message"]
@@ -238,7 +242,7 @@ class TestTheRefusalPrecedesEveryProbeAndSideEffect:
         self, monkeypatch: pytest.MonkeyPatch, finalized: pathlib.Path
     ) -> None:
         """The same mistake reports identically whether or not ``hf`` exists."""
-        monkeypatch.setattr(recorder_mod, "_hf_executable", lambda: None)
+        monkeypatch.setattr(transfer_mod, "_hf_executable", lambda: None)
         result = _sync(finalized, delete="false")
         assert "delete" in result["message"]
         assert "hf` CLI not found" not in result["message"]
@@ -345,12 +349,18 @@ class TestAUsablePostureIsUnchanged:
 # Structural sweep: no publication-posture flag may reach the wire unchecked.
 # ---------------------------------------------------------------------------
 
-_MODULE_PATH = pathlib.Path(inspect.getfile(recorder_mod))
+#: Every module the publication surface spans. A flag is only checked here if
+#: the sweep reads the file that declares it, so the recorder session and the
+#: transfer module below it are both read; ``source`` overrides both, which is
+#: what the planted-surface pin uses.
+_MODULE_PATHS = (pathlib.Path(inspect.getfile(recorder_mod)), pathlib.Path(inspect.getfile(transfer_mod)))
 _DOMAIN = "boolean_flag_error"
 
 
-def _module_tree(source: str | None = None) -> ast.Module:
-    return ast.parse(source if source is not None else _MODULE_PATH.read_text())
+def _module_trees(source: str | None = None) -> tuple[ast.Module, ...]:
+    if source is not None:
+        return (ast.parse(source),)
+    return tuple(ast.parse(path.read_text()) for path in _MODULE_PATHS)
 
 
 def _boolean_flags(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
@@ -400,14 +410,15 @@ def _forwarded(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
 def _surfaces(source: str | None = None) -> dict[str, tuple[list[str], set[str], set[str]]]:
     """Public surfaces declaring a publication flag, with their verdicts."""
     found: dict[str, tuple[list[str], set[str], set[str]]] = {}
-    for node in ast.walk(_module_tree(source)):
-        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            continue
-        if node.name.startswith("_"):
-            continue
-        flags = _boolean_flags(node)
-        if flags:
-            found[node.name] = (flags, _guarded(node), _forwarded(node))
+    for tree in _module_trees(source):
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            if node.name.startswith("_"):
+                continue
+            flags = _boolean_flags(node)
+            if flags:
+                found[node.name] = (flags, _guarded(node), _forwarded(node))
     return found
 
 
@@ -433,7 +444,7 @@ class TestEveryPublicationFlagIsCheckedOrForwarded:
 
     def test_the_sweep_detects_a_planted_unchecked_surface(self) -> None:
         """A scanner that silently matched nothing would look like a clean module."""
-        planted = _MODULE_PATH.read_text() + (
+        planted = _MODULE_PATHS[0].read_text() + (
             "\n\ndef publish_somewhere(target: str, *, delete: bool = False) -> None:\n"
             '    """Planted surface that reads a posture flag with no domain."""\n'
             "    if delete:\n"

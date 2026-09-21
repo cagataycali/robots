@@ -20,7 +20,7 @@ the capability. That made three claims wrong at once:
   documented minimum.
 
 Every assertion below reads the floor from
-``dataset_recorder._HF_BUCKET_CLI_MIN_VERSION`` rather than restating it, so the
+``dataset_transfer._HF_BUCKET_CLI_MIN_VERSION`` rather than restating it, so the
 gate, the messages, the docs and the packaging pin cannot drift apart again.
 """
 
@@ -36,14 +36,14 @@ import pytest
 from packaging.requirements import Requirement
 from packaging.version import Version
 
-from strands_robots import dataset_recorder
+from strands_robots import dataset_transfer
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 _BUCKET_GUIDANCE = _REPO_ROOT / "docs" / "data" / "dataset-recorder.md"  # where sync_to_bucket is documented
-_RECORDER_SRC = Path(dataset_recorder.__file__)
+_TRANSFER_SRC = Path(dataset_transfer.__file__)
 
-_FLOOR = Version(".".join(str(part) for part in dataset_recorder._HF_BUCKET_CLI_MIN_VERSION))
+_FLOOR = Version(".".join(str(part) for part in dataset_transfer._HF_BUCKET_CLI_MIN_VERSION))
 
 # Releases whose `hf` entry point exists but carries no `buckets`/`sync`
 # subcommand. Verified against the published wheels: `huggingface_hub/cli/
@@ -82,7 +82,7 @@ class TestTheGateRefusesEveryReleaseWithoutTheSubcommands:
         import huggingface_hub
 
         monkeypatch.setattr(huggingface_hub, "__version__", version)
-        problem = dataset_recorder._huggingface_hub_version_error()
+        problem = dataset_transfer._huggingface_hub_version_error()
         assert problem is not None, f"huggingface_hub {version} has no `hf buckets`/`hf sync` but the gate accepted it"
         assert version in problem, "the refusal must quote the installed version"
 
@@ -91,7 +91,7 @@ class TestTheGateRefusesEveryReleaseWithoutTheSubcommands:
         import huggingface_hub
 
         monkeypatch.setattr(huggingface_hub, "__version__", version)
-        assert dataset_recorder._huggingface_hub_version_error() is None, (
+        assert dataset_transfer._huggingface_hub_version_error() is None, (
             f"huggingface_hub {version} ships the subcommands and must not be refused"
         )
 
@@ -99,11 +99,11 @@ class TestTheGateRefusesEveryReleaseWithoutTheSubcommands:
         """The refused/accepted split falls exactly at the declared floor."""
         import huggingface_hub
 
-        major, minor = dataset_recorder._HF_BUCKET_CLI_MIN_VERSION
+        major, minor = dataset_transfer._HF_BUCKET_CLI_MIN_VERSION
         monkeypatch.setattr(huggingface_hub, "__version__", f"{major}.{minor}.0")
-        assert dataset_recorder._huggingface_hub_version_error() is None
+        assert dataset_transfer._huggingface_hub_version_error() is None
         monkeypatch.setattr(huggingface_hub, "__version__", f"{major}.{minor - 1}.99")
-        assert dataset_recorder._huggingface_hub_version_error() is not None
+        assert dataset_transfer._huggingface_hub_version_error() is not None
 
 
 class TestTheUpgradeInstructionNamesAReleaseThatShipsThem:
@@ -113,7 +113,7 @@ class TestTheUpgradeInstructionNamesAReleaseThatShipsThem:
         import huggingface_hub
 
         monkeypatch.setattr(huggingface_hub, "__version__", "1.4.1")
-        problem = dataset_recorder._huggingface_hub_version_error()
+        problem = dataset_transfer._huggingface_hub_version_error()
         assert problem is not None
         floors = _install_hint_floors(problem)
         assert floors, f"the upgrade instruction names no huggingface_hub floor: {problem!r}"
@@ -123,8 +123,8 @@ class TestTheUpgradeInstructionNamesAReleaseThatShipsThem:
         assert "pip install -U" in problem, "the remedy must be a runnable install command"
 
     def test_the_cli_not_found_message_names_the_same_floor(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(dataset_recorder, "_hf_executable", lambda: None)
-        result = dataset_recorder.sync_dataset_to_bucket(root=_dataset_root(tmp_path), bucket="my-org/robot-fave")
+        monkeypatch.setattr(dataset_transfer, "_hf_executable", lambda: None)
+        result = dataset_transfer.sync_dataset_to_bucket(root=_dataset_root(tmp_path), bucket="my-org/robot-fave")
         assert result["status"] == "error"
         floors = _install_hint_floors(result["message"])
         assert floors and all(f >= _FLOOR for f in floors), (
@@ -138,14 +138,14 @@ class TestTheRefusalPrecedesTheSubprocess:
     def test_no_subprocess_runs_for_a_release_without_the_subcommands(self, tmp_path, monkeypatch):
         import huggingface_hub
 
-        monkeypatch.setattr(dataset_recorder, "_hf_executable", lambda: "hf")
+        monkeypatch.setattr(dataset_transfer, "_hf_executable", lambda: "hf")
         monkeypatch.setattr(huggingface_hub, "__version__", "1.4.1")
 
         def _boom(*_args, **_kwargs):
             raise AssertionError("the CLI must not be spawned when it cannot serve the request")
 
         monkeypatch.setattr(subprocess, "run", _boom)
-        result = dataset_recorder.sync_dataset_to_bucket(root=_dataset_root(tmp_path), bucket="my-org/robot-fave")
+        result = dataset_transfer.sync_dataset_to_bucket(root=_dataset_root(tmp_path), bucket="my-org/robot-fave")
         assert result["status"] == "error"
         assert "No such command" not in result["message"], (
             "the caller got raw CLI usage noise instead of an upgrade instruction"
@@ -156,7 +156,7 @@ class TestEveryDeclaredFloorAgrees:
     """Guidance, packaging and the gate name one version."""
 
     @pytest.mark.parametrize(
-        "path", [_BUCKET_GUIDANCE, _RECORDER_SRC, _PYPROJECT], ids=["docs", "dataset_recorder", "pyproject"]
+        "path", [_BUCKET_GUIDANCE, _TRANSFER_SRC, _PYPROJECT], ids=["docs", "dataset_transfer", "pyproject"]
     )
     def test_no_documented_floor_is_below_the_capability(self, path):
         floors = _install_hint_floors(path.read_text())
@@ -219,8 +219,8 @@ class TestTheGateStillFailsOpen:
         import huggingface_hub
 
         monkeypatch.setattr(huggingface_hub, "__version__", "not-a-version")
-        assert dataset_recorder._huggingface_hub_version_error() is None
+        assert dataset_transfer._huggingface_hub_version_error() is None
 
     def test_an_unimportable_hub_is_not_refused(self, monkeypatch):
         monkeypatch.setitem(__import__("sys").modules, "huggingface_hub", None)
-        assert dataset_recorder._huggingface_hub_version_error() is None
+        assert dataset_transfer._huggingface_hub_version_error() is None

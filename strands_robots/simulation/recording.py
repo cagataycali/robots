@@ -34,6 +34,7 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.dataset_transfer import sync_dataset_to_bucket
 from strands_robots.utils import (
     boolean_flag_error,
     camera_schema_key,
@@ -1635,11 +1636,6 @@ class DatasetRecordingMixin:
                     }
                 ],
             }
-
-        # Lazy import: keeps this engine-agnostic mixin free of the
-        # dataset_recorder import (numpy) at module load, matching the lazy
-        # DatasetRecorder import in each backend's start_recording.
-        from strands_robots.dataset_recorder import sync_dataset_to_bucket
 
         # Every no-bucket combination returned above, so bucket is set here.
         assert bucket is not None

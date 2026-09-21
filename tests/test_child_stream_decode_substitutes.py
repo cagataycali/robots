@@ -19,7 +19,7 @@ The package had already decided that, twice, for the *same* bytes:
 The sites that read a child through a *pipe* in text mode did not, and one of
 them loses something a caller was promised:
 
-* :func:`~strands_robots.dataset_recorder.sync_dataset_to_bucket` documents
+* :func:`~strands_robots.dataset_transfer.sync_dataset_to_bucket` documents
   "Never raises on ``hf`` failure; errors are surfaced in the result dict", and
   ``stop_recording`` calls it unguarded on that promise. The decode happens
   after ``hf sync`` has already run, so an undecodable byte in the CLI's own
@@ -43,7 +43,7 @@ from typing import Any
 import pytest
 
 import strands_robots
-from strands_robots import dataset_recorder as recorder_mod
+from strands_robots import dataset_transfer as transfer_mod
 
 PACKAGE = pathlib.Path(strands_robots.__file__).parent
 
@@ -148,8 +148,8 @@ class TestBucketSyncKeepsItsVerdict:
             return real_run(_child_argv(stdout=UNDECODABLE_CLI_LINE), **kwargs)
 
         monkeypatch.setattr(subprocess, "run", run)
-        monkeypatch.setattr(recorder_mod, "_hf_executable", lambda: "/usr/bin/hf")
-        monkeypatch.setattr(recorder_mod, "_huggingface_hub_version_error", lambda: None)
+        monkeypatch.setattr(transfer_mod, "_hf_executable", lambda: "/usr/bin/hf")
+        monkeypatch.setattr(transfer_mod, "_huggingface_hub_version_error", lambda: None)
         return recorded
 
     @pytest.fixture
@@ -162,7 +162,7 @@ class TestBucketSyncKeepsItsVerdict:
     def test_an_undecodable_cli_message_is_reported_not_raised(
         self, wire: list[list[str]], finalized: pathlib.Path, create: bool
     ) -> None:
-        result = recorder_mod.sync_dataset_to_bucket(finalized, "acme/robotdata", run_id="run1", create=create)
+        result = transfer_mod.sync_dataset_to_bucket(finalized, "acme/robotdata", run_id="run1", create=create)
         assert result["status"] == "success", result
         assert result["bucket_uri"] == "hf://buckets/acme/robotdata/run1"
         assert wire, "no hf argv reached the wire"
@@ -176,10 +176,10 @@ class TestBucketSyncKeepsItsVerdict:
             return real_run(_child_argv(stderr=b"quota exceeded for \xffacme/robotdata\n", returncode=1), **kwargs)
 
         monkeypatch.setattr(subprocess, "run", run)
-        monkeypatch.setattr(recorder_mod, "_hf_executable", lambda: "/usr/bin/hf")
-        monkeypatch.setattr(recorder_mod, "_huggingface_hub_version_error", lambda: None)
+        monkeypatch.setattr(transfer_mod, "_hf_executable", lambda: "/usr/bin/hf")
+        monkeypatch.setattr(transfer_mod, "_huggingface_hub_version_error", lambda: None)
 
-        result = recorder_mod.sync_dataset_to_bucket(finalized, "acme/robotdata", run_id="run1", create=False)
+        result = transfer_mod.sync_dataset_to_bucket(finalized, "acme/robotdata", run_id="run1", create=False)
         assert result["status"] == "error"
         # The report keeps the diagnosis on both sides of the byte.
         assert "quota exceeded for" in result["message"]
@@ -195,9 +195,9 @@ class TestBucketSyncKeepsItsVerdict:
             return real_run(_child_argv(stderr=b"quota exceeded for acme/robotdata\n", returncode=1), **kwargs)
 
         monkeypatch.setattr(subprocess, "run", run)
-        monkeypatch.setattr(recorder_mod, "_hf_executable", lambda: "/usr/bin/hf")
-        monkeypatch.setattr(recorder_mod, "_huggingface_hub_version_error", lambda: None)
+        monkeypatch.setattr(transfer_mod, "_hf_executable", lambda: "/usr/bin/hf")
+        monkeypatch.setattr(transfer_mod, "_huggingface_hub_version_error", lambda: None)
 
-        result = recorder_mod.sync_dataset_to_bucket(finalized, "acme/robotdata", run_id="run1", create=False)
+        result = transfer_mod.sync_dataset_to_bucket(finalized, "acme/robotdata", run_id="run1", create=False)
         assert result["message"] == "quota exceeded for acme/robotdata"
         assert REPLACEMENT not in result["message"]

@@ -208,7 +208,7 @@ class TestStopRecordingIdleKwargs:
     def test_idle_bucket_syncs_last_finalized_dataset(self, recording_sim, monkeypatch):
         # The daily-sync workflow: session already closed, bucket= re-syncs the
         # dataset stashed as last_dataset_root at start_recording.
-        from strands_robots import dataset_recorder as dr
+        from strands_robots.simulation import recording as recording_mod
 
         recording_sim._world._backend_state["last_dataset_root"] = "/tmp/last_ds"
         seen = {}
@@ -217,7 +217,7 @@ class TestStopRecordingIdleKwargs:
             seen["args"] = (local_root, bucket, run_id)
             return {"status": "success", "bucket_uri": f"hf://buckets/{bucket}/run7"}
 
-        monkeypatch.setattr(dr, "sync_dataset_to_bucket", _fake_sync)
+        monkeypatch.setattr(recording_mod, "sync_dataset_to_bucket", _fake_sync)
 
         result = recording_sim.stop_recording(bucket="org/buck", run_id="run7")
         assert result["status"] == "success"
@@ -230,11 +230,11 @@ class TestStopRecordingIdleKwargs:
         # Unlike the open-session path (where the dataset was still saved), the
         # ONLY requested effect on the idle path is the sync - a failed sync
         # fails the call.
-        from strands_robots import dataset_recorder as dr
+        from strands_robots.simulation import recording as recording_mod
 
         recording_sim._world._backend_state["last_dataset_root"] = "/tmp/last_ds"
         monkeypatch.setattr(
-            dr,
+            recording_mod,
             "sync_dataset_to_bucket",
             lambda *a, **k: {"status": "error", "message": "bucket unreachable"},
         )
@@ -261,7 +261,7 @@ class TestStopRecordingIdleKwargs:
     def test_idle_bucket_after_real_stop_cycle_resyncs(self, recording_sim, monkeypatch):
         # Full repro from #1498: record -> stop (session closed) -> explicit
         # stop_recording(bucket=...) must sync, not silently succeed.
-        from strands_robots import dataset_recorder as dr
+        from strands_robots.simulation import recording as recording_mod
 
         rec = _FakeRecorder()
         _arm(recording_sim, rec)
@@ -276,7 +276,7 @@ class TestStopRecordingIdleKwargs:
             synced["args"] = (root, bucket)
             return {"status": "success", "bucket_uri": f"hf://buckets/{bucket}/x"}
 
-        monkeypatch.setattr(dr, "sync_dataset_to_bucket", _fake_sync)
+        monkeypatch.setattr(recording_mod, "sync_dataset_to_bucket", _fake_sync)
         second = recording_sim.stop_recording(bucket="org/buck")
         assert second["status"] == "success"
         assert synced["args"] == (rec.root, "org/buck")

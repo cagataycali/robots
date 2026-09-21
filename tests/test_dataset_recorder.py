@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from strands_robots import dataset_transfer as dt
 from strands_robots.dataset_recorder import (
     DatasetRecorder,
     unrecordable_camera_columns_error,
@@ -1731,10 +1732,8 @@ def test_sync_to_bucket_missing_hf_cli_errors(tmp_path, monkeypatch):
     """No ``hf`` CLI on PATH -> actionable error, never a subprocess call."""
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: None)
+    monkeypatch.setattr(dt, "_hf_executable", lambda: None)
 
     def _boom(*_a, **_k):
         raise AssertionError("subprocess must not run when hf CLI is absent")
@@ -1758,10 +1757,8 @@ def test_sync_to_bucket_old_huggingface_hub_errors(tmp_path, monkeypatch):
 
     import huggingface_hub
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
     monkeypatch.setattr(huggingface_hub, "__version__", "0.36.2")
 
     def _boom(*_a, **_k):
@@ -1783,10 +1780,8 @@ def test_sync_to_bucket_new_huggingface_hub_passes_version_gate(tmp_path, monkey
 
     import huggingface_hub
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
     monkeypatch.setattr(huggingface_hub, "__version__", "1.5.0")
 
     def _fake_run(cmd, *_a, **_k):
@@ -1811,10 +1806,8 @@ def test_sync_to_bucket_tolerates_a_bucket_that_already_exists(tmp_path, monkeyp
     """
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     calls = []
 
@@ -1849,10 +1842,8 @@ def test_sync_to_bucket_still_reports_a_genuine_create_failure(tmp_path, monkeyp
     """
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     def _fake_run(cmd, *_a, **_k):
         if "create" in cmd:
@@ -1880,10 +1871,8 @@ def test_sync_to_bucket_unimportable_huggingface_hub_skips_version_gate(tmp_path
     import subprocess
     import sys
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
     # A None entry in sys.modules makes `import huggingface_hub` raise ImportError.
     monkeypatch.setitem(sys.modules, "huggingface_hub", None)
 
@@ -1903,10 +1892,8 @@ def test_sync_to_bucket_unparseable_huggingface_hub_version_skips_gate(tmp_path,
 
     import huggingface_hub
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
     monkeypatch.setattr(huggingface_hub, "__version__", "unknown")
 
     def _fake_run(cmd, *_a, **_k):
@@ -1938,10 +1925,8 @@ def test_sync_to_bucket_rejects_unsafe_bucket(tmp_path, monkeypatch, bad_bucket)
     """
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     def _boom(*_a, **_k):
         raise AssertionError(f"subprocess must not run for unsafe bucket {bad_bucket!r}")
@@ -1956,9 +1941,8 @@ def test_sync_to_bucket_rejects_unsafe_bucket(tmp_path, monkeypatch, bad_bucket)
 
 def test_sync_to_bucket_requires_finalized_meta_dir(tmp_path, monkeypatch):
     """A dataset with no ``meta/`` (never finalized) is refused."""
-    from strands_robots import dataset_recorder as dr
 
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
     # No _write_meta: meta/ is absent.
 
     result = _sync_recorder(tmp_path).sync_to_bucket("my-org/robot-fave")
@@ -1973,10 +1957,8 @@ def test_sync_to_bucket_rejects_unsafe_run_id(tmp_path, monkeypatch, bad_run_id)
     """run_id must be a single safe path segment (no '/', traversal, metachars)."""
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     def _boom(*_a, **_k):
         raise AssertionError(f"subprocess must not run for unsafe run_id {bad_run_id!r}")
@@ -1993,10 +1975,8 @@ def test_sync_to_bucket_success_creates_and_syncs(tmp_path, monkeypatch):
     """Happy path: creates the bucket then syncs to the derived HF URI."""
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     calls: list[list[str]] = []
 
@@ -2023,10 +2003,8 @@ def test_sync_to_bucket_preexisting_bucket_is_not_an_error(tmp_path, monkeypatch
     """`hf buckets create` failing because the bucket already exists is tolerated."""
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     def _fake_run(cmd, *_a, **_k):
         if cmd[:3] == ["hf", "buckets", "create"]:
@@ -2045,10 +2023,8 @@ def test_sync_to_bucket_create_failure_surfaced(tmp_path, monkeypatch):
     """A genuine `hf buckets create` failure is surfaced, not swallowed."""
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     def _fake_run(cmd, *_a, **_k):
         if cmd[:3] == ["hf", "buckets", "create"]:
@@ -2067,10 +2043,8 @@ def test_sync_to_bucket_sync_failure_surfaced(tmp_path, monkeypatch):
     """A non-zero `hf sync` return code is surfaced with its stderr."""
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     def _fake_run(cmd, *_a, **_k):
         if cmd[:3] == ["hf", "buckets", "create"]:
@@ -2089,10 +2063,8 @@ def test_sync_to_bucket_delete_flag_forwards_to_sync(tmp_path, monkeypatch):
     """delete=True appends --delete to the `hf sync` command (mirror semantics)."""
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     calls: list[list[str]] = []
 
@@ -2126,11 +2098,9 @@ def test_sync_dataset_to_bucket_works_without_a_recorder(tmp_path, monkeypatch):
     """
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     root = tmp_path / "robot-fave"
     (root / "meta").mkdir(parents=True)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     calls: list[list[str]] = []
 
@@ -2140,7 +2110,7 @@ def test_sync_dataset_to_bucket_works_without_a_recorder(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
 
-    result = dr.sync_dataset_to_bucket(root, "my-org/robot-fave")
+    result = dt.sync_dataset_to_bucket(root, "my-org/robot-fave")
 
     assert result["status"] == "success"
     # run_id derived from Path(root).name, not from any repo_id.
@@ -2160,12 +2130,10 @@ def test_sync_dataset_to_bucket_standalone_needs_no_recorder(tmp_path, monkeypat
     ``stop_recording(bucket=...)`` on an idle sim)."""
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     root = tmp_path / "robot-fave"
     root.mkdir()
     _write_meta(root)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     calls: list[list[str]] = []
 
@@ -2175,7 +2143,7 @@ def test_sync_dataset_to_bucket_standalone_needs_no_recorder(tmp_path, monkeypat
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
 
-    result = dr.sync_dataset_to_bucket(str(root), "my-org/robot-fave")
+    result = dt.sync_dataset_to_bucket(str(root), "my-org/robot-fave")
 
     assert result["status"] == "success"
     # run_id defaults to the dataset directory name when no recorder exists.
@@ -2186,11 +2154,10 @@ def test_sync_dataset_to_bucket_standalone_needs_no_recorder(tmp_path, monkeypat
 
 def test_sync_dataset_to_bucket_standalone_requires_finalized_meta(tmp_path, monkeypatch):
     """The standalone sync refuses a dataset root without ``meta/``."""
-    from strands_robots import dataset_recorder as dr
 
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
-    result = dr.sync_dataset_to_bucket(str(tmp_path), "my-org/robot-fave")
+    result = dt.sync_dataset_to_bucket(str(tmp_path), "my-org/robot-fave")
 
     assert result["status"] == "error"
     assert "meta/" in result["message"]
@@ -2200,18 +2167,16 @@ def test_sync_dataset_to_bucket_accepts_str_root(tmp_path, monkeypatch):
     """``root`` may be a plain string (the docstring advertises str | Path)."""
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     root = tmp_path / "run-021"
     (root / "meta").mkdir(parents=True)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
     monkeypatch.setattr(
         subprocess,
         "run",
         lambda cmd, *_a, **_k: subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr=""),
     )
 
-    result = dr.sync_dataset_to_bucket(str(root), "my-org/robot-fave", create=False)
+    result = dt.sync_dataset_to_bucket(str(root), "my-org/robot-fave", create=False)
 
     assert result["status"] == "success"
     assert result["bucket_uri"] == "hf://buckets/my-org/robot-fave/run-021"
@@ -2221,17 +2186,15 @@ def test_sync_dataset_to_bucket_missing_hf_cli_errors(tmp_path, monkeypatch):
     """No ``hf`` CLI -> actionable error, never a subprocess call."""
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: None)
+    monkeypatch.setattr(dt, "_hf_executable", lambda: None)
 
     def _boom(*_a, **_k):
         raise AssertionError("subprocess must not run when hf CLI is absent")
 
     monkeypatch.setattr(subprocess, "run", _boom)
 
-    result = dr.sync_dataset_to_bucket(tmp_path, "my-org/robot-fave")
+    result = dt.sync_dataset_to_bucket(tmp_path, "my-org/robot-fave")
 
     assert result["status"] == "error"
     assert "hf" in result["message"]
@@ -2256,17 +2219,15 @@ def test_sync_dataset_to_bucket_rejects_unsafe_bucket(tmp_path, monkeypatch, bad
     """
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     def _boom(*_a, **_k):
         raise AssertionError(f"subprocess must not run for unsafe bucket {bad_bucket!r}")
 
     monkeypatch.setattr(subprocess, "run", _boom)
 
-    result = dr.sync_dataset_to_bucket(tmp_path, bad_bucket)
+    result = dt.sync_dataset_to_bucket(tmp_path, bad_bucket)
 
     assert result["status"] == "error"
     assert "invalid bucket" in result["message"]
@@ -2277,17 +2238,15 @@ def test_sync_dataset_to_bucket_rejects_unsafe_run_id(tmp_path, monkeypatch, bad
     """The lifted free function keeps the run_id allowlist (LLM-input safety)."""
     import subprocess
 
-    from strands_robots import dataset_recorder as dr
-
     _write_meta(tmp_path)
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
 
     def _boom(*_a, **_k):
         raise AssertionError(f"subprocess must not run for unsafe run_id {bad_run_id!r}")
 
     monkeypatch.setattr(subprocess, "run", _boom)
 
-    result = dr.sync_dataset_to_bucket(tmp_path, "my-org/robot-fave", run_id=bad_run_id)
+    result = dt.sync_dataset_to_bucket(tmp_path, "my-org/robot-fave", run_id=bad_run_id)
 
     assert result["status"] == "error"
     assert "invalid run_id" in result["message"]
@@ -2295,12 +2254,11 @@ def test_sync_dataset_to_bucket_rejects_unsafe_run_id(tmp_path, monkeypatch, bad
 
 def test_sync_dataset_to_bucket_requires_meta_dir(tmp_path, monkeypatch):
     """A directory with no ``meta/`` (never finalized) is refused."""
-    from strands_robots import dataset_recorder as dr
 
-    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(dt, "_hf_executable", lambda: "hf")
     # No _write_meta: meta/ is absent.
 
-    result = dr.sync_dataset_to_bucket(tmp_path, "my-org/robot-fave")
+    result = dt.sync_dataset_to_bucket(tmp_path, "my-org/robot-fave")
 
     assert result["status"] == "error"
     assert "meta/" in result["message"]
@@ -2353,13 +2311,12 @@ def test_recorder_sync_to_bucket_error_passthrough_has_no_counters(tmp_path, mon
 def test_sync_dataset_to_bucket_exported_top_level():
     """``strands_robots.sync_dataset_to_bucket`` lazy-resolves to the helper."""
     from strands_robots import __all__ as strands_robots_all
-    from strands_robots import dataset_recorder as dr
     from strands_robots import sync_dataset_to_bucket
 
     assert "sync_dataset_to_bucket" in strands_robots_all
     # The from-import above goes through the package's lazy ``__getattr__``,
     # so identity with the helper proves the lazy resolution works.
-    assert sync_dataset_to_bucket is dr.sync_dataset_to_bucket
+    assert sync_dataset_to_bucket is dt.sync_dataset_to_bucket
 
 
 def test_hf_executable_prefers_interpreter_env_over_path(tmp_path, monkeypatch):
@@ -2368,31 +2325,27 @@ def test_hf_executable_prefers_interpreter_env_over_path(tmp_path, monkeypatch):
     """
     import shutil
 
-    from strands_robots import dataset_recorder as dr
-
     # A fake venv layout: <venv>/bin/python and <venv>/bin/hf.
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "hf").write_text("#!/bin/sh\n")
-    monkeypatch.setattr(dr.sys, "executable", str(bin_dir / "python"))
+    monkeypatch.setattr(dt.sys, "executable", str(bin_dir / "python"))
     # PATH lookup would resolve elsewhere; the interpreter-env hit must win.
     monkeypatch.setattr(shutil, "which", lambda _name: "/somewhere/else/hf")
 
-    assert dr._hf_executable() == str(bin_dir / "hf")
+    assert dt._hf_executable() == str(bin_dir / "hf")
 
 
 def test_hf_executable_falls_back_to_path(tmp_path, monkeypatch):
     """When no ``hf`` sits next to the interpreter, fall back to PATH lookup."""
     import shutil
 
-    from strands_robots import dataset_recorder as dr
-
     empty = tmp_path / "bin"
     empty.mkdir()
-    monkeypatch.setattr(dr.sys, "executable", str(empty / "python"))
+    monkeypatch.setattr(dt.sys, "executable", str(empty / "python"))
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/hf")
 
-    assert dr._hf_executable() == "/usr/bin/hf"
+    assert dt._hf_executable() == "/usr/bin/hf"
 
 
 # create(overwrite=...) makes re-recording into an existing repo_id honest:
