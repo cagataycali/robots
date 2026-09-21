@@ -47,10 +47,9 @@ The four **posture** flags select a branch rather than scale a quantity -
 `reset_between` (reset the scene between episodes or carry the end state over),
 `wbc_install_torque_control` (install the WBC torque shim for the call or leave the
 actuators alone) and `async_rtc` (overlap inference with actuation or drain each
-chunk first) - so a value that is not a boolean is refused rather than read by
-truthiness: every non-empty string is truthy, so `fast_mode="false"` would run
-unpaced and `async_rtc="false"` would report `rtc_async_enabled=True` beside the
-background thread the caller declined, each under `status="success"`. The domain is
+chunk first) - so a non-boolean is refused rather than read by truthiness:
+every non-empty string is truthy, so `fast_mode="false"` would run unpaced, and
+`async_rtc="false"` would report `rtc_async_enabled=True`, under `status="success"`. The domain is
 the shared `boolean_flag_error` one the recording postures and the mesh wire schema
 use, bound to the tool-error envelope through `SimEngine._validate_posture_flags`
 and checked ahead of robot resolution, so a refused call builds no policy and
@@ -73,12 +72,11 @@ yet is reported as running, is named, and is halted by a stop carrying no
 idle while another is mid-rollout names that rollout and the call that ends it, and
 carries the reason when that robot's last rollout ended in error.
 
-`list_policies_running` answers on every backend from that population - a MuJoCo,
-Newton or Isaac engine names the robots it is driving, and a peer polled over the
-mesh reports the same names at the same instant - and `describe()["methods"]` names
-it beside `stop_policy`. A backend that can report no population at all is refused
-rather than reported as idle: "no policies running" is an affirmative claim about
-every robot in the world.
+`list_policies_running` answers on every backend from that population - MuJoCo,
+Newton, Isaac and a peer polled over the mesh all name the robots they are driving
+at that instant. A backend that can report no population at all is refused rather
+than reported as idle: "no policies running" is an affirmative claim about every
+robot in the world.
 
 Scene mutations read the same population: `add_robot`, `remove_robot`, `add_object`,
 `remove_object`, `move_object`, `add_camera`, `remove_camera`, `load_scene`,
@@ -98,7 +96,7 @@ a multi-episode rollout still resets between its own episodes.
 | `elapsed_s` | measured on a monotonic clock, so no date correction can move it |
 | `stopped_early`, `stopped_reason` | `budget`, `predicate`, `stopped`, or an error |
 | `actions_applied`, `steps_advanced` | actions that **commanded** the robot, and physics steps taken - an advanced step is not a commanded action, and an action dict naming no actuator commands nothing |
-| `action_errors`, `action_resolution_rate`, `partial_action_failure_rate` | per-key resolution health |
+| `action_errors`, `action_resolution_rate`, `partial_action_failure_rate` | per-key resolution health, over the steps whose per-actuator credit is *known*: a coarse backend error, and a step keyed by driven joint names rather than actuators, are excluded rather than scored as misses, so an empty map with `0.0` means unknown, not undriven |
 | `video_path` (`None` when no MP4 was written), `video_frames`, `video_fps` | `video_fps` is the rate the MP4 *plays* at - the requested `fps` capped to `control_frequency`, since a rollout renders at most one frame per control step |
 | `sim_time_s` | when the backend reports it |
 | `stop_when_true_at_reset`, `stop_when_reset_warning` | see [predicates](predicates.md) |
@@ -108,10 +106,9 @@ a multi-episode rollout still resets between its own episodes.
 or named one at all (`actions_applied: 0` - how a model declaring no `<actuator>`
 block behaves until `actuate_robot` adds a position servo per joint), returns
 `status="error"`, while a run where only *some* keys resolve is operational and adds
-an `N/M action steps had unresolved keys` note. Both eval routes tolerate one empty
-chunk per step - a policy may legitimately stall - and refuse the *aggregate* when
-`actions_applied` is zero, since `success_rate` / `avg_reward` / `pass_hat_k` would
-then describe the scene's initial state rather than the policy. A criterion that
+an `N/M action steps had unresolved keys` note. Both eval routes tolerate one empty chunk
+per step and refuse the *aggregate* when `actions_applied` is zero, since `success_rate`
+/ `avg_reward` / `pass_hat_k` would then describe the scene's initial state. A criterion that
 *raises* is fatal on every route (`success_fn`, `is_success` / `is_failure`,
 `stop_when`), naming the criterion, the episode and the step; verdicts are read with
 `bool()`, so a `numpy.bool_` is accepted. `on_frame` is best-effort telemetry -

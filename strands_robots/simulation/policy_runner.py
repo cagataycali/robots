@@ -2175,7 +2175,10 @@ class PolicyRunner:
             actuator confirmed on every known step, ``~0.83`` == only 1 of 6).
             Coarse backend errors are excluded from those denominators rather
             than fabricated as misses and remain visible in ``action_errors``
-            and the result text. This makes a rollout that silently drives only
+            and the result text, as is a step whose applied keys name driven
+            JOINTS rather than actuators - a spelling ``send_action`` resolves
+            without reporting which actuator it drove, so it is unknown here
+            rather than a miss. This makes a rollout that silently drives only
             a subset of the robot's joints visible instead of looking like a
             clean ``success`` with a zero success-rate.
 
@@ -2887,11 +2890,25 @@ class PolicyRunner:
                     # excluded too: empty applied keys mean "unknown" there, not a
                     # measured miss. Structured partial/none and successful answers
                     # are resolution-known and form the denominator.
-                    if not _is_error or _has_complete_breakdown:
+                    # Per-actuator credit needs the applied keys to NAME actuators.
+                    # A dict keyed by driven-JOINT names is a spelling
+                    # ``send_action`` documents and resolves (it looks the joint's
+                    # driving actuator up, tendon grippers included), so the step
+                    # drove the robot - but it credits no entry of this roster, and
+                    # counting it would record every actuator as a measured miss:
+                    # ``action_resolution_rate`` all 0.0 and a
+                    # ``partial_action_failure_rate`` of 1.0, the signature of a
+                    # rollout that never moved, for one the backend answered
+                    # ``"full"`` on. Which actuator each such key drove is known to
+                    # the backend's resolver and not to this loop, so the step is
+                    # resolution-UNKNOWN for per-actuator purposes - the same rule
+                    # this block already applies to a coarse answer - and is left
+                    # out of the denominator instead of being scored as a miss.
+                    _creditable = [_name for _name in _applied if _name in _actuator_resolved]
+                    if (not _is_error or _has_complete_breakdown) and len(_creditable) == len(_applied):
                         _known_resolution_steps += 1
-                        for _name in _applied:
-                            if _name in _actuator_resolved:
-                                _actuator_resolved[_name] += 1
+                        for _name in _creditable:
+                            _actuator_resolved[_name] += 1
 
                     # Fail fast when every opening probe step either explicitly
                     # resolved no keys or was atomically refused without a complete

@@ -3184,7 +3184,13 @@ class SimEngine(ABC):
             ``0.0`` == every actuator confirmed every known step, ``~0.83`` ==
             only 1 of 6). A coarse backend error is excluded from both rate
             denominators instead of being counted as a physical miss; it remains
-            visible in ``action_errors`` and the human-readable diagnostic.
+            visible in ``action_errors`` and the human-readable diagnostic. A
+            step whose applied keys name driven JOINTS rather than actuators is
+            excluded on the same terms: ``send_action`` resolves that spelling
+            (it looks the joint's driving actuator up), but it reports no
+            actuator per key, so the step is unknown for per-actuator purposes
+            rather than a miss - a rollout keyed entirely that way reports an
+            empty map and ``0.0``, not the ``1.0`` of a robot that never moved.
 
             Video: ``video_path`` (``None`` when no MP4 was written),
             ``video_frames`` and ``video_fps`` (the rate the MP4 plays at -
