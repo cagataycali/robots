@@ -14,8 +14,9 @@ and ``unitree_h1`` do. The registry has no same-model sibling for this robot, so
 ``tests/registry/test_asset_family_joint_counts.py`` says nothing about it; this
 file states the convention the number was written against.
 
-Everything here is graded from ``robots.json`` alone, so it holds on any
-install: no MuJoCo, no downloaded assets, no network. The compiled-model claims
+Everything here is graded from ``robots.json`` and the driver registry alone,
+so it holds on any install: no MuJoCo, no downloaded assets, no network, no
+ROS. The compiled-model claims
 (joint names, actuator count, camera intrinsics, gripper travel) live in
 ``tests_integ/simulation/test_yahboom_m3pro_sim.py``, which downloads the asset.
 """
@@ -76,10 +77,22 @@ class TestTheEntryIsWellFormed:
         assert gripper["actuators"] == ["gripper"]
         assert gripper["closed"] == "low" and gripper["open"] == "high"
 
-    def test_no_hardware_block_until_a_driver_exists(self) -> None:
-        """Declaring ``lerobot_type`` for a robot lerobot cannot build would make
-        ``mode="real"`` fail late, at the bus, instead of at the factory."""
-        assert "hardware" not in _entry()
+    def test_the_hardware_block_names_the_native_driver_and_no_lerobot_type(self) -> None:
+        """``mode="real"`` resolves to the native ROS 2 driver by default.
+
+        Declaring a ``lerobot_type`` for a robot lerobot cannot build would make
+        ``mode="real"`` fail late, at the bus, instead of at the factory; the
+        driver that does build it is ``strands_robots.drivers.yahboom_m3pro``.
+        """
+        hardware = _entry()["hardware"]
+        assert hardware == {"driver": "strands"}
+        assert "lerobot_type" not in hardware
+
+    def test_the_native_driver_is_registered_for_the_entry(self) -> None:
+        from strands_robots.drivers import list_driver_coverage, resolve_driver
+
+        assert list_driver_coverage()["yahboom_m3pro"] == ("strands",)
+        assert resolve_driver("m3pro") == "strands"
 
     def test_no_alias_repeats_the_canonical_name(self) -> None:
         """A self-alias makes every registry read raise, not just this one."""

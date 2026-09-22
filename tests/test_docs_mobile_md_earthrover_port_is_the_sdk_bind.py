@@ -47,8 +47,26 @@ def test_earthrover_fence_port_is_the_sdk_bind() -> None:
     assert set(ports) == {urlsplit(DEFAULT_SDK_URL).port}
 
 
-def test_every_port_literal_on_the_page_is_the_sdk_bind() -> None:
+_EARTHROVER_SECTION = re.compile(
+    r"^## Real hardware: the EarthRover native driver\n(.*?)(?=^## )", re.DOTALL | re.MULTILINE
+)
+
+
+def _earthrover_section() -> str:
+    """The EarthRover section alone - the page teaches other robots' addresses too.
+
+    The Yahboom M3 Pro section below it spells its rosbridge endpoint on
+    ``:9090``, which is that bridge's bind and not a claim about the EarthRover
+    SDK; grading the whole page against one robot's port would refuse every
+    second robot the page documents.
+    """
+    match = _EARTHROVER_SECTION.search(_PAGE.read_text(encoding="utf-8"))
+    assert match, "mobile.md has no '## Real hardware: the EarthRover native driver' section"
+    return match.group(1)
+
+
+def test_every_port_literal_in_the_earthrover_section_is_the_sdk_bind() -> None:
     sdk_port = str(urlsplit(DEFAULT_SDK_URL).port)
-    found = _PORT_LITERAL.findall(_PAGE.read_text(encoding="utf-8"))
-    assert found, "mobile.md spells no host:port address"
+    found = _PORT_LITERAL.findall(_earthrover_section())
+    assert found, "the EarthRover section spells no host:port address"
     assert set(found) == {sdk_port}

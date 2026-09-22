@@ -1006,6 +1006,9 @@
         "closed": "low",
         "open": "high"
       },
+      "hardware": {
+        "driver": "strands"
+      },
       "aliases": [
         "m3pro",
         "m3_pro",
