@@ -322,7 +322,7 @@ All the options above (A–B) work identically with full infrastructure - the on
 > fleet.
 > Adapt [`examples/mesh/mesh_acl_strict_per_peer.json5`](https://github.com/strands-labs/robots/blob/main/examples/mesh/mesh_acl_strict_per_peer.json5)
 > to your fleet and deploy it on the router. See the
-> [security considerations](https://github.com/strands-labs/robots/blob/main/docs/security.md#production-posture-required-off-trusted-networks)
+> [security considerations](https://github.com/strands-labs/robots/blob/main/docs/security/mesh.md#production-posture-required-off-trusted-networks)
 > page for details.
 
 > **Per-caller RPC allowlist (`DEVICE_CONNECT_RPC_ALLOW` / `DEVICE_CONNECT_ESTOP_ALLOW`).**

@@ -5,7 +5,7 @@ one configures the same file: where it is written (``STRANDS_MESH_AUDIT_DIR``),
 whether records carry a per-record HMAC that lets a verifier reject a forged
 entry (``STRANDS_MESH_AUDIT_PSK``), and the per-file / rotation bounds that
 keep disk use finite (``STRANDS_MESH_AUDIT_MAX_BYTES`` and
-``STRANDS_MESH_AUDIT_MAX_FILES``). ``docs/security.md`` documents them together
+``STRANDS_MESH_AUDIT_MAX_FILES``). ``docs/security/audit-log.md`` documents them together
 under ``## Audit log``. Until this file's companion change, the README
 environment-variable matrix carried a row for ``_DIR`` alone -- so a reader
 scanning the matrix for the audit family found one variable of four and not
@@ -40,7 +40,7 @@ from strands_robots.mesh import audit as _audit_module
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "audit.py"
-_PAGE = _ROOT / "docs" / "security.md"
+_PAGE = _ROOT / "docs" / "security" / "audit-log.md"
 _README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
 
 _PREFIX = "STRANDS_MESH_AUDIT_"
@@ -107,9 +107,9 @@ def _readme_matrix_row_order() -> list[str]:
 
 
 def _audit_headings_naming(name: str) -> list[str]:
-    """Return every ``##``/``###`` heading whose section names ``name``."""
+    """Return every heading whose section names ``name``."""
     text = _PAGE.read_text(encoding="utf-8")
-    parts = re.split(r"^(#{2,3} .+)$", text, flags=re.M)
+    parts = re.split(r"^(#{1,3} .+)$", text, flags=re.M)
     out = []
     for index in range(1, len(parts), 2):
         if name in parts[index + 1]:
@@ -161,7 +161,7 @@ class TestEveryAuditVariableIsDocumented:
     def test_the_security_page_names_every_audit_variable(self) -> None:
         missing = sorted(_audit_env_reads() - _documented(_PAGE.read_text(encoding="utf-8")))
         assert not missing, (
-            f"docs/security.md names none of {missing}; the audit posture is "
+            f"docs/security/audit-log.md names none of {missing}; the audit posture is "
             "described there and a variable that shapes it must be nameable"
         )
 
@@ -193,12 +193,12 @@ class TestTheBehaviourThePagesExistToMakeDiscoverable:
     """The prose cannot drift away from what the audit module honours."""
 
     def test_the_psk_read_lives_where_the_page_says_it_does(self) -> None:
-        # docs/security.md says: "when set, per-record HMAC is on".
+        # docs/security/audit-log.md says: "when set, per-record HMAC is on".
         # The module read is the wire between them.  If the read moves or its
         # env name changes, the page's promise no longer resolves.
         assert 'os.getenv("STRANDS_MESH_AUDIT_PSK")' in _MODULE.read_text(encoding="utf-8"), (
             "the audit module no longer reads STRANDS_MESH_AUDIT_PSK by that "
-            "name; docs/security.md promises HMAC when the variable is set, "
+            "name; docs/security/audit-log.md promises HMAC when the variable is set, "
             "and the promise must reach the loader"
         )
 

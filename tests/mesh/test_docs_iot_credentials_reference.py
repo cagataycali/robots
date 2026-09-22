@@ -41,7 +41,7 @@ import pytest
 import strands_robots
 
 _PACKAGE = pathlib.Path(strands_robots.__file__).parent
-_PAGE = _PACKAGE.parent / "docs" / "security.md"
+_PAGE = _PACKAGE.parent / "docs" / "security" / "mesh.md"
 
 #: The module that owns the AWS IoT broker link. Its variables configure one
 #: channel, so the reference documents them together.
@@ -184,7 +184,7 @@ class TestTheReferenceCoversTheCredentials:
         """A credential the transport reads but the page omits is unreachable config."""
         missing = sorted(_credentials_read() - set(_documented_bullets(page)))
         assert not missing, (
-            f"docs/security.md documents no bullet for IoT credentials the transport "
+            f"docs/security/mesh.md documents no bullet for IoT credentials the transport "
             f"reads: {missing}. Both the iot and bridge backends construct "
             "IotMqttTransport with no arguments, so a variable the code honours and "
             "the page omits is the whole of a setting the operator cannot find - "
@@ -196,7 +196,7 @@ class TestTheReferenceCoversTheCredentials:
         missing = sorted(_provisioner_exports() - set(_documented_bullets(page)))
         assert not missing, (
             f"ProvisionedThing.env_vars tells an operator to export {missing}, which "
-            "docs/security.md does not explain. The provisioner's export list is the "
+            "docs/security/mesh.md does not explain. The provisioner's export list is the "
             "package's own answer to what must be set, so the page has to name it."
         )
 

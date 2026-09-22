@@ -77,7 +77,7 @@ from strands_robots.mesh import security as _security
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "security.py"
-_PAGE = _ROOT / "docs" / "security.md"
+_PAGE = _ROOT / "docs" / "security" / "commands.md"
 _README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
 
 _HEADING = "### Policy vocabulary allowlist (policy_type / policy_provider)"
@@ -156,7 +156,7 @@ def test_every_policy_type_allow_variable_the_module_reads_has_a_readme_matrix_r
 
 
 def test_every_policy_type_allow_variable_the_module_reads_is_named_on_the_security_page() -> None:
-    """Every ``STRANDS_MESH_POLICY_TYPE_ALLOW*`` env-var read is on ``docs/security.md``.
+    """Every ``STRANDS_MESH_POLICY_TYPE_ALLOW*`` env-var read is on ``docs/security/commands.md``.
 
     The security page describes the posture and this variable's whole point is
     a security posture (it is the extension knob for the ``validate_command``
@@ -167,7 +167,7 @@ def test_every_policy_type_allow_variable_the_module_reads_is_named_on_the_secur
     reads = _policy_type_allow_env_reads()
     missing = [name for name in sorted(reads) if f"`{name}`" not in text]
     assert not missing, (
-        f"docs/security.md does not name {missing!r} even though "
+        f"docs/security/commands.md does not name {missing!r} even though "
         f"mesh/security.py reads it. Add it under the '{_HEADING}' section."
     )
 

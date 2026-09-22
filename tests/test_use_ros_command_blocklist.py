@@ -469,7 +469,7 @@ def test_the_blocklist_is_documented_where_operators_look() -> None:
 _ALLOWLIST_DOCS: tuple[str, ...] = (
     "docs/reference/configuration.md",
     "docs/ros2-integration.md",
-    "docs/security.md",
+    "docs/security/hardware.md",
 )
 
 # A clause that names the halt and denies that it is gated claims an exemption.

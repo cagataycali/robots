@@ -184,7 +184,7 @@ that read sweeps every servo) comes back `null` with the reason instead of
 `Torque_Enable` register no motor answered is `null`, not `off`, because "torque
 off" reads as "safe to move by hand". The motion actions (`execute`, `start`)
 stop for operator approval as before; see
-[security](../security.md#ros-2-dds-bridge-command-surface).
+[security](../security/hardware.md#ros-2-dds-bridge-command-surface).
 
 ## Calibrating a Feetech SO arm
 

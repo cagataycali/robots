@@ -18,7 +18,7 @@ names and fifteen appeared in no page at all:
   not, so the README described a knob on a feature it gave no way to enable.
 - ``STRANDS_GR00T_REPO_URL`` and ``_TAG`` - the clone source ``build_image``
   fails closed on. Its allowlist, ``STRANDS_GR00T_REPO_URL_ALLOW``, was
-  documented in ``docs/security.md`` with no mention of the variable it
+  documented in ``docs/security/policy-code.md`` with no mention of the variable it
   constrains.
 - ``STRANDS_MESH_BRIDGE_DEDUP_STRICT``, ``STRANDS_MESH_FILTER_INTERFACES``,
   ``STRANDS_ROBOTS_VERBOSE_MUJOCO`` - each the only spelling of its posture.
@@ -55,7 +55,7 @@ refusal names as its own remedy - and ``STRANDS_TRAIN_RDZV_TIMEOUT_S`` /
 ``STRANDS_TRAIN_LOCAL_ADDR``, the two bounds on an elastic launch's rendezvous.
 A ``Name`` bound anywhere else (a parameter, a local) still names nothing a
 page could spell and is not graded. A page is any of ``README.md`` and
-``docs/**/*.md``: ``docs/security.md`` already owns the AWS IoT credentials
+``docs/**/*.md``: ``docs/security/mesh.md`` already owns the AWS IoT credentials
 and the mesh TLS material, graded by their own reference tests, and this test
 does not move them. It also honours the README's shorthand for a family of
 sibling names (```STRANDS_MESH_POSE_HZ`, `_IMU_HZ`, ...``) - a suffix counts

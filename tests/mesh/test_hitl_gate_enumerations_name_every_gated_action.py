@@ -74,13 +74,13 @@ def _enumerations() -> tuple[_Enumeration, ...]:
         ),
         _Enumeration(
             "the security guide's default-gate bullet",
-            _REPO_ROOT / "docs" / "security.md",
+            _REPO_ROOT / "docs" / "security" / "commands.md",
             "The default gate is broader than just fleet-wide actions.",
             default,
         ),
         _Enumeration(
             "the security guide's audit-trail bullet",
-            _REPO_ROOT / "docs" / "security.md",
+            _REPO_ROOT / "docs" / "security" / "commands.md",
             "**Audit trail.**",
             default,
         ),

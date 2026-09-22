@@ -99,7 +99,7 @@ from strands_robots.mesh import _acl_config
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PACKAGE = _ROOT / "strands_robots"
 _MODULE = _PACKAGE / "mesh" / "_acl_config.py"
-_PAGE = _ROOT / "docs" / "security.md"
+_PAGE = _ROOT / "docs" / "security" / "mesh.md"
 _CONFIG_REFERENCE = _ROOT / "docs" / "reference" / "configuration.md"
 
 _HEADING = "### Blacklist ACL acknowledgement (`STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`)"
@@ -180,7 +180,7 @@ def _reader_sites() -> dict[str, str]:
 
 
 def _security_page_section() -> str:
-    """Return the acknowledgement subsection from ``docs/security.md``.
+    """Return the acknowledgement subsection from ``docs/security/mesh.md``.
 
     Bounded by the section heading and the next ``### `` sibling.
     """

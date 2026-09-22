@@ -238,7 +238,7 @@ so a reply that carries a reason (`n - not while the cell door is open`) is alwa
 a decline - and the audit row is the one place that reason survives. An approval
 is recorded too: whether a human authorised an agent to reach a physical surface
 is the first thing an incident review asks. Make sure your deployment captures and
-retains that log; see [Security](security.md).
+retains that log; see the [audit log](security/audit-log.md).
 
 Anything that wraps `use_ros` has to forward that context or it inherits the
 fail-closed path for every command it sends. `RosBridgedRobot` does: its

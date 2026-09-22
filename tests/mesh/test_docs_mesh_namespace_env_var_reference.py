@@ -60,7 +60,7 @@ from strands_robots.mesh import _zenoh_config
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "_zenoh_config.py"
-_PAGE = _ROOT / "docs" / "security.md"
+_PAGE = _ROOT / "docs" / "security" / "mesh.md"
 _README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
 
 _HEADING = "### Fleet routing isolation (namespace)"
@@ -135,7 +135,7 @@ def test_every_namespace_variable_the_module_reads_is_named_on_the_security_page
     reads = _namespace_env_reads()
     page_text = _PAGE.read_text(encoding="utf-8")
     missing = sorted(name for name in reads if name not in page_text)
-    assert not missing, f"docs/security.md is missing names for: {missing}"
+    assert not missing, f"docs/security/mesh.md is missing names for: {missing}"
 
 
 def test_the_security_page_names_the_default_namespace() -> None:
@@ -153,7 +153,7 @@ def test_the_security_page_names_the_default_namespace() -> None:
         page_text,
         re.DOTALL,
     )
-    assert section_match, f"heading '{_HEADING}' is missing from docs/security.md"
+    assert section_match, f"heading '{_HEADING}' is missing from docs/security/mesh.md"
     section = section_match.group(1)
     assert _DEFAULT in section, (
         f"the namespace section names the variable but not its default {_DEFAULT!r}; "
@@ -178,7 +178,7 @@ def test_the_security_page_names_the_silent_mismatch_failure_mode() -> None:
         page_text,
         re.DOTALL,
     )
-    assert section_match, f"heading '{_HEADING}' is missing from docs/security.md"
+    assert section_match, f"heading '{_HEADING}' is missing from docs/security/mesh.md"
     section = section_match.group(1).lower()
     # The section must name the fact that a mismatch is silent / absent /
     # not-loud. Any of these phrasings satisfies the rule; the point is

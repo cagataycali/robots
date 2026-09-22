@@ -56,7 +56,7 @@ from strands_robots.mesh import _zenoh_config
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "_zenoh_config.py"
 _SESSION = _ROOT / "strands_robots" / "mesh" / "session.py"
-_PAGE = _ROOT / "docs" / "security.md"
+_PAGE = _ROOT / "docs" / "security" / "mesh.md"
 _README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
 
 _HEADING = "### Transport credentials (mTLS material)"
@@ -111,7 +111,7 @@ def _section() -> str:
     """Return the named section's body, or fail naming the missing heading."""
     text = _PAGE.read_text(encoding="utf-8")
     assert _HEADING in text, (
-        f"docs/security.md no longer carries {_HEADING!r}; the TLS material "
+        f"docs/security/mesh.md no longer carries {_HEADING!r}; the TLS material "
         "rules below read that section, so a rename must move them with it"
     )
     after = text.split(_HEADING, 1)[1]
@@ -148,7 +148,7 @@ class TestEveryTlsPathIsDocumented:
     def test_the_security_page_names_every_tls_path(self) -> None:
         missing = sorted(_tls_env_reads() - _documented(_PAGE.read_text(encoding="utf-8")))
         assert not missing, (
-            f"docs/security.md names none of {missing}; AUTH_MODE=mtls is the "
+            f"docs/security/mesh.md names none of {missing}; AUTH_MODE=mtls is the "
             "default, so these are required on a fleet that sets no dev flag"
         )
 

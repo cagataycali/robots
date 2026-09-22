@@ -307,7 +307,7 @@ so none of them is refused for it. The two declared postures are unchanged.
 
 `robot_mesh` takes four numeric options. `duration` and `policy_port` travel
 inside the command body that
-[`validate_command`](../security.md) inspects, so that validator already bounds
+[`validate_command`](../security/commands.md#payload-validation) inspects, so that validator already bounds
 them. `timeout` and `limit` never enter a command body, so they are bounded by
 the tool:
 

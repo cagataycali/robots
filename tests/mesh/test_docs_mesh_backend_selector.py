@@ -7,7 +7,7 @@ two readers consult it: ``session._backend_choice`` on every publish path, and
 
 The documented half was the dependency, not the selector. ``[mesh-iot]``
 appears in four pages and ``STRANDS_MESH_BACKEND`` appeared in none, while
-``docs/security.md`` stated the mechanism as "Adding the ``[mesh-iot]`` extra
+``docs/security/mesh.md`` stated the mechanism as "Adding the ``[mesh-iot]`` extra
 routes traffic through AWS IoT Core". Installing the extra routes nothing: the
 default is ``zenoh`` and stays ``zenoh`` until this variable is set. So a
 reader who followed the page installed the dependency, believed the fleet was

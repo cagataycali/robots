@@ -1,7 +1,7 @@
 """A read-only ROS 2 bridge stays read-only, whatever spelling asked for it.
 
 ``Robot(ros2_bridge=True)`` can expose an inbound ``/<robot>/joint_command``
-topic that drives a physical arm, and ``docs/security.md`` names the flag that
+topic that drives a physical arm, and ``docs/security/hardware.md`` names the flag that
 closes it as the ungated posture: "Telemetry-only is ungated. ``ros2_commands=
 False`` is publish-only (no inbound surface) and needs no security config."
 

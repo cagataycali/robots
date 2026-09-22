@@ -18,7 +18,7 @@ posture: with no ACL configured, `Robot(..., mesh=True)` logs `Mesh did NOT
 start` and leaves `robot.mesh.alive` as `False`. For localhost experiments set
 the developer preset in every process that joins; the lab and production
 postures (`STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`, `STRANDS_MESH_ACL_FILE`) are on
-the [Security](security.md) page.
+the [mesh authentication](security/mesh.md) page.
 
 ```bash
 export STRANDS_MESH_LOCAL_DEV=1   # both processes below; localhost only
@@ -468,7 +468,7 @@ without the extra selects a backend whose client is not importable.
 | Value | Transport | Extra needed | Notes |
 |-------|-----------|--------------|-------|
 | `zenoh` (default) | Zenoh. The first process on a host listens on `tcp/127.0.0.1:7447` (`STRANDS_MESH_PORT`) and later ones dial it; cross-host peers need `ZENOH_CONNECT=tcp/<host>:7447`. Multicast scouting is off by default. | none - ships with `strands-robots`. | `STRANDS_MESH_MULTICAST=true` opts into LAN scouting on `224.0.0.224:7446` - a group shared with every other Zenoh application on the LAN, not just this fleet, so any of them sees this peer's presence. |
-| `iot` | AWS IoT Core MQTT with X.509 mutual TLS. | `strands-robots[mesh-iot]` (adds `awsiotsdk`). | Requires `STRANDS_IOT_ENDPOINT`, `STRANDS_IOT_THING_NAME`, `STRANDS_IOT_CERT_DIR`. See [Security](security.md). |
+| `iot` | AWS IoT Core MQTT with X.509 mutual TLS. | `strands-robots[mesh-iot]` (adds `awsiotsdk`). | Requires `STRANDS_IOT_ENDPOINT`, `STRANDS_IOT_THING_NAME`, `STRANDS_IOT_CERT_DIR`. See [Security](security/mesh.md#cross-network-fleets-aws-iot-core). |
 | `bridge` | Zenoh locally, mirrored to AWS IoT for fleet-wide fan-out. | `strands-robots[mesh-iot]`. | A peer speaks Zenoh to its lab neighbours and IoT to the cloud on the same publish. |
 
 ```bash

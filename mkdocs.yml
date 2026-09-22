@@ -82,6 +82,11 @@ nav:
   - Tool Reference: reference/tools.md
   - Configuration: reference/configuration.md
   - Security: security.md
+  - Mesh Authentication: security/mesh.md
+  - Audit Log: security/audit-log.md
+  - Command Approval: security/commands.md
+  - Hardware and Host Access: security/hardware.md
+  - Remote Policy Code: security/policy-code.md
   - Troubleshooting: troubleshooting.md
   - Contributing: contributing.md
 hooks:
