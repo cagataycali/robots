@@ -111,6 +111,19 @@ _NUMERIC = ("temperature", "camera_hz") + _INT
 _USABLE_INT = [("max_tokens", 1, 1), ("max_tokens", "8", 8), ("port", 65535, 65535), ("port", 1.0, 1)]
 
 
+# Every environment variable the schema declares - the set `apply_mesh_env`
+# publishes into `os.environ` and the set the `store` fixture drops. Read from
+# the module, so a key added to the schema is covered here without an edit.
+_PUBLISHED_ENV = tuple(
+    env_name for keys in settings._SCHEMA.values() for env_name, _default in keys.values() if env_name
+)
+
+# What those variables held before any cell in this file ran. The last class
+# compares against it: a published value must not outlive the test that
+# published it, and a value the caller's own environment carries must come back.
+_ENV_AT_IMPORT = {name: os.environ.get(name) for name in _PUBLISHED_ENV}
+
+
 def _section_of(key: str) -> str:
     """The schema section holding *key* - both coercion paths match numeric keys by name."""
     return next(section for section, keys in settings._SCHEMA.items() if key in keys)
@@ -128,10 +141,16 @@ def store(tmp_path, monkeypatch):
     path = tmp_path / "settings.json"
     path.write_text("{}")
     monkeypatch.setattr(settings, "SETTINGS_FILE", path)
-    for keys in settings._SCHEMA.values():
-        for env_name, _default in keys.values():
-            if env_name:
-                monkeypatch.delenv(env_name, raising=False)
+    for env_name in _PUBLISHED_ENV:
+        # setenv BEFORE delenv, so the drop is also a restore. `delenv(...,
+        # raising=False)` on a variable that is absent - the usual case - records
+        # nothing to undo (monkeypatch's delitem returns early on a missing key),
+        # so a value `apply_mesh_env` publishes during the test outlived teardown
+        # and reached the next test as that key's default: exactly the hazard
+        # this docstring names. setenv records the pre-state first, so teardown
+        # removes what was published and puts back what was already there.
+        monkeypatch.setenv(env_name, "")
+        monkeypatch.delenv(env_name)
     settings.clear_overrides()
     settings.load(refresh=True)
     yield path
@@ -345,3 +364,25 @@ class TestANonFiniteNumberIsReportedNotRaised:
         assert errors == []
         assert changed == [f"{section}.{key}"]
         assert settings.load(refresh=True)[section][key] == expected
+
+
+class TestTheScratchStoreLeavesTheEnvironmentAsItFoundIt:
+    """`apply_mesh_env` writes `os.environ`, so a cell here can publish a value.
+
+    The `store` fixture drops every variable the schema declares to keep that
+    value out of the next test; the two cells below - in this order, which is the
+    order pytest runs them - are what says so. Without the restore, a published
+    `ZENOH_CONNECT` reached an unrelated mesh session as its default and the
+    session refused to start (`scheme 'tcp' ... under STRANDS_MESH_AUTH_MODE
+    ='mtls'`), naming an endpoint no mesh test ever configured.
+    """
+
+    def test_a_test_may_publish_what_the_settings_declare(self, store):
+        """Publishing is legitimate - several cells above do it deliberately."""
+        _from_file(store, "mesh", "connect", ["tcp/published:7447"])
+
+        assert settings.apply_mesh_env()["ZENOH_CONNECT"] == "tcp/published:7447"
+
+    def test_the_next_test_finds_the_environment_as_this_file_found_it(self):
+        """No fixture in this cell: the restore happened between the two."""
+        assert {name: os.environ.get(name) for name in _PUBLISHED_ENV} == _ENV_AT_IMPORT
