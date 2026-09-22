@@ -142,11 +142,15 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 #: that module imports lerobot. Each is pinned individually in
 #: ``tests/test_import_layers_are_a_dag.py``.
 #:
-#: The one cut left here is ``drivers.ur``, which reaches up to build a policy.
+#: Two cuts left here reach up from a driver: ``drivers.ur`` builds a policy,
+#: and ``drivers.yahboom_m3pro_twin`` builds the ``Robot("yahboom_m3pro",
+#: mode="sim")`` engine its twin transport steps - the far end of the loop the
+#: driver factory closes, so deferred to first ``connect`` rather than imported.
 KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.__main__", "strands_robots.dashboard.cli"),
     ("strands_robots._hitl_audit", "strands_robots.mesh.audit"),
     ("strands_robots.drivers.ur", "strands_robots.policies"),
+    ("strands_robots.drivers.yahboom_m3pro_twin", "strands_robots.robot"),
     ("strands_robots.teleop_mixin", "strands_robots.teleoperator"),
 )
 
