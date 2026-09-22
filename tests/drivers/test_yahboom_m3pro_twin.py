@@ -68,6 +68,13 @@ class _FakeEngine:
     def list_robots(self) -> list[str]:
         return ["yahboom_m3pro"]
 
+    def create_world(self) -> dict[str, Any]:
+        return {"status": "success", "content": [{"text": "world"}]}
+
+    def add_robot(self, name: str, **kwargs: Any) -> dict[str, Any]:
+        assert name == "yahboom_m3pro" and kwargs.get("keyframe") == "home"
+        return {"status": "success", "content": [{"text": "added"}]}
+
     def physics_timestep(self) -> float:
         return _DT
 
@@ -171,12 +178,12 @@ class TestTheTwinIsTheRobotsGraph:
         assert YahboomM3ProDriver(transport="twin", sim=engine).sim is engine
 
     def test_a_build_failure_is_a_named_reason(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import strands_robots.robot as robot_mod
+        import strands_robots.simulation as sim_mod
 
         def _boom(*args: Any, **kwargs: Any) -> Any:
             raise ImportError("mujoco is not installed")
 
-        monkeypatch.setattr(robot_mod, "Robot", _boom)
+        monkeypatch.setattr(sim_mod, "create_simulation", _boom)
         driver = YahboomM3ProDriver(transport="twin")
         reason = driver.connect_eagerly()
         assert reason is not None and "mujoco is not installed" in reason
@@ -332,10 +339,10 @@ class TestLifecycle:
         assert twin.sim is None
 
     def test_an_engine_the_twin_built_is_destroyed_on_close(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import strands_robots.robot as robot_mod
+        import strands_robots.simulation as sim_mod
 
         built = _FakeEngine()
-        monkeypatch.setattr(robot_mod, "Robot", lambda *a, **k: built)
+        monkeypatch.setattr(sim_mod, "create_simulation", lambda *a, **k: built)
         driver = YahboomM3ProDriver(transport="twin")
         assert driver.connect_eagerly() is None
         assert driver.sim is built

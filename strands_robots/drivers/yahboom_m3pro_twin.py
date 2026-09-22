@@ -57,7 +57,7 @@ import math
 import time
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.drivers.yahboom_m3pro import (
+from strands_robots.drivers.yahboom_m3pro_wire import (
     ARM_JOINTS,
     ARM_TOPIC,
     CMD_VEL_TOPIC,
@@ -180,18 +180,34 @@ class M3ProTwinGraph:
         return self._robot_name
 
     def connect(self) -> str | None:
-        """Build the engine when none was given. Returns a reason on failure, else ``None``."""
+        """Build the engine when none was given. Returns a reason on failure, else ``None``.
+
+        Built through :func:`strands_robots.simulation.create_simulation` and
+        :meth:`~strands_robots.simulation.base.SimEngine.add_robot` - the same
+        two calls ``Robot("yahboom_m3pro", mode="sim", keyframe="home")`` makes -
+        rather than through the factory itself. The factory imports the driver
+        registry, and the driver registry imports this robot's driver, so a twin
+        that imported the factory would close a cycle around what is one table
+        of facts about the robot. The simulation package imports no driver.
+        """
         if self._sim is not None:
             return None
         try:
-            from strands_robots.robot import (
-                Robot,  # noqa: PLC0415 - the factory imports the drivers; this is the loop's far end
+            from strands_robots.simulation import (
+                create_simulation,  # noqa: PLC0415 - MuJoCo is optional; imported on use
             )
 
-            self._sim = Robot("yahboom_m3pro", mode="sim", keyframe="home", mesh=False)
+            sim = create_simulation("mujoco", tool_name="yahboom_m3pro_twin")
+            for step in (sim.create_world(), sim.add_robot(name="yahboom_m3pro", keyframe="home")):
+                if step.get("status") == "error":
+                    sim.destroy()
+                    detail = (step.get("content") or [{}])[0].get("text", str(step))
+                    self._build_error = f"could not build the yahboom_m3pro twin: {detail}"
+                    return self._build_error
         except Exception as exc:  # noqa: BLE001 - the reason is reported, not raised, like every connect here
             self._build_error = f"could not build the yahboom_m3pro twin ({type(exc).__name__}: {exc})"
             return self._build_error
+        self._sim = sim
         self._build_error = None
         return None
 
