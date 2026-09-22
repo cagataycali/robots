@@ -1088,7 +1088,7 @@ class TestSurplusRollbackTargetsOnlyWhatThisCallAppended:
         try:
             spec.worldbody.add_body(name="table", pos=[0.0, 0.0, 0.6])
         except ValueError:
-            pass  # eager-validating builds still leave the orphan behind
+            pass  # The insert is expected to fail; eager-validating builds still leave the orphan behind
         assert len(spec.bodies) == 3, [body.name for body in spec.bodies]
 
         assert SpecBuilder.remove_bodies_not_in(spec, before) == 1
@@ -1134,7 +1134,7 @@ class TestSurplusRollbackTargetsOnlyWhatThisCallAppended:
         try:
             spec.worldbody.add_camera(name="overview", pos=[0.0, 0.0, 9.0])
         except ValueError:
-            pass
+            pass  # The insert is expected to fail; the test verifies rollback below.
         assert [camera.name for camera in spec.cameras][-1] == "wrist"
 
         assert SpecBuilder.remove_cameras_not_in(spec, before) == 1
