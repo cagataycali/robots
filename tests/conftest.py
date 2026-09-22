@@ -239,13 +239,20 @@ def _predicate_registry_is_left_as_found() -> Iterator[None]:
     ``finally``; the session owns it now, so a registration is one line again
     and the one path that forgot is covered too.
 
-    The module is looked up rather than imported so a session that never
-    touches the simulation package does not pull it in.
+    The module is imported here rather than looked up in ``sys.modules`` the way
+    the ``_lazy_modules`` memo above is: that memo is born empty, this registry
+    is born holding the 30 shipped predicates. A lookup that misses the module -
+    which is what happens whenever nothing imported it at collection time, as in
+    ``pytest tests/test_fleet_emergency_evacuation.py`` alone, where the example
+    under test imports it inside a test - would take an empty baseline and this
+    teardown would then wipe the shipped set for the rest of the process, leaving
+    every later cell on ``Unknown predicate 'inside_region'``. The import costs
+    0.1 s once and pulls in stdlib plus :mod:`strands_robots.utils` only.
     """
-    registry = getattr(sys.modules.get("strands_robots.simulation.predicates"), "PREDICATE_REGISTRY", None)
-    before = dict(registry) if registry is not None else {}
+    from strands_robots.simulation import predicates
+
+    before = dict(predicates.PREDICATE_REGISTRY)
     yield
-    registry = getattr(sys.modules.get("strands_robots.simulation.predicates"), "PREDICATE_REGISTRY", None)
-    if registry is not None and registry != before:
-        registry.clear()
-        registry.update(before)
+    if predicates.PREDICATE_REGISTRY != before:
+        predicates.PREDICATE_REGISTRY.clear()
+        predicates.PREDICATE_REGISTRY.update(before)
