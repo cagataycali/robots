@@ -247,17 +247,31 @@ class FeetechTwinBus(FeetechBus):
         if self.is_connected:
             return
         if self._sim is None:
+            # Built through the simulation package - ``create_simulation`` and
+            # ``add_robot``, the two calls ``Robot(robot, mode="sim")`` makes -
+            # rather than through the factory. The factory imports the driver
+            # registry, and the registry imports this bus's driver, so a twin
+            # that imported the factory would close a cycle around one arm.
             try:
-                from strands_robots.robot import (
-                    Robot,  # noqa: PLC0415 - the factory imports the drivers; this is the loop's far end
+                from strands_robots.simulation import (
+                    create_simulation,  # noqa: PLC0415 - MuJoCo is optional; imported on use
                 )
 
-                self._sim = Robot(self.robot, mode="sim", mesh=False)
+                sim = create_simulation("mujoco", tool_name=f"{self.robot}_twin")
+                for step in (sim.create_world(), sim.add_robot(name=self.robot)):
+                    if step.get("status") == "error":
+                        sim.destroy()
+                        detail = (step.get("content") or [{}])[0].get("text", str(step))
+                        raise OSError(f"FeetechTwinBus: could not build the {self.robot} twin: {detail}")
+            except OSError:
+                self._sim = None
+                raise
             except Exception as exc:  # noqa: BLE001 - the reason is reported, not raised, like every connect here
                 self._sim = None
                 raise OSError(
                     f"FeetechTwinBus: could not build the {self.robot} twin ({type(exc).__name__}: {exc})"
                 ) from exc
+            self._sim = sim
         try:
             self._bindings = self._bind_motors()
         except ValueError:

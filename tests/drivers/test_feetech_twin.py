@@ -118,6 +118,13 @@ class _FakeEngine:
     def list_robots(self) -> list[str]:
         return [self.robot]
 
+    def create_world(self) -> dict[str, Any]:
+        return {"status": "success", "content": [{"text": "world"}]}
+
+    def add_robot(self, name: str, **kwargs: Any) -> dict[str, Any]:
+        assert name == self.robot
+        return {"status": "success", "content": [{"text": "added"}]}
+
     def physics_timestep(self) -> float:
         return _DT
 
@@ -562,16 +569,16 @@ class TestLifecycle:
         assert twin.connect_eagerly() is None
 
     def test_cleanup_destroys_an_engine_the_twin_built(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import strands_robots.robot as robot_module
+        import strands_robots.simulation as sim_module
 
         built: list[_FakeEngine] = []
 
-        def _fake_robot(name: str, **kwargs: Any) -> _FakeEngine:
-            assert (name, kwargs) == ("so101", {"mode": "sim", "mesh": False})
+        def _fake_create(backend: str, **kwargs: Any) -> _FakeEngine:
+            assert (backend, kwargs) == ("mujoco", {"tool_name": "so101_twin"})
             built.append(_FakeEngine("so101"))
             return built[-1]
 
-        monkeypatch.setattr(robot_module, "Robot", _fake_robot)
+        monkeypatch.setattr(sim_module, "create_simulation", _fake_create)
         driver = FeetechDriver(tool_name="so101", transport="twin")
         assert driver.sim is None, "built lazily, not at construction"
         assert driver.connect_eagerly() is None
@@ -581,12 +588,12 @@ class TestLifecycle:
         assert driver.sim is None
 
     def test_a_build_failure_is_a_named_reason_not_a_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import strands_robots.robot as robot_module
+        import strands_robots.simulation as sim_module
 
-        def _boom(name: str, **kwargs: Any) -> Any:
+        def _boom(backend: str, **kwargs: Any) -> Any:
             raise ImportError("No module named 'mujoco'")
 
-        monkeypatch.setattr(robot_module, "Robot", _boom)
+        monkeypatch.setattr(sim_module, "create_simulation", _boom)
         driver = FeetechDriver(tool_name="so101", transport="twin")
         reason = driver.connect_eagerly()
         assert reason == "FeetechTwinBus: could not build the so101 twin (ImportError: No module named 'mujoco')"
