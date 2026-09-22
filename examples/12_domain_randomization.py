@@ -93,7 +93,7 @@ def main() -> int:
     )
     noisy = float(sim.get_observation("so100")[joint_key])
     print(f"\njoint {joint_key!r}: clean={clean:.4f} rad  noisy={noisy:.4f} rad  (delta={noisy - clean:+.4f})")
-    print("Sensor noise is now applied to every observation until reset.")
+    print("Sensor noise is now applied to every observation until reconfigured.")
     return 0
 
 

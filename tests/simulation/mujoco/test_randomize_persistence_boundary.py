@@ -27,6 +27,14 @@ here as the control:
 :mod:`tests.simulation.mujoco.test_randomize_positions_persistence` already
 pins one axis of it (``test_a_recompile_still_undoes_the_position_axis``); this
 generalises the same rule to every axis and every published route.
+
+The same rule one level over: a surface may not promise an axis a *quantity*
+the axis does not sample either. The guide described ``randomize_physics`` as
+scaling "mass, friction and joint damping" in two places, while the axis writes
+``geom_friction`` and ``body_mass`` only, and no ``damping_range`` exists in the
+signature to ask for more - so a reader closed the sim2real gap on the one
+dynamics parameter a position-controlled arm needs most, and nothing said the
+axis had not moved it.
 """
 
 from __future__ import annotations
@@ -309,3 +317,118 @@ def test_a_claim_without_a_boundary_is_reported(measured):
     assert not (_wholesale(measured) - _named_operations(qualified))
     # Prose that makes no claim is not graded at all.
     assert not _claims_persistence("Each flag is opt-in per-axis.")
+
+
+# --------------------------------------------------------------------------
+# The physics axis samples friction and mass, and no surface promises more.
+# --------------------------------------------------------------------------
+
+#: Dynamics quantities a reader could take ``randomize_physics`` to sample,
+#: each with the model array that would carry it. Measured below: the axis
+#: writes ``geom_friction`` and ``body_mass`` / ``body_inertia`` and leaves
+#: every array here byte-identical -- and ``randomize()``'s signature has no
+#: range parameter for any of them, so a surface naming one promises an axis
+#: the tree does not have. Actuator damping is the one that matters most: it is
+#: the first parameter a sim2real reader expects a physics axis to cover.
+_UNSAMPLED_DYNAMICS: dict[str, str] = {
+    "armature": "dof_armature",
+    "damping": "dof_damping",
+    "frictionloss": "dof_frictionloss",
+    "stiffness": "jnt_stiffness",
+}
+
+#: A joint that authors every quantity above with a non-zero value, so "the
+#: axis left it alone" is distinguishable from "the axis scaled a zero".
+_DYNAMICS_MJCF = """<mujoco model="dynamics">
+  <worldbody>
+    <body name="link" pos="0 0 0.1">
+      <joint name="hinge" type="hinge" axis="0 1 0" damping="0.5" stiffness="1.5"
+             armature="0.01" frictionloss="0.02"/>
+      <geom name="link_geom" type="capsule" fromto="0 0 0 0.1 0 0" size="0.01" mass="0.1"/>
+    </body>
+  </worldbody>
+  <actuator><position name="act" joint="hinge" kp="10"/></actuator>
+</mujoco>
+"""
+
+
+@functools.lru_cache(maxsize=1)
+def _physics_axis_deltas(tmp: str) -> dict[str, float]:
+    """``max|delta|`` per model array after the physics axis runs alone."""
+    urdf = pathlib.Path(tmp) / "dynamics.xml"
+    urdf.write_text(_DYNAMICS_MJCF)
+    names = ("geom_friction", "body_mass", *sorted(_UNSAMPLED_DYNAMICS.values()))
+    sim = Simulation(tool_name="test_randomize_physics_axis_scope", mesh=False)
+    try:
+        _ok(sim.create_world(gravity=[0, 0, -9.81]), "create_world")
+        _ok(sim.add_robot(name="dyn", urdf_path=str(urdf)), "add_robot(dyn)")
+        assert sim._world is not None and sim._world._model is not None
+        model = sim._world._model
+        read = lambda: {n: np.asarray(getattr(model, n), dtype=np.float64).copy() for n in names}  # noqa: E731
+        before = read()
+        _ok(
+            sim.randomize(randomize_colors=False, randomize_lighting=False, randomize_physics=True, seed=5), "randomize"
+        )
+        after = read()
+    finally:
+        sim.cleanup()
+    return {n: float(np.abs(after[n] - before[n]).max()) for n in names}
+
+
+@pytest.fixture(scope="module")
+def physics_axis_deltas(tmp_path_factory: pytest.TempPathFactory) -> dict[str, float]:
+    return _physics_axis_deltas(str(tmp_path_factory.mktemp("physics_axis")))
+
+
+def test_the_physics_axis_writes_friction_and_mass(physics_axis_deltas):
+    """Premise for the scope test below: the axis did sample something."""
+    for name in ("geom_friction", "body_mass"):
+        assert physics_axis_deltas[name] > 0.0, f"{name} unchanged: {physics_axis_deltas}"
+
+
+@pytest.mark.parametrize(("quantity", "array"), sorted(_UNSAMPLED_DYNAMICS.items()))
+def test_the_physics_axis_leaves_every_other_dynamics_array_untouched(physics_axis_deltas, quantity, array):
+    """Each quantity is authored non-zero, so an untouched array is a real no-op."""
+    assert physics_axis_deltas[array] == 0.0, (
+        f"randomize_physics moved {array} by {physics_axis_deltas[array]}, so the axis does sample {quantity}"
+    )
+
+
+def _physics_axis_claims(text: str) -> list[str]:
+    """Lines describing the physics axis, where a named quantity is a promise."""
+    markers = ("randomize_physics", "mass_range", "friction_range")
+    return [line for line in text.splitlines() if any(marker in line for marker in markers)]
+
+
+def _promised_but_unsampled(text: str) -> frozenset[str]:
+    lines = " || ".join(_physics_axis_claims(text)).lower()
+    return frozenset(q for q in _UNSAMPLED_DYNAMICS if q in lines)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "docs/simulation/domain-randomization.md",
+        "examples/12_domain_randomization.py",
+        "strands_robots/simulation/mujoco/randomization.py",
+        "strands_robots/simulation/newton/randomization.py",
+    ],
+)
+def test_no_surface_promises_a_dynamics_quantity_the_physics_axis_does_not_sample(physics_axis_deltas, surface):
+    """A quantity named beside the axis is read as an axis the axis covers."""
+    path = pathlib.Path(__file__).resolve().parents[3] / surface
+    text = path.read_text(encoding="utf-8")
+    assert _physics_axis_claims(text), f"premise: {surface} still describes the physics axis"
+    promised = sorted(_promised_but_unsampled(text))
+    assert not promised, (
+        f"{surface} describes randomize_physics as sampling {promised}, each measured to leave its "
+        f"model array byte-identical: { {_UNSAMPLED_DYNAMICS[q]: physics_axis_deltas[_UNSAMPLED_DYNAMICS[q]] for q in promised} }"
+    )
+
+
+def test_a_surface_promising_an_unsampled_quantity_is_reported():
+    """Non-vacuity, both directions."""
+    assert _promised_but_unsampled("randomize_physics scales mass, friction and joint damping") == {"damping"}
+    assert _promised_but_unsampled("| `randomize_physics` | mass (mult), friction (scale) |") == frozenset()
+    # A quantity named away from the axis is not a claim about the axis.
+    assert _promised_but_unsampled("MuJoCo reads joint damping from the MJCF.") == frozenset()
