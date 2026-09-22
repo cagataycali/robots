@@ -1879,6 +1879,36 @@ Corrections from code review that apply to all future contributions:
 
 ### Data Integrity
 - **Per-name state copy, not flat index** - When recompiling MuJoCo models (inject/eject), copy qpos/qvel per-joint by name. Flat-index slicing breaks when body-tree order shifts.
+- **A scene rebuild trusts the compiler with nothing a reset would write** - which
+  entries of the ``MjData`` that ``spec.recompile(model, data)`` hands back are
+  undefined is a property of the MuJoCo build, not of this package. Through 3.13 it
+  was the new tail of ``qpos``/``qvel``/``ctrl``/``act``; 3.14.0 carries
+  ``qacc_warmstart``, ``eq_active``, both applied-force buffers and mocap poses by
+  element and, when the spec was grown by attaching a sub-spec with a ``<keyframe>``
+  (every registry robot), hands back heap garbage for the attached elements' slices
+  in all of them - measured `nan`, `6.98e-316`, `1.12e+219`, pre-existing slices
+  intact. So `_recompile_preserving_state` writes every such buffer from the value a
+  reset gives (`qpos0`, `eq_active0`, a mocap body's `body_pos`/`body_quat`, zero)
+  and zeroes both force buffers whole before the name-keyed restore, rather than
+  defining the four the old build left undefined. The symptom of assuming zero was
+  `Nan, Inf or huge value in QACC at DOF 0` on the first step after `add_robot`,
+  against a healthy parked joint, on the runs where the freed memory happened to be
+  non-finite - so pin such a rule with a transfer that is poisoned deliberately, not
+  with the physics that fails only sometimes. Pinned by
+  `tests/simulation/mujoco/test_recompile_defines_every_buffer_it_grows.py` (#3945).
+- **A spec rollback identifies the surplus by identity, never by name or position** -
+  a refused `add_body(name=...)` / `add_camera(name=...)` appends the orphan on every
+  build, and what its name field holds afterwards is the build's business: the
+  colliding name through 3.13, `""` from 3.14 (the failed rename now preserves the
+  previous name). A rollback keyed on the colliding name deleted the orphan on one
+  build and nothing on the other, leaving a nameless body at the origin in a spec
+  that then compiled. Position is not the answer either - `spec.cameras` enumerates
+  in tree order, so a worldbody camera sits before every child body's cameras, not
+  last. Snapshot the element list before the insert and delete what is present
+  afterwards and absent from it (`SpecBuilder.snapshot_bodies` /
+  `remove_bodies_not_in`); spec element wrappers are identity-stable and compare
+  equal for one element, so membership is the test. Pinned by
+  `tests/simulation/mujoco/test_spec_builder.py::TestSurplusRollbackTargetsOnlyWhatThisCallAppended`.
 - **Sanitize user inputs into XML** - Validate names against `^[a-zA-Z0-9_-]+$` before interpolating into MJCF. LLM-provided strings are untrusted.
 - **Match schema and data keys** - If a feature is declared with sanitized names (e.g., `__`), the data producer must emit the same sanitized keys.
 
