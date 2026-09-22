@@ -646,6 +646,20 @@ class TestTheReadPath:
         assert status["last_arm_deg"] == list(HOME_DEG)
         assert status["last_twist"] == {"linear.x": 0.0, "linear.y": 0.0, "angular.z": 0.5}
 
+    def test_status_carries_the_shared_driver_triple(self, driver: YahboomM3ProDriver) -> None:
+        """Every native driver's status reports tool_name/connected/battery_pct.
+
+        The triple is the fleet-wide contract a caller reads without knowing the
+        driver; the M3 Pro's board publishes no battery-percent topic this
+        driver has verified, so it reports the field as ``None`` rather than
+        omitting it or inventing a reading (the reason ``get_observation`` is
+        empty too).
+        """
+        status = _run(driver.get_status())["content"][0]["json"]
+        for key in ("tool_name", "connected", "battery_pct"):
+            assert key in status
+        assert status["battery_pct"] is None
+
     def test_policy_paths_refuse_with_a_route(self, driver: YahboomM3ProDriver) -> None:
         assert "send_action" in driver.start_task("wave")["content"][0]["text"]
         assert "send_action" in driver.run_policy(object())["content"][0]["text"]  # type: ignore[arg-type]
