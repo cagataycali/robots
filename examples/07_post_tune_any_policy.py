@@ -37,6 +37,11 @@ sim.start_recording(
     fps=30,
     task="pick up the red cube",
     overwrite=True,
+    # Record the sensor added above and nothing else. Unscoped, the implicit
+    # "default" overview view lands in the dataset too, and step 2 bakes it into
+    # the checkpoint's input_features - which then refuses any robot that has no
+    # such camera, i.e. every real one.
+    cameras=["front"],
 )
 # control_frequency must equal the recording's fps above: the recorder writes
 # one frame per control step with no decimation, so the 50 Hz default rollout

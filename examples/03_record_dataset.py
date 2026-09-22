@@ -27,6 +27,11 @@ start = sim.start_recording(
     fps=30,
     task="pick up the red cube",
     overwrite=True,
+    # Record the sensor mounted above, not the implicit "default" overview view:
+    # unscoped, the dataset also carries observation.images.default, a camera no
+    # robot outside the simulator supplies, so a policy trained on it declares an
+    # input hardware cannot satisfy.
+    cameras=["front"],
 )
 if start["status"] != "success":
     # Surface the real failure instead of pretending the recording worked.
