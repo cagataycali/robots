@@ -203,11 +203,61 @@ def test_pack_state_pads():
     assert list(out["observation.state"]) == [1.0, 2.0, 0.0, 0.0]
 
 
-def test_pack_state_get_config_roundtrips():
+# A complete SO-arm frame: mid-centered degrees for the 5 arm columns and
+# RANGE_0_100 for the gripper, i.e. every field the step reads at runtime.
+_SO_ARM_FRAME = {
+    "state_keys": [f"j{i}" for i in range(6)],
+    "expected_dim": 6,
+    "dim_policy": "pad",
+    "state_units": "degrees",
+    "gripper_index": 5,
+    "gripper_joint_range": [-0.175, 1.745],
+    "joint_mids": [0.0, -90.0, 90.0, 0.0, 0.0, 0.0],
+    "strict_keys": True,
+}
+
+
+@pytest.mark.parametrize(("field_name", "declared"), sorted(_SO_ARM_FRAME.items()))
+def test_pack_state_get_config_carries_every_runtime_field(field_name, declared):
+    """``get_config`` emits each field the step reads, so a reload behaves the same.
+
+    LeRobot rehydrates a registered step from exactly this dict
+    (``DataProcessorPipeline._build_steps_from_config``), so a field it omits is
+    a runtime behaviour the checkpoint cannot carry. The unit frame
+    (``state_units`` / ``gripper_index`` / ``gripper_joint_range`` /
+    ``joint_mids``) and the ``strict_keys`` posture were all omitted.
+    """
     Step = _require_pack_state()
-    s = Step(state_keys=["a", "b"], expected_dim=2, dim_policy="pad")
-    cfg = s.get_config()
-    assert cfg == {"state_keys": ["a", "b"], "expected_dim": 2, "dim_policy": "pad"}
+    assert Step(**_SO_ARM_FRAME).get_config()[field_name] == declared
+
+
+def test_pack_state_get_config_omits_the_policys_sink():
+    """``missing_keys_sink`` is the policy's live list, not configuration."""
+    Step = _require_pack_state()
+    sink: list[str] = []
+    assert "missing_keys_sink" not in Step(**_SO_ARM_FRAME, missing_keys_sink=sink).get_config()
+
+
+def test_pack_state_unit_frame_survives_a_pipeline_round_trip(tmp_path):
+    """A saved + reloaded pipeline packs the SAME state vector.
+
+    Without the frame in ``get_config`` the reloaded step fell back to
+    ``state_units="native"`` and packed the sim's raw radians where the
+    checkpoint was trained on mid-centered degrees - a ~57x scale error on every
+    arm column, with no warning.
+    """
+    Step = _require_pack_state()
+    pipeline = pytest.importorskip("lerobot.processor.pipeline")
+
+    observation = dict.fromkeys(_SO_ARM_FRAME["state_keys"], 0.5)
+    packed = Step(**_SO_ARM_FRAME).observation(dict(observation))["observation.state"]
+
+    saved = pipeline.DataProcessorPipeline([Step(**_SO_ARM_FRAME)], name="frame")
+    saved.save_pretrained(tmp_path)
+    reloaded = pipeline.DataProcessorPipeline.from_pretrained(tmp_path, config_filename="frame.json")
+    repacked = reloaded.steps[0].observation(dict(observation))["observation.state"]
+
+    assert [round(float(v), 3) for v in repacked] == [round(float(v), 3) for v in packed]
 
 
 # Full lerobot driver coverage guard

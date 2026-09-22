@@ -29,7 +29,7 @@ import json
 import logging
 import math
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -833,12 +833,33 @@ def register_pack_state_step() -> type | None:
             return out
 
         def get_config(self) -> dict[str, Any]:
-            """Return the JSON-serializable config (``state_keys``, ``expected_dim``, ``dim_policy``) for checkpoint round-trip."""
-            return {
-                "state_keys": list(self.state_keys),
-                "expected_dim": self.expected_dim,
-                "dim_policy": self.dim_policy,
-            }
+            """Return the JSON-serializable config for LeRobot's checkpoint round-trip.
+
+            Every field this step READS at runtime is emitted, so a pipeline
+            that is saved and reloaded packs the same vector. The unit frame
+            (``state_units``, ``gripper_index``, ``gripper_joint_range``,
+            ``joint_mids``) and the ``strict_keys`` posture were dropped here,
+            and LeRobot rehydrates a registered step from exactly this dict - so
+            a reloaded ``"degrees"`` pipeline silently packed raw sim radians
+            where the checkpoint was trained on mid-centered degrees, and a
+            declared key the observation did not carry was zero-filled instead of
+            refused.
+
+            ``missing_keys_sink`` is excluded: it is the POLICY's list, passed in
+            so a degradation this step absorbs is visible to the envelope the
+            caller gates on. It is a live object rather than configuration, and
+            whoever rebuilds the step hands it a fresh one.
+            """
+            config: dict[str, Any] = {}
+            for spec in fields(self):
+                if spec.name == "missing_keys_sink":
+                    continue
+                value = getattr(self, spec.name)
+                # Copy the mutable ones: the config is handed to a serializer
+                # (and, on from_pretrained, to another step) that must not alias
+                # this step's lists.
+                config[spec.name] = list(value) if isinstance(value, list) else value
+            return config
 
         def transform_features(self, features):  # type: ignore[no-untyped-def]
             """Return ``features`` unchanged: packing reshapes only the runtime obs, not the model's declared feature set."""
