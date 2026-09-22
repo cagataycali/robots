@@ -4,6 +4,7 @@ These tests exercise the REAL mapping path (not mocked) to close the gap that
 let B7/B12 slip past the mock-heavy existing suite.
 """
 
+import dataclasses
 import math
 
 import numpy as np
@@ -447,27 +448,62 @@ def test_expected_state_dim_falls_back_to_state_keys():
 # JSON loader internals (_extends inheritance + missing config file)
 
 
-def test_resolve_extends_merges_child_overrides():
+_SO_ARM_PARENT = {
+    "obs_rename": {"image": "observation.images.image"},
+    "state_keys": ["1", "2", "3", "4", "5", "6"],
+    "action_keys": ["1", "2", "3", "4", "5", "6"],
+    "dim_policy": "strict",
+    "state_units": "degrees",
+    "action_units": "degrees",
+    "gripper_index": 5,
+    "gripper_joint_range": [-0.175, 1.745],
+    "joint_mids": [0.0, -90.0, 90.0, 0.0, 0.0, 0.0],
+}
+
+
+def _resolve_parent_and_child(child_overrides=None):
+    """Resolve a parent declaring every field and a child that ``_extends`` it."""
     from strands_robots.policies.lerobot_local.embodiment import _resolve
 
-    definitions = {
-        "base": {
-            "obs_rename": {"image": "observation.images.image"},
-            "state_keys": ["a", "b"],
-            "action_keys": ["a", "b"],
-            "dim_policy": "strict",
-        },
-        "child": {
-            "_extends": "base",
-            "__note__": "doc metadata is stripped",
-            "dim_policy": "pad",  # child override wins over inherited value
-        },
-    }
-    child = _resolve("child", definitions)
+    child = {"_extends": "base", "__note__": "doc metadata is stripped"}
+    child.update(child_overrides or {})
+    definitions = {"base": dict(_SO_ARM_PARENT), "child": child}
+    return _resolve("base", definitions), _resolve("child", definitions)
+
+
+@pytest.mark.parametrize("field_name", [f.name for f in dataclasses.fields(EmbodimentMap) if f.name != "name"])
+def test_resolve_extends_inherits_every_declared_field(field_name):
+    # A child inherits EVERY field, not just the key mapping: dropping
+    # state_units/gripper_index/joint_mids leaves the child silently packing its
+    # state in the native frame while the parent declares degrees.
+    parent, child = _resolve_parent_and_child()
+    assert getattr(child, field_name) == getattr(parent, field_name)
+
+
+def test_resolve_extends_child_keys_win_and_metadata_is_stripped():
+    parent, child = _resolve_parent_and_child({"dim_policy": "pad", "state_units": "native"})
     assert child.name == "child"
-    assert child.dim_policy == "pad"  # overridden
-    assert child.state_keys == ["a", "b"]  # inherited
-    assert child.obs_rename == {"image": "observation.images.image"}  # inherited
+    assert child.dim_policy == "pad"
+    assert child.state_units == "native"
+    assert child.action_units == parent.action_units == "degrees"  # untouched by the override
+    assert not hasattr(child, "__note__")
+
+
+def test_resolve_extends_child_converts_in_the_inherited_unit_frame():
+    # The harm the inheritance exists to prevent, end to end: same sim vector in,
+    # same model vector out, both directions.
+    parent, child = _resolve_parent_and_child()
+    sim = [0.5] * 6
+    assert child.sim_state_to_model(sim) == parent.sim_state_to_model(sim)
+    model = parent.sim_state_to_model(sim)
+    assert child.model_action_to_sim(model) == parent.model_action_to_sim(model)
+
+
+def test_resolve_extends_child_does_not_share_the_parent_container():
+    parent, child = _resolve_parent_and_child()
+    assert child.state_keys is not parent.state_keys
+    assert child.obs_rename is not parent.obs_rename
+    assert child.joint_mids is not parent.joint_mids
 
 
 def test_load_defs_returns_empty_when_config_missing(monkeypatch, tmp_path):

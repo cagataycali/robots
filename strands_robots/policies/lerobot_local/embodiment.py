@@ -25,6 +25,7 @@ support ``_extends`` inheritance + ``aliases`` (same loader shape as
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import math
@@ -1059,6 +1060,13 @@ _CONFIG_FILE = Path(__file__).parent / "embodiments.json"
 def _resolve(name: str, definitions: dict) -> EmbodimentMap:
     """Resolve a definition name to an :class:`EmbodimentMap`, following ``_extends``.
 
+    A child inherits EVERY field the parent declares except ``name`` (its own),
+    read off :func:`dataclasses.fields` rather than a hand-written list, so a
+    field added to :class:`EmbodimentMap` later cannot silently fail to be
+    inherited and leave the child in the default unit frame while the parent
+    declares ``degrees``. Each value is copied so a child never shares the
+    parent's mutable container. Keys the child declares win.
+
     Keys beginning with a double underscore (e.g. ``__note__``, ``__doc__``) are
     treated as human-facing documentation/metadata and are stripped before
     constructing the dataclass, so the JSON can carry inline provenance notes
@@ -1068,10 +1076,7 @@ def _resolve(name: str, definitions: dict) -> EmbodimentMap:
     if "_extends" in definition:
         parent = _resolve(definition["_extends"], definitions)
         merged: dict[str, Any] = {
-            "obs_rename": dict(parent.obs_rename),
-            "state_keys": list(parent.state_keys),
-            "action_keys": list(parent.action_keys),
-            "dim_policy": parent.dim_policy,
+            f.name: copy.copy(getattr(parent, f.name)) for f in fields(parent) if f.name != "name"
         }
         for k, v in definition.items():
             if k != "_extends" and not k.startswith("__"):
