@@ -29,6 +29,11 @@ nav:
   - Rollout Observers: simulation/observers.md
   - Predicates: simulation/predicates.md
   - World Building: simulation/world-building.md
+  - Spawn Pose and Physics Options: simulation/spawning.md
+  - Rough Terrain: simulation/terrain.md
+  - Objects: simulation/objects.md
+  - Meshes and Materials: simulation/meshes-and-materials.md
+  - Editing and Exporting a Scene: simulation/scene-editing.md
   - Domain Randomization: simulation/domain-randomization.md
   - Newton Backend (GPU): simulation/newton.md
   - Isaac Sim Backend (GPU): simulation/isaac.md

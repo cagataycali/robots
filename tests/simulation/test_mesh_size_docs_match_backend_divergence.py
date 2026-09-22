@@ -72,10 +72,10 @@ from tests.simulation.test_pose_vector_domain_across_backends import _newton_stu
 _DOCS = pathlib.Path(__file__).parents[2] / "docs" / "simulation"
 
 #: The two pages that document a mesh ``add_object``: the Newton backend page and
-#: the backend-agnostic world-building guide whose ``size`` table is MuJoCo's.
+#: the backend-agnostic meshes guide, whose ``size`` contract is MuJoCo's.
 MESH_PAGES: tuple[pathlib.Path, ...] = (
     _DOCS / "newton.md",
-    _DOCS / "world-building.md",
+    _DOCS / "meshes-and-materials.md",
 )
 
 #: The open contract decision each page must point at while the two disagree.

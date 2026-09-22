@@ -62,7 +62,6 @@ _OVER_BUDGET = frozenset(
         "simulation/isaac.md",
         "simulation/newton.md",
         "simulation/rollouts.md",
-        "simulation/world-building.md",
         "training/overview.md",
         "training/rl.md",
         "troubleshooting.md",
