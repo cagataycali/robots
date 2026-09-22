@@ -15,6 +15,19 @@ robot), both forwarded through the package's existing `use_rosbridge` /
 `use_ros` transports - so every `/cmd_vel` write passes the shared operator
 gate and `STRANDS_ROS2_COMMAND_ALLOW=/cmd_vel` is the headless pre-approval.
 
+A third transport, `twin`, answers the same graph from the `yahboom_m3pro`
+MuJoCo model (`strands_robots/drivers/yahboom_m3pro_twin.py`):
+`Robot("yahboom_m3pro", mode="real", transport="twin")` is the hardware
+driver - same verbs, same units - with the simulation at the far end, so an
+agent rehearses on the twin in the words it will say to the robot. Servo
+degrees go back through the driver's inverse maps onto the position
+actuators, body-frame twists are rotated by the current yaw onto the model's
+world-frame slides with the firmware's watchdog emulated, odometry and IMU are
+read off the base joints, and `/joint_states` makes `get_observation()` a
+reading of the model. The model's `ctrlrange` clamping the base is reported
+on the reply, never silent; the operator gate is not consulted, the twin
+having no physical surface.
+
 `send_action` speaks the twin's vocabulary - `arm1.pos .. arm5.pos` and
 `gripper.pos` in radians, `linear.x` / `linear.y` / `angular.z` in SI - and
 converts at the wire with the inverse of the keyframe the MJCF was written
@@ -36,6 +49,8 @@ Tests: `tests/drivers/test_yahboom_m3pro_driver.py` - network-free against a
 recording transport double, covering the unit maps both ways, every refusal
 before the wire, the gate (a base command with no approval never reaches the
 recorder), the held move's trailing stop, the connect diagnostics and every
-agent verb; the registry test flips from "no hardware block" to "the hardware
-block names the native driver". `docs/robots/mobile.md` documents the
+agent verb; `tests/drivers/test_yahboom_m3pro_twin.py` grades the twin against
+a recording engine double and `tests_integ/simulation/test_yahboom_m3pro_twin.py`
+against MuJoCo itself; the registry test flips from "no hardware block" to
+"the hardware block names the native driver". `docs/robots/mobile.md` documents the
 interface, the transports and what the driver deliberately leaves out.

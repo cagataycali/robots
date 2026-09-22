@@ -164,7 +164,8 @@ def _run(coro: Any) -> Any:
 
 
 async def _invoke(driver: YahboomM3ProDriver, **request: Any) -> dict[str, Any]:
-    results = [event async for event in driver.stream({"toolUseId": "t1", "input": request}, {})]
+    tool_use: Any = {"toolUseId": "t1", "name": driver.tool_name, "input": request}
+    results = [event async for event in driver.stream(tool_use, {})]
     assert len(results) == 1
     return results[0]
 
@@ -380,7 +381,8 @@ class TestTheArmWire:
         built.connect_eagerly()
         built.send_action({"arm1.pos": math.pi / 4})
         assert transport.arm_messages()[-1]["fields"]["joint1"] == 45
-        assert built.last_arm_command()["arm1.pos"] == pytest.approx(math.pi / 4)
+        pose = built.last_arm_command()
+        assert pose is not None and pose["arm1.pos"] == pytest.approx(math.pi / 4)
 
     def test_a_radian_past_the_servo_travel_is_refused_not_clamped(
         self, driver: YahboomM3ProDriver, transport: _FakeTransport

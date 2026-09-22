@@ -295,7 +295,7 @@ protocol underneath. The entry declares `hardware.driver = "strands"`, so
 | `/imu/data_raw` | `sensor_msgs/Imu` | read | IMU |
 | `/scan0`, `/scan1` | `sensor_msgs/LaserScan` | read | the two lidars |
 
-Two transports reach the graph, chosen with `transport=`. **`rosbridge`**
+Three transports answer the graph, chosen with `transport=`. **`rosbridge`**
 (default) dials `rosbridge_server` on the robot over a WebSocket from any host
 with `pip install 'strands-robots[rosbridge]'`; `port=` is the bridge's
 `host[:port]`, default `localhost:9090`. **`ros2`** uses in-process `rclpy`
@@ -304,7 +304,9 @@ for a driver running *on* the robot inside its ROS environment
 package's `use_rosbridge` / `use_ros` transports, so a write to `/cmd_vel`
 passes the shared operator gate: approved by the agent's operator,
 pre-approved with `STRANDS_ROS2_COMMAND_ALLOW=/cmd_vel`, or refused. The arm
-topics are not on the blocklist, so arm commands are not prompted.
+topics are not on the blocklist, so arm commands are not prompted. **`twin`**
+answers the same graph from the MuJoCo model - see
+[the same agent, on the twin](#the-same-agent-on-the-twin) below.
 
 ```python
 import os
@@ -344,11 +346,57 @@ the micro-ROS agent missed the board's boot announcement, and
 The driver is the agent's tool: `status`, `sensors` (odometry + IMU), `arm`
 (six degrees + `time_ms`), `gripper` (`open`), `home`, `move` (`linear_x`,
 `linear_y`, `angular_z`, `duration_s`) and `stop`. Not in it, honestly: the
-board publishes no arm joint-state topic the driver has verified, so
-`get_observation()` is `{}` (`last_arm_command()` returns the last *command*
-in sim units and says so); the cameras are ROS image topics read with
+board publishes no arm joint-state topic the driver has verified, so on the
+robot `get_observation()` is `{}` - it reads `/joint_states` only where the
+graph carries one (`last_arm_command()` returns the last *command* in sim
+units and says so); the cameras are ROS image topics read with
 `use_rosbridge`/`use_ros` `echo`; and no policy provider is wired -
 `start_task` / `run_policy` refuse with the route.
+
+### The same agent, on the twin
+
+`Robot("yahboom_m3pro", mode="sim")` is the physics twin with the simulation
+tool's verbs. `transport="twin"` is something else: the **hardware driver**,
+with its verbs and units, answering the robot's graph from that model. An
+agent that learns to `home` the arm, close the `gripper` and `move` the base
+here says exactly the same words to the hardware - one tool, two far ends.
+
+```python
+from strands import Agent
+from strands_robots import Robot
+
+m3 = Robot("yahboom_m3pro", mode="real", transport="twin")   # builds the model at `home`
+m3.connect_eagerly()                                          # no bridge, no gate: nothing physical
+
+Agent(tools=[m3])("home the arm, close the gripper, then drive forward for two seconds")
+
+m3.get_observation()                                          # a reading here: the model's joints, in radians
+m3.sim.render(camera_name="yahboom_m3pro/wrist")              # the engine is one attribute away
+m3.cleanup()
+```
+
+What the twin does with each topic: `/arm6_joints` degrees go back through the
+driver's own inverse maps onto the `arm1..arm5` and `gripper` position
+actuators and the world steps for the message's `time`; `/cmd_vel` frames are
+rotated by the current yaw onto the world-frame `base_x` / `base_y` slides
+(the model's base is world-frame, the robot's twist is body-frame), each frame
+holds one publish period, and after the burst the twin does what the firmware
+does - holds the last twist for the watchdog, then zeroes; `/odom_raw` and
+`/imu/data_raw` are read off the base joints; `/joint_states` is the model's
+state, so `get_observation()` returns `arm1.pos .. arm5.pos`, `gripper.pos` and
+the three base joints. `sim=` hands in an engine you already built;
+`realtime=True` steps at wall-clock speed for a viewer. The operator gate is
+not consulted on this transport - it is a statement about a physical surface,
+and the twin has none.
+
+Two fidelity notes, both the model's rather than the driver's: the base
+velocity actuators declare `ctrlrange` +-0.5 m/s where the robot's teleop
+ceiling is 1.0, and a command past that is **clamped by MuJoCo** - the twin
+says so on the reply and logs a warning rather than driving at half speed
+quietly; and the yaw velocity servo's gain (`kv` 2 against joint damping 2)
+reaches about half the commanded rate, one of the servo-dynamics estimates the
+description's `DESIGN.md` lists as open. The arm tracks its degree targets to
+within a degree.
 
 ## See also
 

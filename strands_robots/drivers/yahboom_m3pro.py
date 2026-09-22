@@ -23,7 +23,7 @@ it - so this driver speaks it too, rather than the serial protocol underneath:
   (``sensor_msgs/Imu``) and ``/scan0`` / ``/scan1`` (``sensor_msgs/LaserScan``,
   two lidars whose sweeps overlap into near-360 degree cover) - the reads.
 
-Two transports reach that graph, chosen by ``transport=``:
+Three transports answer that graph, chosen by ``transport=``:
 
 * ``"rosbridge"`` (default) - ``rosbridge_server`` on the robot, dialled over a
   WebSocket from *any* host with ``pip install 'strands-robots[rosbridge]'``:
@@ -34,8 +34,13 @@ Two transports reach that graph, chosen by ``transport=``:
   own computer, inside its ROS environment (``ROS_DOMAIN_ID`` is 30 on the
   shipped image); ``port=`` is then ignored. The same three-segment types the
   ``use_ros`` tool speaks.
+* ``"twin"`` - the ``yahboom_m3pro`` MuJoCo model, answering the same topics
+  (:class:`~strands_robots.drivers.yahboom_m3pro_twin.M3ProTwinGraph`). The
+  same tool, verbs and units an agent uses on the robot, over the simulation:
+  what an agent learns to say to the twin it says to the hardware. ``sim=``
+  hands in a built engine; otherwise one is built at the ``home`` keyframe.
 
-Both forward through the transports this package already owns
+The first two forward through the transports this package already owns
 (:func:`strands_robots.rosbridge.rosbridge_action` /
 :func:`strands_robots.ros.ros_action`), so the driver holds no socket and no
 node, and every write to ``/cmd_vel`` passes the shared operator gate
@@ -60,7 +65,9 @@ shows reversed, because polarity is the one thing a URDF cannot tell you.
 
 Out of scope, honestly: the board publishes no arm joint-state topic this
 driver can verify, so :meth:`YahboomM3ProDriver.get_observation` returns ``{}``
-rather than echoing the last *command* back as a *reading*; the cameras
+on the robot rather than echoing the last *command* back as a *reading* - it
+reads ``/joint_states`` only where the graph carries one, which the twin's
+does; the cameras
 (Orbbec on the wrist, a USB camera on the chassis) are ROS image topics a
 caller reads with ``use_rosbridge``/``use_ros`` ``echo`` or a lerobot camera
 config, not through this driver; and no policy provider is wired, so
@@ -81,6 +88,7 @@ from strands.types.tools import ToolContext
 from strands_robots._command_gate import gate_command
 from strands_robots.drivers.base import halt_failure_detail, undeclared_verb_error
 from strands_robots.utils import (
+    boolean_flag_error,
     dial_host_error,
     finite_number_error,
     positive_finite_number_error,
@@ -101,7 +109,7 @@ logger = logging.getLogger(__name__)
 SUPPORTED_ROBOTS: tuple[str, ...] = ("yahboom_m3pro",)
 
 #: The two ways onto the robot's ROS 2 graph. See the module docstring.
-TRANSPORTS: tuple[str, ...] = ("rosbridge", "ros2")
+TRANSPORTS: tuple[str, ...] = ("rosbridge", "ros2", "twin")
 
 #: Where ``rosbridge_server`` listens on the shipped image.
 DEFAULT_ROSBRIDGE = "localhost:9090"
@@ -112,6 +120,10 @@ ARM_TOPIC = "/arm6_joints"
 JOINT_TOPIC = "/arm_joint"
 ODOM_TOPIC = "/odom_raw"
 IMU_TOPIC = "/imu/data_raw"
+#: Joint state by name. The board publishes none; the twin does, and a firmware
+#: that grows one is read the same way.
+JOINT_STATES_TOPIC = "/joint_states"
+#: The two lidars - on the graph, read with ``use_rosbridge``/``use_ros`` echo.
 SCAN_TOPICS: tuple[str, ...] = ("/scan0", "/scan1")
 
 TWIST_TYPE = "geometry_msgs/Twist"
@@ -119,6 +131,7 @@ ARM_TYPE = "arm_msgs/ArmJoints"
 JOINT_TYPE = "arm_msgs/ArmJoint"
 ODOM_TYPE = "nav_msgs/Odometry"
 IMU_TYPE = "sensor_msgs/Imu"
+JOINT_STATES_TYPE = "sensor_msgs/JointState"
 
 #: The topics whose presence proves the board is on the graph. When the
 #: micro-ROS agent missed the STM32's boot announcement the graph carries only
@@ -185,7 +198,11 @@ MAX_MOVE_DURATION_S = 10.0
 #: What the operator gate labels a base command with, per transport - the same
 #: label the transport's own agent tool uses, so one physical ``/cmd_vel`` files
 #: one interrupt id and one audit source whichever surface reached it.
-_GATE_TOOL_BY_TRANSPORT: dict[str, str] = {"rosbridge": "use_rosbridge", "ros2": "use_ros"}
+_GATE_TOOL_BY_TRANSPORT: dict[str, str] = {
+    "rosbridge": "use_rosbridge",
+    "ros2": "use_ros",
+    "twin": "yahboom_m3pro_twin",
+}
 
 
 def _refuse(reason: str) -> dict[str, Any]:
@@ -391,6 +408,8 @@ class YahboomM3ProDriver:
         timeout_s: float = 5.0,
         joint_signs: tuple[float, ...] = (1.0, 1.0, 1.0, 1.0, 1.0),
         move_time_ms: int = DEFAULT_MOVE_TIME_MS,
+        sim: Any | None = None,
+        realtime: bool = False,
         **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` does the network work.
@@ -409,6 +428,12 @@ class YahboomM3ProDriver:
                 until the bench says otherwise.
             move_time_ms: The ``time`` field written when a caller does not
                 say - how long the servos take to reach an arm target.
+            sim: ``twin`` only - a built sim engine carrying ``yahboom_m3pro``
+                (what ``Robot("yahboom_m3pro", mode="sim")`` returns). ``None``
+                builds one on :meth:`connect_eagerly`, at the ``home`` keyframe.
+            realtime: ``twin`` only - step the world at wall-clock speed so a
+                viewer sees the motion as the robot would make it. Default
+                ``False``: as fast as the physics allows.
             **kwargs: Ignored; accepted so the factory can forward extras.
 
         Raises:
@@ -431,6 +456,16 @@ class YahboomM3ProDriver:
             )
         if reason := move_time_error(move_time_ms, "move_time_ms", context):
             raise ValueError(reason)
+        if reason := boolean_flag_error(realtime, "realtime", context):
+            raise ValueError(reason)
+        if sim is not None and transport != "twin":
+            raise ValueError(f"{context}: sim= is the twin transport's engine; pass transport='twin' with it")
+
+        self._twin: Any | None = None
+        if transport == "twin":
+            from strands_robots.drivers.yahboom_m3pro_twin import M3ProTwinGraph  # noqa: PLC0415 - imports this module
+
+            self._twin = M3ProTwinGraph(sim, realtime=realtime)
 
         self._tool_name = tool_name
         self._transport = transport
@@ -474,7 +509,18 @@ class YahboomM3ProDriver:
     @property
     def endpoint(self) -> str:
         """Where this driver reaches the graph, for a reader of ``status``."""
-        return f"ws://{self._host}:{self._port}" if self._transport == "rosbridge" else "rclpy (in-process)"
+        if self._transport == "rosbridge":
+            return f"ws://{self._host}:{self._port}"
+        if self._transport == "twin":
+            from strands_robots.drivers.yahboom_m3pro_twin import TWIN_ENDPOINT  # noqa: PLC0415 - imports this module
+
+            return TWIN_ENDPOINT
+        return "rclpy (in-process)"
+
+    @property
+    def sim(self) -> Any | None:
+        """The engine behind the ``twin`` transport - for ``render`` and the like - else ``None``."""
+        return self._twin.sim if self._twin is not None else None
 
     @property
     def tool_spec(self) -> ToolSpec:
@@ -649,6 +695,8 @@ class YahboomM3ProDriver:
             The transport's envelope, verbatim.
         """
         options.setdefault("timeout", self._timeout)
+        if self._twin is not None:
+            return cast("dict[str, Any]", self._twin(action, gate=gate, **options))
         if self._transport == "ros2":
             from strands_robots.ros import ros_action  # noqa: PLC0415 - rclpy is optional; imported on use
 
@@ -707,10 +755,10 @@ class YahboomM3ProDriver:
             return None
         probe = self._call("status", gate=self._never)
         probe_text = str((probe.get("content") or [{}])[0].get("text", ""))
-        # The transports answer ``status`` as prose: rosbridge says
-        # "connected to ws://..." once dialled, rclpy says "backend: rclpy".
+        # The transports answer ``status`` as prose: rosbridge and the twin say
+        # "; connected to <endpoint>" once dialled, rclpy says "backend: rclpy".
         reachable = probe.get("status") == "success" and (
-            "connected to ws://" in probe_text or probe_text.startswith("backend: rclpy")
+            "; connected to " in probe_text or probe_text.startswith("backend: rclpy")
         )
         if not reachable:
             self._connect_error = (
@@ -791,6 +839,8 @@ class YahboomM3ProDriver:
                 detail,
             )
         self._connected = False
+        if self._twin is not None:
+            self._twin.close()
 
     # ------------------------------------------------------------------ #
     # Write path.                                                        #
@@ -1075,15 +1125,34 @@ class YahboomM3ProDriver:
     # ------------------------------------------------------------------ #
 
     def get_observation(self) -> dict[str, float]:
-        """Joint positions by name - none this driver can vouch for.
+        """Joint positions by name, read from ``/joint_states`` when the graph carries it.
 
         Returns:
-            ``{}`` always. The board publishes no arm joint-state topic this
-            driver has verified, and echoing the last *command* back as a
-            *reading* would put a target where every consumer expects a
-            measurement. :meth:`last_arm_command` answers the other question.
+            ``{"<joint>.pos": radians}`` for every model joint the topic
+            reports - ``arm1..arm5``, ``gripper`` (the ``rlink1`` crank, the
+            key :meth:`send_action` takes) and the three base joints - or
+            ``{}`` when the graph has no ``/joint_states`` or it is silent. The
+            board publishes none, so on the robot this is ``{}``: echoing the
+            last *command* back as a *reading* would put a target where every
+            consumer expects a measurement (:meth:`last_arm_command` answers
+            that question). The twin's graph carries the topic, so there this
+            is the model's state.
         """
-        return {}
+        if not self._connected or JOINT_STATES_TOPIC not in self._topics:
+            return {}
+        samples = parse_echo(
+            self._call("echo", topic=JOINT_STATES_TOPIC, type=JOINT_STATES_TYPE, count=1, gate=self._never)
+        )
+        if not samples:
+            return {}
+        names, positions = samples[0].get("name") or [], samples[0].get("position") or []
+        reading: dict[str, float] = {}
+        for name, position in zip(names, positions, strict=False):
+            joint = str(name).rsplit("/", 1)[-1]
+            key = GRIPPER_JOINT if joint == "rlink1" else joint
+            if key in (*ARM_JOINTS, GRIPPER_JOINT, "base_x", "base_y", "base_yaw"):
+                reading[f"{key}.pos"] = float(position)
+        return reading
 
     def last_arm_command(self) -> dict[str, float] | None:
         """The last commanded arm pose in the model's radians, or ``None``.
@@ -1128,15 +1197,23 @@ class YahboomM3ProDriver:
 __all__ = [
     "ARM_CHANNELS",
     "ARM_JOINTS",
+    "ARM_TOPIC",
     "BASE_CHANNELS",
     "CMD_VEL_TOPIC",
+    "CMD_VEL_WATCHDOG_S",
     "DEFAULT_ROSBRIDGE",
     "HOME_DEG",
+    "IMU_TOPIC",
+    "JOINT_STATES_TOPIC",
+    "JOINT_TOPIC",
+    "JOINT_TYPE",
     "MAX_ANGULAR_RPS",
     "MAX_LINEAR_MPS",
     "MAX_MOVE_DURATION_S",
+    "ODOM_TOPIC",
     "PUBLISH_RATE_HZ",
     "REQUIRED_TOPICS",
+    "SCAN_TOPICS",
     "SERVO_RANGES_DEG",
     "SUPPORTED_ROBOTS",
     "TRANSPORTS",
