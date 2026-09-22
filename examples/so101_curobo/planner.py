@@ -53,7 +53,52 @@ def curobo_available() -> bool:
         return False
 
 
-def _so101_cache_urdf() -> tuple[str | None, str]:
+# The link :class:`CuroboMotionPlanner` plans to and measures its grasp offsets
+# in. The SO-ARM100 revision the strands-robots asset cache pins names its links
+# without the ``_link`` suffix (``base``, ``shoulder``, ... ``gripper``, ``jaw``)
+# and declares no tool frame at all, so a URDF is only a usable cuRobo model
+# here when it declares this one.
+DEFAULT_TOOL_FRAME = "gripper_frame_link"
+
+# URDFs already reported as missing the tool frame (one warning per URDF).
+_DECLINED: set[tuple[str, str]] = set()
+
+
+def _urdf_link_names(urdf_path: str) -> set[str]:
+    """The ``<link name=...>`` set a URDF declares (empty when unreadable)."""
+    try:
+        import xml.etree.ElementTree as ET
+
+        root = ET.parse(urdf_path).getroot()
+    except Exception:  # noqa: BLE001
+        return set()
+    return {name for link in root.iter("link") if (name := link.get("name"))}
+
+
+def _urdf_mesh_dir(urdf_path: str) -> str:
+    """The directory the URDF's own ``<mesh filename=...>`` refs resolve against.
+
+    The SO-101 URDF spells its meshes ``assets/<f>.stl``, relative to the URDF's
+    OWN directory, so handing cuRobo the ``assets/`` subdir spells every mesh
+    ``assets/assets/<f>.stl`` and it resolves none of them (cuRobo then builds a
+    robot with no collision geometry). Probe a declared ref against the URDF's
+    directory and its ``assets/`` subdir and return the one it resolves under.
+    """
+    base = os.path.dirname(os.path.abspath(urdf_path))
+    try:
+        import xml.etree.ElementTree as ET
+
+        root = ET.parse(urdf_path).getroot()
+    except Exception:  # noqa: BLE001
+        return base
+    refs = [f for mesh in root.iter("mesh") if (f := mesh.get("filename")) and "://" not in f]
+    for candidate in (base, os.path.join(base, "assets")):
+        if refs and all(os.path.exists(os.path.join(candidate, ref)) for ref in refs[:3]):
+            return candidate
+    return base
+
+
+def _so101_cache_urdf(tool_frame: str = DEFAULT_TOOL_FRAME) -> tuple[str | None, str]:
     """Best-effort: resolve the SO-101 URDF + mesh dir from the strands-robots cache.
 
     The default MuJoCo demo already auto-downloads the SO-101 model into the
@@ -107,14 +152,34 @@ def _so101_cache_urdf() -> tuple[str | None, str]:
         urdf = matches[0] if matches else None
     if not urdf:
         return None, ""
-    # Meshes live in the cache dir's ``assets/`` subdir when present; cuRobo's
-    # RobotBuilder resolves ``package://`` / relative mesh refs against it.
-    asset_dir = os.path.join(model_dir, "assets")
-    asset_path = asset_dir if os.path.isdir(asset_dir) else model_dir
-    return urdf, asset_path
+    # A URDF that declares no tool frame is not a cuRobo model: the builder
+    # refuses it ("Link <frame> not found in parent map"), the planner's
+    # geometry has no frame to measure in, and offering it anyway turned a
+    # missing dependency into a cuRobo crash swallowed by the scripted
+    # fallback. Decline it here with the reason, so the caller's actionable
+    # "pass urdf_path / SO101_URDF" hint is what the user sees.
+    links = _urdf_link_names(urdf)
+    if links and tool_frame not in links:
+        # Resolution is asked three times per run (the ``auto`` probe, the
+        # planner, and the sim arm), so say it once per URDF.
+        already_said = (urdf, tool_frame) in _DECLINED
+        _DECLINED.add((urdf, tool_frame))
+        if not already_said:
+            logger.warning(
+                "the cached SO-101 URDF %s declares no '%s' link (links: %s), so cuRobo "
+                "cannot plan with it -- pass urdf_path=... / --curobo-urdf (or set "
+                "SO101_URDF) pointing at a revision that declares it.",
+                urdf,
+                tool_frame,
+                sorted(links),
+            )
+        return None, ""
+    # cuRobo's RobotBuilder resolves the URDF's relative mesh refs against this
+    # directory, so it is the one the refs themselves resolve under.
+    return urdf, _urdf_mesh_dir(urdf)
 
 
-def resolve_so101_urdf(urdf_path: str | None = None) -> str | None:
+def resolve_so101_urdf(urdf_path: str | None = None, tool_frame: str = DEFAULT_TOOL_FRAME) -> str | None:
     """Resolve the SO-101 URDF with the documented precedence.
 
     1. explicit ``urdf_path`` argument,
@@ -131,11 +196,11 @@ def resolve_so101_urdf(urdf_path: str | None = None) -> str | None:
     env = os.environ.get("SO101_URDF")
     if env:
         return env
-    cached, _ = _so101_cache_urdf()
+    cached, _ = _so101_cache_urdf(tool_frame)
     return cached
 
 
-def resolve_so101_asset(asset_path: str = "") -> str:
+def resolve_so101_asset(asset_path: str = "", urdf_path: str | None = None) -> str:
     """Resolve the SO-101 mesh dir (for cuRobo) with the same precedence.
 
     explicit ``asset_path`` -> ``SO101_ASSET`` env -> the cache mesh dir.
@@ -147,6 +212,9 @@ def resolve_so101_asset(asset_path: str = "") -> str:
     env = os.environ.get("SO101_ASSET")
     if env:
         return env
+    urdf = urdf_path or os.environ.get("SO101_URDF")
+    if urdf:
+        return _urdf_mesh_dir(urdf)
     _, cached_assets = _so101_cache_urdf()
     return cached_assets
 
@@ -435,7 +503,7 @@ class CuroboMotionPlanner:
         self,
         urdf_path: str | None = None,
         asset_path: str = "",
-        tool_frame: str = "gripper_frame_link",
+        tool_frame: str = DEFAULT_TOOL_FRAME,
         self_collision: bool = False,
         device: str = "cuda",
         grasp_quaternion: Sequence[float] | None = None,
@@ -450,8 +518,8 @@ class CuroboMotionPlanner:
         fingertip_offset: Sequence[float] | None = None,
         **_ignored,
     ):
-        self.urdf_path = resolve_so101_urdf(urdf_path)
-        self.asset_path = resolve_so101_asset(asset_path)
+        self.urdf_path = resolve_so101_urdf(urdf_path, tool_frame)
+        self.asset_path = resolve_so101_asset(asset_path, self.urdf_path)
         self.tool_frame = tool_frame
         self.self_collision = self_collision
         self.device = device
@@ -525,6 +593,18 @@ class CuroboMotionPlanner:
                 "strands-robots SO-101 cache URDF (the one the MuJoCo demo "
                 "downloads), but that wasn't found here -- pass urdf_path=... or "
                 "set SO101_URDF (+ SO101_ASSET for meshes). See README (#67 T2/T4)."
+            )
+        links = _urdf_link_names(self.urdf_path)
+        if links and self.tool_frame not in links:
+            raise RuntimeError(
+                f"{self.urdf_path} declares no '{self.tool_frame}' link, the frame this "
+                "planner plans to and measures its grasp offsets in, so cuRobo cannot "
+                f"build a model from it (links it declares: {sorted(links)}). The "
+                "SO-ARM100 revision the strands-robots asset cache pins names its links "
+                "without the '_link' suffix and declares no tool frame; pass "
+                "urdf_path=... / --curobo-urdf (or set SO101_URDF) pointing at a "
+                "revision that declares it -- SO-ARM100 Simulation/SO101/"
+                "so101_new_calib.urdf on main does."
             )
         from curobo.motion_planner import MotionPlanner, MotionPlannerCfg
         from curobo.robot_builder import RobotBuilder

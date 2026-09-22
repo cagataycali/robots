@@ -96,9 +96,14 @@ recipe: `create() → add_frame()* → save_episode() → finalize()`.
   **SO-101 URDF resolution:** the URDF is resolved in this order — explicit
   `--curobo-urdf` → `SO101_URDF` env → the **auto-downloaded `strands-robots`
   SO-101 cache URDF** (`~/.strands_robots/assets/robotstudio_so101/`, the same
-  asset the default MuJoCo demo fetches). So once you've run the MuJoCo demo
-  (or on any box with internet), `--planner curobo` finds a URDF + meshes
-  with **no flag needed**; pass `--curobo-urdf` only to override with your own.
+  asset the default MuJoCo demo fetches). The planner plans to a
+  `gripper_frame_link` tool frame and measures its grasp offsets in it, and the
+  SO-ARM100 revision that cache pins declares no such link (its links are
+  `base`, `shoulder`, `upper_arm`, `lower_arm`, `wrist`, `gripper`, `jaw`), so
+  **`--curobo-urdf` is required**: point it at a revision that declares the
+  frame — SO-ARM100 `Simulation/SO101/so101_new_calib.urdf` on `main` does. A
+  cached URDF without the frame is declined with that reason (and cuRobo's
+  `Link gripper_frame_link not found in parent map` is never reached).
   **Driver:** NVIDIA's docs recommend driver ≥ 580.65.06 for cuRobo's latest
   release, but this example is **validated on driver 550 / CUDA 12.4 / L4** —
   the 580 floor is conservative, since CUDA 12.x kernels run on a 12.4 driver.
@@ -156,9 +161,11 @@ recipe: `create() → add_frame()* → save_episode() → finalize()`.
   variance is plan nondeterminism -- misses land just outside the bin radius).
   It's a standard kinematic grasp for synthetic data; a fully *dynamic* grasp
   would need an actuated model + contact/gripper-geometry. Unreachable targets
-  fall back to the scripted planner. Set the URDF so its meshes resolve for
-  MuJoCo (e.g. the URDF next to its `assets/` dir); `SO101_ASSET` points cuRobo
-  at the meshes.
+  fall back to the scripted planner. The mesh search path is derived from the
+  URDF's own `<mesh filename=...>` refs (the SO-101 URDF spells them
+  `assets/<f>.stl` relative to itself, so the URDF's *own* directory is the
+  search path — handing cuRobo the `assets/` subdir spelled every mesh
+  `assets/assets/<f>.stl` and it loaded none); `SO101_ASSET` overrides it.
 
 ## Component map
 
@@ -167,7 +174,7 @@ recipe: `create() → add_frame()* → save_episode() → finalize()`.
 | Isaac backend selection | `scene.make_sim("isaac")` -> `create_simulation("isaac")` | in-tree `strands-robots[sim-isaac]`; falls back to MuJoCo when the runtime is absent |
 | Faithful SO-101 asset | `add_robot(urdf_path=...)` (sim + cuRobo share the URDF) | ✅ for cuRobo path (same URDF both sides) |
 | cuRobo install validation | `planner.CUROBO_INSTALL_HINT` | ✅ validated on driver 550 (recipe above) |
-| cuRobo SO-101 config | `CuroboMotionPlanner._ensure` (`RobotBuilder`) | ✅ builds the 5-DOF model from URDF |
+| cuRobo SO-101 config | `CuroboMotionPlanner._ensure` (`RobotBuilder`) | ✅ builds the 5-DOF model from a URDF that declares `gripper_frame_link` (the cached revision does not — pass `--curobo-urdf`) |
 | `CuroboMotionPlanner` | `planner.py` | ✅ cuRobo drives the pick-and-place + kinematic grasp-attach transports the cube to the bin (validated success_rate ≈ 0.3-0.4; nondeterminism-limited); dynamic-grasp realism is further tuning |
 | Executor + gripper | `collector._execute_and_record` | ✅ |
 | `LeRobotDataCollector` | `collector.py` | ✅ (multi-episode, success check) |

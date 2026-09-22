@@ -148,7 +148,7 @@ def test_resolve_so101_urdf_precedence(monkeypatch, tmp_path):
     monkeypatch.setattr(
         P,
         "_so101_cache_urdf",
-        lambda: (str(cache_urdf), str(cache_urdf.parent / "assets")),
+        lambda *_a, **_k: (str(cache_urdf), str(cache_urdf.parent / "assets")),
     )
 
     # 1. explicit wins over everything.
@@ -173,7 +173,7 @@ def test_resolve_so101_urdf_none_when_unavailable(monkeypatch):
     from examples.so101_curobo import planner as P
 
     monkeypatch.delenv("SO101_URDF", raising=False)
-    monkeypatch.setattr(P, "_so101_cache_urdf", lambda: (None, ""))
+    monkeypatch.setattr(P, "_so101_cache_urdf", lambda *_a, **_k: (None, ""))
     assert P.resolve_so101_urdf(None) is None
 
 
