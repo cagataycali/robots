@@ -1,6 +1,6 @@
 """``Robot(ros2_bridge="false")`` is refused for the flag, not for a missing rclpy.
 
-``docs/ros2-integration.md`` promises that ``ros2_bridge`` and ``ros2_commands``
+``docs/ros2/hardware-bridge.md`` promises that ``ros2_bridge`` and ``ros2_commands``
 "are checked at construction, so a config that spells the flag ``"false"`` is
 refused". ``Robot.__init__`` reads ``if ros2_bridge:`` to decide whether to probe
 the transport dependency before the grading in ``_init_ros_bridge`` runs, and
