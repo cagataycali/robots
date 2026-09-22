@@ -79,6 +79,7 @@ nav:
   - Training: training/overview.md
   - VLA-on-G1 Workflow: training/vla_workflow.md
   - Reinforcement Learning: training/rl.md
+  - RL API Reference: training/rl-reference.md
   - Remote Inference: inference/remote.md
   - Examples: examples/overview.md
 - Reference:
