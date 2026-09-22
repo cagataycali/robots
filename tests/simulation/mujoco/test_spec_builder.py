@@ -1043,7 +1043,7 @@ class TestPublicApiSurface:
 
 
 class TestSurplusRollbackTargetsOnlyWhatThisCallAppended:
-    """``remove_surplus_*`` deletes the appended copy, never the original.
+    """``remove_*_not_in`` deletes what the refused call appended, never the original.
 
     A scene injection mutates the live spec before the compile that validates
     the result, so while a rollback is pending a colliding name is carried by two
@@ -1052,8 +1052,20 @@ class TestSurplusRollbackTargetsOnlyWhatThisCallAppended:
     resolves the name to the element present at the last compile and
     ``remove_camera`` takes the first match, i.e. both answer with the ORIGINAL.
 
+    Nor can the surplus be found by the colliding name, which was the previous
+    shape of this rollback. What the refused insert leaves in the orphan's name
+    field is a property of the MuJoCo build: through 3.13 ``add_body(name=...)``
+    appended a body carrying the colliding name, and from 3.14 the failed rename
+    preserves the element's previous name, so the same call appends a body whose
+    name is ``""`` and whose ``pos`` is the default. A name-keyed rollback found
+    the orphan on the first build and nothing on the second - leaving a nameless
+    body at the origin in a spec that then compiled, which is the silent scene
+    rewrite the rollback exists to prevent. Identity against a snapshot taken
+    before the insert is the same set on both, so these cells assert on the
+    element set and the compiled count, and never on what the orphan is called.
+
     These exercise the contract on a real ``MjSpec`` on every supported MuJoCo
-    build. ``add_body``/``add_camera`` insert the duplicate on all of them; only
+    build. ``add_body``/``add_camera`` insert the orphan on all of them; only
     whether they also raise on the spot differs (builds from 3.6 validate the
     repeated name eagerly, earlier ones defer it to compile), which is why the
     insert below tolerates a raise and then asserts on the count either way.
@@ -1061,7 +1073,8 @@ class TestSurplusRollbackTargetsOnlyWhatThisCallAppended:
 
     XML = (
         '<mujoco model="s"><worldbody>'
-        '<body name="table" pos="1 2 0.5"><geom type="box" size="0.2 0.2 0.2"/></body>'
+        '<body name="table" pos="1 2 0.5"><geom type="box" size="0.2 0.2 0.2"/>'
+        '<camera name="wrist" pos="0 0 0.3"/></body>'
         '<camera name="overview" pos="3 3 3" xyaxes="-1 1 0 0 0 1"/>'
         "</worldbody></mujoco>"
     )
@@ -1069,52 +1082,91 @@ class TestSurplusRollbackTargetsOnlyWhatThisCallAppended:
     def test_the_original_body_survives_and_the_spec_recompiles(self):
         spec = mujoco.MjSpec.from_string(self.XML)
         spec.compile()
-        keep = SpecBuilder.count_bodies_named(spec, "table")
-        assert keep == 1
+        before = SpecBuilder.snapshot_bodies(spec)
+        assert [body.name for body in before] == ["world", "table"]
 
         try:
             spec.worldbody.add_body(name="table", pos=[0.0, 0.0, 0.6])
         except ValueError:
-            pass  # eager-validating builds still leave the duplicate behind
-        assert SpecBuilder.count_bodies_named(spec, "table") == 2
+            pass  # The insert is expected to fail; eager-validating builds still leave the orphan behind
+        assert len(spec.bodies) == 3, [body.name for body in spec.bodies]
 
-        assert SpecBuilder.remove_surplus_bodies(spec, "table", keep) == 1
-        survivors = [body for body in spec.bodies if body.name == "table"]
-        assert len(survivors) == 1
-        assert list(survivors[0].pos) == [1.0, 2.0, 0.5]
-        assert len(survivors[0].geoms) == 1
+        assert SpecBuilder.remove_bodies_not_in(spec, before) == 1
+        assert tuple(spec.bodies) == before
+        (survivor,) = [body for body in spec.bodies if body.name == "table"]
+        assert list(survivor.pos) == [1.0, 2.0, 0.5]
+        assert len(survivor.geoms) == 1
         # Rolling back twice must not eat the original: nothing is surplus now.
-        assert SpecBuilder.remove_surplus_bodies(spec, "table", keep) == 0
+        assert SpecBuilder.remove_bodies_not_in(spec, before) == 0
         assert spec.compile().nbody == 2
 
     def test_the_original_camera_survives_and_the_spec_recompiles(self):
         spec = mujoco.MjSpec.from_string(self.XML)
         spec.compile()
-        keep = SpecBuilder.count_cameras_named(spec, "overview")
-        assert keep == 1
+        before = SpecBuilder.snapshot_cameras(spec)
+        assert [camera.name for camera in before] == ["overview", "wrist"]
 
         try:
             spec.worldbody.add_camera(name="overview", pos=[0.0, 0.0, 9.0])
         except ValueError:
-            pass  # eager-validating builds still leave the duplicate behind
-        assert SpecBuilder.count_cameras_named(spec, "overview") == 2
+            pass  # eager-validating builds still leave the orphan behind
+        assert len(spec.cameras) == 3, [camera.name for camera in spec.cameras]
 
-        assert SpecBuilder.remove_surplus_cameras(spec, "overview", keep) == 1
-        survivors = [camera for camera in spec.cameras if camera.name == "overview"]
-        assert len(survivors) == 1
-        assert list(survivors[0].pos) == [3.0, 3.0, 3.0]
-        assert SpecBuilder.remove_surplus_cameras(spec, "overview", keep) == 0
-        assert spec.compile().ncam == 1
+        assert SpecBuilder.remove_cameras_not_in(spec, before) == 1
+        assert tuple(spec.cameras) == before
+        (survivor,) = [camera for camera in spec.cameras if camera.name == "overview"]
+        assert list(survivor.pos) == [3.0, 3.0, 3.0]
+        assert SpecBuilder.remove_cameras_not_in(spec, before) == 0
+        assert spec.compile().ncam == 2
 
-    def test_counting_an_absent_name_reports_zero(self):
+    def test_a_worldbody_camera_is_not_the_last_camera_enumerated(self):
+        """The orphan is found by identity, not by position in the list.
+
+        ``spec.cameras`` enumerates in tree order, so a camera appended to the
+        worldbody sits before the cameras of every child body rather than at the
+        tail. A rollback that deleted the tail would delete the child body's
+        ``wrist`` camera here and leave the orphan.
+        """
+        spec = mujoco.MjSpec.from_string(self.XML)
+        spec.compile()
+        before = SpecBuilder.snapshot_cameras(spec)
+
+        try:
+            spec.worldbody.add_camera(name="overview", pos=[0.0, 0.0, 9.0])
+        except ValueError:
+            pass  # The insert is expected to fail; the test verifies rollback below.
+        assert [camera.name for camera in spec.cameras][-1] == "wrist"
+
+        assert SpecBuilder.remove_cameras_not_in(spec, before) == 1
+        assert [camera.name for camera in spec.cameras] == ["overview", "wrist"]
+
+    def test_a_nameless_orphan_is_still_rolled_back(self):
+        """A rollback keyed on the name would leave this one behind.
+
+        This is the shape MuJoCo 3.14 produces for a refused duplicate insert,
+        built here explicitly so the cell measures the same thing on every
+        build: an unnamed body appended after the snapshot is deleted by the
+        rollback, and a spec that compiled with one extra body compiles without it.
+        """
+        spec = mujoco.MjSpec.from_string(self.XML)
+        spec.compile()
+        before = SpecBuilder.snapshot_bodies(spec)
+
+        spec.worldbody.add_body(pos=[0.0, 0.0, 0.6])
+        assert spec.compile().nbody == 3
+        assert sum(1 for body in spec.bodies if body.name == "table") == 1
+
+        assert SpecBuilder.remove_bodies_not_in(spec, before) == 1
+        assert spec.compile().nbody == 2
+
+    def test_a_snapshot_of_an_unchanged_spec_removes_nothing(self):
         spec = mujoco.MjSpec.from_string(self.XML)
         spec.compile()
 
-        assert SpecBuilder.count_bodies_named(spec, "absent") == 0
-        assert SpecBuilder.count_cameras_named(spec, "absent") == 0
         # A rollback on a path that inserted nothing is a safe no-op.
-        assert SpecBuilder.remove_surplus_bodies(spec, "absent", 0) == 0
-        assert SpecBuilder.remove_surplus_cameras(spec, "absent", 0) == 0
+        assert SpecBuilder.remove_bodies_not_in(spec, SpecBuilder.snapshot_bodies(spec)) == 0
+        assert SpecBuilder.remove_cameras_not_in(spec, SpecBuilder.snapshot_cameras(spec)) == 0
+        assert spec.compile().nbody == 2
 
 
 # The five ways MJCF spells one rotation, applied to a plane. Every entry is the
