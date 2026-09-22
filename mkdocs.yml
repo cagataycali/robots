@@ -42,6 +42,11 @@ nav:
   - Teleoperation: hardware/teleoperation.md
   - Tools: hardware/tools.md
   - ROS 2 Integration: ros2-integration.md
+  - ROS 2 Safety and Command Gate: ros2/safety.md
+  - Ackermann Robots (AWS DeepRacer): ros2/ackermann.md
+  - ROS 2 Sim Bridge: ros2/sim-bridge.md
+  - ROS 2 Hardware Bridge: ros2/hardware-bridge.md
+  - ROS 2 Mesh Bridge: ros2/mesh-bridge.md
   - rosbridge Integration: rosbridge-integration.md
   - Pure-RTPS ROS 2: rtps-integration.md
   - Device Connect: device-connect.md
