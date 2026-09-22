@@ -636,13 +636,19 @@ class SpecBuilder:
         # leaves an orphan body behind.
         material_name = SpecBuilder._build_material(spec, obj) if obj.material is not None else None
 
-        # ``add_body(name=...)`` inserts the duplicate even when the name
-        # collides with an existing scene body, and the steps after it (the geom
-        # type lookup, ``add_geom``) can raise as well. Any raise in this block
-        # must undo only what THIS call inserted, then re-raise so the caller
-        # reports the real reason - hence the body count taken before the insert
-        # and :meth:`remove_surplus_bodies` after it, never a delete by name.
-        pre_count = SpecBuilder.count_bodies_named(spec, obj.name)
+        # A raise in this block can leave a body behind: the steps after the
+        # insert (the geom type lookup, ``add_geom``) run with the body already
+        # in the spec, and a colliding name leaves one too - through mujoco 3.11
+        # ``add_body(name=...)`` appends the duplicate, and from 3.12 it refuses
+        # the repeated name and leaves the appended body UNNAMED. A by-name
+        # rollback cannot see that one, so every later compile carried it: an
+        # anonymous body the scene registry does not know about, one per refused
+        # add. Rolling back by POSITION removes what this call added whatever it
+        # ended up named, then re-raises so the caller reports the real reason.
+        # The insert goes to the worldbody, whose new child is appended last, so
+        # in the tree order ``spec.bodies`` enumerates it is the tail beyond the
+        # length taken here.
+        pre_children = len(getattr(spec, "bodies", ()))
         try:
             body = spec.worldbody.add_body(
                 name=obj.name,
@@ -700,7 +706,7 @@ class SpecBuilder:
 
             body.add_geom(**geom_kwargs)
         except (ValueError, RuntimeError):
-            SpecBuilder.remove_surplus_bodies(spec, obj.name, pre_count)
+            SpecBuilder.remove_appended(spec, getattr(spec, "bodies", ()), pre_children)
             raise
 
     # material build
@@ -830,13 +836,13 @@ class SpecBuilder:
         If ``cam.target`` is set, the look-at direction is converted to a
         quaternion via :func:`_target_quat`.
 
-        ``add_camera(name=...)`` inserts the duplicate even when the name
-        collides with a camera the scene already declares, so - exactly as in
-        :meth:`add_object` - a raise from the insert rolls only the cameras THIS
-        call appended back out (:meth:`remove_surplus_cameras`) before
-        re-raising. Without that, a refused camera left an orphan in the spec and
-        every later scene mutation kept failing to recompile on the duplicate
-        name, bricking the world after one bad add.
+        A refused insert leaves a camera behind - the duplicate through mujoco
+        3.11, an unnamed camera from 3.12 - so, exactly as in :meth:`add_object`,
+        the cameras THIS call appended to the parent are rolled back by position
+        (:meth:`remove_appended`) before re-raising. Without that, a refused
+        camera left an orphan in the spec: it either bricked every later
+        recompile on the duplicate name, or sat in the compiled model as an
+        anonymous camera that shifted the camera indices after it.
         """
         mujoco = _ensure_mujoco()
         pos = list(cam.position)
@@ -866,11 +872,11 @@ class SpecBuilder:
         else:
             attach_to = spec.worldbody
 
-        pre_count = SpecBuilder.count_cameras_named(spec, cam.name)
+        pre_children = len(getattr(attach_to, "cameras", ()))
         try:
             attach_to.add_camera(**kwargs)
         except (ValueError, RuntimeError):
-            SpecBuilder.remove_surplus_cameras(spec, cam.name, pre_count)
+            SpecBuilder.remove_appended(spec, getattr(attach_to, "cameras", ()), pre_children)
             raise
 
     # deferred (body-mounted) cameras
@@ -975,6 +981,43 @@ class SpecBuilder:
             How many cameras currently carry ``name`` (0 when none do).
         """
         return sum(1 for camera in getattr(spec, "cameras", ()) if camera.name == name)
+
+    @staticmethod
+    def remove_appended(spec: Any, children: Any, keep: int) -> int:
+        """Delete the elements a refused insert appended to a parent's list.
+
+        The rollback a refused insert needs, and deliberately NOT a delete by
+        name: what an insert leaves behind is not reliably findable by name. A
+        colliding ``add_body``/``add_camera`` leaves the duplicate through mujoco
+        3.11 - where a by-name delete answers with the ORIGINAL, deleting the
+        healthy scene element and leaving the rejected one holding its name - and
+        from 3.12 it leaves the appended element UNNAMED, where a by-name delete
+        finds nothing at all and the orphan reaches every later compile.
+
+        New elements are appended, so the ones this call added are the tail beyond
+        ``keep``, the length taken before the insert - over a parent's own child
+        list (``parent.cameras``) or, for a body added to the worldbody, over
+        ``spec.bodies``, whose tree order puts the worldbody's newest child last. ``keep`` at or above
+        the current length is a no-op, so the rollback is safe to attempt on a
+        path that may not have inserted anything.
+
+        Callers read the list through ``getattr(parent, ..., ())``, the same
+        accessor-drift posture the rest of this module takes: a build that does
+        not expose the list rolls nothing back rather than raising past the error
+        it was handling.
+
+        Args:
+            spec: The ``mjSpec`` to mutate.
+            children: The parent's child list (``parent.bodies``/``.cameras``).
+            keep: How many children to leave in place.
+
+        Returns:
+            The number of elements deleted.
+        """
+        surplus = list(children)[keep:]
+        for element in surplus:
+            spec.delete(element)
+        return len(surplus)
 
     @staticmethod
     def remove_surplus_bodies(spec: Any, name: str, keep: int) -> int:
