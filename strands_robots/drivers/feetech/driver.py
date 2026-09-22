@@ -24,6 +24,12 @@ What works and what does not:
   can be stopped), which is its own slice. The refusal no longer blames the
   bus, because the bus is here.
 
+* ``transport="twin"`` - the same driver, with the arm's MuJoCo model at the
+  far end of the bus (:mod:`~strands_robots.drivers.feetech.twin`). Every verb,
+  unit and refusal above is unchanged; only the seam is. ``sim=`` hands in an
+  engine already carrying the arm and ``realtime=`` steps it at wall-clock
+  speed. The default transport is the serial bus, and nothing about it moves.
+
 None of this pretends. Every refusal returns an envelope of the same shape a
 successful path returns, so the mesh and the agent need no code change on the
 day the policy loop lands.
@@ -89,6 +95,10 @@ SUPPORTED_ROBOTS: tuple[str, ...] = (
 
 _TOOL_TYPE = "robot"
 
+#: How the driver reaches its servos: the SCS serial bus, or the arm's MuJoCo
+#: model answering the same bus (:class:`~strands_robots.drivers.feetech.twin.FeetechTwinBus`).
+TRANSPORTS: tuple[str, ...] = ("serial", "twin")
+
 # Refusal reason shared by the policy verbs. The literal string is checked in
 # tests, so a change here is a change to the driver contract. It names the
 # control loop and not the bus: blaming the bus for a missing policy loop sends
@@ -136,6 +146,19 @@ class FeetechDriver:
       a caller who lengthens the window for a slow servo, and gets the default
       window and six motors that did not answer, has been told nothing. Held to
       :func:`~strands_robots.utils.positive_finite_number_error`.
+    * ``transport`` - one of :data:`TRANSPORTS`, default ``"serial"``. ``"twin"``
+      builds the bus over the arm's MuJoCo model instead of a serial port
+      (:mod:`~strands_robots.drivers.feetech.twin`): the same verbs, units and
+      refusals, with ``sensors`` reading the model's joints. The model is the
+      one the registry names for ``tool_name``, so ``tool_name`` must resolve to
+      a robot in :data:`SUPPORTED_ROBOTS` with a simulation asset - refused by
+      name otherwise (``hope_jr`` has no asset) - unless ``sim=`` hands in an
+      engine already carrying the arm, whose robot then names the entry.
+    * ``sim`` - ``twin`` only: a built sim engine (what ``Robot("so101",
+      mode="sim")`` returns). ``None`` builds one on first connect; the driver
+      destroys an engine it built and leaves a caller's alone.
+    * ``realtime`` - ``twin`` only: step the model at wall-clock speed so a
+      viewer sees the motion as the arm would make it. Default ``False``.
     """
 
     tool_type = _TOOL_TYPE
@@ -219,13 +242,39 @@ class FeetechDriver:
                     f"ids {sorted(known)} map to {[known[i] for i in sorted(known)]}",
                 )
             motors = {known[i]: SO_ARM_MOTORS[known[i]] for i in self._motor_ids}
-        self._bus = FeetechBus(
-            port=self._port,
-            baud_rate=self._baud_rate,
-            motors=motors,
-            timeout=self._timeout,
-            calibration=records,
-        )
+        # The seam. ``"serial"`` is the shipped default and is untouched by the
+        # twin's knobs; ``"twin"`` builds the same bus surface over the model.
+        transport = kwargs.pop("transport", "serial")
+        sim = kwargs.pop("sim", None)
+        realtime = kwargs.pop("realtime", False)
+        context = f"FeetechDriver({tool_name!r})"
+        if transport not in TRANSPORTS:
+            raise ValueError(f"{context}: transport must be one of {list(TRANSPORTS)}, got {transport!r}")
+        if sim is not None and transport != "twin":
+            raise ValueError(f"{context}: sim= is the twin transport's engine; pass transport='twin' with it")
+        if (reason := boolean_flag_error(realtime, "realtime", context)) is not None:
+            raise ValueError(reason)
+        self._transport: str = transport
+        self._bus: FeetechBus
+        if transport == "twin":
+            from strands_robots.drivers.feetech.twin import FeetechTwinBus  # noqa: PLC0415 - imports this module
+
+            self._bus = FeetechTwinBus(
+                _twin_robot(tool_name, sim, context),
+                motors=motors,
+                timeout=self._timeout,
+                calibration=records,
+                sim=sim,
+                realtime=bool(realtime),
+            )
+        else:
+            self._bus = FeetechBus(
+                port=self._port,
+                baud_rate=self._baud_rate,
+                motors=motors,
+                timeout=self._timeout,
+                calibration=records,
+            )
         self._connect_error: str | None = None
         # Extras from the caller are kept for a downstream driver package
         # to consume; refusing them here would refuse a valid future
@@ -370,10 +419,13 @@ class FeetechDriver:
                 self._bus.write_goal_positions(targets)
         except (ValueError, TypeError, RuntimeError, OSError) as e:
             return _refuse(f"send_action: {e}")
-        return {
-            "status": "success",
-            "content": [{"json": {"commanded": targets, "unit": "degrees (gripper: percent open)"}}],
-        }
+        body: dict[str, Any] = {"commanded": targets, "unit": "degrees (gripper: percent open)"}
+        # The twin reports a target the model's travel clamped (design: "the
+        # model's limits are reported"); the serial bus never sets this, so a
+        # serial reply is byte for byte what it was.
+        if note := getattr(self._bus, "last_clamp_note", ""):
+            body["note"] = note
+        return {"status": "success", "content": [{"json": body}]}
 
     def start_task(
         self,
@@ -425,12 +477,13 @@ class FeetechDriver:
         return {"status": "success", "content": [{"text": f"stop_task: {_NO_POLICY_LOOP}"}]}
 
     def cleanup(self) -> None:
-        """Close the serial port.
+        """Close the serial port - or, on the twin, destroy an engine the driver built.
 
         Idempotent, and safe on a driver that never connected: the bus tracks
         whether it holds an open handle. Torque is deliberately left as it is -
         releasing it here would drop an arm holding a payload when a caller
-        merely tore down a process; ``stop`` is the verb that de-energizes.
+        merely tore down a process; ``stop`` is the verb that de-energizes. An
+        engine handed in through ``sim=`` is the caller's and is left alone.
         """
         with bus_lock(self):
             self._bus.disconnect()
@@ -462,6 +515,21 @@ class FeetechDriver:
     def is_connected(self) -> bool:
         """Whether the serial port is open, so a consumer can tell live from stale."""
         return self._bus.is_connected
+
+    @property
+    def transport(self) -> str:
+        """Which seam the driver is on - one of :data:`TRANSPORTS`."""
+        return self._transport
+
+    @property
+    def endpoint(self) -> str | None:
+        """Where the driver reaches its servos: the serial path, or ``sim://<robot>`` on the twin."""
+        return self._bus.port if self._transport == "twin" else self._port
+
+    @property
+    def sim(self) -> Any | None:
+        """The engine behind the ``twin`` transport - for ``render`` and the like - else ``None``."""
+        return getattr(self._bus, "sim", None) if self._transport == "twin" else None
 
     def _connect_if_needed(self) -> None:
         """Open the bus on first use, recording the reason when it fails."""
@@ -536,6 +604,8 @@ class FeetechDriver:
                         "tool_type": self.tool_type,
                         "connected": self.is_connected,
                         "connect_error": self._connect_error,
+                        "transport": self._transport,
+                        "endpoint": self.endpoint,
                         "port": self._port,
                         "baud_rate": self._baud_rate,
                         "motors": {name: spec.motor_id for name, spec in self._bus.motors.items()},
@@ -571,6 +641,49 @@ class FeetechDriver:
 # on purpose: two drivers with two two-line helpers is smaller than one driver
 # and one shared module that binds their evolution together.
 # ---------------------------------------------------------------------------
+def _twin_robot(tool_name: str, sim: Any | None, context: str) -> str:
+    """Name the registry robot the twin models, or refuse.
+
+    The factory builds a driver as ``driver_cls(tool_name=<canonical>, ...)``
+    and forwards nothing else that names the robot, so the honest source is
+    ``tool_name`` resolved through the registry - unless ``sim`` already
+    carries a robot, in which case that robot is the model and its name is the
+    entry. A ``tool_name`` a caller chose (``"left_arm"``) resolves to nothing
+    and is refused with the fix.
+
+    Args:
+        tool_name: The driver's tool name.
+        sim: The caller's engine, or ``None``.
+        context: The constructor's context for the refusal.
+
+    Returns:
+        A canonical name in :data:`SUPPORTED_ROBOTS` that has a simulation asset.
+
+    Raises:
+        ValueError: The name is not one this driver serves, or it has no asset.
+    """
+    from strands_robots.registry import has_sim, resolve_name  # noqa: PLC0415 - the registry is not a driver import
+
+    candidate = tool_name
+    if sim is not None:
+        names = [str(name) for name in (sim.list_robots() or [])] if hasattr(sim, "list_robots") else []
+        if names:
+            candidate = names[0]
+    canonical = resolve_name(candidate)
+    if canonical not in SUPPORTED_ROBOTS:
+        raise ValueError(
+            f"{context}: transport='twin' models the robot tool_name names, and {candidate!r} resolves to "
+            f"{canonical!r}, which is not one of {list(SUPPORTED_ROBOTS)}; pass tool_name as the arm's registry "
+            "name (so101, so100) or sim= an engine carrying it"
+        )
+    if not has_sim(canonical):
+        raise ValueError(
+            f"{context}: transport='twin' needs a simulation asset, and the registry entry for {canonical!r} "
+            "declares none; the SO arms (so100, so101) do"
+        )
+    return canonical
+
+
 def _refuse(message: str) -> dict[str, Any]:
     """Return an error envelope with ``message``, matching the "not wired" contract."""
     return {"status": "error", "content": [{"text": message}]}
