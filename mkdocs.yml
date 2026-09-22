@@ -41,6 +41,7 @@ nav:
   - Robot Control: hardware/robot-control.md
   - Teleoperation: hardware/teleoperation.md
   - Tools: hardware/tools.md
+  - Twin Transport: hardware/twin-transport.md
   - ROS 2 Integration: ros2-integration.md
   - ROS 2 Safety and Command Gate: ros2/safety.md
   - Ackermann Robots (AWS DeepRacer): ros2/ackermann.md

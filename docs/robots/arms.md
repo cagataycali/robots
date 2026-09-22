@@ -215,6 +215,57 @@ travel. No two SO-101s stop in the same place, so `0 degrees` and
 `0 percent closed` then land somewhere different on each one - the degrees are an
 encoder angle rather than a joint angle. Calibrate the arm and pass the file.
 
+## The same agent, on the twin
+
+`Robot("so101", mode="sim")` is the physics twin with the simulation tool's
+verbs. `transport="twin"` is something else: the **Feetech driver**, with its
+verbs and units, answering its bus from that model. An agent that learns to
+`move_to` a pose, read `sensors` and `set_torque` here says exactly the same
+words to the arm - one tool, two far ends.
+
+```python
+from strands import Agent
+from strands_robots import Robot
+
+arm = Robot("so101", mode="real", driver="strands", transport="twin")   # FeetechDriver, model at the far end
+arm.connect_eagerly()                                                    # builds the model; None, or a reason
+
+Agent(tools=[arm])("read the joints, then move the gripper to 30 percent open")
+
+arm.sim.render(width=640, height=480)                                    # the engine is one attribute away
+arm.cleanup()                                                            # destroys an engine the driver built
+```
+
+`driver="strands"` is spelled because the SO arms' registry entries declare no
+`hardware.driver`, so `Robot(..., mode="real")` alone builds the lerobot
+driver, which has no twin. `so100` works the same way.
+
+What the twin does with the bus: each motor is placed on the model through the
+registry's `joint_labels` (the SO-101 asset names its joints `1`..`6`, the
+SO-100's `Rotation`..`Jaw`, the bus speaks `shoulder_pan`..`gripper`) and the
+actuator driving that joint; a target's degrees go through the bus's own
+`to_counts` against **this arm's calibration** and the calibrated
+`[range_min, range_max]` counts map linearly onto the joint's travel in the
+model, so a calibration file written for a real arm places the twin where it
+places the arm, and with no calibration `0 degrees` is the middle of the model's
+travel. `gripper` percent spans the jaw end to end, `0` at the closed stop. A
+write steps the model for one bus read period (the driver's `timeout`), so the
+servo has arrived by the next `sensors`; `set_torque(False)` zeroes the
+actuators' gains and the arm falls under the model's gravity, `set_torque(True)`
+holds where it is, and a `move_to` while released is refused. `sensors` and the
+mesh's joint reader read the model back through the same map, in degrees.
+`sim=` hands in an engine you already built (with objects, a camera); `realtime=True`
+steps at wall-clock speed for a viewer. The operator gate is not consulted - the
+driver does not consult it on the serial bus either.
+
+Two fidelity notes, the model's rather than the driver's: a MuJoCo position
+servo settles where its gain balances the joint's friction (`frictionloss / kp`),
+so a target is reached to within a degree rather than an encoder count - reads
+are still reproducible to one count; and the SO-101 asset's actuators declare
+`ctrlrange="0 0"` (unlimited), so a calibrated target past the joint's stops is
+clamped to the joint `range` by the twin and **reported** on the reply, where
+the SO-100's declared `ctrlrange` would have clamped it silently.
+
 ## See also
 
 - [Robot factory](../getting-started/robot-factory.md) - how `Robot("name")` resolves
