@@ -227,7 +227,9 @@ class TestTheArmReachesTheModel:
         after = twin.get_observation()
         # The wire is whole degrees, so the reading is the target quantised to one.
         assert after["arm1.pos"] == pytest.approx(0.4, abs=math.radians(0.5))
-        assert after["gripper.pos"] == pytest.approx(-1.0, abs=0.02), "rlink1 reads back under the key send_action takes"
+        assert after["gripper.pos"] == pytest.approx(-1.0, abs=0.02), (
+            "rlink1 reads back under the key send_action takes"
+        )
 
     def test_a_radian_round_trips_through_degrees_within_a_degree(
         self, twin: YahboomM3ProDriver, engine: _FakeEngine
