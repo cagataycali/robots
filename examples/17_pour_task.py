@@ -19,9 +19,10 @@ pouring the moment something slides the cap open. (The ``hinged_carton``
 variant is the same task with the lid on a hinge - mount that one upright,
 where gravity holds the lid shut; see the asset's own comment.) The scripted
 teaser at the end drives the cap directly to demonstrate the physics and the
-predicates flipping; the benchmark evaluation itself runs the ``mock`` policy,
-which does not act, so success is expected to be 0 - the point is authoring
-and scoring a contact-rich task the same way examples 10/11 score locomotion.
+predicates flipping; the benchmark evaluation scores 0 for EVERY policy,
+because the cap is outside the arm's workspace (see ``build_scene``) - the
+point is authoring and scoring a contact-rich task the same way examples
+10/11 score locomotion, not learning this one.
 
 Dependencies: pip install "strands-robots[sim-mujoco]"
 Expected output: the compiled benchmark's metadata, its evaluation metrics,
@@ -95,9 +96,19 @@ def build_scene(sim) -> None:
     The task objects attach through the EXISTING scene APIs -
     ``add_robot(urdf_path=...)`` namespaces their bodies and makes the
     carton's ``cap_slide`` observable by the joint predicates. The carton is
-    mounted lid-down 0.30 m above the tray and out of the arm's reach (so a
-    flailing mock policy cannot bump it open); its closed cap is the only
+    mounted lid-down 0.30 m above the tray, and its closed cap is the only
     thing holding the beads.
+
+    That station is outside the arm's workspace, so the success clause is
+    unreachable for every policy, not just for ``mock``: the so100's tool
+    point reaches x <= 0.44 m while the cap plate starts at x = 0.50 m, and
+    even the bounding sphere of the outermost arm geom stops 54 mm short of
+    it. Bringing the station inside the reach envelope does not make the
+    clause winnable either - the cap's push face is a 4 mm strip flush under
+    the carton walls, which the gripper hits first, so a scripted IK push
+    creeps the cap 8 mm of the 60 mm ``joint_above`` asks for. Score this
+    scene to see the DSL score a contact-rich task; drive the cap from the
+    script, as the teaser in :func:`main` does, to see the physics.
     """
     tray = sim.add_robot(name="tray", urdf_path=task_object_path("open_tray"), position=[0.55, 0.0, 0.0])
     if tray["status"] != "success":
@@ -169,8 +180,8 @@ def main() -> int:
     sim.set_joint_positions({"cap_slide": 0.09}, robot_name="carton")
     sim.step(600)
     print(f"After sliding the cap open: cap_open={cap_open(sim)} poured={poured(sim)}")
-    print("\n(mock does not open the cap, so the benchmark scores 0 - point --policy at a")
-    print(" trained provider, or record the scripted pour as demonstration data.)")
+    print("\n(the cap is outside the arm's workspace, so every policy scores 0 on this")
+    print(" scene - record the scripted pour above as demonstration data instead.)")
     return 0
 
 
