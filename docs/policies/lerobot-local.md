@@ -216,7 +216,10 @@ policy = create_policy(
 The built-in `so100` / `so101` maps declare `state_units`/`action_units`
 `"degrees"`; every other map defaults to `"native"`, which is right for real
 hardware - an SO follower already reports driver units - and wrong for a sim
-packing radians.
+packing radians. Those two spellings are the whole vocabulary
+(`embodiment.UNIT_FRAMES`) and any other is refused when the map is built:
+`"DEGREES"`, the spelling LeRobot's own `MotorNormMode` uses, would otherwise
+mean `"native"` and convert nothing.
 
 Both halves of a declared map are installed as *preprocessor* steps, so a
 checkpoint that ships no `policy_preprocessor.json` (only a postprocessor) has
