@@ -10,7 +10,10 @@ Two properties of ``strands_robots``, both read from the source by
   ``KNOWN_DEFERRED_UPWARD_EDGES``. Each pin is an equality, so an inversion
   added to the package fails until someone declares it, and an inversion removed
   from the package fails until someone deletes its line. The rosters are
-  ratchets, not suppression lists.
+  ratchets, not suppression lists. Both grade an edge by the layers of its
+  two ends, so no module may import the package root, which has no layer:
+  ``TestTheContract`` pins that too, or a public name read off the facade
+  would be a dependency neither roster can see.
 
 The two properties grade different import kinds because they measure different
 things. Acyclicity is about import-time mechanics, so typing-only imports
@@ -27,6 +30,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -183,6 +187,36 @@ class TestTheContract:
         declared = set(mod.KNOWN_DEFERRED_UPWARD_EDGES)
         assert sorted(found - declared) == [], "undeclared deferred inversion; fix it or declare it"
         assert sorted(declared - found) == [], "declared deferred inversion is gone; delete its line"
+
+    def test_no_module_reaches_a_public_name_off_the_package_root(self, graph: Any) -> None:
+        """The facade is not a back door around the two rosters above.
+
+        ``layer_of`` answers ``None`` for the package root - it re-exports names
+        from every layer, so it belongs to none - and :func:`upward_edges` skips
+        an edge whose end has no layer. So an import of the root is graded by
+        neither equality: planting ``strands_robots.utils`` (``core``) ->
+        ``strands_robots`` leaves ``upward_edges`` empty, while 20 of the 46
+        lazily re-exported public names resolve into ``tools`` and 4 into
+        ``app``. ``from strands_robots import Robot`` in a ``core`` module is
+        therefore a dependency on ``app`` that both rosters report as absent.
+
+        Naming the defining module instead gives every internal edge two layers
+        and a direction, which is what the rosters ratchet. That the scan can
+        see the form at all is
+        :meth:`TestTheParserBehindIt.test_each_import_kind_lands_in_its_own_graph`'s
+        ``fakepkg.leaf.attrs`` row: reading an attribute off the package is the
+        only way to earn an edge to the package itself, so a submodule import
+        (``from strands_robots import _dyld``) is not one of these.
+        """
+        laundered = replace(graph, runtime={**graph.runtime, f"{mod.PACKAGE}.utils": frozenset({mod.PACKAGE})})
+        assert mod.upward_edges(laundered) == (), "an edge to the root is graded after all; this pin is redundant"
+        offenders = sorted(
+            (importer, kind)
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            if mod.PACKAGE in targets
+        )
+        assert offenders == [], "reads a public name off the package root; import the module that defines it"
 
     def test_the_registry_owns_the_vocabulary_it_validates(self, graph: Any) -> None:
         """A declared field's legal values sit with the loader that refuses the rest.

@@ -65,12 +65,13 @@ class _Recorder:
 def _install(monkeypatch: pytest.MonkeyPatch, robot: object) -> None:
     """Point the check's ``Robot`` lookup at ``robot``.
 
-    ``check_sim_smoke`` imports ``Robot`` from the package inside its own body,
-    so the attribute on the package is the seam every cell here drives.
+    ``check_sim_smoke`` imports ``Robot`` from the module that defines it inside
+    its own body, so the attribute on ``strands_robots.robot`` is the seam every
+    cell here drives.
     """
-    import strands_robots
+    from strands_robots import robot as robot_module
 
-    monkeypatch.setattr(strands_robots, "Robot", lambda *_a, **_k: robot)
+    monkeypatch.setattr(robot_module, "Robot", lambda *_a, **_k: robot)
 
 
 def _finalbody_release_calls() -> list[str]:
