@@ -874,6 +874,13 @@ def register_pack_state_step() -> type | None:
 
 # Embodiment map
 
+# The closed unit-frame vocabulary an EmbodimentMap can convert between. Every
+# conversion site compares against "degrees" (sim_state_to_model,
+# model_action_to_sim, PackStateProcessorStep.observation), so a spelling outside
+# this set means "no conversion" -- which is why EmbodimentMap.__post_init__
+# refuses one instead of storing it.
+UNIT_FRAMES: frozenset[str] = frozenset({"native", "degrees"})
+
 
 @dataclass(frozen=True)
 class EmbodimentMap:
@@ -892,7 +899,9 @@ class EmbodimentMap:
         state_units: Unit convention of the sim state vector this map packs:
             ``"native"`` (the default - no conversion) or ``"degrees"`` (arm
             columns in degrees, gripper column in ``RANGE_0_100``), which is
-            what :meth:`sim_state_to_model` converts from.
+            what :meth:`sim_state_to_model` converts from. Those two are the
+            whole vocabulary (:data:`UNIT_FRAMES`); any other spelling is
+            refused by :meth:`__post_init__`.
         action_units: Unit convention of the model's action vector, same
             vocabulary as ``state_units``. On ``"degrees"``
             :meth:`model_action_to_sim` converts the model's degrees back to sim
@@ -954,6 +963,25 @@ class EmbodimentMap:
     # (RANGE_0_100). Empty (default) = mid 0, i.e. sim qpos=0 is assumed to be
     # the calibration mid (the prior absolute-degrees behavior).
     joint_mids: list[float] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Refuse a unit frame no conversion site can honor.
+
+        Raises:
+            ValueError: ``state_units`` or ``action_units`` names a frame outside
+                :data:`UNIT_FRAMES`.
+        """
+        for attr in ("state_units", "action_units"):
+            frame = getattr(self, attr)
+            if frame not in UNIT_FRAMES:
+                raise ValueError(
+                    f"embodiment {self.name!r}: {attr}={frame!r} is not a unit frame this map "
+                    f"can convert; expected one of {sorted(UNIT_FRAMES)}. Every conversion site "
+                    f"compares against 'degrees', so another spelling (LeRobot's own 'DEGREES', "
+                    f"say) silently means 'native': the sim's raw radians reach a degrees-trained "
+                    f"checkpoint unconverted, and its degree actions saturate the sim's radian "
+                    f"joint limits. dim_policy is refused the same way by reconcile_dim."
+                )
 
     def validate(self, input_features: dict[str, Any], output_features: dict[str, Any]) -> None:
         """Fail-fast validation against the model's declared features.
@@ -1139,6 +1167,7 @@ def load_embodiment(embodiment: str | EmbodimentMap | dict) -> EmbodimentMap:
 __all__ = [
     "EmbodimentMap",
     "EMBODIMENT_MAP",
+    "UNIT_FRAMES",
     "ZeroActionMonitor",
     "diagnose_action_dim",
     "load_embodiment",

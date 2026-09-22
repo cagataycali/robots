@@ -453,7 +453,7 @@ def test_every_command_verb_branch_hands_the_transport_the_operator_gate() -> No
 
 def test_the_blocklist_is_documented_where_operators_look() -> None:
     """Every blocklisted surface and both env vars appear in the ROS 2 docs."""
-    docs = Path(__file__).resolve().parents[1] / "docs" / "ros2-integration.md"
+    docs = Path(__file__).resolve().parents[1] / "docs" / "ros2" / "safety.md"
     text = docs.read_text(encoding="utf-8")
     for entry in gate_mod.COMMAND_BLOCKLIST:
         assert entry in text, f"{entry} is blocked but undocumented"
@@ -468,7 +468,7 @@ def test_the_blocklist_is_documented_where_operators_look() -> None:
 # this list from going stale into a vacuous sweep.
 _ALLOWLIST_DOCS: tuple[str, ...] = (
     "docs/reference/configuration.md",
-    "docs/ros2-integration.md",
+    "docs/ros2/safety.md",
     "docs/security/hardware.md",
 )
 
