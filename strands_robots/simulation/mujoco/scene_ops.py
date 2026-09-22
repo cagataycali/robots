@@ -972,23 +972,48 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
     values for the indices both models share, and the entries past the old size
     are whatever the fresh allocation happened to contain. The compiler does not
     define that tail, so every buffer this recompile grows is defined here --
-    ``qpos`` from ``qpos0`` and ``qvel``/``ctrl``/``act`` as zero, which is what
-    a reset writes and the only state a caller who has not touched the new
-    entries can mean -- before the forward pass below reads it.
+    ``qpos`` from ``qpos0``, ``eq_active`` from ``eq_active0``, a mocap body's
+    ``mocap_pos``/``mocap_quat`` from its ``body_pos``/``body_quat``, and
+    ``qvel``/``ctrl``/``act``/``qacc_warmstart`` as zero, which is what a reset
+    writes and the only state a caller who has not touched the new entries can
+    mean -- before the forward pass below reads it.
 
-    The tail is not a harmless nonsense number in either buffer:
+    Which entries the compiler leaves undefined is a property of the MuJoCo
+    build, which is why the set above is wider than the four a reader of the
+    3.5-3.13 transfer would name. Through 3.13 the new tail of ``qpos``,
+    ``qvel``, ``ctrl`` and ``act`` was the fresh allocation and everything else
+    came back zeroed. 3.14.0 rewrote the transfer to carry ``qacc_warmstart``,
+    ``eq_active``, both applied-force buffers, mocap poses and history by
+    element, and when the spec was grown by attaching a sub-spec that carries a
+    ``<keyframe>`` -- every robot description in the registry -- the slices of
+    the attached elements come back as heap garbage in every one of those
+    buffers (measured on 3.14.0: ``nan``, ``6.98e-316``, ``1.12e+219``; the
+    pre-existing slices intact). So the rule is not "define the four buffers
+    the old build left undefined" but "trust the compiler with nothing a reset
+    would write", and each buffer here is written from the value a reset gives.
+
+    The tail is not a harmless nonsense number in any buffer:
 
     * ``ctrl`` -- MuJoCo's ``mj_checkCtrl`` disables actuation for the WHOLE
       model on any step where a single entry is non-finite, so one uninitialized
       entry can silently release every held pose in the scene, only on the runs
       where the leftover memory happens to be NaN.
-    * ``qfrc_applied`` and ``xfrc_applied`` -- ``spec.recompile`` transfers
-      neither applied-force buffer at all, so unlike the buffers above these are
-      not a tail problem: every entry is lost, including the slices of joints and
-      bodies that never moved. Both are therefore snapshotted by name before the
-      recompile and re-applied after it, rather than merely having a tail
-      defined. A force a caller latched otherwise stopped acting the moment
-      anything entered the scene, under a ``"status": "success"``.
+    * ``qacc_warmstart`` -- the solver starts from it, so one non-finite entry
+      on a NEW dof poisons the accelerations of every dof in the model on the
+      first step after the rebuild (``Nan, Inf or huge value in QACC at DOF 0``,
+      reported against a joint that was parked and healthy), and the scene is
+      unstable from then on.
+    * ``qfrc_applied`` and ``xfrc_applied`` -- through 3.13 ``spec.recompile``
+      transferred neither applied-force buffer at all, so unlike the buffers
+      above these were not a tail problem: every entry was lost, including the
+      slices of joints and bodies that never moved. Both are therefore
+      snapshotted by name before the recompile and re-applied after it, rather
+      than merely having a tail defined. A force a caller latched otherwise
+      stopped acting the moment anything entered the scene, under a
+      ``"status": "success"``. Both buffers are zeroed whole before that
+      re-apply: the snapshots are the complete record of what was latched, so a
+      row they do not name is zero by definition, and on 3.14.0 the row the
+      compiler hands back for a new body or dof is not zero but undefined.
     * ``qpos`` -- a new joint that no name-keyed pass reaches keeps the tail as
       its pose. The robot-scoped reset in
       :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine._reset_robot_to_reference`
@@ -1003,14 +1028,17 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
       were applied either way, so the only symptom was a quadruped lying down
       under a ``"status": "success"``.
 
-    TWO buffers are not transferred at all rather than only in their tail --
-    both applied-force buffers come back entirely zero, so for these the tail
-    initialization above is beside the point: every entry is lost, including the
-    rows of elements that were there all along. Measured by growing a scene by
-    one body on mujoco 3.5.0 (the floor this package declares), 3.10.0 (the
-    locked version) and 3.11.0, identically on all three -- ``qpos``, ``qvel``,
-    ``ctrl`` and the clock carried, ``qfrc_applied`` and ``xfrc_applied``
-    zeroed.
+    Through 3.13 TWO buffers were not transferred at all rather than only in
+    their tail -- both applied-force buffers came back entirely zero, so for
+    these the tail initialization above is beside the point: every entry was
+    lost, including the rows of elements that were there all along. Measured by
+    growing a scene by one body on mujoco 3.5.0 (the floor this package
+    declares), 3.10.0 and 3.11.0, identically on all three -- ``qpos``,
+    ``qvel``, ``ctrl`` and the clock carried, ``qfrc_applied`` and
+    ``xfrc_applied`` zeroed. 3.14.0 carries both by element and hands back
+    garbage for the attached elements' rows (above); the name-keyed
+    snapshot-and-restore is the right shape for either build, and the zero
+    written first is what makes the rows it does not name defined on both.
 
     * ``xfrc_applied``, the per-body row
       :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
@@ -1054,9 +1082,12 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
     old_nv = int(world._model.nv) if world._model is not None else 0
     old_nu = int(world._model.nu) if world._model is not None else 0
     old_na = int(world._model.na) if world._model is not None else 0
-    # ``spec.recompile`` carries no part of EITHER applied-force buffer -- both
-    # ``xfrc_applied`` and ``qfrc_applied`` come back zero -- so the latched
-    # forces are read off the outgoing data here and re-applied by name below.
+    old_neq = int(world._model.neq) if world._model is not None else 0
+    old_nmocap = int(world._model.nmocap) if world._model is not None else 0
+    # What ``spec.recompile`` does with the two applied-force buffers depends on
+    # the MuJoCo build (see the docstring), so neither is trusted: the latched
+    # forces are read off the outgoing data here, both buffers are zeroed after
+    # the compile, and the snapshot is re-applied by name below.
     _have_state = world._model is not None and world._data is not None
     wrenches = _snapshot_body_wrenches(world._model, world._data, mj) if _have_state else {}
     joint_forces = _snapshot_joint_forces(world._model, world._data, mj) if _have_state else {}
@@ -1094,11 +1125,30 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
         new_data.qpos[old_nq:] = new_model.qpos0[old_nq:]
     if new_model.nv > old_nv:
         new_data.qvel[old_nv:] = 0.0
+        # The solver's warm start is a cache, not state: a cold start on the new
+        # dofs costs one slower solve, a non-finite one poisons the whole step.
+        new_data.qacc_warmstart[old_nv:] = 0.0
     if new_model.nu > old_nu:
         new_data.ctrl[old_nu:] = 0.0
     if new_model.na > old_na:
         new_data.act[old_na:] = 0.0
+    if new_model.neq > old_neq:
+        # A new equality starts at its declared activation, as a reset writes it.
+        new_data.eq_active[old_neq:] = new_model.eq_active0[old_neq:]
+    if new_model.nmocap > old_nmocap:
+        # A new mocap body starts at its declared pose, as a reset writes it.
+        for bid in range(int(new_model.nbody)):
+            mid = int(new_model.body_mocapid[bid])
+            if mid >= old_nmocap:
+                new_data.mocap_pos[mid] = new_model.body_pos[bid]
+                new_data.mocap_quat[mid] = new_model.body_quat[bid]
     # Re-apply the latched external forces, before the forward pass reads them.
+    # Both buffers are rewritten whole: the snapshots above are the complete
+    # record of what was latched, so a row they do not name is zero by
+    # definition, and writing that zero is what makes it true on a build whose
+    # transfer left the row undefined.
+    new_data.qfrc_applied[:] = 0.0
+    new_data.xfrc_applied[:] = 0.0
     _restore_body_wrenches(new_model, new_data, wrenches, mj)
     _restore_joint_forces(new_model, new_data, joint_forces, mj)
     # Forward pass so newly-injected bodies have valid xpos/xquat and any
@@ -1635,9 +1685,9 @@ def inject_object_into_scene(world: SimWorld, obj: SimObject) -> bool:
     ``ValueError`` left the caller with nothing but "spec recompile refused"
     while the actionable message went to the log.
 
-    Every rollback here deletes only the bodies THIS call appended, counted
-    before the insert (``SpecBuilder.count_bodies_named`` /
-    ``remove_surplus_bodies``). A delete by name is wrong on the collision path:
+    Every rollback here deletes only the bodies THIS call appended, identified
+    against a snapshot taken before the insert (``SpecBuilder.snapshot_bodies`` /
+    ``remove_bodies_not_in``). A delete by name is wrong on the collision path:
     ``load_scene`` replaces the world registry, so a body declared by the scene
     MJCF is invisible to ``add_object``'s registry check and the insert reaches
     MuJoCo, leaving two bodies under one name. ``SpecBuilder.remove_body``
@@ -1651,11 +1701,13 @@ def inject_object_into_scene(world: SimWorld, obj: SimObject) -> bool:
         logger.error("inject_object: no spec or model in world")
         return False
 
-    # How many bodies already carry this name, taken BEFORE the insert. Every
-    # rollback below deletes only the bodies beyond this count - the ones this
-    # call appended - because a delete by name resolves the pre-existing body on
-    # a collision and would remove the healthy scene body instead of the orphan.
-    pre_bodies = SpecBuilder.count_bodies_named(spec, obj.name)
+    # The bodies present BEFORE the insert. Every rollback below deletes only
+    # the bodies absent from this snapshot - the ones this call appended -
+    # because a delete by name resolves the pre-existing body on a collision and
+    # would remove the healthy scene body instead of the orphan, and the orphan
+    # a refused insert leaves behind carries the colliding name on one MuJoCo
+    # build and no name on another.
+    pre_bodies = SpecBuilder.snapshot_bodies(spec)
 
     try:
         # Meshes need their asset registered before the geom references it.
@@ -1693,11 +1745,11 @@ def inject_object_into_scene(world: SimWorld, obj: SimObject) -> bool:
     try:
         recompiled = _recompile_preserving_state(world, spec, raise_on_refusal=True)
     except (ValueError, RuntimeError):
-        SpecBuilder.remove_surplus_bodies(spec, obj.name, pre_bodies)
+        SpecBuilder.remove_bodies_not_in(spec, pre_bodies)
         SpecBuilder.remove_mesh(spec, f"mesh_{obj.name}")
         raise
     if not recompiled:
-        SpecBuilder.remove_surplus_bodies(spec, obj.name, pre_bodies)
+        SpecBuilder.remove_bodies_not_in(spec, pre_bodies)
         SpecBuilder.remove_mesh(spec, f"mesh_{obj.name}")
         return False
     return True
@@ -1710,8 +1762,8 @@ def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
     the spec before the validating recompile, so a refused recompile rolls the
     just-added camera back out to keep the spec compilable for later edits.
 
-    That rollback removes only the cameras THIS call appended, counted before the
-    insert. It cannot be a delete by name: when the name collides with a camera
+    That rollback removes only the cameras THIS call appended, identified against
+    a snapshot taken before the insert. It cannot be a delete by name: when the name collides with a camera
     the loaded scene already declares - which ``add_camera``'s registry check
     cannot see, because ``load_scene`` replaces the registry while the MJCF keeps
     its cameras - ``SpecBuilder.remove_camera`` deletes the FIRST camera carrying
@@ -1724,7 +1776,7 @@ def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
         logger.error("inject_camera: no spec or model in world")
         return False
 
-    pre_cameras = SpecBuilder.count_cameras_named(spec, cam.name)
+    pre_cameras = SpecBuilder.snapshot_cameras(spec)
 
     try:
         SpecBuilder.add_camera(spec, cam)
@@ -1733,7 +1785,7 @@ def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
         return False
 
     if not _recompile_preserving_state(world, spec):
-        SpecBuilder.remove_surplus_cameras(spec, cam.name, pre_cameras)
+        SpecBuilder.remove_cameras_not_in(spec, pre_cameras)
         return False
     return True
 

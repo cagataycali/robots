@@ -640,9 +640,10 @@ class SpecBuilder:
         # collides with an existing scene body, and the steps after it (the geom
         # type lookup, ``add_geom``) can raise as well. Any raise in this block
         # must undo only what THIS call inserted, then re-raise so the caller
-        # reports the real reason - hence the body count taken before the insert
-        # and :meth:`remove_surplus_bodies` after it, never a delete by name.
-        pre_count = SpecBuilder.count_bodies_named(spec, obj.name)
+        # reports the real reason - hence the body snapshot taken before the
+        # insert and :meth:`remove_bodies_not_in` after it, never a delete by
+        # name: what name the orphan carries depends on the MuJoCo build.
+        before = SpecBuilder.snapshot_bodies(spec)
         try:
             body = spec.worldbody.add_body(
                 name=obj.name,
@@ -700,7 +701,7 @@ class SpecBuilder:
 
             body.add_geom(**geom_kwargs)
         except (ValueError, RuntimeError):
-            SpecBuilder.remove_surplus_bodies(spec, obj.name, pre_count)
+            SpecBuilder.remove_bodies_not_in(spec, before)
             raise
 
     # material build
@@ -833,7 +834,7 @@ class SpecBuilder:
         ``add_camera(name=...)`` inserts the duplicate even when the name
         collides with a camera the scene already declares, so - exactly as in
         :meth:`add_object` - a raise from the insert rolls only the cameras THIS
-        call appended back out (:meth:`remove_surplus_cameras`) before
+        call appended back out (:meth:`remove_cameras_not_in`) before
         re-raising. Without that, a refused camera left an orphan in the spec and
         every later scene mutation kept failing to recompile on the duplicate
         name, bricking the world after one bad add.
@@ -866,11 +867,11 @@ class SpecBuilder:
         else:
             attach_to = spec.worldbody
 
-        pre_count = SpecBuilder.count_cameras_named(spec, cam.name)
+        before = SpecBuilder.snapshot_cameras(spec)
         try:
             attach_to.add_camera(**kwargs)
         except (ValueError, RuntimeError):
-            SpecBuilder.remove_surplus_cameras(spec, cam.name, pre_count)
+            SpecBuilder.remove_cameras_not_in(spec, before)
             raise
 
     # deferred (body-mounted) cameras
@@ -943,46 +944,51 @@ class SpecBuilder:
 
     # surplus rollback (identify what THIS call inserted, never by name)
     @staticmethod
-    def count_bodies_named(spec: Any, name: str) -> int:
-        """Count the bodies in ``spec`` that carry ``name``.
+    def snapshot_bodies(spec: Any) -> tuple[Any, ...]:
+        """The bodies ``spec`` holds right now, for :meth:`remove_bodies_not_in`.
 
-        Take this BEFORE an insert that may have to be rolled back, and pass it
-        as the ``keep`` argument of :meth:`remove_surplus_bodies`. A plain count
-        rather than a membership test because a spec can legitimately hold two
-        bodies under one name between an insert and the compile that refuses it.
-
-        Args:
-            spec: The ``mjSpec`` to enumerate.
-            name: The body name to count.
-
-        Returns:
-            How many bodies currently carry ``name`` (0 when none do).
-        """
-        return sum(1 for body in getattr(spec, "bodies", ()) if body.name == name)
-
-    @staticmethod
-    def count_cameras_named(spec: Any, name: str) -> int:
-        """Count the cameras in ``spec`` that carry ``name``.
-
-        The camera-side counterpart of :meth:`count_bodies_named`; pair it with
-        :meth:`remove_surplus_cameras`.
+        Take this BEFORE an insert that may have to be rolled back. The surplus
+        is identified by element identity rather than by name because a refused
+        insert does not leave a predictable name behind: through MuJoCo 3.13 a
+        duplicate ``add_body(name=...)`` appended a body carrying the colliding
+        name, and from 3.14 the failed rename preserves the element's previous
+        name, so the same call appends a body whose name is ``""`` (and whose
+        ``pos`` is the default, since the kwargs after ``name`` are never
+        applied). A rollback keyed on the colliding name found the orphan on the
+        first build and nothing on the second, leaving a nameless body at the
+        origin in a spec that then compiled. Identity is the same set on both.
 
         Args:
             spec: The ``mjSpec`` to enumerate.
-            name: The camera name to count.
 
         Returns:
-            How many cameras currently carry ``name`` (0 when none do).
+            Every body currently in ``spec``, in enumeration order.
         """
-        return sum(1 for camera in getattr(spec, "cameras", ()) if camera.name == name)
+        return tuple(getattr(spec, "bodies", ()))
 
     @staticmethod
-    def remove_surplus_bodies(spec: Any, name: str, keep: int) -> int:
-        """Delete the bodies named ``name`` beyond the first ``keep`` of them.
+    def snapshot_cameras(spec: Any) -> tuple[Any, ...]:
+        """The cameras ``spec`` holds right now, for :meth:`remove_cameras_not_in`.
+
+        The camera-side counterpart of :meth:`snapshot_bodies`, for the same
+        reason: a refused ``add_camera(name=...)`` leaves an orphan whose name
+        depends on the MuJoCo build.
+
+        Args:
+            spec: The ``mjSpec`` to enumerate.
+
+        Returns:
+            Every camera currently in ``spec``, in enumeration order.
+        """
+        return tuple(getattr(spec, "cameras", ()))
+
+    @staticmethod
+    def remove_bodies_not_in(spec: Any, before: tuple[Any, ...]) -> int:
+        """Delete every body in ``spec`` that is absent from ``before``.
 
         This is the rollback a refused insert needs, and it is deliberately NOT
         :meth:`remove_body`. A scene injection mutates the live spec before the
-        compile that validates it, so at rollback time a colliding name is
+        compile that validates it, so at rollback time a colliding name may be
         carried by TWO bodies: the healthy pre-existing one and the orphan the
         refused call appended. ``remove_body`` resolves the name through
         ``spec.body(name)``, which answers with the body present at the last
@@ -991,46 +997,50 @@ class SpecBuilder:
         successfully with the original geometry gone: a rejected add silently
         rewrote the scene.
 
-        Identifying the surplus by position instead can never touch a body this
-        call did not create. MuJoCo appends new elements, so the bodies to delete
-        are the tail of the run carrying ``name``; ``keep`` is the count taken
-        before the insert (:meth:`count_bodies_named`). ``keep`` at or above the
-        current count is a no-op, so a rollback is safe to attempt on a path that
-        may not have inserted anything.
+        Nor is it a delete of the surplus copies carrying the name, which was the
+        previous shape here: on MuJoCo 3.14 the orphan carries no name at all
+        (see :meth:`snapshot_bodies`), so a name-keyed rollback leaves it in the
+        spec. Membership in the snapshot is the one test that can never touch a
+        body this call did not create, whatever the failed insert left in the
+        name field. Spec element wrappers are identity-stable and compare
+        equal for one underlying element, so the membership test is by
+        equality. ``before`` equal to the current set is a no-op, so a rollback
+        is safe to attempt on a path that may not have inserted anything.
 
         Args:
             spec: The ``mjSpec`` to mutate.
-            name: The body name whose surplus copies to delete.
-            keep: How many bodies with that name to leave in place.
+            before: The snapshot :meth:`snapshot_bodies` took before the insert.
 
         Returns:
             The number of bodies deleted.
         """
-        surplus = [body for body in getattr(spec, "bodies", ()) if body.name == name][keep:]
+        surplus = [body for body in getattr(spec, "bodies", ()) if body not in before]
         for body in surplus:
             spec.delete(body)
         return len(surplus)
 
     @staticmethod
-    def remove_surplus_cameras(spec: Any, name: str, keep: int) -> int:
-        """Delete the cameras named ``name`` beyond the first ``keep`` of them.
+    def remove_cameras_not_in(spec: Any, before: tuple[Any, ...]) -> int:
+        """Delete every camera in ``spec`` that is absent from ``before``.
 
-        The camera-side counterpart of :meth:`remove_surplus_bodies`, and for the
+        The camera-side counterpart of :meth:`remove_bodies_not_in`, and for the
         same reason: :meth:`remove_camera` deletes the FIRST camera carrying the
         name, which on a collision is the one the scene already declared, so
         rolling a refused camera back with it moved the scene's camera to the
         rejected pose. Every later render from that name then answered with a
-        view the caller was told had been refused.
+        view the caller was told had been refused. A camera is also the case
+        where a positional tail would be wrong: ``spec.cameras`` enumerates in
+        tree order, so a camera appended to the worldbody sits BEFORE the
+        cameras of every child body, not last.
 
         Args:
             spec: The ``mjSpec`` to mutate.
-            name: The camera name whose surplus copies to delete.
-            keep: How many cameras with that name to leave in place.
+            before: The snapshot :meth:`snapshot_cameras` took before the insert.
 
         Returns:
             The number of cameras deleted.
         """
-        surplus = [camera for camera in getattr(spec, "cameras", ()) if camera.name == name][keep:]
+        surplus = [camera for camera in getattr(spec, "cameras", ()) if camera not in before]
         for camera in surplus:
             spec.delete(camera)
         return len(surplus)
