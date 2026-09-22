@@ -93,6 +93,7 @@ from strands_robots.utils import (
     finite_number_error,
     positive_finite_number_error,
     positive_whole_number_error,
+    refusal_repr,
     tcp_port_error,
 )
 
@@ -798,6 +799,16 @@ class YahboomM3ProDriver:
                     "json": {
                         "tool_name": self._tool_name,
                         "connected": self.is_connected,
+                        # Part of the triple every native driver's status carries
+                        # (``tool_name`` / ``connected`` / ``battery_pct``), and
+                        # structurally ``None`` here rather than merely unread:
+                        # this driver vouches for no reading it has not verified
+                        # on the graph (the reason :meth:`get_observation` is
+                        # empty too), and the board publishes no battery-percent
+                        # topic this driver has confirmed. A caller that needs
+                        # the chassis voltage reads the vendor's own topic with
+                        # ``use_rosbridge``/``use_ros`` ``echo``.
+                        "battery_pct": None,
                         "connect_error": self._connect_error,
                         "transport": self._transport,
                         "endpoint": self.endpoint,
@@ -958,7 +969,7 @@ class YahboomM3ProDriver:
         if not self._connected:
             return _refuse("set_arm_degrees: not connected - call connect_eagerly() first")
         if not isinstance(joints, list | tuple) or len(joints) != 6:
-            return _refuse(f"set_arm_degrees: joints must be six servo angles in degrees, got {joints!r}")
+            return _refuse(f"set_arm_degrees: joints must be six servo angles in degrees, got {refusal_repr(joints)}")
         for servo_id, angle in enumerate(joints, start=1):
             if (reason := servo_deg_error(servo_id, angle, f"joint{servo_id}", "set_arm_degrees")) is not None:
                 return _refuse(reason)
@@ -979,7 +990,7 @@ class YahboomM3ProDriver:
             time_ms: Servo travel time; ``None`` uses the driver's default.
         """
         if not isinstance(open, bool):
-            return _refuse(f"set_gripper: open must be true or false, got {open!r}")
+            return _refuse(f"set_gripper: open must be true or false, got {refusal_repr(open)}")
         with self._cache_lock:
             degrees = list(self._last_arm_deg or HOME_DEG)
         degrees[5] = GRIPPER_OPEN_DEG if open else GRIPPER_CLOSED_DEG
