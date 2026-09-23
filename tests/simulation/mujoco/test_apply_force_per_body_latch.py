@@ -11,6 +11,9 @@ vector that every call zeroed in full, so a second ``apply_force`` on a
 different body silently cancelled the first while both calls reported success.
 """
 
+import re
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -229,3 +232,58 @@ class TestLatchedWrenchDirection:
         # Both were pushed with the same force, so both travel the same way.
         assert _speed(sim, "puck_a") > 1.0
         assert _speed(sim, "puck_b") > 1.0
+
+
+# Every caller-facing surface that teaches ``apply_force`` -- the docs pages and
+# the examples a reader copies from. The library's own docstrings are excluded on
+# purpose: the Isaac backend documents that PhysX's ``apply_force_at_pos``
+# primitive acts for one tick, which is why that backend re-applies the latch
+# every tick, and that sentence is about the primitive, not about this contract.
+_TAUGHT_SURFACES = sorted(
+    path
+    for pattern in ("docs/**/*.md", "examples/**/*.py", "examples/**/*.md")
+    for path in Path(__file__).resolve().parents[3].glob(pattern)
+    if "apply_force" in path.read_text(encoding="utf-8")
+)
+
+# A one-step lifetime is the opposite of the latch: the wrench is re-applied on
+# every step until the next ``apply_force`` on that body or a ``reset()``.
+_IMPULSE_CLAIMS = (
+    "for the next step",
+    "for one step",
+    "for a single step",
+    "for the following step",
+    "one step only",
+)
+
+# How much prose after a mention still describes that mention. The claim can be
+# wrapped over several lines, so the text is whitespace-normalized first.
+_CLAIM_WINDOW = 200
+
+
+class TestTheProseMatchesTheLatch:
+    """No surface that teaches ``apply_force`` may sell it as an impulse.
+
+    The behavioural pins above are what a latch is; these pin what a reader is
+    told it is. A reader who believes one call is a one-step impulse writes a
+    robustness sweep that holds a thruster on: ``examples/14``'s own 2 N / 20
+    step push moves a 50 g cube ``+23.0 mm`` up, where a true one-step impulse
+    leaves it ``-7.4 mm`` down -- the impulse reading predicts the opposite
+    sign of the number the example prints.
+    """
+
+    def test_the_corpus_is_not_empty(self):
+        """A grader over a corpus it failed to collect grades nothing."""
+        assert len(_TAUGHT_SURFACES) >= 6, [str(p) for p in _TAUGHT_SURFACES]
+
+    @pytest.mark.parametrize("path", _TAUGHT_SURFACES, ids=lambda p: p.name)
+    def test_a_taught_surface_does_not_promise_a_one_step_push(self, path):
+        prose = " ".join(path.read_text(encoding="utf-8").split())
+        for match in re.finditer("apply_force", prose):
+            window = prose[match.start() : match.start() + _CLAIM_WINDOW]
+            found = [claim for claim in _IMPULSE_CLAIMS if claim in window]
+            assert not found, (
+                f"{path.name} describes apply_force as acting {found[0]!r}: {window!r}. "
+                "The wrench is latched and re-applied on every step until the next "
+                "apply_force on that body or a reset()."
+            )
