@@ -38,6 +38,8 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
+import ipaddress
+import socket
 import textwrap
 from typing import Any
 
@@ -45,6 +47,7 @@ import pytest
 
 import strands_robots.drivers as drivers_pkg
 from strands_robots.drivers.base import declared_verbs, undeclared_verb_error
+from strands_robots.drivers.reachy_vocabulary import ENV_HOST, discovery_candidates
 from strands_robots.drivers.registry import get_native_driver_class
 
 #: Every driver class shipped today. A walk that silently found fewer than this
@@ -59,6 +62,66 @@ _UNDECLARED = ("home", "halt", "SENSORS", "sensor", "", None)
 #: Attributes a fallthrough could have reached. Named so the halt cell can
 #: refuse to pass on a driver whose halt it never managed to observe.
 _HALT_MEMBERS = ("stop_task", "stop")
+
+
+#: Where this module points Reachy daemon discovery. ``ReachyDriver`` is the one
+#: driver in the population whose verbs are served over the network, so
+#: ``test_every_declared_verb_is_dispatched`` drives 22 real HTTP attempts. Left
+#: on its shipped default list - ``localhost`` then ``reachy-mini.local``, a
+#: Wireless's factory mDNS name - that cell was the most expensive in the suite
+#: at 110.4s, almost all of it the resolver's ~5s timeout per verb; and on a
+#: network where the name *does* resolve it is worse than slow, because the verbs
+#: swept here include ``wake``, ``home``, ``motors`` and ``body_turn``. Port 1 is
+#: closed, so the daemon is refused immediately instead of resolved: every
+#: assertion below is about the dispatcher, which answers the same either way.
+_CLOSED_LOOPBACK = "127.0.0.1:1"
+
+
+@pytest.fixture(autouse=True)
+def _reachy_discovery_stays_on_this_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point Reachy discovery at a closed address on this machine.
+
+    ``REACHY_HOST`` alone decides the candidate list, so one value replaces the
+    default pair. Scoped to this module rather than the session because
+    ``tests/drivers/test_reachy_driver.py`` grades what ``port=None`` resolves to
+    and needs the shipped default to be what it reads.
+    """
+    monkeypatch.setenv(ENV_HOST, _CLOSED_LOOPBACK)
+
+
+def _names_only_this_machine(host: str) -> bool:
+    """Whether ``host`` cannot name a machine other than the one running this.
+
+    A loopback literal cannot, and ``localhost`` is the conventional spelling of
+    one. Anything else is a name, and a name is resolved by whatever network the
+    suite happens to run on - which is the whole hazard - so it is judged here
+    without a lookup, keeping this cell independent of the resolver.
+    """
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def test_reachy_discovery_cannot_reach_another_machine() -> None:
+    """The fixture above is load-bearing for safety, not only for runtime.
+
+    Without it this module contacts whatever answers on ``reachy-mini.local``
+    and sends it the write verbs it sweeps, so the addresses discovery returns
+    are graded here rather than left to the reader.
+    """
+    candidates = discovery_candidates()
+    assert candidates, "discovery_candidates is documented never to be empty"
+    for host, port in candidates:
+        assert _names_only_this_machine(host), (
+            f"discovery would probe {host}:{port}, which can answer from another machine"
+        )
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.settimeout(1.0)
+            accepted = probe.connect_ex((host, port)) == 0
+        assert not accepted, f"{host}:{port} accepted a connection, so a driver built here would talk to it"
 
 
 def _driver_classes() -> dict[str, type[Any]]:
