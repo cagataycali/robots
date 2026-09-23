@@ -606,18 +606,31 @@ class FeetechTwinBus(FeetechBus):
         Raises:
             RuntimeError: The bus is not connected.
         """
-        self._engine()
+        engine = self._engine()
         model = self._model()
         obs = self._observation()
         hold: dict[str, float] = {}
-        for name in self.motors:
-            binding = self._binding(name)
-            if model is not None:
-                view = model.actuator(binding.actuator_id)
-                view.gainprm[0] = binding.kp if enabled else 0.0
-                view.biasprm[1] = -binding.kp if enabled else 0.0
-                view.biasprm[2] = binding.kv if enabled else 0.0
-            hold[binding.actuator] = float(obs.get(binding.joint, binding.low))
+        # Gain/bias writes mutate the live MjModel in place, which races a
+        # concurrent mj_step or render under the engine's own lock.  Resolve
+        # each actuator by *name* on the fresh model (scene recompiles
+        # reallocate the model and can shift indices), and hold the engine
+        # lock across the batch so no half-applied write is visible to a
+        # stepping thread.
+        lock = getattr(engine, "_lock", None)
+        if model is not None and lock is not None:
+            with lock:
+                for name in self.motors:
+                    binding = self._binding(name)
+                    view = self._named(model, "actuator", binding.actuator)
+                    if view is not None:
+                        view.gainprm[0] = binding.kp if enabled else 0.0
+                        view.biasprm[1] = -binding.kp if enabled else 0.0
+                        view.biasprm[2] = binding.kv if enabled else 0.0
+                    hold[binding.actuator] = float(obs.get(binding.joint, binding.low))
+        else:
+            for name in self.motors:
+                binding = self._binding(name)
+                hold[binding.actuator] = float(obs.get(binding.joint, binding.low))
         self._torque_enabled = bool(enabled)
         if enabled:
             self._advance(hold, 0.0)
