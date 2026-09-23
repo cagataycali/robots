@@ -334,6 +334,7 @@ class MinkIKBridge:
         )
         self._posture_task = mink.PostureTask(model=model, cost=posture_cost)
         self._tasks = [self._frame_task, self._posture_task]
+        self._limits = self._build_limits(model, self._dof_mask)
         logger.info(
             "%s ready [ee=%s/%s solver=%s nq=%d]",
             self._LOG_LABEL,
@@ -342,6 +343,93 @@ class MinkIKBridge:
             self.solver,
             model.nq,
         )
+
+    def _build_limits(self, model: Any, dof_mask: np.ndarray | None) -> list[Any]:
+        """The QP limits: joint ranges, plus a zero velocity bound on every uncommanded joint.
+
+        The mask in :meth:`solve` zeroes the velocity of an uncommanded DOF *after*
+        the QP has solved, which is too late: the QP has already spent the task on
+        those DOFs. On a robot whose base rides slide or hinge joints - a planar
+        or kinematic mobile base - the cheapest way to move the end-effector is to
+        move the base, so the arm's share of the solution is small, the mask then
+        discards the base's share, and the arm alone never converges. Measured on
+        a five-joint arm on a planar base: a target its arm reaches by forward
+        kinematics solved to a residual of 0.31 m with every arm joint pinned at a
+        limit; bounding the base velocities to zero *inside* the QP solves the same
+        target to 0.001 m.
+
+        A free joint cannot carry a velocity bound (``mink.VelocityLimit`` refuses
+        it), and neither can an *unnamed* one (the limit is keyed by joint name,
+        and ``''`` is not a name it resolves), so both keep the post-solve mask as
+        their only exclusion - the behaviour every joint had before. Every other
+        joint whose DOFs are all uncommanded gets a zero bound.
+
+        :class:`mink.ConfigurationLimit` keeps the *commanded* joints inside their
+        ranges, which is what the position servos that realise the answer can
+        honour. It is narrowed to those joints on purpose: a whole-model limit also
+        binds the frozen ones, and an uncommanded joint whose seed sits past its
+        range - a gripper squeezing an object under MuJoCo's soft limit, a drawer
+        pressed against its stop, both routine on the ``move_to`` path, which seeds
+        from live ``data.qpos`` and never commands the gripper - would then demand
+        a corrective step the zero velocity bound forbids, and the QP raises
+        ``NoSolutionFound``. A frozen joint is already pinned twice (velocity
+        bound and post-solve mask), so it needs no position bound.
+
+        A ``mink`` that ships neither limit class (a stand-in module in a test, or
+        a release older than the limits API) gets no limits and therefore the
+        post-solve mask alone - the historical behaviour, rather than a refusal
+        from a path that used to work.
+
+        Args:
+            model: The MuJoCo model the bridge solves on.
+            dof_mask: The boolean ``nv`` mask of commanded DOFs, or ``None``.
+
+        Returns:
+            The limits to hand to ``mink.solve_ik`` - a list, possibly empty.
+        """
+        mink = self._mink
+        configuration_limit = getattr(mink, "ConfigurationLimit", None)
+        velocity_limit = getattr(mink, "VelocityLimit", None)
+        if configuration_limit is None or velocity_limit is None:
+            return []
+        import mujoco  # mink depends on it, so it is importable wherever the bridge is
+
+        position_limit = configuration_limit(model)
+        if dof_mask is None:
+            return [position_limit]
+        zero_velocity: dict[str, np.ndarray] = {}
+        frozen_dofs: list[int] = []
+        for jnt_id in range(int(model.njnt)):
+            jnt_type = int(model.jnt_type[jnt_id])
+            start = int(model.jnt_dofadr[jnt_id])
+            width = 3 if jnt_type == int(mujoco.mjtJoint.mjJNT_BALL) else 1
+            if jnt_type == int(mujoco.mjtJoint.mjJNT_FREE) or dof_mask[start : start + width].any():
+                continue
+            frozen_dofs.extend(range(start, start + width))
+            name = model.joint(jnt_id).name
+            if name:
+                zero_velocity[name] = np.zeros(width)
+        self._narrow_position_limit(position_limit, frozen_dofs, int(model.nv))
+        limits: list[Any] = [position_limit]
+        if zero_velocity:
+            limits.append(velocity_limit(model, zero_velocity))
+        return limits
+
+    @staticmethod
+    def _narrow_position_limit(limit: Any, frozen_dofs: list[int], nv: int) -> None:
+        """Drop the frozen DOFs from a ``ConfigurationLimit``'s hinge/slide rows.
+
+        ``indices`` and ``projection_matrix`` are the attributes
+        ``compute_qp_inequalities`` reads for hinge and slide joints; the ball-joint
+        rows live on private arrays whose names this does not assume, so a frozen
+        *ball* joint keeps its position bound (a ball limit bounds a rotation
+        magnitude a seed cannot sit past under the soft constraint the same way).
+        """
+        if not frozen_dofs:
+            return
+        keep = np.array([int(i) for i in limit.indices if int(i) not in set(frozen_dofs)], dtype=int)
+        limit.indices = keep
+        limit.projection_matrix = np.eye(nv)[keep] if len(keep) > 0 else None
 
     @staticmethod
     def _build_dof_mask(nv: int, commanded_dofs: Sequence[int] | None) -> np.ndarray | None:
@@ -484,7 +572,12 @@ class MinkIKBridge:
         self._frame_task.set_target(target)
 
         for _ in range(self.max_iters):
-            velocity = mink.solve_ik(self._configuration, self._tasks, self.dt, self.solver, self.damping)
+            if self._limits:
+                velocity = mink.solve_ik(
+                    self._configuration, self._tasks, self.dt, self.solver, self.damping, limits=self._limits
+                )
+            else:
+                velocity = mink.solve_ik(self._configuration, self._tasks, self.dt, self.solver, self.damping)
             if self._dof_mask is not None:
                 # Project the step onto the commandable subspace before
                 # integrating. Zeroing here rather than post-filtering the

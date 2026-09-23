@@ -17,11 +17,18 @@ parity with Newton's contract:
   * ``camera_jitter_px`` shifts rendered frames.
 
 Every test that calls ``set_obs_noise`` fails pre-fix with ``NotImplementedError``.
+
+The lifetime is pinned here too, against the prose: a configuration outlives
+``reset()`` - it is engine state, dropped only by another ``set_obs_noise`` or
+by ``destroy`` - so a surface that ends it at a reset tells a per-episode
+collection loop its later episodes are clean while they are still noisy.
 """
 
 from __future__ import annotations
 
 import io
+import pathlib
+import re
 
 import numpy as np
 import pytest
@@ -212,3 +219,61 @@ def test_sub_pixel_camera_jitter_is_a_noop(sim):
     frame = np.arange(48 * 64 * 3, dtype=np.uint8).reshape(48, 64, 3)
     assert sim.set_obs_noise(camera_jitter_px=0.5, seed=0)["status"] == "success"
     assert sim._maybe_jitter_frame(frame) is frame
+
+
+# --------------------------------------------------------------------------
+# The configuration outlives a reset, and every surface says so.
+# --------------------------------------------------------------------------
+
+#: Surfaces that tell a reader how long a noise configuration lasts. A
+#: per-episode collection loop resets between rollouts, so a reader who
+#: believes the reset clears the noise records noisy states while believing
+#: they are clean - nothing in the result says otherwise.
+_LIFETIME_SURFACES = (
+    "docs/simulation/domain-randomization.md",
+    "docs/simulation/newton.md",
+    "examples/12_domain_randomization.py",
+    "strands_robots/simulation/mujoco/randomization.py",
+    "strands_robots/simulation/newton/randomization.py",
+)
+
+#: The only operation that ends a configuration: another ``set_obs_noise``
+#: call (``destroy`` drops the engine's world with it). Measured below.
+_TERMINATOR = "reconfigured"
+
+
+def _named_terminators(text: str) -> frozenset[str]:
+    """Every operation the prose names as ending the noise ("until X")."""
+    lines = [line for line in text.splitlines() if "until " in line.lower()]
+    return frozenset(m.lower() for line in lines for m in re.findall(r"until\s+([A-Za-z]+)", line))
+
+
+def test_a_reset_keeps_the_noise_configuration(sim):
+    """reset() re-initialises the world; the sensor-noise config is engine state."""
+    sim.set_obs_noise(joint_pos_std=0.05, seed=0)
+    keys = _pos_keys(sim.get_observation(skip_images=True))
+    before = [[sim.get_observation(skip_images=True)[k] for k in keys] for _ in range(8)]
+    assert max(np.std(np.asarray(before), axis=0)) > 1e-6, "premise: the noise is live"
+    assert sim.reset()["status"] == "success"
+    after = [[sim.get_observation(skip_images=True)[k] for k in keys] for _ in range(8)]
+    assert max(np.std(np.asarray(after), axis=0)) > 1e-6, (
+        "a reset cleared the sensor noise, so a per-episode loop's later episodes are silently noise-free"
+    )
+
+
+@pytest.mark.parametrize("surface", _LIFETIME_SURFACES)
+def test_no_surface_ends_the_noise_at_a_reset(surface):
+    """Every "until X" the surfaces write has to be the operation that ends it."""
+    path = pathlib.Path(__file__).resolve().parents[3] / surface
+    named = _named_terminators(path.read_text(encoding="utf-8"))
+    assert named, f"premise: {surface} still says when the noise stops applying"
+    assert "reset" not in named, (
+        f"{surface} ends the noise at a reset, which a reset measurably does not do; the terminator is {_TERMINATOR!r}"
+    )
+
+
+def test_a_surface_naming_the_wrong_terminator_is_reported():
+    """Non-vacuity, both directions."""
+    assert _named_terminators("applied to every observation until reset.") == {"reset"}
+    assert _named_terminators("applied to every observation until reconfigured.") == {_TERMINATOR}
+    assert _named_terminators("Pass all-zero std to disable.") == frozenset()

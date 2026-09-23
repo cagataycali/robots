@@ -8,7 +8,7 @@ description: What randomize() actually samples - colors, lighting, physics, posi
 sim.randomize(
     randomize_colors=True,      # resample object/floor RGB from color_range
     randomize_lighting=True,    # perturb directional + ambient light
-    randomize_physics=False,    # mass (mass_range) + friction (friction_range) + damping
+    randomize_physics=False,    # mass (mass_range) + friction (friction_range)
     randomize_positions=False,  # add position_noise (m) to every object position
     position_noise=0.02,
     color_range=(0.1, 1.0),
@@ -97,7 +97,7 @@ same lighting regardless of how many calls preceded it.
 |------|-------------|-------------|
 | `randomize_colors` | Object + floor RGB (alpha fixed at 1.0) | `color_range` |
 | `randomize_lighting` | Light position (+/-0.5 m of its authored pose) + diffuse colour | - |
-| `randomize_physics` | Per-object mass (mult), per-geom friction (scale), joint damping | `mass_range`, `friction_range` |
+| `randomize_physics` | Per-object mass (mult), per-geom friction (scale) | `mass_range`, `friction_range` |
 | `randomize_positions` | Dynamic-object position offsets (metres); static objects have no pose DOF and are skipped | `position_noise` |
 
 Defaults: `colors=True`, `lighting=True`; `physics` and `positions` default `False`.

@@ -408,7 +408,7 @@ def _pack_poses(data: Any) -> bytes:
 
 
 def _default_factory(robot: str) -> Any:
-    from strands_robots import Robot
+    from strands_robots.robot import Robot
 
     return Robot(robot, mode="sim")
 

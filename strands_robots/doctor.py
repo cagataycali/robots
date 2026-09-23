@@ -797,7 +797,7 @@ def check_sim_smoke() -> str:
     try:
         # Suppress mesh warnings during doctor
         os.environ.setdefault("STRANDS_MESH", "false")
-        from strands_robots import Robot
+        from strands_robots.robot import Robot
 
         sim = Robot("so100")
         try:

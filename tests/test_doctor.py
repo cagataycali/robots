@@ -302,7 +302,7 @@ class TestDoctorDegradedPaths:
         assert "CPU-only" in result
 
     def test_sim_smoke_empty_observation_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import strands_robots
+        import strands_robots.robot
         from strands_robots.doctor import check_sim_smoke
 
         class _EmptyObsRobot:
@@ -324,18 +324,18 @@ class TestDoctorDegradedPaths:
                 observation.
                 """
 
-        monkeypatch.setattr(strands_robots, "Robot", _EmptyObsRobot)
+        monkeypatch.setattr(strands_robots.robot, "Robot", _EmptyObsRobot)
         result = check_sim_smoke()
         assert "  FAIL  " in result
 
     def test_sim_smoke_exception_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import strands_robots
+        import strands_robots.robot
         from strands_robots.doctor import check_sim_smoke
 
         def _boom(*_a: object, **_k: object) -> object:
             raise RuntimeError("mujoco exploded")
 
-        monkeypatch.setattr(strands_robots, "Robot", _boom)
+        monkeypatch.setattr(strands_robots.robot, "Robot", _boom)
         result = check_sim_smoke()
         assert "  FAIL  " in result
         assert "mujoco exploded" in result

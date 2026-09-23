@@ -82,6 +82,47 @@ def reconcile_dim(values: list[float], expected_dim: int, dim_policy: str, *, la
     raise ValueError(f"Unknown dim_policy {dim_policy!r}; expected 'strict'|'pad'|'truncate'.")
 
 
+# Unit frames
+
+# The closed unit-frame vocabulary this module can convert between. Every
+# conversion site compares against "degrees" (sim_state_to_model,
+# model_action_to_sim, PackStateProcessorStep.observation), so a spelling outside
+# this set means "no conversion" -- which is why both holders of a frame refuse
+# one instead of storing it.
+UNIT_FRAMES: frozenset[str] = frozenset({"native", "degrees"})
+
+
+def _require_unit_frame(frame: str, *, field_name: str, owner: str) -> None:
+    """Refuse a unit frame no conversion site can honor.
+
+    A frame is held in two places: :class:`EmbodimentMap` declares it, and the
+    ``strands_pack_state`` pipeline step is handed it - directly by
+    :meth:`~strands_robots.policies.lerobot_local.processor.ProcessorBridge.apply_embodiment`
+    from a graded map, but also by LeRobot's own ``from_pretrained``, which
+    rebuilds the step from the ``policy_preprocessor.json`` a checkpoint ships.
+    One refusal, called from both, so the reconstructed step is graded like the
+    map that normally fills it.
+
+    Args:
+        frame: The declared frame.
+        field_name: Name of the field being graded, quoted in the message.
+        owner: What declared it, quoted in the message.
+
+    Raises:
+        ValueError: ``frame`` is outside :data:`UNIT_FRAMES`.
+    """
+    if frame in UNIT_FRAMES:
+        return
+    raise ValueError(
+        f"{owner}: {field_name}={frame!r} is not a unit frame this module can convert; "
+        f"expected one of {sorted(UNIT_FRAMES)}. Every conversion site compares against "
+        f"'degrees', so another spelling (LeRobot's own 'DEGREES', say) silently means "
+        f"'native': the sim's raw radians reach a degrees-trained checkpoint unconverted, "
+        f"and its degree actions saturate the sim's radian joint limits. dim_policy is "
+        f"refused the same way by reconcile_dim."
+    )
+
+
 def _convert_joint_vector(
     values: list[float],
     *,
@@ -682,7 +723,9 @@ def register_pack_state_step() -> type | None:
                 or ``"degrees"`` (convert the sim's radian joints to the model's
                 training units before packing). Mirrors
                 :attr:`EmbodimentMap.state_units`, which is where this step's
-                value comes from.
+                value normally comes from; a frame outside :data:`UNIT_FRAMES`
+                is refused by :meth:`__post_init__`, so a step LeRobot rebuilds
+                from a saved pipeline is graded like the map.
             gripper_index: Column of the gripper inside ``state_keys``, which
                 speaks ``RANGE_0_100`` rather than degrees. ``-1`` (the default)
                 = no distinct gripper column.
@@ -725,6 +768,14 @@ def register_pack_state_step() -> type | None:
         # The caller's list, written (not replaced) with the declared keys this
         # step zero-filled, so the policy can report the degradation it packed.
         missing_keys_sink: list[str] = field(default_factory=list)
+
+        def __post_init__(self) -> None:
+            """Refuse a ``state_units`` frame :meth:`observation` cannot honor.
+
+            Raises:
+                ValueError: ``state_units`` is outside :data:`UNIT_FRAMES`.
+            """
+            _require_unit_frame(self.state_units, field_name="state_units", owner="strands_pack_state step")
 
         def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
             """Compose the declared scalar joint keys into ``observation.state`` (passthrough when already packed)."""
@@ -874,13 +925,6 @@ def register_pack_state_step() -> type | None:
 
 # Embodiment map
 
-# The closed unit-frame vocabulary an EmbodimentMap can convert between. Every
-# conversion site compares against "degrees" (sim_state_to_model,
-# model_action_to_sim, PackStateProcessorStep.observation), so a spelling outside
-# this set means "no conversion" -- which is why EmbodimentMap.__post_init__
-# refuses one instead of storing it.
-UNIT_FRAMES: frozenset[str] = frozenset({"native", "degrees"})
-
 
 @dataclass(frozen=True)
 class EmbodimentMap:
@@ -972,16 +1016,7 @@ class EmbodimentMap:
                 :data:`UNIT_FRAMES`.
         """
         for attr in ("state_units", "action_units"):
-            frame = getattr(self, attr)
-            if frame not in UNIT_FRAMES:
-                raise ValueError(
-                    f"embodiment {self.name!r}: {attr}={frame!r} is not a unit frame this map "
-                    f"can convert; expected one of {sorted(UNIT_FRAMES)}. Every conversion site "
-                    f"compares against 'degrees', so another spelling (LeRobot's own 'DEGREES', "
-                    f"say) silently means 'native': the sim's raw radians reach a degrees-trained "
-                    f"checkpoint unconverted, and its degree actions saturate the sim's radian "
-                    f"joint limits. dim_policy is refused the same way by reconcile_dim."
-                )
+            _require_unit_frame(getattr(self, attr), field_name=attr, owner=f"embodiment {self.name!r}")
 
     def validate(self, input_features: dict[str, Any], output_features: dict[str, Any]) -> None:
         """Fail-fast validation against the model's declared features.
