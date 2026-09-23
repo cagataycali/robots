@@ -87,14 +87,16 @@ implemented by it.
 | `reads_instruction` (class attribute) | no | `True` - declare `False` when the instruction never shapes the actions (the task envelopes then say so) |
 | `instruction_free_actions` (class attribute) | no | `None` - with `reads_instruction = False`, the words the envelope uses for your actions (`"a test motion on every joint"` on the mock); `None` names no motion |
 
-`preflight` is the fail-fast seam: the simulation calls it on your **class**,
-before `create_policy` constructs anything and therefore before any weight
-download, with the keys the runtime observation will carry (joint names plus
-camera names). Raise `ValueError` from it to reject a configuration your policy
-cannot consume - a declared image input that no sim camera can be routed to is
-the motivating case - instead of surfacing that deep inside the first inference.
-Implementations must be cheap: local metadata and the given keys, no network, no
-instantiation.
+`preflight` is the fail-fast seam: the simulation and the hardware task path
+(`Robot(..., mode="real").start_task`) call it on your **class**, before
+`create_policy` constructs anything and therefore before any weight download,
+with the keys the runtime observation will carry (joint names plus camera names).
+Raise `ValueError` from it to reject a configuration your policy cannot consume -
+a declared image input that no camera can be routed to is the motivating case -
+instead of surfacing that deep inside the first inference. On the arm the keys
+are the arm's own motors and cameras, and a refusal ends the task with the arm
+disconnected again. Implementations must be cheap: local metadata and the given
+keys, no network, no instantiation.
 
 `execution_horizon` is the single source of truth for the re-query interval: how
 many actions a consumer takes from one `get_actions` chunk before asking again.

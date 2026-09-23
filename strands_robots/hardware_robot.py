@@ -1641,7 +1641,57 @@ class Robot(TeleopMixin, AgentTool):
         # (unknown kwargs are the provider's own refusal to make).
         policy_config.update({k: v for k, v in policy_kwargs.items() if v is not None})
 
+        # The provider's own pre-construction check, run for the same reason
+        # ``SimEngine._preflight_policy_config`` runs it before ``create_policy``:
+        # a configuration the provider can refuse WITHOUT constructing - a chunk
+        # count the consumer cannot execute, an ``image_keys`` list that
+        # withholds a feature the embodiment feeds, camera names that cannot be
+        # routed to a VLA's declared image inputs - otherwise surfaces only after
+        # the multi-minute weight download, on an arm this task has already
+        # energized and an operator who has already approved the rollout. That is
+        # the shape ``_policy_provider_error`` / ``_policy_port_error`` /
+        # ``_policy_requires_error`` exist to close, left open for the checks the
+        # provider makes for itself. The ValueError this raises reaches
+        # ``_execute_task`` as any other build failure does, so the refusal is
+        # reported with the arm released.
+        await self._run_policy_preflight(policy_provider, policy_config)
+
         return create_policy(policy_provider, **policy_config)
+
+    async def _run_policy_preflight(self, policy_provider: str, policy_config: dict[str, Any]) -> None:
+        """Run the provider's class-level ``preflight`` against this arm's observation.
+
+        The observation is read only when the resolved class actually overrides
+        the hook (:func:`~strands_robots.policies.policy_overrides_preflight`),
+        mirroring the sim engine: it is the camera routing such a hook validates,
+        and the read warms and grabs a frame from every configured camera, which
+        for a provider that leaves the default no-op in place is gathered purely
+        to be discarded.
+
+        A read that fails is not a verdict on the policy configuration, so it
+        does not become one here: the preflight is skipped and the same read is
+        reported by :meth:`_initialize_policy`, which owns it.
+
+        Args:
+            policy_provider: Provider name, as passed to ``create_policy``.
+            policy_config: The assembled provider kwargs ``create_policy`` will
+                be given, so the hook judges the configuration that will be built.
+
+        Raises:
+            ValueError: The provider's ``preflight`` refused this configuration.
+        """
+        from .policies import policy_overrides_preflight, preflight_policy
+
+        if not policy_overrides_preflight(policy_provider, **policy_config):
+            return
+        try:
+            observation = await asyncio.to_thread(read_observation, self.robot)
+        except Exception as exc:  # noqa: BLE001 - a read this arm cannot serve is _initialize_policy's to report
+            logger.debug("policy preflight skipped: observation unavailable (%s)", exc)
+            return
+        if not isinstance(observation, Mapping) or not observation:
+            return
+        preflight_policy(policy_provider, set(observation), **policy_config)
 
     def _close_open_devices(self) -> None:
         """Close every device that is open, one at a time and best-effort.
