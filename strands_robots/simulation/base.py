@@ -1685,8 +1685,10 @@ class SimEngine(ABC):
         local call to the domain its own remote surface enforces.
 
         Otherwise the domain is finiteness: a numeric string is an accepted
-        spelling of a scalar here, and a finite magnitude outside ``ctrlrange``
-        is a units question already surfaced by the clamp warning.
+        spelling of a scalar here, and a finite magnitude outside the range the
+        actuator holds the command to - its ``ctrlrange``, or the range of the
+        joint an unlimited position servo drives - is a units question already
+        surfaced by the out-of-range warning.
 
         Args:
             action: A ``{name: value}`` mapping, or an ordered numeric vector

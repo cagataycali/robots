@@ -24,7 +24,9 @@ from strands_robots.simulation.mujoco.backend import (
     mj_name_to_id,
 )
 from strands_robots.simulation.mujoco.scene_ops import (
+    actuator_joint_id,
     actuator_target_body_ids,
+    effective_ctrl_range,
     geom_label,
     mj_contact_is_active,
     robot_owned_actuator_ids,
@@ -358,6 +360,28 @@ def _cameras_recording_option_error(
         if text := positive_whole_number_error(value, param, method):
             return {"status": "error", "content": [{"text": text}]}
     return None
+
+
+#: Fraction of a range that absorbs boundary rounding in the out-of-range
+#: warning. A position servo commanded exactly at a limit routinely lands a
+#: float epsilon outside it, and that is not a unit mismatch.
+_CTRL_BOUND_TOLERANCE = 0.01
+
+
+def _within_bounds(value: float, lo: float, hi: float) -> bool:
+    """Whether ``value`` sits inside ``[lo, hi]`` with the rounding tolerance.
+
+    Args:
+        value: The commanded value.
+        lo: Lower bound, strictly below *hi* (the caller checks that).
+        hi: Upper bound.
+
+    Returns:
+        True when the value is inside the bounds widened by
+        :data:`_CTRL_BOUND_TOLERANCE` of their span.
+    """
+    tol = (hi - lo) * _CTRL_BOUND_TOLERANCE
+    return lo - tol <= value <= hi + tol
 
 
 class RenderingMixin:
@@ -1132,37 +1156,92 @@ class RenderingMixin:
             hint,
         )
 
+    def _exceeded_ctrl_bounds(
+        self, model: Any, act_id: int, value: float, mj: Any
+    ) -> tuple[tuple[float, float], str] | None:
+        """The bounds ``value`` breaches on this actuator and their source, else ``None``.
+
+        Two sources, and MuJoCo enforces them by different mechanisms:
+
+        * a ``ctrllimited`` actuator's own ``ctrlrange``, which MuJoCo clamps
+          ``ctrl`` into inside ``mj_step``;
+        * the range of the joint an UNLIMITED position servo drives. ``ctrl`` is
+          not clamped there, but ``ctrl`` IS the joint target and the joint
+          cannot leave its range, so a command beyond it is equally not
+          reproduced. That is the case every so101 actuator is in: its shipped
+          MJCF authors neither ``ctrlrange`` nor ``inheritrange``, so a degrees
+          chunk applied as radians pinned every joint at a limit with nothing
+          logged.
+
+        The joint read here is a pre-filter rather than a second copy of the
+        rule: in that branch
+        :func:`~strands_robots.simulation.mujoco.scene_ops.effective_ctrl_range`
+        answers with either the same joint range or no bounds at all, so a value
+        inside it cannot breach the authoritative answer - and the drive-type
+        lookup that answer needs
+        (:func:`~strands_robots.simulation.mujoco.scene_ops.joint_drive_map`,
+        measured at 230 us on a 35-actuator scene) is then paid only by a value
+        that is already out of range, rather than by every key on every control
+        step.
+
+        Args:
+            model: Live ``mujoco.MjModel``.
+            act_id: Resolved actuator the value is written to.
+            value: The command, in the actuator's ctrl units.
+            mj: The ``mujoco`` module.
+
+        Returns:
+            ``((lo, hi), source)`` naming the breached bounds and where they came
+            from, or ``None`` when the command is within them or the actuator
+            holds it to none.
+        """
+        lo = float(model.actuator_ctrlrange[act_id][0])
+        hi = float(model.actuator_ctrlrange[act_id][1])
+        if bool(model.actuator_ctrllimited[act_id]):
+            # A degenerate range under ctrllimited=1 is a claim about the
+            # actuator rather than an unset limit, and this warning is about a
+            # unit mismatch - so it is respected rather than second-guessed.
+            if hi <= lo or _within_bounds(value, lo, hi):
+                return None
+            return (lo, hi), "actuator ctrlrange"
+        if hi > lo:
+            # Unlimited with a range stored anyway (only a post-compile mutation
+            # produces that): MuJoCo enforces neither the stored range nor a
+            # joint limit through ctrl, so there is no clamp to report.
+            return None
+        jnt_id = actuator_joint_id(model, act_id, mj)
+        if jnt_id < 0 or not bool(model.jnt_limited[jnt_id]):
+            return None
+        jnt_lo = float(model.jnt_range[jnt_id][0])
+        jnt_hi = float(model.jnt_range[jnt_id][1])
+        if jnt_hi <= jnt_lo or _within_bounds(value, jnt_lo, jnt_hi):
+            return None
+        bounds, _source_or_reason = effective_ctrl_range(model, mj, act_id, jnt_id)
+        if bounds is None:
+            # A rate or torque drive: its ctrl is not a joint coordinate, so the
+            # joint's limits are not bounds on the value written here.
+            return None
+        return bounds, "driven joint range"
+
     def _warn_ctrl_clamp(self, model: Any, act_id: int, pfx: str, key: str, value: float, mj: Any) -> None:
-        """Warn once when a value written to a ctrl-limited actuator is out of range.
+        """Warn once when an action value is outside the range its actuator holds it to.
 
         The direct-actuator branch of :meth:`_apply_action_by_name` writes the
-        action value verbatim to ``data.ctrl``. When that actuator is
-        ``ctrllimited`` and the value falls outside its ``ctrlrange``, MuJoCo
-        clamps it inside ``mj_step`` - so the commanded trajectory is silently
-        NOT reproduced for that actuator while the call still reports success.
+        action value verbatim to ``data.ctrl``. When the value is outside the
+        bounds that actuator is held to - see :meth:`_exceeded_ctrl_bounds` for
+        the two sources and how MuJoCo enforces each - the commanded trajectory
+        is silently NOT reproduced for that actuator while the call still reports
+        success.
 
         This is exactly the failure mode of replaying a dataset whose action
         units differ from this robot's actuator ctrl units (e.g. a normalized
-        gripper action in ``[0, 1]`` replayed onto a joint-position gripper
-        whose ctrlrange is a few radians), or of a policy emitting
-        out-of-distribution commands. Surface it once per ``(prefix, key)`` so
-        a 50Hz control loop never spams the log. A small tolerance absorbs
-        boundary rounding, and unlimited actuators (which never clamp) are
-        skipped.
+        gripper action in ``[0, 1]`` replayed onto a joint-position gripper whose
+        ctrlrange is a few radians, or a degrees-valued chunk applied as
+        radians), or of a policy emitting out-of-distribution commands. Surface
+        it once per ``(prefix, key)`` so a 50Hz control loop never spams the log,
+        and check the dedup FIRST so a breaching key costs one bounds resolution
+        rather than one per step. A small tolerance absorbs boundary rounding.
         """
-        try:
-            if not bool(model.actuator_ctrllimited[act_id]):
-                return
-            lo = float(model.actuator_ctrlrange[act_id][0])
-            hi = float(model.actuator_ctrlrange[act_id][1])
-        except (IndexError, TypeError, ValueError):
-            return
-        if hi <= lo:
-            # [0, 0] sentinel or degenerate range: not a meaningful limit.
-            return
-        tol = (hi - lo) * 0.01
-        if lo - tol <= value <= hi + tol:
-            return
         warned = getattr(self, "_warned_ctrl_clamp_keys", None)
         if warned is None:
             warned = set()
@@ -1170,19 +1249,34 @@ class RenderingMixin:
         dedup = (pfx, key)
         if dedup in warned:
             return
+        try:
+            breach = self._exceeded_ctrl_bounds(model, act_id, float(value), mj)
+        except (IndexError, TypeError, ValueError):
+            return
+        if breach is None:
+            return
+        (lo, hi), source = breach
+        if source == "actuator ctrlrange":
+            bounds_phrase = f"outside its ctrlrange [{lo:.4g}, {hi:.4g}]"
+            mechanism = "MuJoCo will clamp it"
+        else:
+            bounds_phrase = (
+                f"outside the [{lo:.4g}, {hi:.4g}] range of the joint it drives "
+                "(its own ctrlrange is unset, so ctrl IS the joint target)"
+            )
+            mechanism = "the joint cannot leave that range"
         warned.add(dedup)
         logger.warning(
-            "[sim] action value %.4g for ctrl-limited actuator %r (prefix=%r) is outside "
-            "its ctrlrange [%.4g, %.4g]; MuJoCo will clamp it, so the commanded value is "
-            "NOT reproduced for this actuator. This usually means the action units do not "
-            "match the actuator - e.g. a normalized gripper action replayed onto a "
-            "joint-position gripper, or an out-of-distribution policy command. Rescale the "
+            "[sim] action value %.4g for actuator %r (prefix=%r) is %s; %s, so the commanded "
+            "value is NOT reproduced for this actuator. This usually means the action units do "
+            "not match the actuator - e.g. a normalized gripper action replayed onto a "
+            "joint-position gripper, or a degrees-valued chunk applied as radians. Rescale the "
             "action to the actuator's units (or pass a matching action_key_map to replay).",
             value,
             key,
             pfx,
-            lo,
-            hi,
+            bounds_phrase,
+            mechanism,
         )
 
     def _get_valid_action_keys(self, robot_name: str) -> list[str]:

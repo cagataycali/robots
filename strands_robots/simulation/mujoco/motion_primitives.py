@@ -81,6 +81,7 @@ from strands_robots.simulation.motion_primitives_base import (
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, mj_name_to_id
 from strands_robots.simulation.mujoco.scene_ops import (
     actuator_target_body_ids,
+    effective_ctrl_range,
     geom_label,
     joint_drive_map,
     mj_contact_is_active,
@@ -251,94 +252,23 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
     ) -> tuple[tuple[float, float] | None, str]:
         """Open/close set-point bounds for a gripper actuator, and their source.
 
-        Returns ``((lo, hi), source)`` - *source* naming where the bounds came
-        from, for the success payload - or ``(None, reason)`` when every source
-        is exhausted, *reason* then naming each one that was tried so the
-        refusal says what it looked at.
+        Thin reader of :func:`~strands_robots.simulation.mujoco.scene_ops.effective_ctrl_range`,
+        which owns the rule and states why each source is consulted or refused.
+        The endpoints ``set_gripper`` drives to and the bounds the engine's
+        out-of-range warning reports are the same quantity, so they are resolved
+        in one place.
 
-        The actuator ``ctrlrange`` is authoritative whenever it is usable. When
-        it is not, MuJoCo's encoding is the thing to read carefully: a position
-        servo whose MJCF declares neither ``ctrlrange`` nor ``inheritrange="1"``
-        compiles to ``ctrlrange == (0, 0)`` with ``actuator_ctrllimited == 0``,
-        and that is the UNLIMITED actuator - a different claim from "this
-        actuator accepts nothing". For a JOINT / JOINTINPARENT transmission
-        ``ctrl`` IS the joint target, so the driven joint's own limits are the
-        open/close set-points, and they are precisely what ``inheritrange="1"``
-        would have compiled the ctrlrange to. Both sibling primitives already
-        make that substitution (``rotate_wrist`` and ``move_to`` read
-        ``jnt_range`` under ``jnt_limited``); ``set_gripper`` read only the
-        ctrlrange and so refused on so101, whose shipped MJCF authors neither
-        attribute while so100's sets ``inheritrange="1"`` on every actuator -
-        the only reason so100 was unaffected (GH #1942).
+        Args:
+            model: The compiled ``MjModel``.
+            act_id: The gripper actuator.
+            jnt_id: The joint it transmits to, or ``None`` for a tendon drive.
 
-        Three shapes keep refusing, and none of them is an omission to repair:
-
-        * ``actuator_ctrllimited == 1`` alongside a degenerate range is a claim
-          about the actuator, so it is respected rather than second-guessed.
-          The MJCF compiler cannot produce that combination - it rejects an
-          explicit ``ctrllimited="true"`` whose range is not strictly increasing
-          with *invalid control range for actuator*, and it compiles a bare
-          degenerate range (``"0 0"``, ``"0.5 0.5"``) to ``ctrllimited == 0`` -
-          so this guard bites only on a model mutated after compilation, which
-          this package does do: :mod:`strands_robots.policies.wbc.sim_control`
-          rewrites ``ctrlrange`` to hand control to a whole-body controller and
-          restores it afterwards.
-        * A driven joint that is itself unlimited has no limits to lend.
-        * A drive whose ``ctrl`` is not a joint pose cannot be commanded with a
-          joint limit even though its transmission IS the joint: substituting
-          the range would command a rate (``<velocity>``) or a torque
-          (``<motor>``) numerically equal to a joint coordinate. The
-          substitution's premise is that ``ctrl`` is the joint target - exactly
-          what ``inheritrange="1"`` would have compiled - so it is the drive
-          rather than the transmission that has to supply it, which is what
-          :func:`~strands_robots.simulation.mujoco.scene_ops.joint_drive_map`
-          decides.
-        * A tendon actuator's ctrlrange is a normalised command space, not joint
-          units - the shipped Franka gripper is ``(0, 255)`` - so a joint range
-          would command the wrong quantity. *jnt_id* is ``None`` for one by
-          construction: only JOINT / JOINTINPARENT transmissions appear in
-          :meth:`_joint_actuator_map`.
-
-        A degenerate range *stored* under ``ctrllimited == 0`` is inert rather
-        than restrictive - MuJoCo clamps ``ctrl`` only when
-        ``ctrllimited == 1`` - so such an actuator genuinely accepts any
-        command, and substituting the joint range restricts nothing that was
-        previously free and widens nothing that was previously enforced.
+        Returns:
+            ``((lo, hi), source)`` for the success payload, or ``(None, reason)``
+            when no source can supply set-points - *reason* naming each one
+            tried, for the refusal.
         """
-        lo = float(model.actuator_ctrlrange[act_id][0])
-        hi = float(model.actuator_ctrlrange[act_id][1])
-        if hi > lo:
-            return (lo, hi), "actuator ctrlrange"
-        if bool(model.actuator_ctrllimited[act_id]):
-            return None, (
-                f"its ctrlrange ({lo}, {hi}) is degenerate and ctrllimited=1 declares that "
-                "as a real limit rather than an unset one"
-            )
-        if jnt_id is None:
-            return None, (
-                f"its ctrlrange ({lo}, {hi}) is unset (ctrllimited=0) and it drives no joint "
-                "whose limits could substitute - a tendon actuator's ctrlrange is a normalised "
-                "command space, not joint units"
-            )
-        if not bool(model.jnt_limited[jnt_id]):
-            return None, (
-                f"its ctrlrange ({lo}, {hi}) is unset (ctrllimited=0) and the joint it drives is itself unlimited"
-            )
-        servos, _ = joint_drive_map(model, self._mj)
-        if servos.get(jnt_id) != act_id:
-            return None, (
-                f"its ctrlrange ({lo}, {hi}) is unset (ctrllimited=0) and its ctrl is not a joint "
-                "pose, so the driven joint's limits are not set-points it can be commanded with - "
-                "a <velocity> drive reads ctrl as a rate, a <motor> as a torque"
-            )
-        jnt_lo = float(model.jnt_range[jnt_id][0])
-        jnt_hi = float(model.jnt_range[jnt_id][1])
-        if jnt_hi > jnt_lo:
-            return (jnt_lo, jnt_hi), "driven joint range"
-        return None, (
-            f"its ctrlrange ({lo}, {hi}) is unset (ctrllimited=0) and the joint it drives has "
-            f"a degenerate range ({jnt_lo}, {jnt_hi})"
-        )
+        return effective_ctrl_range(model, self._mj, act_id, jnt_id)
 
     def _short_name(self, name: str | None, namespace: str) -> str:
         """Strip the robot namespace prefix for hint matching."""
