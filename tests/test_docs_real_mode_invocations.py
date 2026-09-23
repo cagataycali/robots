@@ -7,11 +7,32 @@ it are decided at runtime rather than by the factory signature:
 * **The name.** ``Robot()`` resolves it through the package registry, so a
   spelling that is neither a canonical name nor an alias raises ``ValueError``
   before anything is built.
-* **The keywords.** ``mode="real"`` resolves the robot's ``hardware.lerobot_type``
-  to a lerobot config dataclass, and a keyword is accepted only when that
-  dataclass declares it or it appears in the cross-robot forwarding allowlist
-  :data:`~strands_robots.hardware_robot._FORWARDABLE_KWARGS`. So the accepted set
-  is a property of *the named robot*, not of the factory.
+* **The keywords.** Which surface they must satisfy depends on the driver the
+  call resolves to, so the accepted set is a property of *the named robot and
+  its driver*, not of the factory.
+
+  * ``driver="lerobot"`` (today's default) resolves the robot's
+    ``hardware.lerobot_type`` to a lerobot config dataclass and forwards the
+    keywords into it, so one the dataclass does not declare raises - unless it
+    appears in the cross-robot forwarding allowlist
+    :data:`~strands_robots.hardware_robot._FORWARDABLE_KWARGS`. That is the half
+    graded here.
+  * ``driver="strands"`` never reaches a lerobot config at all.
+    :func:`~strands_robots.robot._build_native_driver` forwards the keywords
+    verbatim to the registered driver's ``__init__``, and every shipped driver
+    ends in ``**kwargs`` which it pops its own keywords out of - the Feetech
+    driver's ``port`` / ``transport``, the UR driver's ``rtde_frequency`` - and
+    keeps the remainder in ``_extras``. So *any* keyword binds and none is
+    refused: there is no acceptance rule to grade, and grading such a call
+    against the lerobot dataclass reports a working documented line as broken.
+    Those calls are therefore excluded from the keyword half by
+    :func:`_builds_a_native_driver`, on the same reasoning that makes the
+    signature-based sibling return ``None`` for a callee carrying ``**kwargs``.
+
+Which driver a call resolves to is not the spelling of its ``driver=`` either -
+an absent keyword defers to the robot's registry ``hardware.driver`` and then to
+:data:`~strands_robots.registry.DEFAULT_DRIVER`. :func:`resolve_driver` is that
+rule, so it is called rather than re-implemented here.
 
 Neither is reachable from a signature. ``Robot`` ends in ``**kwargs: Any``, and
 ``tests/test_docs_python_examples_are_callable.py`` grades keywords against
@@ -39,6 +60,7 @@ import pytest
 import strands_robots
 import strands_robots.hardware_robot as hardware_robot
 import strands_robots.robot as robot_factory
+from strands_robots.drivers import driver_choice_error, resolve_driver
 from strands_robots.registry import get_hardware_type, get_robot
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
@@ -48,6 +70,11 @@ _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 #: corpus size is asserted. The floor sits well below the current count; it only
 #: has to fail if the extractor stops reaching the documentation.
 _MINIMUM_GRADED_CALLS = 20
+
+#: The same premise for the keyword half alone, which grades only the calls a
+#: lerobot config backs. Excluding the native-driver calls must leave a corpus,
+#: not empty the check: 24 of the 42 documented calls resolve to lerobot today.
+_MINIMUM_LEROBOT_CALLS = 10
 
 
 @dataclasses.dataclass(frozen=True)
@@ -59,11 +86,14 @@ class _Invocation:
             opened directly.
         name: The robot name as written in the documentation.
         keywords: Keyword names the call passes, excluding ``mode``.
+        driver: The ``driver=`` value as written, or ``None`` when the call
+            passes none (deferring to the registry) or passes a computed one.
     """
 
     location: str
     name: str
     keywords: tuple[str, ...]
+    driver: str | None = None
 
 
 def _documents_a_refusal(block: str) -> bool:
@@ -122,11 +152,15 @@ def _documented_real_mode_calls() -> list[_Invocation]:
                 name = node.args[0].value
                 if not isinstance(name, str):
                     continue
+                driver = written.get("driver")
                 found.append(
                     _Invocation(
                         location=f"{path.relative_to(_REPO_ROOT)}:{fence_line + node.lineno - 1}",
                         name=name,
                         keywords=tuple(k for k in written if k != "mode"),
+                        driver=driver.value
+                        if isinstance(driver, ast.Constant) and isinstance(driver.value, str)
+                        else None,
                     )
                 )
     return found
@@ -190,7 +224,46 @@ def _names_no_registered_robot(name: str) -> bool:
     return get_robot(name) is None
 
 
-def _rejected_keywords(name: str, keywords: tuple[str, ...]) -> list[str]:
+def _refused_driver_choice(driver: str | None) -> str | None:
+    """Return why ``driver=`` itself is refused, or ``None`` when it is a choice.
+
+    Read before the driver is resolved, because an unknown spelling makes
+    ``Robot()`` raise on the keyword rather than build anything - and because
+    :func:`resolve_driver` raises on it, which would turn a documentation defect
+    into an error inside the sweep instead of a reported location.
+
+    Args:
+        driver: The ``driver=`` value as written, or ``None`` when unset.
+
+    Returns:
+        The refusal reason, or ``None``.
+    """
+    if driver is None:
+        return None
+    return driver_choice_error(driver, "driver", "Robot")
+
+
+def _builds_a_native_driver(name: str, driver: str | None) -> bool:
+    """Return whether this call is built by a native driver rather than lerobot.
+
+    :func:`~strands_robots.drivers.resolve_driver` is the rule, not the spelling
+    of ``driver=``: an absent keyword defers to the robot's registry
+    ``hardware.driver`` and then to the package default, so a robot that
+    declares a native driver takes the native path with no keyword at all.
+
+    Args:
+        name: Robot name or alias as written in the documentation.
+        driver: The ``driver=`` value as written, or ``None`` when unset. Must
+            already be known to be a valid choice.
+
+    Returns:
+        ``True`` when the keywords are forwarded to a driver's ``**kwargs``
+        instead of into a lerobot config dataclass.
+    """
+    return resolve_driver(name, driver) != "lerobot"
+
+
+def _rejected_keywords(name: str, keywords: tuple[str, ...], driver: str | None = None) -> list[str]:
     """Return the keywords ``Robot(name, mode="real", ...)`` would refuse.
 
     The one place the acceptance rule lives, so the documentation sweep and the
@@ -199,12 +272,17 @@ def _rejected_keywords(name: str, keywords: tuple[str, ...]) -> list[str]:
     Args:
         name: Robot name or alias.
         keywords: Keyword names the call passes, excluding ``mode``.
+        driver: The call's ``driver=`` as written, or ``None`` when unset.
 
     Returns:
         The rejected names, sorted. Empty when every keyword is accepted, and
-        also empty when the robot's config cannot be resolved - an ungradable
-        robot is not a wrong one.
+        also empty when the call cannot be graded rather than being wrong: a
+        native driver takes every keyword through ``**kwargs`` and refuses
+        none, and a robot whose lerobot config will not resolve declares no
+        field set to check against.
     """
+    if _builds_a_native_driver(name, driver):
+        return []
     declared = _keywords_the_robot_declares(name)
     if declared is None:
         return []
@@ -227,6 +305,20 @@ class TestTheCorpusIsReached:
         calls = _documented_real_mode_calls()
         bimanual = [c for c in calls if "left_arm_config" in c.keywords]
         assert bimanual, "no documented mode='real' call passes a per-arm config"
+
+    def test_the_keyword_half_still_grades_a_corpus_of_lerobot_calls(self) -> None:
+        """Excluding the native-driver calls must not empty the keyword half."""
+        pytest.importorskip("lerobot.robots.config")
+        graded = [
+            call
+            for call in _documented_real_mode_calls()
+            if _refused_driver_choice(call.driver) is None and not _builds_a_native_driver(call.name, call.driver)
+        ]
+        assert len(graded) >= _MINIMUM_LEROBOT_CALLS, (
+            f"only {len(graded)} documented mode='real' calls are backed by a lerobot config "
+            f"(expected at least {_MINIMUM_LEROBOT_CALLS}); the keyword half now grades almost "
+            "nothing, so a clean result would be meaningless"
+        )
 
     def test_the_factory_owns_a_nonempty_keyword_set(self) -> None:
         owned = _keywords_the_factory_owns()
@@ -252,11 +344,15 @@ class TestEveryDocumentedRealModeKeywordIsAccepted:
         pytest.importorskip("lerobot.robots.config")
         offenders = []
         for call in _documented_real_mode_calls():
-            rejected = _rejected_keywords(call.name, call.keywords)
+            refused = _refused_driver_choice(call.driver)
+            if refused is not None:
+                offenders.append(f"{call.location}: {refused}")
+                continue
+            rejected = _rejected_keywords(call.name, call.keywords, call.driver)
             if rejected:
                 offenders.append(
                     f"{call.location}: Robot({call.name!r}, mode='real') passes {rejected}, "
-                    f"which neither the factory nor {call.name!r} accepts"
+                    f"which neither the factory nor the lerobot config for {call.name!r} accepts"
                 )
         assert not offenders, "documented mode='real' calls that raise as written:\n  " + "\n  ".join(offenders)
 
@@ -331,6 +427,32 @@ class TestTheKeywordRuleIsGradedOnConstructedExemplars:
         pytest.importorskip("lerobot.robots.config")
         assert _rejected_keywords("so101", ("port", "cameras")) == []
         assert _rejected_keywords("so101", ("left_arm_config",)) == ["left_arm_config"]
+
+    def test_a_native_driver_keyword_is_graded_against_the_driver_not_the_config(self) -> None:
+        """``transport`` is the Feetech driver's own keyword and no lerobot field.
+
+        The pair is the whole point: the same keyword on the same robot is
+        accepted on the native path and refused on the lerobot one, so the rule
+        reads the driver rather than the robot alone.
+        """
+        pytest.importorskip("lerobot.robots.config")
+        declared = _keywords_the_robot_declares("so101")
+        assert declared is not None and "transport" not in declared
+        assert _rejected_keywords("so101", ("transport",), "strands") == []
+        assert _rejected_keywords("so101", ("transport",), "lerobot") == ["transport"]
+
+    def test_the_native_path_is_decided_by_resolution_not_the_written_keyword(self) -> None:
+        """A robot declaring a native driver takes that path with no keyword."""
+        assert _builds_a_native_driver("so101", "strands")
+        assert not _builds_a_native_driver("so101", "lerobot")
+        assert not _builds_a_native_driver("so101", None), "the SO arms declare no native driver yet"
+        assert _builds_a_native_driver("yahboom_m3pro", None), "a declared native driver needs no keyword"
+
+    def test_an_unknown_driver_spelling_is_reported_rather_than_raising(self) -> None:
+        """A near-miss spelling is a documentation defect with a location."""
+        assert _refused_driver_choice("strand") is not None
+        assert _refused_driver_choice("strands") is None
+        assert _refused_driver_choice(None) is None
 
     def test_both_outcomes_occur_so_neither_branch_is_dead(self) -> None:
         pytest.importorskip("lerobot.robots.config")
