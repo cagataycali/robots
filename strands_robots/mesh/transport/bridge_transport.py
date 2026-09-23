@@ -181,6 +181,12 @@ def _topic_suffix(topic: str) -> str:
     return tail
 
 
+#: Exact-match heads already warned about for half-bridged tail traffic, so
+#: the log carries one line per misconfigured head rather than one per
+#: delivered sample. Bounded by the operator's topic list; cleared on restart.
+_WARNED_HALF_BRIDGED_HEADS: set[str] = set()
+
+
 def _should_bridge(
     topic: str,
     allowed_suffixes: frozenset[str],
@@ -244,6 +250,30 @@ def _should_bridge(
         if rest and any(seg == ".." for seg in rest.split("/")):
             return False
         return True
+
+    # Silent-partial-success guard. The operator put a topic in the
+    # EXACT-match list (STRANDS_MESH_BRIDGE_TOPICS) and tail-suffixed traffic
+    # (``<head>/<turn>``) is now arriving on it: the bare topic bridges, every
+    # per-turn message stays on the LAN. From the operator's side the change
+    # looks like it took. Refuse the tail (correct) and say so once per head,
+    # so the half that did not take is visible.
+    #
+    # A head that IS in the prefix list already returned True above, so
+    # reaching here means the tails are genuinely unbridged -- the position of
+    # this block after the prefix-accept return is what makes that true, and
+    # test_a_head_in_both_lists_bridges_its_tails_and_stays_silent pins it.
+    if "/" in suffix and head in allowed_suffixes:
+        if head not in _WARNED_HALF_BRIDGED_HEADS:
+            _WARNED_HALF_BRIDGED_HEADS.add(head)
+            logger.warning(
+                "[bridge] topic %r is in STRANDS_MESH_BRIDGE_TOPICS (exact match) "
+                "but tail-suffixed traffic %r is NOT bridged: the bare topic "
+                "reaches MQTT while per-turn messages stay LAN-only. Add %r to "
+                "STRANDS_MESH_BRIDGE_TOPICS_PREFIX to bridge the tails too.",
+                head,
+                suffix,
+                head,
+            )
 
     return False
 
