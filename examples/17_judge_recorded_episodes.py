@@ -29,7 +29,7 @@ OpenAI-compatible endpoint works - no cloud dependency required)::
     judge(f"Label every episode of the dataset at {root}. Use sample_frames "
           "with include_images=True to look at the recording.")
 
-Dependencies: pip install "strands-robots[sim-mujoco,lerobot]"
+Dependencies: pip install "strands-robots[sim-mujoco,lerobot]" "lerobot[training]"
 Expected output: per-episode verdicts, judge labels (one deliberate dispute
 showing the verdict stands), an agreement report, the filtered episode subset,
 and a 2-step ACT training run on that subset. Runtime: ~2 minutes on CPU

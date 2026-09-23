@@ -11,7 +11,7 @@ Swap ``PROVIDER`` to "groot" or "cosmos3" and only the provider string changes:
 the lerobot draccus CLI, GR00T's tyro FinetuneConfig, and Cosmos's TOML+DCP
 pipeline all hide behind one ``TrainSpec`` + ``Trainer`` lifecycle.
 
-Dependencies: pip install "strands-robots[sim-mujoco,lerobot]"
+Dependencies: pip install "strands-robots[sim-mujoco,lerobot]" "lerobot[training]"
 Expected output: a trained ACT checkpoint under /tmp, loaded back as a Policy.
 Runtime: ~30s on CPU (2 training steps - just enough to prove the loop).
 """
