@@ -66,14 +66,12 @@ from __future__ import annotations
 import logging
 import math
 import threading
-import time
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.drivers.base import policy_step, undeclared_verb_error
-from strands_robots.mesh.pacing import Ticker
+from strands_robots.drivers.rollout import PolicyRollout, policy_from_provider
 from strands_robots.registry import resolve_name
-from strands_robots.registry.policies import policy_requires_error
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
@@ -467,7 +465,7 @@ class URDriver:
         # :meth:`_begin_halt`.
         self._halt_epoch = 0
 
-        self._rollout: _Rollout | None = None
+        self._rollout: PolicyRollout | None = None
         self._task_admission = threading.Lock()
 
     @staticmethod
@@ -1099,10 +1097,10 @@ class URDriver:
     ) -> dict[str, Any]:
         """Build a policy from the provider registry and roll it out in the background.
 
-        A provider that cannot be built is refused, never raised: this is the one
-        driver in the fleet that builds a policy from the provider registry, and
-        it is reached as an agent tool, where an exception is not something the
-        caller can handle. A provider missing a keyword the registry names as
+        A provider that cannot be built is refused, never raised, by the shared
+        owner of that build (:func:`~strands_robots.drivers.rollout.policy_from_provider`):
+        this verb is reached as an agent tool, where an exception is not
+        something the caller can handle. A provider missing a keyword the registry names as
         required is refused before the build, because several build without it
         and fail only once the rollout asks for its first action - by which time
         this verb has answered "started" and a live arm is held by a rollout that
@@ -1123,42 +1121,17 @@ class URDriver:
             or a refusal naming the provider that could not be built - or the
             keyword it needed and was not given.
         """
-        from strands_robots.policies import create_policy
-
         kwargs: dict[str, Any] = {"host": policy_host, **policy_kwargs}
         if policy_port is not None:
             kwargs["port"] = policy_port
-        # Judged before the build, because several providers build without the
-        # keyword they cannot act without and only fail on the worker thread,
-        # once this verb has answered "started" and the rollout holds an arm
-        # that is already live. ``kwargs`` is what the caller supplied, so
-        # nothing is ignored here: unlike the real-arm surface, this verb funnels
-        # ``policy_port`` into it, so the same guard judges the port too.
-        if reason := policy_requires_error(
+        policy, reason = policy_from_provider(
             policy_provider,
             kwargs,
             "start_task",
             "the rollout would start on a live arm and fail at its first action",
-        ):
+        )
+        if reason is not None:
             return _refuse(reason)
-        try:
-            policy = create_policy(policy_provider, **kwargs)
-        # Recovery path: catch broadly. The refusal below is this verb's
-        # documented answer to a provider it cannot build, and the exceptions a
-        # build raises are not enumerable. Naming
-        # ``(ImportError, TypeError, ValueError)`` covered neither half of the
-        # real population: nine of the twenty-nine registered provider
-        # spellings raised past the envelope, ``lerobot_local`` among them,
-        # because :func:`~strands_robots.policies.create_policy`'s own
-        # documented ``UntrustedRemoteCodeError`` is a ``RuntimeError``; and a
-        # provider whose constructor resolves a checkpoint off disk raises
-        # ``FileNotFoundError`` from a path the caller mistyped. Widening the
-        # tuple to cover today's classes would re-break on the next provider,
-        # and ``register_policy`` lets a caller add one this package never sees.
-        # The rollout loop catches this broadly for the same reason one step
-        # later - see :meth:`_Rollout._run`.
-        except Exception as exc:  # noqa: BLE001 - an unbuildable provider is refused, not raised
-            return _refuse(f"start_task: could not build the {policy_provider!r} policy: {exc}")
         return self.run_policy(policy, instruction=instruction, duration=duration)
 
     def run_policy(
@@ -1204,13 +1177,16 @@ class URDriver:
         if not self.is_connected:
             return _refuse("run_policy: not connected - call connect_eagerly() first")
 
-        rollout = _Rollout(
-            driver=self,
+        rollout = PolicyRollout(
+            name=f"ur-rollout-{self._tool_name}",
             policy=policy_object,
             instruction=instruction,
             duration=float(duration),
             n_steps=n_steps,
             period=1.0 / self._control_frequency,
+            observe=self.get_observation,
+            act=self.send_action,
+            on_finish=self._drop_anchor,
         )
         # Admission held across the running check, the reference assignment and
         # start() so a second caller cannot pass the check before either
@@ -1257,7 +1233,7 @@ class URDriver:
         """
         self._begin_halt()
         rollout = self._rollout
-        unjoined: _Rollout | None = None
+        unjoined: PolicyRollout | None = None
         if rollout is not None and rollout.is_running:
             rollout.request_stop()
             if not rollout.join():
@@ -1293,173 +1269,3 @@ class URDriver:
             "status": "success",
             "content": [{"json": {"stopped": True, "steps": halted, "robot": self._tool_name}}],
         }
-
-
-class _Rollout:
-    """One policy rollout on its own thread, paced by :class:`~strands_robots.mesh.pacing.Ticker`.
-
-    Holds the loop's counters and exit reason so :meth:`URDriver.get_task_status`
-    has one snapshot to report, whether the loop is running, finished its budget
-    or was refused mid-way.
-    """
-
-    def __init__(
-        self,
-        *,
-        driver: URDriver,
-        policy: Any,
-        instruction: str,
-        duration: float,
-        n_steps: int | None,
-        period: float,
-    ) -> None:
-        """Record the rollout's budget; :meth:`start` runs it.
-
-        Args:
-            driver: The driver whose arm is commanded.
-            policy: The policy object, resolved to a callable by
-                :func:`~strands_robots.drivers.base.policy_step`.
-            instruction: Instruction handed to the policy each step.
-            duration: Wall-clock budget in seconds.
-            n_steps: Step budget; when given it wins over ``duration``.
-            period: Seconds per step.
-        """
-        self._driver = driver
-        self._policy = policy
-        self._instruction = instruction
-        self._duration = duration
-        self._n_steps = n_steps
-        self._period = period
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._lock = threading.Lock()
-        self.steps = 0
-        self._exit_reason: str | None = None
-        self._refusal: str | None = None
-
-    @property
-    def is_running(self) -> bool:
-        """Whether the rollout thread is still stepping."""
-        thread = self._thread
-        return thread is not None and thread.is_alive()
-
-    def start(self) -> None:
-        """Run the rollout on a daemon thread."""
-        self._thread = threading.Thread(
-            target=self._run,
-            name=f"ur-rollout-{self._driver.tool_name}",
-            daemon=True,
-        )
-        self._thread.start()
-
-    def request_stop(self) -> None:
-        """Ask the loop to exit at its next tick."""
-        self._stop.set()
-
-    def join(self, timeout: float = 2.0) -> bool:
-        """Wait for the loop to exit, reporting whether it did.
-
-        Args:
-            timeout: Seconds to wait. The loop checks the stop event once per
-                period, so a bound a few periods long is enough.
-
-        Returns:
-            ``True`` when the thread is out of the loop - which is what makes a
-            halt claim true, because the loop cannot write another setpoint once
-            it has left. ``False`` when it is still in there: a caller-supplied
-            policy blocking on a remote inference call outlasts any join budget,
-            and :meth:`URDriver.stop_task` needs that fact rather than a
-            ``stopped`` claim its own ``running`` flag contradicts.
-        """
-        thread = self._thread
-        if thread is None:
-            return True
-        thread.join(timeout)
-        return not thread.is_alive()
-
-    def snapshot(self) -> dict[str, Any]:
-        """The counters and exit reason, as one dict for the status envelope."""
-        with self._lock:
-            return {
-                "running": self.is_running,
-                "steps": self.steps,
-                "exit_reason": self._exit_reason,
-                "refusal": self._refusal,
-                "instruction": self._instruction,
-            }
-
-    def _run(self) -> None:
-        """Step the policy until the budget runs out, the arm refuses, or stop."""
-        step_fn = policy_step(self._policy, self._instruction)
-        if step_fn is None:  # pragma: no cover - admitted by run_policy
-            self._finish("policy")
-            return
-        deadline = time.monotonic() + self._duration
-        with Ticker(self._period, self._stop) as ticker:
-            while True:
-                if self._stop.is_set():
-                    self._finish("stopped")
-                    return
-                if self._n_steps is not None and self.steps >= self._n_steps:
-                    self._finish("n_steps")
-                    return
-                if self._n_steps is None and time.monotonic() >= deadline:
-                    self._finish("duration")
-                    return
-
-                observation = self._driver.get_observation()
-                try:
-                    action = step_fn(observation)
-                except Exception as exc:  # noqa: BLE001 - a policy fault ends the rollout, not the thread
-                    self._finish("policy", f"the policy raised {type(exc).__name__}: {exc}")
-                    return
-                if not isinstance(action, dict) or not action:
-                    self._finish("policy", f"the policy returned {action!r}, expected a joint-keyed action dict")
-                    return
-
-                if self._stop.is_set():
-                    # Re-read after the policy returns and before the setpoint
-                    # goes out. A policy call is the longest thing in a step, so
-                    # a stop signalled during one would otherwise be answered by
-                    # one more servoJ - landing after the servoStop the halt
-                    # verb just issued, and moving an arm an operator was told
-                    # had stopped. This check cannot be the only one: the
-                    # ``send_action`` below reads three RTDE registers before it
-                    # writes, and a halt issued during those is caught by the
-                    # halt counter that method re-reads. See
-                    # :meth:`URDriver._begin_halt`.
-                    self._finish("stopped")
-                    return
-
-                envelope = self._driver.send_action(action)
-                if envelope.get("status") != "success":
-                    self._finish("refused", _envelope_text(envelope))
-                    return
-                with self._lock:
-                    self.steps += 1
-                if ticker.wait():
-                    self._finish("stopped")
-                    return
-
-    def _finish(self, reason: str, refusal: str | None = None) -> None:
-        """Record why the loop exited, and drop the driver's step-gate anchor.
-
-        Every exit routes through here, so the anchor is dropped by construction
-        rather than per reason: a rollout that ran its budget out leaves the arm
-        at rest just as surely as one an operator stopped, and the arm may be
-        moved before the next setpoint. Taken outside this object's lock - the
-        driver's anchor is behind a different, non-reentrant lock.
-        """
-        with self._lock:
-            self._exit_reason = reason
-            self._refusal = refusal
-        self._driver._drop_anchor()
-
-
-def _envelope_text(envelope: dict[str, Any]) -> str:
-    """Read the reason out of a refusal envelope, for the rollout snapshot."""
-    for block in envelope.get("content") or []:
-        text = block.get("text") if isinstance(block, dict) else None
-        if text:
-            return str(text)
-    return "the arm refused the setpoint"

@@ -19,10 +19,16 @@ What works and what does not:
   not part of :data:`~strands_robots.drivers.base.DRIVER_SURFACE` and no
   shipped driver has one.
 * ``stop`` - releases torque on every motor, reporting any that stayed driven.
-* ``start_task`` / ``run_policy`` - still refused, and now for the *accurate*
-  reason: a policy needs a control loop (rate, action horizon, a thread that
-  can be stopped), which is its own slice. The refusal no longer blames the
-  bus, because the bus is here.
+* ``run_policy`` / ``start_task`` - roll a policy out on a background thread at
+  ``control_frequency`` (30 Hz by default, the SO-arm teleop rate). Each step
+  reads the whole arm in one sync-read, hands the policy a lerobot-shaped
+  ``{"<joint>.pos": degrees}`` observation and commands its action through
+  ``send_action``, so a setpoint the bus refuses ends the rollout with that
+  refusal as its exit reason. ``get_task_status`` reports the live snapshot and
+  ``stop_task`` halts the loop, leaving the arm energized where it stands -
+  ``stop`` is still the verb that de-energizes. The loop is
+  :class:`~strands_robots.drivers.rollout.PolicyRollout`, shared with the UR
+  driver rather than copied.
 
 * ``transport="twin"`` - the same driver, with the arm's MuJoCo model at the
   far end of the bus (:mod:`~strands_robots.drivers.feetech.twin`). Every verb,
@@ -31,8 +37,7 @@ What works and what does not:
   speed. The default transport is the serial bus, and nothing about it moves.
 
 None of this pretends. Every refusal returns an envelope of the same shape a
-successful path returns, so the mesh and the agent need no code change on the
-day the policy loop lands.
+successful path returns, so the mesh and the agent read one shape either way.
 
 The class is registered for every Feetech robot the package registry knows
 about - see :func:`~strands_robots.drivers._register_shipped_drivers` for the
@@ -44,7 +49,8 @@ is how an out-of-tree driver package would extend the table.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator, Sequence
+import threading
+from collections.abc import AsyncGenerator, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -53,8 +59,8 @@ if TYPE_CHECKING:
 
     from strands_robots.policies import Policy
 
-from strands_robots.bus_access import bus_lock
-from strands_robots.drivers.base import undeclared_verb_error
+from strands_robots.bus_access import bus_lock, read_joints
+from strands_robots.drivers.base import halt_failure_detail, policy_step, undeclared_verb_error
 from strands_robots.drivers.feetech.bus import (
     DEFAULT_TIMEOUT_S,
     SO_ARM_MOTORS,
@@ -62,6 +68,7 @@ from strands_robots.drivers.feetech.bus import (
     MotorCalibration,
     load_calibration,
 )
+from strands_robots.drivers.rollout import PolicyRollout, policy_from_provider
 from strands_robots.utils import boolean_flag_error, positive_count_error, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
@@ -99,11 +106,11 @@ _TOOL_TYPE = "robot"
 #: model answering the same bus (:class:`~strands_robots.drivers.feetech.twin.FeetechTwinBus`).
 TRANSPORTS: tuple[str, ...] = ("serial", "twin")
 
-# Refusal reason shared by the policy verbs. The literal string is checked in
-# tests, so a change here is a change to the driver contract. It names the
-# control loop and not the bus: blaming the bus for a missing policy loop sends
-# a caller to read serial code that already works.
-_NO_POLICY_LOOP = "not wired yet (the policy control loop)"
+#: Steps per second a rollout commands when the caller names no other rate. The
+#: SO-arm teleop rate, and what an ACT or pi0 checkpoint trained on lerobot SO
+#: data expects: a Feetech servo at its default speed reaches a goal within one
+#: 33 ms period, so a faster loop commands a setpoint the arm has not arrived at.
+DEFAULT_CONTROL_FREQUENCY: float = 30.0
 
 
 class FeetechDriver:
@@ -279,6 +286,11 @@ class FeetechDriver:
                 calibration=records,
             )
         self._connect_error: str | None = None
+        self._rollout: PolicyRollout | None = None
+        # Held across the running check, the reference assignment and ``start``,
+        # so two callers cannot both pass the check and then stream setpoints
+        # from two rollouts onto one half-duplex bus.
+        self._task_admission = threading.Lock()
 
     # ------------------------------------------------------------------ #
     # Tool surface.                                                       #
@@ -380,7 +392,13 @@ class FeetechDriver:
             else:
                 envelope = self._set_torque_envelope(bool(enabled))
         elif action == "stop":
-            envelope = self._set_torque_envelope(False)
+            # The rollout is halted before the arm is released: a loop still
+            # streaming setpoints would have its next write refused by a bus
+            # whose torque is off, reporting a policy fault for what was an
+            # operator's stop. The halt's own verdict is reported when it is not
+            # a success rather than restated here - ``stop_task`` decided it.
+            halt = self.stop_task()
+            envelope = halt if halt["status"] != "success" else self._set_torque_envelope(False)
         else:
             envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
@@ -429,51 +447,186 @@ class FeetechDriver:
     def start_task(
         self,
         instruction: str,
-        robot_name: str | None = None,
-        policy_object: Policy | None = None,
-        **kwargs: Any,
+        policy_port: int | None = None,
+        policy_host: str = "localhost",
+        policy_provider: str = "groot",
+        duration: float = 30.0,
+        **policy_kwargs: Any,
     ) -> dict[str, Any]:
-        """Refuse: the bus is live, but no policy control loop drives it yet.
+        """Build a policy from the provider registry and roll it out on the arm.
 
-        The parameters are spelled the way
-        :meth:`~strands_robots.drivers.base.HardwareDriver.start_task` declares
-        them, so a caller that names them as keywords reaches this refusal
-        instead of a :class:`TypeError`. A refusal is a contract too: the day
-        the loop lands, no caller changes.
+        Args:
+            instruction: Natural-language instruction handed to the policy.
+            policy_port: Port the policy server listens on; ``None`` uses the
+                provider's default.
+            policy_host: Host the policy server runs on.
+            policy_provider: Which provider to build, by registry name.
+            duration: Wall-clock budget for the rollout, in seconds.
+            **policy_kwargs: Extra provider-specific policy options.
+
+        Returns:
+            The envelope :meth:`run_policy` returns for the rollout it started,
+            or a refusal naming the provider that could not be built - or the
+            keyword the registry says that provider needs and did not get. A
+            refusal rather than a raise, and *before* the rollout starts: the
+            verb is reached as an agent tool, and a rollout that answered
+            "started" and then faulted at its first action would hold an
+            energized arm it can never step. See
+            :func:`~strands_robots.drivers.rollout.policy_from_provider`.
         """
-        del instruction, robot_name, policy_object, kwargs
-        return _refuse(f"start_task: {_NO_POLICY_LOOP}")
+        kwargs: dict[str, Any] = {"host": policy_host, **policy_kwargs}
+        if policy_port is not None:
+            kwargs["port"] = policy_port
+        policy, reason = policy_from_provider(
+            policy_provider,
+            kwargs,
+            "start_task",
+            "the rollout would start on an energized arm and fail at its first action",
+        )
+        if reason is not None:
+            return _refuse(reason)
+        return self.run_policy(policy, instruction=instruction, duration=duration)
 
     def run_policy(
         self,
-        policy_object: Policy,
-        robot_name: str | None = None,
-        **kwargs: Any,
+        policy_object: Policy | Callable[[dict[str, Any]], dict[str, Any]],
+        instruction: str = "",
+        duration: float = 30.0,
+        n_steps: int | None = None,
+        control_frequency: float = DEFAULT_CONTROL_FREQUENCY,
     ) -> dict[str, Any]:
-        """Refuse: the bus is live, but no policy control loop drives it yet.
+        """Roll an already-built policy out on the arm, on a background thread.
 
-        ``policy_object`` is the name
-        :meth:`~strands_robots.drivers.base.HardwareDriver.run_policy` declares;
-        see :meth:`start_task` for why the refusal honours it.
+        Each step reads the whole arm in one sync-read, hands the policy that
+        observation and commands the action it answers through
+        :meth:`send_action` - so the rollout crosses the same target-domain and
+        torque gates a hand-written setpoint does, and a frame the bus refuses
+        ends the rollout with that refusal as its exit reason rather than being
+        retried against a bus that just said no.
+
+        The observation is shaped ``{"<joint>.pos": value}`` - what lerobot's own
+        SO-arm robot class answers and what a checkpoint trained on lerobot SO
+        data reads - in the driver's units: degrees, percent open for the
+        gripper. It is read through
+        :func:`~strands_robots.bus_access.read_joints`, so the rollout shares the
+        one bus lock with the mesh readers instead of colliding with them.
+
+        Args:
+            policy_object: The policy to roll out. A built
+                :class:`~strands_robots.policies.Policy`, an object exposing
+                ``step(observation)``, or a bare callable - the set
+                :func:`~strands_robots.drivers.base.policy_step` resolves, which
+                is the same set the refusal below names.
+            instruction: Natural-language instruction handed to the policy on
+                every step.
+            duration: Wall-clock budget in seconds.
+            n_steps: Step budget; when given it wins over ``duration``.
+            control_frequency: Steps per second, defaulting to
+                :data:`DEFAULT_CONTROL_FREQUENCY`. Graded rather than coerced: a
+                zero or a nan becomes the loop's period, and a period that is not
+                a positive number paces the arm at whatever the float divides to.
+
+        Returns:
+            A success envelope describing the rollout that started - poll
+            :meth:`get_task_status` for its progress - or a refusal. Never
+            raises.
         """
-        del policy_object, robot_name, kwargs
-        return _refuse(f"run_policy: {_NO_POLICY_LOOP}")
+        if err := positive_finite_number_error(duration, "duration", "run_policy"):
+            return _refuse(err)
+        if err := positive_finite_number_error(control_frequency, "control_frequency", "run_policy"):
+            return _refuse(err)
+        if n_steps is not None and (err := positive_count_error(n_steps, "n_steps", "run_policy")):
+            return _refuse(err)
+        if policy_object is None:
+            return _refuse("run_policy: policy_object is required")
+        if policy_step(policy_object, instruction) is None:
+            return _refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
+        # The bus opens here rather than on the worker thread, so a port that
+        # cannot be opened is this verb's refusal instead of a rollout that
+        # reports "started" and ends at step 0 with the same reason.
+        if reason := self.connect_eagerly():
+            return _refuse(f"run_policy: {reason}")
 
-    def get_task_status(self) -> dict[str, Any]:
-        """Return an empty-but-well-formed envelope.
-
-        A caller polling task status sees nothing running rather than an
-        error, because "nothing to run" is the honest answer during the stub
-        phase.
-        """
+        rollout = PolicyRollout(
+            name=f"feetech-rollout-{self._tool_name}",
+            policy=policy_object,
+            instruction=instruction,
+            duration=float(duration),
+            n_steps=n_steps,
+            period=1.0 / float(control_frequency),
+            observe=lambda: read_joints(self),
+            act=self.send_action,
+        )
+        with self._task_admission:
+            if self._rollout is not None and self._rollout.is_running:
+                return _refuse("run_policy: a task is already running; call stop_task first")
+            self._rollout = rollout
+            rollout.start()
         return {
             "status": "success",
-            "content": [{"json": {"in_flight": False, "reason": _NO_POLICY_LOOP}}],
+            "content": [
+                {
+                    "json": {
+                        "robot": self._tool_name,
+                        "instruction": instruction,
+                        "control_frequency": float(control_frequency),
+                        "duration": duration,
+                        "n_steps": n_steps,
+                        "transport": self._transport,
+                    }
+                }
+            ],
         }
 
+    def get_task_status(self) -> dict[str, Any]:
+        """Report the rollout's progress, or that none has run.
+
+        The snapshot outlives the thread, so a poller arriving after the loop
+        finished still reads what ended it (``exit_reason``, and the bus's own
+        refusal when that is what ended it) rather than an empty answer.
+        """
+        rollout = self._rollout
+        if rollout is None:
+            return {"status": "success", "content": [{"json": {"running": False, "steps": 0}}]}
+        return {"status": "success", "content": [{"json": rollout.snapshot()}]}
+
     def stop_task(self) -> dict[str, Any]:
-        """No-op success: there is nothing to stop."""
-        return {"status": "success", "content": [{"text": f"stop_task: {_NO_POLICY_LOOP}"}]}
+        """Halt the rollout, leaving the arm energized where it stands.
+
+        Torque is deliberately kept: an SO arm holding a payload would drop it,
+        and ``stop`` is the verb that de-energizes. What stops is the stream of
+        setpoints.
+
+        Returns:
+            A success envelope naming the steps that ran when the loop left -
+            including when nothing was running, because an idempotent stop is
+            what a caller tearing down needs. An *error* envelope carrying
+            ``stopped=False`` when the thread is still in the loop: a
+            caller-supplied policy blocking on a remote inference call is the
+            ordinary case, and claiming a halt that :meth:`get_task_status`
+            would contradict is the one thing this verb will not do. No further
+            setpoint reaches the bus either way - the loop re-reads the stop
+            signal after the policy returns and before it commands.
+        """
+        rollout = self._rollout
+        if rollout is None:
+            return {"status": "success", "content": [{"json": {"stopped": True, "steps": 0, "robot": self._tool_name}}]}
+        if rollout.is_running:
+            rollout.request_stop()
+            if not rollout.join():
+                snapshot = rollout.snapshot()
+                snapshot["stopped"] = False
+                snapshot["robot"] = self._tool_name
+                snapshot["reason"] = (
+                    "stop_task: the rollout thread did not join within its budget; the policy is "
+                    "likely blocking - the loop commands no further setpoint, but the task is "
+                    "still holding the arm"
+                )
+                return {"status": "error", "content": [{"json": snapshot}]}
+        return {
+            "status": "success",
+            "content": [{"json": {"stopped": True, "steps": rollout.steps, "robot": self._tool_name}}],
+        }
 
     def cleanup(self) -> None:
         """Close the serial port - or, on the twin, destroy an engine the driver built.
@@ -483,7 +636,14 @@ class FeetechDriver:
         releasing it here would drop an arm holding a payload when a caller
         merely tore down a process; ``stop`` is the verb that de-energizes. An
         engine handed in through ``sim=`` is the caller's and is left alone.
+
+        A rollout is halted first: this hook goes on to release the port that
+        loop writes through, so a thread left in it would command an arm nothing
+        in the process can still reach. The halt carries no verdict here either
+        (``-> None``), so a refused one is logged.
         """
+        if detail := halt_failure_detail(self.stop_task()):
+            logger.error("%s: cleanup released the bus under a live rollout: %s", self._tool_name, detail)
         with bus_lock(self):
             self._bus.disconnect()
 
@@ -621,13 +781,17 @@ class FeetechDriver:
         }
 
     async def stop(self) -> None:
-        """De-energize every motor.
+        """Halt any rollout, then de-energize every motor.
 
-        Logs the motors that did not answer rather than raising: ``stop`` is
-        called from teardown paths that cannot handle an exception, and a
-        silent partial release would report an arm safe while joints are still
-        driven.
+        Logs the motors that did not answer - and a rollout thread that did not
+        leave its loop - rather than raising: ``stop`` is called from teardown
+        paths that cannot handle an exception and is annotated ``-> None``, so
+        the log is the only place a halt this hook could not complete survives.
+        A silent partial release would report an arm safe while joints are still
+        driven, or while a policy is still commanding them.
         """
+        if detail := halt_failure_detail(self.stop_task()):
+            logger.error("%s: stop_task did not halt the rollout: %s", self._tool_name, detail)
         envelope = self._set_torque_envelope(False)
         if envelope["status"] == "error":
             logger.error("%s: %s", self._tool_name, envelope["content"][0]["text"])

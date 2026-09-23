@@ -25,12 +25,12 @@ from typing import Any
 
 import pytest
 
+from strands_robots.drivers.rollout import PolicyRollout
 from strands_robots.drivers.ur import (
     JOINT_NAMES,
     SERVOJ_GAIN,
     SERVOJ_LOOKAHEAD_TIME,
     URDriver,
-    _Rollout,
 )
 from tests.mocks.ur_rtde import (
     MEASURED_Q,
@@ -56,7 +56,7 @@ def _reachable_setpoint() -> dict[str, float]:
     return {name: q + 0.001 for name, q in zip(JOINT_NAMES, MEASURED_Q, strict=True)}
 
 
-def _rollout(driver: URDriver, policy: Any) -> _Rollout:
+def _rollout(driver: URDriver, policy: Any) -> PolicyRollout:
     """One rollout the test starts itself, so a stop can be placed exactly.
 
     ``run_policy`` owns the thread it starts, which is what the cells above
@@ -64,13 +64,16 @@ def _rollout(driver: URDriver, policy: Any) -> _Rollout:
     the next setpoint, and placing a stop inside that window needs a reference
     to the rollout before it runs.
     """
-    return _Rollout(
-        driver=driver,
+    return PolicyRollout(
+        name=f"ur-rollout-{driver.tool_name}",
         policy=policy,
         instruction="",
         duration=30.0,
         n_steps=None,
         period=1.0 / 200.0,
+        observe=driver.get_observation,
+        act=driver.send_action,
+        on_finish=driver._drop_anchor,
     )
 
 

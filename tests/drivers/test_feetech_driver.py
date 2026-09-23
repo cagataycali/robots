@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from typing import Any
 
 import numpy as np
@@ -39,7 +40,7 @@ from strands_robots.drivers import (
 from strands_robots.drivers.base import declared_verbs
 from strands_robots.drivers.feetech import FeetechDriver
 from strands_robots.drivers.feetech.bus import SO_ARM_MOTORS
-from strands_robots.drivers.feetech.driver import _NO_POLICY_LOOP, SUPPORTED_ROBOTS
+from strands_robots.drivers.feetech.driver import SUPPORTED_ROBOTS
 from strands_robots.registry import get_robot
 from tests.drivers.conftest import FakeServoPort
 
@@ -61,6 +62,16 @@ def _port(driver: FeetechDriver) -> FakeServoPort:
     port = driver.bus._conn
     assert isinstance(port, FakeServoPort)
     return port
+
+
+def _drain(driver: FeetechDriver, timeout: float = 5.0) -> None:
+    """Wait for the rollout thread to leave the loop, or fail the cell."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not driver.get_task_status()["content"][0]["json"].get("running", False):
+            return
+        time.sleep(0.01)
+    raise AssertionError("the rollout never finished")
 
 
 # ============================================================================
@@ -260,45 +271,163 @@ class TestWrites:
         assert "no port configured" in result["content"][0]["text"]
 
 
-class TestPolicyRefusals:
-    """The policy verbs still refuse - and blame the control loop, not the bus.
+class TestPolicyRollout:
+    """The policy verbs drive the bus: one loop, one snapshot, one halt.
 
-    Naming the bus here would send a caller to read serial code that works.
+    The loop itself is :class:`~strands_robots.drivers.rollout.PolicyRollout`,
+    shared with the UR driver and graded across both in
+    :mod:`test_native_run_policy_accepts_the_policy_it_types`. What is graded
+    here is what this driver adds: the domains it holds the rollout's knobs to,
+    the bus refusal that ends a rollout, and a halt that leaves the arm
+    energized.
     """
 
-    def test_start_task_refuses_naming_the_policy_loop(self) -> None:
-        result = FeetechDriver(tool_name="so101").start_task("pick up the cube")
-        assert result == {
-            "status": "error",
-            "content": [{"text": f"start_task: {_NO_POLICY_LOOP}"}],
+    @pytest.mark.parametrize(
+        ("kwargs", "fragment"),
+        [
+            ({"duration": 0.0}, "duration"),
+            ({"duration": float("nan")}, "duration"),
+            ({"control_frequency": 0.0}, "control_frequency"),
+            ({"control_frequency": -30.0}, "control_frequency"),
+            ({"n_steps": 0}, "n_steps"),
+            ({"n_steps": 2.5}, "n_steps"),
+        ],
+    )
+    def test_a_knob_outside_its_domain_is_refused_before_the_arm_moves(
+        self, kwargs: dict[str, Any], fragment: str
+    ) -> None:
+        """A period the loop cannot pace is refused, not divided into.
+
+        ``1.0 / 0.0`` raises on the worker thread and a nan period paces the arm
+        at whatever the ticker makes of it, so both are judged here - where the
+        caller still has a reply to read.
+        """
+        driver = _wired()
+        result = driver.run_policy(lambda _obs: {"shoulder_pan": 0.0}, **kwargs)
+        assert result["status"] == "error"
+        assert fragment in result["content"][0]["text"]
+
+    def test_a_policy_of_no_resolvable_shape_is_refused_naming_the_contract(self) -> None:
+        """The refusal names ``get_actions_sync``, the shape the seam types."""
+        result = _wired().run_policy(object())  # type: ignore[arg-type]
+        assert result["status"] == "error"
+        assert "get_actions_sync" in result["content"][0]["text"]
+
+    def test_a_rollout_without_a_port_is_refused_rather_than_started(self) -> None:
+        """The bus opens in the verb, so a dead port is not a rollout of zero steps."""
+        result = FeetechDriver(tool_name="so101").run_policy(lambda _obs: {"gripper": 0.0})
+        assert result["status"] == "error"
+        assert "no port configured" in result["content"][0]["text"]
+
+    def test_a_rollout_commands_its_step_budget_and_names_what_ended_it(self) -> None:
+        """The whole loop, end to end: budget, wire, terminal snapshot."""
+        driver = _wired()
+        port = _port(driver)
+        port.writes.clear()
+
+        envelope = driver.run_policy(
+            lambda obs: {"shoulder_pan": 1.0},
+            instruction="hold still",
+            n_steps=4,
+            control_frequency=200.0,
+        )
+        assert envelope["status"] == "success", envelope
+        assert envelope["content"][0]["json"]["control_frequency"] == 200.0
+        _drain(driver)
+
+        status = driver.get_task_status()["content"][0]["json"]
+        assert status["steps"] == 4, status
+        assert status["exit_reason"] == "n_steps", status
+        assert status["instruction"] == "hold still"
+        assert len([frame for frame in port.writes if frame[4] == 0x83]) == 4
+
+    def test_the_policy_reads_the_arm_in_lerobot_keys(self) -> None:
+        """Each step hands the policy ``{"<joint>.pos": value}``, the lerobot shape.
+
+        A checkpoint trained on lerobot SO-arm data reads those keys; a bare
+        joint name would leave it looking at an observation it cannot index.
+        """
+        driver = _wired()
+        seen: list[dict[str, Any]] = []
+
+        def policy(observation: dict[str, Any]) -> dict[str, float]:
+            seen.append(observation)
+            return {"shoulder_pan": 0.0}
+
+        assert driver.run_policy(policy, n_steps=1, control_frequency=200.0)["status"] == "success"
+        _drain(driver)
+        assert seen, "the policy was never asked for an action"
+        assert set(seen[0]) == {f"{name}.pos" for name in SO_ARM_MOTORS}
+
+    def test_a_setpoint_the_bus_refuses_ends_the_rollout_carrying_that_reason(self) -> None:
+        """The bus's own refusal is the exit reason, not a retry against a bus that said no."""
+        driver = _wired()
+
+        assert driver.run_policy(lambda _obs: {"shoulder_lift": 400.0}, control_frequency=200.0)["status"] == "success"
+        _drain(driver)
+
+        status = driver.get_task_status()["content"][0]["json"]
+        assert status["exit_reason"] == "refused", status
+        assert status["steps"] == 0, status
+        assert "outside the travel" in (status["refusal"] or "")
+
+    def test_a_second_rollout_is_refused_while_one_is_in_flight(self) -> None:
+        """One arm, one command bus: two loops would interleave setpoints."""
+        driver = _wired()
+        assert driver.run_policy(lambda _obs: {"shoulder_pan": 0.0}, duration=30.0)["status"] == "success"
+        try:
+            second = driver.run_policy(lambda _obs: {"shoulder_pan": 0.0}, duration=30.0)
+            assert second["status"] == "error"
+            assert "already running" in second["content"][0]["text"]
+        finally:
+            driver.stop_task()
+
+    def test_stop_task_halts_a_running_rollout_and_leaves_the_arm_energized(self) -> None:
+        """The ledger's own acceptance: a running rollout stops when asked.
+
+        Torque is deliberately untouched - an arm holding a payload would drop
+        it, and ``stop`` is the verb that de-energizes.
+        """
+        driver = _wired()
+        port = _port(driver)
+        assert driver.run_policy(lambda _obs: {"shoulder_pan": 0.0}, duration=30.0)["status"] == "success"
+
+        halt = driver.stop_task()
+
+        assert halt["status"] == "success", halt
+        body = halt["content"][0]["json"]
+        assert body["stopped"] is True
+        assert body["robot"] == "so101"
+        assert driver.get_task_status()["content"][0]["json"]["running"] is False
+        assert not [frame for frame in port.writes if frame[4] == 0x03 and frame[5] == 0x28], (
+            "stop_task wrote Torque_Enable; de-energizing is stop(), not stop_task()"
+        )
+
+    def test_stop_task_is_idempotent_and_answers_before_any_rollout(self) -> None:
+        """A caller tearing down calls this blind; it must not refuse."""
+        driver = _wired()
+        first = driver.stop_task()
+        assert first == {
+            "status": "success",
+            "content": [{"json": {"stopped": True, "steps": 0, "robot": "so101"}}],
         }
+        assert driver.stop_task() == first
 
-    def test_run_policy_refuses_naming_the_policy_loop(self) -> None:
-        # ``policy_object=None`` because the refusal fires before the argument
-        # is inspected.
-        result = FeetechDriver(tool_name="so101").run_policy(policy_object=None)  # type: ignore[arg-type]
-        assert result == {
-            "status": "error",
-            "content": [{"text": f"run_policy: {_NO_POLICY_LOOP}"}],
-        }
-
-    def test_the_refusal_does_not_blame_the_serial_bus(self) -> None:
-        """The bus is wired; a refusal saying otherwise is a stale message."""
-        assert "bus" not in _NO_POLICY_LOOP
-
-    def test_get_task_status_reports_nothing_in_flight(self) -> None:
-        """Polling task status must not raise; nothing is running."""
+    def test_get_task_status_before_any_rollout_reports_nothing_running(self) -> None:
+        """Polling task status must not raise; nothing has run."""
         result = FeetechDriver(tool_name="so101").get_task_status()
         assert result["status"] == "success"
-        assert result["content"][0]["json"] == {"in_flight": False, "reason": _NO_POLICY_LOOP}
+        assert result["content"][0]["json"] == {"running": False, "steps": 0}
 
-    def test_stop_task_is_a_success_noop(self) -> None:
-        """There is nothing to stop; refusing would break idempotent stops."""
-        result = FeetechDriver(tool_name="so101").stop_task()
-        assert result == {
-            "status": "success",
-            "content": [{"text": f"stop_task: {_NO_POLICY_LOOP}"}],
-        }
+    def test_start_task_refuses_a_provider_it_cannot_build_naming_it(self) -> None:
+        """An unbuildable provider is refused, never raised past dispatch."""
+        result = _wired().start_task("pick up the cube", policy_provider="not_a_provider")
+        assert result["status"] == "error"
+        assert "not_a_provider" in result["content"][0]["text"]
+
+
+class TestTeardown:
+    """The port closes, and closing twice is not an error."""
 
     def test_cleanup_releases_the_port_and_is_idempotent(self) -> None:
         """``cleanup()`` closes the bus and completes without raising.

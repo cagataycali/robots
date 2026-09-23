@@ -152,7 +152,7 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.__main__", "strands_robots.dashboard.cli"),
     ("strands_robots._hitl_audit", "strands_robots.mesh.audit"),
-    ("strands_robots.drivers.ur", "strands_robots.policies"),
+    ("strands_robots.drivers.rollout", "strands_robots.policies"),
     ("strands_robots.drivers.feetech.twin", "strands_robots.simulation"),
     ("strands_robots.drivers.yahboom_m3pro_twin", "strands_robots.simulation"),
     ("strands_robots.teleop_mixin", "strands_robots.teleoperator"),

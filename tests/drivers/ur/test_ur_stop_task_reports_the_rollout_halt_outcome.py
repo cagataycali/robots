@@ -6,7 +6,7 @@ bounded, and a caller-supplied policy blocking on a remote inference call
 outlasts any bound - so the interesting case is not the happy one.  Two things
 were true of it:
 
-* ``_Rollout.join`` was annotated ``-> None`` and swallowed the timeout, so the
+* ``PolicyRollout.join`` was annotated ``-> None`` and swallowed the timeout, so the
   envelope reported ``stopped=True`` for a thread still inside the loop, while
   :meth:`~strands_robots.drivers.ur.URDriver.get_task_status` reported
   ``running=True`` in the same instant.  One driver, two envelopes, opposite
@@ -45,7 +45,8 @@ from typing import Any
 
 import pytest
 
-from strands_robots.drivers.ur import JOINT_NAMES, URDriver, _Rollout
+from strands_robots.drivers.rollout import PolicyRollout
+from strands_robots.drivers.ur import JOINT_NAMES, URDriver
 from tests.mocks.ur_rtde import MEASURED_Q, FakeRTDE, json_of, text_of
 
 HOST = "192.168.1.10"
@@ -62,12 +63,12 @@ def _reachable_setpoint() -> dict[str, float]:
 
 def _fast_join(monkeypatch: pytest.MonkeyPatch) -> None:
     """Shrink the join budget without patching over the decision it feeds."""
-    original = _Rollout.join
+    original = PolicyRollout.join
 
-    def fast(self: _Rollout, timeout: float = FAST_JOIN_S) -> bool:
+    def fast(self: PolicyRollout, timeout: float = FAST_JOIN_S) -> bool:
         return original(self, timeout=timeout)
 
-    monkeypatch.setattr(_Rollout, "join", fast)
+    monkeypatch.setattr(PolicyRollout, "join", fast)
 
 
 @pytest.fixture
@@ -147,7 +148,7 @@ def _halt(driver: URDriver, verb: str) -> None:
         driver.cleanup()
 
 
-def _await_exit(rollout: _Rollout) -> None:
+def _await_exit(rollout: PolicyRollout) -> None:
     """Wait for the rollout thread to leave the loop, polling its own flag.
 
     Deliberately not ``join`` - the cells below that grade ``join``'s verdict
@@ -337,7 +338,7 @@ class TestAHaltDoesNotWedgeTheStream:
 
 
 class TestTheJoinReportsWhatItObserved:
-    """``_Rollout.join`` is the single source of the halt verdict."""
+    """``PolicyRollout.join`` is the single source of the halt verdict."""
 
     def test_a_thread_still_in_the_loop_is_not_joined(self, blocked_rollout: tuple[URDriver, threading.Event]) -> None:
         driver, _release = blocked_rollout
@@ -357,13 +358,16 @@ class TestTheJoinReportsWhatItObserved:
         # ``cleanup`` joins without checking ``is_running``, and a rollout is
         # published to the driver just before its thread starts, so this is the
         # state that race can observe.
-        rollout = _Rollout(
-            driver=URDriver(tool_name="ur5e", port=HOST),
+        driver = URDriver(tool_name="ur5e", port=HOST)
+        rollout = PolicyRollout(
+            name="ur-rollout-ur5e",
             policy=lambda observation: _reachable_setpoint(),
             instruction="",
             duration=1.0,
             n_steps=1,
             period=0.01,
+            observe=driver.get_observation,
+            act=driver.send_action,
         )
         assert rollout.join(timeout=FAST_JOIN_S) is True
 

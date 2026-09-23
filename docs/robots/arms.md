@@ -215,6 +215,35 @@ travel. No two SO-101s stop in the same place, so `0 degrees` and
 `0 percent closed` then land somewhere different on each one - the degrees are an
 encoder angle rather than a joint angle. Calibrate the arm and pass the file.
 
+## Rolling a policy out on an SO arm
+
+`so100`, `so101` and `lekiwi` run a policy on the native driver. The loop steps on
+its own thread, so the verb returns at once and `get_task_status()` is the poll:
+
+```python
+arm = Robot("so101", mode="real", driver="strands", port="/dev/ttyACM0")
+arm.run_policy(policy, instruction="pick up the cube", duration=60.0)  # 30 Hz default
+arm.get_task_status()   # {"running": True, "steps": 412, "exit_reason": None, ...}
+arm.stop_task()         # {"stopped": True, "steps": 604}
+```
+
+Each step reads the whole arm in one sync-read, hands the policy
+`{"shoulder_pan.pos": degrees, ...}` - lerobot's own observation keys, so a
+checkpoint trained on lerobot SO data needs no remap - and commands its answer
+through `send_action`, in degrees (`gripper` is percent open). A setpoint the bus
+refuses ends the rollout with *that* refusal as its `exit_reason`, readable after
+the thread is gone. `control_frequency=` moves the pace off 30 Hz; a rate the
+loop cannot pace is refused rather than divided into.
+
+`stop_task()` halts the loop and leaves the arm energized where it stands -
+dropping torque would drop a payload, and `stop` is the verb that de-energizes.
+It reports `stopped=False` in an error envelope when the policy is blocking on a
+remote call and the thread has not left the loop, rather than claiming a halt
+`get_task_status()` would contradict. `start_task()` builds the policy from the
+provider registry first, and refuses a provider it cannot build - before the arm
+is committed. The same verbs run on `transport="twin"`, which is how a rollout is
+rehearsed against the arm's model.
+
 ## The same agent, on the twin
 
 `Robot("so101", mode="sim")` is the physics twin with the simulation tool's

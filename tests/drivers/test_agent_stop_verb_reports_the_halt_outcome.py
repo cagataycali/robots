@@ -406,12 +406,14 @@ class TestTheVerdictIsSingleSourced:
         )
 
     def test_the_exemption_is_derived_from_the_absence_of_a_verdict(self) -> None:
-        # Not a hand-listed allowlist: these two are exempt because their
-        # stop_task has no refusal path, their serial bus being unwired.
+        # Not a hand-listed allowlist: the Dynamixel driver is exempt because
+        # its stop_task has no refusal path, its serial bus being unwired. The
+        # roster shrinks as a driver gains a halt it can refuse - the Feetech
+        # arm left it when its rollout loop landed.
         exempt = sorted(
             name for name, cls in _driver_classes().items() if not _stop_task_can_refuse(_method_ast(cls, "stop_task"))
         )
-        assert exempt == ["DynamixelDriver", "FeetechDriver"], exempt
+        assert exempt == ["DynamixelDriver"], exempt
 
     @pytest.mark.parametrize("name", ["MicroduckDriver", "ReachyDriver", "G1Driver"])
     def test_the_branch_does_not_restate_a_verdict(self, name: str) -> None:

@@ -37,10 +37,13 @@ import pytest
 import strands_robots.drivers as drivers_pkg
 from strands_robots.drivers import g1 as g1_mod
 from strands_robots.drivers.base import policy_step
+from strands_robots.drivers.feetech import FeetechDriver
+from strands_robots.drivers.feetech.bus import SO_ARM_MOTORS, FeetechBus
 from strands_robots.drivers.g1 import G1Driver
 from strands_robots.drivers.go2 import Go2Driver
 from strands_robots.drivers.ur import URDriver
 from strands_robots.policies.base import Policy
+from tests.drivers.conftest import FakeServoPort
 from tests.drivers.test_g1_control_loop import install_unitree_sdk_stub as install_hg_sdk
 from tests.drivers.test_go2_driver import install_unitree_sdk_stub as install_go_sdk
 from tests.mocks.ur_rtde import MEASURED_Q, FakeRTDE
@@ -174,6 +177,63 @@ def _ur_rollout(
     return status, servoed
 
 
+#: The SO arm joint a cell names, and its motor id on the bus, so a frame can be
+#: decoded back to the one value the policy commanded.
+FEETECH_JOINT = "shoulder_pan"
+
+
+def _feetech_rollout(
+    monkeypatch: pytest.MonkeyPatch, policy: Any, instruction: str, n_steps: int
+) -> tuple[dict[str, Any], list[Any]]:
+    """Roll ``policy`` out on an SO-101 whose serial port is a fake servo bus.
+
+    Returns:
+        The terminal task snapshot, and the ``Goal_Position`` count carried for
+        :data:`FEETECH_JOINT` by every ``SYNC_WRITE`` frame that reached the
+        wire - so a refused policy is visibly a rollout that commanded nothing.
+    """
+    del monkeypatch
+    driver = FeetechDriver(tool_name="so101", port="/dev/fake")
+    driver.bus._conn = FakeServoPort(dict.fromkeys((1, 2, 3, 4, 5, 6), 2048))
+    envelope = driver.run_policy(policy, instruction=instruction, n_steps=n_steps, control_frequency=200.0)
+    if envelope["status"] != "success":
+        return envelope, []
+    _drain(driver)
+    status = driver.get_task_status()["content"][0]["json"]
+    commanded = _feetech_goal_counts(driver.bus._conn)
+    driver.cleanup()
+    return status, commanded
+
+
+def _feetech_goal_counts(port: Any) -> list[int]:
+    """Decode :data:`FEETECH_JOINT`'s goal count out of every SYNC_WRITE frame.
+
+    The frame is ``FF FF FE len 83 addr data_len (id lo hi)* checksum``, so the
+    per-motor triples start at byte 7 - the layout ``test_feetech_protocol``
+    grades and this reads back.
+    """
+    motor_id = SO_ARM_MOTORS[FEETECH_JOINT].motor_id
+    counts: list[int] = []
+    for frame in port.writes:
+        if frame[4] != 0x83:  # not a SYNC_WRITE
+            continue
+        payload = frame[7:-1]
+        for offset in range(0, len(payload), 3):
+            if payload[offset] == motor_id:
+                counts.append(payload[offset + 1] | (payload[offset + 2] << 8))
+    return counts
+
+
+def _feetech_action(offset: float = 0.05) -> dict[str, float]:
+    """A one-joint SO-arm action in the driver's unit: degrees."""
+    return {FEETECH_JOINT: offset}
+
+
+def _feetech_recorded(action: dict[str, float]) -> int:
+    """The goal count the bus encodes ``action`` as, through its own calibration."""
+    return FeetechBus(port=None, motors=dict(SO_ARM_MOTORS)).to_counts(FEETECH_JOINT, action[FEETECH_JOINT])
+
+
 def g1_mod_go2_index() -> dict[str, int]:
     """The Go2 joint order, read off the driver rather than restated here."""
     from strands_robots.drivers.go2 import GO2_JOINT_INDEX
@@ -214,6 +274,7 @@ ROLLOUTS = [
     pytest.param(_g1_rollout, lambda offset=0.05: {G1_JOINT: offset}, lambda a: a[G1_JOINT], id="g1"),
     pytest.param(_go2_rollout, lambda offset=0.05: {GO2_JOINT: offset}, lambda a: a[GO2_JOINT], id="go2"),
     pytest.param(_ur_rollout, _ur_action, _ur_recorded, id="ur"),
+    pytest.param(_feetech_rollout, _feetech_action, _feetech_recorded, id="feetech"),
 ]
 
 
