@@ -160,16 +160,6 @@ class TestConstructor:
         assert driver.tool_name == "so101"
         assert driver.tool_type == "robot"
 
-    def test_extras_pass_through_kwargs_are_kept(self) -> None:
-        """Unknown keywords are kept for a downstream driver package.
-
-        Refusing every unknown keyword here would refuse a valid future
-        extension, and the driver factory has no way to filter them at
-        construction time.
-        """
-        driver = FeetechDriver(tool_name="so101", weird_extension="yes")
-        assert driver._extras == {"weird_extension": "yes"}
-
     def test_ports_multi_bus_is_refused_by_name(self) -> None:
         """A caller passing ``ports=[...]`` gets a named refusal.
 

@@ -242,9 +242,6 @@ class TestTheDriverSatisfiesTheSeam:
         driver = ReachyDriver(tool_name="reachy_mini", cameras={"head": {}}, data_config="cfg")
         assert driver.tool_name == "reachy_mini"
 
-    def test_the_constructor_tolerates_extras_the_factory_forwards(self) -> None:
-        assert ReachyDriver(unknown_future_kwarg=1).tool_name == "reachy_mini"
-
 
 class TestTheHostAndPortComeFromOnePolymorphicArgument:
     """``port=`` names a host, with or without a ``:port`` suffix."""

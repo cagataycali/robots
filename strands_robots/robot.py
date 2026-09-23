@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast, overload
 from strands_robots._mesh_switch import mesh_env_request
 from strands_robots._serial_discovery import scan_serial_devices
 from strands_robots.drivers import (
+    constructor_keywords,
     driver_choice_error,
     get_native_driver_class,
     list_native_drivers,
@@ -330,9 +331,10 @@ def _build_native_driver(
         cameras: Camera configuration, forwarded verbatim to a driver that
             declares it opens them, and refused for one that does not.
         data_config: Data-config name, forwarded verbatim.
-        kwargs: The caller's remaining keyword arguments, forwarded verbatim -
-            ``port=`` among them, which stays polymorphic (a serial path, an IP
-            address or a URL) because only the driver knows how to read it.
+        kwargs: The caller's remaining keyword arguments, forwarded once the
+            driver declares them - ``port=`` among them, which stays polymorphic
+            (a serial path, an IP address or a URL) because only the driver knows
+            how to read it.
         tool_name: The caller's tool name; ``None`` keeps the canonical name.
 
     Returns:
@@ -343,7 +345,9 @@ def _build_native_driver(
             rather than silently falling back to lerobot: a caller who asked for
             a native driver and got the lerobot one would debug the wrong robot.
             Also if ``cameras`` is non-empty and this driver does not declare
-            that it opens cameras.
+            that it opens cameras, and if a keyword is not one this driver's
+            constructor declares - the native mirror of the lerobot path's
+            unknown-keyword refusal.
     """
     driver_cls = get_native_driver_class(canonical)
     if driver_cls is None:
@@ -381,10 +385,25 @@ def _build_native_driver(
             "backends, or capture the frames outside the driver."
         )
 
+    # A keyword this driver does not declare is refused rather than forwarded.
+    # Every driver used to end in ``**kwargs`` and park the remainder, so
+    # ``Robot('so101', mode='real', driver='strands', prot='/dev/ttyACM0')``
+    # reported success having configured nothing: the arm auto-detected a port
+    # while the caller believed they had named one, and the same typo on
+    # ``driver='lerobot'`` is refused by name. The roster is the driver's own
+    # signature (:func:`~strands_robots.drivers.base.constructor_keywords`), so a
+    # driver that grows a keyword is graded on it with nothing to update here.
+    accepted = constructor_keywords(driver_cls)
+    if unknown := sorted(set(kwargs) - set(accepted)):
+        raise ValueError(
+            f"Unknown kwarg(s) for {canonical!r} on driver='strands': {unknown}. "
+            f"{driver_cls.__name__} accepts: {list(accepted)}. (If this is a typo, fix it.)"
+        )
+
     # The constructor contract documented on strands_robots.drivers.base: the
-    # three keywords every driver takes, plus the caller's extras. ``robot=`` is
-    # deliberately NOT forwarded - it carries the lerobot type name, which means
-    # nothing to a driver that does not go through lerobot.
+    # three keywords every driver takes, and the keywords it declares itself.
+    # ``robot=`` is deliberately NOT forwarded - it carries the lerobot type
+    # name, which means nothing to a driver that does not go through lerobot.
     return cast(
         "HardwareDriver",
         driver_cls(tool_name=tool_name or canonical, cameras=cameras, data_config=data_config, **kwargs),

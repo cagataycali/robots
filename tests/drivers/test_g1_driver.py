@@ -128,17 +128,6 @@ def test_constructor_accepts_the_three_factory_kwargs() -> None:
     assert driver.tool_name == "g1"
 
 
-def test_constructor_tolerates_extra_kwargs() -> None:
-    """Unknown extras are logged and discarded, not raised.
-
-    A factory may forward kwargs the driver has never heard of; refusing
-    them would couple the factory to every driver's parameter list. The
-    driver logs the surprise so it is discoverable, then continues.
-    """
-    driver = G1Driver(tool_name="g1", port="1.2.3.4", made_up_option=42)
-    assert driver.tool_name == "g1"
-
-
 # =========================================================================
 # Sensor decode. Each callback is called with a fake IDL message.         #
 # =========================================================================

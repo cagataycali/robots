@@ -395,7 +395,6 @@ class BoosterDriver:
         domain_id: int = 0,
         robot_name: str | None = None,
         cmd_type: str = "parallel",
-        **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` does the SDK work.
 
@@ -423,7 +422,6 @@ class BoosterDriver:
                 :data:`CMD_TYPE_STATE_FIELD` convention frames declare and
                 positions are held from. Defaults to ``"parallel"``, the
                 convention the vendor's reference client leaves in place.
-            **kwargs: Ignored; accepted so the factory can forward extras.
 
         Raises:
             ValueError: If ``cmd_type`` is not one of
@@ -431,8 +429,6 @@ class BoosterDriver:
                 DDS domain (:func:`~strands_robots.utils.dds_domain_id_error`).
         """
         del cameras, data_config  # accepted for parity; unused here
-        if kwargs:
-            logger.debug("BoosterDriver ignoring extra kwargs: %s", sorted(kwargs))
         if cmd_type not in CMD_TYPE_STATE_FIELD:
             raise ValueError(
                 f"BoosterDriver: cmd_type must be one of {', '.join(sorted(CMD_TYPE_STATE_FIELD))}, got {cmd_type!r}"

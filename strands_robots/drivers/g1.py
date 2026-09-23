@@ -397,7 +397,6 @@ class G1Driver:
         network_interface: str = "eth0",
         battery_floor_pct: float = _BATTERY_FLOOR_PCT,
         motion_switcher_client_factory: Callable[[str], Any] | None = None,
-        **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` does the DDS work.
 
@@ -434,15 +433,11 @@ class G1Driver:
                 hygiene preserved.  Kept keyword-only so the factory
                 argument does not silently collide with the positional set
                 the driver-base contract fixes.
-            **kwargs: Ignored; accepted so the factory can forward extras
-                without the driver knowing what they are.
 
         Raises:
             ValueError: If ``battery_floor_pct`` is not a finite number.
         """
         del cameras, data_config  # accepted for parity; unused here
-        if kwargs:
-            logger.debug("G1Driver ignoring extra kwargs: %s", sorted(kwargs))
         self._tool_name = tool_name
         self._port = port
         self._network_interface = network_interface

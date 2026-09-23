@@ -136,7 +136,7 @@ def _connected_driver(monkeypatch: pytest.MonkeyPatch) -> tuple[ReachyDriver, _S
         lambda *a, **k: dict(_LITE_STATUS),
     )
     monkeypatch.setattr(ReachyDriver, "_build_link", lambda self, *, is_lite: link)
-    driver = ReachyDriver(host="reachy.local")
+    driver = ReachyDriver(port="reachy.local")
     assert driver.connect_eagerly() is None, "premise: the driver connects while the extra is present"
     return driver, link
 
@@ -195,13 +195,13 @@ class TestEachGuardIsReachedOnItsOwn:
     def test_the_daemon_probe_reports_an_error_body(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``_daemon_get`` answers in the ``{"error": ...}`` shape its callers read."""
         _block_transport(monkeypatch)
-        driver = ReachyDriver(host="reachy.local")
+        driver = ReachyDriver(port="reachy.local")
         assert _reports_without_prescribing(driver._daemon_get(reachy_mod._PATH_STATUS)["error"])
 
     def test_the_link_builder_returns_the_reason(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``_build_link`` answers in the reason contract it already documents."""
         _block_transport(monkeypatch)
-        driver = ReachyDriver(host="reachy.local")
+        driver = ReachyDriver(port="reachy.local")
         assert _reports_without_prescribing(driver._build_link(is_lite=True))
 
 
@@ -211,7 +211,7 @@ class TestTheReasonReachesAMeshPeer:
     def test_get_status_answers_and_carries_the_reason(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``get_status`` succeeds, reporting the reason as ``connect_error``."""
         _block_transport(monkeypatch)
-        driver = ReachyDriver(host="reachy.local")
+        driver = ReachyDriver(port="reachy.local")
         driver.connect_eagerly()
         status = asyncio.run(driver.get_status())
         assert status["status"] == "success"

@@ -56,13 +56,12 @@ class TestTheDriverSatisfiesTheSeamContract:
         assert missing_driver_members(CrazyflieDriver) == ()
 
     def test_the_factory_constructor_keywords_are_accepted(self) -> None:
-        """The three the factory always passes, plus the extras it forwards."""
+        """The three the factory always passes, plus this driver's own."""
         driver = CrazyflieDriver(
             tool_name="crazyflie",
             cameras={"wrist": {"type": "opencv", "index_or_path": 0}},
             data_config="unused",
             port="radio://0/100/2M/E7E7E7E7E8",
-            some_future_keyword=1,
         )
         assert driver.tool_name == "crazyflie"
         assert driver.tool_type == "robot"

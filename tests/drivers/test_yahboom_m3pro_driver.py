@@ -190,8 +190,8 @@ class TestTheSeamCanBuildIt:
         assert list_driver_coverage()["yahboom_m3pro"] == ("strands",)
         assert resolve_driver("yahboom_m3pro") == "strands"
 
-    def test_the_factory_extras_are_tolerated(self) -> None:
-        built = YahboomM3ProDriver(tool_name="bench", cameras=None, data_config=None, port=None, robot_ip="ignored")
+    def test_the_three_factory_keywords_are_accepted(self) -> None:
+        built = YahboomM3ProDriver(tool_name="bench", cameras=None, data_config=None, port=None)
         assert built.tool_name == "bench"
         assert built.tool_type == "robot"
         assert built.endpoint == f"ws://{DEFAULT_ROSBRIDGE.replace(':', ':')}"

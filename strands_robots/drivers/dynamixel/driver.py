@@ -44,7 +44,7 @@ is how an out-of-tree driver package would extend the table.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.drivers.base import undeclared_verb_error
@@ -87,8 +87,9 @@ class DynamixelDriver:
 
     Constructor contract matches :class:`~strands_robots.drivers.base.HardwareDriver`
     - the factory builds every native driver as ``driver_cls(tool_name=...,
-    cameras=..., data_config=..., **kwargs)`` and forwards the caller's extras
-    in ``kwargs``. Dynamixel-specific keywords land in ``kwargs``:
+    cameras=..., data_config=..., **kwargs)`` and the driver declares every
+    further keyword it honours, so the factory refuses one it does not. The
+    Dynamixel-specific keywords:
 
     * ``port`` - a serial device path (``/dev/tty.usbserial-*``) for a single
       bus, or a sequence of them for a bimanual rig. Kept polymorphic:
@@ -107,7 +108,11 @@ class DynamixelDriver:
         tool_name: str,
         cameras: Any | None = None,
         data_config: Any | None = None,
-        **kwargs: Any,
+        *,
+        port: str | None = None,
+        ports: Sequence[str] | None = None,
+        baud_rate: int = 1_000_000,
+        motor_ids: Sequence[int] = (),
     ) -> None:
         self._tool_name = tool_name
         # Discarded, not stored: this driver never opens a caller-supplied
@@ -118,33 +123,26 @@ class DynamixelDriver:
         self._data_config = data_config
         # port and ports are two spellings of the same field; the mesh's
         # keyboard-teleop passes ``port=`` and Aloha's example passes
-        # ``ports=[...]``. Store both, normalise to a tuple.
-        port = kwargs.pop("port", None)
-        ports = kwargs.pop("ports", None)
+        # ``ports=[...]``. Both are declared; normalise to a tuple.
         if port is not None and ports is not None:
             raise ValueError(
                 f"DynamixelDriver({tool_name!r}): pass port= for a single bus or ports= for multiple, not both",
             )
-        if ports is None and port is None:
-            self._ports: tuple[str, ...] = ()
-        elif ports is not None:
-            self._ports = tuple(ports)
-        else:
+        if ports is not None:
+            self._ports: tuple[str, ...] = tuple(ports)
+        elif port is not None:
             self._ports = (port,)
+        else:
+            self._ports = ()
         # Graded, not coerced - the same reason :class:`FeetechDriver` states:
         # pyserial takes the speed through its own ``int()`` and refuses only a
         # negative, so a converted value is applied rather than reported.
-        baud_rate = kwargs.pop("baud_rate", 1_000_000)
         if (reason := positive_count_error(baud_rate, "baud_rate", f"DynamixelDriver({tool_name!r})")) is not None:
             raise ValueError(reason)
         self._baud_rate: int = baud_rate
-        self._motor_ids: tuple[int, ...] = tuple(kwargs.pop("motor_ids", ()))
+        self._motor_ids: tuple[int, ...] = tuple(motor_ids)
         self._connected: bool = False
         self._connect_error: str | None = None
-        # extras from the caller are kept for a downstream driver package
-        # to consume; refusing them here would refuse a valid future
-        # extension.
-        self._extras = kwargs
 
     # ------------------------------------------------------------------ #
     # Tool surface.                                                       #

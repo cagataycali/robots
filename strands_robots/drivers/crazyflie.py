@@ -564,7 +564,6 @@ class CrazyflieDriver:
         *,
         port: str | None = None,
         setpoint_hz: int = DEFAULT_SETPOINT_HZ,
-        **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` opens the radio.
 
@@ -580,7 +579,6 @@ class CrazyflieDriver:
             setpoint_hz: Rate at which the latched setpoint is re-sent, in Hz.
                 A positive integer: it divides into the repeater's sleep, and
                 the firmware supervisor cuts thrust if the stream goes quiet.
-            **kwargs: Ignored; accepted so the factory can forward extras.
 
         Raises:
             ValueError: If ``setpoint_hz`` is not a positive integer. Raised
@@ -591,8 +589,6 @@ class CrazyflieDriver:
                 infinity inside a background thread, where nothing reports it.
         """
         del cameras, data_config
-        if kwargs:
-            logger.debug("CrazyflieDriver ignoring extra kwargs: %s", sorted(kwargs))
         if (reason := positive_count_error(setpoint_hz, "setpoint_hz", "CrazyflieDriver")) is not None:
             raise ValueError(reason)
 

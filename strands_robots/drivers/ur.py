@@ -389,7 +389,6 @@ class URDriver:
         model: str | None = None,
         control_frequency: float = DEFAULT_CONTROL_FREQUENCY,
         rtde_frequency: float | None = None,
-        **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` opens the RTDE sockets.
 
@@ -413,7 +412,6 @@ class URDriver:
                 ``None`` lets ur_rtde choose the controller's maximum, which is
                 what a caller wants unless they are sharing the arm with another
                 RTDE client.
-            **kwargs: Ignored; accepted so the factory can forward extras.
 
         Raises:
             ValueError: If ``control_frequency`` or ``rtde_frequency`` is not a
@@ -424,8 +422,6 @@ class URDriver:
                 can degrade to reporting.
         """
         del cameras, data_config
-        if kwargs:
-            logger.debug("URDriver ignoring extra kwargs: %s", sorted(kwargs))
 
         # Both rates reach a consumer that cannot report what it was handed:
         # ``control_frequency`` becomes a Ticker period (a nan or a zero

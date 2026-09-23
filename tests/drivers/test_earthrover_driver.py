@@ -172,8 +172,8 @@ class TestTheSeamCanBuildIt:
     def test_the_shipped_registration_names_this_class(self) -> None:
         assert get_native_driver_class("earthrover") is EarthRoverDriver
 
-    def test_the_factory_extras_are_tolerated(self) -> None:
-        driver = EarthRoverDriver(cameras={"front": {}}, data_config="x", unused_extra=1)
+    def test_the_three_factory_keywords_are_accepted(self) -> None:
+        driver = EarthRoverDriver(cameras={"front": {}}, data_config="x")
         assert driver.tool_name == "earthrover"
         assert driver.tool_type == "robot"
 

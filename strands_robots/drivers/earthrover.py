@@ -316,7 +316,6 @@ class EarthRoverDriver:
         port: str | None = None,
         timeout_s: float = 10.0,
         turn_sign: float = 1.0,
-        **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` does the network work.
 
@@ -336,15 +335,12 @@ class EarthRoverDriver:
             turn_sign: ``1.0`` or ``-1.0`` - multiplied into every commanded
                 ``angular``, for a rover whose physical turn direction is
                 observed reversed. See the module docstring.
-            **kwargs: Ignored; accepted so the factory can forward extras.
 
         Raises:
             ValueError: If ``port`` is not URL-shaped, ``timeout_s`` is not a
                 positive finite number, or ``turn_sign`` is not ``±1.0``.
         """
         del cameras, data_config  # accepted for parity; unused here
-        if kwargs:
-            logger.debug("EarthRoverDriver ignoring extra kwargs: %s", sorted(kwargs))
         base = port or DEFAULT_SDK_URL
         if reason := base_url_error(base, "port", type(self).__name__):
             raise ValueError(reason)

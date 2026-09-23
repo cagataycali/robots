@@ -1009,7 +1009,6 @@ class MicroduckDriver:
         timeout: float = 5.0,
         subscribe_hz: int | None = None,
         ssh_spawn: Callable[..., Any] | None = None,
-        **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` talks to robotd.
 
@@ -1033,7 +1032,6 @@ class MicroduckDriver:
                 otherwise a positive integer, because it is sent to robotd as one.
             ssh_spawn: Process factory for the ssh forward (tests inject one);
                 ``None`` means ``subprocess.Popen``.
-            **kwargs: Ignored; accepted so the factory can forward extras.
 
         Raises:
             ValueError: If ``timeout`` is not a positive finite number, or
@@ -1044,8 +1042,6 @@ class MicroduckDriver:
                 driver can degrade to reporting.
         """
         del cameras, data_config
-        if kwargs:
-            logger.debug("MicroduckDriver ignoring extra kwargs: %s", sorted(kwargs))
 
         # The two transport knobs are held to the shared numeric domains for
         # the same reason the actuation flags are held to ``boolean_flag_error``:

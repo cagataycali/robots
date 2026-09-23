@@ -31,7 +31,7 @@ robot = Robot("so100", mode="auto")  # probes USB, falls back to sim
 | `keyframe` | str \| int | `None` | Spawn in a model `<keyframe>` pose (name or index) instead of the zero configuration. Ignored when `mode="real"` (reported at debug level). |
 | `driver` | str | `"auto"` | Which implementation drives a real robot: `"auto"` / `"lerobot"` / `"strands"`. `"auto"` honours the robot's registry `hardware.driver` and otherwise builds the lerobot driver. Checked in every mode; only `mode="real"` acts on it (sim reports it as ignored at debug level). See [Choosing a driver](#choosing-a-driver). |
 | `tool_name` | str | `None` | The name the agent sees this robot under. `None` keeps the default - `"<name>_sim"` in sim, the canonical robot name on hardware - which is why two `Robot("so101")` in one `Agent` used to collide at registration. Name each one (`tool_name="left_arm"`) to put a bimanual pair, or a real arm beside its sim twin, in one agent. Letters, digits, `_` or `-`, at most 64 characters; anything else raises `ValueError` before the backend builds. |
-| `**kwargs` | | | Forwarded to the backend or driver constructor as given. A name it does not recognize is ignored, not refused, so check the spelling against the forwardable list below. |
+| `**kwargs` | | | Forwarded to the backend or driver constructor. `mode="real"` grades the name and raises `ValueError` on one it does not know: the lerobot driver against the robot's config dataclass plus the forwardable list below, a native driver against its own constructor parameters (`driver='strands'`, so `prot=` is refused naming the keyword and that driver's roster). A sim keyword the backend does not recognize is still ignored. |
 
 ## Name resolution
 

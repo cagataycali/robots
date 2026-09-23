@@ -251,7 +251,6 @@ class ReachyDriver(AgentTool):
         zenoh_prefix: str | None = None,
         transport: Any = None,
         tts_url: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` talks to the daemon.
 
@@ -293,8 +292,6 @@ class ReachyDriver(AgentTool):
                 combines the daemon host with port 5002 at call time (where
                 ``tiny-the-reachy`` installs its ``tiny-tts.service``). Speech
                 synthesis is not part of the Reachy daemon.
-            **kwargs: Ignored; accepted so the factory can forward extras
-                without the driver knowing what they are.
 
         Raises:
             ValueError: If ``api_port`` or a ``:port`` suffix in ``port`` is not
@@ -304,8 +301,6 @@ class ReachyDriver(AgentTool):
         """
         super().__init__()
         del cameras, data_config  # accepted for parity; unused here
-        if kwargs:
-            logger.debug("ReachyDriver ignoring extra kwargs: %s", sorted(kwargs))
 
         self._tool_name = tool_name
         # ``port=None`` with ``REACHY_HOST`` set reads as if the caller had passed

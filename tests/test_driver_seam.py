@@ -83,13 +83,14 @@ class _CompleteDriver:
     contract in :mod:`strands_robots.drivers.base` promises a driver receives.
     ``cameras`` is part of that contract only for a driver that declares it opens
     them, so this one declares it - a driver that does not is handed a refusal
-    instead of a config it would drop.
+    instead of a config it would drop. ``port`` is declared for the same reason:
+    the factory forwards only the keywords a driver's constructor names.
     """
 
     reads_cameras = True
 
-    def __init__(self, tool_name: str, cameras: Any = None, data_config: Any = None, **kwargs: Any) -> None:
-        self.forwarded = {"tool_name": tool_name, "cameras": cameras, "data_config": data_config, **kwargs}
+    def __init__(self, tool_name: str, cameras: Any = None, data_config: Any = None, *, port: Any = None) -> None:
+        self.forwarded = {"tool_name": tool_name, "cameras": cameras, "data_config": data_config, "port": port}
 
     @property
     def tool_name(self) -> str:

@@ -379,8 +379,9 @@ class FrankaDriver:
     Constructor contract matches
     :class:`~strands_robots.drivers.base.HardwareDriver`: the factory builds
     every native driver as ``driver_cls(tool_name=..., cameras=...,
-    data_config=..., **kwargs)`` and forwards the caller's extras in ``kwargs``.
-    Franka-specific keywords land there:
+    data_config=..., **kwargs)`` and the driver declares every further keyword it
+    honours, so the factory refuses one it does not. The Franka-specific
+    keywords:
 
     * ``port`` - the control box's hostname or IP, as printed in Desk (a Franka
       install's is typically ``172.16.0.2``). ``port`` rather than ``hostname``
@@ -401,7 +402,10 @@ class FrankaDriver:
         tool_name: str,
         cameras: Any | None = None,
         data_config: Any | None = None,
-        **kwargs: Any,
+        *,
+        port: str | None = None,
+        stream_rate_hz: float = DEFAULT_STREAM_RATE_HZ,
+        speed_factor: float = DEFAULT_SPEED_FACTOR,
     ) -> None:
         self._tool_name = tool_name
         # Discarded, not stored: this driver never opens a caller-supplied
@@ -414,17 +418,14 @@ class FrankaDriver:
         # differently from a Panda (:data:`JOINT_PREFIXES`), and every read and
         # every command below must speak the one this arm's model speaks.
         self._joint_names = joint_names_for(tool_name)
-        port = kwargs.pop("port", None)
         self._hostname: str | None = str(port) if port else None
 
-        rate = kwargs.pop("stream_rate_hz", DEFAULT_STREAM_RATE_HZ)
-        stride = downsample_stride(rate)
+        stride = downsample_stride(stream_rate_hz)
         if isinstance(stride, str):
             raise ValueError(f"FrankaDriver({tool_name!r}): {stride}")
-        self._stream_rate_hz = float(rate)
+        self._stream_rate_hz = float(stream_rate_hz)
         self._stride = stride
 
-        speed_factor = kwargs.pop("speed_factor", DEFAULT_SPEED_FACTOR)
         if (reason := positive_finite_number_error(speed_factor, "speed_factor", "FrankaDriver")) is not None:
             raise ValueError(reason)
         if float(speed_factor) > 1.0:
@@ -457,9 +458,6 @@ class FrankaDriver:
         # the other order, which is safe only because of that rule.
         self._lock = threading.RLock()
         self._motion_lock = threading.Lock()
-        # Extras are kept rather than refused: a downstream driver package may
-        # consume them, and refusing them here would refuse a valid extension.
-        self._extras = kwargs
 
     # ------------------------------------------------------------------ #
     # Tool surface.                                                      #

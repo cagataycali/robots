@@ -12,9 +12,9 @@ reports as dead servos. That is the same failure ``baud_rate`` is graded to
 prevent, in the same constructor, so the window is held to the domain every
 other driver holds its timeout to.
 
-The second half is the driver: a window it recorded in ``_extras`` instead of
-forwarding is the case its own ``motor_ids`` comment names - a keyword that
-changes nothing, leaving the caller believing the bus is configured.
+The second half is the driver: a window it recorded instead of forwarding is the
+case its own ``motor_ids`` comment names - a keyword that changes nothing,
+leaving the caller believing the bus is configured.
 
 No serial port is opened. The one cell that grades ``connect`` replaces the
 bus's ``require_optional`` with a recorder, which is what makes the number the
@@ -84,15 +84,9 @@ class TestTheDriverForwardsTheReadWindow:
     """A window the caller passes is honoured, not recorded."""
 
     def test_the_window_the_caller_asked_for_reaches_the_bus(self) -> None:
-        """Forwarded to the bus, and gone from the extras bucket.
-
-        Both halves matter: the bucket exists for keywords a downstream driver
-        package may consume, and a knob this bus already has is not one of
-        them.
-        """
+        """Forwarded to the bus rather than held by the driver that took it."""
         driver = FeetechDriver(tool_name="so101", port="/dev/fake", timeout=0.25)
         assert driver.bus.timeout == 0.25
-        assert "timeout" not in driver._extras
 
     @pytest.mark.parametrize("timeout", UNUSABLE)
     def test_an_unusable_window_is_refused_naming_the_driver(self, timeout: Any) -> None:

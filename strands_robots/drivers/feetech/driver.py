@@ -44,7 +44,7 @@ is how an out-of-tree driver package would extend the table.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -118,8 +118,9 @@ class FeetechDriver:
 
     Constructor contract matches :class:`~strands_robots.drivers.base.HardwareDriver`
     - the factory builds every native driver as ``driver_cls(tool_name=...,
-    cameras=..., data_config=..., **kwargs)`` and forwards the caller's extras
-    in ``kwargs``. Feetech-specific keywords land in ``kwargs``:
+    cameras=..., data_config=..., **kwargs)`` and the driver declares every
+    further keyword it honours, so the factory refuses one it does not. The
+    Feetech-specific keywords:
 
     * ``port`` - a serial device path (``/dev/tty.usbserial-*``) for the SCS
       bus. Optional at construction; the bus opens it on connect.
@@ -168,7 +169,16 @@ class FeetechDriver:
         tool_name: str,
         cameras: Any | None = None,
         data_config: Any | None = None,
-        **kwargs: Any,
+        *,
+        port: str | None = None,
+        ports: Any = None,
+        baud_rate: int = 1_000_000,
+        timeout: float = DEFAULT_TIMEOUT_S,
+        calibration: str | Path | dict[str, MotorCalibration] | None = None,
+        motor_ids: Sequence[int] = (),
+        transport: str = "serial",
+        sim: Any = None,
+        realtime: bool = False,
     ) -> None:
         self._tool_name = tool_name
         # Discarded, not stored: this driver never opens a caller-supplied
@@ -180,11 +190,9 @@ class FeetechDriver:
         # A Feetech arm today is one U-shape bus. Aloha-style bimanual rigs
         # are Dynamixel not Feetech, so we accept a single ``port`` and refuse
         # ``ports`` outright rather than pretend to multi-bus a family that
-        # does not need it. The keyword is still tolerated in kwargs so a
-        # caller mis-passing ``ports=[...]`` gets a named refusal rather than
-        # a silent ignore.
-        port = kwargs.pop("port", None)
-        ports = kwargs.pop("ports", None)
+        # does not need it. The keyword is still declared so a caller
+        # mis-passing ``ports=[...]`` gets a named refusal rather than the
+        # roster of keywords this driver does read.
         if ports is not None:
             raise ValueError(
                 f"FeetechDriver({tool_name!r}): pass port= for the Feetech bus; "
@@ -198,14 +206,13 @@ class FeetechDriver:
         # while ``get_status`` reported the converted number as the configured
         # one. The same domain :mod:`~strands_robots.tools.serial_tool` holds
         # its ``baudrate`` to, because the two reach the same ``serial.Serial``.
-        baud_rate = kwargs.pop("baud_rate", 1_000_000)
         if (reason := positive_count_error(baud_rate, "baud_rate", f"FeetechDriver({tool_name!r})")) is not None:
             raise ValueError(reason)
         self._baud_rate: int = baud_rate
-        # Forwarded, not recorded. The bus has this knob, so a ``timeout`` left
-        # in ``self._extras`` is not an extension waiting for a downstream
-        # package - it is a window the caller set and the bus never saw.
-        timeout = kwargs.pop("timeout", DEFAULT_TIMEOUT_S)
+        # Forwarded, not recorded. The bus has this knob, so a ``timeout`` this
+        # constructor accepted and kept to itself would not be an extension
+        # waiting for a downstream package - it is a window the caller set and
+        # the bus never saw.
         if (reason := positive_finite_number_error(timeout, "timeout", f"FeetechDriver({tool_name!r})")) is not None:
             raise ValueError(reason)
         self._timeout: float = float(timeout)
@@ -213,7 +220,6 @@ class FeetechDriver:
         # Loaded here rather than in the bus so a path that is not a
         # calibration is refused while the caller still has the traceback that
         # names their keyword, and so ``get_status`` can report the source.
-        calibration = kwargs.pop("calibration", None)
         self._calibration_source: str | None = None
         records: dict[str, MotorCalibration] | None = None
         if isinstance(calibration, str | Path):
@@ -227,7 +233,7 @@ class FeetechDriver:
                 f"FeetechDriver({tool_name!r}): calibration must be a path to the JSON "
                 f"lerobot-calibrate wrote, or the records themselves, got {type(calibration).__name__}",
             )
-        self._motor_ids: tuple[int, ...] = tuple(kwargs.pop("motor_ids", ()))
+        self._motor_ids: tuple[int, ...] = tuple(motor_ids)
         # ``motor_ids`` narrows the arm to a subset of SO_ARM_MOTORS. Honoured
         # rather than recorded: a keyword that changes nothing is worse than one
         # that is refused, because the caller believes the arm is configured.
@@ -244,9 +250,6 @@ class FeetechDriver:
             motors = {known[i]: SO_ARM_MOTORS[known[i]] for i in self._motor_ids}
         # The seam. ``"serial"`` is the shipped default and is untouched by the
         # twin's knobs; ``"twin"`` builds the same bus surface over the model.
-        transport = kwargs.pop("transport", "serial")
-        sim = kwargs.pop("sim", None)
-        realtime = kwargs.pop("realtime", False)
         context = f"FeetechDriver({tool_name!r})"
         if transport not in TRANSPORTS:
             raise ValueError(f"{context}: transport must be one of {list(TRANSPORTS)}, got {transport!r}")
@@ -276,10 +279,6 @@ class FeetechDriver:
                 calibration=records,
             )
         self._connect_error: str | None = None
-        # Extras from the caller are kept for a downstream driver package
-        # to consume; refusing them here would refuse a valid future
-        # extension.
-        self._extras = kwargs
 
     # ------------------------------------------------------------------ #
     # Tool surface.                                                       #

@@ -261,7 +261,6 @@ class YahboomM3ProDriver:
         move_time_ms: int = DEFAULT_MOVE_TIME_MS,
         sim: Any | None = None,
         realtime: bool = False,
-        **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` does the network work.
 
@@ -285,14 +284,11 @@ class YahboomM3ProDriver:
             realtime: ``twin`` only - step the world at wall-clock speed so a
                 viewer sees the motion as the robot would make it. Default
                 ``False``: as fast as the physics allows.
-            **kwargs: Ignored; accepted so the factory can forward extras.
 
         Raises:
             ValueError: If any of the above is outside its domain.
         """
         del cameras, data_config  # accepted for parity; unused here
-        if kwargs:
-            logger.debug("YahboomM3ProDriver ignoring extra kwargs: %s", sorted(kwargs))
         context = type(self).__name__
         if transport not in TRANSPORTS:
             raise ValueError(f"{context}: transport must be one of {list(TRANSPORTS)}, got {transport!r}")

@@ -247,7 +247,7 @@ class TestConstruction:
 
     def test_realtime_must_be_a_boolean(self, engine) -> None:
         with pytest.raises(ValueError, match="realtime"):
-            FeetechDriver(tool_name="so101", transport="twin", sim=engine, realtime="yes")
+            FeetechDriver(tool_name="so101", transport="twin", sim=engine, realtime="yes")  # type: ignore[arg-type]
 
     def test_a_robot_without_a_sim_asset_is_refused_by_name(self) -> None:
         with pytest.raises(ValueError, match="needs a simulation asset.*'hope_jr'"):

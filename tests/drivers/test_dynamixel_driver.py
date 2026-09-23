@@ -439,12 +439,6 @@ class TestDriver:
         status = asyncio.run(driver.get_status())
         assert status["content"][0]["json"]["ports"] == []
 
-    def test_extras_kwarg_survive_construction(self) -> None:
-        """The factory forwards a caller's extras; a driver that refuses an
-        unrecognised kwarg refuses a valid future extension."""
-        driver = DynamixelDriver(tool_name="koch", port="/dev/a", future_kwarg="ok")
-        assert driver._extras == {"future_kwarg": "ok"}
-
     def test_tool_name_and_type(self) -> None:
         driver = DynamixelDriver(tool_name="koch")
         assert driver.tool_name == "koch"

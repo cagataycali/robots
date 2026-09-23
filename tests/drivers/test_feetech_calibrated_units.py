@@ -365,7 +365,7 @@ class TestTheDriverReachesIt:
 
     def test_a_calibration_that_is_neither_a_path_nor_records_is_refused(self) -> None:
         with pytest.raises(ValueError, match="must be a path to the JSON"):
-            FeetechDriver(tool_name="so101", port="/dev/fake", calibration=7)
+            FeetechDriver(tool_name="so101", port="/dev/fake", calibration=7)  # type: ignore[arg-type]
 
     def test_narrowing_the_bus_still_calibrates_what_is_left(self, tmp_path: Path) -> None:
         path = tmp_path / "orange_follower.json"

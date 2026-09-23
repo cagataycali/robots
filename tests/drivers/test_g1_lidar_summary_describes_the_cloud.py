@@ -117,7 +117,6 @@ class TestTheSummaryAdvertisesNoCapItDoesNotApply:
             _FULL_FRAME,
             network_interface="enp0s31f6",
             battery_floor_pct=25.0,
-            lidar_max_points=500,
         )
         assert _without_clock(default) == _without_clock(reconfigured)
 
@@ -172,10 +171,10 @@ class TestTheReportedCountStaysTheClouds:
 class TestTheRestOfTheDriverIsUnchanged:
     """Over-reach controls: the other decoders and the forwarding contract."""
 
-    def test_an_unknown_keyword_is_still_accepted(self) -> None:
-        """The factory forwards extras, so dropping a parameter breaks no caller."""
-        driver = G1Driver(tool_name="g1", port="1.2.3.4", something_the_driver_never_heard_of=7)
-        assert driver.tool_name == "g1"
+    def test_a_keyword_the_driver_never_heard_of_is_refused(self) -> None:
+        """A driver declares the keywords it reads, so one it does not is named."""
+        with pytest.raises(TypeError, match="something_the_driver_never_heard_of"):
+            G1Driver(tool_name="g1", port="1.2.3.4", something_the_driver_never_heard_of=7)  # type: ignore[call-arg]
 
     def test_the_imu_decoder_still_populates(self) -> None:
         driver = G1Driver(tool_name="g1", port="1.2.3.4")

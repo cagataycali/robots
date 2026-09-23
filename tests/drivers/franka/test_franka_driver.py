@@ -695,7 +695,7 @@ class TestConstruction:
     def test_the_factory_signature_builds_it(self) -> None:
         """``driver_cls(tool_name=, cameras=, data_config=, **kwargs)`` - a driver
         refusing one of the three named keywords is one the factory cannot build."""
-        driver = FrankaDriver(tool_name="panda", cameras=None, data_config=None, port=_HOST, unknown_extra=1)
+        driver = FrankaDriver(tool_name="panda", cameras=None, data_config=None, port=_HOST)
         assert driver.tool_name == "panda" and driver.tool_type == "robot"
 
     @pytest.mark.parametrize("speed_factor", [0.0, -0.5, 1.5, float("nan"), "fast"])

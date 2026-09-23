@@ -214,17 +214,23 @@ class TestADocumentedRefusalReallyRefuses:
         assert isinstance(exc, type) and issubclass(exc, BaseException), (
             f"the `**kwargs` row promises `{promised.group(1)}`, which is not a builtin exception"
         )
+        # The row scopes the refusal to ``mode="real"`` and says a sim keyword is
+        # still ignored, so both halves are graded. The real-mode refusal is the
+        # factory's, raised before a driver is constructed, so it reaches no
+        # hardware.
+        with pytest.raises(exc):
+            Robot("so101", mode="real", driver="strands", definitely_not_a_forwardable_kwarg=1)
         mjcf = Path(str(tmp_path)) / "probe.xml"
         mjcf.write_text(_PROBE_MJCF, encoding="utf-8")
         sim = None
         try:
-            with pytest.raises(exc):
-                sim = Robot(
-                    "so100",
-                    mode="sim",
-                    urdf_path=str(mjcf),
-                    definitely_not_a_forwardable_kwarg=1,
-                )
+            sim = Robot(
+                "so100",
+                mode="sim",
+                urdf_path=str(mjcf),
+                definitely_not_a_forwardable_kwarg=1,
+            )
+            assert sim is not None, "the row says a sim keyword the backend does not recognize is ignored"
         finally:
             if sim is not None:
                 sim.destroy()

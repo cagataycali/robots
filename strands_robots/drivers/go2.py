@@ -482,7 +482,6 @@ class Go2Driver:
         network_interface: str = "eth0",
         battery_floor_pct: float = _BATTERY_FLOOR_PCT,
         motion_switcher_client_factory: Callable[[str], Any] | None = None,
-        **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` does the DDS work.
 
@@ -514,8 +513,6 @@ class Go2Driver:
                 imports the client on first use, preserving module-load
                 hygiene. Keyword-only so it cannot collide with the positional
                 set the driver-base contract fixes.
-            **kwargs: Ignored; accepted so the factory can forward extras
-                without the driver knowing what they are.
 
         Raises:
             ValueError: If ``battery_floor_pct`` is not a finite number. A
@@ -524,8 +521,6 @@ class Go2Driver:
                 nothing.
         """
         del cameras, data_config  # accepted for parity; unused here
-        if kwargs:
-            logger.debug("Go2Driver ignoring extra kwargs: %s", sorted(kwargs))
         if err := finite_number_error(battery_floor_pct, "battery_floor_pct", "Go2Driver"):
             raise ValueError(err)
         self._tool_name = tool_name

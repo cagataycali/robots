@@ -231,7 +231,6 @@ class RobotiqDriver:
         stroke_mm: float = STROKE_MM,
         speed: float = 1.0,
         force: float = 1.0,
-        **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` opens the socket.
 
@@ -257,7 +256,6 @@ class RobotiqDriver:
                 2F-85's; a 2F-140 is the same protocol with a wider stroke.
             speed: Default speed, ``0.0``..``1.0`` of maximum.
             force: Default force, ``0.0``..``1.0`` of maximum.
-            **kwargs: Ignored; accepted so the factory can forward extras.
 
         Raises:
             ValueError: If a numeric knob is outside its domain. Raised here
@@ -266,8 +264,6 @@ class RobotiqDriver:
                 not a connection this driver can degrade to reporting.
         """
         del cameras, data_config
-        if kwargs:
-            logger.debug("RobotiqDriver ignoring extra kwargs: %s", sorted(kwargs))
 
         # Each of these reaches a consumer that cannot report what it was
         # handed: the timeouts go to socket.settimeout and to a deadline
