@@ -172,14 +172,23 @@ class TestPermissiveACLWarningExceptNarrow:
             "review thread core.py:121 (PR-3 + PR-6 review-feedback)."
         )
 
-        # PR-3 ships _acl_config + _zenoh_config in the same diff, so the
-        # ImportError fallback was dead code (review thread core.py:121).
-        # The gate now resolves snapshot_acl directly under a narrow
-        # ValueError catch (fail-CLOSED on bad config).
-        assert "except ValueError as warn_exc:" in gate_src
+        # PR-3 ships _acl_config + _zenoh_config in the same diff, so a
+        # standalone ImportError fallback was dead code (review thread
+        # core.py:121). The gate resolves snapshot_acl directly under a
+        # narrow catch that fails CLOSED on bad config.
+        #
+        # ImportError belongs in that tuple, which is what this
+        # test's own docstring always described ("a non-(ImportError|
+        # ValueError)"). It is not a widening toward `except Exception`:
+        # ``_parse_json5`` raises ImportError for a missing *declared*
+        # optional dep (json5), and because this gate's call site is
+        # try/finally rather than try/except, anything escaping turns a
+        # documented decision into a traceback out of ``Mesh.start``.
+        assert "except (ValueError, ImportError) as warn_exc:" in gate_src
         # No bare `except Exception as warn_exc:` left in the start() block
         assert "except Exception as warn_exc:" not in gate_src
-        # And no dead ImportError fallback in the gate method either.
+        # And no dead standalone ImportError fallback in the gate method:
+        # the type is handled in the narrow tuple above, not as its own arm.
         assert "except ImportError:" not in gate_src
 
 

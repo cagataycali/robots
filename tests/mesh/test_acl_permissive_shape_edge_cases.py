@@ -180,3 +180,100 @@ def test_deny_non_dict_subject_entry_is_skipped_not_permissive() -> None:
     data["subjects"] = ["not-a-dict", 9]
     data["policies"] = [{"rules": ["open"], "subjects": ["any"]}]
     assert _acl_config._is_permissive_acl_shape(data) is False
+
+
+# ---------------------------------------------------------------------------
+# The validator's own suggested escape hatch is invisible to the gate.
+#
+# ``_validate_acl_shape`` REFUSES a subject that constrains neither
+# ``interfaces`` nor ``cert_common_names``, and its error message tells the
+# operator: 'for an explicit any-link wildcard use ``interfaces: ["*"]``'.
+# That shape is wire-identical to the one just refused -- Zenoh reads ``["*"]``
+# as SubjectProperty::Wildcard on the interface dimension, exactly what an
+# absent field means -- but ``_is_wildcard_subject`` tests truthiness, so a
+# non-empty list reads as "constrained" and the refuse-to-start gate misses it.
+#
+# The comment beside that rejection in ``_acl_config.py`` says the intended escape is
+# ``interfaces: ["*"]`` *plus an explicit CN list*; the check is an OR, so
+# ``["*"]`` alone is accepted on its own.
+# ---------------------------------------------------------------------------
+
+
+def _wide_open_with(subject: dict) -> dict:
+    """deny default + ``**``/allow rule + *subject*, joined by one policy."""
+    data = _deny_base()
+    data["rules"] = [
+        {"id": "open", "key_exprs": ["**"], "messages": ["put"], "flows": ["egress"], "permission": "allow"}
+    ]
+    data["subjects"] = [subject]
+    data["policies"] = [{"rules": ["open"], "subjects": [subject["id"]]}]
+    return data
+
+
+def test_explicit_any_link_wildcard_is_permissive() -> None:
+    """``interfaces: ["*"]`` is any-peer-on-any-link, so the gate must fire.
+
+    ``["*"]`` is the shape
+    ``_validate_acl_shape``'s own rejection message recommends, and it is
+    wire-identical to the no-constraint subject that rejection refuses, so a
+    truthiness test on the list let the recommended escape slip the gate.
+    """
+    data = _wide_open_with({"id": "any", "interfaces": ["*"]})
+    assert _acl_config._is_permissive_acl_shape(data) is True
+
+
+def test_explicit_any_cn_wildcard_is_permissive() -> None:
+    """``cert_common_names: ["*"]`` is the same wildcard on the other axis."""
+    data = _wide_open_with({"id": "any", "cert_common_names": ["*"]})
+    assert _acl_config._is_permissive_acl_shape(data) is True
+
+
+def test_both_dimensions_wildcarded_is_permissive() -> None:
+    """Spelling the wildcard on both dimensions at once is still permissive."""
+    data = _wide_open_with({"id": "any", "interfaces": ["*"], "cert_common_names": ["*"]})
+    assert _acl_config._is_permissive_acl_shape(data) is True
+
+
+def test_wildcard_member_among_real_entries_is_permissive() -> None:
+    """A ``"*"`` beside real entries widens the subject, it does not add to it.
+
+    Zenoh matches every peer on every link for the wildcard member, so
+    ``["eth0", "*"]`` is "any link" -- not "eth0 plus one more". An operator
+    appending ``"*"`` to a scoped list has removed the scope, and the gate has
+    to say so.
+    """
+    data = _wide_open_with({"id": "mixed", "interfaces": ["eth0", "*"]})
+    assert _acl_config._is_permissive_acl_shape(data) is True
+
+
+def test_wildcard_on_one_dimension_only_is_scoped() -> None:
+    """Control: the wildcard is per-dimension, and both must be open.
+
+    ``interfaces: ["*"]`` with an enumerated CN list is the deliberate
+    wildcard binding ``_validate_acl_shape``'s message describes -- any link,
+    but only named certs -- so it is genuinely scoped and must NOT fire.
+    """
+    data = _wide_open_with({"id": "any_link_named_cn", "interfaces": ["*"], "cert_common_names": ["robot-a"]})
+    assert _acl_config._is_permissive_acl_shape(data) is False
+
+
+def test_substring_star_is_not_a_wildcard() -> None:
+    """Control: ``"*"`` is the wildcard token, not any string containing one.
+
+    ``"eth*"`` is not Zenoh's any-link wildcard, so matching on substrings
+    would over-fire the gate and refuse to start a genuinely scoped mesh.
+    """
+    data = _wide_open_with({"id": "globbed", "interfaces": ["eth*"]})
+    assert _acl_config._is_permissive_acl_shape(data) is False
+
+
+def test_constrained_interface_subject_is_scoped() -> None:
+    """Control: a real NIC name is a genuine constraint, so the verdict is False."""
+    data = _wide_open_with({"id": "lab", "interfaces": ["eth0"]})
+    assert _acl_config._is_permissive_acl_shape(data) is False
+
+
+def test_constrained_cn_subject_is_scoped() -> None:
+    """Control: an enumerated cert CN is a genuine constraint."""
+    data = _wide_open_with({"id": "robot_a", "cert_common_names": ["robot-a"]})
+    assert _acl_config._is_permissive_acl_shape(data) is False

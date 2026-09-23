@@ -827,16 +827,44 @@ def _is_permissive_acl_shape(data: dict[str, Any]) -> bool:
         kes = r.get("key_exprs") or []
         return isinstance(kes, list) and "**" in kes
 
+    def _dimension_is_unconstrained(value: Any) -> bool:
+        """Return True when a subject dimension restricts no peer.
+
+        Two shapes are wire-identical to Zenoh's
+        ``SubjectProperty::Wildcard`` and must both read as
+        unconstrained:
+
+        * absent or empty -- the field was never narrowed;
+        * ``["*"]``, or any list carrying a ``"*"`` member -- the
+          explicit any-link wildcard. Zenoh matches every peer on
+          every link for it, so a ``"*"`` alongside real entries
+          widens the subject back to "everyone" rather than adding
+          one more allowed value.
+
+        Testing truthiness alone (the previous behaviour) read
+        ``["*"]`` as a constraint because the list is non-empty, so
+        the shape :func:`_validate_acl_shape`'s own rejection message
+        recommends as the explicit wildcard slipped the
+        refuse-to-start gate the rejection exists to feed.
+        """
+        if not value:
+            return True
+        if isinstance(value, str):
+            return value == "*"
+        if isinstance(value, (list, tuple, set)):
+            return any(isinstance(v, str) and v == "*" for v in value)
+        return False
+
     def _is_wildcard_subject(s: Any) -> bool:
         if not isinstance(s, dict):
             return False
-        # Wildcard on both dimensions: no interfaces AND no
-        # cert_common_names. Either field absent OR explicitly empty
-        # (the validator already rejects empty interfaces lists, but
-        # belt-and-braces here for hand-rolled dicts).
-        ifaces = s.get("interfaces")
-        cns = s.get("cert_common_names")
-        return not ifaces and not cns
+        # Wildcard on both dimensions: neither ``interfaces`` nor
+        # ``cert_common_names`` narrows the peer set. Each field may be
+        # absent, explicitly empty, or the explicit ``"*"`` wildcard --
+        # all three are SubjectProperty::Wildcard on the wire.
+        return _dimension_is_unconstrained(s.get("interfaces")) and _dimension_is_unconstrained(
+            s.get("cert_common_names")
+        )
 
     wildcard_rule_ids = {r.get("id") for r in rules if _is_wildcard_rule(r)}
     if not wildcard_rule_ids:
@@ -888,10 +916,15 @@ def is_default_acl_in_use(namespace: str = "strands") -> bool:
         return True
     try:
         resolved = _load_acl_cached(Path(path_env))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, ImportError) as exc:
         # fail closed. A broken ACL file is treated as the
         # most-dangerous-known posture so the operator hears about it
         # at start-up rather than silently degrading to permissive.
+        # ``ImportError`` belongs here: ``_parse_json5`` raises it when
+        # the declared ``json5`` dep is absent, which is a partial
+        # install -- a configuration problem of exactly the kind this
+        # handler exists to convert into a refusal, not a genuine bug
+        # that a narrower tuple should surface as a traceback.
         logger.warning(
             "[mesh] ACL file %s could not be loaded for shape check (%s); "
             "treating as permissive-by-default for the start-time gate",
@@ -956,9 +989,11 @@ def snapshot_acl(namespace: str = "strands") -> tuple[bool, dict[str, Any]]:
         return True, default_acl(namespace)
     try:
         resolved = _load_acl_cached(Path(path_env))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, ImportError) as exc:
         # fail closed: unloadable file is treated as permissive so the
-        # gate at Mesh.start refuses to bring up the wire.
+        # gate at Mesh.start refuses to bring up the wire. ``ImportError``
+        # is a missing declared optional dep (``json5``), which must
+        # refuse rather than propagate -- see is_default_acl_in_use.
         logger.warning(
             "[mesh] ACL file %s could not be loaded for snapshot (%s); "
             "treating as permissive-by-default for the start-time gate",

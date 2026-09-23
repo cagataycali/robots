@@ -731,12 +731,21 @@ class Mesh(SensorLoopsMixin):
             auth_mode = _zenoh_config.resolve_auth_mode()
             namespace = _zenoh_config.resolve_namespace()
             is_permissive, resolved = _acl_config.snapshot_acl(namespace)
-        except ValueError as warn_exc:
+        except (ValueError, ImportError) as warn_exc:
             # Narrow tuple per AGENTS.md > Review Learnings (#86):
             # ValueError surfaces bad STRANDS_MESH_AUTH_MODE / unloadable
             # ACL. Fail-CLOSED (treat as permissive) so the gate refuses
             # to bring up the wire. Wider exception types (OSError, etc.)
             # propagate so genuine bugs aren't masked at WARNING level.
+            #
+            # ImportError is in the tuple because this method is
+            # documented as a DECISION (True refuses, False proceeds) and
+            # the call sits in try/finally, not try/except -- so anything
+            # escaping leaves ``start()`` as a traceback instead of a
+            # verdict. ``_parse_json5`` raises ImportError when the
+            # declared ``json5`` dep is missing, which takes a partial
+            # install (zenoh present, json5 absent) and is a
+            # configuration problem, not a bug the narrow tuple protects.
             logger.warning(
                 "[mesh] %s: ACL gate evaluation failed (%s) -- treating as permissive default; refusing to start",
                 self.peer_id,

@@ -759,6 +759,105 @@ class TestJSON5DepSwap:
             ac.resolve_acl("strands")
 
 
+class TestMissingJSON5IsADecisionNotATraceback:
+    """The fail-closed handlers must catch ``ImportError`` too.
+
+    ``_parse_json5`` raises ``ImportError`` when the declared ``json5`` dep is
+    absent (a partial install: zenoh present, json5 missing). The two
+    fail-closed resolvers caught only ``(OSError, ValueError)``, so that
+    escaped them -- and ``Mesh._refuse_under_permissive_default_acl`` is
+    documented as a decision whose call site sits in ``try/finally``, so an
+    escape left ``Mesh.start`` raising instead of refusing.
+
+    A STRICT, gate-passing ACL file is used throughout, so "the file was
+    permissive anyway" cannot explain a refusal: the refusal has to come from
+    the unreadable-parser path.
+    """
+
+    @staticmethod
+    def _strict_acl_file(tmp_path) -> Path:
+        """An ACL the shape check accepts: deny default, one narrow rule."""
+        path = tmp_path / "strict.json5"
+        path.write_text(
+            json.dumps(
+                {
+                    "enabled": True,
+                    "default_permission": "deny",
+                    "rules": [
+                        {
+                            "id": "r1",
+                            "key_exprs": ["strands/**"],
+                            "messages": ["put"],
+                            "flows": ["egress"],
+                            "permission": "allow",
+                        }
+                    ],
+                    "subjects": [{"id": "s1", "cert_common_names": ["robot-a"]}],
+                    "policies": [{"rules": ["r1"], "subjects": ["s1"]}],
+                }
+            )
+        )
+        return path
+
+    @pytest.fixture
+    def _no_json5(self, monkeypatch, tmp_path):
+        """Point the loader at a strict file and make json5 unimportable."""
+
+        def _boom(*args, **kwargs):
+            raise ImportError("No module named 'json5'")
+
+        monkeypatch.setattr("strands_robots.utils.require_optional", _boom)
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(self._strict_acl_file(tmp_path)))
+        ac._clear_acl_cache_for_test()
+        ac._set_thread_snapshot(None)
+        yield
+        ac._clear_acl_cache_for_test()
+        ac._set_thread_snapshot(None)
+
+    def test_shape_check_refuses_instead_of_raising(self, _no_json5):
+        """``is_default_acl_in_use`` reports the dangerous posture, not a raise."""
+        assert ac.is_default_acl_in_use("strands") is True
+
+    def test_snapshot_refuses_instead_of_raising(self, _no_json5):
+        """``snapshot_acl`` fails closed to permissive + the built-in default."""
+        is_permissive, resolved = ac.snapshot_acl("strands")
+        assert is_permissive is True
+        assert isinstance(resolved, dict)
+
+    def test_resolve_acl_still_raises(self, _no_json5):
+        """Control: the plain loader has no fail-closed contract to honor.
+
+        ``resolve_acl`` is not a gate -- ``Robot()``'s best-effort mesh attach
+        turns this into a warning naming the missing package, which is the
+        accurate outcome. Pinned so widening the gate is not mistaken for
+        making every ACL read silently succeed.
+        """
+        with pytest.raises(ImportError, match="json5 is required"):
+            ac.resolve_acl("strands")
+
+    def test_mesh_gate_decides_refuse_rather_than_propagating(self, _no_json5, monkeypatch):
+        """The end of the chain: ``Mesh.start``'s gate returns True, not a raise.
+
+        This is the real cost of the escape. The gate's call site is
+        ``try/finally``, so before the fix this ``ImportError`` left
+        ``start()`` as a traceback -- neither starting the mesh nor recording
+        the refusal the operator needed to see.
+        """
+        from strands_robots.mesh.core import Mesh
+
+        monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
+        monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
+
+        class _Robot:
+            name = "g1"
+            robot_type = "unitree_g1"
+
+            def get_state(self):
+                return {}
+
+        assert Mesh(_Robot(), "probe-1")._refuse_under_permissive_default_acl() is True
+
+
 # ---------------------------------------------------------------------
 # the prior fix-1: bare except on permissive-ACL warning narrowed
 # ---------------------------------------------------------------------
