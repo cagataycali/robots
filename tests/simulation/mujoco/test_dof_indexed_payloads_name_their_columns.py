@@ -10,11 +10,13 @@ reasons that both arise in ordinary scenes:
 * ``nv`` spans the whole compiled model, so a scene holding two robots reports
   one width covering both and one robot's columns are an interior slice.
 
-The third DOF-indexed query in the same mixin, ``inverse_dynamics``, already
-answers this by naming every generalized force it reports, and that shape is the
-one the other two now follow. Without it a caller who pairs a robot's joint
-names with the leading columns reads a different robot's Jacobian and is told
-nothing, which is what these tests pin.
+The third DOF-indexed query in the same mixin, ``inverse_dynamics``, answers it
+by naming the generalized forces it reports, and that shape is the one the other
+two follow. Without it a caller who pairs a robot's joint names with the leading
+columns reads a different robot's Jacobian and is told nothing, which is what
+these tests pin - and a name-keyed mapping owes the same completeness, because a
+joint is not a DOF: a free joint owns six, so keying by joint reports one
+component under a name that owns six and drops the other five.
 """
 
 import inspect
@@ -285,6 +287,129 @@ class TestEveryReadOnlyQuerysDofIndexedPayloadIsLabelled:
             sim.destroy()
 
 
+class TestEveryGeneralizedForceIsReported:
+    """``inverse_dynamics`` reports one force per DOF, not one per joint.
+
+    ``qfrc_inverse`` is DOF-indexed. Keying it by joint reported a multi-DOF
+    joint's first component under a name that owns six and dropped the rest -
+    silently, and the dropped components carry the load: a floating base's
+    vertical entry is the robot's whole weight.
+    """
+
+    @staticmethod
+    def _reference(sim):
+        """``mj_inverse`` for zero desired acceleration, computed independently."""
+        model, data = sim.mj_model, sim._world._data
+        mj.mj_forward(model, data)
+        saved = data.qacc.copy()
+        data.qacc[:] = 0.0
+        mj.mj_inverse(model, data)
+        forces = data.qfrc_inverse.copy()
+        data.qacc[:] = saved
+        return forces
+
+    def test_a_free_joints_six_components_are_all_reported(self, tmp_path):
+        """The weight of a floating base is reported, not dropped.
+
+        Fails before: the mapping held one entry per named joint, so the base's
+        six DOFs collapsed to ``qfrc_inverse[0]`` (~0 N) and the vertical
+        component holding the robot up was absent.
+        """
+        sim = Simulation(tool_name="dof_forces_floating")
+        try:
+            created = sim.create_world()
+            assert created["status"] == "success", created["content"][0]["text"]
+            added = sim.add_robot(name="fb", urdf_path=_write(tmp_path, "fb.xml", FLOATING_XML))
+            assert added["status"] == "success", added["content"][0]["text"]
+
+            nv = sim.mj_model.nv
+            joints = sim.robot_joint_names("fb")
+            assert nv == 7 and len(joints) == 2, f"premise: a free joint plus a hinge, got nv={nv} {joints}"
+            reference = self._reference(sim)
+            weight = float(sim.mj_model.body_mass.sum()) * 9.81
+            assert reference[2] == pytest.approx(weight, rel=1e-6), (
+                f"premise: the base's vertical force is the robot's weight, {reference[2]} vs {weight}"
+            )
+
+            payload = _json(sim.inverse_dynamics())
+            forces = payload["qfrc_inverse"]
+            assert len(forces) == nv, (
+                f"inverse_dynamics reported {len(forces)} forces {sorted(forces)} for a model with "
+                f"nv={nv}: the free joint owns six DOFs, so {nv - len(forces)} generalized forces "
+                f"are missing - including the {weight:.2f} N holding the robot up."
+            )
+            assert max(abs(v) for v in forces.values()) == pytest.approx(weight, rel=1e-6)
+            assert forces["fb/base_free[2]"] == pytest.approx(reference[2], abs=1e-9)
+            assert forces["fb/swing"] == pytest.approx(reference[6], abs=1e-9)
+            assert payload["dof_joint_names"] == ["fb/base_free"] * 6 + ["fb/swing"]
+        finally:
+            sim.destroy()
+
+    def test_an_unnamed_joints_forces_are_reported_by_dof_index(self, tmp_path):
+        """A bare ``<freejoint/>`` has no name; its forces are still reported.
+
+        Fails before: every DOF of the model belonged to the unnamed joint, so
+        the mapping came back empty and the query reported nothing at all.
+        """
+        sim = Simulation(tool_name="dof_forces_unnamed")
+        try:
+            created = sim.create_world()
+            assert created["status"] == "success", created["content"][0]["text"]
+            added = sim.add_robot(name="u", urdf_path=_write(tmp_path, "u.xml", UNNAMED_JOINT_XML))
+            assert added["status"] == "success", added["content"][0]["text"]
+
+            nv = sim.mj_model.nv
+            reference = self._reference(sim)
+            forces = _json(sim.inverse_dynamics())["qfrc_inverse"]
+            assert len(forces) == nv, (
+                f"inverse_dynamics reported {len(forces)} forces for nv={nv}: the model's only "
+                "joint is unnamed, so nothing was reported."
+            )
+            assert forces["dof[2]"] == pytest.approx(reference[2], abs=1e-9)
+            assert forces["dof[2]"] == pytest.approx(float(sim.mj_model.body_mass.sum()) * 9.81, rel=1e-6)
+        finally:
+            sim.destroy()
+
+    def test_a_joint_keyed_mapping_covers_every_dof(self, tmp_path):
+        """Derived: any read-only query keying numbers by joint owes one per DOF.
+
+        The population is the mixin's read-only queries; a payload counts when
+        its keys name the model's joints (so ``get_energy``'s labelled scalars
+        are not swept in). Held on a floating-base scene, where nv exceeds the
+        joint count - the case a per-joint mapping silently truncates.
+        """
+        sim = Simulation(tool_name="dof_forces_derived")
+        try:
+            created = sim.create_world()
+            assert created["status"] == "success", created["content"][0]["text"]
+            added = sim.add_robot(name="fb", urdf_path=_write(tmp_path, "fb.xml", FLOATING_XML))
+            assert added["status"] == "success", added["content"][0]["text"]
+            nv = sim.mj_model.nv
+            owners = {name for name in _json(sim.get_jacobian(site_name="fb/tip"))["dof_joint_names"] if name}
+
+            checked, offenders = [], []
+            for name in TestEveryReadOnlyQuerysDofIndexedPayloadIsLabelled._read_only_queries():
+                result = getattr(sim, name)()
+                if result.get("status") != "success":
+                    continue
+                for block in [b["json"] for b in result["content"] if isinstance(b, dict) and "json" in b]:
+                    for key, value in block.items():
+                        if not isinstance(value, dict) or not value:
+                            continue
+                        if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value.values()):
+                            continue
+                        if not any(k.split("[")[0] in owners or k.startswith("dof[") for k in value):
+                            continue
+                        checked.append(f"{name}.{key}")
+                        if len(value) != nv:
+                            offenders.append(f"{name}.{key} has {len(value)} entries for nv={nv}")
+
+            assert checked, "premise: at least one query must key numbers by joint"
+            assert not offenders, "a joint-keyed mapping drops DOFs: " + "; ".join(offenders)
+        finally:
+            sim.destroy()
+
+
 class TestNothingElseChanges:
     """These hold on both trees: the numbers and the existing keys are untouched."""
 
@@ -318,7 +443,7 @@ class TestNothingElseChanges:
             sim.destroy()
 
     def test_inverse_dynamics_still_names_its_forces_by_joint(self, tmp_path):
-        """The precedent this change follows, unchanged: a name-keyed mapping."""
+        """A single-DOF joint keeps its bare name: the hinge-only case is untouched."""
         sim = _two_arm_sim(tmp_path)
         try:
             payload = _json(sim.inverse_dynamics())

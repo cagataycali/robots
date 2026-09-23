@@ -351,6 +351,30 @@ def _dof_joint_names(mj: Any, model: Any) -> list[str | None]:
     return [mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, int(model.dof_jntid[dof])) for dof in range(int(model.nv))]
 
 
+def _dof_force_keys(model: Any, dof_names: list[str | None]) -> list[str]:
+    """Key each of the model's ``nv`` generalized forces distinctly.
+
+    ``_dof_joint_names`` labels a payload that is already index-aligned, so it
+    repeats a multi-DOF joint's name once per column and reports ``None`` for an
+    unnamed joint - neither of which can key a mapping. A single-DOF joint keeps
+    its bare name, the spelling a hinge-only scene has always reported; a
+    multi-DOF joint's components are indexed ``name[k]`` from its first DOF; and
+    a DOF whose joint is unnamed - MJCF permits a bare ``<freejoint/>`` - is
+    keyed ``dof[i]`` by DOF index, so it is reported rather than dropped.
+    """
+    widths = np.bincount(np.asarray(model.dof_jntid, dtype=int), minlength=int(model.njnt))
+    keys: list[str] = []
+    for dof, name in enumerate(dof_names):
+        jnt = int(model.dof_jntid[dof])
+        if name is None:
+            keys.append(f"dof[{dof}]")
+        elif widths[jnt] == 1:
+            keys.append(name)
+        else:
+            keys.append(f"{name}[{dof - int(model.jnt_dofadr[jnt])}]")
+    return keys
+
+
 def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
     """Return the dense ``nv x nv`` mass matrix M(q), robust to MuJoCo drift.
 
@@ -1587,6 +1611,15 @@ class PhysicsMixin:
         acceleration - the standard inverse-dynamics query for a manipulator
         (at rest, pure gravity compensation).
 
+        ``qfrc_inverse`` is DOF-indexed, and a joint is not a DOF: a free joint
+        owns six and a ball joint three. The reported mapping therefore carries
+        one entry per DOF - a single-DOF joint under its bare name, a multi-DOF
+        joint's components as ``name[k]``, and a DOF whose joint is unnamed as
+        ``dof[i]`` - so the whole of a floating base's wrench is reported
+        instead of its first component under the joint's name. ``dof_joint_names``
+        labels the DOFs in order, on the same terms ``get_jacobian`` names its
+        columns and ``get_mass_matrix`` its diagonal.
+
         ``mj_inverse`` reads ``data.qacc`` as the *desired* acceleration, so
         this method runs ``mj_forward`` first (so the position/velocity
         kinematics match the current ``qpos``/``qvel``, matching the defensive
@@ -1610,21 +1643,21 @@ class PhysicsMixin:
             data.qacc[:] = 0.0
             try:
                 mj.mj_inverse(model, data)
-                # Build named force mapping
-                forces = {}
-                for i in range(model.njnt):
-                    name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i)
-                    if name:
-                        dof_adr = model.jnt_dofadr[i]
-                        forces[name] = float(data.qfrc_inverse[dof_adr])
+                # One entry per DOF: qfrc_inverse is DOF-indexed, so keying it
+                # by joint would report a multi-DOF joint's first component
+                # under a name that owns six and drop the other five.
+                dof_names = _dof_joint_names(mj, model)
+                forces = {
+                    key: float(data.qfrc_inverse[dof]) for dof, key in enumerate(_dof_force_keys(model, dof_names))
+                }
             finally:
                 data.qacc[:] = saved_qacc
 
         return {
             "status": "success",
             "content": [
-                {"text": f"Inverse dynamics: {len(forces)} joint forces computed"},
-                {"json": {"qfrc_inverse": forces}},
+                {"text": f"Inverse dynamics: {len(forces)} generalized forces computed"},
+                {"json": {"qfrc_inverse": forces, "dof_joint_names": dof_names}},
             ],
         }
 
