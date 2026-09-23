@@ -18,7 +18,7 @@ The driver's method itself is not yet plumbed on `G1Driver` today (refs
 `live_handle_refusal` grader refuses a handle without a `set_fsm` accessor
 with a message naming the verb, the `driver` parameter and the accessor.
 Once the driver method lands the same call returns the driver's envelope
-verbatim — this is the same shape `g1_start_task` (whose driver method
+verbatim - this is the same shape `g1_start_task` (whose driver method
 refuses with a registry-not-wired string today) already ships.
 
 `strands_robots.tools.g1.g1_set_fsm.g1_set_fsm` is the agent-facing side
@@ -26,10 +26,10 @@ of that write: one duck-typed call on `driver.set_fsm`, the envelope the
 driver produced returned verbatim, and the same live-handle refusals every
 write-side verb in this package owes (`driver` is `None`, a robot *name*,
 or any object without a callable `set_fsm`). The verb adds four
-data-parameter refusals on top — a `None` `fsm_id`, a non-int shape, a
+data-parameter refusals on top - a `None` `fsm_id`, a non-int shape, a
 `bool` payload (which would coerce to `1` Damp silently), and a
 non-positive-finite `wait` (validated through the shared
-`positive_finite_number_error`) — so the driver is not asked to sleep on
+`positive_finite_number_error`) - so the driver is not asked to sleep on
 `nan` / `inf` / negative or transition to a state the caller did not name.
 Importing the module pulls no `unitree_sdk2py` submodule (the package's
 SDK-load-hygiene contract, refs #358), and the module docstring names the

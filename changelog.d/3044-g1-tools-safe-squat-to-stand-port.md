@@ -5,9 +5,9 @@ point for the SQUAT->STAND transition: a caller passes a Damp-preamble
 duration in seconds and the driver publishes `LocoClient.Damp`, sleeps for
 `preamble_s`, then issues `LocoClient.Squat2StandUp` over the same DDS
 singleton `ensure_dds` opens. The Damp preamble is the SDK's
-controller-to-controller handoff smoother — firing it against an unheld
+controller-to-controller handoff smoother - firing it against an unheld
 robot leaves it slumping toward the floor, so the driver's own path is
-where the FSM-set precondition gate (`{3, 4, 706}` — the read-only envelope
+where the FSM-set precondition gate (`{3, 4, 706}` - the read-only envelope
 `strands_robots.tools.g1.g1_safe_posture_fsm_gates` names that set, refs
 #358) and the `avg_knee <= 1.4` rad pose gate fire.
 
@@ -25,7 +25,7 @@ The driver's method itself is not yet plumbed on `G1Driver` today (refs
 `live_handle_refusal` grader refuses a handle without a
 `safe_squat_to_stand` accessor with a message naming the verb, the
 `driver` parameter and the accessor. Once the driver method lands the
-same call returns the driver's envelope verbatim — this is the same shape
+same call returns the driver's envelope verbatim - this is the same shape
 `g1_set_fsm` (refs #3025), `g1_set_stand_height` (refs #3031),
 `g1_set_swing_height` (refs #3032) and `g1_balance_stand` (refs #3033)
 already ship.
@@ -37,21 +37,21 @@ verbatim, and the same live-handle refusals every write-side verb in this
 package owes (`driver` is `None`, a robot *name*, or any object without a
 callable `safe_squat_to_stand`). The verb adds five data-parameter shape
 refusals on top through the shared
-`strands_robots.utils.positive_finite_number_error` validator — a `None`
+`strands_robots.utils.positive_finite_number_error` validator - a `None`
 `preamble_s`, a non-numeric shape, a `bool` payload (which would coerce
 to a silent `1.0` or `0.0`), a `nan` / `inf` payload (which would silently
 no-op or block indefinitely), and a non-positive value (`0.0` collapses
 to a bare `Squat2StandUp` write the neon bundle documented as a distinct
 `use_unitree` verb; a negative value raises `ValueError` from `time.sleep`).
 The neon-bundle-observed usable-range admission itself is not enforced by
-this verb — the module docstring names "does not refuse a `preamble_s`
+this verb - the module docstring names "does not refuse a `preamble_s`
 outside the neon-bundle-observed usable range" as one of the things this
 verb does not do, and refusing the domain here would fork the neon
 bundle's admission set into a second source of truth this module would
 then have to keep in sync with the envelope lookup.
 
 The FSM and pose gates the neon bundle's own `_assert_safe_for_damp`
-implements are also not consulted here — the driver's own
+implements are also not consulted here - the driver's own
 `_check_motion_gates` (refs #2916) is the one FSM gate for actuation, and
 the LowState pose-check belongs on the same side because the driver
 already caches `LowState` for its own subscribers. A second gate call

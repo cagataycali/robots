@@ -5,10 +5,10 @@ targets (`left_hip_pitch_joint`) to the action keys lerobot's `UnitreeG1` driver
 accepts (`kLeftHipPitch.q`), so the same `KimodoPolicy` object can drive sim
 actuators and the real robot's DDS lowcmd path.
 
-* `build_lerobot_g1_action_dict(action, extra_action_keys=None)` — the driver
+* `build_lerobot_g1_action_dict(action, extra_action_keys=None)` - the driver
   action dict for one control tick.
-* `kimodo_action_to_lerobot_g1(action)` — the rename on its own.
-* `get_joint_map()` — the rename table, for callers renaming in their own loop.
+* `kimodo_action_to_lerobot_g1(action)` - the rename on its own.
+* `get_joint_map()` - the rename table, for callers renaming in their own loop.
 
 The table pairs joints by name, not by position in the driver enum. The driver
 applies only the action keys it recognises and leaves every other motor on its

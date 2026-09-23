@@ -7,8 +7,8 @@ neither owns: the motion envelope". Only one of those two consumed it.
 Connect driver's three movement RPCs ran `finite_number_error` and stopped
 there. So for the same physical robot `look(pitch=200)` reported `success` and
 sent a head pose built from 200 degrees of pitch on an axis whose travel is
-+/-40, `body(yaw=400)` reported `success` and sent `{"body_yaw": 6.98}` — 400
-degrees in radians — on an axis whose travel is +/-160, and
++/-40, `body(yaw=400)` reported `success` and sent `{"body_yaw": 6.98}` - 400
+degrees in radians - on an axis whose travel is +/-160, and
 `send_action({"head_pitch": 200})` refused both while naming the limit.
 
 The exclusion was argued rather than overlooked. `_motion_domain_error` said the
@@ -22,14 +22,14 @@ and a later change gave the library the model.
 Why nothing caught it: the two surfaces spell the same axis differently. `look`
 takes `pitch`/`roll`/`yaw` where the envelope keys
 `head_pitch`/`head_roll`/`head_yaw`, and `envelope_error` ignores a key it has no
-limit for — so handing it the RPC's own keyword dict bounds nothing and reports
+limit for - so handing it the RPC's own keyword dict bounds nothing and reports
 no error. `_ENVELOPE_AXIS_BY_PARAM` is that mapping, and a test grades it against
 the live limits so an axis added to the envelope cannot be silently left
 unmapped.
 
 Finiteness is still asked first, so an unusable value is named by the caller's
 own parameter spelling rather than by the axis it maps to, and a travel
-comparison against `nan` — which `abs(nan) <= 40` makes `False` — is never the
+comparison against `nan` - which `abs(nan) <= 40` makes `False` - is never the
 message. Per-axis travel is the half that transfers: the envelope's head-body
 yaw coupling limit bounds `head_yaw - body_yaw` and needs both values in one
 call, which this RPC surface does not offer, and that stays with `send_action`.

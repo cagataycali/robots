@@ -18,7 +18,7 @@ for the SDK-facing gate work the write belongs on), so the
 `live_handle_refusal` grader refuses a handle without a `balance_stand`
 accessor with a message naming the verb, the `driver` parameter and the
 accessor. Once the driver method lands the same call returns the driver's
-envelope verbatim — this is the same shape `g1_set_fsm` (refs #3025),
+envelope verbatim - this is the same shape `g1_set_fsm` (refs #3025),
 `g1_set_stand_height` (refs #3031) and `g1_set_swing_height` (refs #3032)
 already ship.
 
@@ -27,17 +27,17 @@ agent-facing side of that write: one duck-typed call on
 `driver.balance_stand`, the envelope the driver produced returned verbatim,
 and the same live-handle refusals every write-side verb in this package owes
 (`driver` is `None`, a robot *name*, or any object without a callable
-`balance_stand`). The verb adds four data-parameter shape refusals on top —
+`balance_stand`). The verb adds four data-parameter shape refusals on top -
 a `None` `balance_mode`, a `bool` payload (which would coerce to a silent
 `0` or `1`), a `float` payload (which the neon bundle's own `int(...)` would
 silently truncate to a mode the caller did not name), and a non-integer
-`str` shape — using inline `isinstance` shape checks rather than a shared
+`str` shape - using inline `isinstance` shape checks rather than a shared
 validator because the value-domain here is an integer mode id with a
 neon-bundle-observed admitted set `{0, 3}`, and no existing shared validator
 in `strands_robots.utils` fits that shape (`positive_count_error` refuses
 `0`, which is the static-balance default; `finite_number_error` admits
 floats the SDK's handler cannot use). The in-set admission `{0, 3}` itself
-is not enforced by this verb — the module docstring names "does not refuse
+is not enforced by this verb - the module docstring names "does not refuse
 a `balance_mode` outside the admitted set" as one of the things this verb
 does not do, because refusing an unlisted mode here would fork the neon
 bundle's admission set into a second source of truth this module would then

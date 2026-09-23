@@ -4,7 +4,7 @@ The ``execute`` envelope gained the sentence; the background lifecycle did not.
 Measured with an agent: ``start`` "trace a small circle" with ``mock`` →
 ``Task started: 'trace a small circle'``, ``status`` → ``RUNNING … Steps: 18``,
 ``stop`` → ``Task stopped … Steps completed: 34``, and the agent summarised
-"Task launched successfully … RUNNING — 18 steps completed … stopped cleanly".
+"Task launched successfully … RUNNING - 18 steps completed … stopped cleanly".
 Nothing in three answers said the circle was never attempted.
 """
 

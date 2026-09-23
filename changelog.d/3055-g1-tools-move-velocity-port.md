@@ -20,7 +20,7 @@ The driver's method itself is not yet plumbed on `G1Driver` today
 `live_handle_refusal` grader refuses a handle without a `move_velocity`
 accessor with a message naming the verb, the `driver` parameter and
 the accessor. Once the driver method lands the same call returns the
-driver's envelope verbatim — this is the same shape `g1_stop_move`
+driver's envelope verbatim - this is the same shape `g1_stop_move`
 (refs #3035), `g1_wave_hand_loco` (refs #3041), `g1_release_arm`
 (refs #3034), `g1_balance_stand` (refs #3033), `g1_set_stand_height`
 (refs #3031) and `g1_set_swing_height` (refs #3032) already ship.
@@ -31,7 +31,7 @@ walk is a negative `vx`, a clockwise turn a negative `vyaw`) and go
 through the shared `finite_number_error` validator; `duration` is a
 positive finite float through `positive_finite_number_error`. Both
 validators refuse `None`, non-numeric, `nan`, `inf` and the `bool`
-subclass that would coerce to `0.0` / `1.0` silently — refusing the
+subclass that would coerce to `0.0` / `1.0` silently - refusing the
 numeric domain before dispatch keeps the driver's rc-decoded refusal
 reserved for the SDK's own return codes (a caller reading the
 `ERR_CODES` table surfaced by `g1_error_codes` sees numbers only the
@@ -43,7 +43,7 @@ the one gate for arm-SDK writes (`send_action` / `run_policy` /
 singleton and belongs on the locomotion admission set `WALK_FSMS`
 the driver's own path will check when the write lands. The envelope
 clamps (`vx` / `vy` / `vyaw` magnitudes, `duration` upper bound) are
-not restated here either — the neon bundle's verb clamped its
+not restated here either - the neon bundle's verb clamped its
 arguments before dispatch, and that decision belongs on the driver's
 own write path so a caller who reaches `SetVelocity` through a
 different entry point (a future `use_unitree` dispatcher, refs
@@ -62,7 +62,7 @@ The test suite grades sixteen shapes: SDK-load-hygiene, a
 driver-side refusal round-trip, a future success envelope
 round-trip, `None` / string / int driver refusal, call-count
 invariance (one call to the verb produces exactly one call to
-`driver.move_velocity` — no retry inside the wrapper because the
+`driver.move_velocity` - no retry inside the wrapper because the
 SDK's handler is not re-entrant), argument-quadruple pass-through
 (no clamp/round/reshape), `None` / `nan` / `inf` / `bool` velocity
 component refusal, zero / negative `duration` refusal, and the

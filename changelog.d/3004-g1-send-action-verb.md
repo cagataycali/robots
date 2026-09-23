@@ -1,7 +1,7 @@
 ### Added: `g1_send_action` verb for the driver's one-frame `rt/lowcmd` write
 
 `G1Driver.send_action` publishes one `LowCmd_` frame on `rt/lowcmd` for a
-joint-name-keyed action dict.  It is the driver's *one-frame* write — a caller
+joint-name-keyed action dict.  It is the driver's *one-frame* write - a caller
 who wants a schedule (500 Hz, 200 Hz) reaches
 `G1Driver.run_policy` which owns the control loop today, or calls this verb on
 their own timer.  The write path already re-gates through
@@ -14,8 +14,8 @@ side of that single write: one duck-typed call on `driver.send_action`, the
 envelope the driver produced returned verbatim, and the same live-handle
 refusals every write-side verb in this package owes (`driver` is `None`, is a
 robot *name*, or is any object without a callable `send_action`).  The verb
-adds three `action`-parameter refusals on top — a `None` action, a non-dict
-shape, and an empty dict — so the driver is not asked to admit a wire frame
+adds three `action`-parameter refusals on top - a `None` action, a non-dict
+shape, and an empty dict - so the driver is not asked to admit a wire frame
 that names no joint through the arm-SDK gate.  Importing the module pulls no
 `unitree_sdk2py` submodule (the package's SDK-load-hygiene contract, refs
 #358), and the module docstring names the four things this verb does not do

@@ -2,10 +2,10 @@
 
 ``active`` (a standing-pose posture flag) and ``enable_torque``'s ``on`` select a
 *posture* / energise servos on physical hardware, so they must be rejected unless
-they are a real boolean — the convention in ``AGENTS.md`` ("Posture flags are
+they are a real boolean - the convention in ``AGENTS.md`` ("Posture flags are
 checked, never read by truthiness"), with ``strands_robots.utils.boolean_flag_error``
 as the shared domain. Every non-empty string is truthy, so ``"false"`` read by
-``bool()`` would send ``active: true`` / energise the torque — silent wrong
+``bool()`` would send ``active: true`` / energise the torque - silent wrong
 actuation. These tests pin the domain over the spellings an operator reaches for
 when opting out.
 """

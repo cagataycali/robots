@@ -1,7 +1,7 @@
 ### Added: `G1Driver` reads its FSM id from the motion-switcher API
 
-Previously `G1Driver._fsm_id` had exactly one writer — the `None` initialiser
-in `__init__` — so `_check_motion_gates` refused every `send_action`,
+Previously `G1Driver._fsm_id` had exactly one writer - the `None` initialiser
+in `__init__` - so `_check_motion_gates` refused every `send_action`,
 `run_policy` and `start_task` with `FSM id unknown - motion-switcher source
 has not been wired`. The wire path the SDK exposes for the FSM state is
 `MotionSwitcherClient.CheckMode()` (`LowState_` has no `fsm_id` field; every
@@ -11,9 +11,9 @@ and `strands_robots/tools/g1/_motion_switcher.py` landed the decoder half
 in that thread.
 
 The driver-side wiring lands here as the producer. `G1Driver` takes a new
-keyword-only `motion_switcher_client_factory` constructor argument — a
+keyword-only `motion_switcher_client_factory` constructor argument - a
 callable that returns an open `MotionSwitcherClient`, defaulting to a lazy
-loader that imports the SDK on first call — and a private `_refresh_fsm_id`
+loader that imports the SDK on first call - and a private `_refresh_fsm_id`
 method that reads through `read_fsm_id` at the top of every
 `_check_motion_gates` call. Three read-side branches are handled
 explicitly: an OK reading writes `_fsm_id`, a `name == ""` reading (the
@@ -33,7 +33,7 @@ every unit test with a mocked bus.
 
 The read runs off the control-loop thread. `CheckMode()` is a synchronous
 DDS round trip, and `_ControlLoop._run` re-gates every step, so refreshing
-inside the gate would have put an RPC inside a 2 ms budget — and one
+inside the gate would have put an RPC inside a 2 ms budget - and one
 transient transport failure would have blocked frame publication (and the
 loop's `_stop_event` observation) for the SDK's whole RPC timeout while the
 joints drooped. Instead `_ControlLoop` owns a second thread that refreshes at
@@ -66,7 +66,7 @@ is replaced by `test_g1_battery_floor_reaches_with_wired_fsm.py`, which
 grades the flipped reachability directly: a driver with a wired FSM and a
 critical pack refuses for the *battery*, not the FSM. The acceptance test
 `test_send_action_returns_success_on_a_healthy_driver_that_has_a_decoded_lowstate`
-turns over from `strict=True` XFAIL into a passing cell — the same
+turns over from `strict=True` XFAIL into a passing cell - the same
 mechanical checkpoint the predecessor's docstring promised the wiring
 commit would fire.
 
@@ -76,8 +76,8 @@ integer the firmware reports for `HANDSHAKE_FSMS` under `CheckMode`;
 whether `ReleaseMode()` is required before an `rt/lowcmd` write (the SDK's
 own G1 low-level example calls it, and this PR does not); and whether
 10 Hz is the right refresh cadence against a real motion-switcher's RPC
-cost. The cadence is reasoned rather than measured — fast enough that an
+cost. The cadence is reasoned rather than measured - fast enough that an
 FSM transition ends a rollout within 100 ms, slow enough that the RPC is
-not the frame budget — and it is a module constant from which the
+not the frame budget - and it is a module constant from which the
 staleness bound is derived, so retuning it against a measurement is one
 edit and cannot change how many missed reads the gate tolerates.

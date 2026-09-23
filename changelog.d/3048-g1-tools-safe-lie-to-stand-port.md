@@ -5,10 +5,10 @@ point for the LIE->STAND transition: a caller passes a Damp-preamble
 duration in seconds and the driver publishes `LocoClient.Damp`, sleeps for
 `preamble_s`, then issues `LocoClient.Lie2StandUp` over the same DDS
 singleton `ensure_dds` opens. The Damp preamble is the SDK's
-controller-to-controller handoff smoother — firing it against an unheld
+controller-to-controller handoff smoother - firing it against an unheld
 robot leaves it slumping toward the floor, but from a face-up lying pose
 that is already on the floor, so the driver's own path is where the
-FSM-set precondition gate (`{1, 702}` — the read-only envelope
+FSM-set precondition gate (`{1, 702}` - the read-only envelope
 `strands_robots.tools.g1.g1_safe_posture_fsm_gates` names that set, refs
 #358) fires. The pose-check that the sibling
 `g1_safe_squat_to_stand` verb consults (`avg_knee <= 1.4` rad) is skipped
@@ -28,7 +28,7 @@ The driver's method itself is not yet plumbed on `G1Driver` today (refs
 `live_handle_refusal` grader refuses a handle without a `safe_lie_to_stand`
 accessor with a message naming the verb, the `driver` parameter and the
 accessor. Once the driver method lands the same call returns the driver's
-envelope verbatim — this is the same shape `g1_set_fsm` (refs #3025),
+envelope verbatim - this is the same shape `g1_set_fsm` (refs #3025),
 `g1_set_stand_height` (refs #3031), `g1_set_swing_height` (refs #3032),
 `g1_balance_stand` (refs #3033) and `g1_safe_squat_to_stand` (refs #3044)
 already ship.

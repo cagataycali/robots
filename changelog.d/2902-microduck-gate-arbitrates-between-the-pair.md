@@ -3,7 +3,7 @@
 `switch_on_velocity` exists to choose between a `move_key` and an `idle_key` by
 `|twist|` each tick, and both the module docstring and the parameter's own
 documentation say it selects *between* them. It read the magnitude whatever skill
-was active, so an explicit `switch(...)` — or `select=` on a previous tick — to
+was active, so an explicit `switch(...)` - or `select=` on a previous tick - to
 any third skill was undone by the very next tick that carried a
 `target_velocity`, before the skill that was asked for had been ticked once.
 
@@ -22,15 +22,15 @@ which read phase and behaviour encodings there.
 Pollen's `infer_policy.py` draws the boundary in the same place. Its
 `_update_policy_session` is documented "Switch between walking and standing
 sessions based on vel_cmd magnitude" and returns early for each of its non-pair
-modes — `ground_pick_mode`, `sit_mode` ("Don't switch while sitting"),
-`slope_mode` and an active `behavior_mode` — before it computes the magnitude.
+modes - `ground_pick_mode`, `sit_mode` ("Don't switch while sitting"),
+`slope_mode` and an active `behavior_mode` - before it computes the magnitude.
 Our gate carried only the first of those five guards, the one checking that both
 sessions are loaded.
 
 The gate now returns early when the active skill is neither of its two keys, one
 statement after that existing check and before the magnitude is read. Nothing
-about the pair changes: a bundle holding only `move_key` and `idle_key` — the
-two-skill shape the documentation's own example builds — behaves exactly as
+about the pair changes: a bundle holding only `move_key` and `idle_key` - the
+two-skill shape the documentation's own example builds - behaves exactly as
 before in both directions and at the threshold itself, an absent key still
 leaves the gate inert, `select=` still wins per tick, and selecting a gate key
 again hands arbitration straight back.

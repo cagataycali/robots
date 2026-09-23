@@ -10,8 +10,8 @@ design. A payload whose `policy_type` or `policy_provider` is not in the
 widened union is refused on the mesh path with
 `refusal_codes.POLICY_TYPE_NOT_ALLOWED`; the refusal message names this
 variable as the recourse. `mesh/security.py` references the variable ten
-times — one refusal code, one charset comment, two class docstrings on the
-built-in list, one loader, one cache key and two `ValidationError` messages —
+times - one refusal code, one charset comment, two class docstrings on the
+built-in list, one loader, one cache key and two `ValidationError` messages -
 so the module source names it well, but until this change the two
 documentation surfaces the module points operators at (the README env-var
 matrix and `docs/security.md`) did not name it at all.

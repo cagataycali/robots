@@ -7,7 +7,7 @@
   the neon runner's ``0.3`` minimum-admitted ICP fitness plus the ``[0.0,
   1.0]`` shape bounds Open3D's ``result.fitness`` takes on. The neon runner's
   own comparison is ``result.fitness < _ICP_FITNESS_THRESHOLD`` (strict less
-  than), so equality at ``0.3`` is admitted — refusing at the boundary would
+  than), so equality at ``0.3`` is admitted - refusing at the boundary would
   drop the neon bundle's own admitted edge. Two refusal reasons are decided:
   ``fitness_below_threshold`` (value inside Open3D's own bounds but below
   the neon admission threshold, the *quality* refusal) and

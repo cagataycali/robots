@@ -9,7 +9,7 @@ from the driver at wire time.
 
 Both tools read the driver's own constants (`HANDSHAKE_FSMS`, `WALK_FSMS`
 under `strands_robots.tools.g1._g1_common`, and the `7404` entry in
-`ERR_CODES` the write path's refusal quotes) — a widen or narrow of an
+`ERR_CODES` the write path's refusal quotes) - a widen or narrow of an
 admission set in the driver moves the write path and this lookup
 together, so the shipped domain cannot drift between them.
 
@@ -18,13 +18,13 @@ together, so the shipped domain cannot drift between them.
 computes the same membership answer the gate would, and on a non-member
 carries the exact `refusal_code=7404` / `refusal_text` pair the driver's
 write path would surface. `bool` is refused as `fsm_id` despite being an
-`int` subclass — the domain refusal names that specific caller mistake
+`int` subclass - the domain refusal names that specific caller mistake
 because `True` silently compared against a set of three-digit motion-
 switcher ids would land as "not arm-ready" for a caller who never asked
 a valid question.
 
 `import strands_robots.tools.g1.g1_motion_gates` pulls no
-`unitree_sdk2py` submodule — the package's SDK-load-hygiene contract
+`unitree_sdk2py` submodule - the package's SDK-load-hygiene contract
 from `strands-labs/robots#358`.
 
 Refs `strands-labs/robots#358`: this port is the second verb in the

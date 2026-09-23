@@ -6,9 +6,8 @@ inconsistently across terminals and log pipelines and are tokenizer noise for
 the agents that read these strings programmatically. An ASCII rendering carries
 the same meaning everywhere.
 
-Unlike :mod:`tests.test_source_strings_no_emoji` and
-:mod:`tests.test_source_strings_no_unicode_dashes` -- which scan every source
-byte and therefore also police docstrings/comments -- this guard is deliberately
+Unlike :mod:`tests.test_source_strings_no_emoji_or_unicode_dash` -- which scans
+every source byte and therefore also polices docstrings/comments -- this guard is deliberately
 *surgical*: it parses each module's AST and only inspects the string literals
 that reach one of the three surfaces AGENTS.md names. That keeps intentional,
 semantic Unicode in docstrings (mapping arrows, math symbols) untouched while

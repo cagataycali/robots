@@ -1,6 +1,6 @@
 ### Fixed
 
-- `tests/test_source_strings_no_emoji.py` now scans `changelog.d/*.md`, closing
+- `tests/test_source_strings_no_emoji_or_unicode_dash.py` now scans `changelog.d/*.md`, closing
   the one hygiene surface no scan covered. All three source-hygiene scans walk
   `*.py` under the package and the test tree only, while
   `scripts/assemble_changelog.py --apply` folds fragment text *verbatim* into

@@ -1,4 +1,4 @@
-### Added: Pollen Microduck native driver — `Robot("microduck", mode="real")` over robotd
+### Added: Pollen Microduck native driver - `Robot("microduck", mode="real")` over robotd
 
 The Microduck's 14-DOF biped is now driven natively. `MicroduckDriver` speaks
 the on-robot `robotd` daemon's `duck-ipc-proto` JSON-RPC directly over its Unix
