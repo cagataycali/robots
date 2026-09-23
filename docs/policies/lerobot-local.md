@@ -266,6 +266,14 @@ discarded (see [Camera routing](#embodiment-obs_rename-and-the-pre-flight-check)
 rejected and points at `camera_key_map=` / `obs_rename_override=` to make it
 validate, or `set_robot_state_keys([...])`.
 
+A candidate that converts units is withheld too when normalization is inert
+(the "stats do not cover" warning above): `so100` and `so101` declare
+`state_units='degrees'`, correct only against degree-recorded stats, and with
+none the so101 joint range reaches the model at up to 160.0 where packing it
+natively reaches 2.79. The remedy then points at `set_robot_state_keys([...])`,
+which leaves the units alone, and names the `processor_overrides` that would
+make the embodiment correct.
+
 ## Camera routing
 
 Observations use bare camera names (`top`, `wrist`); the policy declares image

@@ -3009,7 +3009,11 @@ class LerobotLocalPolicy(Policy):
             # and, once a declared embodiment has already been rejected at load
             # time, no embodiment at all, since re-passing that one is the same
             # loop reached through obs_rename rather than state_keys.
-            + state_key_remedy(scalar_keys, embodiment_rejected=self._embodiment_config_failed)
+            + state_key_remedy(
+                scalar_keys,
+                embodiment_rejected=self._embodiment_config_failed,
+                normalization_inert=self._normalization_is_inert(),
+            )
         )
         if self.strict_keys:
             raise ValueError("strict_keys=True: " + msg)
@@ -3021,6 +3025,22 @@ class LerobotLocalPolicy(Policy):
             logger.warning("%s", sanitize_log_value(msg))
             self._state_key_mismatch_warned = True
         return drop_velocity_siblings(scalar_keys)
+
+    def _normalization_is_inert(self) -> bool:
+        """Whether this policy declares a normalization no stats back.
+
+        The unit half of a state-key remedy: with an inert normalization,
+        recommending an ``embodiment=`` that converts units hands the caller a
+        rescale nothing undoes. One reader of
+        :meth:`~strands_robots.policies.lerobot_local.processor.ProcessorBridge.inert_normalization_features`
+        for both mismatch guards, so they cannot advise differently.
+
+        Returns:
+            ``True`` when a bridge is loaded and reports a declared
+            normalization its stats do not cover.
+        """
+        bridge = self._processor_bridge
+        return bool(bridge is not None and bridge.inert_normalization_features())
 
     def _collect_state_values(self, observation_dict: dict[str, Any], order: list[str]) -> list[float]:
         """Pull the joint-state vector from ``observation_dict`` in ``order``.
@@ -3087,6 +3107,7 @@ class LerobotLocalPolicy(Policy):
                 + state_key_remedy(
                     observed_state_keys(observation_dict),
                     embodiment_rejected=self._embodiment_config_failed,
+                    normalization_inert=self._normalization_is_inert(),
                 )
                 # Same registry-checked remedy as the all-missing guard, so one
                 # rule serves both degradations.

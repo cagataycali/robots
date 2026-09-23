@@ -328,7 +328,9 @@ def matching_embodiments(observation_keys: Iterable[Any]) -> list[str]:
     )
 
 
-def state_key_remedy(observation_keys: Iterable[Any], *, embodiment_rejected: bool = False) -> str:
+def state_key_remedy(
+    observation_keys: Iterable[Any], *, embodiment_rejected: bool = False, normalization_inert: bool = False
+) -> str:
     """Advice for a state-key mismatch, chosen from what the observation contains.
 
     A fixed example cannot be right for every caller. Recommending
@@ -343,6 +345,17 @@ def state_key_remedy(observation_keys: Iterable[Any], *, embodiment_rejected: bo
     embodiment is offered at all. ``set_robot_state_keys`` is always offered as
     the unambiguous alternative, quoting the observed keys verbatim when the
     list is short enough to paste.
+
+    Binding the keys is not the whole question, because a map is applied as a
+    whole and two of the shipped ones (``so100``, ``so101``) also declare
+    ``state_units='degrees'``. That conversion is correct only against a
+    normalizer holding degree-recorded stats: with an inert normalization
+    (``normalization_inert``) nothing scales the converted values back, so the
+    so101 joint range reaches the model at up to 160.0 where packing it
+    natively reaches 2.79 and the checkpoint was trained on ~1 sigma. A
+    unit-converting candidate is therefore not offered on its own to such a
+    caller - ``set_robot_state_keys`` fixes the key names and leaves the units
+    alone - and the stats that would make it correct are named instead.
 
     Matching ``state_keys`` is necessary but not sufficient, because a declared
     embodiment is applied as a whole: ``LerobotLocalPolicy._configure_embodiment``
@@ -363,6 +376,12 @@ def state_key_remedy(observation_keys: Iterable[Any], *, embodiment_rejected: bo
             (``LerobotLocalPolicy._embodiment_config_failed``). When set, no
             embodiment is named and the advice points at the camera routing that
             makes the declared one validate.
+        normalization_inert: Whether this policy's declared normalization is
+            backed by no stats
+            (``ProcessorBridge.inert_normalization_features()`` non-empty).
+            When set, a candidate that converts units
+            (:attr:`EmbodimentMap.converts_units`) is not offered on its own,
+            because nothing scales the converted values back.
 
     Returns:
         One to three sentences of remedy, plain ASCII, ending in a period. An
@@ -395,6 +414,20 @@ def state_key_remedy(observation_keys: Iterable[Any], *, embodiment_rejected: bo
         )
 
     candidates = matching_embodiments(keys)
+    if normalization_inert:
+        converting = [name for name in candidates if EMBODIMENT_MAP[name].converts_units]
+        candidates = [name for name in candidates if name not in converting]
+        if converting and not candidates:
+            listed = " / ".join(f"'{name}'" for name in converting)
+            return (
+                f"The only shipped embodiment(s) whose state_keys this observation carries "
+                f"({listed}) also declare state_units='degrees', and this policy's normalization "
+                "is inert (see the preceding 'stats do not cover' warning), so the converted "
+                "values would reach the model unscaled rather than as the ~1 sigma it was trained "
+                f"on. So {set_keys}, which fixes the key names and leaves the units alone - or "
+                "pass that embodiment together with processor_overrides supplying the training "
+                "dataset's stats for BOTH normalizer_processor and unnormalizer_processor."
+            )
     if not candidates:
         return (
             f"No shipped embodiment declares state_keys this observation carries, so {set_keys}. "
@@ -1088,6 +1121,18 @@ class EmbodimentMap:
             gripper_joint_range=self.gripper_joint_range,
             joint_mids=self.joint_mids,
         )
+
+    @property
+    def converts_units(self) -> bool:
+        """Whether applying this map rescales the caller's numbers.
+
+        The declaration :func:`state_key_remedy` reads before it recommends an
+        ``embodiment=``: a map that converts is only correct when the
+        checkpoint's normalizer holds stats recorded in the frame it converts
+        TO, so with an inert normalization it changes the magnitudes and
+        nothing changes them back.
+        """
+        return self.state_units != "native" or self.action_units != "native"
 
     def sim_state_to_model(self, values: list[float]) -> list[float]:
         """Convert a sim state vector into the model's training units.

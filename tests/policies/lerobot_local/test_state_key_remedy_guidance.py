@@ -18,16 +18,28 @@ only when the registry confirms every one of its ``state_keys`` is present, all
 qualifying configurations are listed when the observation cannot tell them apart
 (the real SO, Koch and OMX arms report identical ``.pos`` keys), and when nothing
 matches no embodiment is offered at all.
+
+Binding the keys is not the whole question. A map is applied as a whole, and the
+two shipped sim SO maps also declare ``state_units='degrees'``, which is correct
+only against a normalizer holding degree-recorded stats. A base checkpoint's
+stats are keyed by its training dataset, so they cover nothing
+(``ProcessorBridge.inert_normalization_features()``) and the conversion is not
+scaled back: the so101 joint range then reaches the model at up to 160.0 where
+packing it natively reaches 2.79. So the remedy consults that check, withholds a
+unit-converting candidate from such a caller, and names the stats that would
+make it correct.
 """
 
+import dataclasses
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import torch
 
 from strands_robots.policies.lerobot_local.embodiment import (
+    _CONFIG_NAMES,
     EMBODIMENT_MAP,
     matching_embodiments,
     state_key_remedy,
@@ -227,3 +239,76 @@ class TestBothDiagnosticsCarryIt:
             policy._collect_state_values(_obs(HARDWARE_KEYS), policy.robot_state_keys)
 
         assert "'base'" not in str(excinfo.value)
+
+
+class TestAnInertNormalizationWithholdsAUnitConvertingEmbodiment:
+    """``embodiment='so101'`` converts to degrees; with no stats to scale them
+    back, following it is worse than the mismatch it escapes."""
+
+    def test_the_degrees_conversion_is_what_makes_it_worse(self):
+        """The magnitudes the two framings hand an unnormalized model."""
+        ranges = [
+            (-1.9199, 1.9199),
+            (-1.7453, 1.7453),
+            (-1.7453, 1.5708),
+            (-1.6581, 1.6581),
+            (-2.7925, 2.7925),
+            (-0.1745, 1.7453),
+        ]
+        degrees = EMBODIMENT_MAP["so101"]
+        native = dataclasses.replace(degrees, state_units="native", action_units="native")
+
+        def reach(embodiment):
+            packed = embodiment.sim_state_to_model([hi for _, hi in ranges])
+            packed += embodiment.sim_state_to_model([lo for lo, _ in ranges])
+            return max(abs(v) for v in packed)
+
+        assert round(reach(degrees), 1) == 160.0
+        assert round(reach(native), 2) == 2.79
+
+    def test_only_the_two_sim_so_maps_declare_a_conversion(self):
+        """The declaration the rule reads, over the whole shipped registry."""
+        converting = sorted(
+            name for name, embodiment in EMBODIMENT_MAP.items() if embodiment.converts_units and name in _CONFIG_NAMES
+        )
+
+        assert converting == ["so100", "so101"]
+
+    @pytest.mark.parametrize(
+        ("keys", "inert", "named", "withheld"),
+        [
+            (SIM_SO101_KEYS, False, "embodiment='so101'", "normalization"),
+            (SIM_SO101_KEYS, True, "processor_overrides", "embodiment='so101'"),
+            (HARDWARE_KEYS, False, "so_real", "normalization"),
+            (HARDWARE_KEYS, True, "so_real", "normalization is inert"),
+        ],
+        ids=["sim-live", "sim-inert", "hardware-live", "hardware-inert"],
+    )
+    def test_the_conversion_is_withheld_only_where_it_would_go_unscaled(self, keys, inert, named, withheld):
+        """A native-units candidate is unaffected: the rule reads the declaration,
+        not the observation's shape."""
+        remedy = state_key_remedy(keys, normalization_inert=inert)
+
+        assert named in remedy, remedy
+        assert withheld not in remedy, remedy
+        assert remedy.isascii(), remedy
+        assert "set_robot_state_keys" in remedy, remedy
+
+    @pytest.mark.parametrize("inert", [False, True], ids=["live", "inert"])
+    @pytest.mark.parametrize("guard", ["all_missing", "partial_missing"], ids=["all-missing", "partial-missing"])
+    def test_both_guards_consult_the_check(self, guard, inert):
+        """Neither mismatch message may advise the conversion the other withholds."""
+        policy = _policy(strict_keys=True)
+        bridge = MagicMock()
+        bridge.inert_normalization_features.return_value = ["observation.state (STATE/MEAN_STD)"] if inert else []
+        policy._processor_bridge = bridge
+        observation = _obs(SIM_SO101_KEYS)
+
+        with pytest.raises(ValueError) as excinfo:
+            if guard == "all_missing":
+                policy._resolve_state_order(observation, SIM_SO101_KEYS)
+            else:
+                policy.robot_state_keys = [*SIM_SO101_KEYS[:5], "left/gripper"]
+                policy._collect_state_values(observation, policy.robot_state_keys)
+
+        assert ("embodiment='so101'" in str(excinfo.value)) is not inert, str(excinfo.value)
