@@ -85,24 +85,35 @@ class TestMockPolicy:
 class TestMockPolicyStaysInsideTheActuatorRange:
     """The mock commands what the actuator can do, so the engine has nothing to warn about.
 
-    ``examples/01_sim_hello_world.py`` printed three ctrlrange clamp warnings
-    before its one line of expected output, because the mock's ±0.5 sinusoid
-    did not fit the SO-100 ``Pitch`` / ``Jaw`` / ``Elbow`` ranges. The engine
-    hands an opted-in policy the model through ``set_sim_context``; the mock
-    now uses it to clip.
+    ``examples/01_sim_hello_world.py`` printed three clamp warnings before its
+    one line of expected output, because the mock's ±0.5 sinusoid did not fit
+    the SO-100 ``Pitch`` / ``Jaw`` / ``Elbow`` ranges. The engine hands an
+    opted-in policy the model through ``set_sim_context``; the mock uses it to
+    clip.
+
+    Both shipped SO arms are rolled out because MuJoCo holds a command to a
+    range two ways and each arm is one of them: so100's MJCF sets
+    ``inheritrange="1"`` so every actuator compiles a ``ctrlrange``, while
+    so101 authors neither attribute, so its six actuators are unlimited
+    position servos whose ``ctrl`` is bounded by the driven joint's own limits.
+    A mock that reads only ``actuator_ctrllimited`` learns nothing on so101 and
+    commands its jaw past ``-0.1745``.
     """
 
-    def test_hello_world_scene_emits_no_clamp_warning(self, caplog):
+    @pytest.mark.parametrize("robot", ["so100", "so101"])
+    def test_a_rollout_emits_no_out_of_range_warning(self, robot, caplog):
         pytest.importorskip("mujoco")
         from strands_robots import Robot
 
-        sim = Robot("so100", mesh=False)
+        sim = Robot(robot, mesh=False)
         try:
             with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.rendering"):
-                result = sim.run_policy(robot_name="so100", policy_object=MockPolicy(), instruction="x", n_steps=50)
+                result = sim.run_policy(robot_name=robot, policy_object=MockPolicy(), instruction="x", n_steps=50)
             assert result["status"] == "success"
-            clamps = [r for r in caplog.records if "outside its ctrlrange" in r.getMessage()]
-            assert clamps == [], [r.getMessage()[:80] for r in clamps]
+            # The shared tail of both branches of the warning (ctrlrange and
+            # driven joint range), so neither source can go unnoticed.
+            clamps = [r for r in caplog.records if "is NOT reproduced" in r.getMessage()]
+            assert clamps == [], [r.getMessage()[:120] for r in clamps]
         finally:
             sim.destroy()
 
