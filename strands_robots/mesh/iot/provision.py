@@ -195,11 +195,19 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
+            # Both halves of the safety cycle, gated together by
+            # ``allow_estop_publish``: the authority that may ORIGINATE a
+            # fleet-wide stop is the one that may clear it, and a cert that may
+            # not originate a stop must not lift a lockout it could not have
+            # engaged. Publishing a resume peers will honour additionally needs
+            # the HMAC ``_on_safety_resume`` recomputes over
+            # ``STRANDS_MESH_OVERRIDE_CODE``.
             "Sid": "AllowSafetyEstop",
             "Effect": "Allow",
             "Action": ["iot:Publish", "iot:RetainPublish"],
             "Resource": [
                 "arn:aws:iot:*:*:topic/strands/safety/estop",
+                "arn:aws:iot:*:*:topic/strands/safety/resume",
             ],
         },
         {
@@ -221,16 +229,23 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
                 "arn:aws:iot:*:*:topicfilter/strands/${iot:Connection.Thing.ThingName}/*",
                 "arn:aws:iot:*:*:topicfilter/strands/broadcast",
                 "arn:aws:iot:*:*:topicfilter/strands/safety/estop",
+                # ``Mesh.start`` subscribes estop and resume as a PAIR, and
+                # the bridge carries both by default
+                # (``DEFAULT_BRIDGE_SUFFIXES``). Granting estop alone made a
+                # cloud-delivered lockout unclearable: every peer engaged it
+                # and the broker then denied the only topic that lifts it.
+                "arn:aws:iot:*:*:topicfilter/strands/safety/resume",
                 "arn:aws:iot:*:*:topicfilter/strands/+/presence",
             ],
         },
         {
             # Tightly scoped Receive: a robot only sees the messages
             # delivered to topics it actually subscribes to (own /cmd, own
-            # /response/*, broadcast, safety/estop, +/presence). Previously
-            # this was a wildcard ``iot:Receive`` on ``strands/*``, which
-            # would have let any robot eavesdrop on the entire fleet's
-            # traffic -- including other robots' commands and responses.
+            # /response/*, broadcast, safety/estop, safety/resume,
+            # +/presence). Previously this was a wildcard ``iot:Receive`` on
+            # ``strands/*``, which would have let any robot eavesdrop on the
+            # entire fleet's traffic -- including other robots' commands and
+            # responses.
             "Sid": "AllowReceiveScoped",
             "Effect": "Allow",
             "Action": "iot:Receive",
@@ -239,6 +254,10 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
                 "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}/response/*",
                 "arn:aws:iot:*:*:topic/strands/broadcast",
                 "arn:aws:iot:*:*:topic/strands/safety/estop",
+                # Subscribe without Receive is the deliberate asymmetry
+                # documented below, and on this topic it is fail-UNSAFE: the
+                # broker would ACK the subscription and drop every delivery.
+                "arn:aws:iot:*:*:topic/strands/safety/resume",
                 "arn:aws:iot:*:*:topic/strands/*/presence",
             ],
         },
@@ -267,8 +286,12 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
 #: ``provision_robot(..., allow_estop_publish=False)`` swaps the ``strands-
 #: robot`` policy for ``strands-robot-no-estop``: identical to the default
 #: except the ``AllowSafetyEstop`` publish statement is removed. The robot can
-#: STILL subscribe + receive ``strands/safety/estop`` and obey fleet stops --
-#: it simply cannot ORIGINATE one (and therefore cannot arm a Will on it).
+#: STILL subscribe + receive both safety topics and obey fleet stops -- it
+#: simply cannot ORIGINATE either (and therefore cannot arm a Will on them).
+#: Dropping resume-publish alongside estop-publish is deliberate: a Will armed
+#: on ``strands/safety/resume`` is the same dead-man switch pointed the other
+#: way, clearing a legitimate lockout the instant a defender cuts the
+#: attacker's connection.
 #: Use this for robots that should obey but never issue fleet-wide stops
 #: (the common case); keep the default for designated safety-authority robots.
 ROBOT_NO_ESTOP_POLICY_NAME = "strands-robot-no-estop"
@@ -279,7 +302,8 @@ def _robot_policy_doc(*, allow_estop_publish: bool) -> dict[str, Any]:
 
     When *allow_estop_publish* is False the ``AllowSafetyEstop`` publish
     statement is omitted (finding #15) -- the cert cannot publish (or arm a
-    Will on) ``strands/safety/estop`` while retaining subscribe + receive.
+    Will on) ``strands/safety/estop`` or ``strands/safety/resume`` while
+    retaining subscribe + receive on both.
     """
     import copy
 
@@ -318,6 +342,9 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
                 "arn:aws:iot:*:*:topic/strands/*/cmd",
                 "arn:aws:iot:*:*:topic/strands/broadcast",
                 "arn:aws:iot:*:*:topic/strands/safety/estop",
+                # The operator is the role that clears a fleet lockout; the
+                # release was the only half of the cycle it could not publish.
+                "arn:aws:iot:*:*:topic/strands/safety/resume",
             ],
         },
         {
@@ -354,6 +381,10 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
                 "arn:aws:iot:*:*:topicfilter/strands/+/safety/event",
                 "arn:aws:iot:*:*:topic/strands/safety/estop",
                 "arn:aws:iot:*:*:topicfilter/strands/safety/estop",
+                # A console that sees the stop but never the release shows a
+                # fleet as permanently locked out.
+                "arn:aws:iot:*:*:topic/strands/safety/resume",
+                "arn:aws:iot:*:*:topicfilter/strands/safety/resume",
             ],
         },
         {
