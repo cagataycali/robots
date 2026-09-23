@@ -72,6 +72,7 @@ viewer that should see the motion at the speed the arm would make it.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import time
@@ -140,7 +141,6 @@ class _Binding:
         joint: The model's joint name, as the engine's observation reports it
             (without the robot namespace).
         actuator: The actuator's name as the engine's ``send_action`` takes it.
-        actuator_id: The actuator's index in the model, for the gain arrays.
         low: The low end of the travel the calibrated counts map onto, radians.
         high: The high end, radians.
         percent_low_is_closed: For a percent motor, whether ``0`` percent sits at
@@ -152,7 +152,6 @@ class _Binding:
 
     joint: str
     actuator: str
-    actuator_id: int
     low: float
     high: float
     percent_low_is_closed: bool
@@ -353,7 +352,6 @@ class FeetechTwinBus(FeetechBus):
             bindings[name] = _Binding(
                 joint=joint,
                 actuator=self._short(str(actuator_view.name)),
-                actuator_id=int(actuator_view.id),
                 low=low,
                 high=high,
                 percent_low_is_closed=closed_low,
@@ -610,26 +608,21 @@ class FeetechTwinBus(FeetechBus):
         model = self._model()
         obs = self._observation()
         hold: dict[str, float] = {}
-        # Gain/bias writes mutate the live MjModel in place, which races a
-        # concurrent mj_step or render under the engine's own lock.  Resolve
-        # each actuator by *name* on the fresh model (scene recompiles
-        # reallocate the model and can shift indices), and hold the engine
-        # lock across the batch so no half-applied write is visible to a
-        # stepping thread.
+        # The gain/bias writes mutate the live MjModel in place, which races a
+        # concurrent mj_step or render, so they happen under the engine's own
+        # lock when it exposes one - and a backend without one is not a reason
+        # to skip them. Each actuator is resolved by *name* on the model read
+        # here: a scene recompile reallocates the model and can shift indices.
         lock = getattr(engine, "_lock", None)
-        if model is not None and lock is not None:
-            with lock:
-                for name in self.motors:
-                    binding = self._binding(name)
-                    view = self._named(model, "actuator", binding.actuator)
-                    if view is not None:
-                        view.gainprm[0] = binding.kp if enabled else 0.0
-                        view.biasprm[1] = -binding.kp if enabled else 0.0
-                        view.biasprm[2] = binding.kv if enabled else 0.0
-                    hold[binding.actuator] = float(obs.get(binding.joint, binding.low))
-        else:
+        ctx = lock if lock is not None else contextlib.nullcontext()
+        with ctx:
             for name in self.motors:
                 binding = self._binding(name)
+                view = None if model is None else self._named(model, "actuator", binding.actuator)
+                if view is not None:
+                    view.gainprm[0] = binding.kp if enabled else 0.0
+                    view.biasprm[1] = -binding.kp if enabled else 0.0
+                    view.biasprm[2] = binding.kv if enabled else 0.0
                 hold[binding.actuator] = float(obs.get(binding.joint, binding.low))
         self._torque_enabled = bool(enabled)
         if enabled:

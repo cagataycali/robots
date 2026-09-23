@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,19 @@ class _View:
         self.biasprm = [0.0, -kp, -0.5]
 
 
+class _RecordsWhetherHeld(list):  # type: ignore[type-arg]
+    """A gain array that records, per write, whether the engine's lock was held."""
+
+    def __init__(self, values: list[float], lock: threading.Lock, log: list[bool]) -> None:
+        super().__init__(values)
+        self._lock = lock
+        self._log = log
+
+    def __setitem__(self, index: Any, value: Any) -> None:
+        self._log.append(self._lock.locked())
+        super().__setitem__(index, value)
+
+
 class _Model:
     """The named-access surface of an ``MjModel`` the twin uses, over one robot's joints."""
 
@@ -101,13 +115,31 @@ class _Model:
             raise KeyError(key)
         return self._views[key]
 
+    def with_a_robot_added_ahead(self, robot: str, joints: dict[str, tuple[float, float]], *, kp: float) -> _Model:
+        """The model a recompile yields when another arm lands ahead of ours: same names, shifted indices.
+
+        ``add_robot`` reallocates the model, so every actuator this one carries
+        moves down the list by the count the new arm brought.
+        """
+        merged = _Model(robot, joints, ctrl_limited=True, kp=kp)
+        merged._views |= self._views
+        merged._by_index = list(merged._views.values())
+        merged.nu = len(merged._by_index)
+        for index, view in enumerate(merged._by_index):
+            view.id = index
+        return merged
+
 
 class _FakeEngine:
     """A sim engine double carrying one SO arm: records writes, position servos arrive instantly."""
 
-    def __init__(self, robot: str = "so101") -> None:
+    def __init__(self, robot: str = "so101", *, lock: Any | None = None) -> None:
         joints = _SO101 if robot == "so101" else _SO100
         self.robot = robot
+        if lock is not None:
+            # In-tree backends expose one; the attribute is absent when a
+            # backend does not, which is the default here on purpose.
+            self._lock = lock
         self.mj_model = _Model(robot, joints, ctrl_limited=robot == "so100", kp=17.8 if robot == "so101" else 50.0)
         self.state: dict[str, float] = dict.fromkeys(joints, 0.0)
         self.vel: dict[str, float] = dict.fromkeys(joints, 0.0)
@@ -529,6 +561,42 @@ class TestTorque:
         assert _invoke(twin, action="stop")["status"] == "success"
         assert engine.mj_model.actuator("so101/1").gainprm[0] == 0.0
         assert twin.bus.torque_enabled is False
+
+    def test_every_gain_write_happens_while_the_engine_lock_is_held(self) -> None:
+        """The gain arrays are the live model's, shared with the stepping and render threads.
+
+        A write outside the engine's lock can be read half-applied by a
+        concurrent ``mj_step``, so every one of them is made under it.
+        """
+        lock = threading.Lock()
+        engine = _FakeEngine("so101", lock=lock)
+        driver = FeetechDriver(tool_name="so101", transport="twin", sim=engine)
+        assert driver.connect_eagerly() is None
+        held: list[bool] = []
+        for index in range(engine.mj_model.nu):
+            view = engine.mj_model.actuator(index)
+            view.gainprm = _RecordsWhetherHeld(view.gainprm, lock, held)
+            view.biasprm = _RecordsWhetherHeld(view.biasprm, lock, held)
+
+        assert _invoke(driver, action="set_torque", enabled=False)["status"] == "success"
+
+        assert len(held) == 3 * len(_SO101), "expected a gain and two bias writes per motor"
+        assert all(held), f"{held.count(False)} of {len(held)} gain writes ran with the engine lock free"
+
+    def test_the_gains_follow_the_actuator_name_when_a_recompile_shifts_the_indices(self, twin, engine) -> None:
+        """Releasing this arm must not limp an arm added after it.
+
+        A scene recompile renumbers the actuators, so a gain write addressed by
+        the index seen at connect time lands on whatever now sits there.
+        """
+        engine.mj_model = engine.mj_model.with_a_robot_added_ahead("so100", _SO100, kp=50.0)
+
+        assert _invoke(twin, action="set_torque", enabled=False)["status"] == "success"
+
+        assert [engine.mj_model.actuator(f"so101/{name}").gainprm[0] for name in _SO101] == [0.0] * len(_SO101)
+        assert [engine.mj_model.actuator(f"so100/{name}").gainprm[0] for name in _SO100] == [50.0] * len(_SO100), (
+            "released the actuators of the arm that was added, not its own"
+        )
 
 
 class TestRegisters:
