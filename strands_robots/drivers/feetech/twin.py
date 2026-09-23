@@ -102,11 +102,24 @@ TWIN_SCHEME = "sim://"
 
 
 def _scalar(value: Any) -> int:
-    """A model flag as an ``int`` - MuJoCo's views hand back one-element arrays, a double may hand back a list."""
-    try:
-        return int(value)
-    except TypeError:
-        return int(value[0])
+    """A model field as an ``int``.
+
+    MuJoCo's named views hand back one-element *arrays* rather than scalars, and
+    ``int()`` on an array with ``ndim > 0`` is deprecated in NumPy and becomes an
+    error - so the element is read before the conversion rather than after the
+    warning. A test double may hand back a plain list, which has no ``shape``
+    and is read the same way; a 0-d array has a falsy shape and converts
+    directly.
+
+    Args:
+        value: A model field, array or scalar.
+
+    Returns:
+        The field as an ``int``.
+    """
+    if getattr(value, "shape", None) or isinstance(value, list | tuple):
+        return _scalar(value[0])
+    return int(value)
 
 
 def _flag(value: Any) -> bool:
