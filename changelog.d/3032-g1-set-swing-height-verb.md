@@ -17,7 +17,7 @@ The driver's method itself is not yet plumbed on `G1Driver` today (refs
 `live_handle_refusal` grader refuses a handle without a `set_swing_height`
 accessor with a message naming the verb, the `driver` parameter and the
 accessor. Once the driver method lands the same call returns the driver's
-envelope verbatim — this is the same shape `g1_set_fsm` (refs #3025) and
+envelope verbatim - this is the same shape `g1_set_fsm` (refs #3025) and
 `g1_set_stand_height` (refs #3031) already ship.
 
 `strands_robots.tools.g1.g1_set_swing_height.g1_set_swing_height` is the
@@ -26,9 +26,9 @@ agent-facing side of that write: one duck-typed call on
 verbatim, and the same live-handle refusals every write-side verb in this
 package owes (`driver` is `None`, a robot *name*, or any object without a
 callable `set_swing_height`). The verb adds four data-parameter refusals
-on top — a `None` `height`, a non-numeric shape, a `bool` payload (which
+on top - a `None` `height`, a non-numeric shape, a `bool` payload (which
 would coerce to a silent `0.0` shuffle or `1.0` far-past-envelope gait),
-and a non-finite value (`nan` / `inf`) — validated through the shared
+and a non-finite value (`nan` / `inf`) - validated through the shared
 `finite_number_error` (NOT `positive_finite_number_error`, because
 `0.0` is a caller-facing value the neon bundle's own wrapper admits as
 the minimum-clearance shuffle gait, and refusing it here would drop a

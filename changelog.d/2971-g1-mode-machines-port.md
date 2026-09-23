@@ -5,7 +5,7 @@
   agent-facing lookups over the `mode_machine` ids the neon bundle
   observed as arm-ready on the real robot. Snapshotted from the neon
   bundle's `ARM_READY_MODE_MACHINES` observation
-  (`cagataycali/neon-the-g1/tools/_g1_common.py`, set `{5, 6}` — the
+  (`cagataycali/neon-the-g1/tools/_g1_common.py`, set `{5, 6}` - the
   two hardware-layout ids the firmware publishes on `rt/lowstate`
   when the balance controller admits an arm write). This
   repository's driver does **not** consult that membership: its
@@ -13,7 +13,7 @@
   motion-switcher API) and reads `mode_machine` only for the
   `is None` liveness refusal, so `admitted` here answers the
   membership question about the neon-observed contract and is not a
-  prediction of the driver's admission decision — an arm-ready
+  prediction of the driver's admission decision - an arm-ready
   `mode_machine` is necessary-by-observation, not sufficient. A
   future driver-side `mode_machine` fallback would read the same
   set. Each descriptor carries a `mode_machine` id and an

@@ -11,10 +11,10 @@ promises; the neon bundle documented the workaround in
 `cagataycali/neon-the-g1/tools/g1_safe_posture.py` and the driver's own
 path (once landed) follows the same route.
 
-The Damp preamble is the SDK's controller-to-controller handoff smoother —
+The Damp preamble is the SDK's controller-to-controller handoff smoother -
 firing it against an unheld robot leaves it slumping toward the floor, so
 the driver's own path is where the FSM-set precondition gate
-(`{500, 501, 801}` — the read-only envelope
+(`{500, 501, 801}` - the read-only envelope
 `strands_robots.tools.g1.g1_safe_posture_fsm_gates` names that set, refs
 #358) fires. The neon variant kept `pose_check=False` because the
 upright-FSM precondition already implies a controller-managed
@@ -34,7 +34,7 @@ The driver's method itself is not yet plumbed on `G1Driver` today (refs
 `live_handle_refusal` grader refuses a handle without a
 `safe_stand_to_squat` accessor with a message naming the verb, the
 `driver` parameter and the accessor. Once the driver method lands the
-same call returns the driver's envelope verbatim — this is the same shape
+same call returns the driver's envelope verbatim - this is the same shape
 `g1_set_fsm` (refs #3025), `g1_set_stand_height` (refs #3031),
 `g1_set_swing_height` (refs #3032), `g1_balance_stand` (refs #3033),
 `g1_safe_squat_to_stand` (refs #3044) and `g1_safe_lie_to_stand`

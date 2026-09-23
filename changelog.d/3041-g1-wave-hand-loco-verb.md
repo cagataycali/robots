@@ -19,7 +19,7 @@ for the SDK-facing gate work the write belongs on), so the
 `live_handle_refusal` grader refuses a handle without a `wave_hand_loco`
 accessor with a message naming the verb, the `driver` parameter and the
 accessor. Once the driver method lands the same call returns the driver's
-envelope verbatim — this is the same shape `g1_set_fsm` (refs #3025),
+envelope verbatim - this is the same shape `g1_set_fsm` (refs #3025),
 `g1_set_stand_height` (refs #3031), `g1_set_swing_height` (refs #3032) and
 `g1_balance_stand` (refs #3033) already ship.
 
@@ -28,17 +28,17 @@ agent-facing side of that write: one duck-typed call on
 `driver.wave_hand_loco`, the envelope the driver produced returned verbatim,
 and the same live-handle refusals every write-side verb in this package owes
 (`driver` is `None`, a robot *name*, or any object without a callable
-`wave_hand_loco`). The verb adds two data-parameter shape refusals on top —
+`wave_hand_loco`). The verb adds two data-parameter shape refusals on top -
 a `None` `turn_flag` (no default is defensible, the two admitted variants
 `False` and `True` are the two data points the read-only envelope surfaces
 and a caller who did not pass one has not decided the write) and a non-`bool`
 `turn_flag` (an `int`, `float` or `str` payload which the neon wrapper's own
 `bool(turn)` coercion would silently transform into an admitted task id the
-caller had not named on purpose) — using inline `isinstance` shape checks
+caller had not named on purpose) - using inline `isinstance` shape checks
 that mirror the read-only envelope module's own `turn_flag must be bool`
 refusal so both paths render the same shape a caller can grep for. The
 in-set admission (both `False` and `True` today) itself is not enforced by
-this verb — the module docstring names "does not refuse a `turn_flag`
+this verb - the module docstring names "does not refuse a `turn_flag`
 through Python's `bool()` coercion" as one of the things this verb does not
 do beyond the shape refusal, because the two admitted variants are the two
 data points the envelope module names as source of truth, and a firmware
@@ -51,7 +51,7 @@ SDK's `rc`, restate the driver's refusal wording, compose the `SetTaskId`
 payload id, chain a companion FSM transition) so a caller reading it does
 not misread the surface. Unlike the arm-SDK write verbs `WaveHand`
 dispatches through `SetTaskId` rather than the arm-SDK path, so this verb
-does not read the driver's `_check_motion_gates` admission set — the neon
+does not read the driver's `_check_motion_gates` admission set - the neon
 bundle's docstring named the verb as "does not require FSM 500+ because it
 uses SetTaskId" (the *observed* behaviour of the wave varies with the
 current FSM the same way the sibling `g1_shake_hand_loco` primitive does,

@@ -491,7 +491,7 @@ def test_dyld_shim_noop_without_torchcodec(monkeypatch):
 def test_dyld_shim_sets_env_and_skips_reexec_when_unsafe(monkeypatch, tmp_path):
     """When torchcodec + ffmpeg are present but it's NOT safe to re-exec
     (e.g. under pytest), the shim sets DYLD for child procs and does NOT
-    re-exec — it keeps the remedy for the first video-decoding open instead
+    re-exec - it keeps the remedy for the first video-decoding open instead
     of warning at import."""
     import warnings
 
@@ -538,7 +538,7 @@ def test_dyld_shim_noop_when_already_set(monkeypatch, tmp_path):
 #
 # These exercise the real ``from lerobot.datasets import StreamingLeRobotDataset``
 # path. lerobot itself is import-order fragile in some envs, so we inject a
-# stand-in ``lerobot.datasets`` module rather than depend on the real package —
+# stand-in ``lerobot.datasets`` module rather than depend on the real package -
 # the code under test only cares that the symbol resolves (or doesn't).
 
 

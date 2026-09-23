@@ -18,7 +18,7 @@ The driver's method itself is not yet plumbed on `G1Driver` today (refs
 `live_handle_refusal` grader refuses a handle without a `stop_move`
 accessor with a message naming the verb, the `driver` parameter and the
 accessor. Once the driver method lands the same call returns the
-driver's envelope verbatim — this is the same shape `g1_release_arm`
+driver's envelope verbatim - this is the same shape `g1_release_arm`
 (refs #3034), `g1_balance_stand` (refs #3033), `g1_set_stand_height`
 (refs #3031) and `g1_set_swing_height` (refs #3032) already ship.
 
@@ -27,7 +27,7 @@ side of that write: one duck-typed call on `driver.stop_move`, the
 envelope the driver produced returned verbatim, and the same live-handle
 refusals every write-side verb in this package owes (`driver` is `None`,
 a robot *name*, or any object without a callable `stop_move`). The verb
-adds no data-parameter refusals — the halt request has no caller-facing
+adds no data-parameter refusals - the halt request has no caller-facing
 shape beyond the driver handle, which is the one thing the neon bundle's
 verb also asked for.
 

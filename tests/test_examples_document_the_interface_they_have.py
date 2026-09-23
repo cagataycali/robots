@@ -2,8 +2,8 @@
 
 An example is run by copying its header, so the header is an interface: the
 install line is what a reader's environment ends up containing, and the
-``--flags`` in ``--help`` are what a reader believes they can set. Two ways that
-interface drifts from the file, both measured on ``74136572a``:
+``--flags`` in ``--help`` are what a reader believes they can set. Three ways
+that interface drifts from the file, the first two measured on ``74136572a``:
 
 1. ``examples/vla/cosmos3_diffusers_mujoco_rollout.py`` documented
    ``uv pip install "strands-robots[cosmos3-diffusers,cosmos3-sim]"`` and then
@@ -19,6 +19,17 @@ interface drifts from the file, both measured on ``74136572a``:
    ``mode``, so every run sampled the backend default of 35 whatever the flag
    said.
 
+3. ``examples/07_post_tune_any_policy.py`` and
+   ``examples/17_judge_recorded_episodes.py`` documented
+   ``pip install "strands-robots[sim-mujoco,lerobot]"`` and then trained through
+   ``create_trainer("lerobot_local")``. LeRobot's ``train()`` opens with
+   ``require_package("accelerate", extra="training")`` - on CPU as well as GPU -
+   and no strands extra supplies it, so both examples ran every earlier stage
+   and then exited 1 on a ``TrainSpec rejected`` the line could not satisfy.
+   ``accelerate`` is invisible to the import scan above because the example
+   never imports it: the trainer names it in
+   ``_LEROBOT_CALL_TIME_PACKAGES``, which is what the rule below reads.
+
 Why the install rule is keyed on distributions this project declares: an example
 may legitimately import something no extra covers (an optional third-party tool
 the header installs separately, or a module only the reader's own environment
@@ -33,6 +44,8 @@ import ast
 import re
 import tomllib
 from pathlib import Path
+
+from strands_robots.training.lerobot import _LEROBOT_CALL_TIME_PACKAGES
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
@@ -166,6 +179,89 @@ def test_an_install_line_declares_every_distribution_the_example_imports() -> No
             extras = sorted(extra for extra, dists in by_extra.items() if dist in dists)
             offenders.append(f"{path.relative_to(_REPO_ROOT).as_posix()} imports {module} (declared by {extras})")
     assert not offenders, "an example's install line must install what the example imports: " + "; ".join(offenders)
+
+
+def _install_line_text(docstring: str) -> str | None:
+    """The docstring's install line verbatim, or ``None`` when it has none."""
+    match = _INSTALL_LINE.search(docstring)
+    return None if match is None else match.group(0).replace("\\\n", " ")
+
+
+def _lerobot_extras_named(install_line: str) -> frozenset[str]:
+    """Extras of the ``lerobot`` distribution the line asks for by name."""
+    return frozenset(
+        extra.strip()
+        for group in re.findall(r"lerobot\[(?P<extras>[^\]]+)\]", install_line)
+        for extra in group.split(",")
+    )
+
+
+def _trains_through_lerobot(tree: ast.Module) -> bool:
+    """Whether the example reaches lerobot's ``train()`` via the trainer factory.
+
+    The provider reaches ``create_trainer`` either literally or through a
+    module-level constant (``PROVIDER = "lerobot_local"``, the spelling
+    example 07 uses so a reader retargets the flow by editing one line), so
+    both are resolved.
+    """
+    constants = {
+        target.id: node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+    def names_lerobot(arg: ast.expr) -> bool:
+        if isinstance(arg, ast.Constant):
+            return arg.value == "lerobot_local"
+        return isinstance(arg, ast.Name) and constants.get(arg.id) == "lerobot_local"
+
+    return any(
+        isinstance(node, ast.Call)
+        and (node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None))
+        == "create_trainer"
+        and any(names_lerobot(arg) for arg in node.args)
+        for node in ast.walk(tree)
+    )
+
+
+def test_an_install_line_declares_what_the_trainer_needs_at_call_time() -> None:
+    """An example that trains names the extra lerobot's ``train()`` requires.
+
+    The import scan cannot see these: the example never imports ``accelerate``,
+    lerobot's ``train()`` does, as its first statement and whatever the device.
+    The trainer publishes the pair in ``_LEROBOT_CALL_TIME_PACKAGES`` and
+    refuses a spec without it, so an install line missing the extra buys a
+    ``TrainSpec rejected`` at the end of an otherwise working run.
+    """
+    graded, offenders = [], []
+    for path, tree in _examples():
+        install_line = _install_line_text(ast.get_docstring(tree) or "")
+        if install_line is None or not _trains_through_lerobot(tree):
+            continue
+        graded.append(path)
+        named = _lerobot_extras_named(install_line)
+        for package, extra in _LEROBOT_CALL_TIME_PACKAGES:
+            if extra not in named and package not in install_line:
+                offenders.append(
+                    f"{path.relative_to(_REPO_ROOT).as_posix()} trains but does not install "
+                    f"{package} (lerobot[{extra}])"
+                )
+    assert graded, "no example trains through create_trainer('lerobot_local'); the rule grades nothing"
+    assert not offenders, "a training example's install line must reach train(): " + "; ".join(offenders)
+
+
+def test_the_call_time_rule_separates_a_naming_line_from_a_silent_one() -> None:
+    """Planted pair: the extra is what the rule reads, in either spelling."""
+    assert ("accelerate", "training") in _LEROBOT_CALL_TIME_PACKAGES, "the trainer's call-time roster moved"
+    assert _lerobot_extras_named('pip install "strands-robots[lerobot]"') == frozenset()
+    assert "training" in _lerobot_extras_named('pip install "strands-robots[lerobot]" "lerobot[training]"')
+    assert "training" in _lerobot_extras_named('pip install "lerobot[pi,training]"')
+    assert _trains_through_lerobot(ast.parse('x = create_trainer("lerobot_local")'))
+    assert _trains_through_lerobot(ast.parse('P = "lerobot_local"\nx = create_trainer(P, device="cpu")'))
+    assert not _trains_through_lerobot(ast.parse('x = create_trainer("ppo")'))
+    assert not _trains_through_lerobot(ast.parse('P = "ppo"\nx = create_trainer(P)'))
 
 
 def test_every_flag_an_example_advertises_is_read() -> None:

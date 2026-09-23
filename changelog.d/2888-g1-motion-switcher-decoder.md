@@ -4,7 +4,7 @@ The G1 driver's ``_check_motion_gates`` compares ``_fsm_id`` against
 ``HANDSHAKE_FSMS`` and ``WALK_FSMS`` to decide whether an arm-SDK or
 locomotion write is admitted. On the shipped tree ``_fsm_id`` had exactly
 one writer (the ``None`` initialiser); the producer is the motion-switcher
-API, not ``rt/lowstate``. This adds the *decoder* half — the mapping from
+API, not ``rt/lowstate``. This adds the *decoder* half - the mapping from
 ``CheckMode()``'s ``(status, result)`` return to the integer the gate
 reads:
 
@@ -20,7 +20,7 @@ reading = read_fsm_id(client)  # calls CheckMode(), decodes, catches SDK errors
 The seam that loads the SDK names
 ``unitree_sdk2py.comm.motion_switcher.motion_switcher_client``.
 ``MotionSwitcherClient`` ships under ``comm/`` rather than ``g1/`` because the
-motion switcher is shared across platforms — the SDK's ``example/g1``,
+motion switcher is shared across platforms - the SDK's ``example/g1``,
 ``example/h1``, ``example/h1_2``, ``example/go2``, ``example/b2`` and
 ``example/b2w`` low-level examples all import it from that one place, and
 ``unitree_sdk2py/g1/`` holds only ``arm``, ``audio`` and ``loco``. The path is a
@@ -39,14 +39,14 @@ rather than defaulting to a value the gate might silently open on. The length
 named in that shape refusal is read through
 :func:`strands_robots.utils.sequence_length`, the package's single owner of
 "how many components is this?", because a 0-d numpy array or torch tensor
-declares ``__len__`` and raises from it — so a ``hasattr``/``len`` probe would
+declares ``__len__`` and raises from it - so a ``hasattr``/``len`` probe would
 escape the refusal path with a bare ``len() of unsized object`` out of the one
 function whose purpose is to answer an unusable input with a message.
 
 Which key carries the FSM id is *not* settled by this change. ``CheckMode``
 returns ``json.loads(data)`` straight from the robot, so the Python package
 cannot say which keys that payload holds, and the string ``"form"`` appears
-nowhere in ``unitree_sdk2py`` — every SDK example reads ``result['name']`` and
+nowhere in ``unitree_sdk2py`` - every SDK example reads ``result['name']`` and
 nothing else. That question is one of the wire-format decisions #2765 tracks and
 answering it needs a robot; until then an active mode whose payload carries no
 integer ``form`` is refused rather than defaulted, so a wrong guess surfaces as

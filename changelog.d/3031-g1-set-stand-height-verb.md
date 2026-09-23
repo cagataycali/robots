@@ -16,7 +16,7 @@ The driver's method itself is not yet plumbed on `G1Driver` today (refs
 `live_handle_refusal` grader refuses a handle without a `set_stand_height`
 accessor with a message naming the verb, the `driver` parameter and the
 accessor. Once the driver method lands the same call returns the driver's
-envelope verbatim — this is the same shape `g1_set_fsm` (refs #3025) and
+envelope verbatim - this is the same shape `g1_set_fsm` (refs #3025) and
 `g1_start_task` (whose driver method refuses with a registry-not-wired
 string today) already ship.
 
@@ -26,9 +26,9 @@ agent-facing side of that write: one duck-typed call on
 verbatim, and the same live-handle refusals every write-side verb in this
 package owes (`driver` is `None`, a robot *name*, or any object without a
 callable `set_stand_height`). The verb adds four data-parameter refusals
-on top — a `None` `height`, a non-numeric shape, a `bool` payload (which
+on top - a `None` `height`, a non-numeric shape, a `bool` payload (which
 would coerce to a silent `0.0` LOW or `1.0` near-max stance), and a
-non-finite value (`nan` / `inf`) — validated through the shared
+non-finite value (`nan` / `inf`) - validated through the shared
 `finite_number_error` (NOT `positive_finite_number_error`, because a
 negative value is the caller-facing signal that selects the SDK's
 `HighStand` sentinel). Importing the module pulls no `unitree_sdk2py`

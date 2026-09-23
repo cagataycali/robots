@@ -1,14 +1,14 @@
-### Added: SO-100/SO-101 native driver reaches the arm — the Feetech SCS bus is wired
+### Added: SO-100/SO-101 native driver reaches the arm - the Feetech SCS bus is wired
 
 `FeetechDriver` was registered for `so100`/`so101`/`lekiwi` but every write
 refused with `"not wired yet (the Feetech SCS serial bus)"`, and the driver
-exposed neither `bus` nor `is_connected` — so `joint_read_source` resolved it to
+exposed neither `bus` nor `is_connected` - so `joint_read_source` resolved it to
 `None` and an SO-arm published **no `joints` section at all** on the mesh state
 topic. `FeetechBus` closes both halves (:issue:`360` scope 1).
 
 `send_action` now writes the whole arm in one `SYNC_WRITE` frame, so a
 six-joint move latches together instead of smearing over six write latencies.
-Targets are degrees (`gripper` is percent open) — the domain `pose_tool`
+Targets are degrees (`gripper` is percent open) - the domain `pose_tool`
 already established for this family, whose motor map is the source of truth
 `SO_ARM_MOTORS` is distilled from. A `.pos` suffix is accepted, so a lerobot
 action dict works unchanged. A target outside a joint's range is **refused, not
@@ -24,7 +24,7 @@ the joint positions. `stop` releases torque on every motor and names any that
 stayed driven; `cleanup` closes the port and leaves torque alone, so tearing
 down a process does not drop a held payload. `motor_ids` is now honoured
 (narrowing the arm) instead of recorded and ignored, and an ID with no joint
-name is refused. `start_task`/`run_policy` still refuse — now naming the
+name is refused. `start_task`/`run_policy` still refuse - now naming the
 missing policy control loop rather than blaming a bus that works.
 
 Every driver-side path that touches the wire holds the same `bus_lock` on the

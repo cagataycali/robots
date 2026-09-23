@@ -17,7 +17,7 @@ for the SDK-facing gate work the write belongs on), so the
 `live_handle_refusal` grader refuses a handle without a `release_arm`
 accessor with a message naming the verb, the `driver` parameter and the
 accessor. Once the driver method lands the same call returns the driver's
-envelope verbatim — this is the same shape `g1_set_stand_height` (refs
+envelope verbatim - this is the same shape `g1_set_stand_height` (refs
 #3031), `g1_set_swing_height` (refs #3032), `g1_start_task` and
 `g1_send_action` already ship.
 
@@ -26,7 +26,7 @@ side of that write: one duck-typed call on `driver.release_arm`, the
 envelope the driver produced returned verbatim, and the same live-handle
 refusals every write-side verb in this package owes (`driver` is `None`, a
 robot *name*, or any object without a callable `release_arm`). The verb
-adds no data-parameter refusals — the release-arm request has no caller-
+adds no data-parameter refusals - the release-arm request has no caller-
 facing shape beyond the driver handle, which is the one thing the neon
 bundle's verb also asked for.
 

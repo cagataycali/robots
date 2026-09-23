@@ -27,16 +27,16 @@ envelope the driver wrote verbatim. This is the same shape `g1_set_fsm`
 
 The verb refuses shape errors on `stage` at the tool surface:
 
-- `None` — no defensible default. The three admitted stages are the data
+- `None` - no defensible default. The three admitted stages are the data
   points the read-only envelope surfaces, and a caller who did not pass
   one has not decided the write. (The neon bundle defaulted to `-1`,
-  which routes the SDK to toggle its internal counter — a semantic that
+  which routes the SDK to toggle its internal counter - a semantic that
   requires the caller to have named the sentinel on purpose.)
-- `bool` — `bool` is an `int` subclass, so `True` would coerce to `1`
+- `bool` - `bool` is an `int` subclass, so `True` would coerce to `1`
   (shake) and `False` to `0` (reach out); both inside the admitted
   set, so a caller writing the boolean would dispatch a stage they did
   not name.
-- non-`int` (`float`, `str`) — the neon wrapper's `int(...)` coercion
+- non-`int` (`float`, `str`) - the neon wrapper's `int(...)` coercion
   silently transformed cross-type shapes rather than declined them.
   Matches the `g1_balance_stand` verb's own cross-type refusal shape a
   caller can grep for.

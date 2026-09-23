@@ -1,9 +1,9 @@
 ### Changed: the g1 tool surface is 25 verbs behind one `use_unitree` dispatcher, not 120 names
 
 `strands_robots/tools/g1/` had inverted. It carried 120 `@tool` names across 71
-modules, and roughly 100 of those were read-only *envelope/admits* lookup pairs
-— `g1_list_walk_forward_envelope` alongside `g1_walk_forward_admits`, repeated
-about fifty times — against only ~14 verbs that move the robot. An agent asked
+modules, and roughly 100 of those were read-only *envelope/admits* lookup pairs -
+`g1_list_walk_forward_envelope` alongside `g1_walk_forward_admits`, repeated
+about fifty times - against only ~14 verbs that move the robot. An agent asked
 to walk found two validators and no walker, and every lookup name spent a
 tool-schema slot in the model's context that an execution verb then could not
 have. This is the seam question in #2928, and the cost of leaving it open grew
@@ -13,7 +13,7 @@ The 46 lookup modules and their 46 tests are removed, and the constants they
 returned get a single home instead of one tool name each:
 `strands_robots.tools.g1.use_unitree.use_unitree` dispatches over the six SDK2
 services (`loco`, `arm`, `audio`, `motion_switcher`, `vui`, `robot_state`) in
-the `use_aws` shape — a `service`, an `operation`, and its `parameters`. Meta
+the `use_aws` shape - a `service`, an `operation`, and its `parameters`. Meta
 discovery (`list_services`, `list_operations`, `describe_operation`) is what
 replaces the lookups: the operation set and each operation's parameters stay
 reachable at runtime, from one verb. Discovery reads signatures through
@@ -41,7 +41,7 @@ seven places, with three more in its test; a three-way merge keeps those
 citations and deletes the module they name, which is enough to turn
 `tests/test_docstring_xref_roles_resolve.py` red without ever showing up as a
 conflict (refs #2940). Those roles are scrubbed here, and every fact they
-carried is kept — the admitted set `{0, 3}` was already stated inline in the
+carried is kept - the admitted set `{0, 3}` was already stated inline in the
 same docstrings.
 
 Two things the removal itself did not settle are settled here, because both are
@@ -51,8 +51,8 @@ The package now publishes its verbs through a `_LAZY_IMPORTS` table, so that
 table *is* the surface, and a hand-written table drifts. A verb landing on
 `main` after this work forked is kept by a three-way merge while the rewritten
 `__init__` never learns its name; a lookup pair landing the same way survives a
-removal it was never part of. Neither is a conflict — git sees an addition on
-one side and no change on the other — so `g1_balance_stand` (#3033) was
+removal it was never part of. Neither is a conflict - git sees an addition on
+one side and no change on the other - so `g1_balance_stand` (#3033) was
 reachable as a module and *not* through the package, and two later envelope
 pairs (#3029, #3036) would have merged into a surface the change describes as
 carrying none. Both are corrected, and the rule is now derived from the tree
@@ -66,7 +66,7 @@ source when `unitree_sdk2py` is absent, and they reached that fallback by
 catching every exception. Any defect in the introspection path therefore
 answered from a possibly-stale on-disk tree, or returned an operation list that
 was empty rather than unread, or reported `parameters: []` for an operation
-whose signature simply could not be read — which tells a caller the operation
+whose signature simply could not be read - which tells a caller the operation
 takes no arguments. The fallback now triggers on the absent-SDK condition
 specifically (`ImportError` for no SDK, `AttributeError` for a renamed client
 class); anything else propagates and surfaces at the tool boundary as an error

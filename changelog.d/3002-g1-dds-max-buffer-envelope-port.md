@@ -8,7 +8,7 @@
   `g1_max_buffer_admits`) surface the neon-observed subscribe-window clamp
   (``[1, 10000]``), plus the neon-tuned default (``20`` for the agent-facing
   read verb's token budget on one `g1_dds_read` payload). Module-local
-  refusal text stays on-surface — the DDS subscription handle sits on the
+  refusal text stays on-surface - the DDS subscription handle sits on the
   SDK-owned reader thread in-process and never touches ``rt/lowcmd``, so no
   motion-FSM ``7404`` code is re-borrowed for a buffer bounds violation.
   Twin of `g1_dds_topic_categories` and `g1_dds_topic_idl_types` (the

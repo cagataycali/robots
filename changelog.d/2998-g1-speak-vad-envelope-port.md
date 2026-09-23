@@ -7,7 +7,7 @@
   `BidiAgent` turn-detector's ``vad_threshold`` clamp (``[0.0, 1.0]``) and the
   neon-observed ``silence_duration_ms`` positive-integer domain (``>= 1``),
   plus the neon-tuned defaults (``0.7`` "stops echo triggers" and ``700`` ms
-  "relaxed"). Module-local refusal texts stay on-surface — the bidi voice
+  "relaxed"). Module-local refusal texts stay on-surface - the bidi voice
   pipeline ships no distinct rc, so no motion-FSM ``7404`` code is re-borrowed
   for a turn-detector bounds violation. Twin of
   `g1_bidi_audio_stream_delay_envelope` (the AEC half of the same argument

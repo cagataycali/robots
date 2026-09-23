@@ -3,8 +3,8 @@
 `dependabot.yml` is a configuration file, not a workflow, and it was in
 `.github/workflows/`. Actions therefore parsed it as a workflow and rejected it
 at parse time on every push to `main` (15 of 15 sampled pushes, `total_jobs: 0`),
-while Dependabot — which reads version-update config from `.github/dependabot.yml`
-only — never saw it at all, so both ecosystem entries and the `ml-stack` /
+while Dependabot - which reads version-update config from `.github/dependabot.yml`
+only - never saw it at all, so both ecosystem entries and the `ml-stack` /
 `sim-stack` / `dev-tools` grouping were inert.
 
 The silent half is the one with consequences: AGENTS.md > "Action Pinning"

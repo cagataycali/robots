@@ -9,14 +9,14 @@ domain. `move_key` and `idle_key` are skill names of exactly the kind `active`
 is, and nothing checked them.
 
 They are read only by the velocity gate, which opens by returning early when
-either names no held skill — so a wrong key did not fail, it made the gate
+either names no held skill - so a wrong key did not fail, it made the gate
 inert. The reachable case is the default. The bundle defaults to
 `move_key="walk"` / `idle_key="stand"` while Pollen ships its skills as
 `alpha_walking`, `alpha_stand`, `roulade`, `ball_kick_*`, so a bundle keyed by
 the weight names it loads constructs, reports a validated threshold, and never
 switches: a biped commanded to walk at 0.3 m/s stays on `alpha_stand`, and every
 tick reports success with the correct 14 joint targets for standing still. One
-wrong key is enough, and it kills the whole gate rather than half of it — the
+wrong key is enough, and it kills the whole gate rather than half of it - the
 direction whose key *is* a held skill stops working too.
 
 The membership is now asked at construction, naming the offending parameter, its

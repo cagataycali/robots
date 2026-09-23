@@ -8,8 +8,8 @@
   future driver-side wrapper for `BalanceStand` is called.
   Snapshotted from the neon bundle's `g1_balance_stand` verb
   (`cagataycali/neon-the-g1/tools/g1_posture.py`): two modes
-  observed against the real robot (`0` Static — the SDK default,
-  `3` Dynamic — the higher-headroom option). Each descriptor also
+  observed against the real robot (`0` Static - the SDK default,
+  `3` Dynamic - the higher-headroom option). Each descriptor also
   carries an `admits_loco_writes` flag (always `True`; every
   admitted balance mode is a locomotion-shaped write by
   definition) so the payload shape matches the `g1_fsm_targets`
