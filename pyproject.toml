@@ -695,6 +695,10 @@ dev = [
     "ruff>=0.15.12,<0.16.0",
     "mypy>=1.0.0,<2.0.0",
     "pytest-timeout>=2.0.0,<3.0.0",
+    # The suite runs in one process; the plugin is here so the cells that grade
+    # a distributed session (tests/test_session_truncation_is_reported.py) can
+    # spawn one. Installing it does not distribute anything on its own.
+    "pytest-xdist>=3.0.0,<4.0.0",
 ]
 
 [project.scripts]

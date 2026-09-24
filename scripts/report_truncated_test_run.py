@@ -147,6 +147,15 @@ from dataclasses import dataclass, field
 _COLLECTED = re.compile(r"collected (?P<collected>\d+) items?(?P<tokens>(?: / \d+ [a-z]+)*)")
 _COLLECT_TOKEN = re.compile(r"/ (?P<count>\d+) (?P<label>[a-z]+)")
 
+# The line a distributed session writes in place of the one above. A controller
+# running under ``pytest-xdist`` does not collect -- it reports what its workers
+# collected, as ``2 workers [5 items]`` (singular for one of either) -- so a log
+# read for the pattern above alone is ``unreadable``, which is what every run of
+# a distributed suite reported. The count is already net of deselection (``-k``
+# leaves ``2 workers [1 item]``), so it is the ``selected`` number and not the
+# pre-deselection total its serial spelling carries.
+_DISTRIBUTED = re.compile(r"\d+ workers? \[(?P<collected>\d+) items?\]")
+
 # The section tests/session_truncation.py writes above the counts line. The
 # session counted its own extent, so that is where the subtraction belongs and
 # this module delegates to it rather than keeping a second reading that can
@@ -261,6 +270,7 @@ def parse_run(text: str) -> RunReport:
         line = _LOG_TIMESTAMP.sub("", raw)
         if collected is None:
             found = _COLLECTED.search(line)
+            spread = _DISTRIBUTED.search(line) if found is None else None
             if found:
                 collected = int(found.group("collected"))
                 tokens = {
@@ -271,6 +281,8 @@ def parse_run(text: str) -> RunReport:
                 # ``selected`` cannot change the answer.
                 selected = collected - tokens.get("deselected", 0)
                 non_items = sum(count for label, count in tokens.items() if label in _NON_ITEM_COLLECT_LABELS)
+            elif spread:
+                collected = selected = int(spread.group("collected"))
         told = _STATED_EXTENT.search(line)
         if told:
             stated = (int(told.group("executed")), int(told.group("selected")))
@@ -285,7 +297,7 @@ def parse_run(text: str) -> RunReport:
         return RunReport(
             outcome=_UNREADABLE,
             stopped_after=stopped_after,
-            detail="no 'collected N items' line was found",
+            detail="no 'collected N items' or 'N workers [M items]' line was found",
         )
 
     if summary is None:
@@ -305,7 +317,13 @@ def parse_run(text: str) -> RunReport:
     assert selected is not None
     if stated is None:
         extent_source = _DERIVED_FROM_LOG
-        executed = max(sum(counts.values()) - non_items, 0)
+        # Bounded by the extent at both ends: no run executes fewer than no
+        # items, and none executes more than it selected. The upper bound is not
+        # decoration -- a distributed log's worker line carries no ``skipped``
+        # token, so a module skipped at import is on the counts line with no
+        # collect-time token to subtract it, and the sum comes to one more than
+        # the session could have run.
+        executed = min(max(sum(counts.values()) - non_items, 0), selected)
     else:
         extent_source = _STATED_BY_SESSION
         executed, selected = stated

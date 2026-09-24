@@ -450,6 +450,32 @@ class TestTheseAreTheLinesPytestWrites:
         # And that run reached all 8 of the items it selected.
         assert parse_run(out).outcome == "complete"
 
+    def test_a_distributed_run_states_its_extent_where_a_serial_one_collects(self, tmp_path: Path) -> None:
+        # A controller under -n does not collect, so it writes "2 workers [13
+        # items]" and no "collected" line at all. Read for the serial spelling
+        # alone every distributed run was "unreadable" -- the one outcome that
+        # says nothing about whether the suite ran.
+        out = self._run(tmp_path, "-k", "alpha", "-x", "-n", "2", "-p", "tests.session_truncation")
+        report = parse_run(out)
+
+        assert "collected 13 items" not in out, out
+        assert report.outcome == "truncated"
+        assert report.selected == 8
+        assert report.executed is not None and report.executed < 8
+        assert report.never_ran == 8 - report.executed
+        assert report.extent_source == "the session's own count"
+
+    def test_a_complete_distributed_run_is_read_as_complete(self, tmp_path: Path) -> None:
+        # No abort, so the session writes no section and the extent is the
+        # worker line alone -- the shape every green run of a distributed suite
+        # has, and the one that must not read as truncated.
+        out = self._run(tmp_path, "-k", "beta", "-n", "2", "-p", "tests.session_truncation")
+        report = parse_run(out)
+
+        assert report.outcome == "complete"
+        assert (report.selected, report.executed, report.never_ran) == (5, 5, 0)
+        assert report.extent_source == "derived from the log's counts"
+
     def test_the_derived_extent_is_the_extent_the_session_counted(self, tmp_path: Path) -> None:
         out = self._run(tmp_path, "-k", "alpha", "-x", "-p", "tests.session_truncation")
 

@@ -7,11 +7,17 @@ shaped exactly like a complete run's, and the abort banner names the stop
 without sizing it - so a reader cannot tell a total from a floor. These cells
 pin the statement that distinguishes them, and pin that it stays absent when the
 session did run everything it collected.
+
+Each end-to-end cell runs both in one process and across ``pytest-xdist``
+workers, because the two sessions count their extent through different hooks: a
+distributed controller never collects, so it has no ``session.items`` to size
+itself by and the statement has to come from what the workers collected.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +33,14 @@ def test_three(): assert False
 def test_four(): pass
 def test_five(): pass
 """
+
+#: How to spread the five tests: in this process, or over two worker processes.
+#: ``-x`` under ``-n`` is the run the required check makes, so the distributed
+#: row is the one that has to speak.
+DISTRIBUTION = [
+    pytest.param([], id="in-one-process"),
+    pytest.param(["-n", "2"], id="across-two-workers"),
+]
 
 
 def _run_pytest(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -122,16 +136,33 @@ class TestTheSuiteReportsItsOwnTruncation:
 class TestARunThatStopsEarlyReportsHowMuchNeverRan:
     """Driven end to end through a nested pytest, on its terminal output."""
 
-    def test_maxfail_one_names_the_three_tests_that_never_started(self, tmp_path: Path) -> None:
+    def test_the_serial_run_reaches_exactly_the_second_of_the_five(self, tmp_path: Path) -> None:
+        # One process runs the items in order and stops on the first failure, so
+        # this is the whole statement with no scheduler in it.
         (tmp_path / "test_five.py").write_text(_FIVE_TESTS)
         result = _run_pytest(tmp_path, "-x")
         assert "1 failed, 1 passed" in result.stdout, result.stdout
         assert "session truncated: 2 of 5 collected tests ran" in result.stdout, result.stdout
-        assert "3 collected tests never started, so the counts below are a floor, not a total." in result.stdout
 
-    def test_a_complete_run_says_nothing(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("distribution", DISTRIBUTION)
+    def test_stopping_early_sizes_what_never_started(self, tmp_path: Path, distribution: list[str]) -> None:
+        # How many of the five ran before the workers were shut down is up to the
+        # scheduler, so the numbers are read back rather than spelled: what both
+        # sessions owe the reader is the extent they collected and the fact that
+        # they did not reach all of it.
         (tmp_path / "test_five.py").write_text(_FIVE_TESTS)
-        result = _run_pytest(tmp_path)
+        result = _run_pytest(tmp_path, "-x", *distribution)
+        stated = re.search(r"session truncated: (\d+) of (\d+) collected tests ran", result.stdout)
+        assert stated, result.stdout
+        started, collected = int(stated.group(1)), int(stated.group(2))
+        assert collected == 5, result.stdout
+        assert 0 < started < 5, result.stdout
+        assert f"{5 - started} collected tests never started, so the counts below are a floor" in result.stdout
+
+    @pytest.mark.parametrize("distribution", DISTRIBUTION)
+    def test_a_complete_run_says_nothing(self, tmp_path: Path, distribution: list[str]) -> None:
+        (tmp_path / "test_five.py").write_text(_FIVE_TESTS)
+        result = _run_pytest(tmp_path, *distribution)
         assert "2 failed, 3 passed" in result.stdout, result.stdout
         assert "session truncated" not in result.stdout, result.stdout
 

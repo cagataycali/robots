@@ -19,7 +19,8 @@ many never started, and that the counts are therefore a floor. It is silent on a
 complete session, so the statement appears only where it changes what the counts
 below it mean, and it is independent of *why* the session stopped - a
 ``--maxfail`` budget, an interrupt, or a test that took the process down all
-truncate the report the same way.
+truncate the report the same way - and of whether the tests ran in this process
+or across ``pytest-xdist`` workers.
 """
 
 from __future__ import annotations
@@ -66,6 +67,26 @@ class SessionTruncationReporter:
     def pytest_collection_finish(self, session: pytest.Session) -> None:
         """Record the item count collection settled on, after deselection."""
         self._collected = len(session.items)
+
+    @pytest.hookimpl(optionalhook=True)
+    def pytest_xdist_node_collection_finished(self, ids: list[str]) -> None:
+        """Record the item count a worker collected, for a distributed session.
+
+        Under ``pytest-xdist`` the controller delegates collection to the
+        workers, so :meth:`pytest_collection_finish` never fires on it and the
+        count stays ``None`` -- while the workers' ``pytest_runtest_logfinish``
+        events are forwarded and counted as usual. A truncated distributed
+        session therefore said nothing at all, which is the one place the
+        statement is needed most: ``-x`` under ``-n`` stops the whole run on the
+        first failure with every other worker's remaining items unexecuted.
+
+        Every worker collects the same items and xdist aborts the run when two
+        disagree, so one worker's id list is the session's collected count.
+
+        Args:
+            ids: Node ids the reporting worker collected, after deselection.
+        """
+        self._collected = len(ids)
 
     def pytest_runtest_logfinish(self, nodeid: str) -> None:
         """Count a test that was entered, whatever its outcome."""
