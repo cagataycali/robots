@@ -15,7 +15,9 @@ publisher wiring with NO ROS 2 installed. They assert that:
   domain is refused, because a context's domain is fixed at ``init`` and the
   constructor's ``ROS_DOMAIN_ID`` write cannot move it. The guard lives in the
   shared :class:`~strands_robots.ros_telemetry.RosTelemetryBridge`, so the
-  hardware bridge is held to it too.
+  hardware bridge is held to it too - and, being the one refusal that lands
+  after the constructor's ``ROS_DOMAIN_ID`` write, it hands that variable back
+  as it found it.
 * A ``MuJoCoSimEngine`` constructor argument that is refused leaves no rclpy
   node or context behind, whichever argument it is.
 """
@@ -265,8 +267,6 @@ def test_a_domain_the_running_context_cannot_be_moved_to_is_refused(
     bridges for one robot then put two publishers on ``/<robot>/joint_states``
     and interleaved two poses under one name.
 
-    The refusal is also the only one that lands after the process-wide write, so
-    it is the only one that has to undo it.
     """
     from strands_robots.simulation.ros_bridge import SimRosBridge
 
@@ -288,9 +288,48 @@ def test_a_domain_the_running_context_cannot_be_moved_to_is_refused(
         assert f"already has a running rclpy context on domain {running}" in message
         assert f"pass domain_id={running}" in message, "the refusal names the domain that would work"
         assert len(fake_ros["nodes"]) == 1, "the refused bridge created a node it cannot shut down"
-        assert os.environ["ROS_DOMAIN_ID"] == str(running), "the refusal left the domain write in place"
 
     first.shutdown()
+
+
+#: What ``ROS_DOMAIN_ID`` held before a bridge that gets refused was built. This
+#: refusal is the only one that lands *after* the constructor's process-wide
+#: write, so it is the only one that has to undo it, and "as it found it" has two
+#: shapes: unset stays unset, and a value the shell or an earlier bridge left
+#: comes back unchanged rather than being replaced by the domain in force.
+_PREEXISTING_DOMAIN_ENV: list[str | None] = [None, "3"]
+
+
+@pytest.mark.parametrize("preexisting", _PREEXISTING_DOMAIN_ENV, ids=repr)
+def test_a_refused_domain_leaves_the_environment_as_it_found_it(
+    fake_ros: dict[str, Any], monkeypatch: pytest.MonkeyPatch, preexisting: str | None
+) -> None:
+    """A refused bridge hands the caller's ``ROS_DOMAIN_ID`` back untouched.
+
+    The range and QoS refusals land before the write and so leave the
+    environment alone for free; this one cannot, and a stranded ``ROS_DOMAIN_ID``
+    outlives the constructor that failed - every later context in the process,
+    and every ROS 2 command line run from it, reads the domain of a bridge that
+    was never built.
+
+    The context here is one no bridge owns, as any library calling
+    ``rclpy.init()`` leaves behind, so the variable under test is the caller's
+    own rather than an earlier bridge's.
+    """
+    from strands_robots.simulation.ros_bridge import SimRosBridge
+
+    if preexisting is None:
+        monkeypatch.delenv("ROS_DOMAIN_ID", raising=False)
+    else:
+        monkeypatch.setenv("ROS_DOMAIN_ID", preexisting)
+    fake_ros["inited"] = True
+    fake_ros["domain"] = 0
+
+    with pytest.raises(ValueError, match="domain_id 7 cannot be honored"):
+        SimRosBridge(domain_id=7)
+
+    assert os.environ.get("ROS_DOMAIN_ID") == preexisting
+    assert fake_ros["nodes"] == [], "the refused bridge created a node it cannot shut down"
 
 
 def test_shutdown_reports_a_context_it_could_not_release(
