@@ -26,10 +26,12 @@ CI, pinned by ``test_a_merge_commit_head_defeats_the_check``.
 from __future__ import annotations
 
 import ast
+import base64
 import importlib.util
 import inspect
 import subprocess
 import sys
+import urllib.error
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -497,8 +499,9 @@ def _api(
     compares: dict[str, object],
     pull_files: dict[int, list[dict[str, object]]] | None = None,
     base: str = "main",
+    contents: dict[str, str] | None = None,
 ) -> Callable[[str, str], object]:
-    """Return a ``_get`` stand-in serving the open set, compares, and head file lists.
+    """Return a ``_get`` stand-in serving the open set, compares, head file lists and blobs.
 
     A compare with no recorded payload raises, which is deliberate: an unrecorded
     lookup is a test that has not said what it means, and silently returning an
@@ -511,13 +514,27 @@ def _api(
     (153), identical both ways. The tests where the two must differ record the
     divergence explicitly, which is the only place the distinction carries
     meaning.
+
+    ``contents`` records a blob's text by ``"<ref>:<path>"``, served in the shape
+    the contents endpoint returns (base64 under ``content``). An unrecorded blob
+    raises for the same reason an unrecorded compare does -- and here the silent
+    alternative would be worse than "no overlap": an empty page is zero words,
+    which is inside every budget.
     """
     heads = {int(cast(int, row["number"])): str(cast(dict[str, object], row["head"])["sha"]) for row in pulls}
     recorded = dict(pull_files or {})
+    blobs = dict(contents or {})
 
     def get(url: str, token: str) -> object:
         if "/pulls?" in url:
             return pulls if url.endswith("page=1") else []
+        if "/contents/" in url:
+            path, _, ref = url.split("/contents/", 1)[1].partition("?ref=")
+            key = f"{ref}:{path}"
+            if key not in blobs:
+                raise check.ApiError(f"no recorded blob for {key}")
+            encoded = base64.b64encode(blobs[key].encode("utf-8")).decode("ascii")
+            return {"encoding": "base64", "content": encoded}
         if "/files?" in url:
             number = int(url.split("/pulls/", 1)[1].split("/files", 1)[0])
             entries = recorded.get(number)
@@ -539,6 +556,11 @@ def _api(
 
 def _pull(number: int, head: str, *, draft: bool = False) -> dict[str, object]:
     return {"number": number, "head": {"sha": head}, "draft": draft}
+
+
+def _page(words: int) -> str:
+    """A docs page of exactly ``words`` words, counted as the budget grader counts (``str.split()``)."""
+    return " ".join(["word"] * words) + "\n"
 
 
 def _sweep(monkeypatch: pytest.MonkeyPatch, get: Callable[[str, str], object], tmp_path: Path) -> int:
@@ -599,6 +621,11 @@ def test_a_prose_only_pair_is_listed_but_does_not_set_the_exit_status(
             "head10...main": _compare([]),
             "main...head20": _compare(["docs/guide.md"]),
             "head20...main": _compare([]),
+        },
+        contents={
+            "aaaa1111:docs/guide.md": _page(100),
+            "head10:docs/guide.md": _page(110),
+            "head20:docs/guide.md": _page(120),
         },
     )
 
@@ -1072,6 +1099,215 @@ def test_the_sweep_and_the_single_branch_mode_share_one_prose_rule(
     # The same prose-only pair the test above cleared now blocks, because the one
     # classification both modes read has changed.
     assert _sweep(monkeypatch, get, tmp_path) == 1
+
+
+# --- a shared docs page is graded, so prose-only is not always harmless ---------
+#
+# ``tests/test_docs_pages_are_within_the_word_budget.py`` counts every
+# ``docs/**/*.md`` page against a budget. Two additions to one page compose to a
+# count neither head has, and a text-clean merge is the normal case, so both
+# halves of the prose-only argument fail there (#3961). The numbers below are the
+# incident's: #3907 and #3940 on ``docs/policies/moveit2.md``, base 1479, heads
+# 1493 and 1497, composed 1511 against 1500.
+
+_PAGE = "docs/policies/moveit2.md"
+_GRADER_PATH = _REPO_ROOT / "tests" / "test_docs_pages_are_within_the_word_budget.py"
+
+
+def _docs_pair(base_words: int, left_words: int, right_words: int) -> Callable[[str, str], object]:
+    """Two open pull requests sharing one docs page, with the three blobs recorded."""
+    return _api(
+        [_pull(10, "head10"), _pull(20, "head20")],
+        {
+            "main...head10": _compare([_PAGE]),
+            "head10...main": _compare([]),
+            "main...head20": _compare([_PAGE]),
+            "head20...main": _compare([]),
+        },
+        contents={
+            f"aaaa1111:{_PAGE}": _page(base_words),
+            f"head10:{_PAGE}": _page(left_words),
+            f"head20:{_PAGE}": _page(right_words),
+        },
+    )
+
+
+def test_a_docs_page_pair_each_inside_the_budget_but_composing_over_it_is_reported(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The pin for #3961: each head passes the grader alone, and the composition fails it.
+
+    Both pull requests were approved with auto-merge armed and the sweep listed
+    them as prose-only. Whichever squashed second would have turned ``main`` red
+    on the required check with nothing to resolve, so the pair belongs in the
+    reported section with the three counts a reader needs to see the sum.
+    """
+    get = _docs_pair(1479, 1493, 1497)
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert "compose over the word budget (1)" in report
+    assert f"| #10 + #20 | `{_PAGE}` | base 1479, #10 1493, #20 1497, composed 1511 > 1500 |" in report
+    # Promoted out of the not-reported list, not duplicated into it.
+    assert "prose-only" not in report
+
+
+def test_a_docs_page_pair_whose_composition_stays_inside_the_budget_is_still_prose_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The exemption is kept for a page the sum leaves inside: 1479 + 11 + 9 = 1499.
+
+    One word under is the boundary the grader draws (``<=``), so a sweep that
+    reported this pair would be reporting a composition the required check would
+    pass.
+    """
+    get = _docs_pair(1479, 1490, 1488)
+
+    assert _sweep(monkeypatch, get, tmp_path) == 0
+
+    report = capsys.readouterr().out
+    assert "compose over the word budget" not in report
+    assert f"#10 + #20: `{_PAGE}`" in report
+    assert "prose-only" in report
+
+
+def test_an_unreadable_docs_page_blob_is_named_as_unevaluated_rather_than_inside(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A blob the sweep could not read is an unknown, not a page inside the budget.
+
+    The sweep's failure mode is a missed overlap, and a failed read that fell
+    through to "prose-only" would be exactly that with a reassuring label. So the
+    page is listed where every other unreadable input is, and leaves the
+    not-reported list, which would describe it as considered and cleared.
+    """
+    recorded = _docs_pair(1479, 1493, 1497)
+
+    def get(url: str, token: str) -> object:
+        if "/contents/" in url and url.endswith("?ref=aaaa1111"):
+            raise urllib.error.HTTPError(url, 404, "Not Found", None, None)  # type: ignore[arg-type]
+        return recorded(url, token)
+
+    assert _sweep(monkeypatch, get, tmp_path) == 0
+
+    report = capsys.readouterr().out
+    assert "Unevaluated (1)" in report
+    assert f"- #10 + #20: `{_PAGE}` word-budget composition unreadable: HTTP Error 404" in report
+    assert "prose-only" not in report
+    assert "compose over the word budget" not in report
+
+
+def test_a_head_already_over_the_budget_alone_is_its_own_red_not_a_composition(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A branch the grader already fails on its own needs no pair to explain it.
+
+    The composition is over too (1479 + 31 + 11), but the finding this section
+    makes is "neither branch can see it", and one of them can. The same test is
+    what leaves a page the grader exempts alone: an exemption is over on every
+    head by construction.
+    """
+    get = _docs_pair(1479, 1510, 1490)
+
+    assert _sweep(monkeypatch, get, tmp_path) == 0
+
+    report = capsys.readouterr().out
+    assert "compose over the word budget" not in report
+    assert f"#10 + #20: `{_PAGE}`" in report
+    assert "prose-only" in report
+
+
+def test_the_budget_composition_reads_every_blob_from_the_base_repository_and_the_base_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Three blob reads per shared page: two heads and the base, with no checkout.
+
+    Every blob is read from the repository being swept -- a pull request's commits
+    are in the base repository's object store, fork or not, which is what the
+    compare endpoint already relies on -- and the base blob once when both sides
+    share the merge base the compare payload carries.
+    """
+    recorded = _docs_pair(1479, 1493, 1497)
+    urls: list[str] = []
+
+    def counting(url: str, token: str) -> object:
+        urls.append(url)
+        return recorded(url, token)
+
+    assert _sweep(monkeypatch, counting, tmp_path) == 1
+
+    blob_urls = sorted(url for url in urls if "/contents/" in url)
+    assert blob_urls == [
+        f"{check.API_ROOT}/repos/owner/name/contents/{_PAGE}?ref=aaaa1111",
+        f"{check.API_ROOT}/repos/owner/name/contents/{_PAGE}?ref=head10",
+        f"{check.API_ROOT}/repos/owner/name/contents/{_PAGE}?ref=head20",
+    ]
+
+
+def test_no_blob_is_read_for_a_pair_sharing_no_graded_page(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The read is scoped to the grader's population, so the rest of the queue costs nothing.
+
+    A shared ``CHANGELOG.md`` is prose no grader counts, and a pair already
+    reported on a behaviour-bearing path has its merge-order decision pending
+    whatever its docs page says. Neither fetches a blob -- which is also what
+    keeps every pre-existing sweep recording valid without a ``contents`` entry.
+    """
+    recorded = _api(
+        [_pull(10, "head10"), _pull(20, "head20"), _pull(30, "head30")],
+        {
+            "main...head10": _compare(["CHANGELOG.md", _SHARED, _PAGE]),
+            "head10...main": _compare([]),
+            "main...head20": _compare(["CHANGELOG.md"]),
+            "head20...main": _compare([]),
+            "main...head30": _compare([_SHARED, _PAGE]),
+            "head30...main": _compare([]),
+        },
+    )
+    urls: list[str] = []
+
+    def counting(url: str, token: str) -> object:
+        urls.append(url)
+        return recorded(url, token)
+
+    assert _sweep(monkeypatch, counting, tmp_path) == 1
+    assert [url for url in urls if "/contents/" in url] == []
+
+
+def test_the_sweep_budget_is_the_graders_budget() -> None:
+    """One number, two owners by necessity, pinned equal here.
+
+    The grader owns the policy: it is what turns ``main`` red. The sweep cannot
+    import it -- it runs with no checkout and nothing outside the standard
+    library -- so it carries a copy, and this cell is what makes the copy safe:
+    raising either literal without the other fails the suite, from the same
+    source text the grader runs.
+    """
+    tree = ast.parse(_GRADER_PATH.read_text(encoding="utf-8"))
+    budgets = [
+        node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "_BUDGET" for target in node.targets)
+        and isinstance(node.value, ast.Constant)
+    ]
+    assert budgets == [check.DOCS_WORD_BUDGET]
+
+
+@pytest.mark.parametrize(
+    ("path", "graded"),
+    [
+        ("docs/policies/moveit2.md", True),
+        ("docs/index.md", True),
+        ("docs/README.rst", False),
+        ("CHANGELOG.md", False),
+        ("documents/guide.md", False),
+        ("strands_robots/docs/notes.md", False),
+    ],
+)
+def test_a_page_is_graded_exactly_where_the_budget_grader_looks(path: str, graded: bool) -> None:
+    """``docs/**/*.md`` and nothing else, matching the grader's ``rglob`` over ``docs``."""
+    assert check.is_budgeted_page(path) is graded
 
 
 def test_all_open_and_head_are_mutually_exclusive(tmp_path: Path) -> None:

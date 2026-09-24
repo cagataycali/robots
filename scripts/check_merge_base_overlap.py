@@ -247,6 +247,24 @@ want -- but they do not set the exit status, so a docs PR that happens to share
 a file with a landed docs PR is not asked to re-run a full test suite for a
 result that cannot change.
 
+One prose surface is graded, and there both halves of that argument fail.
+``tests/test_docs_pages_are_within_the_word_budget.py`` counts every
+``docs/**/*.md`` page against :data:`DOCS_WORD_BUDGET`, so two additions to one
+page near the budget compose to a count neither branch has, and a text-clean
+merge is the normal case for two paragraphs added in different sections. #3907
+and #3940 both edited ``docs/policies/moveit2.md`` (base 1479 words): 1493 and
+1497 words at their heads, both passing, and 1511 composed over the shared base
+against a budget of 1500. The sweep listed the pair as prose-only, and whichever
+squashed second would have turned ``main`` red on the required check with
+nothing to resolve (#3961). So the sweep reads the three blobs -- each head's and
+the base's -- for a shared docs page, counts words exactly as the grader does
+(``len(text.split())``), and reports the pair when the composition exceeds the
+budget while each head alone is inside it. A head already over the budget alone
+is that branch's own red rather than a composition, and a page the grader
+exempts is over on both heads by construction, so the same condition leaves both
+in the prose-only list. A blob that could not be read is named as unevaluated,
+never counted as inside: this check's failure mode is a missed overlap.
+
 Usage
 -----
 ``--base-ref``  the branch being merged into (default ``main``). Resolved as
@@ -295,6 +313,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 import dataclasses
 import itertools
 import json
@@ -303,6 +322,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -310,6 +330,18 @@ from pathlib import Path
 #: Suffixes whose overlap cannot change the outcome of the test suite or the
 #: contents of the built package, and so is reported without blocking.
 PROSE_SUFFIXES = frozenset({".md", ".rst", ".txt"})
+
+#: The per-page word ceiling ``tests/test_docs_pages_are_within_the_word_budget.py``
+#: grades every ``docs/**/*.md`` page against. That grader is the policy's owner:
+#: it is what turns ``main`` red. This is a copy rather than an import because the
+#: sweep runs with no checkout and this script imports nothing outside the
+#: standard library, so the grader's module is not reachable from here; the two
+#: literals are pinned equal by ``tests/test_merge_base_overlap.py``, which reads
+#: the grader's source, so a change to either without the other fails the suite.
+DOCS_WORD_BUDGET = 1500
+
+#: Where the word-budget grader's population lives, as a path prefix.
+DOCS_ROOT = "docs/"
 
 
 class GitError(RuntimeError):
@@ -420,6 +452,25 @@ def diff_entries(start: str, end: str, repo: Path | None = None) -> tuple[tuple[
 def is_prose(path: str) -> bool:
     """Whether a path is documentation, and so reported without blocking."""
     return Path(path).suffix.lower() in PROSE_SUFFIXES
+
+
+def is_budgeted_page(path: str) -> bool:
+    """Whether the word-budget grader reads a path: a Markdown page under ``docs/``.
+
+    Prefix and suffix exactly as the grader resolves its population
+    (``docs.rglob("*.md")``), so the sweep reads a blob only for a page whose
+    composed count the required check will grade.
+    """
+    return path.startswith(DOCS_ROOT) and path.endswith(".md")
+
+
+def word_count(text: str) -> int:
+    """Count words the way the budget is stated: ``str.split()`` over the whole file.
+
+    The grader's ``_words`` verbatim -- front matter and fences included -- so the
+    number reported here is the number the required check would print.
+    """
+    return len(text.split())
 
 
 def partition_overlap(paths: Iterable[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -1109,6 +1160,119 @@ def stale_base_overlaps(
     return found
 
 
+def file_text(repo: str, path: str, ref: str, token: str) -> str:
+    """Return one file's text at ``ref``, read through the contents endpoint.
+
+    ``repo`` is the base repository for every blob, a fork head's included: a pull
+    request's commits live in the base repository's object store, which is what
+    the compare endpoint this script already relies on resolves them from.
+    Measured on a fork head (``11c9d777`` on ``shipitfast/robots``): the base
+    repository's contents endpoint returned the same blob, sha ``a94a84f8``, as
+    the fork's did.
+
+    The payload carries the blob base64-encoded for anything under the endpoint's
+    1 MiB ceiling, which every docs page is. Decoded as UTF-8 because that is the
+    codec the grader states on its own read; a payload in any other shape is an
+    ``ApiError`` rather than an empty string, since an empty string counts as
+    zero words and zero words is "inside the budget" -- the answer this relation
+    must never give by accident.
+    """
+    url = f"{API_ROOT}/repos/{repo}/contents/{urllib.parse.quote(path)}?ref={ref}"
+    payload = _get(url, token)
+    content = payload.get("content") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict) or payload.get("encoding") != "base64" or not isinstance(content, str):
+        raise ApiError(f"{url}: expected a base64-encoded file payload")
+    return base64.b64decode(content).decode("utf-8")
+
+
+@dataclasses.dataclass(frozen=True)
+class DocsBudgetComposition:
+    """One shared docs page whose two edits compose to a count neither branch has.
+
+    ``composed`` is the larger of the two ways of adding one head's delta over its
+    own merge base to the other head's count. The two agree whenever the page is
+    identical at both merge bases, which is every pair whose base did not move
+    under the page -- and when it did, the larger is the conservative reading for
+    a check whose failure mode is a missed overlap.
+    """
+
+    left: int
+    right: int
+    path: str
+    left_words: int
+    right_words: int
+    base_words: tuple[int, int]
+    composed: int
+
+
+def docs_budget_pair_overlaps(
+    pull_requests: Iterable[OpenPullRequest],
+    pairs: Iterable[tuple[int, int, tuple[str, ...], tuple[str, ...]]],
+    repo: str,
+    token: str,
+) -> tuple[list[DocsBudgetComposition], list[tuple[int, int, str, str]]]:
+    """Return ``(compositions, unevaluated)`` for the docs pages prose-only pairs share.
+
+    The one prose relation that can turn ``main`` red without a conflict (#3961):
+    the word-budget grader reads every ``docs/**/*.md`` page, so two additions to
+    one page compose to a count neither head has. Only pairs the path relation
+    left prose-only are read -- a pair already reported on a behaviour-bearing
+    path has its merge-order decision pending whatever the page does -- and only
+    pages the grader's population contains, so the read costs three blobs per
+    shared page and nothing for the rest of the queue.
+
+    A pair is a finding when the composition exceeds :data:`DOCS_WORD_BUDGET` and
+    each head alone is inside it. A head already over is that branch's own red,
+    not a composition, and the same test leaves a page the grader exempts in the
+    prose-only list: an exemption is graded as still over, so both heads are.
+
+    ``unevaluated`` rows are ``(left, right, path, reason)`` for every page a blob
+    read failed on. Named rather than read as inside, for the reason the module
+    docstring gives at every other unreadable input here.
+    """
+    by_number = {row.number: row for row in pull_requests}
+    counted: dict[tuple[str, str], int] = {}
+    lookup_failures = (ApiError, urllib.error.URLError, ValueError)
+
+    def words_at(ref: str, path: str) -> int:
+        key = (ref, path)
+        if key not in counted:
+            counted[key] = word_count(file_text(repo, path, ref, token))
+        return counted[key]
+
+    found: list[DocsBudgetComposition] = []
+    unevaluated: list[tuple[int, int, str, str]] = []
+    for left_number, right_number, blocking, prose in pairs:
+        if blocking:
+            continue
+        left, right = by_number[left_number], by_number[right_number]
+        for path in prose:
+            if not is_budgeted_page(path):
+                continue
+            try:
+                left_words = words_at(left.head_sha, path)
+                right_words = words_at(right.head_sha, path)
+                left_base = words_at(left.merge_base, path)
+                right_base = words_at(right.merge_base, path)
+            except lookup_failures as error:
+                unevaluated.append((left_number, right_number, path, f"word-budget composition unreadable: {error}"))
+                continue
+            composed = max(left_words + right_words - right_base, right_words + left_words - left_base)
+            if left_words <= DOCS_WORD_BUDGET and right_words <= DOCS_WORD_BUDGET and composed > DOCS_WORD_BUDGET:
+                found.append(
+                    DocsBudgetComposition(
+                        left=left_number,
+                        right=right_number,
+                        path=path,
+                        left_words=left_words,
+                        right_words=right_words,
+                        base_words=(left_base, right_base),
+                        composed=composed,
+                    )
+                )
+    return found, unevaluated
+
+
 def render_sweep(
     *,
     repo: str,
@@ -1118,7 +1282,9 @@ def render_sweep(
     stale: Sequence[tuple[int, int, tuple[str, ...], tuple[str, ...]]],
     named_pairs: Sequence[tuple[int, int, tuple[str, ...]]],
     named_stale: Sequence[tuple[int, int, tuple[str, ...]]],
+    budget_pairs: Sequence[DocsBudgetComposition],
     unevaluated: Sequence[tuple[int, str]],
+    unevaluated_pages: Sequence[tuple[int, int, str, str]],
 ) -> str:
     """Render the sweep report.
 
@@ -1136,10 +1302,20 @@ def render_sweep(
     lines.append("")
 
     blocking_pairs = [row for row in pairs if row[2]]
-    prose_pairs = [row for row in pairs if not row[2]]
+    # A page the budget relation reported, or could not read, leaves the
+    # prose-only list: it is either a finding or an unknown, and "not reported"
+    # would describe neither.
+    promoted = {(row.left, row.right, row.path) for row in budget_pairs}
+    promoted.update((left, right, path) for left, right, path, _ in unevaluated_pages)
+    prose_pairs = [
+        (left, right, blocking, remaining)
+        for left, right, blocking, prose in pairs
+        if not blocking
+        if (remaining := tuple(path for path in prose if (left, right, path) not in promoted))
+    ]
     blocking_stale = [row for row in stale if row[2]]
 
-    if not blocking_pairs and not blocking_stale and not named_pairs and not named_stale:
+    if not blocking_pairs and not blocking_stale and not named_pairs and not named_stale and not budget_pairs:
         clean = (
             "No pair in the open set shares a changed path, no pull request shares one "
             + "with what has landed on its base, and no test names a module a sibling or the "
@@ -1217,6 +1393,33 @@ def render_sweep(
             rendered = ", ".join(f"`{module}`" for module in modules)
             lines.append(f"| #{number} | {behind_by} | {rendered} |")
         lines.append("")
+    if budget_pairs:
+        budget_heading = f"### Pairs whose edits to one docs page compose over the word budget ({len(budget_pairs)})"
+        budget_why = (
+            f"Each head is inside the {DOCS_WORD_BUDGET}-word budget "
+            + "`tests/test_docs_pages_are_within_the_word_budget.py` grades, and the two additions to "
+            + "one page compose to a count neither branch has. Prose cannot change what the suite "
+            + "does, but the suite reads this prose: whichever merges second turns the required "
+            + "check red on the base with no conflict for git to report. Counted as the grader "
+            + "counts, `len(text.split())` over the whole file; cutting the overshoot from either "
+            + "addition before the second merge is what clears it."
+        )
+        lines.append(budget_heading)
+        lines.append("")
+        lines.append(budget_why)
+        lines.append("")
+        lines.append("| pull requests | page | words at base, at each head, composed |")
+        lines.append("|---|---|---|")
+        for row in budget_pairs:
+            base = (
+                str(row.base_words[0]) if row.base_words[0] == row.base_words[1] else "/".join(map(str, row.base_words))
+            )
+            counts = (
+                f"base {base}, #{row.left} {row.left_words}, #{row.right} {row.right_words}, "
+                + f"composed {row.composed} > {DOCS_WORD_BUDGET}"
+            )
+            lines.append(f"| #{row.left} + #{row.right} | `{row.path}` | {counts} |")
+        lines.append("")
     if prose_pairs:
         prose_heading = (
             f"Also sharing a path, not reported ({len(prose_pairs)} prose-only pair(s)) - prose "
@@ -1229,15 +1432,17 @@ def render_sweep(
             rendered = ", ".join(f"`{path}`" for path in paths)
             lines.append(f"- #{left} + #{right}: {rendered}")
         lines.append("")
-    if unevaluated:
+    if unevaluated or unevaluated_pages:
         unevaluated_heading = (
-            f"Unevaluated ({len(unevaluated)}) - named rather than counted as clean, because a "
-            + "pull request this check could not read is not a pull request it cleared:"
+            f"Unevaluated ({len(unevaluated) + len(unevaluated_pages)}) - named rather than counted as "
+            + "clean, because a pull request this check could not read is not a pull request it cleared:"
         )
         lines.append(unevaluated_heading)
         lines.append("")
         for number, reason in unevaluated:
             lines.append(f"- #{number}: {reason}")
+        for left, right, path, reason in unevaluated_pages:
+            lines.append(f"- #{left} + #{right}: `{path}` {reason}")
         lines.append("")
 
     remedy = (
@@ -1288,6 +1493,7 @@ def _run_sweep(repo: str, base_ref: str, token: str) -> int:
     stale = stale_base_overlaps(pull_requests)
     named_pairs = named_module_pair_overlaps(pull_requests)
     named_stale = named_module_stale_overlaps(pull_requests)
+    budget_pairs, unevaluated_pages = docs_budget_pair_overlaps(pull_requests, pairs, repo, token)
     _emit(
         render_sweep(
             repo=repo,
@@ -1296,14 +1502,24 @@ def _run_sweep(repo: str, base_ref: str, token: str) -> int:
             pairs=pairs,
             named_pairs=named_pairs,
             named_stale=named_stale,
+            budget_pairs=budget_pairs,
             stale=stale,
             unevaluated=unevaluated,
+            unevaluated_pages=unevaluated_pages,
         )
     )
     # A named-module finding blocks on the same footing as a shared path: both say
     # the composition has never been compiled, and this one resolves only to '.py'
-    # module files, so there is no prose half to suppress.
-    blocking = any(row[2] for row in pairs) or any(row[2] for row in stale) or bool(named_pairs) or bool(named_stale)
+    # module files, so there is no prose half to suppress. A docs page composing
+    # over the word budget is the one prose finding on that footing: the suite
+    # reads it, and the composition is red.
+    blocking = (
+        any(row[2] for row in pairs)
+        or any(row[2] for row in stale)
+        or bool(named_pairs)
+        or bool(named_stale)
+        or bool(budget_pairs)
+    )
     return 1 if blocking else 0
 
 
