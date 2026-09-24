@@ -90,9 +90,9 @@ _LEROBOT_LISTING = "Known lerobot robot types"
 def _lerobot_robot_types() -> set[str]:
     """Every robot type lerobot's ChoiceRegistry knows, after its own discovery."""
     pytest.importorskip("lerobot")
-    from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
+    from strands_robots.utils import ensure_lerobot_family_registered
 
-    _ensure_lerobot_robots_registered()
+    ensure_lerobot_family_registered("robots")
     from lerobot.robots.config import RobotConfig
 
     return set(RobotConfig.get_known_choices())
@@ -218,9 +218,9 @@ class TestTheTeleoperatorRefusalIsUnchanged:
     def _in_both_registries() -> set[str]:
         """Names lerobot lists as a teleoperator that also have a native driver."""
         pytest.importorskip("lerobot")
-        from strands_robots.teleoperator import _ensure_lerobot_teleoperators_registered
+        from strands_robots.utils import ensure_lerobot_family_registered
 
-        _ensure_lerobot_teleoperators_registered()
+        ensure_lerobot_family_registered("teleoperators")
         from lerobot.teleoperators.config import TeleoperatorConfig
 
         return {name for name in TeleoperatorConfig.get_known_choices() if get_native_driver_class(name) is not None}

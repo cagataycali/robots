@@ -27,11 +27,10 @@ The returned object is a raw lerobot ``Teleoperator`` - it duck-types to
 from __future__ import annotations
 
 import dataclasses
-import importlib
 import logging
-import pkgutil
-from functools import cache
 from typing import TYPE_CHECKING, Any
+
+from strands_robots.utils import ensure_lerobot_family_registered
 
 if TYPE_CHECKING:
     from lerobot.teleoperators.teleoperator import Teleoperator as LeRobotTeleoperator
@@ -85,65 +84,6 @@ _FORWARDABLE_TELEOP_KWARGS = (
 )
 
 
-@cache
-def _ensure_lerobot_teleoperators_registered() -> None:
-    """Import every teleoperator subpackage so TeleoperatorConfig is populated.
-
-    Mirror of ``hardware_robot._ensure_lerobot_robots_registered`` - walks
-    ``lerobot.teleoperators`` with ``pkgutil`` so we automatically pick up
-    every teleoperator lerobot ships, including those whose registered type
-    name doesn't match its subpackage name (e.g. ``so101_leader`` /
-    ``so100_leader`` both in ``so_leader/``). Then invokes lerobot's
-    third-party plugin loader so ``lerobot_teleoperator_*`` distributions
-    register too.
-
-    Idempotent via ``@cache`` - first call walks the tree, the rest are
-    no-ops.
-    """
-    try:
-        import lerobot.teleoperators as _lr_teleop
-    except ImportError as exc:
-        # Two failure modes, matched log levels (see hardware_robot):
-        #   1. lerobot wholly absent -> debug (sim-only / CI hosts).
-        #   2. lerobot present but lerobot.teleoperators broken -> warning
-        #      (genuine partial-install signal).
-        try:
-            import lerobot  # noqa: F401  (probe-only)
-        except ImportError:
-            logger.debug("lerobot not installed: %s", exc)
-        else:
-            logger.warning(
-                "lerobot is installed but lerobot.teleoperators is not importable (partial install?): %s",
-                exc,
-            )
-        return
-
-    for _, sub_name, is_pkg in pkgutil.iter_modules(_lr_teleop.__path__):
-        if not is_pkg:
-            continue
-        full_name = f"{_lr_teleop.__name__}.{sub_name}"
-        try:
-            importlib.import_module(full_name)
-        except (ImportError, OSError) as exc:
-            # Device-specific runtime dep missing (hidapi for gamepad,
-            # reachy2_sdk, unitree_sdk2py, ...) OR an OS-level probe failure
-            # inside a driver's __init__. The teleoperator simply won't appear
-            # in the choice registry -- the correct outcome; constructing it
-            # later raises a clean "Unsupported teleoperator type". Narrow
-            # (ImportError, OSError) per AGENTS.md > Review Learnings (#86).
-            logger.debug("[teleoperator] skip %s: %s", full_name, exc)
-
-    try:
-        from lerobot.utils.import_utils import register_third_party_plugins
-    except ImportError:
-        logger.debug("[teleoperator] register_third_party_plugins unavailable")
-    else:
-        try:
-            register_third_party_plugins()
-        except (ImportError, AttributeError, OSError) as exc:
-            logger.warning("[teleoperator] third-party plugin registration failed: %s", exc)
-
-
 def _other_lerobot_kind_refusal(requested: str, *, wanted: str) -> str | None:
     """Name ``requested`` as the OTHER kind of lerobot device, or ``None``.
 
@@ -176,7 +116,7 @@ def _other_lerobot_kind_refusal(requested: str, *, wanted: str) -> str | None:
     if wanted == "robot":
         from lerobot.teleoperators.config import TeleoperatorConfig
 
-        _ensure_lerobot_teleoperators_registered()
+        ensure_lerobot_family_registered("teleoperators")
         if requested not in TeleoperatorConfig.get_known_choices():
             return None
         return (
@@ -189,12 +129,7 @@ def _other_lerobot_kind_refusal(requested: str, *, wanted: str) -> str | None:
     if wanted == "teleoperator":
         from lerobot.robots.config import RobotConfig
 
-        # Imported here, not at module scope: this module is deliberately
-        # stdlib-only so it stays import-safe, and the robot registry is only
-        # needed on a refusal path.
-        from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
-
-        _ensure_lerobot_robots_registered()
+        ensure_lerobot_family_registered("robots")
         if requested not in RobotConfig.get_known_choices():
             return None
         return (
@@ -217,7 +152,7 @@ def _build_teleop_config(teleop_type: str, **kwargs: Any) -> Any:
     """
     from lerobot.teleoperators.config import TeleoperatorConfig
 
-    _ensure_lerobot_teleoperators_registered()
+    ensure_lerobot_family_registered("teleoperators")
 
     try:
         ConfigClass = TeleoperatorConfig.get_choice_class(teleop_type)

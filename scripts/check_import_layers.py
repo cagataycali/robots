@@ -67,7 +67,10 @@ PACKAGE = "strands_robots"
 #: concern shared by three hosts in three layers - the hardware ``Robot``, the
 #: MuJoCo ``Simulation`` and the Device Connect sim driver - so it belongs under
 #: the lowest of them, which is where its own module-scope imports already put
-#: it (``utils`` alone).
+#: it (``utils`` alone). ``teleoperator`` sits there for the same reason and
+#: reads the same way: it is the factory for the input device that mixin
+#: attaches, its own only in-package import is ``utils``, and its two readers
+#: are that mixin and the hardware ``Robot`` a layer above.
 #: ``__main__`` sits in the top layer because a console entry point is the one
 #: module nothing can import: it is the process, not a part of the library, and
 #: it reaches for whatever the command a reader typed needs - the doctor, the
@@ -106,7 +109,17 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("registry", ("assets", "registry")),
     (
         "drivers|mesh",
-        ("device_connect", "drivers", "mesh", "ros", "rosbridge", "ros_telemetry", "rtps", "teleop_mixin"),
+        (
+            "device_connect",
+            "drivers",
+            "mesh",
+            "ros",
+            "rosbridge",
+            "ros_telemetry",
+            "rtps",
+            "teleop_mixin",
+            "teleoperator",
+        ),
     ),
     ("sim|policies", ("inference", "policies", "simulation", "training")),
     (
@@ -118,7 +131,6 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "hardware_ros_bridge",
             "hardware_rtps_bridge",
             "robot",
-            "teleoperator",
             "verify_dataset",
         ),
     ),
@@ -144,8 +156,7 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 #: inside a function body, once, on first call.
 #:
 #: Sanctioned, and staying: ``_hitl_audit`` writes the operator's answer through
-#: the mesh safety log; ``teleop_mixin`` defers ``teleoperator`` because that
-#: module imports lerobot. Each is pinned individually in
+#: the mesh safety log. Each is pinned individually in
 #: ``tests/test_import_layers_are_a_dag.py``.
 #:
 #: Every entry is an inversion the code forces. An inversion that only the
@@ -164,7 +175,6 @@ KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.drivers.rollout", "strands_robots.policies"),
     ("strands_robots.drivers.feetech.twin", "strands_robots.simulation"),
     ("strands_robots.drivers.yahboom_m3pro_twin", "strands_robots.simulation"),
-    ("strands_robots.teleop_mixin", "strands_robots.teleoperator"),
 )
 
 

@@ -73,8 +73,8 @@ install ships:
 
 ```python
 from lerobot.teleoperators.config import TeleoperatorConfig
-from strands_robots.teleoperator import _ensure_lerobot_teleoperators_registered
-_ensure_lerobot_teleoperators_registered()
+from strands_robots.utils import ensure_lerobot_family_registered
+ensure_lerobot_family_registered("teleoperators")
 print(sorted(TeleoperatorConfig.get_known_choices()))
 ```
 
