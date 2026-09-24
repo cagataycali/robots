@@ -1,4 +1,4 @@
-"""Regression tests for the WBC auto-torque-control path on ``run_policy``.
+"""Regression tests for the WBC auto-torque-control path on every rollout surface.
 
 :class:`WBCPolicy` emits joint-**position** targets. The stock
 ``Robot("unitree_g1")`` ships position-servo actuators with a uniform
@@ -8,10 +8,24 @@ servos directly and the gait diverged within a fraction of a second - the
 documented quickstart silently fell over.
 
 The fix gives the MuJoCo engine a ``_maybe_install_wbc_torque_control`` hook
-that ``run_policy`` invokes after binding the policy: when a WBCPolicy meets a
-position-servo scene it auto-installs the torque shim for the duration of the
+that a rollout surface invokes after binding the policy: when a WBCPolicy meets
+a position-servo scene it auto-installs the torque shim for the duration of the
 call and restores the actuators afterwards. The opt-out is the
 ``wbc_install_torque_control=False`` kwarg.
+
+``TestEveryRolloutSurfaceInstallsTheShim`` pins that all three surfaces install
+it, not just ``run_policy``. The hook was read there alone, so the SCORED
+surfaces - ``eval_policy`` and ``evaluate_benchmark``, whose whole output is a
+success rate - drove WBC's position targets into the stock servo gain. Measured
+on ``Robot("unitree_g1")`` with the published
+``GR00T-WholeBodyControl-{Balance,Walk}.onnx`` weights at 50 Hz on the shipped
+``g1_walk_forward`` spec: through ``evaluate_benchmark`` the pelvis fell 0.797 m
+-> 0.393 m, the spec's ``base_below_z`` failure fired at step 107 and the
+benchmark reported ``success_rate: 0.0`` under ``status="success"``; the
+identical call with the shim installed held 0.733 m, walked past the 2 m goal at
+step 139 and scored ``success_rate: 1.0`` (``avg_reward`` 40.3 vs 153.0). A
+success rate carries no field saying which pipeline produced it, so the 0% read
+as an honest policy failure.
 
 These run WITHOUT real SONIC weights (stub ONNX session, real config + joint
 mapping) on the real torque/position-servo G1 model. The end-to-end "does it
@@ -57,6 +71,7 @@ from strands_robots.policies.wbc import (
     wbc_uses_position_servo,
 )
 from strands_robots.simulation.base import SimEngine
+from strands_robots.simulation.benchmark import BenchmarkProtocol, StepInfo
 
 mujoco = pytest.importorskip("mujoco", reason="mujoco not installed")
 
@@ -558,3 +573,176 @@ class TestABackendThatCannotInstallTheShimRefusesInsteadOfFalling:
         assert not isinstance(outcome, str), outcome
         assert callable(outcome)
         outcome()
+
+
+# ---------------------------------------------------------------------------
+# Every rollout surface installs the controller its policy needs
+# ---------------------------------------------------------------------------
+
+
+class _StandSpec(BenchmarkProtocol):
+    """A three-step G1 spec that neither succeeds nor fails.
+
+    The shipped ``g1_walk_forward`` would do, but its 1000-step horizon buys
+    nothing here: what is under test is whether the controller is registered
+    while the policy is being driven, which the first step already answers.
+    """
+
+    max_steps = 3
+
+    @property
+    def supported_robots(self) -> list[str]:
+        return ["unitree_g1"]
+
+    @property
+    def default_robot(self) -> str:
+        return "unitree_g1"
+
+    def on_episode_start(self, sim, rng) -> None:  # type: ignore[no-untyped-def]
+        return None
+
+    def on_step(self, sim, obs, action):  # type: ignore[no-untyped-def]
+        return StepInfo(reward=0.0)
+
+    def is_success(self, sim) -> bool:  # type: ignore[no-untyped-def]
+        return False
+
+    def is_failure(self, sim) -> bool:  # type: ignore[no-untyped-def]
+        return False
+
+
+def _drive(sim, surface: str, policy, **kwargs):  # type: ignore[no-untyped-def]
+    """Roll ``policy`` out through one of the three rollout surfaces."""
+    if surface == "run_policy":
+        return sim.run_policy("unitree_g1", policy_object=policy, n_steps=3, fast_mode=True, **kwargs)
+    if surface == "eval_policy":
+        return sim.eval_policy("unitree_g1", policy_object=policy, max_steps=3, n_episodes=1, **kwargs)
+    return sim.evaluate_benchmark(_SPEC_NAME, robot_name="unitree_g1", policy_object=policy, **kwargs)
+
+
+_SURFACES = ["run_policy", "eval_policy", "evaluate_benchmark"]
+_SPEC_NAME = "wbc_shim_surface_probe"
+
+
+@pytest.fixture
+def stand_spec():  # type: ignore[no-untyped-def]
+    from strands_robots.simulation.benchmark import register_benchmark, unregister_benchmark
+
+    register_benchmark(_SPEC_NAME, _StandSpec())
+    try:
+        yield _SPEC_NAME
+    finally:
+        unregister_benchmark(_SPEC_NAME)
+
+
+class TestEveryRolloutSurfaceInstallsTheShim:
+    """The controller is live while the policy drives, on all three surfaces.
+
+    Read through the policy's own inference call rather than a per-surface hook
+    (``run_policy`` takes an ``observer``, the eval surfaces an ``on_frame``):
+    the session records what the scene's controller registry held at each step,
+    which is the fact the gait depends on and is spelled the same way whoever
+    asks for the rollout.
+    """
+
+    @pytest.fixture
+    def g1(self):  # type: ignore[no-untyped-def]
+        from strands_robots import Robot
+        from strands_robots.simulation.model_registry import resolve_model
+
+        if not resolve_model("unitree_g1"):
+            pytest.skip("unitree_g1 model assets not available")
+        return Robot("unitree_g1", mesh=False)
+
+    @staticmethod
+    def _recording_policy(sim, seen: list) -> WBCPolicy:  # type: ignore[no-untyped-def]
+        policy = _g1_policy()
+        stub = policy.policy_session
+
+        class _Recording:
+            def get_inputs(self):  # type: ignore[no-untyped-def]
+                return stub.get_inputs()
+
+            def run(self, output_names, feed):  # type: ignore[no-untyped-def]
+                seen.append(sim._world._backend_state.get("action_controller"))
+                return stub.run(output_names, feed)
+
+        policy.policy_session = _Recording()
+        return policy
+
+    @pytest.mark.parametrize("surface", _SURFACES)
+    def test_the_shim_is_live_for_every_step_and_gone_after(self, g1, stand_spec, surface: str) -> None:
+        seen: list = []
+        result = _drive(g1, surface, self._recording_policy(g1, seen))
+
+        assert result["status"] == "success", _text_of(result)
+        assert seen, f"{surface}: the policy was never queried, so nothing was measured"
+        assert all(isinstance(c, WBCTorqueController) for c in seen), (
+            f"{surface} drove a WBCPolicy with the scene's controller registry holding "
+            f"{[type(c).__name__ for c in seen]} - WBC's joint-position targets went "
+            "straight into the stock kp=500 servo gain"
+        )
+        assert g1._world._backend_state.get("action_controller") is None, (
+            f"{surface} left the torque shim installed after the call"
+        )
+
+    @pytest.mark.parametrize("surface", _SURFACES)
+    def test_the_opt_out_installs_nothing(self, g1, stand_spec, surface: str) -> None:
+        seen: list = []
+        result = _drive(g1, surface, self._recording_policy(g1, seen), wbc_install_torque_control=False)
+
+        assert result["status"] == "success", _text_of(result)
+        assert seen and all(c is None for c in seen), [type(c).__name__ for c in seen]
+
+    @pytest.mark.parametrize("surface", _SURFACES)
+    def test_the_posture_is_checked_not_read_by_truthiness(self, g1, stand_spec, surface: str) -> None:
+        """``"false"`` is truthy, so reading it would install the shim it spells off."""
+        result = _drive(g1, surface, _g1_policy(), wbc_install_torque_control="false")
+
+        assert result["status"] == "error", _text_of(result)
+        text = _text_of(result)
+        assert "wbc_install_torque_control" in text and surface in text, text
+
+
+class TestABackendThatCannotInstallRefusesOnEverySurface:
+    """The requirement is reported by whichever surface was asked, naming it.
+
+    The refusal exists so a backend without the shim reports the requirement
+    instead of rolling out and letting the fall be the only evidence. Reached
+    from ``run_policy`` alone it left the two surfaces that publish a number
+    doing exactly that.
+    """
+
+    @pytest.mark.parametrize("surface", _SURFACES)
+    def test_the_surface_names_itself_and_applies_no_action(self, stand_spec, surface: str) -> None:
+        sim = _OtherBackendSim()
+        result = _drive(sim, surface, _g1_policy())
+
+        assert result["status"] == "error", _text_of(result)
+        text = _text_of(result)
+        assert text.startswith(f"{surface}:"), text
+        assert "_OtherBackendSim" in text and 'backend="mujoco"' in text, text
+        assert sim.sends == 0, f"{surface}: a refused rollout applies no action"
+
+    @pytest.mark.parametrize("surface", _SURFACES)
+    def test_the_documented_opt_out_still_rolls_out(self, stand_spec, surface: str) -> None:
+        sim = _OtherBackendSim()
+        result = _drive(sim, surface, _g1_policy(), wbc_install_torque_control=False)
+
+        assert result["status"] == "success", _text_of(result)
+        assert sim.sends == 3, sim.sends
+
+
+class TestEveryRolloutSurfaceReadsTheOneInstaller:
+    def test_no_surface_reads_the_hook_directly(self) -> None:
+        """A fourth reader of the hook is a fourth chance to forget the refusal.
+
+        The three surfaces install through ``_install_action_controller``, whose
+        job is to gate the posture and turn a reason string into a refusal. A
+        call site reaching past it is the shape this module's defect had.
+        """
+        src = inspect.getsource(SimEngine)
+        assert src.count("self._maybe_install_wbc_torque_control(") == 1, (
+            "_maybe_install_wbc_torque_control has readers other than _install_action_controller; route them through it"
+        )
+        assert src.count("self._install_action_controller(") == len(_SURFACES)

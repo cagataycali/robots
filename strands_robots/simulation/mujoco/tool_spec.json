@@ -420,7 +420,7 @@
     },
     "wbc_install_torque_control": {
       "type": "boolean",
-      "description": "run_policy: install the torque shim a wbc policy needs on a position-servo scene for the duration of the call (default true). False to drive a torque-actuated scene yourself. No-op for other providers."
+      "description": "run_policy / eval_policy / evaluate_benchmark: install the torque shim a wbc policy needs on a position-servo scene for the duration of the call (default true). False to drive a torque-actuated scene yourself. No-op for other providers."
     },
     "max_onframe_failures": {
       "type": "integer",

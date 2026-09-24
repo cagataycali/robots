@@ -1411,11 +1411,13 @@ class SimEngine(ABC):
 
         Returns:
             ``None`` when nothing has to be installed; a zero-arg cleanup
-            callable when a controller was installed, which :meth:`run_policy`
-            invokes in a ``finally`` block to restore the scene after the
-            rollout; or the reason string when the policy needs a controller
-            this engine cannot install, which :meth:`run_policy` refuses as its
-            ``status="error"`` envelope before any action is applied.
+            callable when a controller was installed, which the calling rollout
+            surface invokes in a ``finally`` block to restore the scene after
+            the rollout; or the reason string when the policy needs a controller
+            this engine cannot install, which that surface refuses as its
+            ``status="error"`` envelope before any action is applied. The reason
+            names no surface: :meth:`_install_action_controller` prefixes the one
+            the caller used, since all three rollout surfaces install through it.
         """
         try:
             from strands_robots.policies.base import iter_policy_tree
@@ -1428,7 +1430,7 @@ class SimEngine(ABC):
         if not any(isinstance(p, WBCPolicy) for p in iter_policy_tree(policy)):
             return None
         return (
-            f"run_policy: {robot_name!r} is driven by a WBCPolicy, which emits joint-position "
+            f"{robot_name!r} is driven by a WBCPolicy, which emits joint-position "
             f"targets the scene's position servos override, and the {type(self).__name__} backend "
             "cannot install the torque shim that corrects them (WBCTorqueController applies "
             "SONIC's per-joint PD law to a compiled MjModel). No rollout was started, because "
@@ -1436,6 +1438,47 @@ class SimEngine(ABC):
             'reports success. Run this policy on the MuJoCo backend (backend="mujoco"), or pass '
             "wbc_install_torque_control=False to drive a torque-actuated scene directly."
         )
+
+    def _install_action_controller(
+        self, policy: Any, robot_name: str, enabled: bool, surface: str
+    ) -> tuple[Callable[[], None] | None, str | None]:
+        """Install the action controller *policy* needs here, or say why not.
+
+        One reader of :meth:`_maybe_install_wbc_torque_control` for every
+        surface that rolls a policy out - :meth:`run_policy`,
+        :meth:`eval_policy` and :meth:`evaluate_benchmark`. The hook lived on
+        ``run_policy`` alone, so the same WBC checkpoint that walks the G1 past
+        the 2 m goal under ``run_policy`` drove the stock position servos
+        directly under ``evaluate_benchmark``: the pelvis collapsed from 0.797 m
+        to 0.393 m by step 107, the spec's ``base_below_z`` failure fired, and
+        the benchmark published ``success_rate: 0.0`` under
+        ``status="success"``. A success rate carries no field saying which
+        pipeline produced it, so that 0% is indistinguishable from an honest
+        policy failure - the scored surfaces are exactly the ones that must not
+        differ from the unscored one here.
+
+        Args:
+            policy: The policy about to be rolled out (or any wrapper declaring
+                it through ``children``).
+            robot_name: Robot the policy drives.
+            enabled: The caller's ``wbc_install_torque_control`` posture.
+                ``False`` installs nothing, for a caller managing the
+                controller itself or driving a torque-actuated scene.
+            surface: Public method name the refusal is prefixed with.
+
+        Returns:
+            ``(cleanup, None)`` when nothing had to be installed (``cleanup`` is
+            ``None``) or a controller was installed (``cleanup`` restores the
+            scene, to be called in the caller's ``finally``); ``(None, reason)``
+            when the policy needs a controller this engine cannot install, which
+            the caller refuses before any action is applied.
+        """
+        if not enabled:
+            return None, None
+        outcome = self._maybe_install_wbc_torque_control(policy, robot_name)
+        if isinstance(outcome, str):
+            return None, f"{surface}: {outcome}"
+        return outcome, None
 
     def _build_policy(
         self, entry: str, policy_provider: str, policy_config: dict[str, Any] | None
@@ -3575,17 +3618,17 @@ class SimEngine(ABC):
         # cleanup callable restores the scene in the finally below. Opt out with
         # wbc_install_torque_control=False (e.g. when you manage the controller
         # yourself or drive a torque-actuated scene directly).
-        controller_cleanup = (
-            self._maybe_install_wbc_torque_control(policy, robot_name) if wbc_install_torque_control else None
+        controller_cleanup, controller_refusal = self._install_action_controller(
+            policy, robot_name, wbc_install_torque_control, "run_policy"
         )
-        if isinstance(controller_cleanup, str):
+        if controller_refusal is not None:
             # The hook reports a controller this engine cannot install. Refused
             # here rather than rolled out: the policy would drive a scene it
             # cannot hold up, and success is what the caller would be told.
             return {
                 "status": "error",
                 "content": [
-                    {"text": controller_cleanup},
+                    {"text": controller_refusal},
                     {"json": {"stopped_reason": "error", "steps_used": 0, "n_steps": 0}},
                 ],
             }
@@ -5136,6 +5179,7 @@ class SimEngine(ABC):
         seed: int | None = None,
         async_rtc: bool = False,
         rtc_inference_timeout_s: float | None = None,
+        wbc_install_torque_control: bool = True,
         on_frame: Callable[[int, dict[str, Any], dict[str, Any]], None] | None = None,
         policy_kwargs: dict[str, Any] | None = None,
         video: dict[str, Any] | None = None,
@@ -5192,6 +5236,17 @@ class SimEngine(ABC):
         bounds each async inference (structured error instead of a hung
         rollout). For benchmark-style latency masking use
         :meth:`run_policy` (``async_rtc=...``).
+
+        ``wbc_install_torque_control`` is the posture :meth:`run_policy`
+        declares under that name, applied here through the same reader
+        (:meth:`_install_action_controller`) and checked as the same boolean
+        domain: ``True`` (default) installs the torque shim a
+        :class:`~strands_robots.policies.wbc.WBCPolicy` needs on a
+        position-servo scene for the duration of the call, then uninstalls it.
+        One install covers every episode - both halves of it survive the
+        per-episode reset. A scored rollout that drove the scene differently
+        from an unscored one published the difference as the policy's own
+        success rate, with no field saying which pipeline produced it.
 
         ``on_frame`` is an optional ``(step, observation, action) -> None``
         hook fired per applied control step on the eval thread, immediately
@@ -5355,7 +5410,11 @@ class SimEngine(ABC):
         # evaluation is the one place a misread here would be trusted as a
         # number, since a success rate carries no field saying which pipeline
         # produced it.
-        if err := self._validate_posture_flags("eval_policy", async_rtc=async_rtc):
+        if err := self._validate_posture_flags(
+            "eval_policy",
+            async_rtc=async_rtc,
+            wbc_install_torque_control=wbc_install_torque_control,
+        ):
             return err
         # A hook that cannot be called is configuration, not telemetry, and is
         # knowable before the first step - so it is refused here, ahead of robot
@@ -5495,23 +5554,37 @@ class SimEngine(ABC):
         self.bind_policy_sim_context(policy, resolved_robot)
         on_frame, recording_claim = self._evaluation_recording(resolved_robot, instruction, on_frame, "eval_policy")
 
-        result = PolicyRunner(self).evaluate(
-            resolved_robot,
-            policy,
-            instruction=instruction,
-            n_episodes=n_episodes,
-            max_steps=max_steps,
-            success_fn=success_check,
-            control_frequency=control_frequency,
-            control_substeps=control_substeps,
-            action_horizon=action_horizon,
-            seed=seed,
-            async_rtc=async_rtc,
-            rtc_inference_timeout_s=rtc_inference_timeout_s,
-            on_frame=on_frame,
-            policy_kwargs=policy_kwargs,
-            video=video,
+        # The same action controller run_policy installs, through the same
+        # reader: a scored rollout must not drive the scene differently from an
+        # unscored one, because the number it reports says nothing about which
+        # pipeline produced it.
+        controller_cleanup, controller_refusal = self._install_action_controller(
+            policy, resolved_robot, wbc_install_torque_control, "eval_policy"
         )
+        if controller_refusal is not None:
+            return {"status": "error", "content": [{"text": controller_refusal}]}
+
+        try:
+            result = PolicyRunner(self).evaluate(
+                resolved_robot,
+                policy,
+                instruction=instruction,
+                n_episodes=n_episodes,
+                max_steps=max_steps,
+                success_fn=success_check,
+                control_frequency=control_frequency,
+                control_substeps=control_substeps,
+                action_horizon=action_horizon,
+                seed=seed,
+                async_rtc=async_rtc,
+                rtc_inference_timeout_s=rtc_inference_timeout_s,
+                on_frame=on_frame,
+                policy_kwargs=policy_kwargs,
+                video=video,
+            )
+        finally:
+            if controller_cleanup is not None:
+                controller_cleanup()
         self._annotate_evaluation_recording(result, recording_claim)
         return result
 
@@ -5571,6 +5644,7 @@ class SimEngine(ABC):
         control_substeps: int | None = None,
         policy_object: Policy | None = None,
         video: dict[str, Any] | None = None,
+        wbc_install_torque_control: bool = True,
     ) -> dict[str, Any]:
         """Run a registered :class:`BenchmarkProtocol` against the current sim.
 
@@ -5691,6 +5765,16 @@ class SimEngine(ABC):
                 ``mjData``), so recording does not perturb the bit-stable
                 benchmark rollout. Written paths are returned in the result
                 json ``video_paths``. ``None`` (default) records nothing.
+            wbc_install_torque_control: The same posture :meth:`run_policy`
+                takes, checked and applied the same way: when ``True`` (default)
+                a :class:`~strands_robots.policies.wbc.WBCPolicy` evaluated on a
+                position-servo scene gets the torque shim installed for the
+                duration of this call, then uninstalled. One install covers
+                every episode - the controller registration and the actuator
+                mode both survive the per-episode reset. Set ``False`` to manage
+                the controller yourself or to drive a torque-actuated scene
+                directly. No-op for non-WBC policies and on backends without the
+                hook.
 
         Returns:
             Standard status dict. On success, carries per-episode cumulative
@@ -5756,6 +5840,10 @@ class SimEngine(ABC):
         # other work, not absorbed frame by frame inside the shared eval loop.
         if hook_error := optional_callable_error(on_frame, "on_frame", "evaluate_benchmark"):
             return {"status": "error", "content": [{"text": hook_error}]}
+        if err := self._validate_posture_flags(
+            "evaluate_benchmark", wbc_install_torque_control=wbc_install_torque_control
+        ):
+            return err
         if err := self._validate_video_config(video, "evaluate_benchmark"):
             return err
         if err := self._validate_policy_object(policy_object, "evaluate_benchmark"):
@@ -5902,20 +5990,33 @@ class SimEngine(ABC):
             resolved_robot, instruction or spec_instruction(spec), on_frame, "evaluate_benchmark"
         )
 
-        result = PolicyRunner(self).evaluate(
-            resolved_robot,
-            policy,
-            instruction=instruction,
-            n_episodes=n_episodes,
-            spec=spec,
-            seed=seed,
-            action_horizon=action_horizon,
-            control_frequency=control_frequency,
-            control_substeps=control_substeps,
-            on_frame=on_frame,
-            policy_kwargs=policy_kwargs,
-            video=video,
+        # The same action controller run_policy installs, through the same
+        # reader. This surface's whole output is a success_rate, so a scene the
+        # policy cannot hold up is published as the policy's own failure.
+        controller_cleanup, controller_refusal = self._install_action_controller(
+            policy, resolved_robot, wbc_install_torque_control, "evaluate_benchmark"
         )
+        if controller_refusal is not None:
+            return {"status": "error", "content": [{"text": controller_refusal}]}
+
+        try:
+            result = PolicyRunner(self).evaluate(
+                resolved_robot,
+                policy,
+                instruction=instruction,
+                n_episodes=n_episodes,
+                spec=spec,
+                seed=seed,
+                action_horizon=action_horizon,
+                control_frequency=control_frequency,
+                control_substeps=control_substeps,
+                on_frame=on_frame,
+                policy_kwargs=policy_kwargs,
+                video=video,
+            )
+        finally:
+            if controller_cleanup is not None:
+                controller_cleanup()
         self._annotate_evaluation_recording(result, recording_claim)
         return result
 
