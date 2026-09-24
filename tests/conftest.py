@@ -26,6 +26,7 @@ import pytest
 # Neither import below touches strands_robots, so both are safe above the
 # environment defaults that the strands_robots imports further down depend on.
 from tests._device_connect_real import EDGE_REBINDERS, held_modules, restore
+from tests.description_clone_lock import serialize_description_clones
 from tests.session_truncation import register_truncation_reporter
 
 # Disable mesh BEFORE any strands_robots import below pulls in robot.py.
@@ -56,11 +57,16 @@ install_torch_mock()
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Report the size of a session that stops before every test has started.
+    """Register the reporters and guards this session runs with.
 
-    See :mod:`tests.session_truncation` for why the counts alone do not say it.
+    :mod:`tests.session_truncation` says why a run that stops early cannot be
+    read from its counts alone. :mod:`tests.description_clone_lock` says why the
+    ``robot_descriptions`` clone needs a lock once the session is distributed:
+    every worker collects the whole tree, so the description modules imported at
+    collection time reach one shared cache directory together.
     """
     register_truncation_reporter(config)
+    serialize_description_clones()
 
 
 @pytest.fixture
