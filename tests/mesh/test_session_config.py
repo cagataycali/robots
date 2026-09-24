@@ -9,30 +9,66 @@ the wheel is unavailable the tests skip cleanly.
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
 zenoh = pytest.importorskip("zenoh")
 
 
+#: Every environment variable a cell here reads out of the process, or leaves in
+#: it. Both acknowledgements of ``auth_mode=none`` belong on the list: the gate
+#: that refuses the mode reads them, so a value another test left behind decides
+#: the gate instead of the cell, and ``_build`` sets them with a raw
+#: ``os.environ`` write that monkeypatch cannot undo. Kept level with what the
+#: gate reads by test_the_isolation_covers_every_input_of_the_auth_mode_gate.
+ISOLATED_ENV = [
+    "STRANDS_MESH_NAMESPACE",
+    "STRANDS_MESH_MULTICAST",
+    "STRANDS_MESH_MAX_SESSIONS",
+    "STRANDS_MESH_MAX_CMD_BYTES",
+    "STRANDS_MESH_MAX_CAMERA_BYTES",
+    "STRANDS_MESH_CMD_RATE_HZ",
+    "STRANDS_MESH_AUTH_MODE",
+    "STRANDS_MESH_I_KNOW_THIS_IS_INSECURE",
+    "STRANDS_MESH_LOCAL_DEV",
+    "STRANDS_MESH_TLS_CA",
+    "STRANDS_MESH_TLS_CERT",
+    "STRANDS_MESH_TLS_KEY",
+    "STRANDS_MESH_ACL_FILE",
+    "ZENOH_CONNECT",
+    "ZENOH_LISTEN",
+]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _an_acknowledgement_left_by_an_earlier_test():
+    """Run this module the way a full session hands it to a worker.
+
+    Seven examples do ``os.environ.setdefault("STRANDS_MESH_LOCAL_DEV", "1")``
+    at import and are loaded in process by the example smoke tests, so whichever
+    file precedes this one can leave the localhost dev preset - which is itself
+    an acknowledgement of ``auth_mode=none`` - in the environment. Every cell
+    below has to be indifferent to that, and the one that pins the gate's
+    refusal is the one that silently is not: with the preset set, the mode needs
+    no second factor and nothing raises.
+    """
+    with pytest.MonkeyPatch.context() as leaked:
+        leaked.setenv("STRANDS_MESH_LOCAL_DEV", "1")
+        leaked.setenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", "1")
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch):
-    for key in [
-        "STRANDS_MESH_NAMESPACE",
-        "STRANDS_MESH_MULTICAST",
-        "STRANDS_MESH_MAX_SESSIONS",
-        "STRANDS_MESH_MAX_CMD_BYTES",
-        "STRANDS_MESH_MAX_CAMERA_BYTES",
-        "STRANDS_MESH_CMD_RATE_HZ",
-        "STRANDS_MESH_AUTH_MODE",
-        "STRANDS_MESH_TLS_CA",
-        "STRANDS_MESH_TLS_CERT",
-        "STRANDS_MESH_TLS_KEY",
-        "STRANDS_MESH_ACL_FILE",
-        "ZENOH_CONNECT",
-        "ZENOH_LISTEN",
-    ]:
+    for key in ISOLATED_ENV:
         monkeypatch.delenv(key, raising=False)
+    yield
+    # _build() sets two of the keys above with a raw os.environ write, which
+    # monkeypatch never recorded and so cannot undo. Drop them before its own
+    # teardown restores the values this cell inherited.
+    for key in ISOLATED_ENV:
+        os.environ.pop(key, None)
 
 
 def _build():
@@ -222,6 +258,31 @@ def test_auth_mode_none_requires_explicit_optin(monkeypatch):
 
     with pytest.raises(ValueError, match="STRANDS_MESH_I_KNOW_THIS_IS_INSECURE"):
         _build_config()
+
+
+def test_the_isolation_covers_every_input_of_the_auth_mode_gate():
+    """Every env var the auth-mode gate reads is one this file clears first.
+
+    The gate under test refuses ``auth_mode=none`` unless a second factor is
+    present, and it accepts two of them. A factor this file does not clear is
+    one an earlier test in the same process can leave behind, and the refusal
+    then never runs: the cell above passes for want of a value rather than
+    because the gate raised. The roster is read off
+    :mod:`strands_robots.mesh._zenoh_config` so a third factor added there has
+    to be cleared here too.
+    """
+    import inspect
+    import re
+
+    from strands_robots.mesh import _zenoh_config
+
+    gate = inspect.getsource(_zenoh_config.resolve_auth_mode) + inspect.getsource(_zenoh_config._local_dev_enabled)
+    read = set(re.findall(r'os\.getenv\(\s*"(STRANDS_[A-Z_0-9]+)"', gate))
+    assert read, f"no env var read found in the gate; the roster below grades nothing:\n{gate}"
+    assert read <= set(ISOLATED_ENV), (
+        f"the auth-mode gate reads {sorted(read - set(ISOLATED_ENV))}, which this file leaves in the "
+        "environment - a value another test left behind decides the gate instead of the test"
+    )
 
 
 # --- Default ACL warning in mtls mode -----------------------------------
