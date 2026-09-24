@@ -153,6 +153,11 @@ def fake_rclpy(monkeypatch: pytest.MonkeyPatch) -> list[_RecordingNode]:
 
     rclpy = ModuleType("rclpy")
     rclpy.ok = lambda: True  # type: ignore[attr-defined]
+    # A context is already up, on the default domain: every bridge built here
+    # takes the default ``domain_id``, so the domain guard is satisfied and these
+    # cells grade the depth. The domain itself is pinned in
+    # ``tests/simulation/test_ros_sim_bridge.py``.
+    rclpy.get_default_context = lambda: SimpleNamespace(get_domain_id=lambda: 0)  # type: ignore[attr-defined]
     rclpy.init = lambda: None  # type: ignore[attr-defined]
     rclpy.shutdown = lambda: None  # type: ignore[attr-defined]
     rclpy.create_node = _create_node  # type: ignore[attr-defined]
