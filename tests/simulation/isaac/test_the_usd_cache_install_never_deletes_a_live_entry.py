@@ -1,7 +1,7 @@
 """Installing a converted USD never deletes an entry another process is reading.
 
 The USD cache root is shared cross-process -
-``~/.strands_robots/asset_cache/usd_robots`` - and the pid-suffixed staging
+``~/.strands_robots/asset_cache/usd_robots`` - and the per-conversion staging
 directory says concurrent converters are an intended case. The install step
 defeated it:
 
@@ -63,6 +63,12 @@ class _Importer:
     conversion inside the install window."""
 
     gate: threading.Barrier | None = None
+    #: Every staging directory a conversion was handed, so a test can see whether
+    #: two concurrent conversions shared one.
+    staging_seen: list[str] = []
+    #: Holds the conversion that arrived SECOND at ``gate``, after its output is
+    #: written - the window in which the winner's install renames staging away.
+    park_loser_after_write: threading.Event | None = None
     #: Set by the importer once it has been entered, so a test can know a
     #: conversion is past its marker check and parked inside the window.
     entered: threading.Event | None = None
@@ -79,9 +85,9 @@ class _Importer:
         entered = type(self).entered
         if entered is not None:
             entered.set()
+        type(self).staging_seen.append(self._config.usd_path)
         gate = type(self).gate
-        if gate is not None:
-            gate.wait(timeout=10)
+        index = gate.wait(timeout=10) if gate is not None else 0
         release = type(self).release
         if release is not None:
             release.wait(timeout=10)
@@ -91,6 +97,9 @@ class _Importer:
         out = os.path.join(out_dir, f"{stem}.usda")
         with open(out, "w", encoding="utf-8") as fh:
             fh.write("#usda 1.0\n")
+        park = type(self).park_loser_after_write
+        if park is not None and index:
+            park.wait(timeout=10)
         return out
 
 
@@ -108,6 +117,8 @@ def importer(monkeypatch: pytest.MonkeyPatch) -> type[_Importer]:
     _Importer.gate = None
     _Importer.entered = None
     _Importer.release = None
+    _Importer.park_loser_after_write = None
+    _Importer.staging_seen = []
     import sys
 
     for name in ("isaacsim", "isaacsim.asset", "isaacsim.asset.importer", "isaacsim.asset.importer.mjcf"):
@@ -154,6 +165,38 @@ class TestTwoConcurrentConversionsBothEndUpWithAUsablePath:
         assert len(paths) == 2
         for index, path in enumerate(paths):
             assert os.path.isfile(path), f"caller {index} was handed {path!r}, which does not exist"
+
+    def test_the_loser_released_after_the_winner_installed_keeps_its_own_output(
+        self, importer: type[_Importer], mjcf: str, tmp_path: pathlib.Path
+    ) -> None:
+        """The deterministic form of the cell above, which reaches this window only
+        when the scheduler cooperates.
+
+        The staging directory used to carry the pid alone, so two THREADS of one
+        process derived the same name and converted into it together. That is not a
+        benign collision: the winner renames the shared directory onto the key, so
+        the loser's importer output vanishes mid-call and it raises "reported
+        success but wrote no USD file" for a conversion that in fact succeeded -
+        the failure the cache exists to prevent, attributed to the importer.
+        """
+        cache = str(tmp_path / "cache")
+        importer.gate = threading.Barrier(2, timeout=10)
+        importer.park_loser_after_write = threading.Event()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(convert_mjcf_to_usd, mjcf, cache) for _ in range(2)]
+            # Only the second arrival parks, so the first to complete is the winner:
+            # releasing the loser after that puts its resolve step strictly after
+            # the winner's install, which is the whole window.
+            concurrent.futures.wait(futures, timeout=20, return_when=concurrent.futures.FIRST_COMPLETED)
+            importer.park_loser_after_write.set()
+            paths = [future.result(timeout=20) for future in futures]
+
+        for index, path in enumerate(paths):
+            assert os.path.isfile(path), f"caller {index} was handed {path!r}, which does not exist"
+        assert len(set(importer.staging_seen)) == 2, (
+            f"two concurrent conversions shared a staging directory: {importer.staging_seen}"
+        )
 
     def test_they_agree_on_one_entry(self, importer: type[_Importer], mjcf: str, tmp_path: pathlib.Path) -> None:
         """Both converters produce identical content for a key, so the winner's

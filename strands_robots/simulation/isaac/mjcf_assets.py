@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 import xml.etree.ElementTree as ET
 
 from strands_robots.utils import get_base_dir
@@ -412,9 +413,14 @@ def convert_mjcf_to_usd(
     # a complete entry and no reader can see a directory without one -
     # :func:`_install_entry` owns the rest of that contract, including what to do
     # when another process has already published this key.
-    staging = os.path.join(out_dir, f".{key}.{os.getpid()}.tmp")
-    _remove_tree(staging)
-    os.makedirs(staging, exist_ok=True)
+    #
+    # One staging directory per CONVERSION, not per process: ``mkdtemp`` creates a
+    # name no concurrent caller can derive. A name carrying only the pid collides
+    # between THREADS of one process, and the collision is not benign - the winner
+    # renames the shared directory onto the key, so the loser's importer output
+    # disappears mid-call and it raises "reported success but wrote no USD file"
+    # for a conversion that in fact succeeded.
+    staging = tempfile.mkdtemp(prefix=f".{key}.{os.getpid()}.", suffix=".tmp", dir=out_dir)
     try:
         config = MJCFImporterConfig()
         config.mjcf_path = os.path.abspath(mjcf_path)
@@ -451,9 +457,9 @@ def _install_entry(staging: str, target_root: str, marker: str, final: str, mjcf
     """Publish *staging* as the entry at *target_root*, or defer to the winner.
 
     **Never deletes a completed entry.** The cache root is shared cross-process -
-    ``~/.strands_robots/asset_cache/usd_robots`` - and the pid-suffixed staging
-    directory says concurrent converters are an intended case, so two processes
-    that both miss the marker for one key both convert. The install used to
+    ``~/.strands_robots/asset_cache/usd_robots`` - and the per-conversion staging
+    directory says concurrent converters are an intended case, so two callers that
+    both miss the marker for one key both convert. The install used to
     ``_remove_tree(target_root)`` before renaming, which means the loser deleted
     the winner's finished entry *after* the winner had returned its path and
     referenced that USD into a live stage. USD composes payloads lazily, so a read
