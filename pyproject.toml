@@ -697,7 +697,9 @@ dev = [
     "pytest-timeout>=2.0.0,<3.0.0",
     # The suite runs in one process; the plugin is here so the cells that grade
     # a distributed session (tests/test_session_truncation_is_reported.py) can
-    # spawn one. Installing it does not distribute anything on its own.
+    # spawn one. Installing it does not distribute anything on its own. It is
+    # pinned again in [tool.hatch.envs.default].dependencies, because that list
+    # -- not this extra -- is what `hatch run test` installs.
     "pytest-xdist>=3.0.0,<4.0.0",
 ]
 
@@ -740,6 +742,11 @@ dependencies = [
     "pytest>=6.0,<10.0.0",
     "pytest-cov>=4.0.0,<6.0.0",
     "pytest-timeout>=2.0.0,<3.0.0",
+    # Spawned, never inherited: the cells in
+    # tests/test_session_truncation_is_reported.py run a nested `pytest -n 2`,
+    # and without the plugin in this environment that run exits 4 on
+    # `unrecognized arguments: -n` with nothing on stdout. Same bound as [dev].
+    "pytest-xdist>=3.0.0,<4.0.0",
     "ruff>=0.15.12,<0.16.0",
     "mypy>=1.0.0,<2.0.0",
 ]
