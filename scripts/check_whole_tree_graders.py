@@ -185,6 +185,7 @@ of the tree, not something a caller composes.
 from __future__ import annotations
 
 import ast
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -196,6 +197,14 @@ PACKAGE = "strands_robots"
 #: false positive: its receiver is the ``ast`` module, which resolves to no
 #: path, so it is dropped for want of a target rather than by a name exception.
 _WALK_METHODS = frozenset({"rglob", "glob", "iterdir", "walk"})
+
+#: The same names as identifier tokens in source text. A module that calls one
+#: of the methods above necessarily spells its name as a token, so a source with
+#: no match holds no walk call and is not parsed: the analysis below reads a
+#: module's imports, helpers, call sites and enclosing scopes in several passes
+#: over its tree, and two in three test modules have nothing for it to find.
+#: Derived from ``_WALK_METHODS`` so the two cannot name different sets.
+_WALK_METHOD_TOKEN = re.compile(r"\b(?:" + "|".join(sorted(_WALK_METHODS)) + r")\b")
 
 #: Callables that answer "the file this module was loaded from".
 MODULE_FILE_FUNCS = frozenset({"getfile", "getsourcefile"})
@@ -863,6 +872,8 @@ def derive_graders(root: Path) -> tuple[str, ...]:
         try:
             source = path.read_text(encoding="utf-8")
         except OSError:
+            continue
+        if _WALK_METHOD_TOKEN.search(source) is None:
             continue
         try:
             walked = walked_paths(source, path, root)

@@ -180,6 +180,88 @@ def test_the_derivation_is_not_vacuous(derived: tuple[str, ...]) -> None:
     )
 
 
+def _plant_tree(root: Path, modules: dict[str, str]) -> None:
+    """Plant a repository shaped like this one: a package root and a ``tests/`` area.
+
+    :param root: The planted repository root.
+    :param modules: Test module sources keyed by their path under ``tests/``.
+    """
+    (root / "strands_robots").mkdir()
+    (root / "strands_robots" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "tests").mkdir()
+    for name, source in modules.items():
+        (root / "tests" / name).write_text(source, encoding="utf-8")
+
+
+_SWEEP = "import pathlib\n\nROOT = pathlib.Path(__file__).resolve().parents[1]\n\n\ndef test_it():\n    assert list(ROOT.rglob('*.py'))\n"
+
+
+class TestOnlyAModuleNamingAWalkMethodIsAnalysed:
+    """The derivation parses a test module only when its source names a walk method.
+
+    Resolving a module's walk receivers reads its imports, helpers, call sites
+    and enclosing scopes in several passes over the tree, and most test modules
+    walk nothing, so that work found nothing two times in three. The cell that
+    pays for the derivation was among the largest single cells in the suite
+    (#3869). A module that calls ``rglob``, ``glob``, ``iterdir`` or ``walk``
+    spells that name as a token, so a source with none of them can be skipped
+    before it is parsed without changing what is selected - and the one
+    direction that skip could fail, a walk the token scan misses, is what the
+    control below grades.
+    """
+
+    @staticmethod
+    def _analysed(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+        """Record every module ``derive_graders`` hands to the walk analysis."""
+        analysed: list[Path] = []
+        real = _cwtg.walked_paths
+
+        def recording(source: str, module_path: Path, root: Path) -> set[Path]:
+            analysed.append(module_path)
+            return real(source, module_path, root)
+
+        monkeypatch.setattr(_cwtg, "walked_paths", recording)
+        return analysed
+
+    def test_a_module_that_names_no_walk_method_is_not_analysed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A test module with no walk token is never handed to the walk analysis.
+
+        The planted module asserts on arithmetic and imports nothing, which is
+        the shape of most of ``tests/``; the sweep beside it is selected as
+        before, so the skip narrows the work and not the answer.
+        """
+        _plant_tree(tmp_path, {"test_plain.py": "def test_it():\n    assert 1 + 1 == 2\n", "test_sweep.py": _SWEEP})
+        analysed = self._analysed(monkeypatch)
+
+        derived = _cwtg.derive_graders(tmp_path)
+
+        assert derived == ("tests/test_sweep.py",)
+        assert analysed == [tmp_path / "tests" / "test_sweep.py"], (
+            "derive_graders handed a module whose source names no walk method to "
+            "the walk analysis, so every test module in the tree is parsed and "
+            "resolved for a receiver it cannot hold:\n"
+            + "\n".join(f"  - {path.relative_to(tmp_path).as_posix()}" for path in analysed)
+        )
+
+    def test_a_walk_spelled_across_lines_is_still_selected(self, tmp_path: Path) -> None:
+        """The skip reads tokens, so layout around the call does not hide a walk.
+
+        A receiver on the line above its method and a space before the call's
+        parenthesis are both legal spellings, and each is one the skip must
+        still hand to the analysis - a scan keyed on ``.rglob(`` would drop the
+        second, and a grader dropped that way is #3105's failure again.
+        """
+        spread = (
+            "import pathlib\n\nROOT = pathlib.Path(__file__).resolve().parents[1]\n\n\n"
+            "def test_it():\n    assert list(\n        ROOT\n        .rglob ('*.py')\n    )\n"
+        )
+        _plant_tree(tmp_path, {"test_spread.py": spread})
+
+        assert _cwtg.derive_graders(tmp_path) == ("tests/test_spread.py",)
+
+
 @pytest.mark.parametrize(
     ("label", "root_expression"),
     [
