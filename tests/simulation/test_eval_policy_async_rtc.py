@@ -12,7 +12,8 @@ the same single-worker prefetch pipeline. These tests pin:
 
 * default eval stays synchronous (every inference starts on a chunk boundary)
 * opt-in async eval overlaps (an inference STARTS mid-chunk)
-* async wall-time is materially lower (latency is hidden behind execution)
+* latency is hidden behind execution: an action is dispatched while a
+  prefetched query is still in flight, which the synchronous loop cannot do
 * both paths report RTC inference telemetry in the payload
 * identical step accounting for an observation-independent policy
 * the spec/benchmark path rejects ``async_rtc=True`` (reproducible by design)
@@ -26,6 +27,7 @@ import time
 from typing import Any
 
 import numpy as np
+import pytest
 
 from strands_robots.policies.base import Policy
 from strands_robots.simulation.base import SimEngine
@@ -34,6 +36,8 @@ from strands_robots.simulation.policy_runner import PolicyRunner
 _CHUNK = 4
 _INFER_SLEEP = 0.05
 _EXEC_SLEEP = 0.02  # per send_action; chunk exec (~0.08s) > infer (0.05s) -> hidden
+# See tests.simulation.test_policy_runner_async_rtc._OVERLAP_WAIT.
+_OVERLAP_WAIT = 0.25
 
 
 class _CountingSim(SimEngine):
@@ -45,6 +49,13 @@ class _CountingSim(SimEngine):
         self._exec_sleep = exec_sleep
         self._lock = threading.Lock()
         self.send_count = 0
+        # Latency-masking handshake (see ``_ChunkPolicy`` and
+        # ``test_inference_overlaps_execution_only_when_async``): the policy sets
+        # ``inference_active`` while a query is open, and every action dispatched
+        # in that window sets ``overlap_seen``. Only one query is ever in flight
+        # (single prefetch worker), so the pair needs no generation counter.
+        self.inference_active = threading.Event()
+        self.overlap_seen = threading.Event()
 
     def create_world(self, timestep=None, gravity=None, ground_plane=True):
         return {"status": "success"}
@@ -85,6 +96,8 @@ class _CountingSim(SimEngine):
         return {n: 0.0 for n in self._joint_names}
 
     def send_action(self, action, robot_name=None, n_substeps=1):
+        if self.inference_active.is_set():
+            self.overlap_seen.set()
         with self._lock:
             self.send_count += 1
         if self._exec_sleep:
@@ -97,11 +110,19 @@ class _CountingSim(SimEngine):
 class _ChunkPolicy(Policy):
     """Emits fixed-size chunks; records the sim step index at each inference start."""
 
-    def __init__(self, sim: _CountingSim, chunk: int = _CHUNK, infer_sleep: float = _INFER_SLEEP) -> None:
+    def __init__(
+        self,
+        sim: _CountingSim,
+        chunk: int = _CHUNK,
+        infer_sleep: float = _INFER_SLEEP,
+        overlap_wait: float | None = None,
+    ) -> None:
         self._sim = sim
         self.actions_per_step = chunk
         self._chunk = chunk
         self._infer_sleep = infer_sleep
+        self._overlap_wait = overlap_wait
+        self.overlaps: list[bool] = []
         self.robot_state_keys: list[str] = []
         self.infer_starts: list[int] = []
         self._lock = threading.Lock()
@@ -122,17 +143,32 @@ class _ChunkPolicy(Policy):
     ) -> list[dict[str, Any]]:
         with self._lock:
             self.infer_starts.append(self._sim.send_count)
-        if self._infer_sleep:
+        if self._overlap_wait is not None:
+            # Hold the query open until the loop dispatches another action
+            # instead of sleeping a fixed period and timing the run: the overlap
+            # is then observed. The synchronous loop is inside this call and
+            # cannot dispatch, so it falls through on the timeout.
+            self._sim.overlap_seen.clear()
+            self._sim.inference_active.set()
+            try:
+                self.overlaps.append(self._sim.overlap_seen.wait(self._overlap_wait))
+            finally:
+                self._sim.inference_active.clear()
+        elif self._infer_sleep:
             time.sleep(self._infer_sleep)
         keys = self.robot_state_keys or ["j0", "j1", "j2"]
         return [{k: 0.0 for k in keys} for _ in range(self._chunk)]
 
 
 def _evaluate(
-    async_rtc: bool, *, exec_sleep: float = _EXEC_SLEEP, max_steps: int = 16
+    async_rtc: bool,
+    *,
+    exec_sleep: float = _EXEC_SLEEP,
+    max_steps: int = 16,
+    overlap_wait: float | None = None,
 ) -> tuple[dict, _ChunkPolicy, _CountingSim]:
     sim = _CountingSim(exec_sleep=exec_sleep)
-    policy = _ChunkPolicy(sim)
+    policy = _ChunkPolicy(sim, overlap_wait=overlap_wait)
     policy.set_robot_state_keys(sim.robot_joint_names("arm"))
     result = PolicyRunner(sim).evaluate(
         "arm",
@@ -168,22 +204,19 @@ def test_eval_default_is_synchronous() -> None:
     assert all(c % _CHUNK == 0 for c in policy.infer_starts), policy.infer_starts
 
 
-def test_eval_async_rtc_masks_inference_latency() -> None:
-    """Async wall-time is materially lower because inference hides behind exec."""
-    t0 = time.perf_counter()
-    sync_result, _, _ = _evaluate(async_rtc=False)
-    sync_elapsed = time.perf_counter() - t0
+@pytest.mark.parametrize(("async_rtc", "expect_overlap"), [(False, False), (True, True)])
+def test_eval_inference_overlaps_execution_only_when_async(async_rtc: bool, expect_overlap: bool) -> None:
+    """Latency masking, observed directly instead of inferred from elapsed time.
 
-    t0 = time.perf_counter()
-    async_result, _, _ = _evaluate(async_rtc=True)
-    async_elapsed = time.perf_counter() - t0
-
-    assert sync_result["status"] == "success"
-    assert async_result["status"] == "success"
-    # 16 steps / chunk 4 => 4 chunks. Sync pays infer_sleep per chunk serially;
-    # async hides all but (at most) the first. Saving >= 2 inference periods is
-    # a conservative, non-flaky margin.
-    assert sync_elapsed - async_elapsed > 2 * _INFER_SLEEP, (sync_elapsed, async_elapsed)
+    Each query is held open until the eval loop dispatches another action. The
+    async pipeline drains the rest of the current chunk while the prefetched
+    query is in flight, so the overlap is seen; the synchronous loop is inside
+    the call and cannot dispatch, so every query falls through on the timeout.
+    """
+    result, policy, _ = _evaluate(async_rtc=async_rtc, overlap_wait=_OVERLAP_WAIT)
+    assert result["status"] == "success"
+    assert policy.overlaps, "policy was never queried"
+    assert any(policy.overlaps) == expect_overlap, policy.overlaps
 
 
 def test_eval_async_rtc_reports_telemetry() -> None:
