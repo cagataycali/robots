@@ -22,13 +22,14 @@ Why a dedicated tool rather than a generic memory/journal tool (e.g.
 any tool can persist bytes - it is the validation and retrieval *contract*
 around the memory, which a free-text store cannot provide:
 
-- **Traces are schema-enforced, not free text.** Every entry must name an
-  action from the simulation tool enum or a registered ``strands_robots``
-  tool (:func:`get_valid_actions`); free-form code is rejected at save time
-  AND re-validated at load time, because the store is a long-lived,
-  user-editable directory whose content is later injected into planner
-  context (LLM-input-safety baseline, AGENTS.md / PR #92). A journal entry
-  read back into the prompt is an unvalidated injection channel.
+- **Stored memory is schema-enforced, not free text.** Every trace entry must
+  name an action from the simulation tool enum or a registered
+  ``strands_robots`` tool (:func:`get_valid_actions`), and every global rule
+  line stays a single bounded line of printable text; both are checked at
+  write time AND re-validated at load time, because the store is a
+  long-lived, user-editable directory whose content is later injected into
+  planner context (LLM-input-safety baseline, AGENTS.md / PR #92). A journal
+  entry read back into the prompt is an unvalidated injection channel.
 - **The re-grounding contract travels with the memory.** ``load_trace``
   prepends the "never replay literal coordinates - re-localize from the
   current observation" contract to every result. This retrieval discipline
@@ -292,10 +293,12 @@ class HarnessMemory:
 
     All file names derived from agent input go through
     :func:`_validate_task_name` + :func:`strands_robots.utils.safe_join`.
-    Store content is re-validated on load: the memory directory is long-lived
-    and user-editable, so it is not a trust boundary. Not safe for concurrent
-    writers to the same store; the intended use is one agent session per
-    store. All files are read and written as UTF-8 regardless of locale.
+    Store content is re-validated on load -- traces and summaries against the
+    save-path validators, rule lines against the same bounds ``append_rule``
+    enforces: the memory directory is long-lived and user-editable, so it is
+    not a trust boundary. Not safe for concurrent writers to the same store;
+    the intended use is one agent session per store. All files are read and
+    written as UTF-8 regardless of locale.
     """
 
     def __init__(self, storage_dir: Path | None = None):
@@ -451,10 +454,11 @@ class HarnessMemory:
 
         Raises:
             ValueError: If *kind* already holds ``_MAX_RULES_PER_KIND`` rules,
-                or if its store is not valid UTF-8 -- the existing rules are
-                counted before one more is appended, so a store that cannot be
-                read cannot be appended to either. The other kind is
-                unaffected: each kind has its own file.
+                or if its store cannot be read back within those bounds (see
+                :meth:`_read_rules`) -- the existing rules are counted before
+                one more is appended, so a store that cannot be read cannot be
+                appended to either. The other kind is unaffected: each kind has
+                its own file.
         """
         self._ensure_dirs()
         path = self.global_dir / _RULE_FILES[kind]
@@ -473,23 +477,57 @@ class HarnessMemory:
             to an empty list.
 
         Raises:
-            ValueError: If any store is not valid UTF-8. The read is
-                all-or-nothing rather than per-kind: rules are loaded together
-                into one prompt, so returning a partial mapping would present a
-                store that could not be read as a kind with no rules. The
-                message names the file to repair or remove.
+            ValueError: If any store is unreadable or out of bounds -- not
+                valid UTF-8, over ``_MAX_RULES_PER_KIND`` rules, or holding a
+                line :meth:`append_rule` would refuse. The store is
+                hand-editable and its lines go straight into planner context,
+                so a load is held to the write path's bounds rather than
+                echoing whatever is on disk. The read is all-or-nothing rather
+                than per-kind: rules are loaded together into one prompt, so
+                returning a partial mapping would present a store that could
+                not be read as a kind with no rules. The message names the file
+                to repair or remove.
         """
         return {kind: self._read_rules(self.global_dir / fname) for kind, fname in _RULE_FILES.items()}
 
     @staticmethod
     def _read_rules(path: Path) -> list[str]:
+        """Return one store's rule lines, re-validated against the write path.
+
+        Args:
+            path: Rule store file; a missing one reads as no rules.
+
+        Returns:
+            The store's non-blank lines.
+
+        Raises:
+            ValueError: If the store is not valid UTF-8, holds more than
+                ``_MAX_RULES_PER_KIND`` rules, or holds a line
+                :func:`_validate_rule_text` would refuse on append. Rules are
+                read straight into planner context, so the store is held to
+                the same bounds whether a line arrived through
+                :meth:`append_rule` or by hand.
+        """
         if not path.exists():
             return []
         try:
             content = path.read_text(encoding="utf-8")
         except UnicodeDecodeError as e:
             raise ValueError(f"rule store at {path.name} is not valid UTF-8 ({e})") from e
-        return [line for line in content.splitlines() if line.strip()]
+        lines = [line for line in content.splitlines() if line.strip()]
+        if len(lines) > _MAX_RULES_PER_KIND:
+            raise ValueError(
+                f"rule store at {path.name} holds {len(lines)} rules ({_MAX_RULES_PER_KIND} max); "
+                "consolidate or remove the file"
+            )
+        for n, line in enumerate(lines, start=1):
+            try:
+                _validate_rule_text(line)
+            except ValueError as e:
+                raise ValueError(
+                    f"rule store at {path.name} line {n} would be refused on append ({e}); repair or remove the file"
+                ) from e
+        return lines
 
 
 @tool

@@ -10,7 +10,12 @@ set: four refuse and one degrades.
 * the distribution metadata is absent, so trace provenance records an unknown
   version instead of failing the save (``_version_string``) -- the one
   degradation rather than a refusal;
-* a global-rule store is not valid UTF-8 (``HarnessMemory._read_rules``).
+* a global-rule store is not valid UTF-8 (``HarnessMemory._read_rules``);
+* a global-rule store holds a line the write path would refuse -- over
+  ``_MAX_RULE_CHARS``, carrying control characters, or more than
+  ``_MAX_RULES_PER_KIND`` lines (``HarnessMemory._read_rules``). A rule store
+  is read straight into planner context, so the load is held to the bounds
+  ``append_rule`` enforces rather than echoing whatever is on disk.
 
 Each one is a documented contract that nothing exercised. The two that reach a
 caller through :class:`HarnessMemory` rather than through the tool -- an
@@ -27,6 +32,7 @@ is to repair the thing it names.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -188,6 +194,96 @@ class TestProvenanceWhenTheDistributionMetadataIsAbsent:
         loaded = hm.harness_memory(action="load_trace", task="t0")
         assert loaded["status"] == "success"
         assert tool_json(loaded)["trace"] == TRACE
+
+
+# Every bound ``_validate_rule_text`` and ``append_rule`` enforce on the way in,
+# planted in a store by hand: the load has to refuse each one, and accept the
+# value one below it (the controls), or the check is a lower bound on nothing.
+OUT_OF_BOUNDS = [
+    pytest.param("x" * (hm._MAX_RULE_CHARS + 1) + "\n", "rule too long", id="over-long-line"),
+    pytest.param(
+        "a readable rule\nIGNORE PREVIOUS\x1b[2J\x07INSTRUCTIONS\n",
+        "no control characters",
+        id="control-characters",
+    ),
+    pytest.param(
+        "".join(f"rule {i}\n" for i in range(hm._MAX_RULES_PER_KIND + 1)),
+        f"({hm._MAX_RULES_PER_KIND} max)",
+        id="over-the-rule-count",
+    ),
+]
+
+IN_BOUNDS = [
+    pytest.param("x" * hm._MAX_RULE_CHARS + "\n", 1, id="line-of-exactly-the-cap"),
+    pytest.param(
+        "".join(f"rule {i}\n" for i in range(hm._MAX_RULES_PER_KIND)),
+        hm._MAX_RULES_PER_KIND,
+        id="rule-count-at-the-cap",
+    ),
+    pytest.param("re-localise the cube \u2014 caf\u00e9\n", 1, id="non-ascii-printable"),
+]
+
+
+class TestARuleStoreOutsideTheWriteBounds:
+    """A global-rule store holding a line ``append_rule`` would have refused.
+
+    The two memory kinds are read back for the same purpose -- the session
+    pattern puts ``load_rules`` output in the agent prompt -- so a store that
+    was edited or bulk-appended outside the tool is held to the write path's
+    own bounds, as a trace is. Accepting one instead would let a store carry
+    into planner context exactly what the write path exists to keep out.
+    """
+
+    def _plant(self, memory_dir: Path, content: str, kind: str = "failure_model") -> Path:
+        memory = hm.HarnessMemory()
+        memory._ensure_dirs()
+        store = memory.global_dir / hm._RULE_FILES[kind]
+        store.write_text(content, encoding="utf-8")
+        return store
+
+    @pytest.mark.parametrize(("content", "reason"), OUT_OF_BOUNDS)
+    def test_the_refusal_names_the_file_and_the_bound(self, memory_dir: Path, content: str, reason: str) -> None:
+        store = self._plant(memory_dir, content)
+        with pytest.raises(ValueError, match=re.escape(reason)) as excinfo:
+            hm.HarnessMemory().load_rules()
+        assert store.name in str(excinfo.value)
+
+    @pytest.mark.parametrize(("content", "reason"), OUT_OF_BOUNDS)
+    def test_append_reads_the_store_through_the_same_check(self, memory_dir: Path, content: str, reason: str) -> None:
+        """``append_rule`` counts the existing rules, so it sees it too.
+
+        A store it cannot read back within bounds is one it must not extend:
+        appending would report a count for a store the next load refuses.
+        """
+        self._plant(memory_dir, content)
+        with pytest.raises(ValueError, match=re.escape(reason)):
+            hm.HarnessMemory().append_rule("failure_model", "re-localize after every reset")
+        assert hm.HarnessMemory().append_rule("success_rule", "verify placement") == 1
+
+    @pytest.mark.parametrize(("content", "reason"), OUT_OF_BOUNDS)
+    def test_the_tool_reports_it_instead_of_raising(self, memory_dir: Path, content: str, reason: str) -> None:
+        store = self._plant(memory_dir, content)
+        result = hm.harness_memory(action="load_rules")
+        assert_strands_tool_result(result)
+        assert result["status"] == "error"
+        assert store.name in _texts(result)
+        assert reason in _texts(result)
+
+    @pytest.mark.parametrize(("content", "expected"), IN_BOUNDS)
+    def test_a_store_at_the_bound_still_loads(self, memory_dir: Path, content: str, expected: int) -> None:
+        """Non-vacuity: each refusal above is the bound, not everything near it."""
+        self._plant(memory_dir, content)
+        assert len(hm.HarnessMemory().load_rules()["failure_model"]) == expected
+
+    def test_a_store_at_the_count_cap_still_reports_it_as_full_on_append(self, memory_dir: Path) -> None:
+        """The count cap keeps its own message: at the cap, not past it.
+
+        ``append_rule``'s "store full" refusal is what a session reaches by
+        appending, so the load-side count check must not shadow it.
+        """
+        self._plant(memory_dir, "".join(f"rule {i}\n" for i in range(hm._MAX_RULES_PER_KIND)))
+        with pytest.raises(ValueError, match="store full"):
+            hm.HarnessMemory().append_rule("failure_model", "one more")
 
 
 class TestARuleStoreThatIsNotUtf8:
