@@ -53,7 +53,15 @@ def _record(sim: Simulation, root: str, *, n_episodes: int, n_steps: int = 4) ->
     # fps must equal the control_frequency the rollouts below run at (50): the
     # recorder captures one frame per control step, so a differing rate would
     # only mislabel every timestamp.
-    start = sim.start_recording(repo_id="local/episode_contract", task="t", fps=50, root=root, overwrite=True)
+    #
+    # Every cell reads episode indices and frame counts out of the parquet and
+    # the run json; none reads a pixel. Recording the world's free camera would
+    # render it through OSMesa at each control step and encode a video per
+    # episode flush, which at n_episodes=20 was 20 s of a 21 s cell (#3869). An
+    # action-only dataset carries the same episode_index column.
+    start = sim.start_recording(
+        repo_id="local/episode_contract", task="t", fps=50, root=root, overwrite=True, cameras=[]
+    )
     assert start["status"] == "success", start
     run = sim.run_policy(
         robot_name="so100",

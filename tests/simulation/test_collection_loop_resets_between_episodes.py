@@ -137,7 +137,12 @@ def _collect(tmp_path: Path, calls: list[str], repo_id: str) -> list[np.ndarray]
     """Run ``calls`` once per episode against a real engine; return start states."""
     sim = strands_robots.Robot("so101", mode="sim", mesh=False)
     try:
-        started = sim.start_recording(repo_id=repo_id, task="collect", fps=30, root=str(tmp_path))
+        # The verdict is read from observation.state at each episode's first
+        # frame; no cell reads a pixel. Recording the world's free camera would
+        # render it through OSMesa at every control step and encode a video per
+        # episode, which was 12 s of each 13 s cell (#3869). An action-only
+        # dataset carries the same state column and episode boundaries.
+        started = sim.start_recording(repo_id=repo_id, task="collect", fps=30, root=str(tmp_path), cameras=[])
         assert started["status"] == "success", started
         for _ in range(_EPISODES):
             for call in calls:
@@ -204,9 +209,9 @@ class TestTheMechanismTheRecipeDependsOn:
         sim = strands_robots.Robot("so101", mode="sim", mesh=False)
         try:
             assert (
-                sim.start_recording(repo_id="local/collect_firstclass", task="collect", fps=30, root=str(tmp_path))[
-                    "status"
-                ]
+                sim.start_recording(
+                    repo_id="local/collect_firstclass", task="collect", fps=30, root=str(tmp_path), cameras=[]
+                )["status"]
                 == "success"
             )
             result = sim.run_policy(robot_name="so101", n_episodes=_EPISODES, **_CALL_ARGS["run_policy"])
