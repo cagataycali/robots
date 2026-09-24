@@ -43,15 +43,14 @@ sim.start_recording(
     # such camera, i.e. every real one.
     cameras=["front"],
 )
-# control_frequency must equal the recording's fps above: the recorder writes
-# one frame per control step with no decimation, so the 50 Hz default rollout
-# against a 30 fps recording is refused and the episode lands with zero frames.
+# The recorder writes one frame per control step with no decimation, so an unset
+# control_frequency adopts the fps declared above; a rate that disagrees with it
+# is refused rather than written at a distorted timestamp rate.
 rollout = sim.run_policy(
     robot_name="so100",
     policy_object=MockPolicy(),
     instruction="pick up the red cube",
     n_steps=60,
-    control_frequency=30.0,
 )
 if rollout["status"] != "success":
     raise SystemExit(f"rollout failed: {rollout['content'][0]['text']}")
