@@ -29,8 +29,10 @@ recording is what could not happen.
 
 The interleaving is driven deterministically: the stand-in's ``Init`` blocks
 after signalling, which parks the caller inside ``_DDS_INIT_LOCK`` holding a
-fully built endpoint, and the teardown then runs to completion. No sleeps, no
-DDS bus, and no SDK - the stand-ins are what the production path constructs.
+fully built endpoint, and the teardown then runs to completion. Fetching that
+endpoint waits for the factory to announce it, because the construction runs on
+another thread and a started thread has not necessarily run. No sleeps, no DDS
+bus, and no SDK - the stand-ins are what the production path constructs.
 """
 
 from __future__ import annotations
@@ -115,12 +117,18 @@ class _Factory:
         self.built: list[_Endpoint] = []
         self.park = park
         self.park_topic = park_topic
+        #: Announces every build. The cells construct on one thread and fetch
+        #: the endpoint from another, and the only event that could settle that
+        #: hand-off - ``entered_init`` - lives on the very object being fetched.
+        self.a_build = threading.Condition()
 
     def __call__(self, topic: str, message_class: type) -> _Endpoint:
         endpoint = _Endpoint(topic, message_class)
         if self.park is not None and topic == self.park_topic:
             endpoint.may_finish_init = self.park
-        self.built.append(endpoint)
+        with self.a_build:
+            self.built.append(endpoint)
+            self.a_build.notify_all()
         return endpoint
 
 
@@ -131,8 +139,26 @@ def _parking(topic: str) -> tuple[threading.Event, _Factory]:
 
 
 def _the(factory: _Factory, topic: str) -> _Endpoint:
-    """The single endpoint ``factory`` built for ``topic``."""
-    matches = [endpoint for endpoint in factory.built if endpoint.topic == topic]
+    """The single endpoint ``factory`` built for ``topic``, once it exists.
+
+    The construction runs on the thread :func:`_run_and_park` started, so a
+    caller reaching for the endpoint has not synchronized with it yet: a thread
+    that is started is not a thread that has run, and on a loaded box it can be
+    many milliseconds from its first bytecode. Reading ``built`` directly made
+    the fetch a race the parked interleaving cannot settle - the event that
+    would settle it, ``entered_init``, is an attribute of the object being
+    fetched - so the cells failed with ``got 0`` before reaching the behaviour
+    they grade.
+
+    Waiting is not a sleep and paces nothing: every build notifies, so this
+    returns as soon as the endpoint exists, and the timeout only bounds a hang.
+    """
+    with factory.a_build:
+        matches = factory.a_build.wait_for(
+            lambda: [endpoint for endpoint in factory.built if endpoint.topic == topic],
+            _BARRIER_TIMEOUT_S,
+        )
+    assert matches, f"the factory was never asked for an endpoint on {topic!r}"
     assert len(matches) == 1, f"expected one endpoint for {topic!r}, got {len(matches)}"
     return matches[0]
 
@@ -188,8 +214,7 @@ class TestASubscribeRacingCloseLeavesNoLiveSubscriber:
         assert subs.start() is None
 
         thread, _ = _run_and_park(lambda: subs.subscribe(_SUB_TOPIC, dict, lambda _m: None))
-        assert factory.built, "the factory was never asked for a subscriber"
-        endpoint = factory.built[0]
+        endpoint = _the(factory, _SUB_TOPIC)
         assert endpoint.entered_init.wait(_BARRIER_TIMEOUT_S), "Init never ran"
 
         subs.close()
