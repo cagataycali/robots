@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture(autouse=True)
@@ -44,7 +44,7 @@ def test_next_seq_non_symlink_failure_writes_poison_record(tmp_path, monkeypatch
 
     monkeypatch.setattr(audit, "_next_seq", _boom)
 
-    with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
+    with caplog.at_level(logging.ERROR, logger="strands_robots.audit"):
         audit.log_safety_event("emergency_stop", "peerA", {"reason": "test"})
 
     # The audit log file must contain a NEXT_SEQ_DEGRADED poison record.
@@ -59,7 +59,7 @@ def test_next_seq_non_symlink_failure_writes_poison_record(tmp_path, monkeypatch
 
 def test_seqlock_symlink_still_writes_seq_lock_degraded(tmp_path, monkeypatch):
     """The pre-existing SEQ_LOCK_DEGRADED path must be unchanged by #324."""
-    from strands_robots.mesh.audit import SeqLockSymlinkError
+    from strands_robots.audit import SeqLockSymlinkError
 
     def _symlink_boom(_peer_id):
         raise SeqLockSymlinkError("symlinked seq lockfile")
@@ -98,7 +98,7 @@ def test_next_seq_degraded_poison_survives_psk_signing(tmp_path, monkeypatch, ca
 
     monkeypatch.setattr(audit, "_next_seq", _boom)
 
-    with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
+    with caplog.at_level(logging.ERROR, logger="strands_robots.audit"):
         audit.log_safety_event("emergency_stop", "peerC", {"reason": "psk_regression"})
 
     # The poison marker must survive -- NOT be overwritten by a real HMAC.

@@ -55,7 +55,7 @@ import strands_robots.tools.robot_mesh as mesh_mod  # noqa: E402
 import strands_robots.tools.serial_tool as serial_mod  # noqa: E402
 from strands_robots._command_gate import gate_command  # noqa: E402
 from strands_robots._motion_grants import consume_grant  # noqa: E402
-from strands_robots.mesh.audit import audit_log_path, read_audit_log  # noqa: E402
+from strands_robots.audit import audit_log_path, read_audit_log  # noqa: E402
 from strands_robots.ros import GATE_TOOL  # noqa: E402
 
 # A reply that carries a reason. Every gate accepts a canonical affirmative only,
@@ -392,7 +392,7 @@ def audit_rows(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, dict[str
     def _record(event_type: str, source: str, payload: dict[str, Any]) -> None:
         recorded.append((event_type, source, payload))
 
-    monkeypatch.setattr("strands_robots.mesh.audit.log_safety_event", _record)
+    monkeypatch.setattr("strands_robots.audit.log_safety_event", _record)
     return recorded
 
 
@@ -622,7 +622,7 @@ class TestAnUnwritableAuditLogDoesNotChangeTheVerdict:
         def _boom(*_a: object, **_k: object) -> None:
             raise OSError("audit log unavailable")
 
-        monkeypatch.setattr("strands_robots.mesh.audit.log_safety_event", _boom)
+        monkeypatch.setattr("strands_robots.audit.log_safety_event", _boom)
 
         result = gate.drive(response)
 

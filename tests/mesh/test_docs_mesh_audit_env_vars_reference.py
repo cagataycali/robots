@@ -36,10 +36,10 @@ import ast
 import pathlib
 import re
 
-from strands_robots.mesh import audit as _audit_module
+from strands_robots import audit as _audit_module
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
-_MODULE = _ROOT / "strands_robots" / "mesh" / "audit.py"
+_MODULE = _ROOT / "strands_robots" / "audit.py"
 _PAGE = _ROOT / "docs" / "security" / "audit-log.md"
 _README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
 
@@ -134,7 +134,7 @@ class TestThePopulationIsDerived:
     def test_the_audit_module_still_lives_where_the_scan_expects(self) -> None:
         # If audit.py moves, this rule points the failing test at the reason.
         assert _MODULE.exists(), (
-            "strands_robots/mesh/audit.py is gone; move the scan target to wherever the audit env-reads live now"
+            "strands_robots/audit.py is gone; move the scan target to wherever the audit env-reads live now"
         )
         # Behavioural premise: the constant table also names its knobs.  Keeps
         # the AST literal walk honest against a rewrite that pulls names from
@@ -216,6 +216,5 @@ class TestTheBehaviourThePagesExistToMakeDiscoverable:
         # readers use.  If the module is renamed, the scan needs to move with
         # it, and this cell names the reason at the failure line.
         assert getattr(_audit_module, "__file__", None), (
-            "strands_robots.mesh.audit could not resolve to a file; the "
-            "scan target and the documented posture are diverging"
+            "strands_robots.audit could not resolve to a file; the scan target and the documented posture are diverging"
         )

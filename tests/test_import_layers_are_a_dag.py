@@ -224,26 +224,28 @@ class TestTheContract:
     @pytest.mark.parametrize(
         ("member", "reads"),
         [
-            ("_hitl_audit", "mesh"),
             ("drivers", "policies and simulation"),
         ],
     )
     def test_an_inversion_a_move_cannot_remove_is_not_reported_as_a_placement(
         self, graph: Any, member: str, reads: str
     ) -> None:
-        """The two declared inversions are forced, and that is measured.
+        """The one declared inversion is forced, and that is measured.
 
-        Each of these members reads a layer above it, so the rule two cells up
-        sees it; none is reported, because something at or below where it reads
-        imports it and moving it would only invert that edge instead. Drop the
-        "nothing that imports it forbids the move" half of the rule and both
-        turn into false reports, which is what these rows pin.
+        ``drivers`` reads a layer above it, so the rule two cells up sees it; it
+        is not reported, because something at or below where it reads imports it
+        and moving it would only invert that edge instead. Drop the "nothing that
+        imports it forbids the move" half of the rule and it turns into a false
+        report, which is what this row pins.
 
-        ``teleop_mixin`` had a third row, for its deferred read of the
-        ``teleoperator`` factory. That one was NOT forced: the factory sat in
-        ``app`` only because it borrowed a private lerobot-registry walk from the
-        hardware ``Robot``, and sharing that walk from ``core`` let it move down
-        beside the mixin. A row here whose member reads nothing above it grades
+        Two members have left this table, and both left the same way - the thing
+        they reached up for moved down to them. ``teleop_mixin`` deferred its read
+        of the ``teleoperator`` factory, which sat in ``app`` only because it
+        borrowed a private lerobot-registry walk from the hardware ``Robot``.
+        ``_hitl_audit`` deferred its read of the safety audit log, which sat in
+        ``mesh`` only because the mesh wrote to it first - it imports nothing from
+        the package, and a ``core`` gate, a ``mesh`` peer and a ``tools`` body all
+        write to it. A row here whose member reads nothing above it grades
         nothing, so the row goes when the inversion does.
         """
         assert member in mod.LAYER_OF_MEMBER, reads
@@ -406,15 +408,19 @@ class TestTheContract:
         that lives above one of its callers is a safety decision that caller
         reaches up for, or copies.
 
-        Neither reads anything above ``core`` at import time. The audit row's one
-        upward read - the mesh safety log it writes through - is deferred to the
-        call and pinned here as exactly that, so a second upward dependency
-        cannot join it unnoticed, and moving it to module scope fails.
+        Neither reads anything above ``core``, at import time or from inside a
+        call: the empty sets are the pin, so a gate that reaches up for a peer, a
+        host or a tool fails here whether it does so on import or on first use.
+        The audit row's one dependency used to be the exception - the safety log
+        it writes through sat in ``mesh``, so the write was deferred to keep a
+        transport stack off the import of a tool that gates a ROS graph. The log
+        sits in ``core`` beside it now and imports nothing from the package, so
+        the write is a module-scope call and the exception is gone.
         """
         core = mod.LAYER_NAMES.index("core")
-        deferred = {
+        deferred: dict[str, set[str]] = {
             "strands_robots._command_gate": set(),
-            "strands_robots._hitl_audit": {"strands_robots.mesh.audit"},
+            "strands_robots._hitl_audit": set(),
         }
         for name, allowed_late in deferred.items():
             assert name in graph.modules
@@ -502,6 +508,12 @@ class TestTheContract:
                 "core",
                 frozenset(),
                 frozenset({"core", "sim|policies"}),
+            ),
+            (
+                "strands_robots.audit",
+                "core",
+                frozenset(),
+                frozenset({"core", "drivers|mesh", "tools"}),
             ),
             (
                 "strands_robots._motion_grants",

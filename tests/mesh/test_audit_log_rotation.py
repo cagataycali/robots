@@ -1,6 +1,6 @@
 """Audit-log size-based rotation and bound-resolution tests.
 
-Cover the disk-bounding guarantees of :mod:`strands_robots.mesh.audit`:
+Cover the disk-bounding guarantees of :mod:`strands_robots.audit`:
 
 * :func:`audit._resolve_log_max_bytes` and
   :func:`audit._resolve_log_max_files` clamp operator-supplied env vars
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture(autouse=True)

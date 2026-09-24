@@ -1,6 +1,6 @@
 """Graceful-degradation contract for the cross-process seq flock.
 
-``strands_robots.mesh.audit._seq_flock`` serialises per-peer sequence-number
+``strands_robots.audit._seq_flock`` serialises per-peer sequence-number
 allocation across processes with an ``flock``'d lockfile. Its documented
 contract splits failure modes in two:
 
@@ -25,7 +25,7 @@ import pathlib
 
 import pytest
 
-from strands_robots.mesh import audit as mesh_audit
+from strands_robots import audit as mesh_audit
 
 pytestmark = pytest.mark.skipif(
     not mesh_audit._HAS_FCNTL,

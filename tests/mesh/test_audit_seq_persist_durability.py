@@ -24,7 +24,7 @@ import os
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture(autouse=True)
@@ -106,7 +106,7 @@ def test_persist_survives_chmod_rejection(monkeypatch, caplog) -> None:
     monkeypatch.setattr(audit.os, "chmod", _chmod_boom)
 
     audit._SEQ_COUNTERS["peerC"] = 21
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("WARNING", logger="strands_robots.audit"):
         audit._persist_seq_counters()  # must not raise
 
     sidecar = audit._seq_sidecar_path()
@@ -185,7 +185,7 @@ def test_persist_fails_soft_when_data_write_raises(monkeypatch, caplog) -> None:
     monkeypatch.setattr(audit.json, "dump", _dump_boom)
 
     audit._SEQ_COUNTERS["peerE"] = 9
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("WARNING", logger="strands_robots.audit"):
         audit._persist_seq_counters()  # must not raise
 
     sidecar = audit._seq_sidecar_path()
@@ -219,7 +219,7 @@ def test_persist_closes_orphaned_fd_when_fdopen_raises(monkeypatch, caplog) -> N
     monkeypatch.setattr(audit.os, "close", _tracking_close)
 
     audit._SEQ_COUNTERS["peerF"] = 11
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("WARNING", logger="strands_robots.audit"):
         audit._persist_seq_counters()  # must not raise
 
     sidecar = audit._seq_sidecar_path()

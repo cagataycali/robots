@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture
@@ -92,7 +92,7 @@ def test_seed_failsoft_when_audit_log_read_raises(
 
     monkeypatch.setattr(audit, "read_audit_log", _raise)
 
-    with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.audit"):
+    with caplog.at_level(logging.WARNING, logger="strands_robots.audit"):
         audit._load_seq_counters()  # must not raise
 
     assert audit._SEQ_COUNTERS == {}

@@ -63,6 +63,13 @@ PACKAGE = "strands_robots"
 #: while its own five imports are all ``core``, so keeping it in ``app`` inverted
 #: the layering for its only caller and made three core modules look like they
 #: had an ``app`` reader when that reader was the recorder. And
+#: ``audit`` sits in ``core`` for the same reason the dataset modules do: the
+#: append-only safety log is a contract, not a host. It imports nothing from the
+#: package at all, and its writers are in three layers - the mesh that names the
+#: file, the ``robot_mesh`` tool, and the ``_hitl_audit`` row every
+#: human-in-the-loop gate owes - so under ``mesh`` it was a ``core`` module
+#: reaching two layers up for a JSONL appender, which is the one inversion this
+#: roster carried that nothing forced. And
 #: ``teleop_mixin`` sits with ``drivers|mesh`` because it is an input-device
 #: concern shared by three hosts in three layers - the hardware ``Robot``, the
 #: MuJoCo ``Simulation`` and the Device Connect sim driver - so it belongs under
@@ -92,6 +99,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "_mujoco_gl",
             "_path_validation",
             "_serial_discovery",
+            "audit",
             "bus_access",
             "dataset_metadata",
             "dataset_recorder",
@@ -171,7 +179,6 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 #: factory, which imports the driver registry and would close a cycle around
 #: the driver each one twins.
 KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
-    ("strands_robots._hitl_audit", "strands_robots.mesh.audit"),
     ("strands_robots.drivers.rollout", "strands_robots.policies"),
     ("strands_robots.drivers.feetech.twin", "strands_robots.simulation"),
     ("strands_robots.drivers.yahboom_m3pro_twin", "strands_robots.simulation"),

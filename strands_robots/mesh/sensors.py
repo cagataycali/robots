@@ -28,8 +28,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     pass
 
+from strands_robots.audit import log_safety_event
 from strands_robots.bus_access import read_observation
-from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.session import (
     HAND_HZ,

@@ -628,7 +628,7 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
     # attacker has chmod'd 0o600) would pass while the actual TLS load
     # later opens the symlink target. Symmetric with the
     # ``O_NOFOLLOW`` + lstat-reject discipline applied across
-    # ``strands_robots.mesh.audit._ensure_paths``, ``_load_seq_counters``, and
+    # ``strands_robots.audit._ensure_paths``, ``_load_seq_counters``, and
     # ``strands_robots.mesh._acl_config._load_acl_file``.
     #
     if not _is_posix():
@@ -674,7 +674,7 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
         # returns the link's own metadata -- since the loop already
         # rejected symlinks, ``lstat`` is equivalent to ``stat`` for
         # the path we are looking at, but we keep ``lstat`` explicit to
-        # match the discipline of ``strands_robots.mesh.audit._ensure_paths``,
+        # match the discipline of ``strands_robots.audit._ensure_paths``,
         # _load_seq_counters, and ``strands_robots.mesh._acl_config._load_acl_file``.
         #
         # Residual TOCTOU window: between this lstat() and Zenoh's

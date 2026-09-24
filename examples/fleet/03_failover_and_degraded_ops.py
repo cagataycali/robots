@@ -62,7 +62,7 @@ from capabilities import (  # noqa: E402
     manifest_from_dict,
 )
 
-from strands_robots.mesh.audit import log_safety_event, read_audit_log, verify_audit_integrity  # noqa: E402
+from strands_robots.audit import log_safety_event, read_audit_log, verify_audit_integrity  # noqa: E402
 from strands_robots.mesh.session import PEER_TIMEOUT  # noqa: E402
 
 ORCHESTRATOR_ID = "fleet-orchestrator"

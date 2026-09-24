@@ -42,7 +42,7 @@ def _reset_state(monkeypatch, tmp_path):
     # breaks hermeticity and stretches a rate-limit burst past its window.
     # These tests pin the defence layers, not transport - forbid the gateway.
     monkeypatch.setattr(rmt, "_gateway_mesh", lambda: None)
-    from strands_robots.mesh import audit
+    from strands_robots import audit
 
     audit._SEQ_COUNTER = 0
     yield
@@ -283,7 +283,7 @@ class TestAudit:
         m = _stub_mesh()
         with patch.object(rmt, "_resolve_mesh", return_value=m):
             _call("emergency_stop")
-        from strands_robots.mesh.audit import read_audit_log
+        from strands_robots.audit import read_audit_log
 
         events = [r for r in read_audit_log() if r.get("event") == "llm_tool_action"]
         assert any(r["payload"]["action"] == "emergency_stop" and r["payload"]["success"] for r in events)
@@ -292,7 +292,7 @@ class TestAudit:
         ctx = _make_ctx(response="no")
         with patch.object(rmt, "_resolve_mesh", return_value=_stub_mesh()):
             _call("emergency_stop", ctx=ctx)
-        from strands_robots.mesh.audit import read_audit_log
+        from strands_robots.audit import read_audit_log
 
         events = [r for r in read_audit_log() if r.get("event") == "llm_tool_action"]
         assert any(

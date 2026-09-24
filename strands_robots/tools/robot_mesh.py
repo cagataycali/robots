@@ -494,7 +494,7 @@ def _audit_tool_action(action: str, target: str, success: bool, detail: str) -> 
     is not violated implicitly.
     """
     try:
-        from strands_robots.mesh.audit import log_safety_event
+        from strands_robots.audit import log_safety_event
 
         log_safety_event(
             "llm_tool_action",

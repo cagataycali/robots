@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from strands_robots.mesh import audit as mesh_audit
+from strands_robots import audit as mesh_audit
 
 
 @pytest.fixture
@@ -159,7 +159,7 @@ class TestSeqFlockSymlinkRejection:
     def test_symlinked_lockfile_raises_hard_fail(self, tmp_path, monkeypatch):
         import os
 
-        from strands_robots.mesh import audit as audit_mod
+        from strands_robots import audit as audit_mod
 
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
 
@@ -178,7 +178,7 @@ class TestSeqFlockSymlinkRejection:
 
     def test_normal_lockfile_still_works(self, tmp_path, monkeypatch):
         """Sanity: regular (non-symlink) lockfile path is untouched."""
-        from strands_robots.mesh import audit as audit_mod
+        from strands_robots import audit as audit_mod
 
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
 
@@ -207,7 +207,7 @@ class TestSeqLockDegradedPoisonRecord:
     def test_symlinked_seq_lockfile_writes_poison_record(self, tmp_path, monkeypatch):
         import os
 
-        from strands_robots.mesh import audit as audit_mod
+        from strands_robots import audit as audit_mod
 
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
 

@@ -11,7 +11,7 @@ never saw the four variables that decide where the audit trail lives and
 whether it can be forged.
 
 Two properties are graded here, both derived from the package rather than from
-a list kept alongside it - so a variable added to ``mesh/audit.py`` later is
+a list kept alongside it - so a variable added to ``audit.py`` later is
 graded on arrival:
 
 - **Every audit variable the module reads is documented.** A variable the
@@ -39,9 +39,9 @@ import re
 import pytest
 
 import strands_robots
-from strands_robots.mesh import audit
+from strands_robots import audit
 
-_AUDIT_MODULE = pathlib.Path(strands_robots.__file__).parent / "mesh" / "audit.py"
+_AUDIT_MODULE = pathlib.Path(strands_robots.__file__).parent / "audit.py"
 _PAGE = pathlib.Path(strands_robots.__file__).parent.parent / "docs" / "security" / "audit-log.md"
 
 #: The prefix every audit-log env var shares.  Reading the module for the
@@ -55,11 +55,11 @@ _AUDIT_HEADING = "Audit log"
 
 
 def _audit_env_reads() -> set[str]:
-    """The set of ``STRANDS_MESH_AUDIT_*`` env vars ``mesh/audit.py`` reads.
+    """The set of ``STRANDS_MESH_AUDIT_*`` env vars ``audit.py`` reads.
 
     Returns:
         Every literal ``os.getenv`` / ``os.environ.get`` / ``os.environ[...]``
-        key in ``mesh/audit.py`` that starts with ``STRANDS_MESH_AUDIT_``.
+        key in ``audit.py`` that starts with ``STRANDS_MESH_AUDIT_``.
     """
     found: set[str] = set()
     tree = ast.parse(_AUDIT_MODULE.read_text(encoding="utf-8"))
@@ -111,7 +111,7 @@ def _documented_audit_vars() -> dict[str, str]:
 def test_every_audit_env_var_is_documented():
     """Every ``STRANDS_MESH_AUDIT_*`` var the module reads has a docs entry.
 
-    This is the rule that fires when a knob lands in ``mesh/audit.py`` without
+    This is the rule that fires when a knob lands in ``audit.py`` without
     a corresponding mention in ``docs/security/audit-log.md``.  It reads the module's AST
     for the literal keys rather than trusting an authored list, so no future
     variable is silently omitted.
@@ -120,7 +120,7 @@ def test_every_audit_env_var_is_documented():
     documented = _documented_audit_vars()
     missing = sorted(read - documented.keys())
     assert not missing, (
-        f"``mesh/audit.py`` reads {sorted(read)} but ``docs/security/audit-log.md`` "
+        f"``audit.py`` reads {sorted(read)} but ``docs/security/audit-log.md`` "
         f"names {sorted(documented)}. Undocumented: {missing}. "
         f"Add a bullet under the ``{_AUDIT_HEADING}`` heading naming each."
     )
@@ -171,7 +171,7 @@ def test_audit_env_vars_sit_under_the_named_heading():
 
 
 def test_audit_variables_the_module_reads_include_the_four_known_names():
-    """Pin the four names ``mesh/audit.py`` reads today.
+    """Pin the four names ``audit.py`` reads today.
 
     A premise cell: if this fails, the audit module stopped reading one of the
     four names the docstring narrates, and the documentation rule above may
@@ -187,7 +187,7 @@ def test_audit_variables_the_module_reads_include_the_four_known_names():
     }
     missing = sorted(known - read)
     assert not missing, (
-        f"``mesh/audit.py`` no longer reads {missing}. Update this test's "
+        f"``audit.py`` no longer reads {missing}. Update this test's "
         f"``known`` set and the docstrings in ``docs/security/audit-log.md`` accordingly."
     )
 
@@ -254,7 +254,7 @@ def _audit_section() -> str:
 
 
 def _log_safety_event_ast() -> ast.FunctionDef:
-    """Return the ``log_safety_event`` definition from ``mesh/audit.py``.
+    """Return the ``log_safety_event`` definition from ``audit.py``.
 
     Returns:
         The :class:`ast.FunctionDef` for the audit writer, which is the single
@@ -265,7 +265,7 @@ def _log_safety_event_ast() -> ast.FunctionDef:
     for node in tree.body:
         if isinstance(node, ast.FunctionDef) and node.name == "log_safety_event":
             return node
-    raise AssertionError("mesh/audit.py no longer defines log_safety_event")
+    raise AssertionError("audit.py no longer defines log_safety_event")
 
 
 def _record_field_names() -> set[str]:
@@ -310,7 +310,7 @@ def _signature_field_name() -> str:
 
     Derived by dataflow rather than by name: find the local the
     ``_sign_record`` call binds, then the ``record[...]`` key that local is
-    assigned to.  Renaming the field in ``mesh/audit.py`` therefore moves this
+    assigned to.  Renaming the field in ``audit.py`` therefore moves this
     answer, and the documentation rule below follows it.
 
     Returns:
@@ -327,7 +327,7 @@ def _signature_field_name() -> str:
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     signed_locals.add(target.id)
-    assert signed_locals, "mesh/audit.py no longer binds the result of _sign_record"
+    assert signed_locals, "audit.py no longer binds the result of _sign_record"
 
     fields: set[str] = set()
     for node in ast.walk(fn):
@@ -402,7 +402,7 @@ def test_the_section_names_the_field_the_signature_is_written_into():
     field = _signature_field_name()
     named = _fields_the_section_names()
     assert field in named, (
-        f"``mesh/audit.py`` writes the per-record HMAC into ``record[{field!r}]`` "
+        f"``audit.py`` writes the per-record HMAC into ``record[{field!r}]`` "
         f"but the ``{_AUDIT_HEADING}`` section names {sorted(named)} as record "
         f"fields. Name ``{field}`` where the PSK bullet describes the signature."
     )
@@ -482,7 +482,7 @@ def test_every_log_line_the_section_quotes_is_one_the_module_emits():
     missing = sorted(fragment for fragment in quoted if fragment not in source)
     assert not missing, (
         f"The ``{_AUDIT_HEADING}`` section quotes {missing}, which do not "
-        f"appear in ``mesh/audit.py``. An alert built on a line the module "
+        f"appear in ``audit.py``. An alert built on a line the module "
         f"never emits never fires."
     )
 
@@ -516,7 +516,7 @@ def test_an_unusable_destination_leaves_the_peer_running_with_the_trail_off(
         root.chmod(0o500)
 
     try:
-        with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.audit"):
+        with caplog.at_level(logging.WARNING, logger="strands_robots.audit"):
             for index in range(3):
                 audit.log_safety_event("emergency_stop", "peer-a", {"index": index})
     finally:

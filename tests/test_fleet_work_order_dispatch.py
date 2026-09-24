@@ -35,7 +35,7 @@ _MODULE_NAME = "fleet_work_order_dispatch_example"
 @pytest.fixture
 def example(monkeypatch, tmp_path):
     """Load the example with the audit log confined to tmp_path and signed."""
-    from strands_robots.mesh import audit
+    from strands_robots import audit
 
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "smoke-test-psk")
@@ -92,7 +92,7 @@ def _run_shipped_queue(example, tmp_path, approve=_approve_all, send=None, sends
 
 
 def _audit_records(example):
-    from strands_robots.mesh.audit import read_audit_log
+    from strands_robots.audit import read_audit_log
 
     return [
         r for r in read_audit_log() if r.get("peer_id") == example.DISPATCHER_ID and isinstance(r.get("payload"), dict)
@@ -153,7 +153,7 @@ def test_infeasible_order_is_nacked_with_machine_readable_reason(example, tmp_pa
 
 def test_audit_log_reconstructs_every_order_end_to_end(example, tmp_path):
     """order -> dispatch -> action -> completion for every order, signed and gap-free."""
-    from strands_robots.mesh.audit import verify_audit_integrity
+    from strands_robots.audit import verify_audit_integrity
 
     _run_shipped_queue(example, tmp_path)
 

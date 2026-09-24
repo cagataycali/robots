@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 
-import strands_robots.mesh.audit as audit
+import strands_robots.audit as audit
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +47,7 @@ def test_psk_value_rotation_drops_record(monkeypatch, caplog):
     # Operator rotates the PSK value mid-run (no restart).
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "key-B")
 
-    with caplog.at_level("ERROR", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("ERROR", logger="strands_robots.audit"):
         audit.log_safety_event(
             event_type="estop",
             peer_id="op-1",

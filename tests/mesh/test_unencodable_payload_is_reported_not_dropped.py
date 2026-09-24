@@ -180,7 +180,7 @@ class TestAnUnencodablePayloadIsReported:
         logs at ERROR. A wire half that reported lower is what let a forensic
         trail assert an event no peer received.
         """
-        from strands_robots.mesh import audit
+        from strands_robots import audit
 
         payload = {"distance_m": np.float32(0.02)}
         with caplog.at_level(logging.WARNING):

@@ -27,7 +27,7 @@ import os
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture(autouse=True)
@@ -85,7 +85,7 @@ def test_log_event_refuses_symlinked_log(tmp_path, caplog) -> None:
     log_path = audit.audit_log_path()
     os.symlink(attacker_target, log_path)
 
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("WARNING", logger="strands_robots.audit"):
         audit.log_safety_event("emergency_stop", "peerB", {"reason": "test"})  # must not raise
 
     # The attacker's target file must be left byte-for-byte intact.
@@ -116,7 +116,7 @@ def test_log_event_fails_soft_when_open_raises(tmp_path, monkeypatch, caplog) ->
 
     monkeypatch.setattr(audit.os, "open", _boom)
 
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("WARNING", logger="strands_robots.audit"):
         audit.log_safety_event("emergency_stop", "peerC", {"reason": "test"})  # must not raise
 
     assert any("failed to write" in rec.message for rec in caplog.records), (
@@ -163,7 +163,7 @@ def test_log_event_closes_fd_when_fdopen_raises(tmp_path, monkeypatch, caplog) -
     monkeypatch.setattr(audit.os, "fdopen", _boom_fdopen)
     monkeypatch.setattr(audit.os, "close", _tracking_close)
 
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("WARNING", logger="strands_robots.audit"):
         audit.log_safety_event("emergency_stop", "peerE", {"reason": "test"})  # must not raise
 
     # The raw fd opened for the append write was closed by the cleanup path.

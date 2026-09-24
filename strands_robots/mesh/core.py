@@ -23,9 +23,9 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from strands_robots._mesh_switch import mesh_env_request
+from strands_robots.audit import log_safety_event
 from strands_robots.bus_access import joint_read_source, read_joints, read_observation
 from strands_robots.mesh import security as _security
-from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.sensors import SensorLoopsMixin
 from strands_robots.mesh.session import (
@@ -3601,7 +3601,7 @@ class Mesh(SensorLoopsMixin):
         reaching an already locked-out peer must halt a rollout the first one
         missed rather than be rejected. The event is also published on
         ``strands/safety/estop`` and recorded in the audit log (see
-        :func:`strands_robots.mesh.audit.log_safety_event`).
+        :func:`strands_robots.audit.log_safety_event`).
 
         Returns the responses collected within the broadcast timeout, the local
         robot's own answer first (shaped like a peer's, with this peer's id) --

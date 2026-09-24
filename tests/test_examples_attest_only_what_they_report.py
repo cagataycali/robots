@@ -2,7 +2,7 @@
 
 An example that prints a scoped audit trail and an integrity verdict is
 printing one document, so both halves have to describe the same records.
-:func:`~strands_robots.mesh.audit.verify_audit_integrity` called with no
+:func:`~strands_robots.audit.verify_audit_integrity` called with no
 argument does not: it re-reads the entire log, which unlike a test's log is the
 developer's real ``~/.strands_robots/mesh_audit.jsonl`` -- examples do not
 redirect ``STRANDS_MESH_AUDIT_DIR``, and are not supposed to, because their

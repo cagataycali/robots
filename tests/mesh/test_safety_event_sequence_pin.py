@@ -24,7 +24,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh import security as mesh_security
 

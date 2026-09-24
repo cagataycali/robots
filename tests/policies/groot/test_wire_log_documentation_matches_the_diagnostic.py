@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from strands_robots.mesh.audit import audit_log_path
+from strands_robots.audit import audit_log_path
 from strands_robots.policies.groot.policy import Gr00tPolicy, _wire_log_dir
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]

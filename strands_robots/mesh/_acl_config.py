@@ -218,7 +218,7 @@ def _read_acl_bytes(path: Path) -> bytes:
     # ACL_FILE_MAX_BYTES + 1 so an attacker who races content between
     # stat() and read() cannot bypass the size cap. Mirrors the
     # O_NOFOLLOW + bounded-read discipline used for the audit log
-    # (``strands_robots.mesh.audit._ensure_paths``). The ACL file gates wire authorisation,
+    # (``strands_robots.audit._ensure_paths``). The ACL file gates wire authorisation,
     # so the same TOCTOU + symlink-swap defences apply.
     if path.is_symlink():
         raise ValueError(

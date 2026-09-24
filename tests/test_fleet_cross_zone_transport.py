@@ -37,7 +37,7 @@ _DASHBOARD_MODULE = "fleet_dashboard_example"
 
 
 def _reset_audit_state() -> None:
-    from strands_robots.mesh import audit
+    from strands_robots import audit
 
     audit._SEQ_COUNTERS.clear()
     audit._AUDIT_STATE.seq_loaded = False
@@ -238,7 +238,7 @@ def test_a_non_positive_n_steps_is_refused_before_anything_starts(example, n_ste
 
 
 def test_handoff_writes_a_signed_custody_chain_to_the_audit_log(example):
-    from strands_robots.mesh.audit import read_audit_log, verify_audit_integrity
+    from strands_robots.audit import read_audit_log, verify_audit_integrity
 
     request = {"request_id": "X-01", "payload_kg": 3.0, "src": "stock", "dst": "etch"}
     plan = example.plan_request(request, example.ZONES, example.DOCKS)
@@ -382,7 +382,7 @@ def test_fleet_estop_and_resume_flip_the_fleet_safety_state(dash):
 
 
 def test_audit_tail_reaches_the_timeline_once_and_only_once(dash):
-    from strands_robots.mesh.audit import log_safety_event
+    from strands_robots.audit import log_safety_event
 
     board = dash.FleetDashboard(_FakeMesh(), renderer := _RecordingRenderer(), tail_audit=True)
     board._audit_since = 0.0  # everything this test writes is in the window

@@ -50,7 +50,7 @@ from strands_robots.utils import (
 
 _log_safety_event: Callable[..., None] | None
 try:  # audit is best-effort; never let an import issue break teleop apply
-    from strands_robots.mesh.audit import log_safety_event as _log_safety_event
+    from strands_robots.audit import log_safety_event as _log_safety_event
 except Exception:  # pragma: no cover - defensive
     _log_safety_event = None
 

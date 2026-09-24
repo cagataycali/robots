@@ -45,7 +45,7 @@ _MODULE_NAME = "fleet_failover_and_degraded_ops_example"
 @pytest.fixture
 def example(monkeypatch, tmp_path):
     """Load the example with the audit log confined to tmp_path and signed."""
-    from strands_robots.mesh import audit
+    from strands_robots import audit
 
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "smoke-test-psk")
@@ -110,7 +110,7 @@ class _StubFleet:
 
 
 def _audit_records(example):
-    from strands_robots.mesh.audit import read_audit_log
+    from strands_robots.audit import read_audit_log
 
     return [r for r in read_audit_log() if isinstance(r.get("payload"), dict)]
 
@@ -368,7 +368,7 @@ def test_restarted_orchestrator_resyncs_the_outage_from_presence_and_audit(examp
     trail. The reconstruction names the issuer, the engaged peers, and the
     task chain, and the missing robot is visible as absent from presence.
     """
-    from strands_robots.mesh.audit import read_audit_log
+    from strands_robots.audit import read_audit_log
 
     # Pre-outage: the failover drill writes the orchestrator's task trail.
     manifests = [example.manifest_from_dict(m) for m in example.FLEET_MANIFESTS]

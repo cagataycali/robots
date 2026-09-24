@@ -41,7 +41,7 @@ _MODULE_NAME = "fleet_emergency_evacuation_example"
 @pytest.fixture
 def example(monkeypatch, tmp_path):
     """Load the example with the audit log confined to tmp_path and signed."""
-    from strands_robots.mesh import audit
+    from strands_robots import audit
 
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "smoke-test-psk")
@@ -68,7 +68,7 @@ def example(monkeypatch, tmp_path):
 
 
 def _coordinator_events(example):
-    from strands_robots.mesh.audit import read_audit_log
+    from strands_robots.audit import read_audit_log
 
     return [r["event"] for r in read_audit_log() if r.get("peer_id") == example.COORDINATOR_ID]
 
@@ -120,7 +120,7 @@ def test_dry_run_protocol_orders_phases_and_signs_the_trail(example):
     """Abort completes, the retreat runs closest-first, the path-clear claim
     precedes everything phase 3 would do, and the benchmark passes - all read
     from outputs and the signed audit chain."""
-    from strands_robots.mesh.audit import verify_audit_integrity
+    from strands_robots.audit import verify_audit_integrity
 
     world = example.ScriptedEvacuationWorld()
     summary = example.run_evacuation(world, sleep=lambda _s: None)
@@ -269,7 +269,7 @@ def test_the_report_attests_the_records_it_shows_and_not_the_whole_log(example):
     """
     import time
 
-    from strands_robots.mesh.audit import audit_log_path, log_safety_event, read_audit_log, verify_audit_integrity
+    from strands_robots.audit import audit_log_path, log_safety_event, read_audit_log, verify_audit_integrity
 
     # A machine that has used the mesh before, from runs this report is not about.
     log_file = Path(audit_log_path())
@@ -368,7 +368,7 @@ def test_declined_resume_does_not_clear_the_lockout(example, monkeypatch):
         receiver._dispatch({"action": "execute", "instruction": "resume the route"})
 
     # The audit trail names the denial with a structured local reason.
-    from strands_robots.mesh.audit import read_audit_log
+    from strands_robots.audit import read_audit_log
 
     denials = [r for r in read_audit_log() if r.get("event") == "resume_denied"]
     assert denials, "a refused resume must leave a resume_denied audit record"

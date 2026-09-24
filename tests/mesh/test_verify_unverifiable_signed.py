@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-import strands_robots.mesh.audit as audit
+import strands_robots.audit as audit
 
 
 @pytest.fixture(autouse=True)

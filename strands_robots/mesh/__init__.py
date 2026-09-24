@@ -17,10 +17,13 @@ Typical usage::
 Submodules
 ----------
 - ``session`` - Shared Zenoh session singleton and peer registry
-- ``audit`` - Append-only safety event audit log
 - ``core`` - The Mesh class (lifecycle, presence, state, RPC, subscribe)
 - ``sensors`` - Extended sensor topic loops (pose, health, IMU, odom, lidar, hand, map)
 - ``input`` - InputPublisher / InputReceiver for teleoperation over mesh
+
+The append-only safety event log this package writes through is
+:mod:`strands_robots.audit`, one layer down: three layers write to it, so it
+sits under all of them rather than inside the first of them.
 
 The in-process registry of mesh-enabled robots is reachable through
 :func:`get_local_robots`, which returns a snapshot. Code that needs to
@@ -28,6 +31,7 @@ mutate the registry itself reaches ``strands_robots.mesh.core``, where it is
 defined; this package re-exports the public surface only.
 """
 
+from strands_robots.audit import log_safety_event
 from strands_robots.mesh._mobile_base import (
     ActionCapable,
     MobileBaseRobot,
@@ -35,7 +39,6 @@ from strands_robots.mesh._mobile_base import (
     Transport,
 )
 from strands_robots.mesh.ackermann_robot import AckermannRosRobot
-from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.core import Mesh, get_local_robots, init_mesh
 from strands_robots.mesh.input import InputPublisher, InputReceiver
 from strands_robots.mesh.ros_bridge import RosBridgedRobot

@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture
@@ -52,7 +52,7 @@ def test_sidecar_value_above_cap_is_refused(isolated_audit, caplog):
     """Sidecar value > ``_MAX_SEED_SEQ`` is dropped with a WARNING."""
     bad = audit._MAX_SEED_SEQ + 1
     _write_sidecar(isolated_audit, {"victim": bad, "ok": 100})
-    with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.audit"):
+    with caplog.at_level(logging.WARNING, logger="strands_robots.audit"):
         audit._load_seq_counters()
     assert audit._SEQ_COUNTERS.get("victim", 0) == 0, "over-cap sidecar value must NOT seed the counter"
     assert audit._SEQ_COUNTERS.get("ok") == 100, "well-formed sidecar entry next to a tampered one must still seed"

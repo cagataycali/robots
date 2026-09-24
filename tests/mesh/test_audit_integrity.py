@@ -1,7 +1,7 @@
 """Audit-log HMAC integrity and sequence-gap detection tests.
 
 These tests cover the on-disk forensic guarantees of
-:mod:`strands_robots.mesh.audit`:
+:mod:`strands_robots.audit`:
 
 * Records gain a monotonic ``seq`` field.
 * When STRANDS_MESH_AUDIT_PSK is set, every record carries a HMAC ``sig``.
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture(autouse=True)
@@ -222,7 +222,7 @@ def test_read_audit_log_spans_rotated_files(tmp_path, monkeypatch):
 
     import importlib
 
-    from strands_robots.mesh import audit
+    from strands_robots import audit
 
     importlib.reload(audit)
 
@@ -273,7 +273,7 @@ def test_missing_sig_does_not_advance_cursor_when_psk_present(tmp_path, monkeypa
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "yin-replay-test")
     import importlib
 
-    from strands_robots.mesh import audit
+    from strands_robots import audit
 
     importlib.reload(audit)
 
@@ -335,7 +335,7 @@ def test_log_safety_event_does_not_propagate_seq_errors(monkeypatch, tmp_path, c
 
     monkeypatch.setattr(audit, "_next_seq", boom)
 
-    with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
+    with caplog.at_level(logging.ERROR, logger="strands_robots.audit"):
         # Must NOT raise.
         audit.log_safety_event("test_event", "peer-x", {"k": "v"})
 
@@ -387,7 +387,7 @@ def test_psk_degrade_drops_record(monkeypatch, tmp_path, caplog):
     # Phase 2: PSK is unset mid-run (simulates attacker or accident).
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK")
 
-    with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
+    with caplog.at_level(logging.ERROR, logger="strands_robots.audit"):
         # Must NOT raise (audit failures must not crash the safety path).
         # writes a poison record with sig=PSK_DEGRADED instead of
         # silent drop, preserving the forensic trail.
@@ -443,7 +443,7 @@ def test_psk_degrade_unsigned_to_signed_drops_record(monkeypatch, tmp_path, capl
     # Phase 2: PSK installed mid-run (rollout OR attacker restoring it).
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "test-psk-secret")
 
-    with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
+    with caplog.at_level(logging.ERROR, logger="strands_robots.audit"):
         audit.log_safety_event("signed_attempt", "peer-a", {"phase": "two"})
 
     # poison record IS written (was previously dropped). Symmetric
@@ -483,7 +483,7 @@ def test_cursor_does_not_roll_backward_on_forged_low_seq(monkeypatch, tmp_path):
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
     import importlib
 
-    from strands_robots.mesh import audit
+    from strands_robots import audit
 
     importlib.reload(audit)
 
@@ -598,7 +598,7 @@ class TestAuditFailSoft:
 
         monkeypatch.setattr(audit, "_sign_record", boom)
 
-        with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
+        with caplog.at_level(logging.ERROR, logger="strands_robots.audit"):
             # Must NOT raise -- safety-path contract
             audit.log_safety_event("test", "peer-1", {"data": "ok"})
 
@@ -733,7 +733,7 @@ class TestF14SignFailedPoisonRecord:
 
         monkeypatch.setattr(audit, "_sign_record", boom)
 
-        with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
+        with caplog.at_level(logging.ERROR, logger="strands_robots.audit"):
             audit.log_safety_event("test", "operator-1", {"i": 1})
 
         # The record should be present with sig=SIGN_FAILED (poison),

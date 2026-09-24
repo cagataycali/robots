@@ -25,7 +25,7 @@ import os
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +94,7 @@ def test_persist_refuses_symlinked_sidecar(tmp_path, caplog) -> None:
     os.symlink(attacker_target, sidecar)
 
     audit._SEQ_COUNTERS["peerA"] = 99
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("WARNING", logger="strands_robots.audit"):
         audit._persist_seq_counters()
 
     # The attacker's target file must be left byte-for-byte intact.
@@ -115,7 +115,7 @@ def test_persist_fails_soft_on_oserror(tmp_path, monkeypatch, caplog) -> None:
     # Force the first filesystem touch inside the try-block to fail.
     monkeypatch.setattr(audit.os, "open", _boom)
 
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("WARNING", logger="strands_robots.audit"):
         audit._persist_seq_counters()  # must not raise
 
     assert any("could not persist seq sidecar" in rec.message for rec in caplog.records), (

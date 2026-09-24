@@ -1,6 +1,6 @@
 """Pin tests for the audit-log seed fallback gating (R3 perf concern).
 
-Reviewed concern (R3 thread on ``strands_robots/mesh/audit.py:702``):
+Reviewed concern (R3 thread on ``strands_robots/audit.py:702``):
 ``_next_seq`` resets ``_AUDIT_STATE.seq_loaded = False`` on every call,
 which is correct for the cheap sidecar path (peer-process increments
 need to be merged inside the flock). But when the sidecar is degraded
@@ -38,7 +38,7 @@ from unittest.mock import patch
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture

@@ -1,7 +1,7 @@
 """Audit-log unavailability must never break inbound command handling.
 
 Every rejection and successful-execution branch of ``Mesh._exec_cmd`` records a
-forensic event via :func:`strands_robots.mesh.audit.log_safety_event`. That call
+forensic event via :func:`strands_robots.audit.log_safety_event`. That call
 is best-effort: the audit log is file-backed and can be transiently unwritable
 (disk full, permissions, a symlink refusal), but a wired peer must still get its
 structured response and the robot must still act. Each call site therefore wraps

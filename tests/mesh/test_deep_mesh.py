@@ -30,11 +30,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from strands_robots.audit import log_safety_event, read_audit_log
+
 # Correct import paths after refactor (commit 8f0eb6c)
 from strands_robots.mesh import InputPublisher, InputReceiver, Mesh, get_local_robots, init_mesh
 from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh import session as mesh_session
-from strands_robots.mesh.audit import log_safety_event, read_audit_log
 from strands_robots.mesh.session import (
     clear_peers,
     get_peer,

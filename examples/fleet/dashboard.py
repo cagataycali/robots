@@ -68,7 +68,7 @@ from collections.abc import Callable
 from typing import Any
 
 from strands_robots.mesh import init_mesh
-from strands_robots.mesh.audit import read_audit_log
+from strands_robots.audit import read_audit_log
 from strands_robots.utils import require_optional, tcp_port_error
 
 DASHBOARD_ID = "fleet-dashboard"

@@ -62,7 +62,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from strands_robots.mesh.audit import log_safety_event, read_audit_log, verify_audit_integrity
+from strands_robots.audit import log_safety_event, read_audit_log, verify_audit_integrity
 from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark
 from strands_robots.simulation.predicates import PREDICATE_REGISTRY, BoolPredicate, register_predicate
 

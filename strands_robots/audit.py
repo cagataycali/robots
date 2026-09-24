@@ -1,9 +1,19 @@
-"""Append-only audit log for safety-critical mesh events.
+"""Append-only audit log for safety-critical events.
 
 Safety actions on a multi-robot mesh (most importantly :func:`emergency_stop`)
 need a tamper-evident trail that lives independently of stdout, structured
 loggers, or any process that may crash mid-event.  This module owns that
 trail.
+
+The mesh is where it started and is still the heaviest writer, but it is not the
+only one: :mod:`~strands_robots._hitl_audit` writes the operator-response row
+every human-in-the-loop gate owes, and :mod:`~strands_robots.tools.robot_mesh`
+writes its own refusals.  Those three sit in three different layers, so the log
+sits under all of them, at the package root, and imports nothing from the package
+- a gate that asks a human pays for a JSONL appender and nothing else.  The
+on-disk name and the four ``STRANDS_MESH_AUDIT_*`` variables below are the
+operator's contract and are deliberately unchanged: one trail, one file, whoever
+writes to it.
 
 Layout
 ------

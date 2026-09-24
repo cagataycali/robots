@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture(autouse=True)
@@ -71,7 +71,7 @@ def test_load_seq_counters_refuses_symlinked_sidecar(tmp_path, caplog) -> None:
     # Pre-populate _SEQ_COUNTERS at a higher value than the attacker's.
     audit._SEQ_COUNTERS["victim_peer"] = 1000
 
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("WARNING", logger="strands_robots.audit"):
         audit._load_seq_counters()
 
     # Counter must NOT be rolled backward by the attacker's value.

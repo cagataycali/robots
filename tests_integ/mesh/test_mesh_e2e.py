@@ -90,8 +90,8 @@ def test_two_meshes_rpc_round_trip():
 
 def test_emergency_stop_writes_audit_log(tmp_path, monkeypatch):
     """E-STOP broadcast triggers the audit log."""
+    from strands_robots.audit import read_audit_log
     from strands_robots.mesh import Mesh
-    from strands_robots.mesh.audit import read_audit_log
 
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
 

@@ -1,6 +1,6 @@
 """Pin tests for audit sequence-counter recovery from non-dict sidecar payloads.
 
-Reviewed concern (R3 thread on ``strands_robots/mesh/audit.py:488``):
+Reviewed concern (R3 thread on ``strands_robots/audit.py:488``):
 ``sidecar_loaded = True`` was set unconditionally inside the
 ``elif sidecar.exists():`` branch, including when the parsed JSON payload
 was ``null``, a list, a string, or a number. The ``isinstance(payload,
@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture

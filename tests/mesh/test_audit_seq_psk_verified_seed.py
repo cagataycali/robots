@@ -6,7 +6,7 @@ re-seeds ``_SEQ_COUNTERS`` by walking the persisted audit log and taking
 monotonic-sequence floor that replay protection depends on.
 
 The circular-trust defence (``_load_seq_counters`` in
-``strands_robots.mesh.audit``) closes a self-poisoning hole on that boundary:
+``strands_robots.audit``) closes a self-poisoning hole on that boundary:
 when ``STRANDS_MESH_AUDIT_PSK`` is configured, the seed walk trusts ONLY records
 whose HMAC ``sig`` it can recompute and ``compare_digest``-match. Otherwise an
 attacker who could append a single forged record (no PSK in dev, or a PSK
@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture
@@ -126,7 +126,7 @@ def test_over_cap_signed_record_refused(
 
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.audit"):
+    with caplog.at_level(logging.WARNING, logger="strands_robots.audit"):
         audit._load_seq_counters()
 
     assert "peer-C" not in audit._SEQ_COUNTERS
@@ -148,7 +148,7 @@ def test_all_unverified_log_seeds_nothing(
 
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.audit"):
+    with caplog.at_level(logging.WARNING, logger="strands_robots.audit"):
         audit._load_seq_counters()
 
     assert audit._SEQ_COUNTERS == {}

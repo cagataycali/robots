@@ -26,7 +26,7 @@ import threading
 import time
 from types import SimpleNamespace
 
-from strands_robots.mesh import audit as audit_mod
+from strands_robots import audit as audit_mod
 from strands_robots.mesh import core
 
 

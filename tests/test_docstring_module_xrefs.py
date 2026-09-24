@@ -214,6 +214,6 @@ def test_comments_cite_modules_not_internal_filenames() -> None:
     offenders = _comment_offenders()
     assert not offenders, (
         "Comments must cite internal code by module path "
-        "(``strands_robots.mesh.audit._ensure_paths``) not source filename "
+        "(``strands_robots.audit._ensure_paths``) not source filename "
         f"(``audit.py``). Offending files: {offenders}"
     )

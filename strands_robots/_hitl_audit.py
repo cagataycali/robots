@@ -33,18 +33,24 @@ audit log - one gate spelling the row ``operator refused`` would be invisible to
 search for another's ``operator declined``, and the reader has no way to know a
 third gate wrote nothing at all.
 
-The audit module is imported inside the call rather than at module scope because
-``strands_robots.mesh`` pulls in the transport stack, and a tool that gates a ROS
-graph or a training run must not pay for that on import.
-
 It sits beside :mod:`~strands_robots._command_gate` at the package root, which is
 the one caller that reads it at module scope: the row and the decision that
-writes it cannot be on two sides of a layer boundary.
+writes it cannot be on two sides of a layer boundary. The log it writes through,
+:mod:`~strands_robots.audit`, sits there too and imports nothing from the
+package, so the write is a plain module-scope import: a tool that gates a ROS
+graph or a training run pays for a JSONL appender on import and nothing else.
+
+The module is bound rather than the function, so ``log_safety_event`` is looked up
+on :mod:`~strands_robots.audit` at call time. That keeps one patch target for
+every gate's rows - the sink, not each writer's copy of the name - which is what
+lets a test assert that all four gates above reach the same log.
 """
 
 from __future__ import annotations
 
 import logging
+
+from strands_robots import audit
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +104,7 @@ def log_operator_response(
     verdict = "approved" if approved else "declined"
     detail = f"operator {verdict}: {response!r}"
     try:
-        from strands_robots.mesh.audit import log_safety_event
-
-        log_safety_event(
+        audit.log_safety_event(
             "llm_tool_action",
             source,
             {

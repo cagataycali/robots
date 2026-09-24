@@ -1,4 +1,4 @@
-"""Forensic-walker defenses for :mod:`strands_robots.mesh.audit`.
+"""Forensic-walker defenses for :mod:`strands_robots.audit`.
 
 ``read_audit_log`` is both the operator-facing forensic reader and the
 seed source for ``_load_seq_counters`` when the seq sidecar is corrupt.
@@ -38,7 +38,7 @@ import os
 
 import pytest
 
-from strands_robots.mesh import audit
+from strands_robots import audit
 
 
 @pytest.fixture(autouse=True)
@@ -166,7 +166,7 @@ def test_read_audit_log_skips_malformed_json_line(tmp_path, monkeypatch, caplog)
         encoding="utf-8",
     )
 
-    with caplog.at_level("DEBUG", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("DEBUG", logger="strands_robots.audit"):
         records = audit.read_audit_log()
 
     events = [r.get("event") for r in records]
@@ -206,7 +206,7 @@ def test_read_audit_log_skips_blank_lines_without_a_corruption_breadcrumb(tmp_pa
         encoding="utf-8",
     )
 
-    with caplog.at_level("DEBUG", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("DEBUG", logger="strands_robots.audit"):
         records = audit.read_audit_log()
 
     events = [r.get("event") for r in records]
@@ -249,7 +249,7 @@ def test_read_audit_log_keeps_records_around_undecodable_bytes(damaged_line, exp
         b'{"event": "before", "payload": {"i": 1}}\n' + damaged_line + b'\n{"event": "after", "payload": {"i": 2}}\n'
     )
 
-    with caplog.at_level("DEBUG", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("DEBUG", logger="strands_robots.audit"):
         records = audit.read_audit_log()
 
     assert [r.get("event") for r in records] == expected_events
@@ -321,7 +321,7 @@ def test_read_audit_log_leaves_an_undamaged_log_without_a_damage_breadcrumb(capl
     """
     audit.log_safety_event("emergency_stop", "peer-a", {"index": 1})
 
-    with caplog.at_level("DEBUG", logger="strands_robots.mesh.audit"):
+    with caplog.at_level("DEBUG", logger="strands_robots.audit"):
         records = audit.read_audit_log()
 
     assert len(records) == 1
