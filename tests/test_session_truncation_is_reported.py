@@ -52,7 +52,7 @@ def _run_pytest(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """
     env = {**os.environ, "PYTHONPATH": str(_REPO_ROOT)}
     env.pop("PYTEST_ADDOPTS", None)
-    return subprocess.run(
+    result = subprocess.run(
         [
             sys.executable,
             "-m",
@@ -71,6 +71,14 @@ def _run_pytest(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
         env=env,
         timeout=120,
     )
+    # A run that never reached collection -- an option the installed plugins do
+    # not declare, an unimportable plugin -- writes its usage error to stderr and
+    # nothing to stdout, so an assertion on stdout alone reports a blank. Name
+    # the stream that carries the reason.
+    assert result.stdout, (
+        f"the nested pytest wrote nothing to stdout (exit {result.returncode}); stderr:\n{result.stderr}"
+    )
+    return result
 
 
 class TestTheSummaryStatesTheSizeOfWhatDidNotRun:
