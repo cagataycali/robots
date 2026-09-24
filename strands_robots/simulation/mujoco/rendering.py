@@ -365,6 +365,43 @@ def _cameras_recording_option_error(
 #: Fraction of a range that absorbs boundary rounding in the out-of-range
 #: warning. A position servo commanded exactly at a limit routinely lands a
 #: float epsilon outside it, and that is not a unit mismatch.
+def _cams_rec_ready_timeout(n_cameras: int) -> float:
+    """Seconds :meth:`RenderingMixin.start_cameras_recording` waits for warmup.
+
+    The worst case is the 30-attempt warmup cap (~1 s per camera at 64x48,
+    more for larger frames) plus a margin. A module function rather than an
+    inline expression so a test can reach the not-warm-yet branch without
+    spending the whole timeout on it.
+    """
+    return 5.0 + 1.0 * n_cameras
+
+
+def _no_frames_reason(state: dict[str, Any], elapsed: float, errors: int) -> str:
+    """Why a camera in ``state`` buffered nothing over an ``elapsed``-second window.
+
+    The daemon recorder writes ``warmup_s`` when it enters the capture loop, so
+    its absence means the render context never came up inside the window - the
+    common cause of an empty recording and the one the frame count cannot show,
+    because the frames carry no timestamps.
+
+    Args:
+        state: The recorder state, read for ``mode`` and ``warmup_s``.
+        elapsed: Seconds between start and this flush.
+        errors: Render failures counted for this camera.
+
+    Returns:
+        One parenthetical clause naming the cause.
+    """
+    if state.get("mode") == "synchronous":
+        return f"no step() rendered into the synchronous recorder during the {elapsed:.1f}s window"
+    warmup_s = state.get("warmup_s")
+    if warmup_s is None:
+        return f"the recorder thread was still warming its render context for the whole {elapsed:.1f}s window"
+    if errors:
+        return f"every render after the {warmup_s:.1f}s warmup failed ({errors} errors)"
+    return f"warmup took {warmup_s:.1f}s of the {elapsed:.1f}s window and no capture tick landed after it"
+
+
 _CTRL_BOUND_TOLERANCE = 0.01
 
 
@@ -2596,8 +2633,10 @@ class RenderingMixin:
                 positive whole number; ``0``/negative would drop every frame.
 
         Returns:
-            The success envelope naming the tag, cameras and capture clock, or
-            the error envelope from the ``cameras`` domain below or from
+            The success envelope naming the tag, cameras and capture clock,
+            plus whether the recorder is capturing yet and what its warmup
+            cost (``capturing`` / ``warmup_s`` in the JSON block) - or the
+            error envelope from the ``cameras`` domain below or from
             :meth:`_start_cameras_recording_under_lock` on refusal.
         """
         # ``cameras`` names an ordered list of DISTINCT camera names. Its shape
@@ -2628,13 +2667,13 @@ class RenderingMixin:
         out_dir = state["output_dir"]
 
         # Wait for the recorder thread to warm its GL context and enter the
-        # capture loop before reporting success. Worst case is the 30-attempt
-        # warmup cap (~1s/cam at 64x48, more for larger frames) plus a small
-        # margin; the common case is ~0.5s. If warmup somehow stalls we still
-        # return after the timeout rather than blocking forever - the thread
-        # keeps trying and ``get_cameras_recording_status`` exposes errors.
-        _ready_timeout = 5.0 + 1.0 * len(names)
-        if not state["ready"].wait(timeout=_ready_timeout):
+        # capture loop before reporting success, so the return coincides with
+        # the first captured frame. If warmup stalls we still return after
+        # :func:`_cams_rec_ready_timeout` rather than blocking forever - the
+        # thread keeps trying, and the return below says it is not capturing.
+        _ready_timeout = _cams_rec_ready_timeout(len(names))
+        capturing = state["ready"].wait(timeout=_ready_timeout)
+        if not capturing:
             logger.warning(
                 "camera recorder '%s' not ready after %.1fs; returning anyway (first frames may be delayed)",
                 tag,
@@ -2650,7 +2689,37 @@ class RenderingMixin:
             f"not one per sim step; a step() burst that returns in milliseconds records ~0 frames. "
             f"For one frame per control step record with start_recording (dataset) instead."
         )
-        return {"status": "success", "content": [{"text": msg}]}
+        # Whether the wait above succeeded was a log-only warning, so the
+        # caller read the same sentence over a capturing recorder and over one
+        # whose render context was still coming up - then stopped a few
+        # seconds later and found zero frames. Say which it is, and carry the
+        # pair a caller acts on (is it capturing, and what did warmup cost).
+        if capturing:
+            msg += f"\n   warmup: {state.get('warmup_s', 0.0):.1f}s - the recorder is capturing"
+        else:
+            msg += (
+                f"\n   NOT CAPTURING YET: the recorder thread is still warming its render context after "
+                f"{_ready_timeout:.1f}s. Frames start when it finishes - check get_cameras_recording_status "
+                f"reports frames before you stop."
+            )
+        return {
+            "status": "success",
+            "content": [
+                {"text": msg},
+                {
+                    "json": {
+                        "recording": tag,
+                        "cameras": list(names),
+                        # The recorder's own normalized rate, not the raw
+                        # argument: an integral float is normalized on the way in.
+                        "fps": state["fps"],
+                        "output_dir": out_dir,
+                        "capturing": capturing,
+                        "warmup_s": state.get("warmup_s"),
+                    }
+                },
+            ],
+        }
 
     def _start_cameras_recording_under_lock(
         self,
@@ -2907,7 +2976,11 @@ class RenderingMixin:
             # Warmup done (or capped) - capture loop is about to run. Unblock
             # the caller waiting in start_cameras_recording so the success
             # return coincides with the first captured frame, not the cold
-            # thread launch.
+            # thread launch. The duration is kept because it is the only
+            # answer to "why did a window this long capture nothing": a fresh
+            # thread's GL context comes up slower than the main thread's, and
+            # the frames carry no timestamp that would show it afterwards.
+            state["warmup_s"] = round(_time.monotonic() - state["started_mono"], 2)
             state["ready"].set()
 
             interval = 1.0 / fps
@@ -3185,8 +3258,10 @@ class RenderingMixin:
             else:
                 # No frame was ever buffered, so no clip exists: say so instead
                 # of naming a file that was never written (a caller fed that
-                # path onward and found nothing there).
-                line = f"   {cam:20s}     0 frames - no clip written ({errors} errors)"
+                # path onward and found nothing there). The error count alone
+                # read as "nothing went wrong" on the common case - a window
+                # shorter than the recorder's warmup - so name the cause.
+                line = f"   {cam:20s}     0 frames - no clip written ({_no_frames_reason(state, elapsed, errors)})"
             if frames_skipped:
                 line += f"  [{frames_skipped} skipped: size mismatch]"
             if flush_error:
@@ -3515,6 +3590,10 @@ class RenderingMixin:
             head += "  (stop requested; the recorder thread has not exited)"
         elif phase == "unflushed":
             head += "  (stopped, not encoded; call stop_cameras_recording() to flush)"
+        elif phase == "recording" and (ready := state.get("ready")) is not None and not ready.is_set():
+            # The synchronous recorder has no thread and no event, so this
+            # reads as "not warming" there, which is true of it.
+            head += "  (recorder thread still warming its render context - no frames yet)"
         lines = [head]
         for cam in state["cameras"]:
             frames = len(state["buffers"][cam])
