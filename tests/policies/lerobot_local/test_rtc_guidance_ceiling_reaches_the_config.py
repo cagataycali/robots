@@ -4,8 +4,9 @@ lerobot's RTC denoiser takes the guidance ceiling from
 ``self.rtc_config.max_guidance_weight`` - it clamps with
 ``torch.minimum(guidance_weight, max_guidance_weight)`` and feeds the same value
 to ``nan_to_num(..., posinf=max_guidance_weight)``. It is *not* part of the RTC
-kwarg contract: ``ActionSelectKwargs`` carries ``inference_delay``,
-``prev_chunk_left_over`` and ``execution_horizon`` and nothing else.
+kwarg contract - the ``TypedDict`` ``predict_action_chunk`` unpacks, which
+carries ``inference_delay``, ``prev_chunk_left_over`` and ``execution_horizon``
+and nothing else.
 
 So a ceiling kept only on the policy object cannot take effect. Pre-fix
 ``_init_rtc`` read the checkpoint's value as a *default* into
@@ -37,7 +38,7 @@ import ast
 import inspect
 import math
 import textwrap
-from typing import Any
+from typing import Any, get_args, get_type_hints
 from unittest.mock import MagicMock
 
 import pytest
@@ -58,6 +59,58 @@ UNUSABLE: tuple[Any, ...] = (0, 0.0, -3.5, math.nan, math.inf, True, False, "2.0
 
 # Accepted spellings: a float, an int, and a value below the model's own.
 USABLE: tuple[Any, ...] = (2.0, 0.5, 1, 25.0)
+
+
+def _rtc_kwarg_contract() -> set[str]:
+    """The keyword names lerobot's RTC seam declares, read off that seam.
+
+    Resolved from the ``TypedDict`` that ``predict_action_chunk`` unpacks -
+    the method :meth:`LerobotLocalPolicy._predict_with_rtc` forwards into -
+    because the name of that dict belongs to lerobot: 0.6.1 declared it as
+    ``modeling_smolvla.ActionSelectKwargs`` and renamed it to
+    ``pretrained.RTCActionSelectKwargs``. The seam is the same either way, so
+    reading the signature grades the contract across both spellings instead of
+    erroring on the rename.
+    """
+    smolvla = pytest.importorskip("lerobot.policies.smolvla.modeling_smolvla")
+    hints = get_type_hints(smolvla.SmolVLAPolicy.predict_action_chunk, include_extras=True)
+    hint = hints.get("kwargs")
+    assert hint is not None, (
+        "smolvla's predict_action_chunk no longer annotates **kwargs, so the RTC "
+        "kwarg contract cannot be read off the seam _predict_with_rtc forwards into"
+    )
+    unpacked = get_args(hint)
+    assert len(unpacked) == 1, f"predict_action_chunk unpacks {unpacked}, expected one TypedDict"
+    return set(unpacked[0].__annotations__)
+
+
+def _forwarded_rtc_kwargs() -> set[str]:
+    """The keyword names ``_predict_with_rtc`` forwards into that seam.
+
+    Derived from the method's own source - the ``rtc_kwargs`` dict literal plus
+    every ``rtc_kwargs["name"] =`` write - so a newly forwarded keyword is
+    graded against lerobot's contract without editing this file.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(LerobotLocalPolicy._predict_with_rtc)))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id == "rtc_kwargs" and isinstance(node.value, ast.Dict):
+                names |= {
+                    key.value for key in node.value.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                }
+            elif (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "rtc_kwargs"
+                and isinstance(target.slice, ast.Constant)
+                and isinstance(target.slice.value, str)
+            ):
+                names.add(target.slice.value)
+    return names
 
 
 class _StubRtcConfig:
@@ -268,13 +321,18 @@ class TestThePremisesThisRestsOn:
 
         The ceiling is written onto the config precisely *because* it is absent
         from this contract. Were it added upstream, this cell fires and the
-        author reconsiders the write.
+        author reconsiders the write. The same read pins the other direction:
+        every keyword ``_predict_with_rtc`` forwards is one the seam declares.
         """
-        smolvla = pytest.importorskip("lerobot.policies.smolvla.modeling_smolvla")
-        keys = set(smolvla.ActionSelectKwargs.__annotations__)
+        declared = _rtc_kwarg_contract()
+        forwarded = _forwarded_rtc_kwargs()
 
-        assert "execution_horizon" in keys, "premise: the horizon IS a kwarg"
-        assert "max_guidance_weight" not in keys, (
+        assert forwarded, "premise: _predict_with_rtc forwards RTC keywords"
+        assert forwarded <= declared, (
+            f"_predict_with_rtc forwards {sorted(forwarded - declared)}, which lerobot's "
+            f"RTC kwarg contract no longer declares (it declares {sorted(declared)})"
+        )
+        assert "max_guidance_weight" not in declared, (
             "lerobot now accepts the ceiling as an RTC kwarg; forward it in "
             "_predict_with_rtc instead of writing it onto rtc_config"
         )

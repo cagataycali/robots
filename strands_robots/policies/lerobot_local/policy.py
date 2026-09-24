@@ -2221,8 +2221,9 @@ class LerobotLocalPolicy(Policy):
             # Written onto the config, because that is the only place lerobot
             # reads it: ``RTCInferenceMixin`` takes the ceiling from
             # ``self.rtc_config.max_guidance_weight``, and the RTC kwarg
-            # contract (``ActionSelectKwargs``) carries only ``inference_delay``,
-            # ``prev_chunk_left_over`` and ``execution_horizon``. Kept only on
+            # contract - the ``TypedDict`` ``predict_action_chunk`` unpacks -
+            # carries only ``inference_delay``, ``prev_chunk_left_over`` and
+            # ``execution_horizon``. Kept only on
             # this policy - as it was - the caller's ceiling reached the INFO
             # line below and nothing else, so a checkpoint tuned with a ``2.0``
             # ceiling ran the model's own ``10.0``. The horizon needs no
