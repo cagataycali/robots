@@ -213,6 +213,13 @@ policy = create_policy(
 )
 ```
 
+Together, because the units half on its own is refused rather than run: a map
+that converts writes its conversion into the very tensor the inert normalizer
+then leaves alone, so the full so101 joint range reaches the model at 160.0 where
+the native pack reaches 2.79 and the checkpoint was trained on ~1 sigma. The load
+names the inert features and both ways out - supply the stats above, or drop the
+conversion (`set_robot_state_keys([...])`, or a `"native"` map).
+
 The built-in `so100` / `so101` maps declare `state_units`/`action_units`
 `"degrees"`; every other map defaults to `"native"`, which is right for real
 hardware - an SO follower already reports driver units - and wrong for a sim
