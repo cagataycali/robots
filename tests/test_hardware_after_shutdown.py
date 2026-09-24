@@ -78,7 +78,6 @@ import ast
 import pathlib
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -87,6 +86,7 @@ from strands_robots import hardware_robot
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState, TaskStatus
 from strands_robots.policies.base import Policy
+from tests._daemon_executor import DaemonThreadExecutor
 
 #: Upper bound on any wait, so a broken contract fails instead of hanging.
 DEADLINE = 10.0
@@ -193,7 +193,7 @@ def make_robot(bus: Bus) -> HwRobot:
     hw.control_frequency = 500.0
     hw.action_sleep_time = 1.0 / 500.0
     hw._task_state = RobotTaskState()
-    hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="arm_executor")
+    hw._executor = DaemonThreadExecutor(max_workers=1, thread_name_prefix="arm_executor")
     hw._shutdown_event = threading.Event()
     hw._stop_requested = threading.Event()
     hw._task_admission = threading.Lock()
