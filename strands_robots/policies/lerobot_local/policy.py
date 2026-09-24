@@ -1488,6 +1488,35 @@ class LerobotLocalPolicy(Policy):
                 # packed as degrees, so the stats-only remedy leaves
                 # observation.state a near-constant. The warning names both.
                 inert = bridge.inert_normalization_features()
+                # Worse than the passthrough on its own: a DECLARED embodiment whose
+                # state_units/action_units are not native writes its conversion into
+                # the very tensor the inert normalizer then leaves alone, so the
+                # converted value reaches the model raw. Measured on so101's MJCF
+                # joint range: the degrees pack reaches 160.0 where the native pack
+                # reaches 2.79 and the checkpoint was trained on ~1 sigma. The
+                # warning below prescribes exactly this unit half, so a caller who
+                # already declared it is advised to do what they did. Both halves are
+                # known here, so refuse and name them - the same posture the
+                # mismatched-width guard above takes.
+                embodiment = self._embodiment
+                if inert and embodiment is not None and embodiment.converts_units:
+                    raise ValueError(
+                        f"lerobot_local: embodiment {embodiment.name!r} converts units "
+                        f"(state_units={embodiment.state_units!r}, "
+                        f"action_units={embodiment.action_units!r}), but "
+                        f"{self.pretrained_name_or_path or '<model>'} has an ACTIVE normalization "
+                        f"pipeline whose stats do not cover {inert}, so nothing scales the "
+                        "conversion back: the converted state reaches the model unscaled (the "
+                        "so101 joint range packs to 160.0 where packing it natively reaches 2.79 "
+                        "and the checkpoint was trained on ~1 sigma) and the predicted action is "
+                        "un-unnormalized before being converted back. Supply the training "
+                        "dataset's stats for BOTH sides -- processor_overrides="
+                        "{'normalizer_processor': {'stats': <dataset stats>}, "
+                        "'unnormalizer_processor': {'stats': <dataset stats>}} -- or drop the "
+                        "conversion and let the native values through: call "
+                        "set_robot_state_keys([...]) to bind the keys, or pass an embodiment "
+                        "whose state_units/action_units are 'native'."
+                    )
                 if inert:
                     # The stats LeRobot could not find are usually IN this
                     # checkpoint under dataset-prefixed keys. Name them: a

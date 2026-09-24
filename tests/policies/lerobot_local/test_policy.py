@@ -2096,6 +2096,7 @@ class TestLoadModelPostprocessorWarning:
         policy.cache_model = False
         policy.revision = None
         policy._molmoact2_norm_tag = None
+        policy._embodiment = None
         return policy
 
     def test_warns_without_postprocessor(self, caplog):
