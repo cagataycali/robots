@@ -201,7 +201,10 @@ def test_tool_forwards_every_honored_value_unchanged(robots: str | None, expecte
     For a single string argument, unset and empty genuinely coincide - only a value
     that carries content while naming nothing is a caller mistake.
     """
-    fake = {"downloaded": 0, "skipped": 0, "failed": 0, "method": "git clone"}
+    # A result carrying a ``method`` reached a download, so it reports at least one
+    # outcome - three zeros beside it is a shape ``download_robots`` never returns,
+    # and is now read as the empty selection it describes.
+    fake = {"downloaded": 1, "skipped": 0, "failed": 0, "method": "git clone", "assets_dir": "/d"}
     with patch(f"{_TOOL_MOD}.download_robots", return_value=fake) as download:
         result = download_assets(action="download", robots=robots)
 

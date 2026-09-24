@@ -235,7 +235,9 @@ class TestTheToolRefusesTheFlagItForwards:
 
     @pytest.mark.parametrize("value", [True, False])
     def test_a_usable_boolean_is_forwarded_unchanged(self, value: bool) -> None:
-        fake = {"downloaded": 0, "skipped": 0, "failed": 0, "method": "git clone"}
+        # A ``method`` means a download was reached, so three zeros beside it is a
+        # shape the library never returns - it now reads as the empty selection.
+        fake = {"downloaded": 1, "skipped": 0, "failed": 0, "method": "git clone", "assets_dir": "/d"}
         with patch(f"{_TOOL_MOD}.download_robots", return_value=fake) as download:
             envelope = _run_tool(action="download", robots="probe_arm", force=value)
         assert envelope["status"] == "success"

@@ -768,6 +768,10 @@ def download_robots(
 
     Returns:
         Dict with downloaded/skipped/failed counts, names, and details.
+        ``unknown_names`` carries the entries of ``names`` the registry does not
+        list, on every return path - a caller grading its own verdict needs them
+        from the selection that matched nothing just as much as from the one that
+        downloaded, and this function only logs them.
 
     Raises:
         ValueError: If ``names`` is an empty selection, which asks for no robot
@@ -839,6 +843,14 @@ def download_robots(
     # Resolve requested robots. Read ``is not None``: an empty selection was
     # refused above, so reaching the ``category``/all branches means the caller
     # named no subset at all.
+    # A name the registry does not list was only a ``logger.warning`` here, so it
+    # left no trace in the result. Every caller that grades a download therefore
+    # graded it on counts alone, and an all-unknown selection produces the same
+    # zeros as a selection that matched nothing - indistinguishable from the
+    # outside. Reported as ``unknown_names``, so the verdict can name what it is
+    # refusing. Kept as the caller spelled it rather than canonicalized: that is
+    # the string they have to correct.
+    unknown: list[str] = []
     if names is not None:
         robots: dict[str, dict[str, Any]] = {}
         for name in names:
@@ -847,13 +859,20 @@ def download_robots(
                 robots[canonical] = all_sim[canonical]
             else:
                 logger.warning("Unknown robot: %s (resolved: %s)", name, canonical)
+                unknown.append(name)
     elif category:
         robots = {n: i for n, i in all_sim.items() if i.get("category") == category}
     else:
         robots = dict(all_sim)
 
     if not robots:
-        return {"downloaded": 0, "skipped": 0, "failed": 0, "message": "No matching robots found."}
+        return {
+            "downloaded": 0,
+            "skipped": 0,
+            "failed": 0,
+            "unknown_names": unknown,
+            "message": "No matching robots found.",
+        }
 
     # Partition: needs download vs already present
     to_download: dict[str, dict[str, Any]] = {}
@@ -870,6 +889,7 @@ def download_robots(
             "skipped": len(skipped),
             "failed": 0,
             "skipped_names": skipped,
+            "unknown_names": unknown,
             "message": f"All {len(robots)} robots already have assets. Use force=True to re-download.",
         }
 
@@ -911,6 +931,7 @@ def download_robots(
         "skipped_names": skipped,
         "failed_names": list(failed),
         "failed_details": failed,
+        "unknown_names": unknown,
         "assets_dir": str(dest_dir),
         "method": method,
         "message": (f"{len(downloaded)} downloaded ({method}), {len(skipped)} already present, {len(failed)} failed."),
