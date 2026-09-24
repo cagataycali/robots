@@ -37,6 +37,9 @@ from __future__ import annotations
 
 import ast
 import importlib
+import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -78,18 +81,31 @@ def _module_only_attributes(name: str) -> set[str]:
     return {attr for attr in dir(module) if not hasattr(tool, attr)}
 
 
+#: A dotted target spelled from the package root, as a source expression or as
+#: the string a patcher resolves: ``strands_robots.tools.<name>.<attribute>``.
+_PACKAGE_TARGET = re.compile(r"^strands_robots\.tools\.([a-z_0-9]+)\.([A-Za-z_0-9]+)")
+
+
 def _module_reads(source: str) -> list[tuple[int, str]]:
     """Reads of a package-bound tool name that only a module could answer.
+
+    Two spellings reach the ambiguous package attribute and are graded the same,
+    because the object they land on is decided the same way: the name bound by
+    ``from strands_robots.tools import <name>`` (or the dotted expression written
+    out in full), and a *string* patch target -
+    ``monkeypatch.setattr("strands_robots.tools.<name>.<attribute>", ...)``,
+    ``patch("...")``. Both patchers resolve a string target by walking that same
+    attribute, so one raises or patches the tool object depending on which read
+    ran first in the process.
 
     Args:
         source: Python source to classify.
 
     Returns:
-        ``(lineno, expression)`` for every attribute read whose target was bound
-        by ``from strands_robots.tools import <ambiguous name>`` and which the
-        tool object cannot serve. An attribute both resolutions carry -
-        ``tool_name``, ``__name__`` - is not reported: those reads mean the same
-        thing either way, and refusing them would refuse working code.
+        ``(lineno, expression)`` for every such target the tool object cannot
+        serve. An attribute both resolutions carry - ``tool_name``,
+        ``__name__`` - is not reported: those reads mean the same thing either
+        way, and refusing them would refuse working code.
     """
     shadowable = _shadowable_names()
     tree = ast.parse(source)
@@ -101,16 +117,23 @@ def _module_reads(source: str) -> list[tuple[int, str]]:
                 if alias.name in shadowable:
                     bound[alias.asname or alias.name] = alias.name
 
+    def _serves(name: str, attribute: str) -> bool:
+        return hasattr(_tool_object(name), attribute)
+
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in bound
-            and not hasattr(_tool_object(bound[node.value.id]), node.attr)
-        ):
-            found.append((node.lineno, ast.unparse(node)))
-    return sorted(found)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in bound:
+            if not _serves(bound[node.value.id], node.attr):
+                found.append((node.lineno, ast.unparse(node)))
+        elif isinstance(node, ast.Attribute):
+            match = _PACKAGE_TARGET.match(ast.unparse(node))
+            if match and match[1] in shadowable and not _serves(match[1], match[2]):
+                found.append((node.lineno, ast.unparse(node)))
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            match = _PACKAGE_TARGET.match(node.value)
+            if match and match[1] in shadowable and not _serves(match[1], match[2]):
+                found.append((node.lineno, node.value))
+    return sorted(set(found))
 
 
 def _scanned_sources() -> dict[Path, str]:
@@ -144,6 +167,27 @@ class TestTheTwoResolutionsReallyDiffer:
             module_only = _module_only_attributes(name)
             assert {"__file__", "__spec__", "__loader__", "__package__"} <= module_only, (name, sorted(module_only))
             assert not hasattr(_tool_object(name), "__file__"), name
+
+    def test_the_attribute_flips_when_the_lazy_path_is_re_entered(self) -> None:
+        """Which of the two the package attribute holds is not fixed for a process.
+
+        Importing the submodule binds the module there; dropping that binding and
+        letting ``__getattr__`` resolve again caches the tool object over it, for
+        the rest of the process. That is what makes a target spelled through the
+        attribute depend on unrelated test order rather than on behavior, and it
+        is asked of a fresh interpreter because this one's binding was already
+        decided by whatever imported first.
+        """
+        script = (
+            "import importlib, strands_robots.tools as T\n"
+            "importlib.import_module('strands_robots.tools.pose_tool')\n"
+            "print(type(vars(T)['pose_tool']).__name__)\n"
+            "vars(T).pop('pose_tool', None)\n"
+            "getattr(T, 'pose_tool')\n"
+            "print(type(vars(T)['pose_tool']).__name__)\n"
+        )
+        done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+        assert done.stdout.split() == ["module", "DecoratedFunctionTool"], done.stdout
 
     def test_an_attribute_both_carry_is_not_module_only(self) -> None:
         """The rule is "the tool cannot answer it", not "it is a dunder".
@@ -197,6 +241,10 @@ class TestTheRuleFlagsTheReadItIsFor:
     )
     _AMBIGUOUS_THEN_DUNDER_READ = "from strands_robots.tools import use_rosbridge as ur\nroot = ur.__file__\n"
     _AMBIGUOUS_THEN_SHARED_READ = "from strands_robots.tools import pose_tool\nname = pose_tool.tool_name\n"
+    _STRING_PATCH_TARGET = 'monkeypatch.setattr("strands_robots.tools.pose_tool.MotorController", object)\n'
+    _STRING_PATCH_TARGET_NESTED = 'patch("strands_robots.tools.serial_tool.time.sleep")\n'
+    _STRING_TARGET_SHARED_ATTRIBUTE = 'patch("strands_robots.tools.pose_tool.tool_name")\n'
+    _MODULE_HANDLE = 'mod = importlib.import_module("strands_robots.tools.pose_tool")\nmonkeypatch.setattr(mod, "MotorController", object)\n'
     _SUBMODULE_IMPORT = "import strands_robots.tools.pose_tool as pose_mod\npose_mod.pose_tool(action='list_poses')\n"
     _SUBMODULE_FROM_IMPORT = "from strands_robots.tools.pose_tool import pose_tool\npose_tool(action='list_poses')\n"
 
@@ -206,6 +254,10 @@ class TestTheRuleFlagsTheReadItIsFor:
         pytest.param(_AMBIGUOUS_THEN_SHARED_READ, False, id="ambiguous-import-but-shared-attribute"),
         pytest.param(_SUBMODULE_IMPORT, False, id="submodule-import"),
         pytest.param(_SUBMODULE_FROM_IMPORT, False, id="submodule-from-import"),
+        pytest.param(_STRING_PATCH_TARGET, True, id="string-patch-target"),
+        pytest.param(_STRING_PATCH_TARGET_NESTED, True, id="string-patch-target-through-a-module"),
+        pytest.param(_STRING_TARGET_SHARED_ATTRIBUTE, False, id="string-target-shared-attribute"),
+        pytest.param(_MODULE_HANDLE, False, id="module-handle-then-attribute"),
     )
 
     @pytest.mark.parametrize(("source", "flagged"), _CASES)

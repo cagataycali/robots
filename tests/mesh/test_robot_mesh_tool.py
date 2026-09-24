@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from strands_robots.tools.robot_mesh import robot_mesh
+
+#: The submodule, not the tool object the package slot may hold instead
+#: (tests/tools/test_lazy_tool_name_is_not_read_as_a_module.py).
+rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
 
 def _make_tool_context(*, interrupt_response: str = "y", interrupt_raises: bool = False) -> MagicMock:
@@ -84,7 +89,7 @@ def test_peers_no_local_no_remote(fake_no_local):
     ``tests/mesh/test_gateway_mesh_kill_switch.py``.
     """
     gateway = MagicMock(name="Gateway")
-    with patch("strands_robots.tools.robot_mesh._gateway_mesh", return_value=gateway):
+    with patch.object(rmt, "_gateway_mesh", return_value=gateway):
         out = _strands_call(action="peers")
     assert out["status"] == "success"
     assert "No peers" in out["content"][0]["text"]
@@ -300,7 +305,7 @@ def test_actions_without_local_mesh_fail(fake_no_local, monkeypatch):
     # delenv the assertion below would be graded against the kill-switch answer
     # and this test would stop covering the case it names.
     monkeypatch.delenv("STRANDS_MESH", raising=False)
-    with patch("strands_robots.tools.robot_mesh._gateway_mesh", return_value=None):
+    with patch.object(rmt, "_gateway_mesh", return_value=None):
         out = _strands_call(action="tell", target="peer-b", instruction="go")
     assert out["status"] == "error"
     assert "no local mesh" in out["content"][0]["text"]
@@ -422,7 +427,8 @@ def _audit_capture(monkeypatch):
         calls.append((action, target, success, detail))
 
     monkeypatch.setattr(
-        "strands_robots.tools.robot_mesh._audit_tool_action",
+        rmt,
+        "_audit_tool_action",
         _spy,
     )
     return calls

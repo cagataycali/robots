@@ -16,6 +16,7 @@ Pinned for PR #3868 review thread on ``strands_robots/tools/pose_tool.py:1330``.
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 from typing import Any
@@ -25,12 +26,17 @@ import pytest
 
 from strands_robots.tools.pose_tool import pose_tool
 
+#: The submodule, not the tool object the package slot may hold instead
+#: (tests/tools/test_lazy_tool_name_is_not_read_as_a_module.py).
+pose_tool_module = importlib.import_module("strands_robots.tools.pose_tool")
+
 
 @pytest.fixture
 def _stub_serial(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prevent any real serial port interaction."""
     monkeypatch.setattr(
-        "strands_robots.tools.pose_tool.MotorController",
+        pose_tool_module,
+        "MotorController",
         MagicMock,
     )
 

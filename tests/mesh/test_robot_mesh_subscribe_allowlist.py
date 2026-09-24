@@ -14,11 +14,14 @@ were never audited).
 
 from __future__ import annotations
 
+import importlib
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rmt
+#: The submodule, not the tool object the package slot may hold instead
+#: (tests/tools/test_lazy_tool_name_is_not_read_as_a_module.py).
+rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
 
 @pytest.fixture(autouse=True)
@@ -83,7 +86,7 @@ def test_default_allowlist_permits_shared_classes():
 
 def test_subscribe_allows_presence():
     m = _stub_mesh()
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("subscribe", target="**/presence", name="p")
     assert r["status"] == "success"
     m.subscribe.assert_called_once()
@@ -91,7 +94,7 @@ def test_subscribe_allows_presence():
 
 def test_subscribe_blocks_cmd_stream():
     m = _stub_mesh()
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("subscribe", target="victim/cmd", name="x")
     assert r["status"] == "error"
     assert "allowed topic set" in r["content"][0]["text"]
@@ -102,7 +105,7 @@ def test_subscribe_env_extends_allowlist(monkeypatch):
     monkeypatch.setenv("STRANDS_MESH_SUBSCRIBE_ALLOW", "**/state/**")
     rmt._reset_subscribe_allowlist_cache()
     m = _stub_mesh()
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("subscribe", target="**/state/joints", name="s")
     assert r["status"] == "success"
     m.subscribe.assert_called_once()
@@ -112,8 +115,8 @@ def test_inbox_read_is_audited():
     m = _stub_mesh()
     m.inbox = {"sub-a": [("topic", {"x": 1}), ("topic", {"x": 2})]}
     with (
-        patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m),
-        patch("strands_robots.tools.robot_mesh._audit_tool_action") as audit,
+        patch.object(rmt, "_resolve_mesh", return_value=m),
+        patch.object(rmt, "_audit_tool_action") as audit,
     ):
         r = _call("inbox", name="sub-a")
     assert r["status"] == "success"
@@ -135,7 +138,7 @@ def test_watch_rejects_off_allowlist_peer():
     """
     m = _stub_mesh()
     m.on_stream.return_value = "stream-peer-b"
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("watch", target="peer-b")
     assert r["status"] == "error"
     assert "allowed topic set" in r["content"][0]["text"]
@@ -149,7 +152,7 @@ def test_watch_rejects_arbitrary_peer_ids():
     m = _stub_mesh()
     m.on_stream.return_value = "stream-x"
     for peer in ("reachy", "arm-a", "robot_1", "attacker"):
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("watch", target=peer)
         assert r["status"] == "error", f"watch should reject peer '{peer}'"
     m.on_stream.assert_not_called()
@@ -162,7 +165,7 @@ def test_watch_allowed_when_operator_extends_allowlist(monkeypatch):
     rmt._reset_subscribe_allowlist_cache()
     m = _stub_mesh()
     m.on_stream.return_value = "stream-peer-b"
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("watch", target="peer-b")
     assert r["status"] == "success"
     m.on_stream.assert_called_once_with("peer-b")
@@ -176,7 +179,7 @@ def test_watch_allowed_when_in_hitl_set_and_approved(monkeypatch):
     m = _stub_mesh()
     m.on_stream.return_value = "stream-peer-b"
     ctx = _make_ctx("y")  # operator approves
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("watch", target="peer-b", ctx=ctx)
     assert r["status"] == "success"
     m.on_stream.assert_called_once_with("peer-b")
@@ -190,7 +193,7 @@ def test_watch_blocked_when_in_hitl_set_and_declined(monkeypatch):
     m = _stub_mesh()
     m.on_stream.return_value = "stream-peer-b"
     ctx = _make_ctx("n")  # operator declines
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("watch", target="peer-b", ctx=ctx)
     assert r["status"] == "error"
     m.on_stream.assert_not_called()
@@ -243,7 +246,7 @@ def test_watch_rejects_wildcard_targets_even_with_permissive_allowlist(monkeypat
     rmt._reset_subscribe_allowlist_cache()
     m = _stub_mesh()
     m.on_stream.return_value = "stream-x"
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("watch", target=target)
     # Empty target hits the missing-target branch first; non-empty wildcards
     # hit the new peer-id shape check. Either way, error + on_stream silent.
@@ -263,7 +266,7 @@ def test_watch_rejects_wildcard_even_when_in_hitl_set_and_approved(monkeypatch):
     m = _stub_mesh()
     m.on_stream.return_value = "stream-x"
     ctx = _make_ctx("y")  # operator approves
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("watch", target="*", ctx=ctx)
     assert r["status"] == "error"
     m.on_stream.assert_not_called()
@@ -288,7 +291,7 @@ def test_watch_accepts_literal_peer_ids_with_extended_allowlist(monkeypatch, pee
     rmt._reset_subscribe_allowlist_cache()
     m = _stub_mesh()
     m.on_stream.return_value = f"stream-{peer}"
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("watch", target=peer)
     assert r["status"] == "success", f"watch should accept literal peer id {peer!r}"
     m.on_stream.assert_called_once_with(peer)
@@ -300,7 +303,7 @@ def test_watch_rejects_overlong_peer_id(monkeypatch):
     rmt._reset_subscribe_allowlist_cache()
     m = _stub_mesh()
     m.on_stream.return_value = "stream-x"
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("watch", target="z" * 65)
     assert r["status"] == "error"
     m.on_stream.assert_not_called()
@@ -314,7 +317,7 @@ def test_watch_rejects_leading_special_char(monkeypatch):
     m = _stub_mesh()
     m.on_stream.return_value = "stream-x"
     for bad in ("-rm", ".dot", "_under", "/abs"):
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("watch", target=bad)
         assert r["status"] == "error", f"watch must reject leading-special target {bad!r}"
     m.on_stream.assert_not_called()

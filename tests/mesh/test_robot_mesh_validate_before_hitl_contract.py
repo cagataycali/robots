@@ -41,6 +41,7 @@ exactly the state the guard exists to catch.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import subprocess
 import sys
@@ -50,7 +51,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rmt
+#: The submodule, not the tool object the package slot may hold instead
+#: (tests/tools/test_lazy_tool_name_is_not_read_as_a_module.py).
+rmt = importlib.import_module("strands_robots.tools.robot_mesh")
+
 
 # The two gated actions whose handler re-reads a pre-validated command body,
 # with the transport method each one dispatches through and the call-arg index
@@ -283,7 +287,8 @@ class TestNothingIsDispatchedWhenTheContractIsBroken:
         """No ``success=True`` record for a dispatch that never happened."""
         audited: list[tuple[str, str, bool, str]] = []
         monkeypatch.setattr(
-            "strands_robots.tools.robot_mesh._audit_tool_action",
+            rmt,
+            "_audit_tool_action",
             lambda a, t, ok, detail: audited.append((a, t, ok, detail)),
         )
         _validator_returning_none(monkeypatch)

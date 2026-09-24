@@ -23,11 +23,14 @@ dispatch raises ``AttributeError`` instead of returning a clean decline).
 
 from __future__ import annotations
 
+import importlib
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rmt
+#: The submodule, not the tool object the package slot may hold instead
+#: (tests/tools/test_lazy_tool_name_is_not_read_as_a_module.py).
+rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +97,7 @@ def test_non_string_interrupt_response_declines_without_dispatch(response):
     invoked -- and the tool does not raise past dispatch."""
     m = _stub_mesh()
     ctx = _make_ctx(response)
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("tell", ctx=ctx, target="peer-a", instruction="go")
     assert r["status"] == "error"
     assert "declined" in r["content"][0]["text"].lower()
@@ -106,7 +109,7 @@ def test_affirmative_interrupt_response_dispatches():
     """The canonical affirmative approves and the action is dispatched once."""
     m = _stub_mesh()
     ctx = _make_ctx("  YES  ")
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         r = _call("tell", ctx=ctx, target="peer-a", instruction="go")
     assert r["status"] == "success"
     m.tell.assert_called_once()
@@ -116,7 +119,7 @@ def test_non_string_decline_does_not_consume_rate_slot():
     """A non-string (fail-closed) decline must not burn a rate-limit slot, so a
     later genuine approval still dispatches -- same contract as a string decline."""
     m = _stub_mesh()
-    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+    with patch.object(rmt, "_resolve_mesh", return_value=m):
         for _ in range(5):
             r = _call("tell", ctx=_make_ctx(None), target="peer-a", instruction="go")
             assert r["status"] == "error"

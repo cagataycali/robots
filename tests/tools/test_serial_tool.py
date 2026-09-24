@@ -9,6 +9,7 @@ must be plain ASCII.
 
 from __future__ import annotations
 
+import importlib
 import itertools
 from types import SimpleNamespace
 from typing import Any
@@ -16,9 +17,12 @@ from typing import Any
 import pytest
 import serial
 
-import strands_robots.tools.serial_tool as serial_tool_module
 from strands_robots.tools.serial_tool import serial_tool
 from tests.tool_result_contract import tool_json
+
+#: The submodule, not the tool object the package slot may hold instead
+#: (tests/tools/test_lazy_tool_name_is_not_read_as_a_module.py).
+serial_tool_module = importlib.import_module("strands_robots.tools.serial_tool")
 
 
 def _texts(result: dict[str, Any]) -> str:
@@ -150,7 +154,7 @@ def test_read_formats_hex_and_ascii(fake_serial_factory):
 
 
 def test_send_read_round_trip(fake_serial_factory, monkeypatch):
-    monkeypatch.setattr("strands_robots.tools.serial_tool.time.sleep", lambda *_: None)
+    monkeypatch.setattr(serial_tool_module.time, "sleep", lambda *_: None)
     created = fake_serial_factory(reads=[b"OK"])
     result = serial_tool(action="send_read", port="/dev/ttyACM0", data="Q")
     assert result["status"] == "success"
@@ -162,7 +166,7 @@ def test_send_read_round_trip(fake_serial_factory, monkeypatch):
 
 
 def test_send_read_hex_and_missing_payload(fake_serial_factory, monkeypatch):
-    monkeypatch.setattr("strands_robots.tools.serial_tool.time.sleep", lambda *_: None)
+    monkeypatch.setattr(serial_tool_module.time, "sleep", lambda *_: None)
     created = fake_serial_factory(reads=[b""])
     ok = serial_tool(action="send_read", port="/dev/ttyACM0", hex_data="01 02")
     assert ok["status"] == "success"
@@ -216,7 +220,7 @@ def test_feetech_velocity_requires_args(fake_serial_factory):
 
 
 def test_feetech_ping_success(fake_serial_factory, monkeypatch):
-    monkeypatch.setattr("strands_robots.tools.serial_tool.time.sleep", lambda *_: None)
+    monkeypatch.setattr(serial_tool_module.time, "sleep", lambda *_: None)
     fake_serial_factory(reads=[bytes([0xFF, 0xFF, 0x01, 0x02, 0x00, 0x00])])
     result = serial_tool(action="feetech_ping", port="/dev/ttyACM0", motor_id=1)
     assert result["status"] == "success"
@@ -225,7 +229,7 @@ def test_feetech_ping_success(fake_serial_factory, monkeypatch):
 
 
 def test_feetech_ping_no_response(fake_serial_factory, monkeypatch):
-    monkeypatch.setattr("strands_robots.tools.serial_tool.time.sleep", lambda *_: None)
+    monkeypatch.setattr(serial_tool_module.time, "sleep", lambda *_: None)
     fake_serial_factory(reads=[b"\x00"])
     result = serial_tool(action="feetech_ping", port="/dev/ttyACM0", motor_id=1)
     assert result["status"] == "error"
@@ -250,13 +254,13 @@ def test_monitor_collects_chunks(fake_serial_factory, monkeypatch):
     returned record stays on the wall clock because a reader correlates it with
     other logs and seconds of process uptime would not.
     """
-    monkeypatch.setattr("strands_robots.tools.serial_tool.time.sleep", lambda *_: None)
+    monkeypatch.setattr(serial_tool_module.time, "sleep", lambda *_: None)
     # Scripted so the window admits exactly one read and then expires. Chained
     # with a repeat rather than a fixed-length iterator so the script bounds the
     # window instead of the number of clock reads.
     window = itertools.chain([0.0, 0.0], itertools.repeat(10.0))
-    monkeypatch.setattr("strands_robots.tools.serial_tool.time.monotonic", lambda: next(window))
-    monkeypatch.setattr("strands_robots.tools.serial_tool.time.time", lambda: 1_700_000_000.5)
+    monkeypatch.setattr(serial_tool_module.time, "monotonic", lambda: next(window))
+    monkeypatch.setattr(serial_tool_module.time, "time", lambda: 1_700_000_000.5)
     created = fake_serial_factory(reads=[b"hi"], in_waiting=2)
     result = serial_tool(action="monitor", port="/dev/ttyACM0")
     assert result["status"] == "success"

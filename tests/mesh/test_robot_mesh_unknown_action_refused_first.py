@@ -10,12 +10,17 @@ problem.
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from strands_robots.tools.robot_mesh import robot_mesh
+
+#: The submodule, not the tool object the package slot may hold instead
+#: (tests/tools/test_lazy_tool_name_is_not_read_as_a_module.py).
+rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
 
 def _call(**kwargs: Any) -> dict[str, Any]:
@@ -32,7 +37,7 @@ def test_unknown_action_in_a_robot_less_process_is_named_and_the_gateway_is_neve
     with (
         patch("strands_robots.mesh.get_local_robots", return_value={}),
         patch("strands_robots.mesh.session.get_peers", return_value=[]),
-        patch("strands_robots.tools.robot_mesh._gateway_mesh", gateway),
+        patch.object(rmt, "_gateway_mesh", gateway),
     ):
         out = _call(action="warp")
     text = out["content"][0]["text"]

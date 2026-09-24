@@ -18,11 +18,14 @@ These tests pin each layer.
 
 from __future__ import annotations
 
+import importlib
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rmt
+#: The submodule, not the tool object the package slot may hold instead
+#: (tests/tools/test_lazy_tool_name_is_not_read_as_a_module.py).
+rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +82,7 @@ class TestInterruptGate:
         """Without an approving response, emergency_stop must NOT call mesh."""
         ctx = _make_ctx(response="n")  # operator denies
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("emergency_stop", ctx=ctx)
         assert r["status"] == "error"
         assert "declined" in r["content"][0]["text"].lower()
@@ -93,7 +96,7 @@ class TestInterruptGate:
     def test_emergency_stop_runs_when_operator_approves(self):
         ctx = _make_ctx(response="y")
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("emergency_stop", ctx=ctx)
         assert r["status"] == "success"
         m.emergency_stop.assert_called_once()
@@ -101,14 +104,14 @@ class TestInterruptGate:
     def test_emergency_stop_yes_full_word_approves(self):
         ctx = _make_ctx(response="YES")
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("emergency_stop", ctx=ctx)
         assert r["status"] == "success"
 
     def test_broadcast_raises_interrupt(self):
         ctx = _make_ctx(response="n")
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("broadcast", command='{"action": "status"}', ctx=ctx)
         assert r["status"] == "error"
         assert "declined" in r["content"][0]["text"].lower()
@@ -117,7 +120,7 @@ class TestInterruptGate:
     def test_broadcast_runs_when_operator_approves(self):
         ctx = _make_ctx(response="y")
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("broadcast", command='{"action": "status"}', ctx=ctx)
         assert r["status"] == "success"
         m.broadcast.assert_called_once()
@@ -128,7 +131,7 @@ class TestInterruptGate:
         robot without an out-of-band operator approval."""
         ctx = _make_ctx(response="n")  # operator denies
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("tell", target="peer-a", instruction="pick up cube", ctx=ctx)
         assert r["status"] == "error"
         assert "declined" in r["content"][0]["text"].lower()
@@ -141,7 +144,7 @@ class TestInterruptGate:
     def test_tell_runs_when_operator_approves(self):
         ctx = _make_ctx(response="y")
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("tell", target="peer-a", instruction="pick up cube", ctx=ctx)
         assert r["status"] == "success"
         m.tell.assert_called_once()
@@ -155,7 +158,7 @@ class TestInterruptGate:
         try:
             ctx = _make_ctx()
             m = _stub_mesh()
-            with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+            with patch.object(rmt, "_resolve_mesh", return_value=m):
                 r = _call("tell", target="peer-a", instruction="pick up cube", ctx=ctx)
             assert r["status"] == "success"
             ctx.interrupt.assert_not_called()
@@ -168,7 +171,7 @@ class TestInterruptGate:
         agent.tool.X path), the tool MUST refuse rather than execute."""
         ctx = _make_ctx(raises=True)
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("emergency_stop", ctx=ctx)
         assert r["status"] == "error"
         assert "interrupt" in r["content"][0]["text"].lower()
@@ -181,7 +184,7 @@ class TestInterruptGate:
 class TestRateLimit:
     def test_emergency_stop_capped_at_3_per_window(self):
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             for _ in range(3):
                 r = _call("emergency_stop")
                 assert r["status"] == "success"
@@ -192,7 +195,7 @@ class TestRateLimit:
 
     def test_tell_capped_at_30_per_window(self):
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             successes = 0
             for _ in range(35):
                 r = _call("tell", target="peer-a", instruction="ping")
@@ -202,7 +205,7 @@ class TestRateLimit:
 
     def test_distinct_actions_dont_share_buckets(self):
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             for _ in range(3):
                 _call("emergency_stop")  # exhausts emergency_stop bucket
             r = _call("tell", target="peer-a", instruction="ping")
@@ -215,7 +218,7 @@ class TestRateLimit:
 class TestCommandValidation:
     def test_send_rejects_attacker_policy_host(self):
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call(
                 "send",
                 target="peer-a",
@@ -227,20 +230,20 @@ class TestCommandValidation:
 
     def test_send_rejects_unknown_action(self):
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("send", target="peer-a", command='{"action": "rm_rf"}')
         assert r["status"] == "error"
         m.send.assert_not_called()
 
     def test_send_rejects_non_json(self):
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("send", target="peer-a", command="not json")
         assert r["status"] == "error"
 
     def test_send_rejects_non_dict_json(self):
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("send", target="peer-a", command='["not a dict"]')
         assert r["status"] == "error"
 
@@ -249,7 +252,7 @@ class TestCommandValidation:
         approved-but-malformed broadcast must still be rejected by
         validation, not silently shipped."""
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call(
                 "broadcast",
                 command='{"action": "execute", "instruction": "go", "policy_provider": "mock", "policy_host": "evil.com"}',
@@ -260,14 +263,14 @@ class TestCommandValidation:
 
     def test_tell_too_long_instruction_rejected(self):
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("tell", target="peer-a", instruction="x" * 3000)
         assert r["status"] == "error"
         assert "exceeds" in r["content"][0]["text"]
 
     def test_tell_passes_with_valid_args(self):
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("tell", target="peer-a", instruction="pick up cube", duration=10)
         assert r["status"] == "success"
 
@@ -278,7 +281,7 @@ class TestCommandValidation:
 class TestAudit:
     def test_successful_emergency_stop_audited(self):
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             _call("emergency_stop")
         from strands_robots.mesh.audit import read_audit_log
 
@@ -287,7 +290,7 @@ class TestAudit:
 
     def test_declined_call_audited(self):
         ctx = _make_ctx(response="no")
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=_stub_mesh()):
+        with patch.object(rmt, "_resolve_mesh", return_value=_stub_mesh()):
             _call("emergency_stop", ctx=ctx)
         from strands_robots.mesh.audit import read_audit_log
 
@@ -348,7 +351,7 @@ class TestDeclineSideChannel322:
         secret = "no-because-CEO-said-PROJECT-TITAN-ships-friday"
         ctx = _make_ctx(response=secret)
         m = _stub_mesh()
-        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        with patch.object(rmt, "_resolve_mesh", return_value=m):
             r = _call("emergency_stop", ctx=ctx)
         assert r["status"] == "error"
         text = r["content"][0]["text"]

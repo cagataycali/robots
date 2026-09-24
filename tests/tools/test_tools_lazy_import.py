@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import importlib
 import pathlib
+from collections.abc import Iterator
 
 import pytest
 
@@ -59,8 +60,30 @@ def test_all_lists_every_lazy_import_name() -> None:
     }
 
 
+@pytest.fixture
+def restored_binding(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Put back the package attribute this test re-caches as the tool object.
+
+    ``vars(tools_pkg)[name]`` is process-global and holds either the tool or the
+    submodule of the same name, whichever was read first. Re-entering the lazy
+    path leaves the TOOL there for the rest of the process, so without this a
+    later ``strands_robots.tools.<name>.<attribute>`` target elsewhere in the
+    same process resolves to an object that cannot serve it - a failure that
+    depends on which file ran first rather than on behavior
+    (tests/tools/test_lazy_tool_name_is_not_read_as_a_module.py).
+    """
+    name = request.getfixturevalue("name")
+    absent = object()
+    before = vars(tools_pkg).get(name, absent)
+    yield
+    if before is absent:
+        vars(tools_pkg).pop(name, None)
+    else:
+        vars(tools_pkg)[name] = before
+
+
 @pytest.mark.parametrize("name", sorted(tools_pkg._LAZY_IMPORTS))
-def test_each_tool_is_lazily_importable(name: str) -> None:
+def test_each_tool_is_lazily_importable(name: str, restored_binding: None) -> None:
     """Each advertised name resolves to the matching object via ``__getattr__``.
 
     The package caches resolved tools into its namespace, and a prior test (or

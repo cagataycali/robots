@@ -148,8 +148,9 @@ class TestProtocolGate:
         assert "n1.7" in result["message"]
 
     def test_deterministic_forwarded_on_start_container(self):
-        with patch(
-            "strands_robots.tools.gr00t_inference._start_container",
+        with patch.object(
+            gi,
+            "_start_container",
             return_value={"status": "success", "skipped": True, "message": "ok"},
         ) as mock:
             result = gr00t_inference(
@@ -162,8 +163,9 @@ class TestProtocolGate:
         assert mock.call_args.kwargs["deterministic"] is True
 
     def test_deterministic_forwarded_through_lifecycle(self):
-        with patch(
-            "strands_robots.tools.gr00t_inference._lifecycle",
+        with patch.object(
+            gi,
+            "_lifecycle",
             return_value={"status": "success", "phase": "full", "steps": [], "message": "ok"},
         ) as mock:
             gr00t_inference(

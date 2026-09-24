@@ -16,6 +16,7 @@ Pins the issue's acceptance criteria (Harness VLA style memory):
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import json
 import os
@@ -32,6 +33,10 @@ from strands_robots.tools.harness_memory import (
     harness_memory,
 )
 from tests.tool_result_contract import assert_strands_tool_result, tool_json
+
+#: The submodule, not the tool object the package slot may hold instead
+#: (tests/tools/test_lazy_tool_name_is_not_read_as_a_module.py).
+hm = importlib.import_module("strands_robots.tools.harness_memory")
 
 
 def _texts(result: dict[str, Any]) -> str:
@@ -223,7 +228,7 @@ def test_summary_must_be_object(memory_dir):
 
 
 def test_trace_entry_count_cap(memory_dir, monkeypatch):
-    monkeypatch.setattr("strands_robots.tools.harness_memory._MAX_TRACE_ENTRIES", 2)
+    monkeypatch.setattr(hm, "_MAX_TRACE_ENTRIES", 2)
     result = _check(harness_memory(action="save_trace", task="t1", trace=VALID_TRACE, summary=VALID_SUMMARY))
     assert result["status"] == "error"
     assert "too long" in _texts(result)
@@ -354,7 +359,7 @@ def test_append_rule_size_cap(memory_dir):
 
 
 def test_rule_count_cap(memory_dir, monkeypatch):
-    monkeypatch.setattr("strands_robots.tools.harness_memory._MAX_RULES_PER_KIND", 2)
+    monkeypatch.setattr(hm, "_MAX_RULES_PER_KIND", 2)
     assert harness_memory(action="append_rule", kind="success_rule", text="one")["status"] == "success"
     assert harness_memory(action="append_rule", kind="success_rule", text="two")["status"] == "success"
     result = _check(harness_memory(action="append_rule", kind="success_rule", text="three"))
@@ -518,7 +523,7 @@ def test_failed_replace_preserves_old_pair(memory_dir):
         raise OSError("disk full")
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("strands_robots.tools.harness_memory.os.replace", failing_replace)
+        mp.setattr(hm.os, "replace", failing_replace)
         new_trace = [{"action": "run_policy", "instruction": "new approach"}]
         result = _check(harness_memory(action="save_trace", task="t1", trace=new_trace, summary={"v": 2}))
         assert result["status"] == "error"
@@ -538,7 +543,7 @@ def test_failed_first_save_leaves_no_ghost_key(memory_dir):
         raise OSError("disk full")
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("strands_robots.tools.harness_memory.os.replace", failing_replace)
+        mp.setattr(hm.os, "replace", failing_replace)
         result = _check(harness_memory(action="save_trace", task="ghost", trace=VALID_TRACE, summary=VALID_SUMMARY))
         assert result["status"] == "error"
 
