@@ -841,7 +841,7 @@ class TestRealModeConfigDiscovery:
 
     @pytest.fixture(autouse=True)
     def _clear_discovery_cache(self):
-        """Reset ``_ensure_lerobot_robots_registered``'s
+        """Reset the shared ``lerobot.robots`` walk's
         ``@functools.cache`` around each test in the class so test
         ordering (``--last-failed``, ``pytest-xdist``, random-order
         plugins) cannot leave stale registry state behind. Without
@@ -852,13 +852,13 @@ class TestRealModeConfigDiscovery:
         last booby-trap and fail in a debugger-hostile way.
         """
         try:
-            from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
+            from strands_robots.utils import ensure_lerobot_family_registered
         except ImportError:
             yield
             return
-        _ensure_lerobot_robots_registered.cache_clear()
+        ensure_lerobot_family_registered.cache_clear()
         yield
-        _ensure_lerobot_robots_registered.cache_clear()
+        ensure_lerobot_family_registered.cache_clear()
 
     def test_lerobot_registry_discovery_finds_all_subpackages(self):
         """Walking ``lerobot.robots`` with pkgutil registers every robot
@@ -871,9 +871,9 @@ class TestRealModeConfigDiscovery:
         pytest.importorskip("lerobot")
         from lerobot.robots.config import RobotConfig
 
-        from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
+        from strands_robots.utils import ensure_lerobot_family_registered
 
-        _ensure_lerobot_robots_registered()
+        ensure_lerobot_family_registered("robots")
         registered = set(RobotConfig.get_known_choices().keys())
 
         # Pin only a single canonical entry to avoid upstream-coupled flake
@@ -895,9 +895,9 @@ class TestRealModeConfigDiscovery:
         pytest.importorskip("lerobot.robots.hope_jr")
         from lerobot.robots.config import RobotConfig
 
-        from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
+        from strands_robots.utils import ensure_lerobot_family_registered
 
-        _ensure_lerobot_robots_registered()
+        ensure_lerobot_family_registered("robots")
         registered = set(RobotConfig.get_known_choices().keys())
         # Multiple types from one subpackage:
         assert "hope_jr_arm" in registered
@@ -1119,12 +1119,12 @@ class TestRealModeConfigDiscovery:
         pytest.importorskip("lerobot.robots.bi_so_follower")
         from lerobot.robots.config import RobotConfig
 
-        from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
+        from strands_robots.utils import ensure_lerobot_family_registered
 
         # Cache is cleared by the class-level ``_clear_discovery_cache``
         # autouse fixture so the first call here is the FIRST call after
         # a fresh import -- exactly the scenario this test pins.
-        _ensure_lerobot_robots_registered()
+        ensure_lerobot_family_registered("robots")
 
         # `hope_jr_arm` lives in `lerobot.robots.hope_jr` (the directory
         # name does NOT match the robot_type). Same with `hope_jr_hand`,
@@ -1282,7 +1282,7 @@ class TestRealModeConfigDiscovery:
         Be Narrow" / hardware-probing pattern. A driver subpackage whose
         ``__init__`` raises a non-``ImportError`` (e.g. ``OSError`` from a
         USB probe in ``unitree_sdk2py``) must not abort the entire
-        ``_ensure_lerobot_robots_registered`` walk -- subsequent driver
+        shared ``lerobot.robots`` walk -- subsequent driver
         imports must still happen.
 
         Pre-fix code used ``except ImportError`` only; an ``OSError``
@@ -1308,7 +1308,7 @@ class TestRealModeConfigDiscovery:
 
         from unittest.mock import patch
 
-        from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
+        from strands_robots.utils import ensure_lerobot_family_registered
 
         real_import = importlib.import_module
         booby_target = "lerobot.robots.so_follower"
@@ -1322,12 +1322,12 @@ class TestRealModeConfigDiscovery:
 
         # Cache is cleared by the autouse fixture so the walk runs.
         with patch(
-            "strands_robots.hardware_robot.importlib.import_module",
+            "strands_robots.utils.importlib.import_module",
             side_effect=fake_import,
         ):
             # Must not raise -- the OSError from so_follower must be caught
             # and the walk must continue past it.
-            _ensure_lerobot_robots_registered()
+            ensure_lerobot_family_registered("robots")
 
         # Sanity: the booby-trap actually fired.  If lerobot ever drops
         # ``so_follower`` upstream, this fails loudly with a setup-error
@@ -1421,15 +1421,13 @@ class TestRealModeConfigDiscovery:
 
         from lerobot.robots.config import RobotConfig
 
-        from strands_robots.hardware_robot import (
-            _FORWARDABLE_KWARGS,
-            _ensure_lerobot_robots_registered,
-        )
+        from strands_robots.hardware_robot import _FORWARDABLE_KWARGS
         from strands_robots.hardware_robot import (
             Robot as HwRobot,
         )
+        from strands_robots.utils import ensure_lerobot_family_registered
 
-        _ensure_lerobot_robots_registered()
+        ensure_lerobot_family_registered("robots")
         ConfigClass = RobotConfig.get_choice_class("so101_follower")
         fields = list(dataclasses.fields(ConfigClass))
         real_fields = {f.name for f in fields}
@@ -1498,13 +1496,11 @@ class TestMinimalConfigContractBranches:
 
         from lerobot.robots.config import RobotConfig
 
-        from strands_robots.hardware_robot import (
-            _FORWARDABLE_KWARGS,
-            _ensure_lerobot_robots_registered,
-        )
+        from strands_robots.hardware_robot import _FORWARDABLE_KWARGS
         from strands_robots.hardware_robot import Robot as HwRobot
+        from strands_robots.utils import ensure_lerobot_family_registered
 
-        _ensure_lerobot_robots_registered()
+        ensure_lerobot_family_registered("robots")
         cfg_cls = RobotConfig.get_choice_class("earthrover_mini_plus")
         fields = {f.name for f in dataclasses.fields(cfg_cls)}
         # Guard the premise: sdk_url must be a real, allowlist-external field.
@@ -1635,19 +1631,19 @@ class TestThirdPartyPluginGuardIsNarrow:
         silently return.
 
         The function under inspection is *discovered* from the call it guards
-        rather than named: this test previously read
-        ``_ensure_lerobot_robots_registered``, and moving the call into its own
-        helper -- so the camera registry could reuse it -- made the assertion
-        read a body that no longer contained the guard. A guard keyed on a
-        function name passes vacuously the moment that call moves one function
-        over.
+        rather than named, because the call has moved twice: first out of the
+        registry walk into its own helper so the camera registry could reuse it,
+        then out of the robot factory into the shared walk every family reads. A
+        guard keyed on a function name passes vacuously the moment that call
+        moves one function over; the MODULE is still named, so a third move has
+        to be reflected here.
         """
         import ast
         import inspect
 
-        from strands_robots import hardware_robot
+        from strands_robots import utils
 
-        module = ast.parse(inspect.getsource(hardware_robot))
+        module = ast.parse(inspect.getsource(utils))
         callers = [
             node
             for node in ast.walk(module)
@@ -1663,7 +1659,7 @@ class TestThirdPartyPluginGuardIsNarrow:
             f"found {[node.name for node in callers]}"
         )
 
-        src = ast.get_source_segment(inspect.getsource(hardware_robot), callers[0]) or ""
+        src = ast.get_source_segment(inspect.getsource(utils), callers[0]) or ""
         assert "except (ImportError, AttributeError, OSError)" in src, (
             "register_third_party_plugins must be guarded by a narrow exception tuple (#291)"
         )

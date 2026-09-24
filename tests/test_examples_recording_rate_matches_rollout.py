@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -208,3 +210,131 @@ def test_the_grader_flags_a_mismatch_and_leaves_a_match_alone(
     (path, fps, rates) = _graded_examples()[0]
     flagged = any(r is not _DYNAMIC and isinstance(r, (int, float)) and float(r) != fps for r in rates)
     assert flagged is should_flag, f"grader returned rates={rates!r} against fps={fps} for:\n{source}"
+
+
+#: Prose roots a reader learns the sequence from: the shipped examples and the
+#: documentation pages. Notebooks carry both markdown and code comments.
+_PROSE_ROOTS = (_EXAMPLES, _EXAMPLES.parent / "docs")
+
+#: Words that put a prose window in the recording sequence rather than in some
+#: unrelated discussion of a control rate.
+_RECORDING_CONTEXT = ("start_recording", "fps", "recording")
+
+#: How a surface ATTRIBUTES a concrete number to the unset rate. Matched only
+#: against a window already mentioning ``control_frequency`` beside a recording,
+#: and deliberately narrow: a neighbouring default that belongs to some other
+#: parameter ("Isaac renders at ``rendering_dt = 1/30`` by default") is a true
+#: statement and must not be flagged.
+_NUMERIC_DEFAULT_CLAIM = (
+    re.compile(r"default[\s:=]*\(?\s*\d"),  # "default 50.0" / "default: 50.0"
+    re.compile(r"\d+(?:\.\d+)?\s*Hz\s+default"),  # "the 50 Hz default rollout"
+)
+
+#: A scan that stops reaching the prose must fail rather than report a clean
+#: sweep over nothing.
+_MINIMUM_GRADED_WINDOWS = 8
+
+
+def _prose_lines(path: Path) -> list[tuple[int, str]]:
+    """``(line number, prose text)`` for every line of ``path`` a reader reads as prose.
+
+    Comments in a ``.py``; everything outside a fence plus the comments inside
+    one in a ``.md`` (a fenced comment is copied into the reader's own script);
+    markdown cells and code comments in a ``.ipynb``.
+    """
+    lines: list[tuple[int, str]] = []
+    if path.suffix == ".py":
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if (text := line.strip()).startswith("#"):
+                lines.append((number, text.lstrip("# ")))
+    elif path.suffix == ".md":
+        fenced = False
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("```"):
+                fenced = not fenced
+            elif not fenced:
+                lines.append((number, line.strip()))
+            elif (text := line.strip()).startswith("#"):
+                lines.append((number, text.lstrip("# ")))
+    elif path.suffix == ".ipynb":
+        for cell in json.loads(path.read_text(encoding="utf-8")).get("cells", []):
+            prose = cell.get("cell_type") == "markdown"
+            for number, line in enumerate(cell.get("source", []), 1):
+                if prose or (text := line.strip()).startswith("#"):
+                    lines.append((number, line.strip().lstrip("# ")))
+    return lines
+
+
+def _rate_prose_windows() -> list[tuple[Path, int, str]]:
+    """``(path, line, context)`` per prose mention of the rate in a recording."""
+    windows: list[tuple[Path, int, str]] = []
+    for root in _PROSE_ROOTS:
+        paths = [p for suffix in ("*.py", "*.md", "*.ipynb") for p in root.rglob(suffix)]
+        for path in sorted(paths):
+            if ".ipynb_checkpoints" in path.parts:
+                continue
+            lines = _prose_lines(path)
+            for index, (number, text) in enumerate(lines):
+                if "control_frequency" not in text:
+                    continue
+                # Two lines either side: these claims run across a wrapped comment.
+                context = " ".join(t for _, t in lines[max(0, index - 2) : index + 3])
+                if any(word in context for word in _RECORDING_CONTEXT):
+                    windows.append((path, number, context))
+    return windows
+
+
+def test_no_shipped_surface_attributes_a_numeric_default_to_a_recorded_rollout() -> None:
+    """The prose must teach the rule the code implements, not the one it replaced.
+
+    Before the resolver, ``start_recording()`` then ``run_policy()`` with
+    nothing else passed refused itself on the two colliding library defaults, so
+    every caller-facing surface warned about "the 50 Hz default rollout". An
+    unset rate now adopts the open recording's fps - measured in
+    ``tests/simulation/test_recording_rate_matches_control_frequency.py`` - so a
+    surface still naming a number for it sends a reader to learn both rates and
+    pass one they never needed to.
+    """
+    windows = _rate_prose_windows()
+    assert len(windows) >= _MINIMUM_GRADED_WINDOWS, (
+        f"only {len(windows)} prose window(s) were read, expected at least "
+        f"{_MINIMUM_GRADED_WINDOWS}: the scan is no longer reaching "
+        f"{[str(r) for r in _PROSE_ROOTS]}, so a clean result would prove nothing"
+    )
+    stale = [
+        f"{path.relative_to(_EXAMPLES.parent)}:{number}: {context[:160]}"
+        for path, number, context in windows
+        if any(pattern.search(context) for pattern in _NUMERIC_DEFAULT_CLAIM)
+    ]
+    assert not stale, (
+        "surface(s) name a concrete default for a rollout's control_frequency while a "
+        f"recording is open; the signature default is {_UNSET_CONTROL_FREQUENCY!r} and "
+        "resolves to the recording's own fps:\n  " + "\n  ".join(stale)
+    )
+
+
+@pytest.mark.parametrize(
+    ("prose", "should_flag"),
+    [
+        # The three shapes the shipped surfaces used before the resolver landed.
+        ("# fps must equal control_frequency (run_policy default: 50.0)", True),
+        ("# start_recording fps vs control_frequency (default 50.0)", True),
+        ("# the 50 Hz default rollout against this 30 fps recording is refused, control_frequency", True),
+        # The rule as it now reads, in a recording context.
+        ("# an unset control_frequency adopts the open recording's fps", False),
+        # A default that belongs to another parameter is a true statement.
+        ("# recording at rendering_dt = 1/30 by default, so keep control_frequency <= 30", False),
+        # The refusal of a rate the caller DID pass is still true and still said.
+        ("# a control_frequency that disagrees with the open recording's fps is refused", False),
+    ],
+)
+def test_the_prose_scan_flags_the_stale_claim_and_leaves_the_rule_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prose: str, should_flag: bool
+) -> None:
+    """A clean sweep means the prose agrees, not that the scan is blind."""
+    (tmp_path / "planted.py").write_text(prose + "\n", encoding="utf-8")
+    monkeypatch.setattr(f"{__name__}._PROSE_ROOTS", (tmp_path,))
+    windows = _rate_prose_windows()
+    assert windows, f"the scan read no window for:\n{prose}"
+    flagged = any(pattern.search(windows[0][2]) for pattern in _NUMERIC_DEFAULT_CLAIM)
+    assert flagged is should_flag, f"scan read {windows[0][2]!r}"

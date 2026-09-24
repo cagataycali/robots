@@ -212,7 +212,9 @@ def _keywords_the_robot_declares(name: str) -> set[str] | None:
         return None
     from lerobot.robots.config import RobotConfig
 
-    hardware_robot._ensure_lerobot_robots_registered()
+    from strands_robots.utils import ensure_lerobot_family_registered
+
+    ensure_lerobot_family_registered("robots")
     config_cls = RobotConfig.get_known_choices().get(lerobot_type)
     if config_cls is None:
         return None

@@ -294,7 +294,7 @@ sim = create_simulation("newton", solver="mujoco")
 sim.create_world()
 sim.add_robot("so100")
 
-# fps must equal the rollout's control_frequency (run_policy default: 50.0)
+# the rollouts below adopt this fps (they pass no control_frequency)
 sim.start_recording(repo_id="local/newton_demo", task="pick the cube", fps=50)
 for _ in range(n_episodes):
     sim.run_policy(robot_name="so100", policy_provider="mock", n_steps=200)

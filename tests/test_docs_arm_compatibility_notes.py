@@ -204,9 +204,9 @@ class TestTheBlockIsShapedTheWayTheRulesAssume:
         pytest.importorskip("lerobot", reason="lerobot is needed to read its robot-type registry")
         from lerobot.robots.config import RobotConfig
 
-        from strands_robots import hardware_robot
+        from strands_robots.utils import ensure_lerobot_family_registered
 
-        hardware_robot._ensure_lerobot_robots_registered()
+        ensure_lerobot_family_registered("robots")
         known = set(RobotConfig.get_known_choices())
         declared = {
             name: (_registry()[name].get("hardware") or {})["lerobot_type"] for name in _arms_with_a_lerobot_type()

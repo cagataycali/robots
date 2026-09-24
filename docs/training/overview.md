@@ -49,7 +49,7 @@ if __name__ == "__main__":   # lerobot's DataLoader workers re-import this file 
     sim = Robot("so100", mesh=False)
     sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0, 0.05])
     sim.start_recording(repo_id="local/demo", root="/tmp/demo_ds",
-                        # fps must equal the rollout's control_frequency (default 50.0)
+                        # the rollout below adopts this fps (it passes no control_frequency)
                         fps=50, task="pick up the red cube", overwrite=True,
                         cameras=["front"])   # else the built-in overview camera is recorded too
     sim.run_policy(robot_name="so100", policy_object=MockPolicy(),

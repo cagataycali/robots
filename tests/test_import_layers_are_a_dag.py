@@ -226,19 +226,25 @@ class TestTheContract:
         [
             ("_hitl_audit", "mesh"),
             ("drivers", "policies and simulation"),
-            ("teleop_mixin", "teleoperator"),
         ],
     )
     def test_an_inversion_a_move_cannot_remove_is_not_reported_as_a_placement(
         self, graph: Any, member: str, reads: str
     ) -> None:
-        """The three declared inversions are forced, and that is measured.
+        """The two declared inversions are forced, and that is measured.
 
         Each of these members reads a layer above it, so the rule two cells up
         sees it; none is reported, because something at or below where it reads
         imports it and moving it would only invert that edge instead. Drop the
-        "nothing that imports it forbids the move" half of the rule and all three
+        "nothing that imports it forbids the move" half of the rule and both
         turn into false reports, which is what these rows pin.
+
+        ``teleop_mixin`` had a third row, for its deferred read of the
+        ``teleoperator`` factory. That one was NOT forced: the factory sat in
+        ``app`` only because it borrowed a private lerobot-registry walk from the
+        hardware ``Robot``, and sharing that walk from ``core`` let it move down
+        beside the mixin. A row here whose member reads nothing above it grades
+        nothing, so the row goes when the inversion does.
         """
         assert member in mod.LAYER_OF_MEMBER, reads
         reaching_up = [
@@ -470,13 +476,22 @@ class TestTheContract:
         (raised by the dataset writer, caught by the rollout drivers a layer
         down).
 
-        The one deferred edge that still points into it - the mixin's
-        lerobot-deferred ``teleoperator`` read - is declared in
-        ``KNOWN_DEFERRED_UPWARD_EDGES`` and graded by the equality above rather
-        than by this cell.
+        Every kind of import is graded, not just the runtime ones, because a
+        deferral is still a dependency: the last edge into ``app`` from below was
+        the mixin reaching into the ``teleoperator`` factory from inside
+        ``attach_teleop``, and it survived a runtime-only reading of this rule for
+        as long as the factory sat in ``app``. It sits in ``drivers|mesh`` now,
+        beside the mixin, so the set is empty for all three kinds and a module
+        moved back up here fails this cell rather than only the roster equality.
         """
         app = mod.LAYER_NAMES.index("app")
-        offenders = sorted(edge for edge in mod.upward_edges(graph) if mod.layer_of(edge[1]) == app)
+        offenders = sorted(
+            (importer, target)
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            for target in targets
+            if mod.layer_of(target) == app and (below := mod.layer_of(importer)) is not None and below < app
+        )
         assert offenders == [], f"a layer below app imports one of its modules: {offenders}"
 
     @pytest.mark.parametrize(
@@ -527,8 +542,14 @@ class TestTheContract:
             (
                 "strands_robots.teleop_mixin",
                 "drivers|mesh",
-                frozenset({"strands_robots.teleoperator"}),
+                frozenset(),
                 frozenset({"drivers|mesh", "sim|policies", "app"}),
+            ),
+            (
+                "strands_robots.teleoperator",
+                "drivers|mesh",
+                frozenset(),
+                frozenset({"drivers|mesh", "app"}),
             ),
             (
                 "strands_robots.rtps.participant",
@@ -571,9 +592,18 @@ class TestTheContract:
         reads nothing above that layer at import time, which is what lets it sit
         there; and its callers are the layers that need it, which is why it sits
         under them. A deferred read above the layer is listed explicitly rather
-        than allowed in general - the mixin's ``teleoperator`` read is late
-        because that module imports lerobot, and promoting it to module scope has
-        to fail here.
+        than allowed in general, so promoting one to module scope has to fail
+        here.
+
+        ``teleop_mixin`` and ``teleoperator`` are the pair that row shape was
+        needed for. The mixin deferred its read of the factory because the
+        factory sat in ``app``, and the only thing holding it there was a private
+        walk of lerobot's robot registry that it borrowed from the hardware
+        ``Robot`` to tell a caller that ``so101_follower`` is a follower, not a
+        leader. That walk is shared from ``core`` now, so the factory sits beside
+        the mixin that attaches what it builds, both sets are empty, and the
+        mixin's import stays deferred for the reason it states - lerobot - rather
+        than for the layering.
 
         The five ``dataset`` rows are one concern touched five ways: what a
         dataset recorded (``dataset_metadata``, the ``meta/episodes`` parquet the

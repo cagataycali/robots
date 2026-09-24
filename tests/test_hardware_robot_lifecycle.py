@@ -1388,38 +1388,40 @@ class TestStreamExecuteHappyPath:
 
 
 class TestEnsureLerobotRegistriesArePopulated:
-    """Behavior tests for the lazy draccus-registry walks.
+    """Behavior tests for the lazy draccus-registry walk.
 
-    Two helpers populate a lerobot choice registry the same way: one walks
-    every ``lerobot.robots`` subpackage (so robot types whose driver lives in a
-    shared module -- e.g. ``so101_follower`` in ``so_follower`` -- are
-    discovered), one walks every ``lerobot.cameras`` backend. Both then invoke
-    lerobot's third-party plugin loader through the single cached helper that
-    owns it, since one call registers every kind at once. The walks are driven
-    entirely by ``pkgutil``/``importlib``/``sys.modules``, so every branch is
-    exercised with injected fakes and no real lerobot driver imports, USB
-    probes, vendor SDKs, or hardware.
+    One walk populates any lerobot choice registry: it imports every subpackage
+    of the named family, so a device whose driver lives in a shared module --
+    ``so101_follower`` in ``so_follower`` -- is discovered, and a device lerobot
+    adds in a future release needs no change here. It then invokes lerobot's
+    third-party plugin loader through the single cached helper that owns it,
+    since one call registers every kind at once. The walk is driven entirely by
+    ``pkgutil``/``importlib``/``sys.modules``, so every branch is exercised with
+    injected fakes and no real lerobot driver imports, USB probes, vendor SDKs,
+    or hardware.
 
-    Branches common to both walks are parametrized over both, so a walk cannot
-    be added with the shared contract untested.
+    The three families are parametrized rows of the same cells, which is the
+    whole point of there being one walk: ``robots``, ``cameras`` and
+    ``teleoperators`` were three copies of this code in two modules, and the
+    third had its own pins in its own file that said the same thing.
 
-    Every helper is ``@functools.cache``d; the fixture clears them all before
+    Both helpers are ``@functools.cache``d; the fixture clears them all before
     each case so the walk actually re-executes. The set is *discovered* rather
-    than listed: clearing only the robot walk left the plugin-loader cases
-    passing vacuously the moment the loader moved into its own cached helper --
+    than listed: clearing only the walk left the plugin-loader cases passing
+    vacuously the moment the loader moved into its own cached helper --
     whichever ran first cached the result for the rest.
     """
 
     @pytest.fixture(autouse=True)
     def _clear_cache(self):
-        import strands_robots.hardware_robot as hw
+        from strands_robots import utils as lr
 
         cached = [
             value
-            for name, value in vars(hw).items()
-            if name.startswith("_ensure_lerobot") and hasattr(value, "cache_clear")
+            for name, value in vars(lr).items()
+            if name.startswith("ensure_lerobot") and hasattr(value, "cache_clear")
         ]
-        assert len(cached) >= 3, f"expected the walks plus the plugin loader; found {len(cached)}"
+        assert len(cached) == 2, f"expected the walk plus the plugin loader; found {len(cached)}"
         for func in cached:
             func.cache_clear()
         yield
@@ -1427,94 +1429,92 @@ class TestEnsureLerobotRegistriesArePopulated:
             func.cache_clear()
 
     @staticmethod
-    def _install_fake_lerobot_robots(monkeypatch, subpackages):
-        """Wire a fake ``lerobot.robots`` whose ``pkgutil`` walk yields
+    def _install_fake_family(monkeypatch, family, subpackages):
+        """Wire a fake ``lerobot.<family>`` whose ``pkgutil`` walk yields
         ``subpackages`` -- a list of ``(name, ispkg)`` tuples."""
-        import strands_robots.hardware_robot as hw
+        from strands_robots import utils as lr
 
-        fake_robots = types.ModuleType("lerobot.robots")
-        fake_robots.__path__ = ["/fake/lerobot/robots"]  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "lerobot.robots", fake_robots)
+        package = f"lerobot.{family}"
+        fake = types.ModuleType(package)
+        fake.__path__ = [f"/fake/{package.replace('.', '/')}"]  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, package, fake)
 
         modinfo = [pkgutil.ModuleInfo(None, name, ispkg) for name, ispkg in subpackages]
-        monkeypatch.setattr(hw.pkgutil, "iter_modules", lambda path: iter(modinfo))
-        return fake_robots
+        monkeypatch.setattr(lr.pkgutil, "iter_modules", lambda path: iter(modinfo))
+        return fake
 
-    @pytest.mark.parametrize(
-        ("walk", "package"),
-        [
-            ("_ensure_lerobot_robots_registered", "lerobot.robots"),
-            ("_ensure_lerobot_cameras_registered", "lerobot.cameras"),
-        ],
-    )
-    def test_lerobot_wholly_absent_is_debug(self, monkeypatch, caplog, walk, package):
+    @pytest.mark.parametrize("family", ["robots", "cameras", "teleoperators"])
+    def test_lerobot_wholly_absent_is_debug(self, monkeypatch, caplog, family):
         """lerobot wholly missing -> debug-level, no warning, returns cleanly.
 
         Expected on a sim-only host that never reaches hardware code: the
         caller gets a clean "Unsupported robot/camera type" at the lookup site
         instead of a warning about an install it does not want.
         """
-        import strands_robots.hardware_robot as hw
+        from strands_robots.utils import ensure_lerobot_family_registered
 
-        monkeypatch.setitem(sys.modules, package, None)
+        monkeypatch.setitem(sys.modules, f"lerobot.{family}", None)
         monkeypatch.setitem(sys.modules, "lerobot", None)
-        with caplog.at_level("WARNING"):
-            getattr(hw, walk)()
+        with caplog.at_level("DEBUG"):
+            ensure_lerobot_family_registered(family)
         assert not [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("lerobot not installed" in r.message for r in caplog.records)
 
-    @pytest.mark.parametrize(
-        ("walk", "package"),
-        [
-            ("_ensure_lerobot_robots_registered", "lerobot.robots"),
-            ("_ensure_lerobot_cameras_registered", "lerobot.cameras"),
-        ],
-    )
-    def test_partial_install_warns(self, monkeypatch, caplog, walk, package):
+    @pytest.mark.parametrize("family", ["robots", "cameras", "teleoperators"])
+    def test_partial_install_warns(self, monkeypatch, caplog, family):
         """lerobot present but its subpackage unimportable -> a warning fires.
 
         A genuine partial-install signal, worth surfacing without
         ``--log-level=DEBUG``, which is what separates it from the case above.
         """
-        import strands_robots.hardware_robot as hw
+        from strands_robots.utils import ensure_lerobot_family_registered
 
-        # ``import lerobot.<kind>`` fails, but the ``import lerobot`` probe
+        # ``import lerobot.<family>`` fails, but the ``import lerobot`` probe
         # succeeds -> the partial-install warning branch.
-        monkeypatch.setitem(sys.modules, package, None)
+        monkeypatch.setitem(sys.modules, f"lerobot.{family}", None)
         monkeypatch.setitem(sys.modules, "lerobot", types.ModuleType("lerobot"))
         with caplog.at_level("WARNING"):
-            getattr(hw, walk)()
+            ensure_lerobot_family_registered(family)
         assert any("partial install" in r.message for r in caplog.records)
 
-    def test_walks_subpackages_and_skips_failing_driver(self, monkeypatch):
+    def test_walks_subpackages_and_skips_failing_driver(self, monkeypatch, caplog):
         """Each importable subpackage is imported; a driver whose import
         raises ImportError/OSError is skipped without crashing the walk."""
-        import strands_robots.hardware_robot as hw
+        from strands_robots import utils as lr
 
-        self._install_fake_lerobot_robots(
+        fake = self._install_fake_family(
             monkeypatch,
+            "robots",
             [("so_follower", True), ("unitree", True), ("_helpers", False)],
         )
         imported: list[str] = []
 
         def fake_import(name):
+            # The family root resolves to the planted package; every subpackage
+            # is recorded, and one of them fails the way a vendor SDK does.
+            if name == "lerobot.robots":
+                return fake
             imported.append(name)
             if name.endswith("unitree"):
                 raise OSError("unitree_sdk2py USB probe failed")
             return types.ModuleType(name)
 
-        monkeypatch.setattr(hw.importlib, "import_module", fake_import)
+        monkeypatch.setattr(lr.importlib, "import_module", fake_import)
         # Make the third-party plugin loader a no-op success.
         plugins = types.ModuleType("lerobot.utils.import_utils")
         plugins.register_third_party_plugins = lambda: None  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "lerobot.utils.import_utils", plugins)
 
-        hw._ensure_lerobot_robots_registered()
+        with caplog.at_level("DEBUG"):
+            lr.ensure_lerobot_family_registered("robots")
 
         # The package subpackages were imported; the non-package module was
         # skipped by the ``is_pkg`` guard.
         assert "lerobot.robots.so_follower" in imported
         assert "lerobot.robots.unitree" in imported
         assert "lerobot.robots._helpers" not in imported
+        # The one that failed is reported as skipped rather than silently lost.
+        assert any("skip lerobot.robots.unitree" in r.message for r in caplog.records)
 
     def test_camera_walk_skips_a_backend_whose_sdk_is_absent(self, monkeypatch):
         """A backend whose import fails is left out of the registry, not fatal.
@@ -1523,30 +1523,29 @@ class TestEnsureLerobotRegistriesArePopulated:
         one absent SDK must not cost the caller ``opencv``. The requested type
         is then refused at the lookup with the choices that did register.
         """
-        import strands_robots.hardware_robot as hw
+        from strands_robots import utils as lr
 
-        fake_cameras = types.ModuleType("lerobot.cameras")
-        fake_cameras.__path__ = ["/fake/lerobot/cameras"]  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "lerobot.cameras", fake_cameras)
-        modinfo = [
-            pkgutil.ModuleInfo(None, name, ispkg)
-            for name, ispkg in [("opencv", True), ("realsense", True), ("configs", False)]
-        ]
-        monkeypatch.setattr(hw.pkgutil, "iter_modules", lambda path: iter(modinfo))
+        fake = self._install_fake_family(
+            monkeypatch,
+            "cameras",
+            [("opencv", True), ("realsense", True), ("configs", False)],
+        )
         imported: list[str] = []
 
         def fake_import(name):
+            if name == "lerobot.cameras":
+                return fake
             imported.append(name)
             if name.endswith("realsense"):
                 raise ImportError("No module named 'pyrealsense2'")
             return types.ModuleType(name)
 
-        monkeypatch.setattr(hw.importlib, "import_module", fake_import)
+        monkeypatch.setattr(lr.importlib, "import_module", fake_import)
         plugins = types.ModuleType("lerobot.utils.import_utils")
         plugins.register_third_party_plugins = lambda: None  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "lerobot.utils.import_utils", plugins)
 
-        hw._ensure_lerobot_cameras_registered()
+        lr.ensure_lerobot_family_registered("cameras")
 
         assert "lerobot.cameras.opencv" in imported
         assert "lerobot.cameras.realsense" in imported
@@ -1557,26 +1556,31 @@ class TestEnsureLerobotRegistriesArePopulated:
     def test_third_party_loader_missing_is_debug(self, monkeypatch, caplog):
         """Older lerobot without ``register_third_party_plugins`` -> debug,
         built-ins still registered, no warning."""
-        import strands_robots.hardware_robot as hw
+        from strands_robots import utils as lr
 
-        self._install_fake_lerobot_robots(monkeypatch, [("so_follower", True)])
-        monkeypatch.setattr(hw.importlib, "import_module", lambda name: types.ModuleType(name))
+        fake = self._install_fake_family(monkeypatch, "robots", [("so_follower", True)])
+        monkeypatch.setattr(
+            lr.importlib, "import_module", lambda name: fake if name == "lerobot.robots" else types.ModuleType(name)
+        )
         # A module that lacks the attribute -> the ``from ... import`` raises
         # ImportError -> the "loader unavailable" debug branch.
         empty = types.ModuleType("lerobot.utils.import_utils")
         monkeypatch.setitem(sys.modules, "lerobot.utils.import_utils", empty)
 
-        with caplog.at_level("WARNING"):
-            hw._ensure_lerobot_robots_registered()
+        with caplog.at_level("DEBUG"):
+            lr.ensure_lerobot_family_registered("robots")
         assert not [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("register_third_party_plugins unavailable" in r.message for r in caplog.records)
 
     def test_third_party_loader_failure_warns(self, monkeypatch, caplog):
         """A broken third-party plugin loader degrades to a warning, not a
         crash -- hardware init must survive plugin registration failures."""
-        import strands_robots.hardware_robot as hw
+        from strands_robots import utils as lr
 
-        self._install_fake_lerobot_robots(monkeypatch, [("so_follower", True)])
-        monkeypatch.setattr(hw.importlib, "import_module", lambda name: types.ModuleType(name))
+        fake = self._install_fake_family(monkeypatch, "robots", [("so_follower", True)])
+        monkeypatch.setattr(
+            lr.importlib, "import_module", lambda name: fake if name == "lerobot.robots" else types.ModuleType(name)
+        )
 
         def boom():
             raise OSError("plugin entry-point probe failed")
@@ -1586,7 +1590,7 @@ class TestEnsureLerobotRegistriesArePopulated:
         monkeypatch.setitem(sys.modules, "lerobot.utils.import_utils", plugins)
 
         with caplog.at_level("WARNING"):
-            hw._ensure_lerobot_robots_registered()
+            lr.ensure_lerobot_family_registered("robots")
         assert any("third-party plugin registration failed" in r.message for r in caplog.records)
 
 
