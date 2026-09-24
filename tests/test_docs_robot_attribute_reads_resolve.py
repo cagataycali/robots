@@ -51,10 +51,12 @@ own failing branch.
 from __future__ import annotations
 
 import ast
+import functools
 import inspect
 import re
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -84,11 +86,19 @@ def _runnable(block: str) -> str:
     return block
 
 
-def _instance_surface(cls: type) -> set[str]:
+@functools.cache
+def _instance_surface(cls: type) -> frozenset[str]:
     """Names reachable on an instance of ``cls``.
 
     ``dir`` misses instance state, so every ``self.X = ...`` target anywhere in
     the MRO is credited as well.
+
+    Memoised because the surface is a constant of the tree and :func:`_unresolved`
+    asks for one per documented read: ``Simulation`` carries a 14-class MRO whose
+    sources take ~0.5 s to fetch and parse, and 48 sim-mode reads paid that 48
+    times - 21 s of the 25 s cell, the largest single-cell walk in the suite
+    (#3869). The cache key is the class object, so an exemplar class built inside
+    a test is derived on its own.
     """
     names = set(dir(cls))
     for klass in cls.__mro__:
@@ -108,14 +118,16 @@ def _instance_surface(cls: type) -> set[str]:
                 and isinstance(node.ctx, ast.Store)
             ):
                 names.add(node.attr)
-    return names
+    return frozenset(names)
 
 
-def _factory_bound_names() -> set[str]:
+@functools.cache
+def _factory_bound_names() -> frozenset[str]:
     """Attributes the ``Robot()`` factory binds onto the instance it returns.
 
     ``run`` is bound here rather than defined on any class, so a surface derived
     from the classes alone would report every documented ``.run()`` as missing.
+    Memoised for the same reason as :func:`_instance_surface`.
     """
     tree = ast.parse(inspect.getsource(robot_factory))
     names: set[str] = set()
@@ -131,7 +143,7 @@ def _factory_bound_names() -> set[str]:
             and isinstance(node.args[1].value, str)
         ):
             names.add(node.args[1].value)
-    return names
+    return frozenset(names)
 
 
 def _declares_a_native_driver(name: str) -> bool:
@@ -173,7 +185,7 @@ def _builds_a_native_driver(name: str, driver: str | None) -> bool:
     return get_native_driver_class(resolve_name(name)) is not None
 
 
-def _hardware_surfaces(name: str, mode: str | None, driver: str | None = None) -> dict[str, set[str]]:
+def _hardware_surfaces(name: str, mode: str | None, driver: str | None = None) -> dict[str, frozenset[str]]:
     """Surfaces ``Robot(name, mode=mode, driver=driver)`` can return, for a non-sim mode."""
     factory = _factory_bound_names()
     if mode == "real" and _builds_a_native_driver(name, driver):
@@ -186,7 +198,7 @@ def _hardware_surfaces(name: str, mode: str | None, driver: str | None = None) -
     return wrapper | {"Simulation": _simulation_surface()}
 
 
-def _simulation_surface() -> set[str]:
+def _simulation_surface() -> frozenset[str]:
     """The surface of the simulation the factory builds, or an empty set."""
     from strands_robots.simulation import Simulation
 
@@ -279,7 +291,7 @@ def _unresolved(reads: list[_Read]) -> list[str]:
     return offenders
 
 
-def _simulation_surfaces() -> dict[str, set[str]]:
+def _simulation_surfaces() -> dict[str, frozenset[str]]:
     """The sim-mode surface, keyed for reporting."""
     return {"Simulation": _simulation_surface()}
 
@@ -421,3 +433,28 @@ class TestTheRuleIsGradedOnConstructedExemplars:
             )
         }
         assert outcomes == {True, False}, f"the exemplars only ever produce {outcomes}"
+
+
+class TestEachSurfaceIsDerivedOnce:
+    """The surfaces are constants of the tree, so a grading pass fetches each class source once.
+
+    Graded on behaviour rather than on a cache attribute: the second pass over
+    the same reads must fetch no class source at all. Before the memo every
+    read re-fetched and re-parsed the whole MRO of the type it resolved to.
+    """
+
+    def test_grading_the_corpus_again_fetches_no_class_source(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        pytest.importorskip("mujoco", reason="the simulation surface needs the [sim-mujoco] extra")
+        reads = _all_documented_reads()
+        _unresolved(reads)
+
+        fetched: list[str] = []
+        real_getsource = inspect.getsource
+
+        def counting_getsource(obj: Any) -> str:
+            fetched.append(getattr(obj, "__qualname__", repr(obj)))
+            return real_getsource(obj)
+
+        monkeypatch.setattr(inspect, "getsource", counting_getsource)
+        _unresolved(reads)
+        assert fetched == [], f"a second pass over {len(reads)} reads re-derived a surface: {sorted(set(fetched))}"
