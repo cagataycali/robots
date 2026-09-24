@@ -19,11 +19,87 @@ from __future__ import annotations
 from strands_robots.mesh.iot.provision import (
     _OPERATOR_POLICY_DOC,
     _ROBOT_POLICY_DOC,
+    _robot_policy_doc,
 )
 
 
 def _statements_by_sid(doc: dict) -> dict[str, dict]:
     return {st.get("Sid", ""): st for st in doc["Statement"]}
+
+
+def _resources_for(doc: dict, action: str) -> list[str]:
+    """Every Resource ARN in *doc* granting *action*."""
+    out: list[str] = []
+    for st in doc["Statement"]:
+        if st.get("Effect") != "Allow":
+            continue
+        actions = st["Action"]
+        actions = [actions] if isinstance(actions, str) else actions
+        if action not in actions:
+            continue
+        resources = st["Resource"]
+        out.extend([resources] if isinstance(resources, str) else resources)
+    return out
+
+
+class TestSafetyCycleIsGrantedAsAPair:
+    """``strands_robots.mesh.core.Mesh.start`` subscribes estop and resume together.
+
+    A policy that grants one without the other is not a narrowing, it is a
+    fail-unsafe gap: the fleet engages a cloud-delivered lockout and then the
+    broker denies the only topic that lifts it, so every robot stays locked
+    until it is restarted by hand. The bridge carries ``safety/resume`` to MQTT
+    by default (``DEFAULT_BRIDGE_SUFFIXES``) at QoS 1 retained, so the wire
+    intent and the policy must agree.
+    """
+
+    ESTOP = "topic/strands/safety/estop"
+    RESUME = "topic/strands/safety/resume"
+
+    def test_robot_receives_both_halves(self):
+        recv = _resources_for(_ROBOT_POLICY_DOC, "iot:Receive")
+        assert any(r.endswith(self.ESTOP) for r in recv)
+        assert any(r.endswith(self.RESUME) for r in recv), (
+            "robot can Receive estop but not resume -- a fleet lockout delivered over MQTT would be unclearable"
+        )
+
+    def test_robot_subscribes_both_halves(self):
+        sub = _resources_for(_ROBOT_POLICY_DOC, "iot:Subscribe")
+        assert any(r.endswith("topicfilter/strands/safety/estop") for r in sub)
+        assert any(r.endswith("topicfilter/strands/safety/resume") for r in sub)
+
+    def test_operator_publishes_and_observes_both_halves(self):
+        pub = _resources_for(_OPERATOR_POLICY_DOC, "iot:Publish")
+        assert any(r.endswith(self.ESTOP) for r in pub)
+        assert any(r.endswith(self.RESUME) for r in pub), (
+            "the operator is the role that clears a lockout; without resume-publish "
+            "the console can stop the fleet and never release it"
+        )
+        recv = _resources_for(_OPERATOR_POLICY_DOC, "iot:Receive")
+        assert any(r.endswith(self.RESUME) for r in recv), (
+            "an operator that sees the stop but never the release shows the fleet as permanently locked out"
+        )
+
+    def test_no_estop_variant_drops_both_publishes_but_keeps_both_receives(self):
+        """``allow_estop_publish=False`` must remove resume-publish too.
+
+        A Last Will armed on ``safety/resume`` is the estop dead-man switch
+        pointed the other way: it clears a legitimate lockout the instant a
+        defender cuts the attacker's connection. A robot that may
+        not originate a stop must not be able to clear one either -- but it
+        must still OBEY both.
+        """
+        doc = _robot_policy_doc(allow_estop_publish=False)
+        pub = _resources_for(doc, "iot:Publish")
+        assert not any(r.endswith(self.ESTOP) for r in pub)
+        assert not any(r.endswith(self.RESUME) for r in pub), (
+            "no-estop cert can still publish resume -- it could arm a Will that lifts someone else's fleet lockout"
+        )
+        recv = _resources_for(doc, "iot:Receive")
+        assert any(r.endswith(self.ESTOP) for r in recv)
+        assert any(r.endswith(self.RESUME) for r in recv), (
+            "a robot that cannot originate a stop must still be able to obey a resume"
+        )
 
 
 class TestRobotPolicy:

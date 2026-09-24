@@ -36,7 +36,11 @@ def sim():
 
 
 def test_status_reports_saved_episodes_beside_the_open_buffer(sim, tmp_path):
-    sim.start_recording(repo_id="lab/b", root=str(tmp_path / "ds"), fps=30)
+    # Every assertion below reads frame and episode counts; none reads a pixel.
+    # Recording the world's free camera would render it through OSMesa at each
+    # of the 60 control steps and encode a video per episode flush, which was
+    # 39 s of this cell's 41 s (#3869). An action-only dataset keeps the counts.
+    sim.start_recording(repo_id="lab/b", root=str(tmp_path / "ds"), fps=30, cameras=[])
     r = sim.run_policy("so101", policy_provider="mock", duration=0.5, control_frequency=30.0, n_episodes=3)
     assert r["status"] == "success", _text(r)
 
@@ -74,7 +78,7 @@ def test_status_off_a_recording_is_unchanged(sim):
 )
 def test_the_recipes_name_a_published_boundary(sim, tmp_path, call, expected):
     if call == "stop_recording":
-        sim.start_recording(repo_id="lab/b", root=str(tmp_path / "ds"), fps=30)
+        sim.start_recording(repo_id="lab/b", root=str(tmp_path / "ds"), fps=30, cameras=[])
     r = getattr(sim, call)()
     assert r["status"] == "error"
     assert "once per episode" not in _text(r)

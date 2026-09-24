@@ -78,7 +78,6 @@ import ast
 import pathlib
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -87,6 +86,7 @@ from strands_robots import hardware_robot
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState, TaskStatus
 from strands_robots.policies.base import Policy
+from tests._daemon_executor import DaemonThreadExecutor
 
 #: Upper bound on any wait, so a broken contract fails instead of hanging.
 DEADLINE = 10.0
@@ -193,7 +193,7 @@ def make_robot(bus: Bus) -> HwRobot:
     hw.control_frequency = 500.0
     hw.action_sleep_time = 1.0 / 500.0
     hw._task_state = RobotTaskState()
-    hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="arm_executor")
+    hw._executor = DaemonThreadExecutor(max_workers=1, thread_name_prefix="arm_executor")
     hw._shutdown_event = threading.Event()
     hw._stop_requested = threading.Event()
     hw._task_admission = threading.Lock()
@@ -389,17 +389,41 @@ class TestAHealthyRolloutIsUnaffected:
         assert policy.reset_calls == 1
         assert bus.connect_calls == 1
 
-    def test_start_task_before_cleanup_still_submits(self, hw: HwRobot, bus: Bus):
-        """A well-formed start still submits; the shutdown guard is the only refusal.
+    def test_start_task_before_cleanup_still_submits(self, hw: HwRobot, bus: Bus, monkeypatch: pytest.MonkeyPatch):
+        """A well-formed start still submits, and what it submitted drives the arm.
 
-        The port is explicit because ``start_task`` now judges it before the
+        The port is explicit because ``start_task`` judges it before the
         submit: an absent ``policy_port`` is refused on its own terms (no policy
         can be built from it), which would mask the property under test here.
+
+        The policy build is stubbed with this file's counting double and the
+        rollout is joined before the fixture tears down. With the real build the
+        cell raced the fixture's ``cleanup()`` against its own bring-up: when the
+        teardown won, the stage gate stopped the task in 0.06 s; when the worker
+        won, it built a ``Gr00tPolicy`` that dialed ``tcp://localhost:5555`` for
+        a server no test provides, and ``executor.shutdown(wait=True)`` waited
+        out the client's 15 s ``reset`` budget (measured at 15.0 s on one CI
+        run). A rollout joined here has no race to lose, opens no socket, and
+        can be asserted on rather than merely reported as started.
         """
-        result = hw.start_task("healthy", policy_port=5555)
+        policy = CountingPolicy()
+
+        async def _counting_policy(*_args: Any, **_kwargs: Any) -> Policy:
+            return policy
+
+        monkeypatch.setattr(hw, "_get_policy", _counting_policy)
+
+        result = hw.start_task("healthy", policy_port=5555, duration=0.05)
 
         assert result["status"] == "success"
         assert "Task started" in _text(result)
+        future = hw._task_state.task_future
+        assert future is not None, "start_task reported a start it did not submit"
+        future.result(timeout=DEADLINE)
+        assert hw._task_state.status is TaskStatus.COMPLETED
+        assert bus.connect_calls == 1
+        assert policy.reset_calls == 1
+        assert bus.commands, "the submitted rollout never commanded the arm"
 
 
 def _wait_until(predicate: Any, timeout: float = DEADLINE) -> bool:

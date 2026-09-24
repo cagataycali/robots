@@ -56,7 +56,7 @@ import functools
 import importlib
 import os
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from types import FunctionType, ModuleType
 from typing import Any
@@ -78,6 +78,27 @@ _EDGE_REIMPORTS = ("device_connect_edge", "device_connect_edge.drivers", "device
 
 #: Where the stand-ins are defined: a class or function from under here is a fake.
 _TESTS_DIR = os.path.dirname(os.path.realpath(__file__))
+
+#: Callbacks :func:`use_the_real_edge` applies to each real edge module it
+#: imports, keyed by the fixture that registered one.
+#:
+#: A fixture that binds a stub on the edge patches the module registered when it
+#: runs. When that module is a sibling's stand-in, this swap deletes it and
+#: imports the real one in its place, and the stub is left on an object nothing
+#: reads any more: the integration re-imported here binds the real symbol. The
+#: fixture registers how to bind itself instead, so the stub follows the swap
+#: onto whatever module the integration will actually read.
+#:
+#: Measured, with the whole tree collected and only
+#: ``TestTheDeviceConnectRelayDoesNotCollapseTheValue`` selected (the state every
+#: ``-k`` filter and every ``xdist`` worker has, and a whole-file run does not):
+#: the first cell reached ``execute`` as ``caller='op-1'`` and was refused
+#: unauthorized, while the three after it passed - by then this swap had already
+#: made the edge real, so the fixture had a real module to patch.
+#:
+#: A registration is undone by the fixture that made it
+#: (``monkeypatch.setitem``), so a session that installs no stub applies none.
+EDGE_REBINDERS: dict[str, Callable[[ModuleType], None]] = {}
 
 
 def _is_real(module: object) -> bool:
@@ -250,8 +271,22 @@ def use_the_real_edge() -> dict[str, ModuleType]:
             del sys.modules[name]
     for name in _EDGE_REIMPORTS:
         importlib.import_module(name)
+    _rebind_the_edge()
     purge()
     return held
+
+
+def _rebind_the_edge() -> None:
+    """Re-apply every :data:`EDGE_REBINDERS` stub to the edge modules now resident.
+
+    Called after the re-imports and before :func:`purge`, so the integration
+    this swap re-imports binds the stub rather than the real symbol.
+    """
+    for rebind in list(EDGE_REBINDERS.values()):
+        for name in _EDGE_REIMPORTS:
+            module = sys.modules.get(name)
+            if module is not None:
+                rebind(module)
 
 
 @contextlib.contextmanager

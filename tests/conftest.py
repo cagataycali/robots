@@ -19,12 +19,13 @@ has started says so instead of reporting counts that read as a total.
 import os
 import sys
 from collections.abc import Iterator
+from types import ModuleType
 
 import pytest
 
 # Neither import below touches strands_robots, so both are safe above the
 # environment defaults that the strands_robots imports further down depend on.
-from tests._device_connect_real import held_modules, restore
+from tests._device_connect_real import EDGE_REBINDERS, held_modules, restore
 from tests.session_truncation import register_truncation_reporter
 
 # Disable mesh BEFORE any strands_robots import below pulls in robot.py.
@@ -83,6 +84,13 @@ def named_rpc_caller(monkeypatch: pytest.MonkeyPatch) -> str:
     replaced ``device_connect_edge`` with a mock gives that mock's
     ``get_rpc_source_device`` the same name itself. A test that sets its own
     allowlist or patches the symbol again still wins: both apply after this.
+
+    Patching what is registered now is not enough on its own: a test that then
+    calls :func:`tests._device_connect_real.use_the_real_edge` replaces a
+    sibling's stand-in with the real edge module, and the integration it
+    re-imports reads the real symbol rather than the patch. The stub is
+    registered in :data:`tests._device_connect_real.EDGE_REBINDERS` as well, so
+    the swap carries it onto the module the integration will read.
     """
     import importlib
     import sys
@@ -113,6 +121,13 @@ def named_rpc_caller(monkeypatch: pytest.MonkeyPatch) -> str:
     for name, module in list(sys.modules.items()):
         if name.startswith("strands_robots.device_connect") and hasattr(module, "get_rpc_source_device"):
             monkeypatch.setattr(module, "get_rpc_source_device", _named)
+
+    def _rebind(module: ModuleType) -> None:
+        """Bind the stub on an edge module a swap imported after this fixture ran."""
+        if hasattr(module, "get_rpc_source_device"):
+            monkeypatch.setattr(module, "get_rpc_source_device", _named)
+
+    monkeypatch.setitem(EDGE_REBINDERS, "named_rpc_caller", _rebind)
     return caller
 
 

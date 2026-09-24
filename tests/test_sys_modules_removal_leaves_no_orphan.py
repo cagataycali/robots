@@ -151,6 +151,7 @@ from __future__ import annotations
 import ast
 import functools
 import sys
+from collections import deque
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -221,6 +222,103 @@ class _Reading:
     removals: tuple[tuple[int, str, str], ...]
     reimports: tuple[tuple[int, str, str, bool], ...]
     prefix_purges: tuple[tuple[int, str, str], ...]
+    functions: int
+    candidates: int
+
+
+@dataclass(frozen=True)
+class _Scan:
+    """What one walk of a file reads for all three rules.
+
+    ``registries`` is every spelling of ``sys.modules`` the file can reach,
+    through any alias ``sys`` is imported under at any scope. ``owners`` is each
+    method's outermost class, keyed by ``id()`` of the function node: a
+    ``setup_method`` that saves and a ``teardown_method`` that restores are one
+    unit, and read alone the save is invisible. ``module_names`` is every
+    ``name = "literal"`` binding at any depth, and ``candidates`` the functions
+    whose subtree holds something a rule can report - in the order
+    :func:`ast.walk` yields them, so the rules' results keep their order.
+    """
+
+    registries: frozenset[str]
+    owners: dict[int, ast.ClassDef]
+    module_names: dict[str, str]
+    candidates: tuple[ast.FunctionDef | ast.AsyncFunctionDef, ...]
+    functions: int
+
+
+def _touches_a_registry(node: ast.AST) -> bool:
+    """Whether *node* is a shape one of the three rules reads off a function.
+
+    A superset by design: every ``.pop(...)`` and ``del ...[...]`` counts
+    whatever it is applied to, because the registry check is the rule's to
+    make. What matters is the other direction - a function holding none of
+    these shapes is one every rule returns nothing for, so it is skipped.
+    """
+    if isinstance(node, ast.Delete):
+        return True
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id == _REIMPORT_HELPER
+    return isinstance(func, ast.Attribute) and func.attr in _REGISTRY_ATTRS
+
+
+def _scan(tree: ast.Module) -> _Scan:
+    """Read *tree* once for everything the three rules used to walk it for.
+
+    Before this the rules walked the whole file three times each for the
+    ``sys`` aliases and the method owners, then every function's subtree
+    another seven times for shapes almost no function holds - 40,915
+    functions across the test trees at `dc29e22b`, 300 of which hold one.
+    Measured there, :func:`_readings` took 49 s before and 12 s after with
+    identical results file for file, and the remaining 12 s is the parse
+    (~10 s); the cell that pays for its first read was the largest single
+    cell in the suite (#3869).
+
+    The pass is the breadth-first order :func:`ast.walk` produces, carrying
+    the chain of enclosing functions and the outermost class beside each node,
+    so a shape a rule reads marks every function enclosing it - the same set
+    :func:`ast.walk` reaches from that function, since both descend through
+    nested definitions.
+    """
+    aliases = {"sys"}
+    owners: dict[int, ast.ClassDef] = {}
+    module_names: dict[str, str] = {}
+    functions: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+    touching: set[int] = set()
+    enclosing: tuple[ast.FunctionDef | ast.AsyncFunctionDef, ...]
+    owner: ast.ClassDef | None
+    queue: deque[tuple[ast.AST, tuple[ast.FunctionDef | ast.AsyncFunctionDef, ...], ast.ClassDef | None]]
+    queue = deque([(tree, (), None)])
+    while queue:
+        node, enclosing, owner = queue.popleft()
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            functions.append(node)
+            enclosing = (*enclosing, node)
+            if owner is not None:
+                owners[id(node)] = owner
+        elif isinstance(node, ast.ClassDef):
+            owner = owner or node
+        elif isinstance(node, ast.Import):
+            aliases.update(alias.asname or "sys" for alias in node.names if alias.name == "sys")
+        elif (
+            isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        ):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    module_names[target.id] = node.value.value
+        if _touches_a_registry(node):
+            touching.update(id(fn) for fn in enclosing)
+        queue.extend((child, enclosing, owner) for child in ast.iter_child_nodes(node))
+    return _Scan(
+        registries=frozenset(f"{alias}.modules" for alias in aliases),
+        owners=owners,
+        module_names=module_names,
+        candidates=tuple(fn for fn in functions if id(fn) in touching),
+        functions=len(functions),
+    )
 
 
 @functools.cache
@@ -230,21 +328,25 @@ def _readings() -> tuple[_Reading, ...]:
     The tree does not change during a session, so parsing it is paid once here
     rather than once per rule and again per cell that asks for the protected
     set - nine walks of both test trees before, one now. What is held per file
-    is the four small tuples the rules read, never the parsed tree, so the
-    cache costs the result set and not the trees.
+    is the four small tuples the rules read and two counts, never the parsed
+    tree, so the cache costs the result set and not the trees. The three rules
+    share one :func:`_scan` of each tree for the same reason.
     """
     readings: list[_Reading] = []
     for path in _graded_files():
         tree = _parse(path)
         if tree is None:
             continue
+        scan = _scan(tree)
         readings.append(
             _Reading(
                 rel=path.relative_to(_REPO_ROOT).as_posix(),
                 patched=frozenset(_patched_module_level_imports(tree)),
-                removals=tuple(unrestored_removals(tree)),
-                reimports=tuple(reimporting_cells(tree)),
-                prefix_purges=tuple(unrestored_prefix_purges(tree)),
+                removals=tuple(unrestored_removals(tree, scan)),
+                reimports=tuple(reimporting_cells(tree, scan)),
+                prefix_purges=tuple(unrestored_prefix_purges(tree, scan)),
+                functions=scan.functions,
+                candidates=len(scan.candidates),
             )
         )
     return tuple(readings)
@@ -278,15 +380,6 @@ def protected_modules() -> dict[str, set[str]]:
         for dotted in reading.patched:
             protected.setdefault(dotted, set()).add(reading.rel)
     return protected
-
-
-def _sys_aliases(tree: ast.Module) -> set[str]:
-    """Every name bound to the ``sys`` module in this file, at any scope."""
-    aliases = {"sys"}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            aliases.update(alias.asname or "sys" for alias in node.names if alias.name == "sys")
-    return aliases
 
 
 def _own_scope_removals(fn: ast.FunctionDef | ast.AsyncFunctionDef, registries: set[str]) -> list[tuple[int, str]]:
@@ -380,31 +473,15 @@ def _restores(scopes: Sequence[ast.AST], registries: set[str], key: str) -> bool
     return False
 
 
-def _method_owners(tree: ast.Module) -> dict[int, ast.ClassDef]:
-    """Each method's enclosing class, keyed by ``id()`` of the function node.
-
-    A ``setup_method`` that saves and a ``teardown_method`` that restores are one
-    unit; read a method alone and the save is invisible.
-    """
-    owners: dict[int, ast.ClassDef] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            for child in ast.walk(node):
-                if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
-                    owners.setdefault(id(child), node)
-    return owners
-
-
-def unrestored_removals(tree: ast.Module) -> list[tuple[int, str, str]]:
+def unrestored_removals(tree: ast.Module, scan: _Scan | None = None) -> list[tuple[int, str, str]]:
     """``(lineno, function, key)`` for each literal removal *tree* never undoes."""
-    registries = {f"{alias}.modules" for alias in _sys_aliases(tree)}
-    owners = _method_owners(tree)
+    if scan is None:
+        scan = _scan(tree)
+    registries = set(scan.registries)
     reported: list[tuple[int, str, str]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            continue
+    for node in scan.candidates:
         scopes: list[ast.AST] = [node]
-        owner = owners.get(id(node))
+        owner = scan.owners.get(id(node))
         if owner is not None:
             scopes.append(owner)
         reported.extend(
@@ -686,6 +763,82 @@ class TestTheScanIsSpecific:
         assert _patched_module_level_imports(ast.parse(patcher)) == {"boto3"}
 
 
+class TestTheScanReachesEveryShapeTheRulesRead:
+    """The pre-filter's one failure direction is a function it skips and a rule would report."""
+
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "sys.modules.pop('a.b', None)",
+            "del sys.modules['a.b']",
+            "_sys.modules.pop('a.b', None)",
+            "monkeypatch.delitem(sys.modules, 'a.b', raising=False)",
+            "reimport(monkeypatch, 'a.b')",
+            "helper.reimport(monkeypatch, 'a.b')",
+            "for key in list(sys.modules):\n        if key.startswith('a.'):\n            sys.modules.pop(key)",
+        ],
+        ids=["pop", "del", "aliased-pop", "delitem", "reimport", "attribute-reimport", "prefix-purge"],
+    )
+    def test_a_function_holding_a_shape_a_rule_reads_is_a_candidate(self, statement: str) -> None:
+        source = "\n".join(["import sys", "import sys as _sys", "def test_x(monkeypatch):", f"    {statement}"])
+        assert [fn.name for fn in _scan(ast.parse(source)).candidates] == ["test_x"]
+
+    def test_a_function_holding_no_such_shape_is_skipped(self) -> None:
+        """The whole saving: the rules never walk a function that cannot be reported."""
+        source = "\n".join(
+            ["import sys", "def test_x():", "    assert sys.modules['a.b'] is not None", "    sys.modules.get('a.b')"]
+        )
+        assert _scan(ast.parse(source)).candidates == ()
+
+    def test_a_shape_inside_a_nested_definition_marks_every_enclosing_function(self) -> None:
+        """The same set ``ast.walk`` reaches from each function, in the order it yields them."""
+        source = "\n".join(
+            [
+                "import sys",
+                "def outer():",
+                "    def inner():",
+                "        sys.modules.pop('a.b', None)",
+                "    return inner",
+                "def bystander():",
+                "    pass",
+            ]
+        )
+        assert [fn.name for fn in _scan(ast.parse(source)).candidates] == ["outer", "inner"]
+
+    def test_a_method_is_owned_by_its_outermost_class(self) -> None:
+        """A save in ``setup_method`` and a restore in ``teardown_method`` are read as one unit."""
+        source = "\n".join(
+            [
+                "import sys",
+                "class TestOuter:",
+                "    class Inner:",
+                "        def test_x(self):",
+                "            sys.modules.pop('a.b', None)",
+            ]
+        )
+        scan = _scan(ast.parse(source))
+        (method,) = scan.candidates
+        assert scan.owners[id(method)].name == "TestOuter"
+
+    def test_the_registries_follow_every_alias_of_sys(self) -> None:
+        source = "\n".join(["import sys as _s", "def f():", "    import sys as _t"])
+        assert _scan(ast.parse(source)).registries == {"sys.modules", "_s.modules", "_t.modules"}
+
+    def test_the_scan_skips_most_of_the_tree(self) -> None:
+        """So a clean result means the filter is selecting, rather than passing everything through.
+
+        Read off :func:`_readings` rather than by a second walk, so the pin costs
+        nothing of what it protects.
+        """
+        functions = sum(reading.functions for reading in _readings())
+        candidates = sum(reading.candidates for reading in _readings())
+        assert candidates >= _MINIMUM_PROTECTED, "the scan is no longer reaching the cells the rules grade"
+        assert candidates * 10 < functions, (
+            f"{candidates} of {functions} functions read as touching sys.modules; the pre-filter "
+            "has widened to the point where the rules walk most of the tree again"
+        )
+
+
 @pytest.fixture
 def probe_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     """An importable throwaway module, left out of ``sys.modules`` afterwards."""
@@ -734,6 +887,10 @@ _MINIMUM_REIMPORTS = 2
 
 #: The shared owner of "remove, import again, put both bindings back".
 _REIMPORT_HELPER = "reimport"
+
+#: The attribute names a rule reads off a call: the two removal spellings and
+#: the shared re-import owner. :func:`_touches_a_registry` reads this.
+_REGISTRY_ATTRS = frozenset({"pop", "delitem", _REIMPORT_HELPER})
 
 
 def _literal_str(node: ast.AST, names: dict[str, str]) -> str | None:
@@ -864,20 +1021,19 @@ def _restores_the_leaf(fn: ast.FunctionDef | ast.AsyncFunctionDef, leaf: str) ->
     )
 
 
-def reimporting_cells(tree: ast.Module) -> list[tuple[int, str, str, bool]]:
+def reimporting_cells(tree: ast.Module, scan: _Scan | None = None) -> list[tuple[int, str, str, bool]]:
     """``(lineno, function, key, puts_it_back)`` per cell that re-imports what it removed.
 
     In scope either way it is spelled: the cell removes the entry through
     ``monkeypatch.delitem`` and imports the module again itself, or it asks the
     shared owner to do both.
     """
-    registries = {f"{alias}.modules" for alias in _sys_aliases(tree)}
-    module_names = _string_names(*tree.body)
+    if scan is None:
+        scan = _scan(tree)
+    registries = set(scan.registries)
     reported: list[tuple[int, str, str, bool]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            continue
-        names = module_names | _string_names(node)
+    for node in scan.candidates:
+        names = scan.module_names | _string_names(node)
         delegated = _delegated_keys(node, names)
         reimported = _reimported_keys(node, names)
         hand_rolled = _restored_removal_keys(node, registries, names) & set(reimported)
@@ -1091,19 +1247,18 @@ def _restores_a_prefix(scopes: Sequence[ast.AST], registries: set[str]) -> bool:
     return False
 
 
-def unrestored_prefix_purges(tree: ast.Module) -> list[tuple[int, str, str]]:
+def unrestored_prefix_purges(tree: ast.Module, scan: _Scan | None = None) -> list[tuple[int, str, str]]:
     """``(lineno, function, prefix)`` for each prefix purge *tree* never undoes."""
-    registries = {f"{alias}.modules" for alias in _sys_aliases(tree)}
-    owners = _method_owners(tree)
+    if scan is None:
+        scan = _scan(tree)
+    registries = set(scan.registries)
     reported: list[tuple[int, str, str]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            continue
+    for node in scan.candidates:
         removals = _dynamic_removals(node, registries)
         if not removals:
             continue
         scopes: list[ast.AST] = [node]
-        owner = owners.get(id(node))
+        owner = scan.owners.get(id(node))
         if owner is not None:
             scopes.append(owner)
         if _restores_a_prefix(scopes, registries):
