@@ -20,7 +20,8 @@ robot is read and how a frame is commanded:
 :func:`policy_from_provider` is the other half a task verb needs: build a
 policy from the provider registry, or name why it could not be built. It is
 here rather than in a driver because a provider that is missing a required
-keyword must be refused *before* the rollout starts - a rollout that answers
+keyword - or one whose own ``preflight`` refuses the configuration it was
+handed - must be refused *before* the rollout starts: a rollout that answers
 "started" and then faults at its first action leaves a live robot held by a
 loop that can never take a step.
 """
@@ -29,7 +30,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from strands_robots.drivers.base import policy_step
@@ -42,6 +43,7 @@ def policy_from_provider(
     kwargs: dict[str, Any],
     verb: str,
     consequence: str,
+    observe: Callable[[], Mapping[str, Any]],
 ) -> tuple[Any, str | None]:
     """Build a policy from the provider registry, or name why not.
 
@@ -53,16 +55,34 @@ def policy_from_provider(
         verb: The driver verb asking, for the refusal text.
         consequence: What happens if an unbuildable provider is admitted, for
             the refusal text.
+        observe: How the robot is read - the same callable
+            :class:`PolicyRollout` will be given, so the provider's own
+            preflight judges the observation the policy will actually receive.
+            Required rather than optional: a driver that could omit it would
+            silently lose the check, which is how this verb went without one.
 
     Returns:
         ``(policy, None)`` once built, or ``(None, reason)`` - a refusal, never
         a raise: these verbs are reached as agent tools, where an exception is
         not something the caller can handle.
     """
-    from strands_robots.policies import create_policy  # noqa: PLC0415 - policies import drivers
+    from strands_robots.policies import create_policy, preflight_reason  # noqa: PLC0415 - policies import drivers
 
     if reason := policy_requires_error(provider, kwargs, verb, consequence):
         return None, reason
+    # The provider's own pre-construction check, on the same grounds as the
+    # required-keyword guard above and for the class of misconfiguration that
+    # guard cannot see: a configuration the provider refuses WITHOUT
+    # constructing - camera names that cannot be routed to a VLA's declared
+    # image inputs, an ``image_keys`` list that withholds a feature the
+    # embodiment feeds - otherwise builds, so this verb answers "started" and
+    # the rollout faults at step 0 with the arm held by a loop that can never
+    # take a step. Measured on an SO-101: ``lerobot_local`` with a declared
+    # embodiment and a joints-only observation answered success after 20 s of
+    # model loading, then exited at ``steps: 0`` with "Robot supplies 0
+    # camera(s) but the policy requires image input(s)".
+    if (reason := preflight_reason(provider, lambda: set(observe()), **kwargs)) is not None:
+        return None, f"{verb}: {reason}"
     try:
         return create_policy(provider, **kwargs), None
     # Recovery path: catch broadly. The exceptions a provider build raises are

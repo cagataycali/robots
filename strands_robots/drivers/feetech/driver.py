@@ -482,6 +482,7 @@ class FeetechDriver:
             kwargs,
             "start_task",
             "the rollout would start on an energized arm and fail at its first action",
+            lambda: read_joints(self),
         )
         if reason is not None:
             return _refuse(reason)

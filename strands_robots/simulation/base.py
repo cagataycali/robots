@@ -1510,14 +1510,16 @@ class SimEngine(ABC):
         unresolvable name reach ``create_policy``, whose raise escapes the
         ``status=error`` envelope this method exists to produce.
 
-        The observation is looked up only when the resolved class actually
-        overrides ``preflight``
-        (:func:`~strands_robots.policies.policy_overrides_preflight`). It is not
-        a cheap lookup - ``get_observation`` without ``skip_images`` renders
-        every camera in the scene - and for a provider that leaves the default
-        no-op in place the frames are gathered purely to be discarded, delaying
-        the start of every rollout loop (and, for ``start_policy``, the first
-        cooperative-stop check) by a full render of the scene.
+        The gate, the lookup and the refusal are
+        :func:`~strands_robots.policies.preflight_reason`'s - the one rule the
+        physical arm and a native driver's task verb read too - and the
+        observation is looked up only when the resolved class actually overrides
+        ``preflight``. It is not a cheap lookup: ``get_observation`` without
+        ``skip_images`` renders every camera in the scene, and for a provider
+        that leaves the default no-op in place the frames are gathered purely to
+        be discarded, delaying the start of every rollout loop (and, for
+        ``start_policy``, the first cooperative-stop check) by a full render of
+        the scene.
 
         ``requires_images`` is deliberately NOT the question asked here. It is
         an instance property, so it cannot be read off an uninstantiated class
@@ -1533,26 +1535,20 @@ class SimEngine(ABC):
             configuration; ``None`` when the check passes, is a no-op, or the
             observation is not yet available.
         """
-        from strands_robots.policies import (
-            policy_overrides_preflight,
-            policy_provider_error,
-            preflight_policy,
-        )
+        from strands_robots.policies import policy_provider_error, preflight_reason
 
-        reason = policy_provider_error(policy_provider, **(policy_config or {}))
+        config = policy_config or {}
+        reason = policy_provider_error(policy_provider, **config)
         if reason is not None:
             return {"status": "error", "content": [{"text": reason}]}
 
-        if not policy_overrides_preflight(policy_provider, **(policy_config or {})):
-            return None
+        def observation_keys() -> set[str]:
+            obs = self.get_observation(robot_name)
+            return set(obs) if isinstance(obs, dict) else set()
 
-        obs = self.get_observation(robot_name)
-        if not isinstance(obs, dict) or not obs:
-            return None
-        try:
-            preflight_policy(policy_provider, set(obs.keys()), **(policy_config or {}))
-        except ValueError as e:
-            return {"status": "error", "content": [{"text": str(e)}]}
+        reason = preflight_reason(policy_provider, observation_keys, **config)
+        if reason is not None:
+            return {"status": "error", "content": [{"text": reason}]}
         return None
 
     # Object management

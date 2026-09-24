@@ -1129,6 +1129,7 @@ class URDriver:
             kwargs,
             "start_task",
             "the rollout would start on a live arm and fail at its first action",
+            self.get_observation,
         )
         if reason is not None:
             return _refuse(reason)

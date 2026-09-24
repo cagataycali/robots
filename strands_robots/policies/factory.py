@@ -5,7 +5,7 @@ import importlib
 import inspect
 import logging
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from strands_robots import refusal_codes
@@ -690,6 +690,61 @@ def preflight_policy(provider: str, observation_keys: set[str], **kwargs) -> Non
         # Provider did not override the default no-op preflight.
         return
     PolicyClass.preflight(set(observation_keys), **resolved_kwargs)
+
+
+def preflight_reason(
+    provider: str,
+    read_observation_keys: Callable[[], Iterable[str]],
+    /,
+    **kwargs: Any,
+) -> str | None:
+    """Why ``provider`` refuses this configuration, or ``None``.
+
+    The whole pre-build check in one call, so the three entry points that owe it
+    - the simulation engine, the physical arm and a native driver's task verb -
+    read one rule instead of keeping three copies of it in step:
+
+    * the observation is read only when the resolved class actually overrides
+      :meth:`Policy.preflight` (:func:`policy_overrides_preflight`). That read is
+      not cheap - the sim renders every camera in the scene, an arm warms and
+      grabs a frame from each configured camera, a driver crosses the wire - and
+      for every shipped provider but ``lerobot_local`` the result is gathered
+      only to be discarded.
+    * a read that fails, or answers nothing, is not a verdict on the policy
+      configuration and does not become one here: the check is skipped and that
+      read stays the caller's own to report.
+    * the provider's ``ValueError`` comes back as text, because two of the three
+      callers answer a refusal envelope rather than raise.
+
+    Args:
+        provider: Provider name, HF model ID, or server URL (as passed to
+            :func:`create_policy`). Positional-only, as is the reader below, so
+            a policy kwarg spelled either way reaches the hook instead of
+            binding here.
+        read_observation_keys: Answers the keys the runtime observation will
+            carry (joint names plus camera names). Called at most once, and only
+            when there is a hook to feed.
+        **kwargs: Provider-specific parameters (the policy_config), judged as
+            the mapping :func:`create_policy` will be given.
+
+    Returns:
+        The provider's refusal text, or ``None`` when the configuration passes,
+        when there is no hook to run, or when the observation could not be read.
+    """
+    if not policy_overrides_preflight(provider, **kwargs):
+        return None
+    try:
+        keys = read_observation_keys()
+    except Exception as exc:  # noqa: BLE001 - a read the caller cannot serve is the caller's to report
+        logger.debug("preflight skipped: observation unavailable for '%s' (%s)", provider, exc)
+        return None
+    if not keys:
+        return None
+    try:
+        preflight_policy(provider, set(keys), **kwargs)
+    except ValueError as exc:
+        return str(exc)
+    return None
 
 
 def _overrides_preflight(PolicyClass: type) -> bool:

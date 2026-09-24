@@ -1661,16 +1661,12 @@ class Robot(TeleopMixin, AgentTool):
     async def _run_policy_preflight(self, policy_provider: str, policy_config: dict[str, Any]) -> None:
         """Run the provider's class-level ``preflight`` against this arm's observation.
 
-        The observation is read only when the resolved class actually overrides
-        the hook (:func:`~strands_robots.policies.policy_overrides_preflight`),
-        mirroring the sim engine: it is the camera routing such a hook validates,
-        and the read warms and grabs a frame from every configured camera, which
-        for a provider that leaves the default no-op in place is gathered purely
-        to be discarded.
-
-        A read that fails is not a verdict on the policy configuration, so it
-        does not become one here: the preflight is skipped and the same read is
-        reported by :meth:`_initialize_policy`, which owns it.
+        The gate, the read and the refusal are
+        :func:`~strands_robots.policies.preflight_reason`'s - the one rule the
+        sim engine and a native driver's task verb read too. This method owes it
+        the arm: the read crosses the motors bus and warms a frame out of every
+        configured camera, so it runs on a worker thread rather than on the loop
+        the task's own cooperative stop is checked from.
 
         Args:
             policy_provider: Provider name, as passed to ``create_policy``.
@@ -1680,18 +1676,15 @@ class Robot(TeleopMixin, AgentTool):
         Raises:
             ValueError: The provider's ``preflight`` refused this configuration.
         """
-        from .policies import policy_overrides_preflight, preflight_policy
+        from .policies import preflight_reason
 
-        if not policy_overrides_preflight(policy_provider, **policy_config):
-            return
-        try:
-            observation = await asyncio.to_thread(read_observation, self.robot)
-        except Exception as exc:  # noqa: BLE001 - a read this arm cannot serve is _initialize_policy's to report
-            logger.debug("policy preflight skipped: observation unavailable (%s)", exc)
-            return
-        if not isinstance(observation, Mapping) or not observation:
-            return
-        preflight_policy(policy_provider, set(observation), **policy_config)
+        def observation_keys() -> set[str]:
+            observation = read_observation(self.robot)
+            return set(observation) if isinstance(observation, Mapping) else set()
+
+        reason = await asyncio.to_thread(preflight_reason, policy_provider, observation_keys, **policy_config)
+        if reason is not None:
+            raise ValueError(reason)
 
     def _close_open_devices(self) -> None:
         """Close every device that is open, one at a time and best-effort.

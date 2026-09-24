@@ -56,6 +56,7 @@ from strands_robots.policies.factory import (
     policy_overrides_preflight,
     policy_provider_error,
     preflight_policy,
+    preflight_reason,
     register_policy,
 )
 from strands_robots.policies.mock import MockPolicy
@@ -79,6 +80,7 @@ __all__ = [
     "create_policy",
     "import_policy_class",
     "preflight_policy",
+    "preflight_reason",
     "policy_overrides_preflight",
     "policy_provider_error",
     "policy_mapping_error",
