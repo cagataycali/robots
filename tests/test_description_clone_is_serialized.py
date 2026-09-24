@@ -10,6 +10,7 @@ out with a message about the cache.
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -67,10 +68,10 @@ def test_one_caller_clones_at_a_time(upstream_cache: ModuleType, monkeypatch: py
         with counting:
             live += 1
             peak = max(peak, live)
-        try:
-            meeting.wait(MEETING_TIMEOUT)  # a second caller arrives here, or does not
-        except threading.BrokenBarrierError:
-            pass
+        # Under the lock the second caller is held out, so the barrier times out
+        # and breaks: that is the serialized case being measured, not a failure.
+        with contextlib.suppress(threading.BrokenBarrierError):
+            meeting.wait(MEETING_TIMEOUT)
         with counting:
             live -= 1
         return f"/cache/{description_name}"
