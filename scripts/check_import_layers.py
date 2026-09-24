@@ -82,6 +82,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "_async_utils",
             "_command_gate",
+            "_description_cache",
             "_dyld",
             "_hitl_audit",
             "_mesh_switch",

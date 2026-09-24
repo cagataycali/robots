@@ -105,11 +105,11 @@ def _install_stub_description(monkeypatch, tmp_path, *, with_scene: bool) -> Pat
     )
 
     def _fake_import(modpath: str):
-        if modpath == "robot_descriptions.fakebot_mj_description":
+        if modpath == "fakebot_mj_description":
             return stub
         raise ImportError(modpath)
 
-    monkeypatch.setattr(discovery.importlib, "import_module", _fake_import)
+    monkeypatch.setattr(discovery, "import_description", _fake_import)
     return pkg_dir
 
 
@@ -138,17 +138,17 @@ def test_discover_robot_returns_none_for_non_description(monkeypatch) -> None:
     monkeypatch.setattr(discovery, "_mjcf_modules", dict)
 
     def _explode(modpath: str):
-        raise AssertionError(f"import_module must not be called for {modpath!r}")
+        raise AssertionError(f"import_description must not be called for {modpath!r}")
 
-    monkeypatch.setattr(discovery.importlib, "import_module", _explode)
+    monkeypatch.setattr(discovery, "import_description", _explode)
     assert discovery.discover_robot("definitely_not_a_robot_xyz") is None
 
 
 def test_discover_robot_handles_module_without_paths(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(discovery, "_mjcf_modules", lambda: {"fakebot": "fakebot_mj_description"})
     monkeypatch.setattr(
-        discovery.importlib,
-        "import_module",
+        discovery,
+        "import_description",
         lambda modpath: SimpleNamespace(),  # no MJCF_PATH / PACKAGE_PATH
     )
     assert discovery.discover_robot("fakebot") is None
@@ -331,7 +331,7 @@ def test_discover_robot_caches_miss_when_module_import_fails(monkeypatch) -> Non
         calls["n"] += 1
         raise ImportError(modpath)
 
-    monkeypatch.setattr(discovery.importlib, "import_module", _raise)
+    monkeypatch.setattr(discovery, "import_description", _raise)
 
     assert discovery.discover_robot("fakebot") is None
     # The miss is cached: a second call must not re-attempt the failing import.

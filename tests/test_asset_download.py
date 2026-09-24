@@ -3,8 +3,8 @@
 Exercises the asset-download strategies end to end without network or
 hardware: the ``robot_descriptions`` import path, the Menagerie ``git clone``
 fallback, custom GitHub sources, and the :func:`download_robots` orchestrator
-that partitions, downloads, and reports. ``subprocess``/``importlib`` are
-mocked so clones become local directory fixtures, letting the tests assert on
+that partitions, downloads, and reports. ``subprocess`` and the description-import
+seam are mocked so clones become local directory fixtures, letting the tests assert on
 observable outcomes (returned status dicts, files copied into the cache,
 symlinks created) rather than implementation details.
 """
@@ -35,7 +35,7 @@ def _entry(asset_dir: str, xml: str = "model.xml", **asset_extra: object) -> dic
 
 
 def test_robot_descriptions_available_true_when_importable() -> None:
-    with patch(f"{_MOD}.importlib.import_module"):  # not used; import is direct
+    with patch(f"{_MOD}.import_description"):  # not used; import is direct
         # Directly simulate a successful import of the package.
         with patch.dict("sys.modules", {"robot_descriptions": SimpleNamespace()}):
             assert dl._robot_descriptions_available() is True
@@ -69,19 +69,19 @@ def test_resolve_module_prefers_explicit_registry_field() -> None:
 def test_resolve_module_naming_heuristic_finds_candidate() -> None:
     info = _entry("panda")  # no explicit module -> heuristic
 
-    def _import(modpath: str) -> object:
+    def _import(module_name: str) -> object:
         # First candidate "panda_mj_description" resolves.
-        if modpath == "robot_descriptions.panda_mj_description":
+        if module_name == "panda_mj_description":
             return SimpleNamespace()
-        raise ImportError(modpath)
+        raise ImportError(module_name)
 
-    with patch(f"{_MOD}.importlib.import_module", side_effect=_import):
+    with patch(f"{_MOD}.import_description", side_effect=_import):
         assert dl._resolve_robot_descriptions_module("panda", info) == "panda_mj_description"
 
 
 def test_resolve_module_returns_none_when_no_candidate_imports() -> None:
     info = _entry("weird")
-    with patch(f"{_MOD}.importlib.import_module", side_effect=ImportError):
+    with patch(f"{_MOD}.import_description", side_effect=ImportError):
         assert dl._resolve_robot_descriptions_module("weird", info) is None
 
 
@@ -185,7 +185,7 @@ def test_rd_download_symlinks_package_path(tmp_path: Path) -> None:
     dest.mkdir()
     info = _entry("so100", robot_descriptions_module="so100_mj_description")
 
-    with patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
+    with patch(f"{_MOD}.import_description", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
         results = dl._download_via_robot_descriptions({"so100": info}, dest)
 
     assert results["so100"] == "downloaded"
@@ -206,7 +206,7 @@ def test_rd_download_reports_xml_mismatch(tmp_path: Path) -> None:
     dest = tmp_path / "cache"
     dest.mkdir()
     info = _entry("so100", robot_descriptions_module="so100_mj_description")
-    with patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
+    with patch(f"{_MOD}.import_description", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
         results = dl._download_via_robot_descriptions({"so100": info}, dest)
     assert results["so100"].startswith("failed: XML mismatch")
     assert not (dest / "so100").exists()
@@ -459,7 +459,7 @@ def test_rd_download_reports_missing_package_path(tmp_path: Path) -> None:
     """When the module's PACKAGE_PATH does not exist, report failure."""
     info = _entry("so100", robot_descriptions_module="so100_mj_description")
     missing = tmp_path / "absent"
-    with patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(missing))):
+    with patch(f"{_MOD}.import_description", return_value=SimpleNamespace(PACKAGE_PATH=str(missing))):
         results = dl._download_via_robot_descriptions({"so100": info}, tmp_path)
     assert results["so100"].startswith("failed: PACKAGE_PATH missing")
 
@@ -480,7 +480,7 @@ def test_rd_download_reuses_valid_existing_symlink(tmp_path: Path) -> None:
     dest.mkdir()
     (dest / "so100").symlink_to(pkg)
     info = _entry("so100", robot_descriptions_module="so100_mj_description")
-    with patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
+    with patch(f"{_MOD}.import_description", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
         results = dl._download_via_robot_descriptions({"so100": info}, dest)
     assert results["so100"] == "downloaded"
     assert (dest / "so100").is_symlink()
@@ -540,7 +540,7 @@ def test_rd_download_reports_stale_symlink_missing_xml(tmp_path: Path) -> None:
     dest.mkdir()
     (dest / "so100").symlink_to(pkg)
     info = _entry("so100", robot_descriptions_module="so100_mj_description")
-    with patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
+    with patch(f"{_MOD}.import_description", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
         results = dl._download_via_robot_descriptions({"so100": info}, dest)
     assert results["so100"].startswith("failed: stale symlink")
     assert not (dest / "so100").exists()  # stale link removed
@@ -560,7 +560,7 @@ def test_rd_download_copytree_fallback_validates_xml(tmp_path: Path) -> None:
     info = _entry("so100", robot_descriptions_module="so100_mj_description")
     with (
         patch("pathlib.Path.symlink_to", side_effect=OSError("symlinks unsupported")),
-        patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))),
+        patch(f"{_MOD}.import_description", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))),
     ):
         results = dl._download_via_robot_descriptions({"so100": info}, dest)
     assert results["so100"].startswith("failed: XML mismatch")
@@ -571,7 +571,7 @@ def test_rd_download_reports_unexpected_import_error(tmp_path: Path) -> None:
     """An unexpected error during import is caught and surfaced as a failure
     string rather than crashing the batch."""
     info = _entry("so100", robot_descriptions_module="so100_mj_description")
-    with patch(f"{_MOD}.importlib.import_module", side_effect=RuntimeError("boom")):
+    with patch(f"{_MOD}.import_description", side_effect=RuntimeError("boom")):
         results = dl._download_via_robot_descriptions({"so100": info}, tmp_path)
     assert results["so100"] == "failed: boom"
 
@@ -630,7 +630,7 @@ def test_rd_download_replaces_existing_plain_directory(tmp_path: Path) -> None:
     stale.mkdir()
     (stale / "old.txt").write_text("stale")
     info = _entry("so100", robot_descriptions_module="so100_mj_description")
-    with patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
+    with patch(f"{_MOD}.import_description", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
         results = dl._download_via_robot_descriptions({"so100": info}, dest)
     assert results["so100"] == "downloaded"
     linked = dest / "so100"
@@ -715,7 +715,7 @@ def test_rd_copy_fallback_rejects_nested_symlink_inside_package(
     dest = tmp_path / "cache"
     dest.mkdir()
     info = _entry("panda", robot_descriptions_module="panda_mj_description")
-    with patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
+    with patch(f"{_MOD}.import_description", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
         results = dl._download_via_robot_descriptions({"panda": info}, dest)
 
     # The model itself still lands, so the guard costs the caller nothing...
@@ -748,7 +748,7 @@ def test_rd_copy_fallback_keeps_what_the_symlink_would_have_exposed(
     dest = tmp_path / "cache"
     dest.mkdir()
     info = _entry("panda", robot_descriptions_module="panda_mj_description")
-    with patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
+    with patch(f"{_MOD}.import_description", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
         results = dl._download_via_robot_descriptions({"panda": info}, dest)
 
     assert results["panda"] == "downloaded"

@@ -17,7 +17,6 @@ Assets are cached in ``~/.strands_robots/assets/`` (override with
 
 from __future__ import annotations
 
-import importlib
 import logging
 import os
 import re
@@ -27,6 +26,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from .._description_cache import import_description
 from ..registry import get_robot
 from ..registry import list_robots as registry_list_robots
 from ..registry import resolve_name as resolve_robot_name
@@ -90,7 +90,7 @@ def _resolve_robot_descriptions_module(name: str, info: dict) -> str | None:
         if not re.match(r"^[a-z0-9_+]+\Z", candidate):
             continue
         try:
-            importlib.import_module(f"robot_descriptions.{candidate}")
+            import_description(candidate)
             logger.warning(
                 "Resolved '%s' via naming heuristic -> '%s'. "
                 "Consider adding 'robot_descriptions_module' to the registry.",
@@ -574,7 +574,7 @@ def _download_via_robot_descriptions(robots: dict[str, dict], dest_dir: Path) ->
             continue
 
         try:
-            mod = importlib.import_module(f"robot_descriptions.{module_name}")
+            mod = import_description(module_name)
             package_path = Path(mod.PACKAGE_PATH)
             if not package_path.exists():
                 results[name] = f"failed: PACKAGE_PATH missing: {package_path}"
