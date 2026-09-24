@@ -68,6 +68,14 @@ PACKAGE = "strands_robots"
 #: MuJoCo ``Simulation`` and the Device Connect sim driver - so it belongs under
 #: the lowest of them, which is where its own module-scope imports already put
 #: it (``utils`` alone).
+#: ``__main__`` sits in the top layer because a console entry point is the one
+#: module nothing can import: it is the process, not a part of the library, and
+#: it reaches for whatever the command a reader typed needs - the doctor, the
+#: dataset verifier, the dashboard CLI. Placing it in ``app``, under ``tools``
+#: and ``dashboard``, made every command it dispatches look like an inversion,
+#: and the dashboard one had to be declared as such. Named with the top layer
+#: rather than given an eighth of its own, the way ``assets`` is named with the
+#: ``registry`` it resolves paths for.
 LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "core",
@@ -104,7 +112,6 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "app",
         (
-            "__main__",
             "doctor",
             "hardware_observe",
             "hardware_robot",
@@ -116,7 +123,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     ("tools", ("tools",)),
-    ("dashboard", ("dashboard",)),
+    ("dashboard", ("__main__", "dashboard")),
 )
 
 #: Layer index by top-level member name, derived from :data:`LAYERS`.
@@ -136,11 +143,14 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 #: one, so these are the inversions that survive: a module that reaches up from
 #: inside a function body, once, on first call.
 #:
-#: Sanctioned, and staying: ``__main__`` is the command that starts the
-#: dashboard, so it reads its CLI; ``_hitl_audit`` writes the operator's answer
-#: through the mesh safety log; ``teleop_mixin`` defers ``teleoperator`` because
-#: that module imports lerobot. Each is pinned individually in
+#: Sanctioned, and staying: ``_hitl_audit`` writes the operator's answer through
+#: the mesh safety log; ``teleop_mixin`` defers ``teleoperator`` because that
+#: module imports lerobot. Each is pinned individually in
 #: ``tests/test_import_layers_are_a_dag.py``.
+#:
+#: Every entry is an inversion the code forces. An inversion that only the
+#: placement forced belongs in :data:`LAYERS` instead, and
+#: :func:`misplaced_members` refuses it here.
 #:
 #: The cuts left here reach up from a driver: ``drivers.ur`` builds a policy,
 #: and the twin transports (``drivers.feetech.twin``,
@@ -150,7 +160,6 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 #: factory, which imports the driver registry and would close a cycle around
 #: the driver each one twins.
 KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
-    ("strands_robots.__main__", "strands_robots.dashboard.cli"),
     ("strands_robots._hitl_audit", "strands_robots.mesh.audit"),
     ("strands_robots.drivers.rollout", "strands_robots.policies"),
     ("strands_robots.drivers.feetech.twin", "strands_robots.simulation"),
@@ -373,6 +382,71 @@ def unassigned_members(graph: ImportGraph) -> tuple[str, ...]:
     return tuple(sorted(members - set(LAYER_OF_MEMBER)))
 
 
+def member_of(module: str) -> str | None:
+    """Return the top-level member a module belongs to, or ``None`` for the root.
+
+    :param module: A dotted module name inside the package.
+    """
+    parts = module.split(".")
+    return parts[1] if len(parts) > 1 else None
+
+
+def misplaced_members(graph: ImportGraph) -> tuple[tuple[str, int, int], ...]:
+    """Return the members :data:`LAYERS` places below their own imports.
+
+    An inversion is meant to say something about the code: this module cannot do
+    its job without one above it. A member placed lower than it belongs says
+    nothing of the kind - every downward import it makes is reported as an
+    inversion, and declaring those in a roster records the placement rather than
+    a dependency. So a declared inversion has to be one no placement could
+    remove, and that is checkable: a member may move up to the highest layer it
+    imports, as long as nothing that imports it sits at or below there.
+
+    Both dependency directions are read from the runtime and late graphs and not
+    the typing-only one, for the same reason :func:`upward_edges` grades those
+    two: deferring an import moves when a dependency is paid, not whether it
+    exists, while an annotation is not a dependency at all. Edges inside the
+    member are ignored - a member moves whole.
+
+    :param graph: The graph to read.
+    :returns: ``(member, declared layer, lowest layer it could move to)`` per
+        misplaced member, sorted by member.
+    """
+    modules_of: dict[str, list[str]] = defaultdict(list)
+    for module in graph.modules:
+        member = member_of(module)
+        if member is not None:
+            modules_of[member].append(module)
+    depends_on: dict[str, set[str]] = defaultdict(set)
+    imported_by: dict[str, set[str]] = defaultdict(set)
+    for kind in ("runtime", "late"):
+        for importer, targets in getattr(graph, kind).items():
+            source = member_of(importer)
+            for target in targets:
+                sink = member_of(target)
+                if source is None or sink is None or source == sink:
+                    continue
+                depends_on[source].add(sink)
+                imported_by[sink].add(source)
+    top = len(LAYERS) - 1
+    found: list[tuple[str, int, int]] = []
+    for member in sorted(modules_of):
+        declared = LAYER_OF_MEMBER.get(member)
+        if declared is None:
+            continue
+        needs = max(
+            (layer for name in depends_on[member] if (layer := LAYER_OF_MEMBER.get(name)) is not None),
+            default=0,
+        )
+        allowed = min(
+            (layer for name in imported_by[member] if (layer := LAYER_OF_MEMBER.get(name)) is not None),
+            default=top,
+        )
+        if declared < needs <= allowed:
+            found.append((member, declared, needs))
+    return tuple(found)
+
+
 def upward_edges(graph: ImportGraph, kind: str = "runtime") -> tuple[tuple[str, str], ...]:
     """Return every import of one kind that points at a higher layer.
 
@@ -421,11 +495,13 @@ def main(argv: list[str] | None = None) -> int:
         ("deferred", upward_edges(graph, "late"), KNOWN_DEFERRED_UPWARD_EDGES),
     )
     orphans = unassigned_members(graph)
+    misplaced = misplaced_members(graph)
 
     print(f"{PACKAGE}: {len(graph.modules)} modules, {len(LAYERS)} layers")
     for kind in ("runtime", "typing_only", "late"):
         print(f"  {kind:12s} edges: {graph.edge_count(kind)}")
     print(f"  runtime cycles: {len(runtime_cycles)}")
+    print(f"  misplaced members: {len(misplaced)}")
     for name, inversions, declared in graded:
         counts: dict[str, int] = defaultdict(int)
         for edge in inversions:
@@ -451,6 +527,13 @@ def main(argv: list[str] | None = None) -> int:
     for member in orphans:
         failed = True
         print(f"FAIL: {PACKAGE}.{member} is in no layer; add it to LAYERS")
+    for misplaced_member, sits_in, reads in misplaced:
+        failed = True
+        print(
+            f"FAIL: {PACKAGE}.{misplaced_member} is in layer {LAYER_NAMES[sits_in]} but imports "
+            f"{LAYER_NAMES[reads]}, and nothing that imports it sits below {LAYER_NAMES[reads]}; "
+            "move it in LAYERS rather than declaring the inversion"
+        )
     if not failed:
         print("OK: no runtime cycle, no undeclared inversion")
     return 1 if failed else 0
