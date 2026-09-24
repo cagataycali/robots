@@ -126,8 +126,18 @@ class TestTheAchievedRateIsTheRequestedRate:
                 start = time.perf_counter()
                 ticker.wait()
                 waits.append(time.perf_counter() - start)
-        assert all(w > period * 0.4 for w in waits), (
-            f"after a 150ms overrun the next waits returned immediately ({[round(w * 1000) for w in waits]}ms) - "
+        # Read the total rather than each wait. A wait returns at the next
+        # deadline, so three of them take three periods less however much of the
+        # first period had already elapsed: the total is above two periods for
+        # any phase, on any load. Per-wait the first one is legitimately short
+        # whenever the process is descheduled between the overrun and the wait
+        # (measured under four busy workers: 6ms of a 20ms period), while a
+        # catch-up burst returns three times at once and totals near zero - so
+        # the sum separates the two and a preemption cannot fake either.
+        total = sum(waits)
+        assert total > period * 2, (
+            f"after a 150ms overrun three waits totalled {total * 1000:.0f}ms, under the "
+            f"{period * 2000:.0f}ms two deadlines alone take ({[round(w * 1000) for w in waits]}ms) - "
             "that is a catch-up burst"
         )
 

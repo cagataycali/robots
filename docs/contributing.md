@@ -16,15 +16,18 @@ uv pip install -e '.[all,dev]'
 ## Commands
 
 ```bash
-hatch run test                       # full suite
+hatch run test                       # full suite (distributed over your cores)
 hatch run test --no-cov tests/       # fast, no coverage
+hatch run test -n0 tests/test_x.py   # one process, for pdb or a timing check
 hatch run lint                       # ruff check + ruff format --check + mypy
 hatch run format                     # ruff fix + format
 mkdocs serve                         # docs at http://localhost:8000
 mkdocs build --strict                # CI gate
 ```
 
-CI runs `hatch run test -x --strict-markers`.
+CI runs `hatch run test -x --strict-markers`. `addopts` carries `-n auto
+--dist loadfile`, so both that run and yours spread over the available cores,
+one worker per file; `-n0` puts the session back in one process.
 
 `-x` means a red run stops at the first failure with the rest of the suite
 unexecuted, and its counts line is shaped exactly like a complete run's. So

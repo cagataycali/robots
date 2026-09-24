@@ -324,6 +324,11 @@ def _run_pytest(*args: str, cwd: Path) -> str:
             *args,
             "-q",
             "--no-cov",
+            # The subject of every cell below is the order these files import
+            # in, so the nested run stays in one process: `-c` above hands it
+            # this repository's addopts, and distributing the files is exactly
+            # the ordering the measurement is about.
+            "-n0",
             "-p",
             "no:cacheprovider",
             "-p",
