@@ -11,6 +11,11 @@ publisher wiring with NO ROS 2 installed. They assert that:
 * Enabling the bridge with no ``rclpy`` raises a clear :class:`ImportError`.
 * :meth:`SimRosBridge.shutdown` releases the node handle *and* the rclpy context
   it initialized, so a failure destroying one does not leak the other.
+* A bridge built in a process that already runs an ``rclpy`` context on another
+  domain is refused, because a context's domain is fixed at ``init`` and the
+  constructor's ``ROS_DOMAIN_ID`` write cannot move it. The guard lives in the
+  shared :class:`~strands_robots.ros_telemetry.RosTelemetryBridge`, so the
+  hardware bridge is held to it too.
 * A ``MuJoCoSimEngine`` constructor argument that is refused leaves no rclpy
   node or context behind, whichever argument it is.
 """
@@ -18,6 +23,7 @@ publisher wiring with NO ROS 2 installed. They assert that:
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from types import ModuleType
 from typing import Any
@@ -92,16 +98,34 @@ class _Image:
         self.data = b""
 
 
+class _FakeContext:
+    """A context whose domain is fixed when it is initialized, as rclpy's is.
+
+    ``ROS_DOMAIN_ID`` is read once, by ``rclpy.init``; a later write to the
+    environment does not move a running context. Modelling that is what lets
+    these tests grade the bridge's domain handling with no ROS 2 installed.
+    """
+
+    def __init__(self, state: dict[str, Any]) -> None:
+        self._state = state
+
+    def get_domain_id(self) -> int:
+        return int(self._state["domain"])
+
+
 @pytest.fixture
 def fake_ros(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Inject a fake rclpy + sensor_msgs.msg and clear require_optional's cache."""
-    state: dict[str, Any] = {"inited": False, "shutdown": False, "nodes": []}
+    state: dict[str, Any] = {"inited": False, "shutdown": False, "nodes": [], "domain": 0}
 
     rclpy = ModuleType("rclpy")
     rclpy.ok = lambda: state["inited"]  # type: ignore[attr-defined]
+    rclpy.get_default_context = lambda: _FakeContext(state)  # type: ignore[attr-defined]
 
     def _init() -> None:
         state["inited"] = True
+        # The domain the context comes up on is the one in force at init.
+        state["domain"] = int(os.environ.get("ROS_DOMAIN_ID", "0"))
 
     def _shutdown() -> None:
         state["shutdown"] = True
@@ -145,8 +169,6 @@ def test_sim_ros_bridge_publishes_joint_states(fake_ros: dict[str, Any]) -> None
 
 
 def test_sim_ros_bridge_sets_domain_env(fake_ros: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
-    import os
-
     from strands_robots.simulation.ros_bridge import SimRosBridge
 
     SimRosBridge(domain_id=42)
@@ -212,6 +234,63 @@ def test_shutdown_releases_the_context_when_the_node_will_not_die(fake_ros: dict
     # ...so ownership passes cleanly to the next bridge in this process.
     SimRosBridge(domain_id=7).shutdown()
     assert fake_ros["inited"] is False
+
+
+#: ``(domain of the context already running, domain the caller asks for)``, and
+#: whether the bridge can honor the request. A context reads ``ROS_DOMAIN_ID``
+#: once, at ``init``, so only the domain already in force is reachable: the two
+#: matching rows are the ones that must still build a bridge, so the guard cannot
+#: be satisfied by refusing more than it should.
+_DOMAIN_REQUESTS: list[tuple[int, int, bool]] = [
+    (0, 7, False),  # the default domain in force, isolation asked for
+    (7, 0, False),  # the reverse: a domain in force, the default asked for
+    (7, 7, True),
+    (0, 0, True),
+]
+
+
+@pytest.mark.parametrize(("running", "requested", "honored"), _DOMAIN_REQUESTS, ids=repr)
+def test_a_domain_the_running_context_cannot_be_moved_to_is_refused(
+    fake_ros: dict[str, Any], monkeypatch: pytest.MonkeyPatch, running: int, requested: int, honored: bool
+) -> None:
+    """The bridge publishes where the caller asked, or says why it cannot.
+
+    The constructor pins its domain by writing ``ROS_DOMAIN_ID``, which only
+    selects the domain of a context it starts itself. In a process that already
+    has one - a ``rclpy`` node embedding the simulation, or the hardware bridge
+    of the arm this sim mirrors - the bridge joined that context and the write
+    was inert: measured on ROS 2 Jazzy, a bridge asked for domain 7 beside a
+    context on domain 0 reported success with ``ROS_DOMAIN_ID=7`` and published
+    every ``JointState`` on domain 0, where a subscriber on 7 never appeared. Two
+    bridges for one robot then put two publishers on ``/<robot>/joint_states``
+    and interleaved two poses under one name.
+
+    The refusal is also the only one that lands after the process-wide write, so
+    it is the only one that has to undo it.
+    """
+    from strands_robots.simulation.ros_bridge import SimRosBridge
+
+    monkeypatch.delenv("ROS_DOMAIN_ID", raising=False)
+    first = SimRosBridge(domain_id=running)
+    assert fake_ros["domain"] == running
+
+    if honored:
+        second = SimRosBridge(domain_id=requested)
+        assert second._owns_context is False, "the running context is not this bridge's to release"
+        assert len(fake_ros["nodes"]) == 2
+        second.shutdown()
+    else:
+        with pytest.raises(ValueError) as excinfo:
+            SimRosBridge(domain_id=requested)
+
+        message = str(excinfo.value)
+        assert f"domain_id {requested} cannot be honored" in message
+        assert f"already has a running rclpy context on domain {running}" in message
+        assert f"pass domain_id={running}" in message, "the refusal names the domain that would work"
+        assert len(fake_ros["nodes"]) == 1, "the refused bridge created a node it cannot shut down"
+        assert os.environ["ROS_DOMAIN_ID"] == str(running), "the refusal left the domain write in place"
+
+    first.shutdown()
 
 
 def test_shutdown_reports_a_context_it_could_not_release(
