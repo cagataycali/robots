@@ -1939,10 +1939,10 @@ class MuJoCoSimEngine(
         # the download path decides the same question when it works out whether
         # a robot's assets need fetching, so a second copy here could disagree
         # with it about the same model.
-        from strands_robots.assets.download import _mjcf_missing_meshes
+        from strands_robots.assets.download import _mesh_problem_detail, _mjcf_mesh_problems
 
         try:
-            missing = bool(_mjcf_missing_meshes(model_path))
+            missing = bool(_mjcf_mesh_problems(model_path))
         except (OSError, UnicodeDecodeError):
             # An unreadable model contributes no reference this check can
             # resolve. MuJoCo names the unreadable file itself on the load that
@@ -1973,6 +1973,23 @@ class MuJoCoSimEngine(
                         )
                     }
                 ],
+            }
+
+        # A download that ran is not a download that delivered: a clone made
+        # without git-lfs writes pointer stubs for every mesh its upstream keeps
+        # in LFS and still exits 0. Proceeding then hands the tree to MuJoCo,
+        # whose decoder reports "number of faces should be between 1 and 200000
+        # ... perhaps this is an ASCII file?" against a path that is on disk -
+        # the cryptic report this method exists to replace.
+        try:
+            problems = _mjcf_mesh_problems(model_path)
+        except (OSError, UnicodeDecodeError):
+            problems = {}
+        if problems:
+            detail = _mesh_problem_detail(os.path.basename(model_path), problems)
+            return {
+                "status": "error",
+                "content": [{"text": f"Robot '{robot_name}' has no loadable meshes after re-fetching: {detail}"}],
             }
         return None
 

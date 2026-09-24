@@ -172,9 +172,102 @@ _MESH_REF_RE = re.compile(r'file="([^"]+\.(?:stl|STL|obj|OBJ|msh))"')
 #: ``<include file="...">`` - the fragments that make up one model.
 _INCLUDE_RE = re.compile(r'<include\s+file="([^"]+)"')
 
+#: First bytes of a Git LFS pointer file - the ``version`` line its spec opens
+#: with. A clone made where git-lfs is not installed (or is configured to skip
+#: smudging) writes these ~130-byte text stubs in place of every file the
+#: upstream repository stores in LFS, and ``git clone`` still exits 0.
+_LFS_POINTER_MAGIC = b"version https://git-lfs.github.com/spec/v1"
+
+#: A pointer is three short text lines; nothing larger is read to classify one.
+_LFS_POINTER_MAX_BYTES = 1024
+
+#: What is wrong with a declared mesh reference, as reported by
+#: :func:`_mjcf_mesh_problems`. Both mean "MuJoCo cannot load this mesh", and
+#: they differ in the remedy, which is why they are told apart.
+_MESH_ABSENT = "absent"
+_MESH_LFS_POINTER = "Git LFS pointer"
+
+
+def _is_lfs_pointer(path: str | os.PathLike[str]) -> bool:
+    """Whether *path* holds a Git LFS pointer instead of the file it stands for.
+
+    A pointer is not the mesh it names and MuJoCo cannot load one: its decoder
+    reads the ``version https://...`` text and reports ``number of faces should
+    be between 1 and 200000 ... perhaps this is an ASCII file?`` against a path
+    that is on disk. So every reader of "is this mesh here?" has to tell the two
+    apart - see :func:`_mjcf_mesh_problems`.
+
+    Args:
+        path: Candidate mesh file.
+
+    Returns:
+        ``True`` when the file is small enough to be a pointer and opens with
+        the spec's version line; ``False`` for any real mesh, and for a path
+        that cannot be read (the caller's next reading of it reports that).
+    """
+    try:
+        if os.path.getsize(path) > _LFS_POINTER_MAX_BYTES:
+            return False
+        with open(path, "rb") as handle:
+            return handle.read(len(_LFS_POINTER_MAGIC)) == _LFS_POINTER_MAGIC
+    except OSError:
+        return False
+
 
 def _mjcf_missing_meshes(model_path: str | os.PathLike[str]) -> list[str]:
-    """Return the mesh references a model declares that are absent on disk.
+    """Return the mesh references a model declares that MuJoCo cannot load.
+
+    Thin reading of :func:`_mjcf_mesh_problems` for the callers that only ask
+    whether anything is wrong; the reason is kept there, for the callers that
+    report one.
+
+    Args:
+        model_path: Path to the model's MAIN file (the one the registry names).
+
+    Returns:
+        The unloadable references, as authored, in declaration order.
+
+    Raises:
+        OSError: The main file cannot be read.
+        UnicodeDecodeError: The main file is not decodable text.
+    """
+    return list(_mjcf_mesh_problems(model_path))
+
+
+def _mesh_problem_detail(model_xml: str, problems: dict[str, str]) -> str:
+    """One line naming the meshes of *model_xml* MuJoCo cannot load, and the remedy.
+
+    Shared by the two surfaces that report the scan rather than only branch on
+    it - the download verdict (:func:`_declared_model_absent`) and the spawn
+    gate (:meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine._ensure_meshes`)
+    - so a user who reads either one is told the same thing.
+
+    Args:
+        model_xml: The model file as the registry declares it, for the report.
+        problems: Output of :func:`_mjcf_mesh_problems`; must be non-empty.
+
+    Returns:
+        A detail line naming the count, the reasons, up to three of the
+        references, and - when a Git LFS pointer is among them - the install
+        that turns the stubs into meshes.
+    """
+    named = list(problems)[:3]
+    more = f", +{len(problems) - len(named)} more" if len(problems) > len(named) else ""
+    reasons = sorted(set(problems.values()))
+    detail = (
+        f"{model_xml} declares {len(problems)} mesh file(s) MuJoCo cannot load "
+        f"({'/'.join(reasons)}): {', '.join(named)}{more}"
+    )
+    if _MESH_LFS_POINTER in reasons:
+        detail += (
+            " - a Git LFS pointer is a text stub, not the mesh, so the clone that fetched it "
+            "ran without git-lfs smudging: install git-lfs (`git lfs install`) and fetch again"
+        )
+    return detail
+
+
+def _mjcf_mesh_problems(model_path: str | os.PathLike[str]) -> dict[str, str]:
+    """Return each mesh reference a model declares that MuJoCo cannot load, and why.
 
     This is the single owner of "are this model's meshes on disk?". Two callers
     ask it - :func:`_needs_download` (should the assets be fetched?) and
@@ -196,15 +289,24 @@ def _mjcf_missing_meshes(model_path: str | os.PathLike[str]) -> list[str]:
       meshes are all present.
 
     Each reference is resolved the way MuJoCo resolves it, via
-    :func:`_mjcf_mesh_candidates`.
+    :func:`_mjcf_mesh_candidates`. A candidate that holds a Git LFS pointer
+    (:func:`_is_lfs_pointer`) is NOT the mesh: MuJoCo's decoder refuses the
+    pointer text against a path that exists, so grading the reference on
+    ``os.path.exists`` alone reports the model as complete, leaves
+    :func:`_needs_download` with nothing to fetch, and hands the tree to the
+    loader anyway. That is reachable on a shipped entry: ``reachy_mini``'s
+    upstream stores its meshes in Git LFS - all 49 the model declares - and a
+    clone made where git-lfs is not installed writes pointers and exits 0.
 
     Args:
         model_path: Path to the model's MAIN file (the one the registry names).
 
     Returns:
-        The absent references, as authored. Empty when the model declares no
-        meshes or every one of them resolves - the two cases callers may treat
-        alike, since neither has anything to fetch.
+        The unloadable references, as authored, mapped to why - ``"absent"``
+        (nothing on disk) or ``"Git LFS pointer"`` (a stub where the mesh
+        belongs, which takes a different remedy). Empty when the model declares
+        no meshes or every one of them resolves - the two cases callers may
+        treat alike, since neither has anything to fetch.
 
     Raises:
         OSError: The main file cannot be read.
@@ -227,12 +329,18 @@ def _mjcf_missing_meshes(model_path: str | os.PathLike[str]) -> list[str]:
         fragments.append(("" if rel == os.curdir else rel, text))
 
     mesh_subdir = _mjcf_mesh_subdir(*(text for _rel, text in fragments))
-    missing: list[str] = []
+    problems: dict[str, str] = {}
     for rel_dir, text in fragments:
         for ref in _MESH_REF_RE.findall(text):
-            if not any(os.path.exists(c) for c in _mjcf_mesh_candidates(ref, model_dir, mesh_subdir, rel_dir)):
-                missing.append(ref)
-    return missing
+            candidates = _mjcf_mesh_candidates(ref, model_dir, mesh_subdir, rel_dir)
+            present = [c for c in candidates if os.path.exists(c)]
+            if any(not _is_lfs_pointer(c) for c in present):
+                continue
+            # A pointer is on disk and is still not the mesh, so it is reported
+            # as a problem - with the reason, because "install git-lfs and
+            # re-fetch" is a different remedy from "fetch the assets".
+            problems[ref] = _MESH_LFS_POINTER if present else _MESH_ABSENT
+    return problems
 
 
 def _needs_download(name: str, info: dict[str, Any] | None, force: bool = False) -> bool:
@@ -406,9 +514,19 @@ def _declared_model_absent(info: dict[str, Any], dst: Path) -> str | None:
         info: Registry entry for the robot.
         dst: Directory the tree was fetched into.
 
+    A tree that holds the declared model but not the meshes that model declares
+    is graded the same way, and for the same reason: the two readings of one
+    entry have to agree. :func:`_needs_download` calls such a tree incomplete
+    (through :func:`_mjcf_mesh_problems`, the one owner of that question), so
+    reporting the fetch as ``downloaded`` leaves the download saying the robot
+    is here while every reader that loads it refuses - which is what a clone
+    made without git-lfs produces for a robot whose upstream stores its meshes
+    in LFS.
+
     Returns:
-        ``None`` when the declared model is on disk; otherwise a ``failed: ...``
-        detail naming the declared file and the model files that did arrive.
+        ``None`` when the declared model is on disk with loadable meshes;
+        otherwise a ``failed: ...`` detail naming the declared file and either
+        the model files that did arrive or the meshes that cannot load.
     """
     model_xml = str(info["asset"]["model_xml"])
     try:
@@ -418,7 +536,14 @@ def _declared_model_absent(info: dict[str, Any], dst: Path) -> str | None:
         # candidate from the resolver either, so no fetch can make it present.
         return f"failed: {exc}"
     if declared.exists():
-        return None
+        try:
+            problems = _mjcf_mesh_problems(declared)
+        except (OSError, UnicodeDecodeError):
+            # An unreadable model says nothing about its meshes, and MuJoCo names
+            # the file it cannot read on the load that follows - a better report
+            # than a verdict invented here.
+            return None
+        return f"failed: {_mesh_problem_detail(model_xml, problems)}" if problems else None
     arrived = sorted(str(x.relative_to(dst)) for x in dst.rglob("*.xml")) if dst.is_dir() else []
     detail = f"failed: fetched tree has no {model_xml}, the model this robot's registry entry declares"
     return f"{detail} - it holds {', '.join(arrived)}" if arrived else detail

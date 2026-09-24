@@ -34,7 +34,12 @@ from pathlib import Path
 import pytest
 
 import strands_robots.assets.manager as manager
-from strands_robots.assets.download import _mjcf_missing_meshes, _needs_download
+from strands_robots.assets.download import (
+    _declared_model_absent,
+    _mjcf_mesh_problems,
+    _mjcf_missing_meshes,
+    _needs_download,
+)
 from strands_robots.registry import get_robot, list_robots
 from strands_robots.registry.user_registry import _invalidate_cache, register_robot
 
@@ -66,12 +71,14 @@ def _register(
     meshdir: str | None = None,
     declares: tuple[str, ...] = (),
     present: tuple[str, ...] = (),
+    body: bytes = b"meshbytes",
 ) -> Path:
     """Write and register a model, then place *present* under its ``meshdir``.
 
     *present* is relative to the resolved mesh directory, so a reference in
     *declares* that is absent from *present* is a mesh the model asks for and
-    does not have.
+    does not have. *body* is what lands at each of those paths - the default is
+    a mesh, and ``_LFS_POINTER`` is the stub a clone leaves without git-lfs.
     """
     model = assets / "unitbot" / model_xml
     model.parent.mkdir(parents=True, exist_ok=True)
@@ -80,7 +87,7 @@ def _register(
     for ref in present:
         target = (mesh_root / ref).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(b"meshbytes")
+        target.write_bytes(body)
     register_robot(
         name="unitbot",
         model_xml=model_xml,
@@ -326,3 +333,77 @@ class TestTheShippedCorpusAgrees:
         if checked == 0:
             pytest.skip("no robot assets installed on this machine")
         assert disagree == [], f"resolver and _needs_download disagree about {disagree}"
+
+
+#: What ``git clone`` writes for an LFS-stored file when git-lfs is not smudging:
+#: the pointer, verbatim from the spec (the oid is reachy_mini's 5w_speaker.stl).
+_LFS_POINTER = (
+    b"version https://git-lfs.github.com/spec/v1\n"
+    b"oid sha256:89c220ac5fa6dd559fcd2f3faccb7197904ab6b882ccf5d2ad04b17a09d58b98\n"
+    b"size 229884\n"
+)
+
+
+class TestAGitLfsPointerIsNotTheMeshItStandsFor:
+    """A stub where a mesh belongs is absent, for every reader of the one owner.
+
+    ``reachy_mini``'s upstream (``pollen-robotics/reachy_mini``) keeps all 49 of
+    the meshes its MJCF declares in Git LFS. A ``git clone`` on a machine where
+    git-lfs is not installed - or is configured to skip smudging - writes a
+    ~130-byte ``version https://git-lfs.github.com/spec/v1`` pointer in place of
+    each one, and exits 0.
+
+    Graded on ``os.path.exists`` alone that tree is complete, so every reader
+    agrees the robot is ready and MuJoCo's decoder is the first surface to
+    object: ``number of faces should be between 1 and 200000 ... perhaps this is
+    an ASCII file?``, against a path that is on disk. The remedy for a pointer
+    is an install, not a re-fetch, which is why the reason is reported and not
+    only the count.
+    """
+
+    #: ``(id, bytes at the declared path, expected problem)``. The mesh body is
+    #: 9 bytes, so a pointer is told apart by its content and not its size.
+    _BODIES = [
+        ("a-real-mesh", b"meshbytes", None),
+        ("a-git-lfs-pointer", _LFS_POINTER, "Git LFS pointer"),
+    ]
+
+    @staticmethod
+    def _tree(assets: Path, *, body: bytes) -> Path:
+        return _register(assets, meshdir="assets", declares=("a.stl",), present=("a.stl",), body=body)
+
+    @pytest.mark.parametrize(("case", "body", "problem"), _BODIES, ids=[c[0] for c in _BODIES])
+    def test_the_owner_says_what_is_wrong_with_each_declared_reference(self, tmp_path, case, body, problem):
+        model = self._tree(tmp_path / "assets", body=body)
+        assert (model.parent / "assets" / "a.stl").exists(), "the declared path is on disk either way"
+        assert _mjcf_mesh_problems(model) == ({} if problem is None else {"a.stl": problem})
+
+    def test_an_absent_reference_keeps_its_own_reason(self, tmp_path):
+        """The two problems take different remedies, so they are not merged."""
+        model = _register(tmp_path / "assets", meshdir="assets", declares=("a.stl",))
+        assert _mjcf_mesh_problems(model) == {"a.stl": "absent"}
+
+    def test_every_reader_of_the_owner_calls_a_pointer_tree_incomplete(self, tmp_path, monkeypatch):
+        """The download trigger, the resolver and the list reading all agree."""
+        model = self._tree(tmp_path / "assets", body=_LFS_POINTER)
+        info = get_robot("unitbot")
+        assert _mjcf_missing_meshes(model) == ["a.stl"]
+        assert _needs_download("unitbot", info, force=False) is True
+        assert not manager._model_meshes_resolve(model)
+        seen, resolved = _attempts(monkeypatch)
+        assert seen == ["unitbot"], "a pointer tree was resolved without reaching for the assets"
+        assert resolved is not None, "a failed fetch still yields the XML"
+
+    def test_a_fetch_that_delivers_pointers_is_not_a_download(self, tmp_path):
+        """The verdict both clone routes return names the count and the install."""
+        model = self._tree(tmp_path / "assets", body=_LFS_POINTER)
+        detail = _declared_model_absent(get_robot("unitbot"), model.parent)
+        assert detail is not None, "reported as downloaded, so a retry reports it present"
+        assert detail.startswith("failed: ")
+        assert "a.stl" in detail and "Git LFS pointer" in detail
+        assert "git lfs install" in detail
+
+    def test_a_fetch_that_delivers_meshes_still_counts(self, tmp_path):
+        """Did not over-fire: the same verdict on a real mesh is a download."""
+        model = self._tree(tmp_path / "assets", body=b"meshbytes")
+        assert _declared_model_absent(get_robot("unitbot"), model.parent) is None

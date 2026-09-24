@@ -92,7 +92,13 @@ def test_meshdir_is_honored_when_resolving_mesh_paths(tmp_path, monkeypatch):
 
 
 def test_missing_mesh_triggers_successful_download(tmp_path, monkeypatch):
-    """A missing mesh triggers auto-download; a clean download yields ``None``."""
+    """A missing mesh triggers auto-download; a download that delivers yields ``None``.
+
+    The fake writes the mesh, because that is what a successful download does -
+    and the verdict is read from the tree afterwards, not from the call
+    returning (see
+    :func:`test_a_download_that_delivers_no_mesh_is_not_a_reason_to_proceed`).
+    """
     model = _write(
         tmp_path / "robot.xml",
         '<mujoco><asset><mesh file="absent.stl"/></asset></mujoco>',
@@ -102,6 +108,7 @@ def test_missing_mesh_triggers_successful_download(tmp_path, monkeypatch):
     def _ok(names, force):
         calls["names"] = names
         calls["force"] = force
+        (tmp_path / "absent.stl").write_bytes(_binary_stl())
 
     monkeypatch.setattr("strands_robots.assets.resolve_robot_name", lambda n: n)
     monkeypatch.setattr("strands_robots.assets.download.download_robots", _ok)
@@ -132,7 +139,12 @@ def test_missing_mesh_download_failure_returns_error_dict(tmp_path, monkeypatch)
 
 
 def test_missing_mesh_in_included_file_is_detected(tmp_path, monkeypatch):
-    """Mesh refs inside an ``<include>``d file are checked, not just the top XML."""
+    """Mesh refs inside an ``<include>``d file are checked, not just the top XML.
+
+    The fake download delivers nothing, so the reference is still absent
+    afterwards and the refusal names it - which is how "detected" is observable
+    here without a real fetch.
+    """
     _write(
         tmp_path / "parts.xml",
         '<mujoco><asset><mesh file="absent.stl"/></asset></mujoco>',
@@ -149,8 +161,52 @@ def test_missing_mesh_in_included_file_is_detected(tmp_path, monkeypatch):
     monkeypatch.setattr("strands_robots.assets.resolve_robot_name", lambda n: n)
     monkeypatch.setattr("strands_robots.assets.download.download_robots", _ok)
 
-    assert _ensure_meshes(model, "robot") is None
+    result = _ensure_meshes(model, "robot")
     assert seen.get("called") is True
+    assert "absent.stl" in result["content"][0]["text"]
+
+
+#: ``(id, what the fetch leaves at the declared mesh path, text the refusal owes)``.
+#: The pointer is what ``git clone`` writes for an LFS-stored mesh where git-lfs
+#: is not smudging - ``reachy_mini``'s upstream keeps all 49 of its meshes there.
+_UNDELIVERED = [
+    ("nothing-at-all", None, "absent"),
+    (
+        "a-git-lfs-pointer",
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:89c2\nsize 229884\n",
+        "git lfs install",
+    ),
+]
+
+
+@pytest.mark.parametrize(("case", "body", "owed"), _UNDELIVERED, ids=[c[0] for c in _UNDELIVERED])
+def test_a_download_that_delivers_no_mesh_is_not_a_reason_to_proceed(tmp_path, monkeypatch, case, body, owed):
+    """The verdict is read from the tree after the fetch, not from the fetch returning.
+
+    A ``git clone`` that ran where git-lfs is not installed writes a ~130-byte
+    pointer stub for every mesh its upstream keeps in LFS and exits 0, so the
+    download reports success and the meshes are still unloadable. Proceeding then
+    hands the tree to MuJoCo, whose decoder reports ``number of faces should be
+    between 1 and 200000 ... perhaps this is an ASCII file?`` against a path that
+    is on disk - the cryptic report ``_ensure_meshes`` exists to replace.
+    """
+    model = _write(
+        tmp_path / "robot.xml",
+        '<mujoco><asset><mesh file="arm.stl"/></asset></mujoco>',
+    )
+
+    def _fetch(names, force):
+        if body is not None:
+            (tmp_path / "arm.stl").write_bytes(body)
+
+    monkeypatch.setattr("strands_robots.assets.resolve_robot_name", lambda n: n)
+    monkeypatch.setattr("strands_robots.assets.download.download_robots", _fetch)
+
+    result = _ensure_meshes(model, "reachy_mini")
+    assert result is not None, "add_robot proceeds into MuJoCo's decoder"
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert "reachy_mini" in text and "arm.stl" in text and owed in text
 
 
 def test_unreadable_model_path_is_tolerated(tmp_path):
@@ -284,8 +340,9 @@ class TestAReferenceIsResolvedTheWayMuJoCoResolvesIt:
             "strands_robots.assets.download.download_robots",
             lambda names, force: called.update(names=names, force=force),
         )
-        assert _ensure_meshes(str(tmp_path / "robot.xml"), "robot") is None
+        result = _ensure_meshes(str(tmp_path / "robot.xml"), "robot")
         assert called == {"names": ["robot"], "force": True}
+        assert "arm.stl" in result["content"][0]["text"]
 
 
 class TestTheDownloadPathUsesTheSameRule:
@@ -384,11 +441,15 @@ class TestTheDownloadPathUsesTheSameRule:
         from strands_robots.simulation.mujoco import simulation as sim_mod
 
         assert callable(dl_mod._mjcf_missing_meshes)
+        # Two spellings of one owner: the list reading delegates to the scan that
+        # classifies each problem, so a caller reading either one reads the same
+        # rules.
+        assert "_mjcf_mesh_problems" in inspect.getsource(dl_mod._mjcf_missing_meshes)
         for source in (
             inspect.getsource(sim_mod.MuJoCoSimEngine._ensure_meshes),
             inspect.getsource(dl_mod._needs_download),
         ):
-            assert "_mjcf_missing_meshes" in source
+            assert "_mjcf_missing_meshes" in source or "_mjcf_mesh_problems" in source
             # ...and no second copy of the rules that owner applies: neither the
             # subdir attributes, nor which fragments make up the model, nor
             # which extensions name a mesh.
