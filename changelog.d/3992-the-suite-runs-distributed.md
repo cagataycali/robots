@@ -28,16 +28,11 @@ runs a nested pytest whose whole subject is the order two files import in, and
 hands it this repository's config with `-c`; that nested run is now explicitly
 `-n0`, because distributing those files is the ordering being measured.
 
-Distributing the session also exposed an unprotected window in the
-`robot_descriptions` cache, which is shared: 40-odd `*_mj_description` modules
-clone ONE repository into ONE directory at import time, every worker collects the
-whole tree, and the upstream cache takes no lock. On a cold cache two workers
-therefore entered that window together and the loser's `git` raised inside a
-collected module, ending the session in a collection ERROR about the cache (four
-shapes measured: `git init` cannot copy a hook template, `remote origin already
-exists`, `could not lock config file`, and a `git checkout` of a commit the
-sibling's fetch had not finished writing -- `reference is not a tree`). The
-session now routes every clone through a lock on the cache directory, so the
-first worker clones while the rest wait and each then finds the finished clone.
-Measured on a cold cache with two workers over the two files that import a
-description: 2 errors before, 31 passed after.
+Distributing the session also reaches the other half of the `robot_descriptions`
+cache window that `strands_robots._description_cache` now owns for the package:
+a test module imports a description through its own `importorskip`, which no
+package seam sees, and every worker collects every file. The session wraps the
+upstream `clone_to_cache` in *that* module's lock, so a collecting worker and a
+package caller in one cache directory wait on one lock file instead of holding
+one each. Measured on a cold cache with two workers over the two files that
+import a description: 2 collection errors before, 31 passed after.

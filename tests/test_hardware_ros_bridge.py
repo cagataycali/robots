@@ -26,7 +26,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -114,13 +114,20 @@ class _Image:
 @pytest.fixture
 def fake_ros(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Inject a fake rclpy + sensor_msgs.msg and clear require_optional's cache."""
-    state: dict[str, Any] = {"inited": False, "shutdown": False, "nodes": [], "spun": 0}
+    state: dict[str, Any] = {"inited": False, "shutdown": False, "nodes": [], "spun": 0, "domain": 0}
 
     rclpy = ModuleType("rclpy")
     rclpy.ok = lambda: state["inited"]  # type: ignore[attr-defined]
+    # A context's domain is read once, at init, and fixed for its lifetime - the
+    # fact the bridge's domain guard exists for. Modelled here so a bridge built
+    # beside a running context is graded the way rclpy grades it.
+    rclpy.get_default_context = lambda: SimpleNamespace(  # type: ignore[attr-defined]
+        get_domain_id=lambda: int(state["domain"])
+    )
 
     def _init() -> None:
         state["inited"] = True
+        state["domain"] = int(os.environ.get("ROS_DOMAIN_ID", "0"))
 
     def _shutdown() -> None:
         state["shutdown"] = True

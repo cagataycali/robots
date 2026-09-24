@@ -31,10 +31,8 @@ from lerobot.teleoperators.config import TeleoperatorConfig  # noqa: E402
 
 import strands_robots  # noqa: E402
 from strands_robots.teleop_mixin import TeleopMixin  # noqa: E402
-from strands_robots.teleoperator import (  # noqa: E402
-    _FORWARDABLE_TELEOP_KWARGS,
-    _ensure_lerobot_teleoperators_registered,
-)
+from strands_robots.teleoperator import _FORWARDABLE_TELEOP_KWARGS  # noqa: E402
+from strands_robots.utils import ensure_lerobot_family_registered  # noqa: E402
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
@@ -57,7 +55,7 @@ def _mixin_keywords() -> set[str]:
 
 def _accepted_by_factory(teleop_type: str) -> set[str]:
     """What ``_build_teleop_config`` recognises for ``teleop_type``: dataclass fields + allowlist + id."""
-    _ensure_lerobot_teleoperators_registered()
+    ensure_lerobot_family_registered("teleoperators")
     config_class = TeleoperatorConfig.get_choice_class(teleop_type)
     fields = {f.name for f in dataclasses.fields(config_class)}
     return fields | set(_FORWARDABLE_TELEOP_KWARGS) | {"id"}

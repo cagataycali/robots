@@ -322,9 +322,9 @@ class TestTheOptionSetIsTheRegistrys:
 
         from lerobot.cameras.configs import CameraConfig
 
-        from strands_robots.hardware_robot import _ensure_lerobot_cameras_registered
+        from strands_robots.utils import ensure_lerobot_family_registered
 
-        _ensure_lerobot_cameras_registered()
+        ensure_lerobot_family_registered("cameras")
         choices = sorted(CameraConfig.get_known_choices())
         assert {"opencv", "intelrealsense"} <= set(choices), choices
         numeric = {name for name, _ in tele_mod._CAMERA_RENDER_DEFAULTS}

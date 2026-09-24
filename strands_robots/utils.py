@@ -1,10 +1,12 @@
 """Shared utilities for strands-robots."""
 
+import functools
 import importlib
 import logging
 import math
 import numbers
 import os
+import pkgutil
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -173,6 +175,103 @@ def lerobot_version() -> str:
         return version("lerobot")
     except ImportError:
         return "unknown"
+
+
+@functools.cache
+def ensure_lerobot_family_registered(family: str) -> None:
+    """Import every subpackage of ``lerobot.<family>`` so its registry is populated.
+
+    lerobot declares each device through a ``@<Kind>Config.register_subclass``
+    decorator that runs when the device's own subpackage is imported, and the
+    family's ``__init__`` deliberately does not import them - it says so in a
+    comment - so that a vendor SDK is not pulled into every ``import lerobot``.
+    Until the walk below runs, the family's :class:`draccus.ChoiceRegistry` has
+    no choices at all and a lookup reports every device as unknown.
+
+    Walking with :mod:`pkgutil` rather than naming the subpackages is what makes
+    a device lerobot adds in a future release available with no change here, and
+    it is also the only way to reach a device whose registered name differs from
+    its subpackage (``so101_follower`` and ``so100_follower`` both live in
+    ``so_follower/``, ``lekiwi_client`` in ``lekiwi/``).
+
+    One function for every family, because the three that need it - ``robots``,
+    ``cameras`` and ``teleoperators`` - differ in nothing but the package name:
+    keeping a copy per caller is what put a private helper of the robot factory
+    on the import path of the teleoperator factory, which reaches for the robot
+    registry only to say "that name is a follower, not a leader". It lives here,
+    beside :func:`lerobot_version`, because it is optional-dependency resolution
+    rather than a concern of any one host.
+
+    Args:
+        family: The subpackage of ``lerobot`` to walk, e.g. ``"robots"``.
+            Each family is cached separately, so the walk runs once per family.
+    """
+    package = f"lerobot.{family}"
+    try:
+        root = importlib.import_module(package)
+    except ImportError as exc:
+        # Two failure modes, and the log level is what separates them: lerobot
+        # wholly absent is expected on a sim-only host (debug - the caller still
+        # gets a clean "Unsupported <kind> type" at the lookup), while lerobot
+        # present with this family unimportable is a partial install worth a
+        # warning without --log-level=DEBUG.
+        try:
+            importlib.import_module("lerobot")
+        except ImportError:
+            logger.debug("lerobot not installed: %s", exc)
+        else:
+            logger.warning("lerobot is installed but %s is not importable (partial install?): %s", package, exc)
+        return
+
+    for _, sub_name, is_pkg in pkgutil.iter_modules(root.__path__):
+        if not is_pkg:
+            continue
+        full_name = f"{package}.{sub_name}"
+        try:
+            importlib.import_module(full_name)
+        except (ImportError, OSError) as exc:
+            # A device whose vendor SDK is absent (``pyrealsense2``, ``hidapi``,
+            # ``unitree_sdk2py``) or whose ``__init__`` probes the OS. It simply
+            # does not appear in the registry, which is the correct outcome: the
+            # lookup then refuses the name and lists what did register.
+            # ``(ImportError, OSError)`` is the canonical narrow pair for a
+            # hardware-probing import per AGENTS.md > Review Learnings (#86).
+            logger.debug("[lerobot registry] skip %s: %s", full_name, exc)
+
+    ensure_lerobot_plugins_registered()
+
+
+@functools.cache
+def ensure_lerobot_plugins_registered() -> None:
+    """Import every installed third-party lerobot plugin distribution.
+
+    lerobot's own loader imports every distribution whose name starts with one
+    of its plugin prefixes (``lerobot_robot_``, ``lerobot_camera_``,
+    ``lerobot_teleoperator_``, ...), and each of those registers itself into the
+    matching :class:`draccus.ChoiceRegistry` as an import side effect. One call
+    therefore populates every registry at once, which is why this is a single
+    cached helper rather than a per-family step: a vendor camera and a vendor
+    robot arrive from the same import, so registering one kind while the caller
+    happens to be resolving the other would leave the second unreachable.
+    """
+    try:
+        from lerobot.utils.import_utils import register_third_party_plugins
+    except ImportError:
+        # ``register_third_party_plugins`` lives in modern lerobot only; older
+        # versions skip this opt-in step (built-ins still work).
+        logger.debug("[lerobot registry] register_third_party_plugins unavailable")
+        return
+    try:
+        register_third_party_plugins()
+    except (ImportError, AttributeError, OSError) as exc:
+        # #291: narrowed from bare ``except Exception`` per AGENTS.md Review
+        # Learnings (#86). Three benign, recoverable reasons: a plugin
+        # distribution whose import chain is broken (ImportError), a lerobot
+        # whose loader entry-point shape differs (AttributeError), or an
+        # OS-level probe inside a plugin's registration (OSError). Each
+        # degrades to "that plugin is absent from the registry" rather than
+        # crashing hardware init; anything else propagates unmasked.
+        logger.warning("[lerobot registry] third-party plugin registration failed: %s", exc)
 
 
 #

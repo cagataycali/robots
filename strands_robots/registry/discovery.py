@@ -28,13 +28,13 @@ Resolution rules:
 
 from __future__ import annotations
 
-import importlib
 import logging
 import os
 import re
 from functools import lru_cache
 from typing import Any
 
+from .._description_cache import import_description
 from .loader import normalize_robot_name
 
 logger = logging.getLogger(__name__)
@@ -150,7 +150,7 @@ def discover_robot(name: str) -> dict[str, Any] | None:
         return None
 
     try:
-        mod = importlib.import_module(f"robot_descriptions.{module_name}")
+        mod = import_description(module_name)
     except ImportError as exc:
         logger.debug("Discovery import failed for %r (%s): %s", norm, module_name, exc)
         _DISCOVER_CACHE[norm] = None
@@ -286,7 +286,7 @@ def discover_urdf_path(name: str) -> str | None:
         return None
 
     try:
-        mod = importlib.import_module(f"robot_descriptions.{module_name}")
+        mod = import_description(module_name)
     except ImportError as exc:
         logger.debug("URDF discovery import failed for %r (%s): %s", norm, module_name, exc)
         return None

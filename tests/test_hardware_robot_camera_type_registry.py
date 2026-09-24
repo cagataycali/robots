@@ -38,8 +38,8 @@ from lerobot.cameras.configs import CameraConfig
 from strands_robots.hardware_robot import (
     _CAMERA_STREAM_DEFAULTS,
     _build_camera_config,
-    _ensure_lerobot_cameras_registered,
 )
+from strands_robots.utils import ensure_lerobot_family_registered
 
 from .test_hardware_robot_config import _make_robot
 
@@ -64,7 +64,7 @@ _MINIMAL_OPTIONS: dict[str, dict[str, object]] = {
 @pytest.fixture(autouse=True)
 def _registered() -> None:
     """Populate the choice registry the way ``Robot()`` does."""
-    _ensure_lerobot_cameras_registered()
+    ensure_lerobot_family_registered("cameras")
 
 
 def _choices() -> list[str]:
@@ -78,7 +78,7 @@ class TestTheRegistryIsTheVocabulary:
         ``lerobot.cameras.__init__`` deliberately does not import its backend
         subpackages, and says so in a comment, to keep backend-specific
         dependencies out of every ``import lerobot``. A registry lookup that
-        skips :func:`~strands_robots.hardware_robot._ensure_lerobot_cameras_registered`
+        skips :func:`~strands_robots.utils.ensure_lerobot_family_registered`
         therefore answers *every* camera type as unknown -- including
         ``opencv``. Run in a fresh interpreter because registration is a
         process-global import side effect this session has already performed.

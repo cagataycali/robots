@@ -7,17 +7,11 @@ assertions) never connect to a device, so they run on CI without USB.
 from __future__ import annotations
 
 import dataclasses
-import logging
-import sys
 
 import pytest
 
-from strands_robots import teleoperator as teleop_mod
-from strands_robots.teleoperator import (
-    Teleoperator,
-    _build_teleop_config,
-    _ensure_lerobot_teleoperators_registered,
-)
+from strands_robots.teleoperator import Teleoperator, _build_teleop_config
+from strands_robots.utils import ensure_lerobot_family_registered
 
 pytest.importorskip("lerobot", reason="factory tests require lerobot installed")
 
@@ -25,7 +19,7 @@ pytest.importorskip("lerobot", reason="factory tests require lerobot installed")
 def test_registry_walk_populates_known_choices():
     from lerobot.teleoperators.config import TeleoperatorConfig
 
-    _ensure_lerobot_teleoperators_registered()
+    ensure_lerobot_family_registered("teleoperators")
     choices = set(TeleoperatorConfig.get_known_choices())
     # A representative slice that must always be present.
     assert {"so101_leader", "so100_leader", "gamepad", "keyboard"} <= choices
@@ -87,19 +81,6 @@ def test_factory_builds_instance():
 # registry/import failure modes by substituting a synthetic draccus config
 # class, so they hold regardless of which device SDKs are installed.
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def _clear_teleop_cache():
-    """Clear the @cache around _ensure_lerobot_teleoperators_registered.
-
-    Cleared before AND after (even on assertion failure) so a test that
-    monkeypatches the lerobot import cannot poison the cached no-op result
-    for later tests that rely on real registration.
-    """
-    _ensure_lerobot_teleoperators_registered.cache_clear()
-    yield
-    _ensure_lerobot_teleoperators_registered.cache_clear()
 
 
 def test_build_config_forwards_declared_field_and_drops_undeclared_allowlist():
@@ -164,65 +145,3 @@ def test_build_config_construction_failure_raises_valueerror():
         )
         with pytest.raises(ValueError, match=r"Failed to construct _BadConfig.*boom"):
             _build_teleop_config("bad", port="/dev/ttyACM0")
-
-
-def test_ensure_registered_partial_install_warns(monkeypatch, caplog, _clear_teleop_cache):
-    """lerobot present but lerobot.teleoperators unimportable -> warning
-    (a genuine partial-install signal), and the function returns cleanly."""
-    # sys.modules[...] = None makes `import lerobot.teleoperators` raise ImportError
-    # while `import lerobot` still succeeds -> the partial-install branch.
-    monkeypatch.setitem(sys.modules, "lerobot.teleoperators", None)
-    with caplog.at_level(logging.WARNING, logger="strands_robots.teleoperator"):
-        _ensure_lerobot_teleoperators_registered()
-    assert any("partial install" in r.message for r in caplog.records)
-
-
-def test_ensure_registered_lerobot_absent_is_debug_not_warning(monkeypatch, caplog, _clear_teleop_cache):
-    """lerobot wholly absent (sim-only host) -> debug, never a warning."""
-    monkeypatch.setitem(sys.modules, "lerobot.teleoperators", None)
-    monkeypatch.setitem(sys.modules, "lerobot", None)
-    with caplog.at_level(logging.DEBUG, logger="strands_robots.teleoperator"):
-        _ensure_lerobot_teleoperators_registered()
-    assert any("lerobot not installed" in r.message for r in caplog.records)
-    assert not any(r.levelno >= logging.WARNING for r in caplog.records)
-
-
-def test_ensure_registered_skips_subpackage_import_failures(monkeypatch, caplog, _clear_teleop_cache):
-    """A subpackage whose device SDK is missing (ImportError/OSError mid-walk)
-    is skipped, not fatal - registration still completes for the rest."""
-    import importlib as _il
-
-    def _boom(name, *a, **k):
-        raise ImportError(f"device sdk missing for {name}")
-
-    monkeypatch.setattr(teleop_mod.importlib, "import_module", _boom)
-    with caplog.at_level(logging.DEBUG, logger="strands_robots.teleoperator"):
-        # Must not raise even though every subpackage import fails.
-        _ensure_lerobot_teleoperators_registered()
-    assert any("skip" in r.message for r in caplog.records)
-    # Restore so the cache_clear teardown re-walks against the real importer.
-    monkeypatch.setattr(teleop_mod.importlib, "import_module", _il.import_module)
-
-
-def test_ensure_registered_plugin_loader_failure_warns(monkeypatch, caplog, _clear_teleop_cache):
-    """If lerobot's third-party plugin loader raises, we warn and continue
-    (built-in teleoperators are already registered by the walk)."""
-    import lerobot.utils.import_utils as _iu
-
-    def _boom():
-        raise OSError("plugin entry-point scan failed")
-
-    monkeypatch.setattr(_iu, "register_third_party_plugins", _boom)
-    with caplog.at_level(logging.WARNING, logger="strands_robots.teleoperator"):
-        _ensure_lerobot_teleoperators_registered()
-    assert any("third-party plugin registration failed" in r.message for r in caplog.records)
-
-
-def test_ensure_registered_plugin_loader_unavailable_is_debug(monkeypatch, caplog, _clear_teleop_cache):
-    """Older lerobot without register_third_party_plugins -> debug, not fatal."""
-    import lerobot.utils.import_utils as _iu
-
-    monkeypatch.delattr(_iu, "register_third_party_plugins", raising=False)
-    with caplog.at_level(logging.DEBUG, logger="strands_robots.teleoperator"):
-        _ensure_lerobot_teleoperators_registered()
-    assert any("register_third_party_plugins unavailable" in r.message for r in caplog.records)

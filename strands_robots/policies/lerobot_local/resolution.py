@@ -55,7 +55,7 @@ def _ensure_policy_configs_registered() -> None:
        invisible to ``PreTrainedConfig.from_pretrained`` until something
        imports the matching subpackage by hand.
 
-    The fix is the same pattern as ``hardware_robot._ensure_lerobot_robots_registered``:
+    The fix is the same pattern as ``utils.ensure_lerobot_family_registered``:
     walk every subpackage of ``lerobot.policies`` with ``pkgutil`` and
     import each one once. That triggers every
     ``@PreTrainedConfig.register_subclass`` decorator unconditionally,

@@ -97,8 +97,8 @@ def test_discover_urdf_path_resolves_existing_file(monkeypatch, tmp_path) -> Non
     urdf_file.write_text("<robot name='panda'></robot>")
     monkeypatch.setattr(discovery, "_urdf_modules", lambda: {"panda": "panda_description"})
     monkeypatch.setattr(
-        discovery.importlib,
-        "import_module",
+        discovery,
+        "import_description",
         lambda modpath: SimpleNamespace(URDF_PATH=str(urdf_file)),
     )
     assert discovery.discover_urdf_path("panda") == str(urdf_file)
@@ -108,17 +108,17 @@ def test_discover_urdf_path_returns_none_for_non_description(monkeypatch) -> Non
     monkeypatch.setattr(discovery, "_urdf_modules", dict)
 
     def _explode(modpath: str):
-        raise AssertionError(f"import_module must not be called for {modpath!r}")
+        raise AssertionError(f"import_description must not be called for {modpath!r}")
 
-    monkeypatch.setattr(discovery.importlib, "import_module", _explode)
+    monkeypatch.setattr(discovery, "import_description", _explode)
     assert discovery.discover_urdf_path("definitely_not_a_robot_xyz") is None
 
 
 def test_discover_urdf_path_none_when_module_lacks_urdf_path(monkeypatch) -> None:
     monkeypatch.setattr(discovery, "_urdf_modules", lambda: {"fakebot": "fakebot_description"})
     monkeypatch.setattr(
-        discovery.importlib,
-        "import_module",
+        discovery,
+        "import_description",
         lambda modpath: SimpleNamespace(),  # no URDF_PATH attribute
     )
     assert discovery.discover_urdf_path("fakebot") is None
@@ -127,8 +127,8 @@ def test_discover_urdf_path_none_when_module_lacks_urdf_path(monkeypatch) -> Non
 def test_discover_urdf_path_none_when_file_missing(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(discovery, "_urdf_modules", lambda: {"fakebot": "fakebot_description"})
     monkeypatch.setattr(
-        discovery.importlib,
-        "import_module",
+        discovery,
+        "import_description",
         lambda modpath: SimpleNamespace(URDF_PATH=str(tmp_path / "nope.urdf")),
     )
     assert discovery.discover_urdf_path("fakebot") is None
@@ -140,7 +140,7 @@ def test_discover_urdf_path_handles_import_error(monkeypatch) -> None:
     def _raise(modpath: str):
         raise ImportError(modpath)
 
-    monkeypatch.setattr(discovery.importlib, "import_module", _raise)
+    monkeypatch.setattr(discovery, "import_description", _raise)
     assert discovery.discover_urdf_path("fakebot") is None
 
 

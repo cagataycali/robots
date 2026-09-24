@@ -40,6 +40,15 @@ ros2 topic list | grep so101          # /so101/joint_states, /so101/<cam>/image_
 ros2 topic echo /so101/joint_states   # live joint positions, updated every step
 ```
 
+One domain per process. A `rclpy` context reads `ROS_DOMAIN_ID` once, when it is
+initialized, and keeps it for its lifetime, so `ros2_domain` selects the domain
+of a context the bridge starts itself. In a process that already has one - a
+`rclpy` node that embeds the simulation, or the hardware bridge of the arm this
+sim mirrors - a different `ros2_domain` is refused at construction, naming the
+domain in force and the two ways on (shut that context down, or ask for that
+domain). Publishing anyway put the telemetry on the other domain, where the
+subscriber the caller isolated it for never appears.
+
 `rclpy` is an optional, system-provided dependency: it arrives with a sourced ROS
 2 distro, not with the `[ros2]` extra (which installs only the cyclonedds RMW
 binding, as above). When it is missing, `ros2_bridge=True` raises an `ImportError`

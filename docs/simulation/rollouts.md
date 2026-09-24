@@ -6,7 +6,7 @@ description: Running, stopping, evaluating and watching a policy in simulation.
 
 | Action | Key params |
 |--------|-----------|
-| `run_policy` | `robot_name` (required), `policy_provider="mock"`, `policy_config={}`, `policy_object=None`, `instruction=""`, `duration=10.0`, `control_frequency=50.0`, `action_horizon=8`, `n_steps=None`, `seed=None`, `async_rtc=None`, `rtc_inference_timeout_s=None`, `stop_when=None`, `observer=None` ([observers](observers.md)), `video=None` |
+| `run_policy` | `robot_name` (required), `policy_provider="mock"`, `policy_config={}`, `policy_object=None`, `instruction=""`, `duration=10.0`, `control_frequency=None`, `action_horizon=8`, `n_steps=None`, `seed=None`, `async_rtc=None`, `rtc_inference_timeout_s=None`, `stop_when=None`, `observer=None` ([observers](observers.md)), `video=None` |
 | `start_policy` | same args, async/non-blocking |
 | `stop_policy` | `robot_name` (optional, defaults to `""` - every rollout) |
 | `list_policies_running` | - |

@@ -141,6 +141,48 @@ def _qos_history_depth_error(value: Any, param: str, context: str) -> str | None
     return None
 
 
+def _foreign_context_domain_error(actual: int, requested: int, context: str) -> str | None:
+    """Why a bridge cannot publish on ``requested`` in this process, else ``None``.
+
+    A context's ROS 2 domain is read once, when it is initialized, and is fixed
+    for its lifetime. The constructor's ``ROS_DOMAIN_ID`` write therefore only
+    selects the domain of a context this bridge starts itself: in a process that
+    already has one - a ``rclpy`` node that embeds the simulation, an earlier
+    bridge, or any library that called ``rclpy.init()`` - the bridge joins that
+    context and the write is inert. Measured on ROS 2 Jazzy: with a context
+    already up on domain 0, ``SimRosBridge(domain_id=7)`` reported success with
+    ``ROS_DOMAIN_ID`` set to ``7`` and published every ``JointState`` on domain
+    0, where a subscriber on 7 never appeared.
+
+    Silence there is worse than one robot's telemetry going to the wrong place.
+    The sim and hardware bridges are a symmetric pair advertising the identical
+    per-robot topics, so mirroring a real arm with a simulated twin on a domain
+    of its own put both on one domain and two publishers on one
+    ``/<robot>/joint_states``, interleaving two different poses of one robot
+    under a well-formed message no subscriber can tell is two robots.
+
+    Args:
+        actual: Domain of the context already running in this process.
+        requested: Domain the caller asked this bridge to publish on.
+        context: Class name of the calling bridge, for the message.
+
+    Returns:
+        ``None`` when the running context is on the requested domain, otherwise
+        the reason it cannot be honored and the two ways to proceed.
+    """
+    if actual == requested:
+        return None
+    return (
+        f"{context}: domain_id {requested} cannot be honored - this process already has a running "
+        f"rclpy context on domain {actual}, and a context's domain is fixed when it is initialized, "
+        "so the ROS_DOMAIN_ID write this bridge performs cannot move it. The telemetry would have "
+        f"gone out on domain {actual}, where no subscriber on domain {requested} appears - and where "
+        "a bridge for the same robot already publishes, two publishers interleave two poses on one "
+        f"/<robot>/joint_states. Shut that context down before constructing this bridge, or pass "
+        f"domain_id={actual} to join the domain already in force."
+    )
+
+
 #: Env var an operator sets to explicitly run an INBOUND ``joint_command``
 #: surface on an unsecured DDS graph (no ``dds_security_config``). Truthy values
 #: mirror the mesh insecure opt-out (``STRANDS_MESH_I_KNOW_THIS_IS_INSECURE``):
@@ -652,6 +694,10 @@ class RosTelemetryBridge(RosTelemetryBase):
         domain_id: ROS 2 domain (``ROS_DOMAIN_ID``) the bridge publishes on.
             Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
             discovery ports from it, and 233 lands past the end of the port space.
+            One domain per process: a context's domain is fixed when it is
+            initialized, so a bridge built in a process that already has a
+            running ``rclpy`` context joins that context's domain, and asking
+            for another one is refused rather than published elsewhere.
         node_name: Name of the internal rclpy node.
         qos_depth: Depth of the publishers' KEEP_LAST history. Only a
             positive ``int`` up to ``MAX_QOS_HISTORY_DEPTH`` names a depth
@@ -660,11 +706,13 @@ class RosTelemetryBridge(RosTelemetryBase):
             than surfacing mid-run from inside rclpy.
 
     Raises:
-        ValueError: If ``domain_id`` is outside ``[0, 232]``, or if
+        ValueError: If ``domain_id`` is outside ``[0, 232]``, if
             ``qos_depth`` is not a positive ``int`` no greater than
-            :data:`MAX_QOS_HISTORY_DEPTH`. Both are checked before the
-            process-wide ``ROS_DOMAIN_ID`` write, so a refused bridge leaves
-            the environment as it found it.
+            :data:`MAX_QOS_HISTORY_DEPTH`, or if this process already runs an
+            ``rclpy`` context on a different domain (see
+            :func:`_foreign_context_domain_error`). Every refusal leaves the
+            environment as it found it - the first two land before the
+            process-wide ``ROS_DOMAIN_ID`` write, the last one undoes it.
         ImportError: When ``rclpy`` / the ROS 2 message packages are not
             importable, with an install hint (system ROS 2 or the docker image).
     """
@@ -694,7 +742,10 @@ class RosTelemetryBridge(RosTelemetryBase):
 
         # Pin the domain before rclpy reads it. Set it unconditionally so the
         # bridge publishes where the caller asked, not where the shell happened
-        # to point.
+        # to point - and keep what was there, because the refusal below is the
+        # one that lands after this write and still has to leave the environment
+        # as it found it.
+        previous_domain = os.environ.get("ROS_DOMAIN_ID")
         os.environ["ROS_DOMAIN_ID"] = str(domain_id)
 
         rclpy_mod: Any = require_optional(
@@ -712,6 +763,18 @@ class RosTelemetryBridge(RosTelemetryBase):
         self._owns_context = not self._rclpy.ok()
         if self._owns_context:
             self._rclpy.init()
+        elif error := _foreign_context_domain_error(
+            self._rclpy.get_default_context().get_domain_id(), domain_id, type(self).__name__
+        ):
+            # Refused before the node is created, and the domain write above is
+            # rolled back, so a process whose context this bridge does not own is
+            # left exactly as it was found - the contract the pre-write refusals
+            # already keep.
+            if previous_domain is None:
+                os.environ.pop("ROS_DOMAIN_ID", None)
+            else:
+                os.environ["ROS_DOMAIN_ID"] = previous_domain
+            raise ValueError(error)
         self._node = self._rclpy.create_node(node_name or self.default_node_name)
         self._qos_depth = qos_depth
         self._joint_pubs: dict[str, Any] = {}

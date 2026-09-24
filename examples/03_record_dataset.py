@@ -38,17 +38,15 @@ if start["status"] != "success":
     print(f"start_recording failed: {start['content'][0]['text']}", file=sys.stderr)
     raise SystemExit(1)
 
-# Run the policy - each step is automatically captured.
-# control_frequency must equal the recording's fps: the recorder writes one
-# frame per control step with no decimation, so the 50 Hz default rollout
-# against this 30 fps recording is refused rather than written at a distorted
-# timestamp rate, and the episode would land with zero frames.
+# Run the policy - each step is automatically captured. The recorder writes one
+# frame per control step with no decimation, so the rollout's rate IS the
+# dataset's: an unset control_frequency adopts the open recording's fps, and a
+# rate you do pass that disagrees with it is refused rather than mislabelled.
 rollout = sim.run_policy(
     robot_name="so100",
     policy_object=MockPolicy(),
     instruction="pick up the red cube",
     n_steps=100,
-    control_frequency=30.0,
 )
 if rollout["status"] != "success":
     # A refused rollout captures nothing, so stop_recording below would report
