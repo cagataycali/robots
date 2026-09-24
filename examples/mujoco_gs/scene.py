@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 # Default cube placement: ~30 cm in front of the arm, in the workspace.
 DEFAULT_CUBE_POSITION = [0.20, 0.20, 0.025]
-DEFAULT_CUBE_HALF_SIZE = [0.025, 0.025, 0.025]  # 5 cm cube
+# ``add_object(size=...)`` takes the FULL extent, so this is a 2.5 cm cube.
+DEFAULT_CUBE_SIZE = [0.025, 0.025, 0.025]
 DEFAULT_CUBE_COLOR = [0.85, 0.10, 0.10, 1.0]  # canonical "red block"
 
 # Prioritised robot configs. SO-101 is the canonical MuJoCo-GS-Web robot; the
@@ -135,7 +136,7 @@ def build_default_scene(
         name="cube",
         shape="box",
         position=DEFAULT_CUBE_POSITION,
-        size=DEFAULT_CUBE_HALF_SIZE,
+        size=DEFAULT_CUBE_SIZE,
         color=DEFAULT_CUBE_COLOR,
         mass=0.05,
     )
@@ -169,12 +170,15 @@ def build_default_scene(
         height=480,
     )
 
-    # Stand the arm up on the benchtop in its "home" ready-pose (its zero pose
-    # sprawls flat across the surface). We set both qpos and the actuator
-    # targets (ctrl) so the pose holds when the sim is stepped.
+    # Pose the arm in its model's "home" keyframe when the asset ships one,
+    # setting both qpos and the actuator targets (ctrl) so the pose holds when
+    # the sim is stepped. The SO-100 and Panda fallbacks ship one (their zero
+    # pose lies flat across the surface); the default SO-101 asset ships no
+    # keyframe, so this is a no-op there and the arm keeps its zero pose,
+    # which already stands with the gripper ~0.25 m off the bench.
     _erect_arm(sim, robot_name="arm")
 
-    sim.step(20)  # settle into the home pose (actuators hold it)
+    sim.step(20)  # settle into the start pose (actuators hold it)
 
     summary = {
         "robot_name": "arm",
@@ -188,9 +192,14 @@ def build_default_scene(
 
 
 def _erect_arm(sim, robot_name: str = "arm") -> bool:
-    """Stand the arm up in its model's ``home`` keyframe (its zero pose sprawls
-    flat). Sets the arm joints' ``qpos`` *and* the matching actuator targets
-    (``ctrl``) so the pose holds when stepped. Touches only the robot's own
+    """Pose the arm in its model's ``home`` keyframe when the asset ships one.
+
+    The SO-100/SO-ARM100 and Panda assets do, and their zero pose lies flat
+    across the surface; the default SO-101 asset ships no keyframe, so this is a
+    no-op there (its zero pose already stands).
+
+    Sets the arm joints' ``qpos`` *and* the matching actuator targets (``ctrl``)
+    so the pose holds when stepped. Touches only the robot's own
     hinge/slide joints — never free joints (e.g. the cube). No-op (returns
     ``False``) if the model has no home-like keyframe.
     """
@@ -240,10 +249,13 @@ def make_scene_description(robot_config: str = "so101", robot_name: str = "arm")
     told the scene contains an SO-101 when it really contains an SO-100.
     """
     pretty = _ROBOT_PRETTY.get(robot_config, f"{robot_config} arm")
+    # Read the cube's width off the constant that builds it, so the number the
+    # agent is told cannot drift from the geom in the scene.
+    cube_cm = 100.0 * DEFAULT_CUBE_SIZE[0]
     return f"""\
 Scene contents (ALREADY BUILT — do not recreate):
   - One {pretty} named `{robot_name}`, mounted at the world origin.
-  - One small red cube named `cube`, ~5 cm wide, on the ground at
+  - One small red cube named `cube`, {cube_cm:g} cm wide, on the ground at
     [0.20, 0.20, 0.025] (about 30 cm in front of the arm).
   - Three cameras: `front` (hero shot), `topdown` (overhead), `oblique`.
   - A photoreal panorama background composited behind everything.
@@ -251,7 +263,8 @@ Scene contents (ALREADY BUILT — do not recreate):
 The cube is dynamic; the panorama is at infinity (no parallax) unless you
 swap to a `gsplat` background. Drive the scene with the `Simulation` tool's
 `set_joint_positions`, `run_policy`, `move_object`, `apply_force`, and `step`
-actions, then call `hybrid_render`.
+actions, then call `render` — the UI composites the photoreal backdrop
+behind whatever you render.
 """
 
 
