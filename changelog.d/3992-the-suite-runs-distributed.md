@@ -1,12 +1,16 @@
 ### Changed: the test suite runs distributed, and a pull request's required check with it
 
-`[tool.pytest.ini_options].addopts` now carries `-n auto --dist loadfile`, so
-`hatch run test` -- and with it `call-test-lint / Test and Lint`, the one
-required check -- spreads the suite over the runner's cores instead of running
-58,000 tests in one process. `loadfile` keeps every test of a file on one
-worker, which is what the file-scoped fixtures and the module-level state this
-suite has assume. Coverage is unaffected: it aggregates across workers, and the
-`--cov-fail-under=80` gate is graded on the combined data (measured: 95%).
+The `test` script now carries `-n auto --dist loadfile`, so `hatch run test`
+-- and with it `call-test-lint / Test and Lint`, the one required check --
+spreads the suite over the runner's cores instead of running 58,000 tests in one
+process. `loadfile` keeps every test of a file on one worker, which is what the
+file-scoped fixtures and the module-level state this suite has assume. Coverage
+is unaffected: it aggregates across workers, and the `--cov-fail-under=80` gate
+is graded on the combined data (measured: 95%). The flags sit on that script and
+not in `[tool.pytest.ini_options].addopts`, which every pytest invocation rooted
+in the repository inherits: `tests_integ/` binds fixed ports, named containers,
+one GPU and physical serial buses, so `hatch run test-integ` and a bare `pytest`
+stay in one process, and a test pins the split.
 
 Measured: the check's test step took 34:01 in one process on the runner; the
 same suite with coverage on takes 12:49 and 15:57 in two runs at `-n 4` on four

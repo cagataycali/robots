@@ -25,9 +25,13 @@ mkdocs serve                         # docs at http://localhost:8000
 mkdocs build --strict                # CI gate
 ```
 
-CI runs `hatch run test -x --strict-markers`. `addopts` carries `-n auto
---dist loadfile`, so both that run and yours spread over the available cores,
-one worker per file; `-n0` puts the session back in one process.
+CI runs `hatch run test -x --strict-markers`. The `test` script carries `-n
+auto --dist loadfile`, so both that run and yours spread over the available
+cores, one worker per file; `-n0` puts the session back in one process. The
+flags live on that script rather than in `addopts` on purpose: `hatch run
+test-integ` and a bare `pytest` stay in one process, because `tests_integ/`
+binds fixed ports, named containers, one GPU and physical serial buses, none
+of which two files may hold at once.
 
 `-x` means a red run stops at the first failure with the rest of the suite
 unexecuted, and its counts line is shaped exactly like a complete run's. So

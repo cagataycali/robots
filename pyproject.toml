@@ -824,7 +824,14 @@ override-dependencies = [
 UV_TORCH_BACKEND = "{env:UV_TORCH_BACKEND:auto}"
 
 [tool.hatch.envs.default.scripts]
-test = "pytest {args:tests}"
+# The unit suite distributes over the cores, one worker per file. The flags
+# live on this script and not in `[tool.pytest.ini_options].addopts`, which
+# every pytest invocation rooted here inherits: `tests_integ/` binds fixed
+# ports, named containers, one GPU and physical serial buses, so two of its
+# files in flight at once is two writers on one arm. `test-integ` and a bare
+# `pytest` therefore stay in one process; pinned by
+# tests/test_the_suite_distributes_only_where_it_measured.py.
+test = "pytest -n auto --dist loadfile {args:tests}"
 test-integ = "pytest tests_integ/ -v --timeout=300 {args}"
 lint = ["ruff check strands_robots tests tests_integ", "ruff format --check strands_robots tests tests_integ", "mypy strands_robots tests tests_integ"]
 format = ["ruff check --fix strands_robots tests tests_integ", "ruff format strands_robots tests tests_integ"]
@@ -1013,7 +1020,7 @@ warn_return_any = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v -n auto --dist loadfile --cov=strands_robots --cov-report=term-missing --cov-fail-under=80 --strict-markers --timeout=120"
+addopts = "-v --cov=strands_robots --cov-report=term-missing --cov-fail-under=80 --strict-markers --timeout=120"
 markers = [
     "gpu: requires CUDA GPU and real model weights (run with: pytest -m gpu)",
     "slow: long-running test (deselect with: pytest -m 'not slow')",
