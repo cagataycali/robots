@@ -353,3 +353,15 @@ class Cosmos3WebsocketClient:
                 reset_fn()
         except Exception as e:  # noqa: BLE001 - reset is best-effort
             logger.info("Cosmos3WebsocketClient.reset best-effort failed: %s", e)
+
+    def close(self) -> None:
+        """Drop the connection if one is open (best-effort and idempotent).
+
+        A live connection is not idle: ``websockets`` runs a keepalive thread
+        per connection for as long as it stays open, so a client that is done
+        with the server releases it here rather than leaving it to the process's
+        exit. A closed client is not a dead one - the next :meth:`infer` dials
+        afresh, exactly as the first call did.
+        """
+        if self._client is not None:
+            self._client.close()

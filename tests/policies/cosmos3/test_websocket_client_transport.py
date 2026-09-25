@@ -181,6 +181,53 @@ def test_client_caches_transport_across_calls(monkeypatch):
     assert connects["n"] == 1
 
 
+def test_client_close_drops_the_connection_and_the_next_call_redials(monkeypatch):
+    """``close`` releases the connection the client holds; it does not retire the client.
+
+    A ``websockets`` connection left open runs a keepalive thread until the
+    process exits, so a caller that is done with the server needs a way to let
+    it go (#4023). Closing is not the end of the client either: the next call
+    connects again, the same lazy dial the first call performed.
+    """
+    fakes = [
+        _FakeWebsocket([mnp.packb({}), mnp.packb({"action": np.zeros((1, 1))})]),
+        _FakeWebsocket([mnp.packb({}), mnp.packb({"action": np.zeros((1, 1))})]),
+    ]
+    handed_out = []
+
+    import websockets.sync.client as wsc
+
+    def connect_in_turn(uri, **kwargs):
+        handed_out.append(fakes[len(handed_out)])
+        return handed_out[-1]
+
+    monkeypatch.setattr(wsc, "connect", connect_in_turn)
+
+    client = Cosmos3WebsocketClient(host="h", port=1)
+    client.infer({"prompt": "x"})
+    assert len(handed_out) == 1 and not handed_out[0].closed
+
+    client.close()
+    assert handed_out[0].closed, "close() left the connection it held open"
+
+    client.infer({"prompt": "y"})
+    assert len(handed_out) == 2, "a closed client did not dial afresh on its next call"
+    assert not handed_out[1].closed
+
+
+def test_client_close_before_any_connection_is_a_noop(monkeypatch):
+    """Nothing to release is not an error, and nothing is dialed to find that out."""
+    import websockets.sync.client as wsc
+
+    def refuse(uri, **kwargs):
+        raise AssertionError("close() dialed the server")
+
+    monkeypatch.setattr(wsc, "connect", refuse)
+    client = Cosmos3WebsocketClient(host="h", port=1)
+    client.close()
+    client.close()
+
+
 def test_client_reset_forwards_to_transport(monkeypatch):
     """reset() forwards to the transport's reset when present."""
     calls = {"n": 0}

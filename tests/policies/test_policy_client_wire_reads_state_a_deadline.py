@@ -31,6 +31,15 @@ that unconsumed metadata blob as its action chunk.
 
 No network access and no GPU: every server here is a loopback listener, and the
 one read that has to miss its reply is parked by the server rather than raced.
+
+Every listener and every client a test opens is closed when that test ends, and
+the ``loopback`` fixture refuses a thread that outlives its test. A connection
+left open here is not idle: ``websockets.sync`` runs a keepalive thread per
+connection that draws ``random.getrandbits(32)`` for each ping it sends, on the
+*process-global* ``random`` - so a client this module kept alive went on
+perturbing the stream of every later test on the same xdist worker, and
+``tests/policies/test_rng_parity.py`` read two ``reset(seed=4242)`` windows as
+two different streams (#4023).
 """
 
 from __future__ import annotations
@@ -39,6 +48,7 @@ import ast
 import math
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -68,22 +78,90 @@ PARK_S = 2.0
 JOIN_S = 8.0
 
 
-def _serve(handler: Any) -> int:
-    """Run *handler* on a loopback WebSocket listener; return its port."""
-    server = serve(handler, "127.0.0.1", 0)
-    port = int(server.socket.getsockname()[1])
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return port
+class _Loopback:
+    """The listeners and clients one test opens, closed at that test's boundary.
+
+    ``released`` is what a handler that has to park waits on, so a server that
+    would otherwise sit in ``time.sleep`` for longer than the test is let go the
+    moment the test is over rather than when its sleep happens to end.
+    """
+
+    def __init__(self) -> None:
+        self.released = threading.Event()
+        self._servers: list[Any] = []
+        self._threads: list[threading.Thread] = []
+        self._clients: list[Any] = []
+
+    def serve(self, handler: Any) -> int:
+        """Run *handler* on a loopback WebSocket listener; return its port."""
+        server = serve(handler, "127.0.0.1", 0)
+        port = int(server.socket.getsockname()[1])
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self._servers.append(server)
+        self._threads.append(thread)
+        return port
+
+    def client(self, client_cls: Any, **kwargs: Any) -> Any:
+        """Construct a loopback client that is closed with the test."""
+        client = client_cls(host="127.0.0.1", **kwargs)
+        self._clients.append(client)
+        return client
+
+    def close(self) -> None:
+        """Release the parked handlers, close every client, then every server.
+
+        Clients first: a server's handler is in ``recv()`` on the connection its
+        client holds, and returns once that side closes, so the server's own
+        ``shutdown()`` - which waits for its handler threads - has nothing left
+        to wait for.
+        """
+        self.released.set()
+        for client in self._clients:
+            client.close()
+        for server in self._servers:
+            server.shutdown()
+        for thread in self._threads:
+            thread.join(JOIN_S)
+
+
+def _threads_started_since(before: set[int | None]) -> list[threading.Thread]:
+    return [thread for thread in threading.enumerate() if thread.ident not in before and thread.is_alive()]
 
 
 @pytest.fixture
-def silent_server() -> int:
+def loopback() -> Iterator[_Loopback]:
+    """Every listener and client the test opens, closed when the test ends.
+
+    The teardown also refuses a thread that outlives the test. A connection this
+    module leaves open is a ``websockets.sync`` keepalive thread drawing from the
+    process-global ``random`` every ``ping_interval`` for the rest of the worker's
+    life (#4023), and nothing else here can see that: the leaked threads are the
+    library's, so no handle this module holds names them. The census below is
+    the one read that does. Bounded by ``JOIN_S`` because a connection's threads
+    end a moment after its socket closes rather than in the same instant.
+    """
+    before = {thread.ident for thread in threading.enumerate()}
+    connections = _Loopback()
+    yield connections
+    connections.close()
+    deadline = time.monotonic() + JOIN_S
+    while _threads_started_since(before) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    leftover = _threads_started_since(before)
+    assert not leftover, "threads this test started are still running after its teardown:\n" + "\n".join(
+        f"  {thread.name}: target={getattr(thread, '_target', None)!r}" for thread in leftover
+    )
+
+
+@pytest.fixture
+def silent_server(loopback: _Loopback) -> int:
     """A server that accepts the connection and then sends nothing at all.
 
     The listening-but-silent state: a port probe that calls readiness answers
     yes, and the metadata frame never comes.
     """
-    return _serve(lambda conn: time.sleep(JOIN_S * 4))
+    return loopback.serve(lambda conn: loopback.released.wait(JOIN_S * 4))
 
 
 def _call_on_a_thread(call: Any) -> tuple[threading.Thread, list[BaseException]]:
@@ -115,9 +193,9 @@ class TestASilentServerIsReportedRatherThanWaitedOut:
     """The read that a listening-but-silent server never answers has a deadline."""
 
     def test_the_read_returns_inside_the_stated_budget(
-        self, client_cls: Any, call_name: str, absent_hint: str, silent_server: int
+        self, client_cls: Any, call_name: str, absent_hint: str, loopback: _Loopback, silent_server: int
     ) -> None:
-        client = client_cls(host="127.0.0.1", port=silent_server, read_timeout=READ_TIMEOUT_S)
+        client = loopback.client(client_cls, port=silent_server, read_timeout=READ_TIMEOUT_S)
         thread, raised = _call_on_a_thread(getattr(client, call_name))
         assert not thread.is_alive(), (
             f"{client_cls.__name__} is still blocked {JOIN_S}s into a read the server will never "
@@ -126,9 +204,9 @@ class TestASilentServerIsReportedRatherThanWaitedOut:
         assert raised and isinstance(raised[0], ConnectionError), f"expected a ConnectionError, got {raised}"
 
     def test_the_report_names_the_silent_server_and_the_budget_that_expired(
-        self, client_cls: Any, call_name: str, absent_hint: str, silent_server: int
+        self, client_cls: Any, call_name: str, absent_hint: str, loopback: _Loopback, silent_server: int
     ) -> None:
-        client = client_cls(host="127.0.0.1", port=silent_server, read_timeout=READ_TIMEOUT_S)
+        client = loopback.client(client_cls, port=silent_server, read_timeout=READ_TIMEOUT_S)
         _thread, raised = _call_on_a_thread(getattr(client, call_name))
         message = str(raised[0])
         assert f"ws://127.0.0.1:{silent_server}" in message, message
@@ -136,10 +214,10 @@ class TestASilentServerIsReportedRatherThanWaitedOut:
         assert f"read_timeout={READ_TIMEOUT_S:g}s" in message, message
 
     def test_the_absent_server_hint_is_not_the_report_a_listening_server_gets(
-        self, client_cls: Any, call_name: str, absent_hint: str, silent_server: int
+        self, client_cls: Any, call_name: str, absent_hint: str, loopback: _Loopback, silent_server: int
     ) -> None:
         """Telling an operator to start a running server names the one thing that is right."""
-        client = client_cls(host="127.0.0.1", port=silent_server, read_timeout=READ_TIMEOUT_S)
+        client = loopback.client(client_cls, port=silent_server, read_timeout=READ_TIMEOUT_S)
         _thread, raised = _call_on_a_thread(getattr(client, call_name))
         assert absent_hint not in str(raised[0]), (
             f"a server that accepted the connection is running, so the 'start it first' hint misreports it: {raised[0]}"
@@ -150,7 +228,7 @@ class TestAFailedExchangeDoesNotLeaveTheConnectionCached:
     """A connection whose exchange did not complete is discarded, not reused."""
 
     @staticmethod
-    def _parking_server() -> int:
+    def _parking_server(loopback: _Loopback) -> int:
         """Serve tagged chunks, withholding the first reply past the read budget.
 
         The marker each request carries comes back in its own reply, which is
@@ -175,10 +253,12 @@ class TestAFailedExchangeDoesNotLeaveTheConnectionCached:
             except Exception:  # noqa: BLE001 - a discarded connection ends the handler
                 return
 
-        return _serve(handler)
+        return loopback.serve(handler)
 
-    def test_the_next_request_gets_its_own_chunk_not_the_previous_one(self) -> None:
-        client = Cosmos3WebsocketClient(host="127.0.0.1", port=self._parking_server(), read_timeout=READ_TIMEOUT_S)
+    def test_the_next_request_gets_its_own_chunk_not_the_previous_one(self, loopback: _Loopback) -> None:
+        client = loopback.client(
+            Cosmos3WebsocketClient, port=self._parking_server(loopback), read_timeout=READ_TIMEOUT_S
+        )
         with pytest.raises(ConnectionError):
             client.infer({"marker": 1})
         time.sleep(PARK_S + 0.5)  # the parked reply has now landed on the socket
@@ -187,7 +267,7 @@ class TestAFailedExchangeDoesNotLeaveTheConnectionCached:
             "action chunk computed for an observation the robot has already moved past"
         )
 
-    def test_a_handshake_that_did_not_complete_is_not_answered_with_empty_metadata(self) -> None:
+    def test_a_handshake_that_did_not_complete_is_not_answered_with_empty_metadata(self, loopback: _Loopback) -> None:
         """A dead connection must not report a server contract nobody sent.
 
                 The refusal's own *type* is the transport's to choose - a server that
@@ -198,8 +278,8 @@ class TestAFailedExchangeDoesNotLeaveTheConnectionCached:
         an unconsumed metadata frame that the next request would have read as
                 its action chunk.
         """
-        port = _serve(lambda conn: conn.close())
-        client = Cosmos3WebsocketClient(host="127.0.0.1", port=port, read_timeout=READ_TIMEOUT_S)
+        port = loopback.serve(lambda conn: conn.close())
+        client = loopback.client(Cosmos3WebsocketClient, port=port, read_timeout=READ_TIMEOUT_S)
         for attempt in (1, 2):
             try:
                 metadata = client.get_server_metadata()
@@ -207,7 +287,7 @@ class TestAFailedExchangeDoesNotLeaveTheConnectionCached:
                 continue
             pytest.fail(f"call {attempt} to a server that closed mid-handshake answered with {metadata!r}")
 
-    def test_a_completed_exchange_keeps_its_connection(self) -> None:
+    def test_a_completed_exchange_keeps_its_connection(self, loopback: _Loopback) -> None:
         """The discard is not a reconnect-per-request: a good connection is reused."""
         connections: list[int] = []
         packer = mnp.Packer()
@@ -222,7 +302,7 @@ class TestAFailedExchangeDoesNotLeaveTheConnectionCached:
             except Exception:  # noqa: BLE001
                 return
 
-        client = Cosmos3WebsocketClient(host="127.0.0.1", port=_serve(handler), read_timeout=JOIN_S)
+        client = loopback.client(Cosmos3WebsocketClient, port=loopback.serve(handler), read_timeout=JOIN_S)
         assert client.infer({"marker": 1})["marker"] == 1
         assert client.infer({"marker": 2})["marker"] == 2
         assert len(connections) == 1, f"one connection served both requests, got {len(connections)}"
