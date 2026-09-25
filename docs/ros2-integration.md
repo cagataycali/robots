@@ -150,5 +150,7 @@ Captured runs are in `examples/ros2/use_ros/sample_output.txt` and
 - [Mesh bridge](ros2/mesh-bridge.md) - `RosBridgedRobot` and the shared
   mobile-base contract
 - [Pure-RTPS ROS 2](rtps-integration.md) - `use_rtps`, no rclpy
+- [Pure-RTPS robot](ros2/rtps-robot.md) - `RtpsRobot` and
+  `Robot(ros2_transport="rtps")`
 - [rosbridge integration](rosbridge-integration.md) - `use_rosbridge`, ROS 1
   and remote robots
