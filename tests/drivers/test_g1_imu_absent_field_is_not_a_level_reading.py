@@ -20,7 +20,7 @@ renamed field lands ``None`` rather than a plausible zero), the sibling humanoid
 states it outright in
 :func:`~strands_robots.drivers.booster.parse_low_state` ("a snapshot that
 reports a zeroed IMU the robot never sent is worse than one that reports none"),
-and the consuming verb ``g1_imu`` documented ``None`` for every field while the
+and the consuming verb ``g1_sensor(sensor="imu")`` documented ``None`` for every field while the
 writer made that outcome unreachable.
 """
 
@@ -34,7 +34,7 @@ import pytest
 
 from strands_robots.drivers import g1, go2
 from strands_robots.drivers.g1 import G1Driver
-from strands_robots.tools.g1.g1_imu import g1_imu
+from strands_robots.tools.g1.g1_sensors import g1_sensor
 
 # The four IMU vectors both Unitree drivers cache, read off their own writers.
 IMU_FIELDS = ("rpy", "gyroscope", "accelerometer", "quaternion")
@@ -121,7 +121,7 @@ def test_a_non_vector_field_costs_only_itself(value: Any) -> None:
 
 
 def test_the_imu_verb_reports_the_unread_field_as_none() -> None:
-    """``g1_imu`` renders the ``None`` its own docstring documents.
+    """``g1_sensor(sensor="imu")`` renders the ``None`` its own docstring documents.
 
     The verb documented every field as "or ``None``" while the writer made
     that outcome unreachable for a driver that had received a frame.
@@ -133,7 +133,7 @@ def test_the_imu_verb_reports_the_unread_field_as_none() -> None:
             mode_machine=4,
         )
     )
-    envelope = g1_imu(driver)
+    envelope = g1_sensor(driver=driver, sensor="imu")
     assert envelope["present"] is True
     assert envelope["rpy"] is None
     assert envelope["accelerometer"] == WIRED["accelerometer"]

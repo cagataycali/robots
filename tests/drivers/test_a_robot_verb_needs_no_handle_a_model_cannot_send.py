@@ -63,14 +63,9 @@ ROVER_VERB_MOVED_TO: dict[str, str] = {
 #: ``Simulation``.
 HANDLE_TAKING_VERBS: dict[str, int] = {
     "tools/g1/g1_actions.py": 13,
-    "tools/g1/g1_battery.py": 1,
-    "tools/g1/g1_imu.py": 1,
-    "tools/g1/g1_lidar_state.py": 1,
-    "tools/g1/g1_lidar_summary.py": 1,
-    "tools/g1/g1_mainboard.py": 1,
-    "tools/g1/g1_pressure.py": 1,
     "tools/g1/g1_run_policy.py": 1,
     "tools/g1/g1_send_action.py": 1,
+    "tools/g1/g1_sensors.py": 1,
     "tools/g1/g1_start_task.py": 1,
     "tools/g1/g1_state.py": 1,
     "tools/g1/g1_stop_task.py": 1,

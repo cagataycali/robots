@@ -196,7 +196,7 @@ class TestTheDecoderReadsTheDeclaredNames:
         record.  That matters because every plausible default is also a
         real reading: ``0`` looks like a healthy system, ``[]`` looks like
         a unit reporting no fans.  ``None`` is the one value that cannot
-        be mistaken for a measurement, and the ``g1_mainboard`` verb
+        be mistaken for a measurement, and the ``g1_sensor`` verb
         passes it through.  A stand-in that omits one attribute models
         exactly that miss, one field at a time.
         """

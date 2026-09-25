@@ -50,7 +50,7 @@ from strands_robots.drivers.g1 import _TOPIC_BMS, G1Driver
 #: cannot be a test dependency; :func:`test_the_frozen_declaration_matches_the_sdk`
 #: proves this copy is still true wherever the SDK *is* importable.  The
 #: decoder reads three of these (``soc``, ``current``, ``cycle``); the rest
-#: are declared but uncached, which the ``g1_battery`` module docstring
+#: are declared but uncached, which the ``g1_sensors`` module docstring
 #: records as a decision that belongs to the decoder rather than the verb.
 _DECLARED_BMS_FIELDS: frozenset[str] = frozenset(
     {
@@ -178,7 +178,7 @@ class TestTheRecordCarriesOnlyWhatTheMessageSaid:
 
         Reporting one would mean answering a question the message does not
         answer.  A firmware that does declare a charge field is one read in
-        ``_on_bms`` plus one key on the ``g1_battery`` envelope, and this
+        ``_on_bms`` plus one key on the ``g1_sensor(sensor="battery")`` envelope, and this
         cell is where that decision gets recorded.
         """
         record = _decode()

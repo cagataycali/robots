@@ -1,7 +1,7 @@
 """``g1_get_task_status`` returns exactly what ``G1Driver.get_task_status`` gives it.
 
 ``g1_get_task_status`` is the third driver-instance-taking verb in
-:mod:`strands_robots.tools.g1`, after ``g1_get_state`` and ``g1_battery``.
+:mod:`strands_robots.tools.g1`, after ``g1_get_state`` and ``g1_sensor``.
 Where those two reach into the driver's cached DDS snapshots (the status
 envelope and the BMS decode), this one wraps the driver's control-loop
 task readout - the same method the mesh's status wire uses to publish loop

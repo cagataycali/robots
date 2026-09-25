@@ -20,9 +20,9 @@ the only Unitree telemetry reads left on typed defaults and a bare ``int()`` /
   a single unreadable header field raised inside the bare ``int()``, was
   swallowed by the callback's ``except``, and dropped the frame's other fields.
 
-Both consuming verbs (``g1_lidar_state``, ``g1_lidar_summary``) already
-documented every field as "or ``None``"; the writers made that unreachable for
-any driver that had received a message.
+The consuming verb (``g1_sensor``, for both the ``lidar_state`` and the
+``lidar_summary`` cache) already documented every field as "or ``None``"; the
+writers made that unreachable for any driver that had received a message.
 
 The structural cell widens the scan the layout-id fix introduced from
 ``_on_lowstate`` alone to every ``_on_*`` decoder on both Unitree drivers, so

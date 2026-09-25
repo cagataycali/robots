@@ -15,8 +15,7 @@ What the driver actually does:
   into an in-memory cache the mesh reads at its own cadence
   (:mod:`strands_robots.mesh.sensors` publishes ``_imu``, ``_battery``,
   ``_lidar_state`` and ``_lidar_summary`` from those caches; ``_mainboard``
-  is read by the ``g1_mainboard`` verb and ``_pressure`` by the
-  ``g1_pressure`` verb).
+  and ``_pressure`` are read by the ``g1_sensor`` verb).
 * Gates writes on the FSM: :meth:`send_action` refuses when the FSM state
   is outside :data:`~strands_robots.drivers.unitree._common.HANDSHAKE_FSMS` or the battery
   is under the floor.  The gate consults :attr:`_fsm_id` (the high-level
@@ -1533,7 +1532,7 @@ class G1Driver:
         :class:`~strands_robots.mesh.sensors.SensorLoopsMixin` for as long as
         the robot runs, so a fleet reading attitude off the wire would be told
         a falling humanoid is level.  ``None`` says the field was not read,
-        which is what the ``g1_imu`` verb documents for every one of them.
+        which is what the ``g1_sensor(sensor="imu")`` verb documents for every one of them.
 
         Because each field is coerced on its own, one unreadable vector reports
         itself as ``None`` and leaves the other three intact, rather than
@@ -1607,7 +1606,7 @@ class G1Driver:
         the record carries no ``charging`` key: a flag the message never
         carries would be a guess with the shape of a reading.  A layout
         that does declare one is one read here plus one key on the
-        ``g1_battery`` envelope.
+        ``g1_sensor(sensor="battery")`` envelope.
         """
         try:
             self._battery = {
@@ -1633,7 +1632,7 @@ class G1Driver:
         constants: ``-1`` renders as a fault code, ``0.0`` on ``cloud_frequency``
         is a unit that has stopped scanning, and ``int(False)`` on
         ``error_state`` is ``0``, which :func:`decode_code` renders as ``OK`` - a
-        healthy lidar fabricated from a flag. ``g1_lidar_state`` documents every
+        healthy lidar fabricated from a flag. ``g1_sensor`` documents every
         field as "or ``None``", and this is what makes that reachable once a
         message has arrived.
 
@@ -1705,7 +1704,7 @@ class G1Driver:
         justify.
 
         Each is read through ``getattr`` with a ``None`` default so a name a
-        future firmware renames surfaces to the ``g1_mainboard`` verb as
+        future firmware renames surfaces to the ``g1_sensor`` verb as
         ``None`` for that key - decidable - rather than as an exception the
         DDS thread swallows silently.  A *typed* default would not be
         decidable: it looks like a reading, which is how a name the IDL never
@@ -1734,7 +1733,7 @@ class G1Driver:
         ``reserve``).  Every field is read through ``getattr`` with a
         default so a name a future firmware renames yields ``None`` on this
         side rather than raising on the DDS thread; a missing field
-        surfaces to the ``g1_pressure`` verb as ``None`` for that key,
+        surfaces to the ``g1_sensor(sensor="pressure")`` verb as ``None`` for that key,
         which is decidable, rather than as an exception the DDS thread
         would swallow silently.
 

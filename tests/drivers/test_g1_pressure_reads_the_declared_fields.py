@@ -214,7 +214,7 @@ class TestTheDecoderReadsTheDeclaredNames:
         An empty list would be a plausible reading (a build with no
         sensors declared), but is not the same as a firmware rename
         where the field is absent entirely.  ``None`` is the decidable
-        value for the missing case; the ``g1_pressure`` verb passes it
+        value for the missing case; the ``g1_sensor`` verb passes it
         through.
         """
         driver = G1Driver(tool_name="g1", port="1.2.3.4")

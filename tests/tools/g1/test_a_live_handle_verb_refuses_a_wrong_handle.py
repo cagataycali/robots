@@ -1,6 +1,6 @@
 """Every g1 verb taking a live driver handle refuses a wrong one by name.
 
-The sensor verbs in ``strands_robots.tools.g1`` read a cache the driver's own
+The sensor verb in ``strands_robots.tools.g1`` reads a cache the driver's own
 DDS subscriber writes.  The handle is a live Python object, so it is annotated
 :class:`~typing.Any` - the driver module reaches into this package for
 ``ensure_dds``, so a real annotation would close an import cycle, and ``Any``
@@ -255,6 +255,13 @@ def _snapshot_family_verbs() -> dict[str, Any]:
     return family
 
 
+#: The second argument a verb needs to reach its healthy answer, by verb.
+#: ``g1_sensor`` dispatches on a sensor name, and the derived controls below
+#: call each verb with the handle alone; a verb selecting nothing answers with
+#: its own selector refusal rather than the reading this file grades.
+_SELECTOR: dict[str, tuple[Any, ...]] = {"g1_sensor": ("battery",)}
+
+
 def _call(tool: Any, *args: Any) -> Any:
     """Call a verb's undecorated function, awaiting it when it is a coroutine.
 
@@ -289,10 +296,16 @@ class TestEveryLiveHandleVerbRefusesAWrongHandle:
             "the discovery has gone blind and every rule in this class is vacuous"
         )
 
-    def test_the_scan_reaches_the_three_sensor_verbs_on_main(self) -> None:
-        """The population contains the verbs this rule was written for."""
+    def test_the_scan_reaches_the_sensor_verb_on_main(self) -> None:
+        """The population contains the verb this rule was written for.
+
+        The six snapshot readers it was written against (``g1_imu``,
+        ``g1_lidar_state``, ``g1_lidar_summary`` and their siblings) are one
+        table-driven ``g1_sensor``, so the rule follows the verb rather than
+        the names it replaced.
+        """
         verbs = set(_live_handle_verbs())
-        expected = {"g1_imu", "g1_lidar_state", "g1_lidar_summary"}
+        expected = {"g1_sensor", "g1_get_state", "g1_send_action"}
         assert expected <= verbs, f"expected {sorted(expected)} among {sorted(verbs)}"
 
     def test_a_verb_named_unlike_its_module_is_still_graded(self) -> None:
@@ -408,13 +421,13 @@ class TestAHealthyHandleIsUntouched:
 
     def test_an_empty_cache_still_reports_absent(self) -> None:
         for name, tool in sorted(_snapshot_family_verbs().items()):
-            result = _call(tool, _CacheOnlyDriver(None))
+            result = _call(tool, _CacheOnlyDriver(None), *_SELECTOR.get(name, ()))
             assert result["status"] == "success", f"{name}: {result!r}"
             assert result["present"] is False, f"{name}: {result!r}"
 
     def test_a_written_cache_still_reports_present(self) -> None:
         for name, tool in sorted(_snapshot_family_verbs().items()):
-            result = _call(tool, _CacheOnlyDriver({"t": 1.0}))
+            result = _call(tool, _CacheOnlyDriver({"t": 1.0}), *_SELECTOR.get(name, ()))
             assert result["status"] == "success", f"{name}: {result!r}"
             assert result["present"] is True, f"{name}: {result!r}"
 
@@ -450,7 +463,7 @@ class TestPremises:
 
         ``live_handle_refusal`` builds the envelope and keeps the four invariants
         this file grades; ``snapshot_handle_refusal`` binds it to the ``_snapshot``
-        accessor the five sensor verbs read.  A verb that reimplemented either
+        accessor the sensor verb reads.  A verb that reimplemented either
         would pass the rules above on the day it landed and drift afterwards,
         which is the failure a single definition site prevents.
 

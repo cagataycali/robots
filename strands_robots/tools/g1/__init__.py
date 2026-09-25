@@ -15,8 +15,9 @@ Organizing principle (post-consolidation, refs #2928):
     lookup modules this package used to carry. This package only keeps
     verbs that do REAL WORK beyond the SDK:
 
-      * Driver-cache reads      (g1_state, g1_battery, g1_imu, g1_mainboard,
-                                 g1_pressure, g1_lidar_state, g1_lidar_summary)
+      * Driver-cache reads      (g1_state, and g1_sensor over the six
+                                 snapshot caches: battery, imu, lidar_state,
+                                 lidar_summary, mainboard, pressure)
       * Driver-gated writes     (g1_send_action, g1_run_policy, g1_start_task,
                                  g1_stop_task, g1_task_status, and the
                                  execution verbs consolidated in g1_actions:
@@ -53,12 +54,7 @@ from strands_robots.drivers.unitree._common import (
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # Driver-cache reads (P0)
     "g1_get_state": (".g1_state", "g1_get_state"),
-    "g1_battery": (".g1_battery", "g1_battery"),
-    "g1_imu": (".g1_imu", "g1_imu"),
-    "g1_mainboard": (".g1_mainboard", "g1_mainboard"),
-    "g1_pressure": (".g1_pressure", "g1_pressure"),
-    "g1_lidar_state": (".g1_lidar_state", "g1_lidar_state"),
-    "g1_lidar_summary": (".g1_lidar_summary", "g1_lidar_summary"),
+    "g1_sensor": (".g1_sensors", "g1_sensor"),
     # Driver-gated writes (P1/P2)
     "g1_send_action": (".g1_send_action", "g1_send_action"),
     "g1_run_policy": (".g1_run_policy", "g1_run_policy"),

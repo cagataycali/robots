@@ -330,10 +330,10 @@ def live_handle_refusal(
 def snapshot_handle_refusal(verb: str, driver: Any) -> dict[str, Any] | None:
     """Return the refusal envelope for an unusable ``driver`` handle, or ``None``.
 
-    The sensor verbs in this package read a cache the driver's own DDS
-    subscriber writes, through the driver's ``_snapshot`` accessor. This is
-    :func:`live_handle_refusal` bound to that accessor, shared because five
-    verbs need it rather than restated in each.
+    The sensor verb in this package reads the caches the driver's own DDS
+    subscribers write, through the driver's ``_snapshot`` accessor. This is
+    :func:`live_handle_refusal` bound to that accessor, kept beside the
+    transport the verb reads rather than restated in the verb.
 
     ``strands_robots.tools.run_policy`` is the one ``@tool`` outside this
     package whose parameter is a live handle typed :class:`~typing.Any`, and it
