@@ -43,7 +43,6 @@ _OVER_BUDGET = frozenset(
         "device-connect.md",
         "getting-started/robot-factory.md",
         "hardware/teleoperation.md",
-        "hardware/tools.md",
         "inference/remote.md",
         "policies/cosmos3.md",
         "policies/kimodo.md",
