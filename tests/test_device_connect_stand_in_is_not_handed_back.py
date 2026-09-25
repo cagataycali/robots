@@ -213,6 +213,29 @@ class TestRestoreReadsTheSnapshot:
         assert fresh is not bound
         assert bound_to_a_fake(fresh, _PREFIX) is False
 
+    def test_a_blocked_import_under_the_prefix_is_not_read_as_a_module(
+        self, probe_package: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``sys.modules[name] = None`` is how a test blocks an import, and it holds no attributes.
+
+        ``tests/test_robot_factory.py`` registers ``None`` against
+        ``strands_robots.device_connect`` to make the runtime's import halt, which
+        is the state the autouse restore in ``tests/conftest.py`` then reads. Read
+        as a module it reached ``vars(None)`` and the cell ended in
+        ``TypeError: vars() argument must have __dict__ attribute`` during
+        teardown - a passing assertion reported as an error, and one that lands on
+        whichever cell blocks an import rather than on the helper.
+        """
+        importlib.import_module(f"{_PREFIX}.leaf")
+        held = held_modules(_PREFIX)
+        package = sys.modules[_PREFIX]
+        monkeypatch.setitem(sys.modules, f"{_PREFIX}.blocked", None)  # type: ignore[arg-type]
+
+        restore(held, _PREFIX)
+
+        assert sys.modules[f"{_PREFIX}.blocked"] is None, "the block is left for the importer to raise on"
+        assert sys.modules[_PREFIX] is package
+
 
 _EDGE_NAMES = (
     "device_connect_edge",

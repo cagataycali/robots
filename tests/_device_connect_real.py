@@ -218,8 +218,16 @@ def _agree(prefix: str) -> None:
     not hand back. Left as it is, ``from pkg import leaf`` serves that attribute
     while ``import pkg.leaf`` serves the registry - the split the module
     docstring describes.
+
+    An entry under *prefix* need not be a module: a test that blocks an import
+    registers ``None`` against the name, which is what ``import pkg.leaf`` reads
+    to raise rather than re-run the import. A blocked name has no attributes to
+    reconcile, so it is skipped here - the same reading of the snapshot
+    :func:`restore` makes when it declines to hand one back.
     """
     for name, module in held_modules(prefix).items():
+        if module is None:
+            continue
         for attr, value in list(vars(module).items()):
             if not isinstance(value, ModuleType) or value.__name__ != f"{name}.{attr}":
                 continue
