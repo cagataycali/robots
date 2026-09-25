@@ -65,6 +65,7 @@ nav:
   - cuRobo: policies/curobo.md
   - MoveIt2: policies/moveit2.md
   - WBC (Whole-Body-Control): policies/wbc.md
+  - WBC Rollouts (Torque Control, Recording, Composite): policies/wbc-rollouts.md
   - WBC Gait-Clock Variant: policies/wbc_gait.md
   - Kimodo (G1 text-to-motion diffusion): policies/kimodo.md
   - ProtoMotions (G1 motion tracker): policies/protomotions.md

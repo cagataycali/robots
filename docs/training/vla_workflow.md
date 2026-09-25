@@ -143,7 +143,7 @@ sim.run_policy(
 ```
 
 For real deploy-grade locomotion (with the upstream torque-PD law), use the
-[torque-control harness](../policies/wbc.md#watching-it-walk-torque-control-deploy):
+[torque-control harness](../policies/wbc-rollouts.md#watching-it-walk-torque-control-deploy):
 
 ```bash
 python examples/wbc/wbc_g1_torque_deploy.py --checkpoint /tmp/g1_finetuned --vx 0.5

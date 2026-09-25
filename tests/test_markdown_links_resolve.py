@@ -54,9 +54,9 @@ The two syntaxes are not resolved the same way, which is why the wrong prefix is
 easy to write and hard to notice:
 
 * MkDocs **rewrites** a Markdown target, so it is authored relative to the
-  source file and comes out relative to the rendered page. ``wbc.md`` ships
-  ``../assets/wbc/g1_walk.gif`` and the built site serves
-  ``../../assets/wbc/g1_walk.gif``.
+  source file and comes out relative to the rendered page.
+  ``wbc-rollouts.md`` ships ``../assets/wbc/g1_walk.gif`` and the built site
+  serves ``../../assets/wbc/g1_walk.gif``.
 * MkDocs **passes raw HTML through unchanged**, so whatever prefix is written is
   what both surfaces get - and the rendered page sits one directory deeper than
   the source file, so a target cannot be correct on both. An author picks a

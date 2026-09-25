@@ -62,7 +62,9 @@ _BACKTICKED_SYMBOL = re.compile(r"`([A-Z][A-Za-z0-9]*)`")
 _FENCE = re.compile(r"^\s*```")
 _ABBREVIATION = re.compile(r"\b(?:e\.g|i\.e|etc|vs|cf|approx)\.$", re.IGNORECASE)
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
-_ON_PAGE_LINK = re.compile(r"\[[^\]]*\]\(#([a-z0-9-]+)\)")
+#: A link to a section, on the page itself (``(#anchor)``) or on another docs
+#: page (``(sibling.md#anchor)``): group 1 is the page, group 2 the anchor.
+_SECTION_LINK = re.compile(r"\[[^\]]*\]\(([\w./-]*)#([a-z0-9-]+)\)")
 
 
 def _defined_symbols() -> dict[str, str]:
@@ -261,21 +263,38 @@ class TestNoDocsPageCallsAShippedSymbolFuture:
 
 
 class TestTheWBCPagePointsAtTheCompositeSection:
-    """The intro sends a reader to the section that shows how to compose."""
+    """The intro sends a reader to the section that shows how to compose.
+
+    The section is free to live on another page - a link that names one is
+    resolved and read there - but it has to exist and to carry the call.
+    """
+
+    _PAGE = DOCS_DIR / "policies" / "wbc.md"
 
     @pytest.fixture
     def page(self) -> str:
-        return (DOCS_DIR / "policies" / "wbc.md").read_text(encoding="utf-8")
+        return self._PAGE.read_text(encoding="utf-8")
 
-    def test_the_first_composite_mention_links_to_a_heading_on_the_page(self, page: str) -> None:
+    def _linked_sections(self, page: str) -> list[tuple[Path, str, str]]:
+        """Every section the intro's composite paragraph links, as (path, anchor, text)."""
         intro = next(p for _, p in _prose_blocks(page) if "CompositePolicy" in p)
-        targets = _ON_PAGE_LINK.findall(intro)
-        assert targets, f"the intro names CompositePolicy without linking the section: {intro}"
-        anchors = _anchors(page)
-        dangling = [t for t in targets if t not in anchors]
-        assert not dangling, f"intro links {dangling}, which is not a heading on the page"
+        links = _SECTION_LINK.findall(intro)
+        assert links, f"the intro names CompositePolicy without linking the section: {intro}"
+        resolved = []
+        for target, anchor in links:
+            path = (self._PAGE.parent / target).resolve() if target else self._PAGE
+            resolved.append((path, anchor, path.read_text(encoding="utf-8")))
+        return resolved
+
+    def test_the_first_composite_mention_links_a_heading_that_exists(self, page: str) -> None:
+        for path, anchor, text in self._linked_sections(page):
+            assert anchor in _anchors(text), f"the intro links #{anchor}, which is not a heading of {path.name}"
 
     def test_the_composite_section_it_points_at_shows_the_call(self, page: str) -> None:
         """The linked section is the one carrying the runnable composite."""
-        assert "## Composing an upper body" in page
-        assert "CompositePolicy(" in page
+        carriers = [
+            path.name
+            for path, _, text in self._linked_sections(page)
+            if "## Composing an upper body" in text and "CompositePolicy(" in text
+        ]
+        assert carriers, "no page the intro links shows a runnable CompositePolicy(...) composite section"

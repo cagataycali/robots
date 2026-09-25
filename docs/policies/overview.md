@@ -45,7 +45,7 @@ own module name with no registry entry. Two ship, and neither is a registry
 provider because each wraps a policy you already hold rather than building one
 from config:
 
-- **`composite`** ([`CompositePolicy`](wbc.md#composing-an-upper-body-manipulation-on-top-of-wbc))
+- **`composite`** ([`CompositePolicy`](wbc-rollouts.md#composing-an-upper-body-manipulation-on-top-of-wbc))
   builds through the factory: `create_policy("composite", lower=..., upper=...)`.
 - **`persistent`** ([`PersistentPolicy`](persistent-worker.md)) resolves but
   cannot be built through `create_policy`: its first parameter is named
