@@ -36,15 +36,6 @@ _EXAMPLE_MODULE = "fleet_cross_zone_transport_example"
 _DASHBOARD_MODULE = "fleet_dashboard_example"
 
 
-def _reset_audit_state() -> None:
-    from strands_robots import audit
-
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._AUDIT_STATE.psk_fingerprint = None
-
-
 def _load(module_name: str, filename: str):
     spec = importlib.util.spec_from_file_location(module_name, _FLEET_DIR / filename)
     assert spec and spec.loader
@@ -59,11 +50,6 @@ def example(monkeypatch, tmp_path):
     """Load example 02 with the audit log confined to tmp_path and signed."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "smoke-test-psk")
-    # Reset the process-global audit state (same isolation as
-    # tests/mesh/test_audit_integrity.py): the PSK fingerprint and sequence
-    # counters are one-shot per process, so records written by earlier tests
-    # in the suite would otherwise poison this test's fresh, signed log.
-    _reset_audit_state()
     monkeypatch.syspath_prepend(str(_FLEET_DIR))
     for name in (_EXAMPLE_MODULE, "capabilities"):
         sys.modules.pop(name, None)
@@ -71,7 +57,6 @@ def example(monkeypatch, tmp_path):
     yield mod
     for name in (_EXAMPLE_MODULE, "capabilities"):
         sys.modules.pop(name, None)
-    _reset_audit_state()
 
 
 @pytest.fixture
@@ -79,12 +64,10 @@ def dash(monkeypatch, tmp_path):
     """Load dashboard.py with the audit log confined to tmp_path."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "smoke-test-psk")
-    _reset_audit_state()
     sys.modules.pop(_DASHBOARD_MODULE, None)
     mod = _load(_DASHBOARD_MODULE, "dashboard.py")
     yield mod
     sys.modules.pop(_DASHBOARD_MODULE, None)
-    _reset_audit_state()
 
 
 class _RecordingSend:

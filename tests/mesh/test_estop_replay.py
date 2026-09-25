@@ -224,13 +224,6 @@ class TestEstopRedundantAudit:
 
     def test_redundant_estop_emits_audit_event(self, tmp_path, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
-        # Reset audit state for isolated test (PR4 audit-tamper-evident
-        # adds these globals; on PR6 standalone they may not exist).
-        if hasattr(audit_mod, "_AUDIT_STATE"):
-            audit_mod._AUDIT_STATE.psk_fingerprint = None
-            audit_mod._AUDIT_STATE.seq_loaded = False
-        if hasattr(audit_mod, "_SEQ_COUNTERS"):
-            audit_mod._SEQ_COUNTERS.clear()
 
         class StubRobot:
             pass

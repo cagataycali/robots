@@ -20,16 +20,9 @@ import strands_robots.audit as audit
 
 @pytest.fixture(autouse=True)
 def _reset_audit_state(monkeypatch, tmp_path):
-    """Isolate each test from process-global PSK and audit dir state."""
+    """Point each test at its own audit dir with no PSK."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
-    audit._AUDIT_STATE.psk_fingerprint = None
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-    yield
-    audit._AUDIT_STATE.psk_fingerprint = None
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
 
 
 def _signed_record_under_psk(monkeypatch, psk_value: str) -> dict:

@@ -43,13 +43,10 @@ from strands_robots import audit
 
 @pytest.fixture
 def isolated_audit_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Provide an isolated audit directory and reset audit module state."""
+    """Provide an isolated audit directory."""
     audit_dir = tmp_path / "mesh_audit"
     audit_dir.mkdir()
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(audit_dir))
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._SEQ_COUNTERS.clear()
     return audit_dir
 
 

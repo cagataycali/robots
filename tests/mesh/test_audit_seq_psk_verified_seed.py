@@ -40,15 +40,9 @@ from strands_robots import audit
 
 @pytest.fixture
 def isolated_audit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """Point the audit module at an empty per-test dir and reset its state."""
+    """Point the audit module at an empty per-test dir."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
     yield tmp_path
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
 
 
 def _sign(record: dict, psk: bytes) -> str:

@@ -41,18 +41,8 @@ _MODULE_NAME = "fleet_emergency_evacuation_example"
 @pytest.fixture
 def example(monkeypatch, tmp_path):
     """Load the example with the audit log confined to tmp_path and signed."""
-    from strands_robots import audit
-
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "smoke-test-psk")
-    # Reset the process-global audit state (same isolation as
-    # tests/mesh/test_audit_integrity.py): the PSK fingerprint and sequence
-    # counters are one-shot per process, so records written by earlier tests
-    # in the suite would otherwise poison this test's fresh, signed log.
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._AUDIT_STATE.psk_fingerprint = None
     sys.modules.pop(_MODULE_NAME, None)
     spec = importlib.util.spec_from_file_location(_MODULE_NAME, _EXAMPLE_PATH)
     assert spec and spec.loader
@@ -61,10 +51,6 @@ def example(monkeypatch, tmp_path):
     spec.loader.exec_module(mod)
     yield mod
     sys.modules.pop(_MODULE_NAME, None)
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._AUDIT_STATE.psk_fingerprint = None
 
 
 def _coordinator_events(example):

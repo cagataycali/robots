@@ -45,18 +45,8 @@ _MODULE_NAME = "fleet_failover_and_degraded_ops_example"
 @pytest.fixture
 def example(monkeypatch, tmp_path):
     """Load the example with the audit log confined to tmp_path and signed."""
-    from strands_robots import audit
-
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "smoke-test-psk")
-    # Reset the process-global audit state (same isolation as
-    # tests/mesh/test_audit_integrity.py): the PSK fingerprint and sequence
-    # counters are one-shot per process, so records written by earlier tests
-    # in the suite would otherwise poison this test's fresh, signed log.
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._AUDIT_STATE.psk_fingerprint = None
     monkeypatch.syspath_prepend(str(_FLEET_DIR))
     for name in (_MODULE_NAME, "capabilities"):
         sys.modules.pop(name, None)
@@ -68,10 +58,6 @@ def example(monkeypatch, tmp_path):
     yield mod
     for name in (_MODULE_NAME, "capabilities"):
         sys.modules.pop(name, None)
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._AUDIT_STATE.psk_fingerprint = None
 
 
 class _StubFleet:

@@ -54,14 +54,6 @@ def _envelope(t: float, peer_id: str) -> SimpleNamespace:
     return SimpleNamespace(payload=SimpleNamespace(to_bytes=lambda r=raw: r))
 
 
-def _reset_audit_state() -> None:
-    if hasattr(audit_mod, "_AUDIT_STATE"):
-        audit_mod._AUDIT_STATE.psk_fingerprint = None
-        audit_mod._AUDIT_STATE.seq_loaded = False
-    if hasattr(audit_mod, "_SEQ_COUNTERS"):
-        audit_mod._SEQ_COUNTERS.clear()
-
-
 class TestEstopLockoutRace:
     def test_concurrent_distinct_issuer_estops_emit_one_engage_one_redundant(self, tmp_path, monkeypatch):
         """Two threads fire estops from distinct issuers; the lock must
@@ -79,7 +71,6 @@ class TestEstopLockoutRace:
         correctly observes the lockout already engaged.
         """
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
-        _reset_audit_state()
 
         m = _stub_mesh()
 

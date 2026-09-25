@@ -331,3 +331,62 @@ def _dashboard_auth_process_state_is_left_as_found() -> Iterator[None]:
             current.update(born)
         else:
             setattr(module, name, born)
+
+
+#: The one-shot flags :mod:`strands_robots.audit` parks on ``_AUDIT_STATE``, and
+#: the value each is born with. Restored by
+#: :func:`_audit_process_state_is_left_as_found` below, together with the
+#: ``_SEQ_COUNTERS`` table that is born empty, and graded against the module's
+#: own bindings in
+#: ``tests/test_process_globals_do_not_cross_a_test_boundary.py``, so a fourth
+#: flag cannot appear there without a decision here.
+AUDIT_PROCESS_FLAGS: dict[str, object] = {
+    "seq_loaded": False,
+    "audit_log_seeded": False,
+    "psk_fingerprint": None,
+}
+
+
+@pytest.fixture(autouse=True)
+def _audit_process_state_is_left_as_found() -> Iterator[None]:
+    """Leave the safety audit log's process state as the session found it.
+
+    :mod:`strands_robots.audit` keeps four pieces of process state: the per-peer
+    sequence counters (``_SEQ_COUNTERS``, born empty) and three one-shot flags on
+    ``_AUDIT_STATE`` - ``seq_loaded`` and ``audit_log_seeded``, which gate the
+    sidecar read and the O(records) audit-log walk to once per process, and
+    ``psk_fingerprint``, the fingerprint of the PSK the first record was signed
+    under. A leaked fingerprint is the sharp one: the next test to write under a
+    different ``STRANDS_MESH_AUDIT_PSK`` is not signed under it, it is refused as
+    a mid-run rotation and replaced by a ``PSK_DEGRADED`` poison record.
+
+    Measured over the twenty-five modules that touch it, run in one process:
+    eleven of the twenty-four module boundaries handed the next module dirty
+    state - ``test_audit_serialise_safety`` and ``test_estop_lockout_race`` hand
+    on all four dirty, ``test_verify_unverifiable_signed`` hands five seq
+    counters to the fleet examples, and ``test_audit_log_symlink_refused`` hands
+    on a PSK fingerprint.
+
+    Every one of those modules reset some of it in a fixture of its own, and no
+    two reset the same set: eleven left ``psk_fingerprint`` out, two left
+    ``_SEQ_COUNTERS`` out, two left ``audit_log_seeded`` out. Restoring here
+    rather than in each caller makes it a property of the session and covers the
+    names a caller left out. Resets *inside* a test - the "simulate a fresh
+    process" reload, the flag a test pins ``True`` to keep the log walk out of
+    its subject - stay where they are; they are the test's own subject, not
+    isolation.
+
+    The module is looked up rather than imported so a session that never writes a
+    safety event does not pull it in. All four are born empty or ``False`` or
+    ``None``, so the born values can be stated here and a module first imported
+    during a test is restored as correctly as one imported at collection.
+    """
+    yield
+    module = sys.modules.get("strands_robots.audit")
+    if module is None:
+        return
+    if module._SEQ_COUNTERS:
+        module._SEQ_COUNTERS.clear()
+    for name, born in AUDIT_PROCESS_FLAGS.items():
+        if getattr(module._AUDIT_STATE, name) != born:
+            setattr(module._AUDIT_STATE, name, born)

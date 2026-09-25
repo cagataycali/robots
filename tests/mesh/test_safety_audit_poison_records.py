@@ -21,13 +21,6 @@ from strands_robots import audit
 @pytest.fixture(autouse=True)
 def _isolate_audit_state(tmp_path, monkeypatch):
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._SEQ_COUNTERS.clear()
-    yield
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._SEQ_COUNTERS.clear()
 
 
 # --------------------------------------------------------------------------- #

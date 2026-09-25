@@ -221,13 +221,8 @@ class TestSeqLockDegradedPoisonRecord:
         os.symlink(str(target), str(lockfile))
         assert lockfile.is_symlink()
 
-        # Reset state
-        if hasattr(audit_mod, "_AUDIT_STATE"):
-            audit_mod._AUDIT_STATE.psk_fingerprint = None
-            audit_mod._AUDIT_STATE.seq_loaded = False
-            audit_mod._AUDIT_STATE.audit_log_seeded = True
-        if hasattr(audit_mod, "_SEQ_COUNTERS"):
-            audit_mod._SEQ_COUNTERS.clear()
+        # The write path is the subject: do not walk the log to seed counters.
+        audit_mod._AUDIT_STATE.audit_log_seeded = True
 
         # log_safety_event must NOT crash; instead it writes a poison record
         audit_mod.log_safety_event("test_event", "victim-peer", {"k": "v"})

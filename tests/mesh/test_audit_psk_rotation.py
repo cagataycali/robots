@@ -29,13 +29,6 @@ import strands_robots.audit as audit
 def _reset_audit_state(monkeypatch, tmp_path):
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
-    audit._AUDIT_STATE.psk_fingerprint = None
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-    yield
-    audit._AUDIT_STATE.psk_fingerprint = None
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
 
 
 def test_psk_value_rotation_drops_record(monkeypatch, caplog):

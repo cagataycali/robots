@@ -1,9 +1,9 @@
 """Every process-global a test dirties is as the session found it by the next test.
 
-Four bindings in this package outlive the test that fills them - the mesh
-rate-limit window, the optional-dependency memo, the predicate registry and the
-dashboard's auth state - so the test that fills one decides what a later test
-reads. ``tests/conftest.py`` restores each in an autouse fixture, and the pin is
+Five bindings in this package outlive the test that fills them - the mesh
+rate-limit window, the optional-dependency memo, the predicate registry, the
+dashboard's auth state and the safety audit log's sequence counters and one-shot
+flags - so the test that fills one decides what a later test reads. ``tests/conftest.py`` restores each in an autouse fixture, and the pin is
 one shape: dirty it in one cell, find it as found in the next, with no fixture in
 this file. Three files each pinned one global in that shape; the shape is a table
 now, one row per global, so a global that joins the session's set joins the pin
@@ -27,11 +27,12 @@ from pathlib import Path
 
 import pytest
 
+import strands_robots.audit as audit
 import strands_robots.dashboard.auth as auth
 import strands_robots.tools.robot_mesh as rmt
 from strands_robots.simulation.predicates import PREDICATE_REGISTRY, register_predicate
 from strands_robots.utils import require_optional
-from tests.conftest import DASHBOARD_AUTH_PROCESS_STATE
+from tests.conftest import AUDIT_PROCESS_FLAGS, DASHBOARD_AUTH_PROCESS_STATE
 
 #: The mesh action whose window a row spends. Any of them would do; this one is
 #: the rate-limited verb the tool's own tests drain.
@@ -108,6 +109,27 @@ def _dashboard_auth_state_is_as_found() -> bool:
     return all(getattr(auth, name) == born for name, born in DASHBOARD_AUTH_PROCESS_STATE.items())
 
 
+def _fill_the_audit_process_state(_monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fill all four at once: a caller that reset three of them left one behind.
+
+    Written onto the globals rather than through :func:`audit.log_safety_event`
+    so the row needs no audit directory of its own - what is pinned is the
+    restore, not how the state got there. ``audit_log_seeded`` has no cheaper
+    fill in any case: the only path that sets it is the audit-log walk a
+    corrupt sidecar falls back to.
+    """
+    audit._SEQ_COUNTERS["a peer only this test wrote as"] = 1
+    audit._AUDIT_STATE.seq_loaded = True
+    audit._AUDIT_STATE.audit_log_seeded = True
+    audit._AUDIT_STATE.psk_fingerprint = b"a fingerprint only this test saw"
+
+
+def _audit_process_state_is_as_found() -> bool:
+    return not audit._SEQ_COUNTERS and all(
+        getattr(audit._AUDIT_STATE, name) == born for name, born in AUDIT_PROCESS_FLAGS.items()
+    )
+
+
 PROCESS_GLOBALS = [
     ProcessGlobal(
         "the mesh rate-limit window", _spend_the_mesh_window, lambda: rmt._rate_limit_check(MESH_ACTION) is None
@@ -115,6 +137,7 @@ PROCESS_GLOBALS = [
     ProcessGlobal("the optional-dependency memo", _memoise_a_stand_in, _memo_is_as_found),
     ProcessGlobal("the predicate registry", _register_a_predicate, lambda: PREDICATE_NAME not in PREDICATE_REGISTRY),
     ProcessGlobal("the dashboard auth state", _fill_the_dashboard_auth_state, _dashboard_auth_state_is_as_found),
+    ProcessGlobal("the audit process state", _fill_the_audit_process_state, _audit_process_state_is_as_found),
 ]
 
 _IDS = [state.label for state in PROCESS_GLOBALS]
@@ -154,6 +177,29 @@ def test_the_dashboard_auth_roster_names_every_global_that_module_keeps() -> Non
         and not isinstance(value, (types.ModuleType, *locks))
     }
     assert discovered == set(DASHBOARD_AUTH_PROCESS_STATE)
+
+
+def test_the_audit_roster_names_every_piece_of_state_that_module_keeps() -> None:
+    """A fourth flag, or a second table, joins the roster - or this cell says so.
+
+    Two things can grow: the flags parked on ``_ProcessAuditState``, whose
+    ``__slots__`` is the module's own list of them, and the mutable module-level
+    bindings themselves. A flag added to that class, or a second per-peer table
+    beside ``_SEQ_COUNTERS``, would be restored by nobody - which is how
+    twenty-five callers came to reset four different subsets. Discovered rather
+    than trusted: a module-level binding that is a dict, or whose type is defined
+    in the module, is mutable state; the rest of the private names there are
+    ``int`` / ``str`` / ``Path`` constants and locks.
+    """
+    assert set(audit._ProcessAuditState.__slots__) == set(AUDIT_PROCESS_FLAGS)
+    mutable = {
+        name
+        for name, value in vars(audit).items()
+        if name.startswith("_")
+        and not name.startswith("__")
+        and (isinstance(value, dict) or type(value).__module__ == audit.__name__)
+    }
+    assert mutable == {"_SEQ_COUNTERS", "_AUDIT_STATE"}
 
 
 def test_a_session_that_first_imports_the_registry_inside_a_test_keeps_the_shipped_set() -> None:

@@ -24,7 +24,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from strands_robots import audit
 from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh import security as mesh_security
 
@@ -57,15 +56,6 @@ def isolated_audit(monkeypatch, tmp_path):
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "pin-psk")
     monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", CODE)
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._AUDIT_STATE.psk_fingerprint = None
-    yield
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._AUDIT_STATE.psk_fingerprint = None
 
 
 def _record_everything(monkeypatch):

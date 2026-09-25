@@ -26,18 +26,9 @@ from strands_robots import audit
 
 @pytest.fixture(autouse=True)
 def _isolated_audit(monkeypatch, tmp_path):
-    """Each test gets a fresh audit dir and reset sequence counter."""
+    """Each test gets a fresh audit dir and no PSK."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False  # reset so tests are deterministic
-    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-    audit._AUDIT_STATE.psk_fingerprint = None  # reset PSK snapshot too
-    yield
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-    audit._AUDIT_STATE.psk_fingerprint = None
 
 
 def _read_lines(p: Path) -> list[dict]:
@@ -368,11 +359,6 @@ def test_psk_degrade_drops_record(monkeypatch, tmp_path, caplog):
     """
 
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
-    # Reset audit state for this test.
-    audit._AUDIT_STATE.psk_fingerprint = None
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-    audit._SEQ_COUNTERS.clear()
 
     # Phase 1: PSK is set, first record is signed.
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "test-psk-secret")
@@ -425,11 +411,6 @@ def test_psk_degrade_unsigned_to_signed_drops_record(monkeypatch, tmp_path, capl
     """
 
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
-    # Reset audit state.
-    audit._AUDIT_STATE.psk_fingerprint = None
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-    audit._SEQ_COUNTERS.clear()
 
     # Phase 1: PSK is unset, first record is unsigned.
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
@@ -543,11 +524,6 @@ class TestPSKStateLock:
         """
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
         monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "test-psk-concurrent")
-        # Reset state
-        audit._AUDIT_STATE.psk_fingerprint = None
-        audit._AUDIT_STATE.seq_loaded = False
-        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-        audit._SEQ_COUNTERS.clear()
 
         errors: list[Exception] = []
 
@@ -586,10 +562,6 @@ class TestAuditFailSoft:
 
     def test_sign_record_runtime_error_does_not_crash(self, tmp_path, monkeypatch, caplog):
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
-        audit._AUDIT_STATE.psk_fingerprint = None
-        audit._AUDIT_STATE.seq_loaded = False
-        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-        audit._SEQ_COUNTERS.clear()
 
         # Patch _sign_record to raise an unexpected RuntimeError
 
@@ -632,11 +604,6 @@ class TestR22ASeedRequiresHmacWithPSK:
     def test_unsigned_records_skipped_with_psk(self, tmp_path, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
         monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "real-psk")
-        # Reset module state
-        audit._AUDIT_STATE.psk_fingerprint = None
-        audit._AUDIT_STATE.seq_loaded = False
-        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-        audit._SEQ_COUNTERS.clear()
 
         # Write a legitimate record (signed)
         audit.log_safety_event("legit", "operator-1", {"i": 1})
@@ -675,10 +642,6 @@ class TestR22ASeedRequiresHmacWithPSK:
         record -- the threat model accepts writers in the audit dir."""
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
         monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
-        audit._AUDIT_STATE.psk_fingerprint = None
-        audit._AUDIT_STATE.seq_loaded = False
-        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-        audit._SEQ_COUNTERS.clear()
 
         # Write an unsigned record (legitimate dev-mode write)
         log_path = audit.audit_log_path()
@@ -722,10 +685,6 @@ class TestF14SignFailedPoisonRecord:
     def test_psk_configured_sign_failure_writes_poison(self, tmp_path, monkeypatch, caplog):
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
         monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "real-psk")
-        audit._AUDIT_STATE.psk_fingerprint = None
-        audit._AUDIT_STATE.seq_loaded = False
-        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-        audit._SEQ_COUNTERS.clear()
 
         # Patch _sign_record to raise an unexpected RuntimeError
         def boom(record):
@@ -751,10 +710,6 @@ class TestF14SignFailedPoisonRecord:
         (no poison) since there's no integrity gate to preserve."""
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
         monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
-        audit._AUDIT_STATE.psk_fingerprint = None
-        audit._AUDIT_STATE.seq_loaded = False
-        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-        audit._SEQ_COUNTERS.clear()
 
         def boom(record):
             raise RuntimeError("dev-mode failure")

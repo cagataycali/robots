@@ -371,23 +371,12 @@ def _audit_log_lines_the_section_quotes() -> set[str]:
 def isolated_audit(monkeypatch, tmp_path):
     """Point the audit writer at a scratch directory with no PSK.
 
-    Mirrors the isolation fixture in ``tests/mesh/test_audit_integrity.py``:
-    the sequence counters and the per-run PSK fingerprint snapshot are process
-    globals, so a behavioural cell that does not reset them inherits whatever
-    an earlier test left behind.  Deliberately opt-in rather than autouse - the
-    documentation rules above must read the page, not a patched environment.
+    Deliberately opt-in rather than autouse - the documentation rules above must
+    read the page, not a patched environment.
     """
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._AUDIT_STATE.psk_fingerprint = None
     yield tmp_path
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._AUDIT_STATE.psk_fingerprint = None
 
 
 def test_the_section_names_the_field_the_signature_is_written_into():

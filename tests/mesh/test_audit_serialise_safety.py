@@ -32,15 +32,8 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _audit_tmp_dir(monkeypatch, tmp_path):
-    """Point the audit log at a temp directory and reset module state."""
+    """Point the audit log at a temp directory."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
-    # Reset module-level state so each test starts clean.
-    from strands_robots import audit
-
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._AUDIT_STATE.psk_fingerprint = None
-    audit._SEQ_COUNTERS.clear()
 
 
 class TestLogSafetyEventNonSerialisablePayload:

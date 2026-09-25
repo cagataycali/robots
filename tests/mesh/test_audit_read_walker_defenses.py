@@ -43,18 +43,9 @@ from strands_robots import audit
 
 @pytest.fixture(autouse=True)
 def _isolated_audit(monkeypatch, tmp_path):
-    """Fresh audit dir + reset module state for each test."""
+    """Fresh audit dir and no PSK for each test."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._AUDIT_STATE.psk_fingerprint = None
-    yield
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._AUDIT_STATE.psk_fingerprint = None
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="platform without symlink support")

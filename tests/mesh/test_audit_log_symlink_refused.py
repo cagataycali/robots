@@ -32,20 +32,14 @@ from strands_robots import audit
 
 @pytest.fixture(autouse=True)
 def _isolate_audit_state(tmp_path, monkeypatch):
-    """Each test starts with a fresh audit dir + reset module state.
+    """Each test starts with a fresh audit dir and no seed-from-log walk.
 
     ``audit_log_seeded`` is pinned True so ``_next_seq`` does not walk the
     audit log to seed counters -- these tests target the WRITE path, not the
     seed-from-log fallback, and a symlinked log must not be read either.
     """
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
-    audit._AUDIT_STATE.seq_loaded = False
     audit._AUDIT_STATE.audit_log_seeded = True
-    audit._SEQ_COUNTERS.clear()
-    yield
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False
-    audit._SEQ_COUNTERS.clear()
 
 
 def test_log_event_writes_real_private_record(tmp_path) -> None:

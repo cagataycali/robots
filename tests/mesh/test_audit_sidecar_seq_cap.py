@@ -32,14 +32,7 @@ from strands_robots import audit
 def isolated_audit(tmp_path, monkeypatch):
     """Point the audit module at an empty per-test temp dir."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
-    # Reset module-level state so each test starts from a clean slate.
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
     yield tmp_path
-    audit._SEQ_COUNTERS.clear()
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
 
 
 def _write_sidecar(tmp_path: Path, payload: dict) -> Path:

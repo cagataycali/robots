@@ -23,10 +23,6 @@ def isolated_audit_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     audit_dir = tmp_path / "mesh_audit"
     audit_dir.mkdir()
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(audit_dir))
-    # Reset audit state
-    audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
-    audit._SEQ_COUNTERS.clear()
     return audit_dir
 
 
