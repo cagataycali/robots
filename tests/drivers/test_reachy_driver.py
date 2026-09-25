@@ -46,6 +46,16 @@ _LITE_STATUS: dict[str, Any] = {"wireless_version": False, "motors": "on", "cont
 _WIRELESS_STATUS: dict[str, Any] = {"wireless_version": True, "motors": "on"}
 
 
+@pytest.fixture(autouse=True)
+def _every_link_this_test_starts_is_released(reachy_links_released: list[ReachyDriver]) -> None:
+    """Module-wide: the loop thread a connected driver owns ends with the test that connected it.
+
+    Almost every test here connects through :func:`_connected` and few need the
+    driver afterwards, so the teardown is the shared fixture's rather than a
+    ``cleanup()`` line in each. See ``tests/drivers/conftest.py`` and #4029.
+    """
+
+
 class _RecordingLink:
     """A ``HardwareLink`` that records commands and replays sensor payloads.
 

@@ -40,6 +40,16 @@ _DESKTOP_LITE_IN_ERROR: dict[str, Any] = {
 _REFUSED: dict[str, Any] = {"error": "<urlopen error [Errno 61] Connection refused>"}
 
 
+@pytest.fixture(autouse=True)
+def _every_link_this_test_starts_is_released(reachy_links_released: list[ReachyDriver]) -> None:
+    """Module-wide: the loop thread a connected driver owns ends with the test that connected it.
+
+    A discovery test connects to grade which daemon was chosen and has no further
+    use for the driver, so the teardown is the shared fixture's. See
+    ``tests/drivers/conftest.py`` and #4029.
+    """
+
+
 class _HostTable:
     """A transport double that answers ``/api/daemon/status`` per host and records every call."""
 

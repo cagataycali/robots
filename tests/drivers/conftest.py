@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""A hardware-shaped Feetech servo bus, shared by the bus and driver tests.
+"""Fixtures shared by the driver tests: a hardware-shaped Feetech servo bus, and
+the teardown every Reachy link a test starts is owed.
 
 :class:`FakeServoPort` stands in for ``serial.Serial``. It is deliberately
 *shaped like the hardware* rather than a bare mock: it answers a READ with a
@@ -13,13 +14,26 @@ The frame it builds is the one
 :func:`strands_robots.drivers.feetech.protocol.parse_status_packet` verifies -
 they are written from the same datasheet layout, and if they ever disagree the
 read tests fail, which is the point.
+
+:func:`reachy_links_released` is the other half. A
+:class:`~strands_robots.drivers.reachy.ReachyDriver` that connects owns a thread
+running an asyncio loop until :meth:`~strands_robots.drivers.reachy.ReachyDriver.cleanup`
+closes it, and a test that connects one and returns leaves that thread on the
+xdist worker for the rest of its run - 114 of them across the two Reachy test
+modules, measured on CI run ``36095655976`` (#4029). The fixture is where that
+teardown lives, so a test module opts in once rather than every test spelling it.
 """
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Iterator
+from typing import Any
+
 import pytest
 
 from strands_robots.drivers.feetech.bus import FeetechBus
+from strands_robots.drivers.reachy import ReachyDriver
 
 
 class FakeServoPort:
@@ -145,3 +159,50 @@ MIDPOINT_COUNTS: dict[int, int] = dict.fromkeys((1, 2, 3, 4, 5, 6), 2048)
 def servo_port() -> FakeServoPort:
     """A six-servo SO-arm sitting at the middle of every joint's range."""
     return FakeServoPort(MIDPOINT_COUNTS)
+
+
+def _threads_started_since(before: set[int | None]) -> list[threading.Thread]:
+    """Threads alive now whose ident was not in ``before``."""
+    return [thread for thread in threading.enumerate() if thread.ident not in before and thread.is_alive()]
+
+
+@pytest.fixture
+def reachy_links_released(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[ReachyDriver]]:
+    """Every Reachy driver that starts a link during the test, cleaned up when it ends.
+
+    The drivers are recorded at
+    :meth:`~strands_robots.drivers.reachy.ReachyDriver._start_link`, the one site
+    that creates the loop and the thread ``cleanup`` is the counterpart of, so a
+    driver reached through a module helper, the ``Robot()`` factory or a direct
+    construction is recorded the same way and none of the call sites has to hand
+    it back. A driver whose link failed to start has already released its loop
+    and is recorded too; ``cleanup`` is idempotent, so calling it again on that
+    one, or on a driver the test cleaned up itself, is a no-op.
+
+    The teardown then refuses a thread that started during the test and is still
+    alive after every recorded driver was cleaned up, named by target. That is
+    the pin (#4029): the cleanup above is what makes it pass, and a link started
+    by some path this fixture does not see fails the test that started it rather
+    than surviving to the end of the worker as an idle ``run_forever`` with its
+    selector and self-pipe open.
+
+    Yields:
+        The recorded drivers, in the order their links started, for a test that
+        wants to assert on them.
+    """
+    before = {thread.ident for thread in threading.enumerate()}
+    started: list[ReachyDriver] = []
+    real_start_link = ReachyDriver._start_link
+
+    def _recording_start_link(self: ReachyDriver, link: Any) -> str | None:
+        started.append(self)
+        return real_start_link(self, link)
+
+    monkeypatch.setattr(ReachyDriver, "_start_link", _recording_start_link)
+    yield started
+    for driver in started:
+        driver.cleanup()
+    leftover = _threads_started_since(before)
+    assert not leftover, "threads this test started are still running after its teardown:\n" + "\n".join(
+        f"  {thread.name}: target={getattr(thread, '_target', None)!r}" for thread in leftover
+    )
