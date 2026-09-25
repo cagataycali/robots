@@ -253,10 +253,11 @@ class TestTheSourceFilterReadsTheNameThePredicateReads:
 
         offenders = _offending_cells({"RosTelemetryBridge"}, tests_root=root)
 
-        assert offenders == [
+        expected = (
             "tests/test_probe.py::test_reaches_the_probe_without_establishing_the_absence "
             "reaches ['RosTelemetryBridge'] expecting ImportError"
-        ]
+        )
+        assert offenders == [expected]
 
     def test_the_same_cell_establishing_the_absence_is_not_reported(self, tmp_path: pathlib.Path) -> None:
         """Control: the file is parsed (it carries the name) and the rule clears it."""
