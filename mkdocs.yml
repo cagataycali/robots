@@ -37,6 +37,7 @@ nav:
   - Domain Randomization: simulation/domain-randomization.md
   - Newton Backend (GPU): simulation/newton.md
   - Isaac Sim Backend (GPU): simulation/isaac.md
+  - Isaac Parity and Fleet Replication: simulation/isaac-parity.md
 - Real Hardware:
   - Robot Control: hardware/robot-control.md
   - Teleoperation: hardware/teleoperation.md
