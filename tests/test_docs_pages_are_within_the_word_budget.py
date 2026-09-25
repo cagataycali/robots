@@ -41,7 +41,6 @@ _OVER_BUDGET = frozenset(
         "api-reference.md",
         "data/episode-labels.md",
         "device-connect.md",
-        "getting-started/robot-factory.md",
         "hardware/teleoperation.md",
         "inference/remote.md",
         "policies/cosmos3.md",

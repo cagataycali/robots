@@ -34,6 +34,10 @@ from strands_robots.robot import Robot, _mesh_env_opt_in
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DOC = _REPO_ROOT / "docs" / "getting-started" / "robot-factory.md"
+#: The ``driver="strands"`` contract, including the refusal transcript the last
+#: class here grades. The factory page states the choice; this one states the
+#: contract.
+_NATIVE_DRIVERS_DOC = _REPO_ROOT / "docs" / "hardware" / "native-drivers.md"
 
 _VARIADIC = (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
 
@@ -273,7 +277,8 @@ class TestTheMeshSectionNamesTheSpellingThatEnablesMesh:
 class TestTheNativeDriverRefusalExampleIsStillTrue:
     """The ``driver="strands"`` refusal example must name a robot that has no driver.
 
-    The page shows the refusal verbatim, as a ``>>>`` transcript, so it reads as
+    The example lives on ``docs/hardware/native-drivers.md``, beside the rest of
+    the native-driver contract. That page shows the refusal verbatim, as a ``>>>`` transcript, so it reads as
     something the reader could paste. That makes it the one block on the page
     whose *premise* can rot without a word of it changing: a robot named here
     because it had no native driver acquires one the day a driver package
@@ -313,7 +318,7 @@ class TestTheNativeDriverRefusalExampleIsStillTrue:
             AssertionError: If the page ships no such block - the guard would
                 otherwise report clean having read nothing.
         """
-        text = _DOC.read_text(encoding="utf-8")
+        text = _NATIVE_DRIVERS_DOC.read_text(encoding="utf-8")
         blocks = [
             block
             for block in re.findall(r"```[a-z]*\n(.*?)```", text, re.DOTALL)
@@ -382,7 +387,7 @@ class TestTheNativeDriverRefusalExampleIsStillTrue:
 
     def test_the_page_names_the_live_listing_helper(self) -> None:
         """A captured list is only honest if the page says where the live one is."""
-        assert "list_native_drivers()" in _DOC.read_text(encoding="utf-8"), (
+        assert "list_native_drivers()" in _NATIVE_DRIVERS_DOC.read_text(encoding="utf-8"), (
             "The transcript's list of natively driven robots is a capture, so the page must name "
             "list_native_drivers() as the way to get the current one."
         )

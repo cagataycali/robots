@@ -246,7 +246,7 @@ class TestTheHealthyBringUpIsUnchanged:
 class TestTheDocumentedReasonIsTheRealOne:
     """The reference page quotes this reason, so the quote is part of the contract.
 
-    ``docs/getting-started/robot-factory.md`` shows the give-up reason as the output
+    ``docs/hardware/reachy-mini.md`` shows the give-up reason as the output
     of ``Robot("reachy_mini", mode="real").connect_eagerly()``. A quoted output rots
     the moment the surface it quotes changes, so it is derived from the driver here
     rather than repeated - the same relation the page's transport-import quote is
@@ -256,7 +256,7 @@ class TestTheDocumentedReasonIsTheRealOne:
     @staticmethod
     def _quoted_reason() -> str:
         """The give-up reason the reference page quotes, unwrapped to one line."""
-        page = Path(reachy_mod.__file__).parents[2] / "docs" / "getting-started" / "robot-factory.md"
+        page = Path(reachy_mod.__file__).parents[2] / "docs" / "hardware" / "reachy-mini.md"
         text = page.read_text(encoding="utf-8")
         blocks = [c for c in text.split("```") if "did not finish its handshake" in c]
         assert len(blocks) == 1, f"expected exactly one quoted handshake reason, found {len(blocks)}"

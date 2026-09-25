@@ -361,7 +361,7 @@ class TestTheReasonPrescribesNothingItCannotEstablish:
 class TestTheDocumentedReasonIsTheRealOne:
     """The reference page quotes this reason, so the quote is part of the contract.
 
-    ``docs/getting-started/robot-factory.md`` shows the refusal as the output of
+    ``docs/hardware/reachy-mini.md`` shows the refusal as the output of
     ``Robot("reachy_mini", mode="real").connect_eagerly()``. A quoted output rots the
     moment the surface it quotes changes, and nothing read that block: the page's own
     suite grades other sections, so the quote carried a remedy the code had stopped
@@ -372,7 +372,7 @@ class TestTheDocumentedReasonIsTheRealOne:
     @staticmethod
     def _quoted_reason() -> str:
         """The reason the reference page quotes, unwrapped to a single line."""
-        page = Path(reachy_mod.__file__).parents[2] / "docs" / "getting-started" / "robot-factory.md"
+        page = Path(reachy_mod.__file__).parents[2] / "docs" / "hardware" / "reachy-mini.md"
         text = page.read_text(encoding="utf-8")
         # Selected by its subject, not by being the page's only such block: the page
         # quotes more than one ``connect_eagerly`` reason, and the resolver's is the
