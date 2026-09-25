@@ -841,7 +841,15 @@ UV_TORCH_BACKEND = "{env:UV_TORCH_BACKEND:auto}"
 # `-n logical` -> `created: 2/2 workers`, 118.57 s at 101% CPU - which puts the
 # required check back in the 60-minute reap band #3869 exists to leave.
 # `logical` reads the CPUs the kernel schedules on, so it is 2 on both kinds.
-test = "pytest -n logical --dist loadfile {args:tests}"
+#
+# `--maxprocesses=2` is the ceiling that keeps `logical` a FLOOR: on a
+# two-core/four-thread runner `logical` is 4, and four workers do not finish
+# this suite - three consecutive attempts of one commit were killed mid-session
+# with "the runner has received a shutdown signal" at 85%, 17 min and 98%, each
+# reporting `created: 4/4 workers`, where every completed run of the same suite
+# had two. Two is the measured count, and the cap says so without taking
+# `logical`'s floor away from a one-core/two-thread runner.
+test = "pytest -n logical --maxprocesses=2 --dist loadfile {args:tests}"
 test-integ = "pytest tests_integ/ -v --timeout=300 {args}"
 lint = ["ruff check strands_robots tests tests_integ", "ruff format --check strands_robots tests tests_integ", "mypy strands_robots tests tests_integ"]
 format = ["ruff check --fix strands_robots tests tests_integ", "ruff format strands_robots tests tests_integ"]

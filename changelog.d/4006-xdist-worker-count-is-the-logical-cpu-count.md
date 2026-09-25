@@ -13,6 +13,14 @@ schedules on and is 2 on both kinds; `loadfile`, the `addopts` split and the
 single-process `test-integ` are unchanged. The pin asserts `logical` and carries
 the measurement in its message.
 
+`logical` is a floor, so it needs a ceiling: on a two-core/four-thread runner it
+is 4, and four workers did not finish this suite - three consecutive attempts of
+one commit were killed mid-session with "the runner has received a shutdown
+signal" at 85%, 17 min and 98%, each reporting `created: 4/4 workers`, where
+every completed run of the same suite had two. `--maxprocesses=2` caps it at the
+count that completes without taking the floor away from a one-core/two-thread
+runner.
+
 Two camera-recording tests asserted a capture RATE where they meant a captured
 frame: they slept a fixed 0.4s / 0.2s and then read the MP4s, and the recorder
 thread samples wall time, so a host whose cores are busy elsewhere had not

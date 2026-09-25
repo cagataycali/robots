@@ -1,7 +1,7 @@
 """Distribution is a property of the ``test`` script, not of the repository.
 
 ``hatch run test`` spreads the unit suite over the cores with ``-n logical
---dist loadfile``. Those flags could equally sit in ``[tool.pytest.ini_options].addopts``,
+--maxprocesses=2 --dist loadfile``. Those flags could equally sit in ``[tool.pytest.ini_options].addopts``,
 and that is where a first cut put them -- but ``addopts`` is read by every
 pytest invocation rooted here, ``hatch run test-integ`` included, and the
 integration suite is the one population that cannot run two files at once:
@@ -51,6 +51,12 @@ def test_the_test_script_distributes_one_worker_per_file(pyproject: dict) -> Non
         "because xdist resolves auto through psutil to the physical core count and a "
         "one-core/two-thread runner then gets one worker (measured: 249 s against 118 s for "
         "logical, same 9,456 tests, same runner)"
+    )
+    assert "--maxprocesses=2" in tokens, (
+        f"the test script distributes without a worker ceiling ({script!r}); `logical` is 4 on a "
+        "two-core/four-thread runner, and four workers did not finish this suite - three "
+        "consecutive attempts of one commit were killed mid-session by a runner shutdown at "
+        "85%, 17 min and 98%, each `created: 4/4 workers`, where two workers complete it"
     )
     assert "--dist" in tokens and tokens[tokens.index("--dist") + 1] == "loadfile", (
         f"the test script distributes without loadfile ({script!r}); the file-scoped fixtures "
