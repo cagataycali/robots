@@ -59,6 +59,23 @@ _MJCF = '<mujoco model="probe"><worldbody><geom type="box" size="1 1 1"/></world
 #: Two descriptions, as two robots sharing one upstream repository would be.
 _NAMES = ("probealpha_mj_description", "probebeta_mj_description")
 
+# A description that clones the way a real one does: through the package's
+# ``_cache.clone_to_cache``, bound at import time - so once the session has
+# wrapped that name, the clone runs inside this module's lock.
+_CLONING_DESCRIPTION_BODY = """
+from robot_descriptions._cache import clone_to_cache as _clone_to_cache
+
+REPOSITORY_PATH = _clone_to_cache("probe_repository")
+MJCF_PATH = REPOSITORY_PATH
+"""
+
+_CACHE_BODY = """
+def clone_to_cache(description_name, commit=None):
+    return "/cache/" + description_name
+"""
+
+_CLONING_NAME = "probegamma_mj_description"
+
 
 class _Probe:
     """Records how many description imports were inside the clone at once."""
@@ -95,6 +112,8 @@ def probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Probe]:
     (package / "bot.xml").write_text(_MJCF)
     for name in _NAMES:
         (tmp_path / f"{name}.py").write_text(_DESCRIPTION_BODY)
+    (tmp_path / f"{_CLONING_NAME}.py").write_text(_CLONING_DESCRIPTION_BODY)
+    (tmp_path / "_cache.py").write_text(_CACHE_BODY)
 
     state = _Probe(package)
     module = ModuleType("_clone_probe")
@@ -107,7 +126,7 @@ def probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Probe]:
     parent = ModuleType("robot_descriptions")
     parent.__path__ = [str(tmp_path)]  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "robot_descriptions", parent)
-    for name in _NAMES:
+    for name in (*_NAMES, _CLONING_NAME, "_cache"):
         monkeypatch.delitem(sys.modules, f"robot_descriptions.{name}", raising=False)
     monkeypatch.setenv(dc.CACHE_ENV, str(tmp_path / "cache"))
     monkeypatch.setattr(discovery, "_DISCOVER_CACHE", {}, raising=False)
@@ -276,3 +295,49 @@ def test_a_collecting_worker_waits_on_the_lock_a_package_caller_holds(
     worker.join(timeout=30)
 
     assert cloned.is_set(), "the collecting worker never cloned once the lock was released"
+
+
+def test_a_description_that_clones_inside_the_import_does_not_wait_on_itself(probe: _Probe) -> None:
+    """The lock is re-entrant on its holder, so the session's wrapper cannot deadlock the package.
+
+    :func:`~strands_robots._description_cache.import_description` holds the lock
+    across the import, and a real description clones *during* that import
+    through ``_cache.clone_to_cache`` - which the session has wrapped in the
+    same lock. ``flock`` knows descriptors, not threads, so before the lock was
+    re-entrant the import parked on its own lock until ``pytest-timeout`` fired.
+    Run in a thread and bounded, so the pre-fix shape fails rather than hangs.
+    """
+    assert serialize_description_clones() is True
+    result: dict[str, object] = {}
+
+    def import_it() -> None:
+        module: Any = dc.import_description(_CLONING_NAME)
+        result["path"] = module.REPOSITORY_PATH
+
+    worker = threading.Thread(target=import_it, daemon=True)
+    worker.start()
+    worker.join(timeout=10)
+
+    assert not worker.is_alive(), "the import is waiting on the lock its own caller holds"
+    assert result == {"path": "/cache/probe_repository"}, f"the description imported as {result}"
+
+
+def test_the_lock_is_released_when_the_outermost_block_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Re-entrancy is per thread and per lock file: a sibling still waits, and only until the holder is out."""
+    monkeypatch.setenv(dc.CACHE_ENV, str(tmp_path / "cache"))
+    acquired = threading.Event()
+
+    def sibling() -> None:
+        with dc.clone_lock():
+            acquired.set()
+
+    worker = threading.Thread(target=sibling, daemon=True)
+    with dc.clone_lock() as outer:
+        with dc.clone_lock() as inner:
+            assert inner == outer, "the nested block guards a different file"
+            worker.start()
+            assert not acquired.wait(0.25), "a sibling thread acquired the lock while this thread held it"
+        assert not acquired.wait(0.25), "the inner block released a lock the outer block still holds"
+    worker.join(timeout=30)
+
+    assert acquired.is_set(), "the sibling never acquired the lock once the outermost block exited"

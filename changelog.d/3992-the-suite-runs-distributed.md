@@ -36,3 +36,15 @@ upstream `clone_to_cache` in *that* module's lock, so a collecting worker and a
 package caller in one cache directory wait on one lock file instead of holding
 one each. Measured on a cold cache with two workers over the two files that
 import a description: 2 collection errors before, 31 passed after.
+
+That lock is now re-entrant on the thread holding it. `import_description`
+holds it across the import, and a real description clones *during* that import
+through the wrapped `clone_to_cache` -- so the holding thread took the lock a
+second time on a second descriptor, which `flock` treats as a stranger, and the
+import waited on itself until `pytest-timeout` fired at 120s
+(`test_camera_pixel_count_domain.py`, the first cell to add a robot whose
+description was not yet cached). A nested block on the holder runs without a
+second acquisition; a sibling thread and a sibling process wait exactly as
+before, and the lock is released when the outermost block exits. Pinned by two
+cells in `tests/test_description_clone_is_serialized.py`, one of which drives
+the wrapped clone through the package's own import.

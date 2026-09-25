@@ -24,6 +24,17 @@ not against unrelated ones, and the kernel releases it if the holder dies.
 The guard is best-effort by design, because a clone is worth more than the
 serialization of it: where ``fcntl`` is absent (Windows) or the cache directory
 cannot hold a lock file, the import proceeds unguarded.
+
+The lock is re-entrant on the thread that holds it. ``flock`` serializes open
+file descriptions, not threads, so a second ``open`` of the lock file in the
+holding thread is a stranger to the kernel and waits on the first forever.
+That thread does exist: the test session wraps upstream's ``clone_to_cache``
+in this lock so a collecting worker is serialized too, and a description
+imported through :func:`import_description` calls that wrapper *inside* the
+window the import already holds. Measured on the distributed suite, the import
+hung until ``pytest-timeout`` fired at 120s with the worker parked in
+``flock``. A thread already inside the block runs a nested block without a
+second acquisition, and the lock is released when the outermost block exits.
 """
 
 from __future__ import annotations
@@ -31,6 +42,7 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -51,6 +63,12 @@ DEFAULT_CACHE = "~/.cache/robot_descriptions"
 
 #: Lock file, kept inside the cache directory whose clones it serializes.
 LOCK_NAME = ".strands-clone.lock"
+
+#: Per-thread nesting depth for each lock file this thread is inside, so a
+#: nested block on the holding thread does not open a second descriptor and
+#: wait on the first. Keyed by lock file: a block that redirects the cache
+#: mid-flight guards a different directory and takes that directory's lock.
+_held = threading.local()
 
 
 def cache_dir() -> Path:
@@ -75,6 +93,16 @@ def clone_lock() -> Iterator[Path | None]:
         yield None
         return
     lock_file = cache_dir() / LOCK_NAME
+    depth: dict[Path, int] = _held.__dict__.setdefault("depth", {})
+    if depth.get(lock_file, 0) > 0:
+        # This thread is inside the block already; the descriptor it holds is
+        # the lock, and a second one would wait on it.
+        depth[lock_file] += 1
+        try:
+            yield lock_file
+        finally:
+            depth[lock_file] -= 1
+        return
     try:
         lock_file.parent.mkdir(parents=True, exist_ok=True)
         handle = lock_file.open("wb")
@@ -89,9 +117,11 @@ def clone_lock() -> Iterator[Path | None]:
             logger.debug("description cache lock refused at %s: %s", lock_file, exc)
             yield None
             return
+        depth[lock_file] = 1
         try:
             yield lock_file
         finally:
+            del depth[lock_file]
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
