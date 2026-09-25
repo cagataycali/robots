@@ -57,14 +57,13 @@ human-in-the-loop gate first.
 Unitree Go2 quadruped side by side in one MuJoCo scene, each known to the
 dispatcher only through its registry metadata.*
 
-Execution on MuJoCo is a `move_to` motion primitive for the staging skill
-plus ONE synchronized `run_multi_policy` loop for every policy-bound skill.
-`--backend isaac` runs the identical dispatch layer with execution falling
-back to sequential per-robot `run_policy` (the base-ABC contract every
-backend implements) - the fallback deliberately shows where the portability
-boundary sits today ([#2122](https://github.com/strands-labs/robots/issues/2122)
-tracks `run_multi_policy` parity, [#2123](https://github.com/strands-labs/robots/issues/2123)
-the motion primitives).
+Execution is a `move_to` motion primitive for the staging skill plus ONE
+synchronized `run_multi_policy` loop for every policy-bound skill. The example
+picks that seam by asking the backend what it implements, never by its name, so
+`--backend isaac` runs the identical dispatch layer AND the identical execution
+shape (Isaac has both surfaces). A backend implementing neither - Newton today -
+falls back to sequential per-robot `run_policy`, the base-ABC contract every
+backend implements: that fallback is where the portability boundary sits.
 
 ```bash
 # No simulator - match, gate, and reject with a loopback execution seam:
@@ -262,9 +261,8 @@ with the LLM outside the safety path (epic decisions D2/D5/D7):
    scripted base/joint setpoints, never a learned policy - to its muster
    pose. Priority conflicts resolve by deterministic corridor-distance
    ordering: closest to the path moves first, the others hold. The retreat
-   sits behind the small `EvacuationWorld` seam so the Isaac adapter
-   ([#2123](https://github.com/strands-labs/robots/issues/2123)) drops in
-   later.
+   sits behind the small `EvacuationWorld` seam, so a second backend is one
+   more implementation of that surface rather than a protocol change.
 3. **Lockout + HITL resume**: mesh lockout engages only AFTER the path is
    asserted clear (D7 - lockout first would freeze the hazard in place).
    Resume goes through the existing HMAC override protocol with operator

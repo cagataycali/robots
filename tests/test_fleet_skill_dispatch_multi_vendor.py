@@ -5,10 +5,11 @@ capability manifests are derived from the real robot registry's metadata
 (category, joint count, gripper), matching runs through the suite's shared
 ``capabilities.py`` hard-constraint filter, the HITL gate is driven in both
 its CI (auto-approve) and declined postures, and execution goes through stub
-seams that record what would have run. The executor-construction tests pin
-the two execution shapes the example ships: one synchronized
-``run_multi_policy`` batch plus ``move_to`` primitives on MuJoCo, and the
-sequential per-robot ``run_policy`` portability fallback (epic D8) elsewhere.
+seams that record what would have run. The executor tests pin the two
+execution shapes the example ships - one synchronized ``run_multi_policy``
+batch plus ``move_to`` primitives, and the sequential per-robot ``run_policy``
+portability fallback (epic D8) - and that the example picks between them by
+asking the backend what it implements rather than by comparing its name.
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from strands_robots.simulation.base import SimEngine
 
 _FLEET_DIR = Path(__file__).resolve().parent.parent / "examples" / "fleet"
 _EXAMPLE_PATH = _FLEET_DIR / "01_skill_dispatch_multi_vendor.py"
@@ -208,8 +211,8 @@ def test_synchronized_executor_batches_policies_into_one_run_multi_policy(exampl
 def test_sequential_fallback_executes_every_binding_via_run_policy(example):
     """The D8 portability fallback: per-robot run_policy, dispatch unchanged.
 
-    On a backend without run_multi_policy / motion primitives (#2122, #2123),
-    every assignment - including the move_to-bound one - executes through the
+    On a backend that implements neither synchronized surface, every
+    assignment - including the move_to-bound one - executes through the
     base-ABC ``run_policy``, seeded, one robot at a time.
     """
     sim = _StubSim()
@@ -232,3 +235,91 @@ def test_executor_failure_raises_instead_of_reporting_success(example):
 
     with pytest.raises(RuntimeError, match="execution failed for T-01"):
         example.dispatch_tasks(example.TASKS, manifests, _approve_all, broken_executor)
+
+
+class _FakeSim:
+    """A backend double that implements exactly the named surfaces.
+
+    ``run_multi_policy`` assigned from :class:`SimEngine` reproduces what a
+    backend that only INHERITS the base refusal looks like (Newton), which is
+    what the capability probe has to tell apart from a real implementation.
+    """
+
+    def __init__(self, *, synchronized: bool):
+        self.destroyed = False
+        if synchronized:
+            self.run_multi_policy = lambda **kw: {"status": "success"}
+            self.move_to = lambda **kw: {"status": "success"}
+        else:
+            self.run_multi_policy = SimEngine.run_multi_policy.__get__(self, _FakeSim)
+
+    def destroy(self) -> None:
+        self.destroyed = True
+
+
+def _run_main_recording_the_executor(example, monkeypatch, sim, argv):
+    """Run the example's main() and report which execution seam it picked."""
+    monkeypatch.setenv("STRANDS_MESH_HITL_ACTIONS", "none")
+    picked: list[str] = []
+
+    def seam(label):
+        def factory(*args, **kwargs):
+            picked.append(label)
+            return lambda assignments: {a["task_id"]: {"status": "success"} for a in assignments}
+
+        return factory
+
+    monkeypatch.setattr(example, "_build_sim", lambda *a, **k: sim)
+    monkeypatch.setattr(example, "make_synchronized_executor", seam("synchronized"))
+    monkeypatch.setattr(example, "make_sequential_executor", seam("sequential"))
+
+    assert example.main(argv) == 0
+    assert sim.destroyed
+    return picked
+
+
+def test_a_backend_implementing_both_surfaces_gets_the_synchronized_executor(example, monkeypatch):
+    """Capability, not name: Isaac implements both surfaces, so it runs them.
+
+    Isaac gained ``run_multi_policy`` and the motion primitives, so routing on
+    the backend's NAME sent a backend that has both down the sequential
+    fallback - the staging skill executing as a policy rollout instead of the
+    IK primitive its binding names.
+    """
+    sim = _FakeSim(synchronized=True)
+
+    assert _run_main_recording_the_executor(example, monkeypatch, sim, ["--backend", "isaac"]) == ["synchronized"]
+
+
+def test_a_backend_implementing_neither_surface_gets_the_sequential_fallback(example, monkeypatch):
+    """The other direction: a backend cannot be given a seam it does not have."""
+    sim = _FakeSim(synchronized=False)
+
+    assert _run_main_recording_the_executor(example, monkeypatch, sim, ["--backend", "mujoco"]) == ["sequential"]
+
+
+@pytest.mark.parametrize(
+    ("module_path", "class_name", "synchronized"),
+    [
+        ("strands_robots.simulation.mujoco.simulation", "MuJoCoSimEngine", True),
+        ("strands_robots.simulation.isaac.simulation", "IsaacSimulation", True),
+        ("strands_robots.simulation.newton.simulation", "NewtonSimEngine", False),
+    ],
+)
+def test_the_shipped_backends_split_the_way_the_example_routes_them(module_path, class_name, synchronized):
+    """Ground the routing in what the shipped engines actually implement.
+
+    Resolved here independently of the example, so the routing cells above
+    cannot agree with a probe that is wrong about every backend. MuJoCo and
+    Isaac define both surfaces; Newton defines neither and inherits the base
+    refusal for one of them.
+    """
+    engine = getattr(importlib.import_module(module_path), class_name)
+
+    implemented = [
+        method
+        for method in ("run_multi_policy", "move_to")
+        if any(method in klass.__dict__ for klass in engine.__mro__ if klass is not SimEngine)
+    ]
+
+    assert implemented == (["run_multi_policy", "move_to"] if synchronized else [])

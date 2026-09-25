@@ -21,7 +21,8 @@ Expected output: two tasks with distinct capability requirements land on the
                  a mobile base), one infeasible task is rejected naming each
                  robot's failing constraint, and the approved work executes -
                  concurrently via run_multi_policy plus a move_to primitive on
-                 MuJoCo; sequentially via per-robot run_policy elsewhere.
+                 a backend that implements them, sequentially via per-robot
+                 run_policy on one that does not.
 Runtime: ~2 seconds with --dry-run; under ~90 seconds live (cached assets).
 
 Note: Set STRANDS_MESH_HITL_ACTIONS=none to auto-approve dispatches (CI /
@@ -279,15 +280,14 @@ def make_synchronized_executor(sim: Any, n_steps: int) -> Callable[[list[dict[st
 def make_sequential_executor(
     sim: Any, n_steps: int, seed: int
 ) -> Callable[[list[dict[str, Any]]], dict[str, dict[str, Any]]]:
-    """Portability-fallback execution seam for non-MuJoCo backends (epic D8).
+    """Portability-fallback execution seam (epic D8).
 
-    ``run_multi_policy`` and the motion primitives are MuJoCo-only today
-    (#2122 tracks run_multi_policy parity on Isaac, #2123 the motion
-    primitives), so every binding here - including move_to-bound skills -
-    executes as a sequential per-robot ``run_policy``, the base-ABC contract
+    For a backend that implements neither synchronized surface - Newton
+    today - every binding here, including move_to-bound skills, executes as
+    a sequential per-robot ``run_policy``, the base-ABC contract
     (strands_robots.simulation.base) every backend implements. The dispatch
     layer above runs unchanged; this executor is the entire portability
-    boundary.
+    boundary. :func:`choose_executor` decides which seam a backend gets.
     """
 
     def execute(assignments: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -303,6 +303,36 @@ def make_sequential_executor(
         return results
 
     return execute
+
+
+def backend_implements(sim: Any, method: str) -> bool:
+    """Does this backend implement ``method`` itself, or only inherit it?
+
+    ``SimEngine`` ships a refusal body for the optional synchronized
+    multi-robot driver and no body at all for the motion primitives, so the
+    capability question is whether the bound method comes from somewhere
+    other than the base class.
+    """
+    from strands_robots.simulation.base import SimEngine
+
+    bound = getattr(sim, method, None)
+    if bound is None:
+        return False
+    return getattr(bound, "__func__", bound) is not getattr(SimEngine, method, None)
+
+
+def choose_executor(sim: Any, n_steps: int, seed: int) -> Callable[[list[dict[str, Any]]], dict[str, dict[str, Any]]]:
+    """Pick the execution seam by capability, never by backend name.
+
+    A backend implementing both synchronized surfaces gets the synchronized
+    executor - MuJoCo and Isaac do; Newton does not and gets the sequential
+    fallback. Asking the backend what it implements is the same rule the
+    dispatch layer above applies to robots, so a backend gaining parity needs
+    no edit here.
+    """
+    if all(backend_implements(sim, m) for m in ("run_multi_policy", "move_to")):
+        return make_synchronized_executor(sim, n_steps)
+    return make_sequential_executor(sim, n_steps, seed)
 
 
 def make_dispatcher_tools(
@@ -404,10 +434,7 @@ def main(argv: list[str] | None = None) -> int:
         execute = make_loopback_executor()
     else:
         sim = _build_sim(args.backend, args.seed, args.view)
-        if args.backend == "mujoco":
-            execute = make_synchronized_executor(sim, args.n_steps)
-        else:
-            execute = make_sequential_executor(sim, args.n_steps, args.seed)
+        execute = choose_executor(sim, args.n_steps, args.seed)
 
     approve = make_hitl_gate()
     try:

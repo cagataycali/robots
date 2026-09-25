@@ -43,7 +43,8 @@ Note: The live lockout drill needs `STRANDS_MESH_OVERRIDE_CODE`; when unset,
       audit trail the incident report is built from.
 
 Part of the fleet suite (epic #2179). The retreat sits behind the small
-``EvacuationWorld`` seam so the Isaac adapter (#2123) drops in later; the
+``EvacuationWorld`` seam, so a second backend is one more implementation of
+that surface rather than a protocol change; the
 read-only Rerun fleet dashboard (``examples/fleet/dashboard.py``) attaches to
 the same mesh and shows the safety events live.
 """
@@ -222,7 +223,7 @@ def build_benchmark_spec(tracked_bodies: dict[str, str], abort_deadline_s: float
 
 
 # The evacuation-world seam. The protocol core talks to this surface only, so
-# the Isaac adapter (#2123) is one more implementation, not a protocol change.
+# a second backend is one more implementation, not a protocol change.
 # Implementations: MujocoEvacuationWorld (live) and ScriptedEvacuationWorld
 # (--dry-run and the smoke test). The contract:
 #
@@ -566,7 +567,7 @@ class MujocoEvacuationWorld:
         import mujoco as mj
 
         # Direct model access is required here: MuJoCo has no public
-        # base-teleport API (Isaac's set_robot_pose is the #2123 seam), and
+        # base-teleport API (Isaac's set_robot_pose is that seam), and
         # the free joint / wrist body of each robot is model metadata.
         model, data = self.sim._world._model, self.sim._world._data
         for name, entry in self._fleet.items():
