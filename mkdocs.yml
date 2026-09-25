@@ -40,6 +40,8 @@ nav:
   - Isaac Parity and Fleet Replication: simulation/isaac-parity.md
 - Real Hardware:
   - Robot Control: hardware/robot-control.md
+  - Native Drivers: hardware/native-drivers.md
+  - Reachy Mini Daemon Link: hardware/reachy-mini.md
   - Teleoperation: hardware/teleoperation.md
   - Tools: hardware/tools.md
   - Twin Transport: hardware/twin-transport.md
