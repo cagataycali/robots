@@ -360,6 +360,91 @@ def test_an_area_held_in_a_loop_variable_resolves(label: str, grader: str) -> No
     ("label", "grader"),
     [
         (
+            "a local bound in a for statement over a module-level tuple",
+            "_TREES = ('strands_robots', 'tests')\n\n\ndef _sources():\n    files = []\n"
+            "    for tree in _TREES:\n        root = ROOT / tree\n        files.extend(root.rglob('*.py'))\n"
+            "    return files\n\n\ndef test_it():\n    assert _sources()\n",
+        ),
+        (
+            "a local bound in a for statement over an inline tuple",
+            "def test_it():\n    for area in ('strands_robots', 'tests'):\n        root = ROOT / area\n"
+            "        for p in root.rglob('*.py'):\n            pass\n",
+        ),
+        (
+            "an annotated local",
+            "_TREES = ('strands_robots', 'tests')\n\n\ndef test_it():\n    for tree in _TREES:\n"
+            "        root: pathlib.Path = ROOT / tree\n        for p in root.rglob('*.py'):\n            pass\n",
+        ),
+        (
+            "a local rebound inside a nested helper",
+            "_TREES = ('strands_robots', 'tests')\n\n\ndef test_it():\n    root = pathlib.Path(__file__).parent / 'fixtures'\n"
+            "    for tree in _TREES:\n\n        def _sweep():\n            root = ROOT / tree\n"
+            "            return list(root.rglob('*.py'))\n\n        assert _sweep()\n",
+        ),
+    ],
+)
+def test_a_local_bound_from_a_loop_variable_resolves(label: str, grader: str) -> None:
+    """A grader that binds ``root = base / area`` inside the loop and walks ``root`` is selected.
+
+    This composes two spellings the derivation already read on their own - a
+    root bound inside the walking function, and an area held in a loop variable
+    - and resolved under neither: the local resolver cannot see through a loop
+    variable and the loop resolver reads the ``/`` only as the receiver itself.
+    #4044 measured three whole-tree graders unrostered on it, one of which took
+    an approved pull request red behind a green preflight. ``label`` names the
+    spelling so a failure says which one stopped resolving.
+    """
+    source = f"import pathlib\n\nimport strands_robots\n\nROOT = pathlib.Path(strands_robots.__file__).resolve().parents[1]\n\n{grader}\n"
+    assert _selects(source, _TESTS_ROOT / "test_planted.py"), (
+        f"the derivation cannot resolve a walk root spelled as {label}, so a grader "
+        "written that way is invisible to the preflight rather than merely "
+        "unrostered - which is the defect #4044 records."
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "grader"),
+    [
+        (
+            "a local bound from a loop over subpackages",
+            "_BACKENDS = ('mujoco', 'newton')\n\n\ndef test_it():\n    for b in _BACKENDS:\n"
+            "        root = PKG / 'simulation' / b\n        for p in root.rglob('*.py'):\n            pass\n",
+        ),
+        (
+            "a local bound from a loop whose iterable is computed at run time",
+            "def test_it():\n    for a in os.environ['AREAS'].split(','):\n        root = PKG / a\n"
+            "        for p in root.rglob('*.py'):\n            pass\n",
+        ),
+        (
+            "a local bound from a loop variable in an unrelated function",
+            "_TREES = ('strands_robots', 'tests')\n\n\ndef test_reads_the_tree():\n    for tree in _TREES:\n"
+            "        root = PKG.parent / tree\n        assert root.is_dir()\n\n\n"
+            "def test_walks_a_fixture(tmp_path):\n    root = tmp_path\n    for p in root.rglob('*.py'):\n        pass\n",
+        ),
+    ],
+)
+def test_a_local_bound_from_a_loop_variable_that_is_not_an_area_is_not_selected(label: str, grader: str) -> None:
+    """Reading the local as its loop expression must not widen *which* walks count.
+
+    The alias hands the loop resolver the expression the local is bound to and
+    nothing else, so a subpackage per backend stays excluded as it is when
+    walked directly, a loop over run-time values stays unresolved, and a local
+    in a function that does not enclose the walk lends nothing - the same
+    scoping :func:`_enclosing_assignments` keeps, so the fixture walk in the
+    third case cannot borrow the sweep's root from its neighbour.
+    """
+    source = f"import os\nimport pathlib\n\nimport strands_robots\n\nPKG = pathlib.Path(strands_robots.__file__).resolve().parent\n\n{grader}\n"
+    assert not _selects(source, _TESTS_ROOT / "simulation" / "test_planted.py"), (
+        f"the derivation selected a module walking {label}. Reading a local as "
+        "its loop expression is meant to resolve the same walks the tree already "
+        "has, not to widen the class of walk that counts as whole-tree."
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "grader"),
+    [
+        (
             "a subpackage walked per backend",
             "_BACKENDS = ('mujoco', 'newton', 'isaac')\n\nFILES = [p for b in _BACKENDS for p in (PKG / 'simulation' / b).rglob('*.py')]",
         ),
