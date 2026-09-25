@@ -100,10 +100,7 @@ def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
     for key in ("ENABLED", "RP_ID", "ORIGIN", "BOOTSTRAP_TOKEN", "TOKEN_TTL"):
         monkeypatch.delenv("STRANDS_DASH_AUTH_" + key, raising=False)
-    auth._cache = {}
-    auth._challenges.clear()
     yield
-    auth._challenges.clear()
 
 
 # --- the expectation is never the caller's claim -------------------------------

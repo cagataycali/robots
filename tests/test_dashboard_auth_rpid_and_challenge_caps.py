@@ -112,13 +112,6 @@ def test_a_legacy_only_store_contributes_nothing_and_stays_usable():
 # --------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def clean_stash():
-    auth._challenges.clear()
-    yield
-    auth._challenges.clear()
-
-
 def test_one_client_cannot_hold_more_than_its_share(monkeypatch):
     monkeypatch.setattr(auth, "_CHAL_MAX_PER_IP", 8)
     for _ in range(200):

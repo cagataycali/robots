@@ -40,10 +40,7 @@ def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
     for k in ("STRANDS_DASH_AUTH_ENABLED", "STRANDS_DASH_AUTH_RP_ID", "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN"):
         monkeypatch.delenv(k, raising=False)
-    auth._cache = {}
-    auth._corrupt = None
     yield
-    auth._corrupt = None
 
 
 def _corrupt_store(tmp_path, body: str = '{"credentials": [{"id": "AAA'):

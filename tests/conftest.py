@@ -277,3 +277,57 @@ def _predicate_registry_is_left_as_found() -> Iterator[None]:
     if predicates.PREDICATE_REGISTRY != before:
         predicates.PREDICATE_REGISTRY.clear()
         predicates.PREDICATE_REGISTRY.update(before)
+
+
+#: The process-globals :mod:`strands_robots.dashboard.auth` keeps, and the value
+#: each is born with. Restored by
+#: :func:`_dashboard_auth_process_state_is_left_as_found` below and graded
+#: against the module's own bindings in
+#: ``tests/test_process_globals_do_not_cross_a_test_boundary.py``, so a fourth
+#: one cannot appear there without a decision here.
+DASHBOARD_AUTH_PROCESS_STATE: dict[str, object] = {"_cache": {}, "_challenges": {}, "_corrupt": None}
+
+
+@pytest.fixture(autouse=True)
+def _dashboard_auth_process_state_is_left_as_found() -> Iterator[None]:
+    """Leave the dashboard's auth module holding nothing a test put there.
+
+    :mod:`strands_robots.dashboard.auth` keeps three process-globals:
+    ``_cache`` (the parsed credential store, keyed on the file), ``_challenges``
+    (the WebAuthn ceremonies awaiting a finish, bounded by ``_CHAL_MAX`` and
+    ``_CHAL_MAX_PER_IP``) and ``_corrupt`` (the diagnosis of a store that would
+    not parse). All three outlive the test that filled them, so a store one test
+    wrote answers a later test's read, and a ceremony one test stashed counts
+    against a later test's per-ip cap.
+
+    Measured over the fifteen ``tests/test_dashboard_auth_*`` modules run in one
+    process: ``test_dashboard_auth_module`` and
+    ``test_dashboard_auth_corrupt_store`` each hand the next module two pending
+    challenges, and every module hands on a populated store cache.
+
+    Fourteen of those modules reset some of it in a fixture of their own, and no
+    two reset the same set - eleven reached ``_cache``, seven ``_corrupt``, three
+    ``_challenges``, and one cleared the challenge table and nothing else.
+    Restoring here rather than in each caller makes it a property of the session,
+    and covers the names a caller left out.
+
+    The module is looked up rather than imported so a session that never touches
+    the dashboard does not pull in fastapi and webauthn. Every one of the three
+    is born empty or ``None`` - unlike the predicate registry above, whose
+    baseline is the shipped set - so the born values can be stated here and a
+    module that first appears during a test is restored as correctly as one that
+    was imported at collection.
+    """
+    yield
+    module = sys.modules.get("strands_robots.dashboard.auth")
+    if module is None:
+        return
+    for name, born in DASHBOARD_AUTH_PROCESS_STATE.items():
+        current = getattr(module, name)
+        if current == born:
+            continue
+        if isinstance(current, dict) and isinstance(born, dict):
+            current.clear()
+            current.update(born)
+        else:
+            setattr(module, name, born)

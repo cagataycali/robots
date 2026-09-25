@@ -71,10 +71,7 @@ def isolated_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         "STRANDS_DASH_AUTH_ENROLL_TOKEN_FILE",
     ):
         monkeypatch.delenv(k, raising=False)
-    auth._cache = {}
-    auth._corrupt = None
     yield
-    auth._corrupt = None
 
 
 def _token_file(tmp_path: Path) -> Path:

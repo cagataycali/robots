@@ -52,8 +52,8 @@ def isolated_store(tmp_path, monkeypatch):
     carries no ``jwt_secret`` makes two cells fail for a reason that has
     nothing to do with a duration, so the verdict is decided by what the
     machine already holds. ``$HOME`` is fresh in CI, so no gate reports any of
-    it. The ten sibling ``test_dashboard_auth_*`` modules that reach the store
-    all carry this redirect; AGENTS.md rule 15 states the same rule for the
+    it. The fourteen sibling ``test_dashboard_auth_*`` modules that reach the
+    store all carry this redirect; AGENTS.md rule 15 states the same rule for the
     dataset cache, for the same reason.
 
     ``monkeypatch.setenv`` rather than a patched module attribute, because the
@@ -62,7 +62,6 @@ def isolated_store(tmp_path, monkeypatch):
     the shared module and leave every copy pointing at the real store.
     """
     monkeypatch.setenv(auth._ENV + "STORE", str(tmp_path / "auth.json"))
-    auth._cache = {}
     yield
 
 
