@@ -56,23 +56,6 @@ FOREIGN_SECRET = "a-different-signing-key-of-a-respectable-length"
 SIGNED_IN_AGO = TTL // 2
 
 
-@pytest.fixture(autouse=True)
-def isolated_store(tmp_path, monkeypatch):
-    """Point every store reader in this file at a per-test file.
-
-    The cells below mint tokens, and :func:`auth.issue_token` signs with
-    ``_jwt_secret()``, which reads the credential store. :func:`auth._store_path`
-    resolves an unset ``STORE`` to ``~/.strands_dashboard/auth.json`` - the file
-    that decides whether a dashboard on this machine is sealed - so without this
-    redirect these cells would read and WRITE it. The sibling
-    ``test_dashboard_auth_*`` modules that reach the store all carry the same
-    redirect, for the same reason.
-    """
-    monkeypatch.setenv(auth._ENV + "STORE", str(tmp_path / "auth.json"))
-    auth._cache = {}
-    yield
-
-
 @pytest.fixture
 def windows(monkeypatch):
     """Set the two renewal windows through the environment the module reads."""

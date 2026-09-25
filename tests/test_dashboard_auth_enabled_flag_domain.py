@@ -35,15 +35,6 @@ import pytest
 from strands_robots.dashboard import auth
 
 
-@pytest.fixture(autouse=True)
-def isolated_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A store of this test's own, and no inherited override."""
-    monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
-    monkeypatch.delenv("STRANDS_DASH_AUTH_ENABLED", raising=False)
-    monkeypatch.delenv("STRANDS_DASH_AUTH_RP_ID", raising=False)
-    monkeypatch.delenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", raising=False)
-
-
 def _enroll(tmp_path: Path) -> None:
     """Put one passkey in the store, so the store's own verdict is ON."""
     auth.has_credentials()  # creates the store

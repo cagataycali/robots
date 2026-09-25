@@ -26,7 +26,6 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -59,19 +58,6 @@ class FakeRequest:
         self.headers = {"host": "localhost:8090", **(headers or {})}
         self.url = SimpleNamespace(scheme=scheme)
         self.client = None if client_host is None else type("C", (), {"host": client_host})()
-
-
-@pytest.fixture(autouse=True)
-def isolated_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
-    monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
-    for k in (
-        "STRANDS_DASH_AUTH_ENABLED",
-        "STRANDS_DASH_AUTH_RP_ID",
-        "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN",
-        "STRANDS_DASH_AUTH_ENROLL_TOKEN_FILE",
-    ):
-        monkeypatch.delenv(k, raising=False)
-    yield
 
 
 def _token_file(tmp_path: Path) -> Path:

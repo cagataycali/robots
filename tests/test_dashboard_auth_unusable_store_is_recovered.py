@@ -39,14 +39,6 @@ class FakeRequest:
         self.url = SimpleNamespace(scheme=scheme)
 
 
-@pytest.fixture(autouse=True)
-def isolated_store(tmp_path, monkeypatch):
-    monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
-    for k in ("STRANDS_DASH_AUTH_ENABLED", "STRANDS_DASH_AUTH_RP_ID", "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN"):
-        monkeypatch.delenv(k, raising=False)
-    yield
-
-
 # Every way a store can parse and still be unusable, with the fault each one used to
 # produce. The reason fragment is what an operator reads out of `store_corruption()` and
 # the log, so it is pinned per row: a single "unusable" for all of them would leave the

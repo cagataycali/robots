@@ -33,17 +33,7 @@ and are deliberately not repeated here.
 import json
 import os
 
-import pytest
-
 from strands_robots.dashboard import auth
-
-
-@pytest.fixture(autouse=True)
-def isolated_store(tmp_path, monkeypatch):
-    monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
-    for key in ("STRANDS_DASH_AUTH_ENABLED", "STRANDS_DASH_AUTH_RP_ID", "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN"):
-        monkeypatch.delenv(key, raising=False)
-    yield
 
 
 class TestTheCacheIsBounded:

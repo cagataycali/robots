@@ -26,14 +26,6 @@ from strands_robots.dashboard import auth
 _PREVIOUS = {"credentials": [{"id": "AAA", "name": "the-operator-passkey"}], "jwt_secret": "keep-me"}
 
 
-@pytest.fixture(autouse=True)
-def isolated_store(tmp_path, monkeypatch):
-    monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
-    for key in ("STRANDS_DASH_AUTH_ENABLED", "STRANDS_DASH_AUTH_RP_ID", "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN"):
-        monkeypatch.delenv(key, raising=False)
-    yield
-
-
 def _seed_previous_store(tmp_path):
     """Put a good store on disk the way an enrolled deployment would have one."""
     path = tmp_path / "auth.json"

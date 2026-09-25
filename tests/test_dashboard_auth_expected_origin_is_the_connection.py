@@ -95,14 +95,6 @@ def websocket(scheme: str, **headers: str) -> WebSocket:
     )
 
 
-@pytest.fixture(autouse=True)
-def isolated_store(tmp_path, monkeypatch):
-    monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
-    for key in ("ENABLED", "RP_ID", "ORIGIN", "BOOTSTRAP_TOKEN", "TOKEN_TTL"):
-        monkeypatch.delenv("STRANDS_DASH_AUTH_" + key, raising=False)
-    yield
-
-
 # --- the expectation is never the caller's claim -------------------------------
 
 #: Each row is a claim a caller can make that the served origin contradicts. The

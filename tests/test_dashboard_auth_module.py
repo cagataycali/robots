@@ -35,15 +35,6 @@ class FakeRequest:
         self.client = type("C", (), {"host": client_host})()
 
 
-@pytest.fixture(autouse=True)
-def isolated_store(tmp_path, monkeypatch):
-    monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
-    monkeypatch.delenv("STRANDS_DASH_AUTH_ENABLED", raising=False)
-    monkeypatch.delenv("STRANDS_DASH_AUTH_RP_ID", raising=False)
-    monkeypatch.delenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", raising=False)
-    yield
-
-
 def test_store_created_with_0600_and_secret(tmp_path):
     assert not auth.has_credentials()
     path = tmp_path / "auth.json"

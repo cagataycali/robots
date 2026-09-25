@@ -27,7 +27,6 @@ identity; the split is the point.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -44,14 +43,6 @@ class FakeRequest:
     def __init__(self, headers: dict[str, str] | None = None, client_host: str = "127.0.0.1") -> None:
         self.headers = {"host": "localhost:8090", **(headers or {})}
         self.client = type("C", (), {"host": client_host})()
-
-
-@pytest.fixture(autouse=True)
-def isolated_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
-    monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
-    for k in ("STRANDS_DASH_AUTH_ENABLED", "STRANDS_DASH_AUTH_RP_ID", "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN"):
-        monkeypatch.delenv(k, raising=False)
-    yield
 
 
 def _corrupt_store(tmp_path: Path) -> None:

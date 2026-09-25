@@ -36,24 +36,6 @@ import pytest
 import strands_robots.dashboard.auth as auth
 
 
-@pytest.fixture(autouse=True)
-def isolated_store(tmp_path, monkeypatch):
-    """Point the store reader at a per-test file.
-
-    Every cell here mints a token, and :func:`auth.issue_token` signs with
-    ``_jwt_secret()``, which reads the credential store. An unset ``STORE``
-    resolves to ``~/.strands_dashboard/auth.json`` - the file that decides
-    whether a dashboard on this machine is sealed - so without this redirect
-    these cells would create one on a machine that has none, or rename an
-    unparseable one aside and write a fresh JWT secret, invalidating every live
-    session token. The sibling ``test_dashboard_auth_*`` modules that reach the
-    store all carry this redirect.
-    """
-    monkeypatch.setenv(auth._ENV + "STORE", str(tmp_path / "auth.json"))
-    auth._cache = {}
-    yield
-
-
 def claims_of(token: str) -> dict:
     """The claims of ``token``, read without re-checking its expiry."""
     return jwt.decode(token, auth._jwt_secret(), algorithms=["HS256"], options={"verify_exp": False})

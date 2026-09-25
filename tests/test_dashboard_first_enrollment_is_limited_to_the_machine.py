@@ -41,7 +41,6 @@ threat, and a gate that never lifted would be a lockout rather than a guard.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -67,17 +66,6 @@ class FakeRequest:
         # client_host=None models a connection with no peer address, which is what an
         # ASGI scope carries for a unix socket or a broken transport.
         self.client = None if client_host is None else type("C", (), {"host": client_host})()
-
-
-@pytest.fixture(autouse=True)
-def isolated_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
-    monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
-    for k in ("STRANDS_DASH_AUTH_ENABLED", "STRANDS_DASH_AUTH_RP_ID", "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN"):
-        monkeypatch.delenv(k, raising=False)
-    auth._cache = {}
-    auth._corrupt = None
-    yield
-    auth._corrupt = None
 
 
 class TestTheFirstEnrollmentOnAFreshStore:

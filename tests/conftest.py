@@ -19,6 +19,7 @@ has started says so instead of reporting counts that read as a total.
 import os
 import sys
 from collections.abc import Iterator
+from pathlib import Path
 from types import ModuleType
 
 import pytest
@@ -277,6 +278,50 @@ def _predicate_registry_is_left_as_found() -> Iterator[None]:
     if predicates.PREDICATE_REGISTRY != before:
         predicates.PREDICATE_REGISTRY.clear()
         predicates.PREDICATE_REGISTRY.update(before)
+
+
+#: Prefix of every environment variable :mod:`strands_robots.dashboard.auth`
+#: reads, including the ``STORE`` that decides which file is the credential
+#: record. Read by :func:`_dashboard_auth_store_is_a_per_test_file` below.
+DASHBOARD_AUTH_ENV = "STRANDS_DASH_AUTH_"
+
+
+@pytest.fixture(autouse=True)
+def _dashboard_auth_store_is_a_per_test_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let no test read or write the credential store this machine is sealed with.
+
+    :func:`strands_robots.dashboard.auth._store_path` resolves an unset
+    ``STRANDS_DASH_AUTH_STORE`` to ``~/.strands_dashboard/auth.json`` - the file
+    that holds the passkey records and the ``jwt_secret``, and so decides whether
+    the dashboard on this machine is sealed. Every reader goes through
+    ``_load()``, which *writes*: a machine with no store gets a fresh one
+    created, and a machine whose store will not parse has the operator's file
+    renamed aside and a new ``jwt_secret`` written, invalidating every live
+    session token. Both under a green report, because nothing in a test asks
+    where the store was.
+
+    Sixteen modules redirected it in an autouse fixture of their own, and no two
+    agreed on the rest of the family: between none and five of the sibling knobs
+    unset, with the docstrings of three of them stating the rule for the other
+    thirteen. Pointing it here makes the redirect a property of the session
+    rather than sixteen authors remembering to, and ``tmp_path / "auth.json"`` is
+    the path every one of them chose, so a module's own helper that seeds or
+    reads that file needs no change.
+
+    The rest of the family is unset for the same reason and in one sweep rather
+    than from a list: a knob left set in the environment - ``RP_ID``, ``ORIGIN``,
+    ``ENABLED``, ``BOOTSTRAP_TOKEN``, a duration - decides a verdict a cell is
+    grading, so the developer's shell would be the thing under test. A cell that
+    wants one sets it afterwards; this fixture runs first.
+
+    The file is not created, only named: ``_save_locked`` makes the parent when
+    something actually writes, so a session that never touches the dashboard
+    pays a name and no I/O.
+    """
+    monkeypatch.setenv(DASHBOARD_AUTH_ENV + "STORE", str(tmp_path / "auth.json"))
+    for name in [key for key in os.environ if key.startswith(DASHBOARD_AUTH_ENV)]:
+        if name != DASHBOARD_AUTH_ENV + "STORE":
+            monkeypatch.delenv(name)
 
 
 #: The process-globals :mod:`strands_robots.dashboard.auth` keeps, and the value
