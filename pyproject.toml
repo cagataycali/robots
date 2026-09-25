@@ -831,7 +831,17 @@ UV_TORCH_BACKEND = "{env:UV_TORCH_BACKEND:auto}"
 # files in flight at once is two writers on one arm. `test-integ` and a bare
 # `pytest` therefore stay in one process; pinned by
 # tests/test_the_suite_distributes_only_where_it_measured.py.
-test = "pytest -n auto --dist loadfile {args:tests}"
+#
+# `logical` and not `auto`: with psutil importable (it is, through the
+# `lerobot` extra `all` folds in) xdist resolves `auto` to
+# `psutil.cpu_count(logical=False)`, the PHYSICAL core count, and the
+# `ubuntu-latest` pool mixes two-core VMs with one-core/two-thread VMs. On the
+# second kind `auto` is one worker - measured on one such runner, 9,456 tests
+# with coverage on: `-n auto` -> `created: 1/1 worker`, 249.08 s at 48% CPU;
+# `-n logical` -> `created: 2/2 workers`, 118.57 s at 101% CPU - which puts the
+# required check back in the 60-minute reap band #3869 exists to leave.
+# `logical` reads the CPUs the kernel schedules on, so it is 2 on both kinds.
+test = "pytest -n logical --dist loadfile {args:tests}"
 test-integ = "pytest tests_integ/ -v --timeout=300 {args}"
 lint = ["ruff check strands_robots tests tests_integ", "ruff format --check strands_robots tests tests_integ", "mypy strands_robots tests tests_integ"]
 format = ["ruff check --fix strands_robots tests tests_integ", "ruff format strands_robots tests tests_integ"]

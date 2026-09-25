@@ -1,7 +1,7 @@
 """Distribution is a property of the ``test`` script, not of the repository.
 
-``hatch run test`` spreads the unit suite over the cores with ``-n auto --dist
-loadfile``. Those flags could equally sit in ``[tool.pytest.ini_options].addopts``,
+``hatch run test`` spreads the unit suite over the cores with ``-n logical
+--dist loadfile``. Those flags could equally sit in ``[tool.pytest.ini_options].addopts``,
 and that is where a first cut put them -- but ``addopts`` is read by every
 pytest invocation rooted here, ``hatch run test-integ`` included, and the
 integration suite is the one population that cannot run two files at once:
@@ -44,9 +44,13 @@ def test_the_test_script_distributes_one_worker_per_file(pyproject: dict) -> Non
     script = pyproject["tool"]["hatch"]["envs"]["default"]["scripts"]["test"]
     tokens = shlex.split(script)
     assert tokens[:1] == ["pytest"], script
-    assert "-n" in tokens and tokens[tokens.index("-n") + 1] == "auto", (
-        f"the test script no longer distributes ({script!r}); the required check then runs "
-        "58,000 tests in one process, which is the 34-minute step this replaced"
+    assert "-n" in tokens and tokens[tokens.index("-n") + 1] == "logical", (
+        f"the test script does not distribute over the logical CPUs ({script!r}). Without "
+        "-n the required check runs 58,000 tests in one process, which is the 51-minute step "
+        "distribution replaced; with -n auto it does the same on part of the ubuntu-latest pool, "
+        "because xdist resolves auto through psutil to the physical core count and a "
+        "one-core/two-thread runner then gets one worker (measured: 249 s against 118 s for "
+        "logical, same 9,456 tests, same runner)"
     )
     assert "--dist" in tokens and tokens[tokens.index("--dist") + 1] == "loadfile", (
         f"the test script distributes without loadfile ({script!r}); the file-scoped fixtures "
