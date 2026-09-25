@@ -69,6 +69,14 @@ That env has `critic_obs_keys == ["Elbow", "Elbow.vel", "Jaw"]` -
 construction; [the reference](rl-reference.md#simenv-numeric-arguments) states
 each domain.
 
+The action is the actuator *command*, clamped to each actuator's `ctrlrange`, so
+a bounded actor - the `tanh`-squashed FastSAC / FastTD3 actors emit `[-1, 1]` -
+reaches only the part of each range overlapping `[-action_scale, action_scale]`:
+at the default `1.0`, 46.4% of the so100's ranges, 57.6% of the g1's, 3.5% of
+the go2's torque limits. Asymmetric ranges (`Pitch` is `[-3.32, 0.174]`) need a
+per-actuator mapping in the actor, since one scalar cannot centre on two
+midpoints.
+
 ## PPO
 
 ```python
