@@ -183,6 +183,6 @@ actuator endpoint to the Internet.
 ## See also
 
 - [Native drivers](native-drivers.md) - the contract this driver satisfies.
-- [Humanoids](../robots/humanoids.md) - the catalog entry, and the other
-  native-driver bring-ups in this family.
+- [Humanoids](../robots/humanoids.md) - the catalog entry, and the family's
+  other native-driver bring-ups.
 - [Robot factory](../getting-started/robot-factory.md) - every `Robot()` kwarg.

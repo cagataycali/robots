@@ -83,7 +83,15 @@ def test_add_robot_during_a_recording_is_refused(
 def test_the_sequence_the_refusal_names_records_both_robots(sim, tmp_path):
     """stop_recording, add_robot, start_recording again - and the columns follow."""
     assert sim.add_robot(name="so101", data_config="so101")["status"] == "success"
-    assert sim.start_recording(repo_id="lab/one", root=str(tmp_path / "one"), fps=30)["status"] == "success"
+    # The verdict is the second dataset's observation.state width and values;
+    # no assertion reads a pixel. Recording the world's free camera would render
+    # it through OSMesa at every control step and encode a video per rollout,
+    # which was 21 s of a 23 s cell locally and the largest cell left in the
+    # suite after #4043 (#3869). An action-only dataset carries the same state
+    # column, so the refusal's named sequence is exercised unchanged. The
+    # parametrized cells above keep the default: one of them IS the camera-only
+    # schema the refusal describes.
+    assert sim.start_recording(repo_id="lab/one", root=str(tmp_path / "one"), fps=30, cameras=[])["status"] == "success"
     assert (
         sim.run_policy(robot_name="so101", policy_provider="mock", duration=0.3, control_frequency=30)["status"]
         == "success"
@@ -92,7 +100,7 @@ def test_the_sequence_the_refusal_names_records_both_robots(sim, tmp_path):
 
     assert sim.add_robot(name="panda", data_config="panda", position=[0.6, 0, 0])["status"] == "success"
     root = tmp_path / "two"
-    assert sim.start_recording(repo_id="lab/two", root=str(root), fps=30)["status"] == "success"
+    assert sim.start_recording(repo_id="lab/two", root=str(root), fps=30, cameras=[])["status"] == "success"
     assert (
         sim.run_policy(robot_name="panda", policy_provider="mock", duration=0.3, control_frequency=30)["status"]
         == "success"
