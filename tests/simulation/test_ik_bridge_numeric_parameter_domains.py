@@ -3,7 +3,7 @@
 :class:`~strands_robots.simulation.ik.MinkIKBridge` is the one home for the mink
 differential-IK solve, re-exported as the public ``MinkIKBridge`` of the
 ``cosmos3`` provider and documented as a constructor a caller
-builds directly (``docs/policies/cosmos3.md``). It validated two of its
+builds directly (``docs/policies/cosmos3-diffusers.md``). It validated two of its
 arguments thoroughly - ``commanded_dofs`` per element, with ``bool`` rejected by
 name and every index range-checked, and ``solver`` through
 :func:`~strands_robots.simulation.ik.resolve_qp_solver` - and handed its eight
