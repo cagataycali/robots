@@ -25,6 +25,7 @@ plumbing up to (and including) the launch-config dict, never a real Kit boot.
 
 from __future__ import annotations
 
+import gc
 import logging
 
 import pytest
@@ -107,6 +108,42 @@ class TestCreateWorldForwardsRenderMode:
         assert recorded["launch_config"] == expected_launch_config
 
 
+class _LeftToTheCollector:
+    """An object whose finalizer logs on this module's logger.
+
+    The shape :meth:`~strands_robots.simulation.base.SimEngine.__del__` takes for
+    an ``IsaacSimulation`` a test built and never destroyed: ``cleanup()`` ->
+    ``destroy()``, which on a fake ``isaacsim`` logs ``World cleanup warning``
+    and ``Stage clear warning`` at WARNING. The self-reference keeps it out of
+    refcount teardown so it goes when the cyclic collector runs, which is when
+    the real ones go.
+    """
+
+    def __init__(self) -> None:
+        self.cycle = self
+
+    def __del__(self) -> None:
+        isaac_simulation.logger.warning("World cleanup warning: %s", "left to the collector")
+
+
+def _launch_key_reports(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """The WARNING records the launch path emits, and nothing else on the logger.
+
+    ``caplog.records`` is every record the call phase captured, on every
+    logger, and ``isaac_simulation.logger`` is shared with ``destroy()``: an
+    engine another test left to the cyclic collector is finalised at whatever
+    point the collector fires, and on CI run 36098888798 (gw0, ``--dist
+    loadfile``) four of them fired inside
+    ``test_headless_only_second_request_is_silent``, whose ``assert not
+    [WARNING records]`` then failed on a launch that had dropped nothing. The
+    report this class grades names the launch keys it could not apply, so
+    read that. The wording is pinned by the differing-request test, which
+    asserts exactly one such report, so a rewording cannot make the silent
+    tests vacuous without failing that one.
+    """
+    return [r for r in caplog.records if r.levelno == logging.WARNING and "launch keys" in r.getMessage()]
+
+
 class TestSimulationAppLaunch:
     """_get_or_create_simulation_app plumbing around the create-once singleton."""
 
@@ -123,10 +160,10 @@ class TestSimulationAppLaunch:
                 headless=True, launch_config={"renderer": "PathTracing"}
             )
         assert second is first
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warnings) == 1
-        assert "renderer" in warnings[0].getMessage()
-        assert "PathTracing" in warnings[0].getMessage()
+        reports = _launch_key_reports(caplog)
+        assert len(reports) == 1
+        assert "renderer" in reports[0].getMessage()
+        assert "PathTracing" in reports[0].getMessage()
 
     def test_matching_second_request_is_silent(self, fake_isaacsim, caplog):
         first = isaac_simulation._get_or_create_simulation_app(headless=True, launch_config={"renderer": "PathTracing"})
@@ -135,7 +172,7 @@ class TestSimulationAppLaunch:
                 headless=True, launch_config={"renderer": "PathTracing"}
             )
         assert second is first
-        assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert not _launch_key_reports(caplog)
 
     def test_headless_only_second_request_is_silent(self, fake_isaacsim, caplog):
         # A render_mode="headless" sim coming up after an RTX one selects no
@@ -143,7 +180,22 @@ class TestSimulationAppLaunch:
         isaac_simulation._get_or_create_simulation_app(headless=True, launch_config={"renderer": "PathTracing"})
         with caplog.at_level(logging.WARNING, logger=isaac_simulation.logger.name):
             isaac_simulation._get_or_create_simulation_app(headless=True)
-        assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert not _launch_key_reports(caplog)
+
+    def test_a_finalizer_on_the_shared_logger_is_not_a_launch_report(self, fake_isaacsim, caplog):
+        # The failure shape of CI run 36098888798: an engine another test left
+        # to the cyclic collector is finalised inside this test's window and
+        # logs on the same logger. That record is not a dropped launch key, so
+        # the silent-request verdict must not read it as one; the control
+        # asserts the record did arrive, so a green here is the filter and not
+        # the collector's timing.
+        isaac_simulation._get_or_create_simulation_app(headless=True, launch_config={"renderer": "PathTracing"})
+        _LeftToTheCollector()
+        with caplog.at_level(logging.WARNING, logger=isaac_simulation.logger.name):
+            gc.collect()
+            isaac_simulation._get_or_create_simulation_app(headless=True)
+        assert [r for r in caplog.records if r.getMessage().startswith("World cleanup warning")]
+        assert not _launch_key_reports(caplog)
 
 
 class TestAbandonedRendererHelpersStayDeleted:
