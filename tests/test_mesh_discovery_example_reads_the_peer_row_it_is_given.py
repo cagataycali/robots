@@ -6,12 +6,22 @@ a key no row carries. It also queried the registry straight after ``Robot()``
 returned - before any other process's heartbeat (``HEARTBEAT_HZ``) could land -
 so it could only ever list this process's own robots, and it listed them as
 discovered peers.
+
+Its own closing hint is to start the script in a second terminal. It handed every
+copy one hardcoded ``peer_id``, and the registry files a record under that id, so
+the second copy overwrote the first's row and each read the other as itself:
+measured, two terminals both printed ``Discovered mesh peers: 0`` beside the hint
+telling them to do what they had just done, where the same example with distinct
+ids printed the remote arm. The identity a second copy claims must therefore be
+one this process cannot share.
 """
 
 from __future__ import annotations
 
 import ast
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 from strands_robots.mesh.session import HEARTBEAT_HZ, PeerInfo
@@ -55,3 +65,52 @@ def test_the_example_waits_for_a_heartbeat_before_reading_the_registry():
 def test_the_example_separates_its_own_robots_from_discovered_peers():
     source = _EXAMPLE.read_text()
     assert "not in local" in source and "in local]" in source
+
+
+def _identity_expression() -> str:
+    """The source of the ``peer_id`` the example hands ``Robot()``.
+
+    A name is resolved to the module-level expression assigned to it, so the
+    identity is read whether it is written at the call or derived above it.
+    """
+    tree = ast.parse(_EXAMPLE.read_text())
+    given: ast.expr | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Robot":
+            for kw in node.keywords:
+                if kw.arg == "peer_id":
+                    given = kw.value
+    assert given is not None, "the example does not pass peer_id to Robot() - the scan is broken"
+    if not isinstance(given, ast.Name):
+        return ast.unparse(given)
+    for statement in tree.body:
+        if isinstance(statement, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == given.id for target in statement.targets
+        ):
+            return ast.unparse(statement.value)
+    raise AssertionError(f"peer_id is the name {given.id!r}, assigned nowhere at module level")
+
+
+def _evaluate(times: int, per_process: int) -> list[str]:
+    """Evaluate the identity expression *per_process* times in *times* processes."""
+    expression = _identity_expression()
+    program = f"import os, sys\nfor _ in range({per_process}): print({expression})"
+    out: list[str] = []
+    for _ in range(times):
+        done = subprocess.run([sys.executable, "-c", program], capture_output=True, text=True, check=True)
+        out.extend(done.stdout.split())
+    return out
+
+
+def test_a_second_copy_of_the_example_claims_a_different_identity():
+    ids = _evaluate(times=3, per_process=1)
+    assert len(set(ids)) == len(ids), (
+        f"every copy of the example joins the mesh as {ids[0]!r}: two of them overwrite "
+        "one peer record and each reads the other as itself"
+    )
+
+
+def test_the_identity_does_not_change_under_the_process_that_claimed_it():
+    ids = _evaluate(times=1, per_process=3)
+    assert len(set(ids)) == 1, f"the identity is not stable within one process: {ids}"
+    assert all(ids), "the identity is empty"
