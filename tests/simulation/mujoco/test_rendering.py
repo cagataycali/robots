@@ -15,6 +15,44 @@ pytest.importorskip("mujoco")
 from tests.simulation.mujoco._gl_probe import requires_gl as _requires_mujoco  # noqa: E402
 
 
+def _await_a_frame_per_camera(sim, timeout: float = 30.0) -> dict:
+    """Block until the recorder has captured a frame for every camera.
+
+    The recorder thread captures on WALL time, so the frame counts an MP4
+    assertion depends on are an event to observe rather than an interval to
+    guess: ``get_cameras_recording_status`` publishes them per camera, and only
+    a camera with a frame is encoded on flush. Sleeping a fixed 0.4s instead
+    asserted a rate - on a host whose cores are busy elsewhere the first sweep
+    had not reached the second camera when the stop landed, so one MP4 existed
+    where two were asserted.
+
+    Args:
+        sim: The ``Simulation`` whose recording to watch.
+        timeout: How long to wait before calling it a recorder that does not
+            capture. Generous on purpose - it bounds a hang, it does not pace
+            the test, which returns as soon as the counts are in.
+
+    Returns:
+        The status envelope that carried the counts, so a caller reads the
+        phase marker and the frames from the same observation.
+
+    Raises:
+        AssertionError: The recording is not registered, or a camera still had
+            no frame at ``timeout``.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        status = sim.get_cameras_recording_status()
+        assert status["status"] == "success", status
+        counts = next((block["json"]["frames"] for block in status["content"] if "json" in block), None)
+        assert counts is not None, f"no recording is registered to capture frames: {status}"
+        if counts and min(counts.values()) >= 1:
+            return status
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"the recorder captured no frame for some camera within {timeout:.0f}s: {counts}")
+        time.sleep(0.02)
+
+
 @_requires_mujoco
 def test_render_all_returns_every_camera(tmp_path: Path) -> None:
     """render_all() should return one image block per camera."""
@@ -67,11 +105,9 @@ def test_start_stop_cameras_recording_writes_one_mp4_per_camera(tmp_path: Path) 
     )
     assert r["status"] == "success", r
 
-    # Let it record for ~0.4s of wall time
-    time.sleep(0.4)
-
-    status = sim.get_cameras_recording_status()
-    assert status["status"] == "success"
+    # Record until there is a frame per camera - the thing the two MP4s below
+    # are, not a rate the host might not sustain.
+    status = _await_a_frame_per_camera(sim)
     # ASCII-only output contract: active recording is flagged with the
     # "[recording]" marker, never an emoji.
     assert "[recording]" in status["content"][0]["text"]
@@ -697,7 +733,7 @@ def test_recorder_first_frame_is_real_geometry(tmp_path: Path) -> None:
     )
     assert r["status"] == "success", r
 
-    time.sleep(0.2)
+    _await_a_frame_per_camera(sim)
     sim.stop_cameras_recording()
 
     # Decode the MP4 and inspect the first frame's column stddev.

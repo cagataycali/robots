@@ -12,3 +12,11 @@ kind. The script now says `-n logical`, which reads the CPUs the kernel
 schedules on and is 2 on both kinds; `loadfile`, the `addopts` split and the
 single-process `test-integ` are unchanged. The pin asserts `logical` and carries
 the measurement in its message.
+
+Two camera-recording tests asserted a capture RATE where they meant a captured
+frame: they slept a fixed 0.4s / 0.2s and then read the MP4s, and the recorder
+thread samples wall time, so a host whose cores are busy elsewhere had not
+reached the second camera when the stop landed - one MP4 where two are asserted.
+They now wait on the frame counts `get_cameras_recording_status` publishes, with
+the deadline as the negative: the wait returns as soon as every camera has a
+frame, and a recorder that captures nothing still fails, naming the counts.
