@@ -20,7 +20,7 @@ frame = sim.get_observation("so100")["default"]   # uint8 HxWx3
 iio.imwrite("first_frame.png", frame)
 ```
 
-> Headless box? `export MUJOCO_GL=osmesa` before importing. See [Troubleshooting](../troubleshooting.md).
+> Headless box? `export MUJOCO_GL=osmesa` before importing. See [simulation troubleshooting](../simulation/troubleshooting.md).
 
 ## Add an object and run a policy
 

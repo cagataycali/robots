@@ -41,6 +41,7 @@ nav:
   - Newton Scenes and Recording: simulation/newton-scenes.md
   - Isaac Sim Backend (GPU): simulation/isaac.md
   - Isaac Parity and Fleet Replication: simulation/isaac-parity.md
+  - Simulation Troubleshooting: simulation/troubleshooting.md
 - Real Hardware:
   - Robot Control: hardware/robot-control.md
   - Native Drivers: hardware/native-drivers.md

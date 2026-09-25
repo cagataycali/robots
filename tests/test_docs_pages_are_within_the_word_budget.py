@@ -55,7 +55,6 @@ _OVER_BUDGET = frozenset(
         "simulation/domain-randomization.md",
         "simulation/rollouts.md",
         "training/overview.md",
-        "troubleshooting.md",
     }
 )
 
