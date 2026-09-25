@@ -38,6 +38,7 @@ nav:
   - Editing and Exporting a Scene: simulation/scene-editing.md
   - Domain Randomization: simulation/domain-randomization.md
   - Newton Backend (GPU): simulation/newton.md
+  - Newton Scenes and Recording: simulation/newton-scenes.md
   - Isaac Sim Backend (GPU): simulation/isaac.md
   - Isaac Parity and Fleet Replication: simulation/isaac-parity.md
 - Real Hardware:

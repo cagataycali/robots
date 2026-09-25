@@ -102,8 +102,8 @@ def _save_episode_docstring_recipe() -> str:
 
 
 def _newton_doc_recipe() -> str:
-    """The collection block in the Newton recording guide."""
-    text = (_REPO_ROOT / "docs" / "simulation" / "newton.md").read_text(encoding="utf-8")
+    """The collection block in the Newton scenes guide."""
+    text = (_REPO_ROOT / "docs" / "simulation" / "newton-scenes.md").read_text(encoding="utf-8")
     blocks = [
         block
         for block in re.findall(r"```python\n(.*?)```", text, re.S)
@@ -111,7 +111,7 @@ def _newton_doc_recipe() -> str:
     ]
     assert len(blocks) == 1, (
         "premise: expected exactly one collection block in "
-        f"docs/simulation/newton.md, found {len(blocks)}. A guard that matches "
+        f"docs/simulation/newton-scenes.md, found {len(blocks)}. A guard that matches "
         "no block, or the wrong one, would pass without grading the recipe."
     )
     return blocks[0]
@@ -119,7 +119,7 @@ def _newton_doc_recipe() -> str:
 
 _RECIPES = {
     "save_episode docstring": _save_episode_docstring_recipe,
-    "docs/simulation/newton.md": _newton_doc_recipe,
+    "docs/simulation/newton-scenes.md": _newton_doc_recipe,
 }
 
 

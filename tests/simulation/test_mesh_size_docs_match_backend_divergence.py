@@ -26,10 +26,10 @@ measures correctly.
 
 So ``size=[2, 3, 4]`` scales the asset on one backend and is ignored on the
 other, and **both calls report success** - which is what makes the divergence
-expensive to discover. ``docs/simulation/newton.md`` asserted the opposite in as
-many words ("at parity with the MuJoCo backend"), so a reader porting a scene
-between the two had the one paragraph that would have warned them telling them
-not to look.
+expensive to discover. The Newton mesh section - now
+``docs/simulation/newton-scenes.md`` - asserted the opposite in as many words
+("at parity with the MuJoCo backend"), so a reader porting a scene between the
+two had the one paragraph that would have warned them telling them not to look.
 
 Why this guard and not a fix
 ----------------------------
@@ -71,10 +71,10 @@ from tests.simulation.test_pose_vector_domain_across_backends import _newton_stu
 
 _DOCS = pathlib.Path(__file__).parents[2] / "docs" / "simulation"
 
-#: The two pages that document a mesh ``add_object``: the Newton backend page and
+#: The two pages that document a mesh ``add_object``: the Newton scenes page and
 #: the backend-agnostic meshes guide, whose ``size`` contract is MuJoCo's.
 MESH_PAGES: tuple[pathlib.Path, ...] = (
-    _DOCS / "newton.md",
+    _DOCS / "newton-scenes.md",
     _DOCS / "meshes-and-materials.md",
 )
 

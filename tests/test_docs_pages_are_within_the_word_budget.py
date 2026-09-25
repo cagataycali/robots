@@ -53,7 +53,6 @@ _OVER_BUDGET = frozenset(
         "rosbridge-integration.md",
         "rtps-integration.md",
         "simulation/domain-randomization.md",
-        "simulation/newton.md",
         "simulation/rollouts.md",
         "training/overview.md",
         "troubleshooting.md",

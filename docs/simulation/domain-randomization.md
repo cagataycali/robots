@@ -197,7 +197,7 @@ renormalization). Values must be finite and non-negative or the call returns
 The Newton (GPU) backend mirrors both the `randomize` contract for the axes it
 supports (colors, lighting, physics) and the `set_obs_noise` sensor-noise
 contract, so an identical call behaves the same on either backend. See
-[Newton backend](newton.md#domain-randomization-and-sensor-noise).
+[Newton backend](newton-scenes.md#domain-randomization-and-sensor-noise).
 
 ## See also
 

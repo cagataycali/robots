@@ -231,7 +231,7 @@ def test_sub_pixel_camera_jitter_is_a_noop(sim):
 #: they are clean - nothing in the result says otherwise.
 _LIFETIME_SURFACES = (
     "docs/simulation/domain-randomization.md",
-    "docs/simulation/newton.md",
+    "docs/simulation/newton-scenes.md",
     "examples/12_domain_randomization.py",
     "strands_robots/simulation/mujoco/randomization.py",
     "strands_robots/simulation/newton/randomization.py",
