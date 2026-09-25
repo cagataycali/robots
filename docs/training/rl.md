@@ -1,5 +1,5 @@
 ---
-description: Train a policy from scratch with reinforcement learning - PPO or SAC over the SimEngine env interface, driven by a reward function instead of a dataset.
+description: Train a policy from scratch with reinforcement learning - PPO, SAC or TD3 over the SimEngine env interface, driven by a reward function instead of a dataset.
 ---
 
 # Reinforcement learning (from scratch)
@@ -26,6 +26,7 @@ pip install 'strands-robots[rl]'
 | [`RLTrainSpec`](rl-reference.md#rltrainspec) | Reward-driven training spec (extends `TrainSpec`). |
 | [`PpoTrainer`](#ppo) | Proximal Policy Optimization (on-policy, GAE, clipped surrogate + value). |
 | [`FastSacTrainer`](#fastsac) | Soft Actor-Critic (off-policy, replay buffer, twin Q critics, auto-tuned entropy). |
+| [`FastTd3Trainer`](#fasttd3) | Twin Delayed DDPG (off-policy, replay buffer, twin Q critics, deterministic actor, delayed updates). |
 | `SimpleReplayBuffer` | Off-policy transition store (fixed-capacity ring buffer). |
 | [`SimEnv`](#simenv) | Gym-style `reset -> step` adapter over a `SimEngine`. |
 | `EmpiricalNormalization` | Running observation normalizer; statistics update in training mode only, so `eval()` makes an exported policy whiten deterministically. Both `forward` and `update` want a batched `(batch, num_obs)` tensor - pass `obs.unsqueeze(0)` for one observation. |
@@ -165,15 +166,56 @@ The off-policy fields (`buffer_size`, `batch_size`, `learning_starts`,
 defaults to `-num_actions` when left `None`.
 
 The learner and the environment share one device, chosen by
-[`RLTrainSpec.device`](rl-reference.md#device-selection); both trainers train
-fine on CPU, where MuJoCo stepping dominates.
+[`RLTrainSpec.device`](rl-reference.md#device-selection); all three trainers
+train fine on CPU, where MuJoCo stepping dominates.
+
+## FastTD3
+
+`FastTd3Trainer` is the **deterministic** off-policy trainer: Twin Delayed DDPG.
+Where SAC explores through a stochastic actor and an auto-tuned entropy
+temperature, TD3 trains a `tanh`-bounded deterministic actor and explores only
+through Gaussian noise added at collection, with clipped double-Q targets,
+target-policy smoothing and delayed actor / target updates. Unlike the single-env
+FastSAC, collection is vectorized: `num_envs > 1` steps N independent `SimEnv`
+through a `VecSimEnv` and pushes N transitions per tick.
+
+```python
+trainer = create_trainer("fast_td3")
+spec = RLTrainSpec(
+    env_factory=make_env,          # the same SimEnv contract as PPO and SAC
+    output_dir="/tmp/fasttd3_reach",
+    total_timesteps=50 * 80,
+    rollout_steps=50,
+    num_envs=4,                    # collected through VecSimEnv
+    learning_starts=500, batch_size=256, gradient_steps=50, buffer_size=50_000,
+    learning_rate=3e-4, tau=0.01,
+    policy_delay=2,                # critic updates per delayed actor / target update
+    exploration_noise_std=0.1,     # Gaussian noise added to the collected action
+    target_noise_std=0.2,          # target-policy smoothing noise, clipped to
+    target_noise_clip=0.5,         # +-target_noise_clip
+    seed=0,
+)
+result = trainer.train(spec)        # setup -> (collect_rollout -> update)* -> save
+print(result.metrics)              # mean_reward, critic_loss, actor_loss, actor_updates
+```
+
+It shares the replay fields with SAC (`buffer_size`, `batch_size`,
+`learning_starts`, `gradient_steps`, `tau`) and reads none of the entropy ones
+(`autotune_alpha`, `init_alpha`, `alpha_lr`, `target_entropy`); the four noise /
+delay fields above are its own, and each is refused by `validate()` rather than
+trusted: a zero scale removes the mechanism silently, and the run would report
+success having explored nothing. The checkpoint pair is the same as
+PPO's and SAC's, so `examples/training/train_fastsac_reach.py` trains TD3
+instead by swapping `create_trainer("fast_td3")`.
 
 ## Worked example
 
 `examples/training/train_ppo_reach.py` (on-policy) and
 `examples/training/train_fastsac_reach.py` (off-policy) both train the SO-100
 `Elbow` joint to a target angle in MuJoCo from scratch and print the checkpoint
-path. The MuJoCo backend is single-environment (`num_envs == 1`).
+path; `create_trainer("fast_td3")` trains the same reach off that second spec.
+The single-environment constraint is FastSAC's (`num_envs == 1`), not the
+backend's: PPO and FastTD3 collect from `num_envs` parallel MuJoCo `SimEnv`.
 
 ## Result
 

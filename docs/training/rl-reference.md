@@ -74,7 +74,9 @@ running statistics still learning.
 `rollout_steps`, `num_envs`, the PPO hyperparameters (`gamma`, `lam`,
 `clip_param`, `num_learning_epochs`, `num_mini_batches`, `entropy_coef`,
 `value_loss_coef`, `max_grad_norm`, `hidden_dims`, `init_noise_std`), the
-[off-policy SAC fields](rl.md#fastsac), plus the universal `output_dir` /
+[off-policy SAC fields](rl.md#fastsac), the [TD3 noise / delay
+fields](rl.md#fasttd3) (`policy_delay`, `exploration_noise_std`,
+`target_noise_std`, `target_noise_clip`), plus the universal `output_dir` /
 `learning_rate` / `seed` / `device`.
 
 `validate()` grades the fields below before `setup()` builds an environment, a
@@ -85,18 +87,22 @@ slower run but a differently-shaped one that torch honors silently, under
 
 | Field | Domain | Graded by | An unusable value |
 |---|---|---|---|
-| `total_timesteps`, `rollout_steps` | positive integer | both | The factors of `num_iters = max(1, total_timesteps // (rollout_steps * num_envs))`: a fraction, `nan` or `inf` clamps the run to one iteration, and `rollout_steps=True` makes PPO normalize advantages over a length-one batch. |
-| `num_envs` | PPO `>= 1`, FastSAC exactly `1` | each backend | PPO parallelizes; the MuJoCo-backed FastSAC is single-env. |
+| `total_timesteps`, `rollout_steps` | positive integer | all three | The factors of `num_iters = max(1, total_timesteps // (rollout_steps * num_envs))`: a fraction, `nan` or `inf` clamps the run to one iteration, and `rollout_steps=True` makes PPO normalize advantages over a length-one batch. |
+| `num_envs` | PPO and FastTD3 `>= 1`, FastSAC exactly `1` | each backend | PPO and FastTD3 collect from N parallel `SimEnv` through `VecSimEnv`; FastSAC is single-env. The constraint is the trainer's, not the MuJoCo backend's. |
 | `learning_starts` | positive integer, `>= batch_size`, and reachable by both the collected step budget and `buffer_size` | off-policy | Short of either bound the run takes **zero** gradient steps and exports the network `setup` initialized. Each short count is reported on its own. |
 | `hidden_dims` | sequence of positive integer widths; empty means a linear policy | all three | `nn.Linear` accepts a width of zero, and the layer after it then emits its bias alone - so the actor commands one fixed action in every state. A problem names the index (`hidden_dims[1] must be a positive integer`). |
-| `gamma` | finite, `[0, 1]` | both | The discounted return is a geometric series, so above 1 it diverges over the horizon. Both endpoints are in: `1` undiscounted, `0` myopic. |
-| `tau` | finite, `(0, 1]` | FastSAC | The Polyak coefficient of the target critics. |
+| `gamma` | finite, `[0, 1]` | all three | The discounted return is a geometric series, so above 1 it diverges over the horizon. Both endpoints are in: `1` undiscounted, `0` myopic. |
+| `tau` | finite, `(0, 1]` | off-policy | The Polyak coefficient of the target critics. |
+| `batch_size`, `buffer_size`, `gradient_steps` | positive integer | off-policy | The replay loop's three counts: transitions sampled per gradient step, ring-buffer capacity, and updates per iteration. A one-slot buffer never fills, and a non-positive `gradient_steps` takes no update while reporting success. |
 | `num_learning_epochs` | positive integer | PPO | The bound of the whole optimizer loop: non-positive takes no gradient step and reports losses of `0.0`. |
 | `clip_param` | positive; `inf` means do not clip | PPO | The half-width of the trust region. `nan` silently removes it - comparisons against `nan` are false, so the gradient takes the unclipped branch - and `0` or a negative inverts the clamp into a constant. |
 | `max_grad_norm` | positive and 64-bit-representable; `inf` means do not clip | PPO | `clip_grad_norm_` scales by `max_norm / total_norm` without judging it: `0` zeroes every gradient, a negative makes the update gradient *ascent*, and `10**400` is refused on range rather than sign. |
 | `init_alpha` | positive finite | FastSAC | The temperature is stored as its logarithm, so `0` gives `-inf` and drops the entropy term from both losses for good. Read whether or not tuning is on. |
 | `alpha_lr` | positive finite, when `autotune_alpha` | FastSAC | `0` never moves the temperature, so the tuning asked for does not happen; `inf` sends it to an infinity on the first step. |
 | `target_entropy` | finite real of **either sign**, or `None` for the `-num_actions` heuristic | FastSAC | Its default is negative, so no endpoint is decidable. |
+| `policy_delay` | positive integer | FastTD3 | The modulus of the `update_count % policy_delay` test that gates the *actor* update, so `0` divides by zero mid-update and `True` (the interval's own maximum read as `1`) removes the delay TD3 is named for. The critics keep training either way. |
+| `exploration_noise_std` | positive finite | FastTD3 | The only exploration a deterministic actor has once the `learning_starts` random warmup ends: `0` silently removes it and the run still reports success, replaying the actor's own actions. Gaussian noise is symmetric, so a negative scale is the same distribution rather than a smaller one. |
+| `target_noise_std`, `target_noise_clip` | positive finite | FastTD3 | Target-policy smoothing: the noise added to the target action, and the bound it is clipped to. Either at `0` removes the smoothing, leaving plain clipped double-Q. |
 | `normalize_obs`, `normalize_advantage`, `autotune_alpha` | `bool` | the backend that reads it | Each is spent by truthiness, so `"false"`, `"no"` and `"0"` would select the affirmative branch. `autotune_alpha` is graded ahead of the `alpha_lr` check it gates. |
 | `log_interval` | whole number of iterations | all three | **The checkpoint cadence, not a logging one**: `it % log_interval == 0` decides whether `save_checkpoint` runs, so it is RL's [`TrainSpec.save_freq`](overview.md). `0` is the supported "final checkpoint only" mode, and `nan` passes the truthiness guard but never the modulus, so it is silently that mode - costly, because RL return is non-monotonic and the deployable policy is often an earlier iteration. |
 | `device` | a device string torch can parse | all three | Spelling only, on the same domain `lerobot_train` and `LerobotTrainer` apply - see [Device selection](#device-selection). |
@@ -113,7 +119,8 @@ authoritative: `setup()` reconciles the `SimEnv` onto it, so observations,
 rewards and dones are built where the network is. Pass `device="cpu"` to stay on
 CPU on a GPU host. `validate()` grades only the *spelling* - `device="cuda"` on
 a CPU-only host is valid, because a queued run is written on one machine and
-executed on another. Both trainers train fine on CPU: MuJoCo stepping dominates.
+executed on another. All three trainers train fine on CPU: MuJoCo stepping
+dominates.
 
 ## See also
 

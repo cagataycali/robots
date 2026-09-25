@@ -61,8 +61,11 @@ class RLTrainSpec(TrainSpec):
             num_envs)``.
         rollout_steps: Environment steps collected per iteration before each
             policy update (the on-policy batch horizon, holosoma ``num_steps``).
-        num_envs: Parallel environments. ``1`` for the MuJoCo single-env
-            backend; vectorized backends raise it.
+        num_envs: Parallel environments. ``1`` for the single-env FastSAC
+            trainer, which refuses any other count; PPO and FastTD3 collect
+            from N parallel ``SimEnv`` through
+            :class:`~strands_robots.training.rl.vec_env.VecSimEnv`, on the
+            MuJoCo backend included.
         actor_obs_keys: Ordered observation keys the actor sees, as
             :class:`~strands_robots.training.rl.env.SimEnv` enforces them. Kept
             on the spec so a plan advisor can echo the observation contract
