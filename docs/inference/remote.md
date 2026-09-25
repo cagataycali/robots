@@ -29,7 +29,8 @@ pip install 'strands-robots[inference]'   # pulls websockets>=17.0 (numpy-agnost
 The extra depends only on `websockets`, so it composes cleanly with `lerobot`
 (`numpy>=2`) in the same environment. The `>=17.0` floor is the release whose
 `Server.shutdown()` closes the connections it accepted rather than the listening
-socket alone - see the teardown contract below.
+socket alone, which is the teardown contract below - graded from a client's point
+of view by `tests/inference/test_a_stopped_server_stops_serving_its_clients.py`.
 
 ## 1. Start the server (GPU box)
 
@@ -65,21 +66,10 @@ server.stop()
 
 Either teardown stops the server *serving*, not just listening: `stop()` (and
 `serve()` returning) closes the listening socket **and** every client connection
-still open, and returns only once every connection handler has terminated. So the
+still open, and returns only once every connection handler has terminated - so the
 wrapped policy is no longer invoked for a client that was already connected, and
 neither call returns while a handler could still send one more action chunk. A
-handler inside an inference call notices the close when that call returns, so a
 teardown that lands mid-inference returns when that inference does.
-
-That contract is the reason for the `>=17.0` floor above rather than something
-this module implements: through websockets 16.x `Server.shutdown()` closed the
-listening socket and nothing else, each accepted connection was served on a
-thread that outlived the server object, and `stop()` returned in 0.18ms while the
-same open connection went on being answered with action chunks - on a robot, the
-policy still driving the arm after the operator was told the server stopped. The
-teardown is graded from a client's point of view by
-`tests/inference/test_a_stopped_server_stops_serving_its_clients.py`, which fails
-on 16.1.1 and passes from 17.0.
 
 `port` is an `int` in `[1, 65535]`, plus `0` for the ephemeral bind above. A
 value outside that - a negative, an out-of-range number, a float, a `bool`, a
@@ -87,8 +77,7 @@ string - is refused by the constructor and by `--port`, before any policy is
 built, rather than reaching the socket.
 
 The server binds `127.0.0.1` by default. Set `host="0.0.0.0"` to accept remote
-connections and wrap the link in tailscale / wireguard for production - the v1
-transport is plaintext (auth/TLS is out of scope, see Non-goals).
+connections; the v1 transport is plaintext (see Non-goals).
 
 ## 2. Connect from the robot host
 
@@ -104,25 +93,22 @@ policy = create_policy("ws://gpu-box:8765")
 
 The server endpoint is set via `endpoint=` (with a `host=`/`port=` fallback).
 `RemotePolicy` tolerates unrecognized kwargs so a shared `policy_config` can be
-forwarded unchanged, but passing the endpoint under any other name (e.g. `uri=`)
-logs a WARNING naming the ignored kwarg and the endpoint actually in use, rather
-than silently connecting to the default `ws://127.0.0.1:8765`.
+forwarded unchanged, but the endpoint under any other name (e.g. `uri=`) logs a
+WARNING naming the ignored kwarg and the endpoint in use, rather than silently
+connecting to the default `ws://127.0.0.1:8765`.
 
 When `port=` is the effective spelling it must be an `int` in `[1, 65535]`, and
 is refused before the endpoint is built. Unlike the server the client cannot
-accept `0`: asking the kernel for a free port is something only the binding side
-can do, so there is nothing for a client to dial. Refusing it here matters
-because a WebSocket target is only resolved on first use - an unusable port is
-not rejected by the transport, it surfaces later as an unreachable server and
-implicates the service you were trying to reach.
+accept `0`: only the binding side can ask the kernel for a free port, so there is
+nothing for a client to dial. A WebSocket target is resolved on first use, so an
+unusable port the transport accepts surfaces later as an unreachable server and
+implicates the service you were dialling.
 
 `host=` is the other half of that same URI and is held to the same terms: a bare
 hostname or IP literal, IPv6 bracketed (`"[::1]"`), with no `/`, `:`, scheme or
-credentials in it. Pass a full URL as `endpoint=` instead. This is not cosmetic -
-the parse hands a delimiter to a later URI component and takes the port with it,
-so `host="127.0.0.1/foo"` reads as host `127.0.0.1`, path `/foo:8765` and port
-**80**: the validated port ends up in the path and the client dials one nobody
-configured. `host="0.0.0.0"` still reaches a server bound on every interface.
+credentials in it - a delimiter is otherwise read as a later URI component and takes the
+validated port with it, so `host="127.0.0.1/foo"` dials port **80**. Pass a full URL as
+`endpoint=` instead. `host="0.0.0.0"` still reaches a server bound on every interface.
 Whether the host resolves is left to the connect path, which already reports it.
 
 Then drive it exactly like a local policy. In simulation:
@@ -155,56 +141,42 @@ running the policy in-process:
 host: the runtime resolves the names once before the rollout, refuses one the
 scene does not contain (naming the bodies it does hold), and merges
 `body.<name>.pos` / `.quat` / `.lin_vel` / `.ang_vel` into every observation it
-sends. The policy that consumes them is on the inference host, so the server
-advertises its whole served tree's declaration - a wrapper does not hide the
-policy inside it - and the client declares the same set. A mimic tracker such as
-[ProtoMotions](../policies/protomotions.md) therefore reads its anchor link over
-the wire exactly as it does in-process.
+sends. The server advertises its whole served tree's declaration - a wrapper does
+not hide the policy inside it - and the client declares the same set, so a mimic
+tracker such as [ProtoMotions](../policies/protomotions.md) reads its anchor link
+over the wire exactly as it does in-process.
 
-Advertised metadata is held to the same domain the local property is, in the same
-direction the forwarded parameters below are: a peer's numbers become this
-policy's introspection answers, so the handshake is where a locally-loaded
-checkpoint's constructor sits in the remote arrangement. `execution_horizon` and
+Advertised metadata is held to the same domain the local property is, because a peer's
+numbers become this policy's introspection answers. `execution_horizon` and
 `actions_per_step` are slice bounds over the action chunk, so they share
-`chunk_count_error`'s domain with the constructor parameters they mirror - a
-positive `int`, nothing else - `requires_images` / `supports_rtc` must be JSON
-booleans, and `required_bodies` is held to `required_bodies_error`, the same owner
-`collect_required_bodies` asks when the policy is local. Coercing instead is silent
-rather than lenient: an advertised `0` lands behind `execution_horizon`'s
-`max(1, ...)` floor, so a peer declaring a 16-action chunk is mirrored as
-single-step, `is_chunk_emitting()` answers `False`, and the rollout leaves the
-async-RTC path with nothing said; `bool("no")` is `True`, so a peer answering
-`"no"` turns a capability on; and filtering a body list keeps the entries it can
-use, so `["torso_link", 42]` becomes a proxy declaring `("torso_link",)` - a
-declaration nobody made, whose missing pose the served tracker replaces with
-`base_quat`, the pelvis. A repeated name is accepted, because the local owner
-de-duplicates it rather than refusing it. A field the handshake omits is not
-refused - the client keeps its own default, so a server advertising a subset stays
-usable - and a value it cannot mirror raises a `ConnectionError` naming the field,
-the value and the peer, without the connection being cached.
+`chunk_count_error`'s domain with the constructor parameters they mirror - a positive
+`int`, nothing else - `requires_images` / `supports_rtc` must be JSON booleans, and
+`required_bodies` is held to `required_bodies_error`, the same owner
+`collect_required_bodies` asks when the policy is local. Nothing is coerced, because a
+coerced value is silent rather than lenient. A repeated body name is accepted, the local
+owner de-duplicates it. A field the handshake omits is not refused - the client keeps
+its own default, so a server advertising a subset stays usable - and a value it cannot
+mirror raises a `ConnectionError` naming the field, the value and the peer, without the
+connection being cached.
 
 ## Real-Time Chunking across the wire
 
-The RTC contract is preserved end to end. The runner counts how many control
-steps elapse during inference and sets it via
-`Policy.set_rtc_observed_delay(steps)`; `RemotePolicy` forwards that count on
-every request, and the server applies it to the wrapped policy immediately
-before inference. Chunk-seam blending therefore happens server-side against the
-correct, deterministic step offset - identical to a local rollout. Per-episode
-`reset(seed)` and `set_control_frequency(hz)` are forwarded too, so seeded
-episodes stay reproducible. The forwarded seed is what makes them so: a policy
-samples from the RNG of the process it runs in, and the rollout's own
-`set_eval_seed` seeds the robot host, not the inference host - so the wrapped
-policy's `reset(seed)` is the only seeding the server process gets, and every
-provider that samples in-process applies it there.
+The RTC contract is preserved end to end. The runner counts how many control steps
+elapse during inference and sets it via `Policy.set_rtc_observed_delay(steps)`;
+`RemotePolicy` forwards that count on every request, and the server applies it to the
+wrapped policy immediately before inference. Chunk-seam blending therefore happens
+server-side against the correct, deterministic step offset. Per-episode `reset(seed)`
+and `set_control_frequency(hz)` are forwarded too, so seeded episodes stay reproducible.
+A policy samples from the RNG of the process it runs in, and the rollout's own
+`set_eval_seed` seeds the robot host, so the forwarded `reset(seed)` is the only seeding
+the inference host gets.
 
-Both forwarded values are validated by the policy itself, so a remote caller
-reaches exactly the accepted domain an in-process one does: `hz` must be a
-finite positive number and the step count `None` or a non-negative `int`. The
-server passes them through verbatim rather than coercing them - JSON carries
-`NaN`, `Infinity` and `true`, and coercing a `true` to `1.0` would install a 1 Hz
-clock no local caller could have set. A refused value is marshalled back as the
-same `RuntimeError` as any other server-side failure, before inference runs.
+Both forwarded values are validated by the policy itself, so a remote caller reaches
+exactly the accepted domain an in-process one does: `hz` must be a finite positive
+number and the step count `None` or a non-negative `int`. The server passes them through
+verbatim rather than coercing them, because JSON carries `NaN`, `Infinity` and `true`
+and no local caller could have set what those coerce to. A refused value is marshalled
+back as the same `RuntimeError` as any other server-side failure, before inference runs.
 
 ## Error handling
 
