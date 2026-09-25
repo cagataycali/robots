@@ -45,7 +45,6 @@ _OVER_BUDGET = frozenset(
         "policies/protomotions.md",
         "reference/configuration.md",
         "simulation/domain-randomization.md",
-        "simulation/rollouts.md",
         "training/overview.md",
     }
 )

@@ -89,9 +89,10 @@ own speed - so it is graded against the shared boolean domain ahead of the `step
 `step_delay` check, and `"false"` is refused rather than read as true. Only `load_pose` and
 `move_multiple` consult it; `reset_to_home` always interpolates.
 
-`store_pose` and `delete_pose` rewrite the *whole* pose library for a robot
+`store_pose` and `delete_pose` rewrite the *whole* pose library
 (`<robot_id>_poses.json` under `.strands_robots/poses/`) through a temp sibling plus `os.replace`,
-so a failed write leaves every posture as it was and names the pose it did not store.
+so a failed write leaves every posture as it was and names the pose it did not store. The
+directory is that write's to create, not a read's.
 
 ### `robot_mesh`
 
