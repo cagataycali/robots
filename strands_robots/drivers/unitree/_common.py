@@ -59,7 +59,7 @@ UNITREE_SDK_INSTALL = (
 )
 
 #: Where the per-platform recipe lives in the docs.
-UNITREE_SDK_DOCS = "docs/robots/humanoids.md (Installing the Unitree SDK)"
+UNITREE_SDK_DOCS = "docs/hardware/unitree-g1.md (Installing the Unitree SDK)"
 
 
 def sdk_missing(exc: BaseException | str) -> str:

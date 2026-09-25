@@ -45,7 +45,10 @@ nav:
 - Real Hardware:
   - Robot Control: hardware/robot-control.md
   - Native Drivers: hardware/native-drivers.md
+  - Booster T1 over the Vendor SDK: hardware/booster-t1.md
+  - Microduck over the robotd Link: hardware/microduck.md
   - Reachy Mini Daemon Link: hardware/reachy-mini.md
+  - Unitree G1 over CycloneDDS: hardware/unitree-g1.md
   - SO Arms over the Feetech Bus: hardware/so-arms.md
   - Universal Robots over RTDE: hardware/universal-robots.md
   - Teleoperation: hardware/teleoperation.md

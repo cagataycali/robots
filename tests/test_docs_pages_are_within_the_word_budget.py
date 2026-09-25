@@ -44,7 +44,6 @@ _OVER_BUDGET = frozenset(
         "policies/kimodo.md",
         "policies/protomotions.md",
         "reference/configuration.md",
-        "robots/humanoids.md",
         "simulation/domain-randomization.md",
         "simulation/rollouts.md",
         "training/overview.md",
