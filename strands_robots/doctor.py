@@ -298,17 +298,27 @@ def check_mujoco_gl() -> str:
 
 
 def check_lerobot() -> str:
-    """LeRobot importable (lerobot extra)."""
-    try:
-        import lerobot
+    """LeRobot importable (lerobot extra).
 
-        ver = getattr(lerobot, "__version__", "?")
-        return _pass(f"lerobot {ver}")
-    except ImportError:
+    The reachability question goes to :func:`~strands_robots.utils.lerobot_install_error`
+    rather than to a bare ``import lerobot``: a *directory* named ``lerobot`` on
+    the import path imports as an empty namespace package, which passed this
+    check as ``lerobot ?`` - the doctor reporting an install for a host that has
+    none, with the unresolvable version as the only tell.
+    """
+    from strands_robots.utils import lerobot_install_error
+
+    problem = lerobot_install_error()
+    if problem is not None:
         return _warn(
-            "lerobot not installed (needed for real hardware + dataset recording)",
+            f"{problem} (needed for real hardware + dataset recording)",
             note='uv pip install "strands-robots[lerobot]"',
         )
+
+    import lerobot
+
+    ver = getattr(lerobot, "__version__", "?")
+    return _pass(f"lerobot {ver}")
 
 
 #: The dynamic loader's own line inside a torchcodec load failure - what is

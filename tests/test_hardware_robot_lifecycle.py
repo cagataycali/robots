@@ -1469,10 +1469,17 @@ class TestEnsureLerobotRegistriesArePopulated:
         """
         from strands_robots.utils import ensure_lerobot_family_registered
 
-        # ``import lerobot.<family>`` fails, but the ``import lerobot`` probe
-        # succeeds -> the partial-install warning branch.
+        # ``import lerobot.<family>`` fails while lerobot itself is installed ->
+        # the partial-install warning branch. The stand-in carries a ``__file__``
+        # because that is what an install has and a bare directory named
+        # ``lerobot`` does not (see
+        # ``tests/test_a_directory_named_lerobot_is_not_an_install.py``): without
+        # one it stands for a host with no install at all, which is the case
+        # above rather than this one.
         monkeypatch.setitem(sys.modules, f"lerobot.{family}", None)
-        monkeypatch.setitem(sys.modules, "lerobot", types.ModuleType("lerobot"))
+        installed = types.ModuleType("lerobot")
+        installed.__file__ = "/fake/lerobot/__init__.py"
+        monkeypatch.setitem(sys.modules, "lerobot", installed)
         with caplog.at_level("WARNING"):
             ensure_lerobot_family_registered(family)
         assert any("partial install" in r.message for r in caplog.records)

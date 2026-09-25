@@ -46,6 +46,8 @@ from typing import Any
 
 from strands import tool
 
+from ..utils import lerobot_install_error
+
 logger = logging.getLogger(__name__)
 
 # Caps chosen to preserve content fully in practice while protecting the
@@ -204,11 +206,20 @@ def _get_registry_choices(kind: str) -> dict[str, str]:
 
 
 def _discover_modules() -> dict[str, Any]:
-    """Discover lerobot submodules and ALL registered config choices dynamically."""
-    try:
-        import lerobot
-    except ImportError:
-        return {"error": "lerobot not installed"}
+    """Discover lerobot submodules and ALL registered config choices dynamically.
+
+    A bare ``import lerobot`` is not the reachability question: a *directory*
+    named ``lerobot`` on the import path imports as an empty namespace package,
+    and this function then reported a catalog of that directory's files with
+    every registry at ``(0)`` - a discovery result that reads as "this install
+    exposes nothing" rather than "there is no install". See
+    :func:`~strands_robots.utils.lerobot_install_error`.
+    """
+    problem = lerobot_install_error()
+    if problem is not None:
+        return {"error": problem}
+
+    import lerobot
 
     result: dict[str, Any] = {"packages": [], "modules": [], "registries": {}}
 

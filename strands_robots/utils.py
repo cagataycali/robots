@@ -177,6 +177,52 @@ def lerobot_version() -> str:
         return "unknown"
 
 
+def lerobot_install_error() -> str | None:
+    """Return why ``import lerobot`` cannot reach an install, or None when it can.
+
+    Two different states read the same to ``import lerobot`` and must not read
+    the same to a caller: lerobot absent, and a *directory* named ``lerobot`` on
+    the import path. Python imports the second as a namespace package, so the
+    import succeeds while the package is empty - ``__path__`` is the directory,
+    ``__file__`` is ``None``, and every registry lookup through it reports zero
+    choices, which a caller cannot tell from a real install that registers
+    nothing. Both spellings of that state are ordinary: a script run from a
+    directory holding a ``git clone`` of lerobot (whose sources live under
+    ``src/``, so the checkout root is not itself a package), and this repository's
+    own ``examples/lerobot/`` beside ``examples/08_discover_lerobot.py``, which
+    Python puts on ``sys.path`` as the script's directory.
+
+    ``__file__ is None`` is the whole test, and it is narrow on purpose: an
+    editable install and a copy on ``PYTHONPATH`` both set ``__file__`` to a real
+    ``__init__.py`` and are real installs.
+
+    Returns:
+        A message naming the cause and its remedy, or ``None`` when lerobot
+        imports as an installed package. Callers frame the message for their own
+        surface (:func:`strands_robots.doctor.check_lerobot` as a check line, the
+        ``use_lerobot`` tool as a tool error) rather than deciding the cause
+        themselves, so one state is reported one way everywhere.
+    """
+    try:
+        import lerobot
+    except ImportError:
+        return "lerobot not installed"
+
+    if getattr(lerobot, "__file__", None) is not None:
+        return None
+
+    directories = [str(entry) for entry in getattr(lerobot, "__path__", [])]
+    where = ", ".join(directories) or "an empty namespace path"
+    remedy = f"uv pip install -e {directories[0]}" if directories else 'uv pip install "strands-robots[lerobot]"'
+    return (
+        f"lerobot not installed: the name resolves to {where}, a directory with no "
+        f"package to import (Python reads it as a namespace package). Install lerobot "
+        f"- '{remedy}' if that directory is a lerobot checkout, otherwise "
+        f"'uv pip install \"strands-robots[lerobot]\"' and run from a directory with "
+        f"no 'lerobot' entry"
+    )
+
+
 @functools.cache
 def ensure_lerobot_family_registered(family: str) -> None:
     """Import every subpackage of ``lerobot.<family>`` so its registry is populated.
@@ -210,15 +256,16 @@ def ensure_lerobot_family_registered(family: str) -> None:
     try:
         root = importlib.import_module(package)
     except ImportError as exc:
-        # Two failure modes, and the log level is what separates them: lerobot
-        # wholly absent is expected on a sim-only host (debug - the caller still
-        # gets a clean "Unsupported <kind> type" at the lookup), while lerobot
-        # present with this family unimportable is a partial install worth a
-        # warning without --log-level=DEBUG.
-        try:
-            importlib.import_module("lerobot")
-        except ImportError:
-            logger.debug("lerobot not installed: %s", exc)
+        # Two failure modes, and the log level is what separates them: no
+        # reachable install is expected on a sim-only host (debug - the caller
+        # still gets a clean "Unsupported <kind> type" at the lookup), while
+        # lerobot installed with this family unimportable is a partial install
+        # worth a warning without --log-level=DEBUG. A directory named lerobot
+        # is the first case, not the second, so the reachability question goes
+        # to lerobot_install_error rather than to a bare import.
+        problem = lerobot_install_error()
+        if problem is not None:
+            logger.debug("%s: %s", problem, exc)
         else:
             logger.warning("lerobot is installed but %s is not importable (partial install?): %s", package, exc)
         return
