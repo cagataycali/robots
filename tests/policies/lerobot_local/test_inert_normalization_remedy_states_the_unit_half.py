@@ -48,7 +48,7 @@ SO101_RANGE_RAD = [
     (-0.1745, 1.7453),
 ]
 
-_DOC = pathlib.Path(__file__).resolve().parents[3] / "docs" / "policies" / "lerobot-local.md"
+_DOC = pathlib.Path(__file__).resolve().parents[3] / "docs" / "policies" / "lerobot-local-observations.md"
 
 
 def _sigma_span(state_units: str) -> list[float]:

@@ -199,6 +199,7 @@ Expected: >5 deg cumulative motion on at least one joint within 20 steps.
 
 ## See also
 
-- [LeRobot Local](lerobot-local.md) - install, caching, processor bridge, RTC
+- [LeRobot Local](lerobot-local.md) - install, caching, RTC
+- [LeRobot Local observations](lerobot-local-observations.md) - the processor bridge and its stats
 - [Policy providers](overview.md)
 - [LeRobot project](https://github.com/huggingface/lerobot)

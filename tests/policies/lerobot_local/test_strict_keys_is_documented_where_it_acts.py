@@ -18,7 +18,7 @@ The sibling that got the flag in the same PR is the counter-evidence.
 matched", naming the whole key surface, and is still accurate. Both joint-state
 methods document their own ``strict_keys`` condition (``_resolve_state_order``
 ships an explicit two-bullet list of the True and False branches), and
-``docs/policies/lerobot-local.md`` documents the joint-state raise in its body -
+``docs/policies/lerobot-local-observations.md`` documents the joint-state raise -
 so the code, the methods and the page agreed, and only the flag's own definition
 and that page's one-line gloss did not.
 

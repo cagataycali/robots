@@ -20,7 +20,7 @@ features, and inference fails with a confusing
 `run_policy` / `eval_policy` catch this with a cheap pre-flight check BEFORE any
 model weights download, returning a `status=error` that names the expected
 source camera keys and how to fix it. See
-[the pre-flight check](lerobot-local.md#embodiment-obs_rename-and-the-pre-flight-check).
+[the pre-flight check](lerobot-local-observations.md#embodiment-obs_rename-and-the-pre-flight-check).
 
 ## Translation table
 
@@ -145,5 +145,5 @@ turns it into an error.
 
 ## See also
 
-- [LeRobot Local](lerobot-local.md) - camera routing, the pre-flight check, `obs_rename_override`.
+- [LeRobot Local observations](lerobot-local-observations.md) - camera routing, the pre-flight check, `obs_rename_override`.
 - [MolmoAct2](molmoact2.md) - the SO-100/101 action/observation contract.
