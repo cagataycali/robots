@@ -18,9 +18,10 @@ Organizing principle (post-consolidation, refs #2928):
       * Driver-cache reads      (g1_state, and g1_sensor over the six
                                  snapshot caches: battery, imu, lidar_state,
                                  lidar_summary, mainboard, pressure)
-      * Driver-gated writes     (g1_send_action, g1_run_policy, g1_start_task,
-                                 g1_stop_task, g1_task_status, and the
-                                 execution verbs consolidated in g1_actions:
+      * Driver-gated writes     (g1_send_action, g1_run_policy, g1_task over
+                                 the control-loop lifecycle: start, status,
+                                 stop, and the execution verbs consolidated
+                                 in g1_actions:
                                  g1_set_fsm, g1_move_velocity, g1_stop_move,
                                  g1_set_stand_height, g1_set_swing_height,
                                  g1_balance_stand, the safe posture
@@ -58,9 +59,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # Driver-gated writes (P1/P2)
     "g1_send_action": (".g1_send_action", "g1_send_action"),
     "g1_run_policy": (".g1_run_policy", "g1_run_policy"),
-    "g1_start_task": (".g1_start_task", "g1_start_task"),
-    "g1_stop_task": (".g1_stop_task", "g1_stop_task"),
-    "g1_get_task_status": (".g1_task_status", "g1_get_task_status"),
+    "g1_task": (".g1_task", "g1_task"),
     # Driver-gated execution verbs, consolidated in one table-driven module
     "g1_arm_action": (".g1_actions", "g1_arm_action"),
     "g1_balance_stand": (".g1_actions", "g1_balance_stand"),

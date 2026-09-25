@@ -100,8 +100,8 @@ await g1.get_status()     # connection, FSM, battery
 
 The driver-as-tool is deliberately small - `sensors`, `status`, `stop` - so an
 agent can introspect the robot the day it is built. Motion goes through the
-FSM-gated `g1_tools` bundle (`g1_send_action`, `g1_run_policy`, `g1_start_task`,
-the `g1_safe_*` posture verbs) and, for the raw SDK, `use_unitree`; see the
+FSM-gated `g1_tools` bundle (`g1_send_action`, `g1_run_policy`, `g1_task` over
+the control-loop lifecycle, the `g1_safe_*` posture verbs) and, for the raw SDK, `use_unitree`; see the
 [hardware tools](../hardware/tools.md) and [security](../security.md) pages.
 
 ### Installing the Unitree SDK

@@ -18,9 +18,9 @@ commanded posture (the driver's own five-reason exit table: ``n_steps``,
 This module is the agent-facing side of that write.  It calls
 :meth:`~strands_robots.drivers.g1.G1Driver.run_policy` once and returns
 the envelope the driver produced verbatim.  A caller who wants to
-observe the rollout reaches :meth:`get_task_status` (the ``g1_task_status``
+observe the rollout reaches :meth:`get_task_status` (``g1_task(action="status")``
 verb); a caller who wants to end it reaches :meth:`stop_task` (the
-``g1_stop_task`` verb).  The driver's own :class:`_task_admission` lock
+``g1_task(action="stop")``).  The driver's own :class:`_task_admission` lock
 serialises this verb against those two, so this module needs no lock of
 its own.  No DDS is subscribed, no bus is touched, no motion switcher
 is opened; the loop's publisher is opened by the driver on start and
@@ -40,7 +40,7 @@ strands_robots.tools.g1.g1_run_policy`` still pulls no
 refs strands-labs/robots#358).
 
 The driver argument is typed :class:`~typing.Any` at runtime rather
-than as ``G1Driver`` for the same reason ``g1_stop_task`` and
+than as ``G1Driver`` for the same reason ``g1_task`` and
 ``g1_send_action`` give: the driver module imports
 :func:`~strands_robots.drivers.unitree._common.ensure_dds` from this
 package at load, so a runtime import of ``G1Driver`` here would close
@@ -76,10 +76,10 @@ What this module does not do.
 * Poll the loop.  The driver's ``get_task_status`` is the one reader
   for the loop's live snapshot; a caller who wants ``steps``,
   ``refusals``, ``elapsed_s`` or the loop's ``exit_reason`` reaches that
-  verb (``g1_task_status``).  This verb only reports the start.
+  verb (``g1_task(action="status")``).  This verb only reports the start.
 * Stop the loop.  The driver's ``stop_task`` signals the loop's exit
   and joins its thread; a caller who wants a controlled stop reaches
-  that verb (``g1_stop_task``).  This verb does not carry a stop knob.
+  that verb (``g1_task(action="stop")``).  This verb does not carry a stop knob.
 * Restate the driver's five exit-reason strings.  The driver's
   :class:`_ControlLoop._run` finally-block names ``n_steps``,
   ``duration``, ``gate``, ``policy``, ``publish`` verbatim, and
@@ -129,9 +129,9 @@ def g1_run_policy(
     strands-labs/robots#2916).  The call returns immediately once the
     loop's thread has started; the caller polls
     :meth:`~strands_robots.drivers.g1.G1Driver.get_task_status` (the
-    ``g1_task_status`` verb) to observe progress and reaches
+    ``g1_task(action="status")`` verb) to observe progress and reaches
     :meth:`~strands_robots.drivers.g1.G1Driver.stop_task` (the
-    ``g1_stop_task`` verb) to end it.
+    ``g1_task(action="stop")`` verb) to end it.
 
     Args:
         driver: An object with a synchronous

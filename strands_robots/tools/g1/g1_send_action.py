@@ -37,7 +37,7 @@ strands_robots.tools.g1.g1_send_action`` still pulls no
 refs strands-labs/robots#358).
 
 The driver argument is typed :class:`~typing.Any` at runtime rather
-than as ``G1Driver`` for the same reason ``g1_stop_task`` gives: the
+than as ``G1Driver`` for the same reason ``g1_task`` gives: the
 driver module imports :func:`~strands_robots.drivers.unitree._common.ensure_dds`
 from this package at load, so a runtime import of ``G1Driver`` here
 would close a cycle, and ``@tool`` calls

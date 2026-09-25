@@ -24,8 +24,7 @@ population by signature and by definition site rather than naming it, so a verb
 added to this package with a live-handle parameter is held to the rule the hour
 it lands instead of inheriting an exemption by being absent from a list.  The
 discovery is deliberately *not* keyed on the module name - ``g1_state.py``
-defines ``g1_get_state`` and ``g1_task_status.py`` defines
-``g1_get_task_status``, and a scan reading ``getattr(module, module_name)``
+defines ``g1_get_state``, and a scan reading ``getattr(module, module_name)``
 grades neither while appearing to grade the package.  Both are async-or-not and
 both are called through ``_call``, because a coroutine returned unawaited is a
 verb inside the population that is still ungraded.
@@ -123,8 +122,7 @@ def _tools_defined_in(module: Any) -> dict[str, Any]:
 
     Keyed by the function name and found by walking the module, because the
     function name and the module name are not the same thing: ``g1_state.py``
-    defines ``g1_get_state`` and ``g1_task_status.py`` defines
-    ``g1_get_task_status``.  A scan reading ``getattr(module, module_name)``
+    defines ``g1_get_state``.  A scan reading ``getattr(module, module_name)``
     sees neither, and a verb it cannot see inherits an exemption from every
     rule in this file.
 
@@ -312,19 +310,17 @@ class TestEveryLiveHandleVerbRefusesAWrongHandle:
         """The blind spot this scan used to have, pinned by the two verbs in it.
 
         ``getattr(module, info.name)`` reaches a verb only when its function
-        name equals its module name, so ``g1_state.py``'s ``g1_get_state`` and
-        ``g1_task_status.py``'s ``g1_get_task_status`` both sat outside the
-        population while the docstring above claimed a verb "is held to the rule
-        the hour it lands".  ``g1_get_task_status`` arrived with no handle guard
-        at all - all six wrong handles raised ``AttributeError`` past the
+        name equals its module name, so ``g1_state.py``'s ``g1_get_state`` sits
+        outside the population while the docstring above claims a verb "is held
+        to the rule the hour it lands".  The other verb this once caught,
+        ``g1_task_status.py``'s ``g1_get_task_status``, arrived with no handle
+        guard at all - all six wrong handles raised ``AttributeError`` past the
         structured response - and every rule in this class passed, because the
-        scan could not see it.
+        scan could not see it.  Its lifecycle is now the table-driven
+        ``g1_task``, so ``g1_get_state`` is the witness that remains.
         """
         verbs = _live_handle_verbs()
-        for verb, module_stem in (
-            ("g1_get_state", "g1_state"),
-            ("g1_get_task_status", "g1_task_status"),
-        ):
+        for verb, module_stem in (("g1_get_state", "g1_state"),):
             assert verb in verbs, f"{verb} (defined in {module_stem}.py) is not in the population: {sorted(verbs)}"
 
     def test_the_scan_is_not_keyed_on_the_module_name(self) -> None:
