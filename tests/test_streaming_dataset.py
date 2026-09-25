@@ -191,6 +191,118 @@ def test_dataloader_ignores_shuffle(monkeypatch):
     assert captured["batch_size"] == 32
 
 
+def _three_episode_proprio_dataset(root):
+    """A real v3.0 dataset of 3 episodes x 2 frames, state/action only.
+
+    No video feature, so it streams with no torchcodec and no decode cost - the
+    subject here is which EPISODES come back, not what a frame holds.
+    """
+    import numpy as np
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    feats = {
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+        "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+    }
+    ds = LeRobotDataset.create(
+        "org/three-episodes",
+        fps=10,
+        root=root,
+        features=feats,
+        use_videos=False,
+        image_writer_threads=0,
+        image_writer_processes=0,
+    )
+    for episode in range(3):
+        for frame in range(2):
+            ds.add_frame(
+                {
+                    "observation.state": np.array([episode, frame], np.float32),
+                    "action": np.array([episode, frame], np.float32),
+                    "task": "t",
+                }
+            )
+        ds.save_episode()
+    if hasattr(ds, "finalize"):
+        ds.finalize()
+
+
+@pytest.mark.parametrize(
+    "episodes,expected",
+    [
+        (None, {0, 1, 2}),
+        ([1], {1}),
+        ([0, 2], {0, 2}),
+    ],
+    ids=["all", "one", "two-of-three"],
+)
+def test_episodes_streams_and_counts_exactly_the_requested_subset(tmp_path, episodes, expected):
+    """The claim under test is docs/data/reading-back.md's ``episodes=[...]`` row: "a
+    subset". lerobot's StreamingLeRobotDataset stores ``episodes`` and never reads it
+    again (its materializing sibling LeRobotDataset does), so the reader streamed - and
+    counted - every episode in the dataset: an episode-filtered training or eval set
+    silently held the episodes the caller filtered out.
+    """
+    pytest.importorskip("lerobot.datasets.streaming_dataset")
+    root = tmp_path / "ds"
+    _three_episode_proprio_dataset(root)
+
+    reader = sd.StreamingDatasetReader.open(
+        "org/three-episodes", root=root, episodes=episodes, buffer_size=1, max_num_shards=1
+    )
+    frames = list(reader)  # the stream exhausts after one pass over the shards
+    assert {int(f["episode_index"]) for f in frames} == expected
+    assert len(frames) == 2 * len(expected)
+    assert reader.num_episodes == len(expected)
+    assert reader.num_frames == 2 * len(expected)
+
+
+def test_episodes_subset_holds_for_a_dataloader_over_the_same_reader(tmp_path):
+    """A DataLoader iterates the lerobot dataset directly, so a subset applied only in
+    the facade's own loop would leave the training path reading every episode."""
+    pytest.importorskip("lerobot.datasets.streaming_dataset")
+    pytest.importorskip("torch")
+    root = tmp_path / "ds"
+    _three_episode_proprio_dataset(root)
+
+    reader = sd.StreamingDatasetReader.open(
+        "org/three-episodes", root=root, episodes=[2], buffer_size=1, max_num_shards=1
+    )
+    seen = [int(i) for batch in reader.dataloader(batch_size=2, num_workers=0) for i in batch["episode_index"]]
+    assert seen == [2, 2]
+
+
+@pytest.mark.parametrize(
+    "episodes,match",
+    [
+        (1, "must be a list of episode indices"),
+        ("0", "must be a list of episode indices"),
+        ([], "episodes is empty"),
+        ([0, 0], "duplicate indices"),
+        ([-1], "non-negative integer"),
+        ([1.5], "non-negative integer"),
+        ([True], "non-negative integer"),
+    ],
+    ids=["bare-int", "string", "empty", "duplicate", "negative", "fractional", "bool"],
+)
+def test_open_refuses_an_episodes_request_it_cannot_honor(monkeypatch, episodes, match):
+    """Same posture as the other knobs: refused at open, not read element-by-element
+    (``episodes="0"`` would be a membership test over characters)."""
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
+    with pytest.raises(ValueError, match=match):
+        sd.StreamingDatasetReader.open("org/ds", episodes=episodes, validate_deltas=False)
+
+
+def test_open_refuses_an_episode_the_dataset_does_not_hold(tmp_path):
+    """A subset naming an absent episode yields no frames at all, which a caller
+    cannot tell from an exhausted stream - so it is named against the real count."""
+    pytest.importorskip("lerobot.datasets.streaming_dataset")
+    root = tmp_path / "ds"
+    _three_episode_proprio_dataset(root)
+    with pytest.raises(ValueError, match=r"episodes \[3\] are not in 'org/three-episodes'"):
+        sd.StreamingDatasetReader.open("org/three-episodes", root=root, episodes=[0, 3])
+
+
 # ── sync_to_bucket ─────────────────────────────────────────────────────────
 
 

@@ -104,7 +104,7 @@ yields from a reservoir buffer. The knobs above are what deliver the recorded or
 
 | Kwarg | Domain | Notes |
 |---|---|---|
-| `episodes=[...]` | list of episode indices | a subset without downloading the rest |
+| `episodes=[...]` | distinct non-negative ints | streams and counts only those episodes; lerobot's streaming class stores the list without reading it, so the reader applies it - the other shards still stream, so what it saves is what you iterate. An index the dataset does not hold is refused rather than read as an empty stream |
 | `buffer_size`, `max_num_shards` | positive ints | `1` and `1` read in capture order |
 | `tolerance_s` | non-negative finite | `0` requires an exact delta-grid match; `inf` used to switch the grid check off |
 | `seed` | int | `0` is a seed, not "unset" |

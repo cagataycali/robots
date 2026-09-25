@@ -17,6 +17,7 @@ import logging
 import sys
 import warnings
 from collections.abc import Callable
+from functools import cache
 from typing import Any
 
 from strands_robots.dataset_source import local_dataset_dir
@@ -86,6 +87,47 @@ def _tolerance_error(value: Any) -> str | None:
     return None
 
 
+def _episodes_error(value: Any) -> str | None:
+    """Return why ``episodes`` cannot be read as a subset request, else None.
+
+    A bare index (``episodes=3``) and a string are the shapes a membership test
+    would consume element-by-element - the string one character at a time - so
+    both are refused rather than read as a one-episode subset.
+    """
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        return (
+            f"open: episodes must be a list of episode indices, got {refusal_repr(value)}. "
+            "Pass episodes=[0, 2] for a two-episode subset, or None to stream all of them."
+        )
+    if not value:
+        return (
+            "open: episodes is empty, so no episode would be streamed; pass at least one "
+            "index, or None to stream all of them."
+        )
+    for entry in value:
+        if error := non_negative_count_error(entry, "every episodes entry", "open"):
+            return error
+    if len(set(value)) != len(value):
+        duplicates = sorted({i for i in value if list(value).count(i) > 1})
+        return f"open: episodes has duplicate indices {duplicates}; each episode is streamed once."
+    return None
+
+
+def _unknown_episodes_error(ds: Any, episodes: list[int]) -> str | None:
+    """Return why ``episodes`` names an episode ``ds`` does not hold, else None."""
+    total = getattr(getattr(ds, "meta", None), "total_episodes", None)
+    if not isinstance(total, int):
+        return None
+    unknown = sorted(int(i) for i in episodes if int(i) >= total)
+    if not unknown:
+        return None
+    return (
+        f"open: episodes {unknown} are not in {getattr(ds, 'repo_id', '?')!r}, which holds "
+        f"{total} episode(s) (0-{total - 1}). A subset naming an episode the dataset does not "
+        "hold streams no frames at all, which reads exactly like an exhausted stream."
+    )
+
+
 # Every numeric knob ``open`` forwards, with the domain it is checked against
 # before lerobot sees it - so a bad value fails at open, not on the first frame.
 _NUMERIC_DOMAINS: dict[str, Callable[[Any], str | None]] = {
@@ -100,6 +142,47 @@ _NUMERIC_DOMAINS: dict[str, Callable[[Any], str | None]] = {
 _BOOLEAN_FLAGS: tuple[str, ...] = ("streaming", "shuffle", "return_uint8", "validate_deltas", "drop_videos")
 
 _VIDEO_KEY_PREFIX = "observation.images."
+
+
+@cache
+def _episode_subset_class(cls: type) -> type:
+    """Return a subclass of ``cls`` that HONORS the ``episodes`` it was built with.
+
+    lerobot's ``StreamingLeRobotDataset`` stores ``episodes`` and never reads it
+    again - its materializing sibling ``LeRobotDataset`` does - so a subset
+    request streamed, and counted, every episode in the dataset: a
+    judge-filtered training set silently held the episodes the judge rejected.
+    The subset is applied on iteration here, so it holds for the reader's own
+    loop AND for a ``DataLoader`` built over the same instance. Frames outside
+    the subset are still fetched and dropped, so what the subset saves is what
+    the caller consumes, not bandwidth.
+    """
+
+    class EpisodeSubsetStreamingDataset(cls):  # type: ignore[valid-type,misc]
+        """``cls``, restricted to the episode indices it was opened with."""
+
+        @property
+        def _subset(self) -> set[int]:
+            return {int(index) for index in (self.episodes or ())}
+
+        def __iter__(self) -> Any:
+            subset = self._subset
+            for frame in super().__iter__():
+                if int(frame["episode_index"]) in subset:
+                    yield frame
+
+        @property
+        def num_episodes(self) -> int:
+            """Episodes this reader streams - the subset, not the dataset's total."""
+            return len(self._subset)
+
+        @property
+        def num_frames(self) -> int:
+            """Frames this reader streams, summed over the subset's episodes."""
+            rows = self.meta.episodes
+            return sum(int(rows[index]["length"]) for index in sorted(self._subset))
+
+    return EpisodeSubsetStreamingDataset
 
 
 class StreamingDatasetReader:
@@ -140,7 +223,11 @@ class StreamingDatasetReader:
                 registered under that id is used as ``root`` when ``root`` is
                 not given.
             root: Local dataset directory; overrides the Hub.
-            episodes: Episode indices to stream; all when ``None``.
+            episodes: Episode indices to stream (distinct, non-negative); all
+                when ``None``. lerobot's streaming dataset stores the list
+                without reading it, so the subset is applied on iteration
+                here; an index the dataset does not hold is refused rather
+                than streamed as an empty read.
             delta_timestamps: Per-key time offsets (seconds) to stack per frame.
                 Checked against the dataset's fps grid when ``validate_deltas``.
             image_transforms: Callable applied to every image tensor.
@@ -178,8 +265,8 @@ class StreamingDatasetReader:
 
         Raises:
             ValueError: A flag that is not a boolean, a numeric knob outside
-                its domain, or ``drop_videos=True`` without a usable
-                ``delta_timestamps``.
+                its domain, an ``episodes`` list the dataset cannot satisfy,
+                or ``drop_videos=True`` without a usable ``delta_timestamps``.
             ImportError: lerobot's streaming dataset is not importable.
         """
         supplied_flags = {
@@ -201,6 +288,8 @@ class StreamingDatasetReader:
         for param, domain in _NUMERIC_DOMAINS.items():
             if error := domain(supplied[param]):
                 raise ValueError(error)
+        if episodes is not None and (error := _episodes_error(episodes)):
+            raise ValueError(error)
 
         if root is None and (local := local_dataset_dir(repo_id)) is not None:
             root = str(local)
@@ -220,6 +309,8 @@ class StreamingDatasetReader:
                 )
 
         StreamingCls = _get_streaming_cls()
+        if episodes is not None:
+            StreamingCls = _episode_subset_class(StreamingCls)
         optional = dict(
             root=root,
             episodes=episodes,
@@ -247,6 +338,8 @@ class StreamingDatasetReader:
             max_num_shards,
         )
         ds = StreamingCls(**kwargs)
+        if episodes is not None and (error := _unknown_episodes_error(ds, episodes)):
+            raise ValueError(error)
         if drop_videos:
             _hide_video_features(ds)
         elif getattr(getattr(ds, "meta", None), "video_keys", None):
