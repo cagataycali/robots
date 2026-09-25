@@ -479,6 +479,14 @@ _MUJOCO_NOISE_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(r"parent has .* child has .* keeping parent value", re.IGNORECASE),
+    # "Child model has pending keyframes. They will not be namespaced
+    # correctly." MuJoCo cannot rename a child spec's pending keyframes at
+    # attach time, so it warns and leaves them bare;
+    # ``scene_ops._namespace_attached_keyframes`` renames them after the
+    # attach's recompile, which is the first moment they exist. The statement
+    # is therefore not true of the world the caller gets, and its remedy
+    # ("compile the child model") is not theirs to apply.
+    re.compile(r"Child model has pending keyframes", re.IGNORECASE),
 )
 
 _noise_lock = threading.Lock()
@@ -496,11 +504,15 @@ def filter_mujoco_attach_noise():
     """Suppress MuJoCo's benign attach/compile spam.
 
     MuJoCo emits "Attach conflict ... keeping parent value" chatter when two
-    scenes are merged. Depending on the MuJoCo build this surfaces either as a
-    Python ``UserWarning`` (from ``spec.to_xml()`` / ``compile()``) OR as raw
-    C-level writes to stderr (fd 2). We suppress BOTH:
+    scenes are merged, and warns that a child's pending keyframes cannot be
+    namespaced (``scene_ops`` renames those itself after the recompile).
+    Depending on the MuJoCo build this surfaces either as a Python
+    ``UserWarning`` (from ``spec.to_xml()`` / ``compile()``) OR as raw C-level
+    writes to stderr (fd 2). We suppress BOTH, from the one roster
+    :data:`_MUJOCO_NOISE_PATTERNS`:
 
-    * a ``warnings.catch_warnings`` filter drops the matching ``UserWarning``;
+    * a ``warnings.catch_warnings`` filter per pattern drops the matching
+      ``UserWarning``;
     * an fd-2 capture drops the matching raw lines and forwards the rest.
 
     No-op (yields immediately) when STRANDS_ROBOTS_VERBOSE_MUJOCO is truthy,
@@ -517,13 +529,16 @@ def filter_mujoco_attach_noise():
         return
 
     # Layer 1: drop the matching Python UserWarning regardless of fd capture.
+    # One filter per pattern in the same roster layer 2 classifies, so the two
+    # layers cannot disagree about what is noise.
     _wctx = warnings.catch_warnings()
     _wctx.__enter__()
-    warnings.filterwarnings(
-        "ignore",
-        message=r".*Attach conflict when attaching.*",
-        category=UserWarning,
-    )
+    for pattern in _MUJOCO_NOISE_PATTERNS:
+        warnings.filterwarnings(
+            "ignore",
+            message=f".*{pattern.pattern}.*",
+            category=UserWarning,
+        )
 
     # Layer 2: capture raw fd-2 writes. Need a real, dup-able stderr fd.
     try:

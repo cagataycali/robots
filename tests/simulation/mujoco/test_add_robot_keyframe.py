@@ -20,6 +20,8 @@ offline and GL-free in CI (no mesh download, no render).
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -396,3 +398,120 @@ class TestApplyHomeQposWidthGuard:
         assert data.qpos[el_adr] == 0.9
         # Only the correctly-sized joint is recorded for reset() to restore.
         assert robot.home_qpos == {"a/elbow": [0.9]}
+
+
+# A robot model that composes ANOTHER model: the outer base declares the inner
+# arm as a ``<model>`` asset and pulls it in with MJCF ``<attach>``. The inner
+# model's ``<keyframe>`` is what MuJoCo calls a PENDING keyframe in the outer
+# spec - absent from ``spec.keys`` until a compile materialises it - so
+# ``spec.attach(child, prefix="<robot>/")`` cannot rename it and warns that it
+# "will not be namespaced correctly". The registry's LeKiwi has exactly this
+# shape (it attaches the SO-ARM100 arm onto its base, inheriting that arm's
+# ``home``/``rest`` keyframes).
+_INNER_MJCF = """
+<mujoco model="inner_arm">
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="root" pos="0 0 0">
+      <joint name="wrist" type="hinge" axis="0 1 0"/>
+      <geom type="capsule" fromto="0 0 0 0 0 0.2" size="0.02" mass="0.5"/>
+    </body>
+  </worldbody>
+  <keyframe>
+    <key name="tucked" qpos="0.9"/>
+  </keyframe>
+</mujoco>
+"""
+
+_OUTER_MJCF = """
+<mujoco model="outer_base">
+  <compiler angle="radian"/>
+  <asset>
+    <model name="inner_arm" file="inner_arm.xml"/>
+  </asset>
+  <worldbody>
+    <body name="chassis" pos="0 0 0.1">
+      <joint name="lift" type="slide" axis="0 0 1"/>
+      <geom type="box" size="0.1 0.1 0.02" mass="2"/>
+      <body name="mount" pos="0.1 0 0">
+        <attach model="inner_arm" body="root" prefix=""/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+_TUCKED = 0.9
+
+
+@pytest.fixture
+def composed_xml(tmp_path):
+    (tmp_path / "inner_arm.xml").write_text(_INNER_MJCF)
+    outer = tmp_path / "outer_base.xml"
+    outer.write_text(_OUTER_MJCF)
+    return str(outer)
+
+
+def _key_names(sim) -> list[str]:
+    model = sim._world._model
+    return [mj.mj_id2name(model, mj.mjtObj.mjOBJ_KEY, i) for i in range(model.nkey)]
+
+
+class TestComposedModelKeyframeNamespace:
+    """A keyframe that arrives through MJCF ``<attach>`` carries the robot's
+    namespace like every other keyframe.
+
+    MuJoCo cannot rename a child spec's pending keyframes at attach time, so
+    left alone they land in the world under their bare source names. That cost
+    a caller two things: a second instance of such a robot could not be added
+    at all (the bare name repeats -> "repeated name 'home' in key", measured on
+    the registry's LeKiwi, so a two-LeKiwi fleet was impossible), and the name
+    every other robot's keyframes carry - ``<robot>/<key>``, which is what
+    ``reset()`` and a caller reading ``model.key_qpos`` address - did not
+    exist. ``scene_ops._namespace_attached_keyframes`` renames them after the
+    attach's recompile, the first moment they are reachable.
+    """
+
+    def test_a_composed_models_keyframe_carries_the_robot_prefix(self, sim, composed_xml):
+        assert sim.add_robot(name="base_a", urdf_path=composed_xml)["status"] == "success"
+        assert _key_names(sim) == ["base_a/tucked"]
+
+    def test_two_instances_of_a_composed_model_share_one_world(self, sim, composed_xml):
+        # The bare source name repeated across instances, so the second add was
+        # refused outright and the fleet could hold exactly one of these robots.
+        assert sim.add_robot(name="base_a", urdf_path=composed_xml)["status"] == "success"
+        assert sim.add_robot(name="base_b", urdf_path=composed_xml)["status"] == "success"
+        assert _key_names(sim) == ["base_a/tucked", "base_b/tucked"]
+
+    def test_the_prefixed_keyframe_spawns_the_inner_models_pose(self, sim, composed_xml):
+        assert sim.add_robot(name="base_a", urdf_path=composed_xml, keyframe="tucked")["status"] == "success"
+        assert np.isclose(_joint_qpos(sim, "base_a/wrist"), _TUCKED)
+
+    def test_a_second_instances_keyframe_spawn_leaves_the_first_alone(self, sim, composed_xml):
+        # MuJoCo materialises the second instance's pending key over the WHOLE
+        # model, so ``key_qpos`` for "base_b/tucked" carries the first robot's
+        # slot at 0.9 too (measured: [0.0, 0.9, 0.0, 0.9]). The spawn applies a
+        # keyframe by joint NAME within the robot's namespace, so only the robot
+        # asked for moves - a caller who reset straight to that key row would
+        # pose both.
+        sim.add_robot(name="base_a", urdf_path=composed_xml)
+        sim.add_robot(name="base_b", urdf_path=composed_xml, keyframe="tucked")
+        assert np.isclose(_joint_qpos(sim, "base_a/wrist"), 0.0)
+        assert np.isclose(_joint_qpos(sim, "base_b/wrist"), _TUCKED)
+
+    def test_keyframes_already_in_the_scene_keep_their_names(self, sim, arm_xml, composed_xml):
+        # An ordinary model's keyframe is namespaced by the attach itself; the
+        # repair must leave it alone rather than prefix it a second time.
+        sim.add_robot(name="plain", urdf_path=arm_xml)
+        assert _key_names(sim) == ["plain/home"]
+        sim.add_robot(name="base_a", urdf_path=composed_xml)
+        assert _key_names(sim) == ["plain/home", "base_a/tucked"]
+
+    def test_the_add_does_not_warn_about_namespacing_it_repaired(self, sim, composed_xml):
+        # MuJoCo's "pending keyframes ... will not be namespaced correctly" is
+        # not true of the world the caller gets, and its remedy (compile the
+        # child model) belongs to the model's author, not the caller.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            sim.add_robot(name="base_a", urdf_path=composed_xml)
+        assert [str(w.message) for w in caught if "pending keyframes" in str(w.message)] == []

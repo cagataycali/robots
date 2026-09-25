@@ -1663,6 +1663,65 @@ def persist_world_option(
 # Inject
 
 
+def _namespace_attached_keyframes(spec: Any, robot: SimRobot, pre_names: frozenset[str]) -> int:
+    """Prefix the keyframes ``spec.attach`` could not namespace. Returns the count.
+
+    A robot model that composes another model with MJCF ``<attach>`` (the
+    LeKiwi, which pulls the SO-ARM100 arm into its own base) reaches
+    :func:`inject_robot_into_scene` carrying the inner model's keyframes as
+    MuJoCo *pending* keyframes: they are absent from ``spec.keys`` until a
+    compile materialises them, so the outer ``spec.attach(child,
+    prefix="<robot>/")`` cannot rename them and says so - "Child model has
+    pending keyframes. They will not be namespaced correctly."
+
+    Left alone they land in the world under their bare names, which costs the
+    caller two things (both measured on mujoco 3.14.0): a second instance of
+    that robot cannot be added at all, because the bare name repeats
+    (``add_robot`` refused with "repeated name 'home' in key"), and the
+    keyframe a caller addresses as ``<robot>/home`` - the name every other
+    robot's keyframes carry, and what ``add_robot(keyframe=...)`` resolves -
+    does not exist.
+
+    The repair runs after the attach's recompile, which is the first moment
+    the names are reachable: every key the compile introduced (not in
+    ``pre_names``) and not already namespaced takes the robot's prefix. The
+    caller recompiles once more to bake the names in.
+
+    Args:
+        spec: the live scene ``MjSpec``, already recompiled once after the attach.
+        robot: the robot just attached; its ``name`` is the prefix.
+        pre_names: key names the spec held BEFORE the attach - the world's own
+            keyframes and those of robots already in it, which are never renamed.
+
+    Returns:
+        How many keyframes were renamed; 0 leaves the spec untouched.
+    """
+    prefix = f"{robot.name}/"
+    taken = {key.name for key in spec.keys}
+    renamed = 0
+    for key in spec.keys:
+        name = key.name
+        if name in pre_names or name.startswith(prefix):
+            continue
+        target = f"{prefix}{name}"
+        if target in taken:
+            # The robot already carries a namespaced keyframe of that name, so
+            # renaming would repeat it and refuse the whole recompile. Report
+            # the collision and leave this one bare rather than fail the add.
+            logger.warning(
+                "keyframe %r attached with robot %r cannot be namespaced: %r is already taken",
+                name,
+                robot.name,
+                target,
+            )
+            continue
+        key.name = target
+        taken.discard(name)
+        taken.add(target)
+        renamed += 1
+    return renamed
+
+
 def inject_robot_into_scene(
     world: SimWorld,
     robot: SimRobot,
@@ -1721,6 +1780,10 @@ def inject_robot_into_scene(
     if backup_spec is None:
         return False
 
+    # The keyframes the scene already holds. Read before the attach so the
+    # repair below can tell the robot's own keyframes from everybody else's.
+    pre_key_names = frozenset(key.name for key in spec.keys)
+
     try:
         with filter_mujoco_attach_noise():
             joint_names = SpecBuilder.attach_robot(spec, robot, robot_xml_path, tool_frame=tool_frame)
@@ -1754,6 +1817,12 @@ def inject_robot_into_scene(
     # travels without the robot's subtree surviving in the live spec.
     try:
         recompiled = _recompile_preserving_state(world, spec, raise_on_refusal=True)
+        if recompiled and _namespace_attached_keyframes(spec, robot, pre_key_names):
+            # A pending keyframe the attach could not rename is only reachable
+            # once a compile has materialised it, so the namespacing costs a
+            # second recompile - paid by the few models that compose another
+            # model, never by the rest.
+            recompiled = _recompile_preserving_state(world, spec, raise_on_refusal=True)
     except (ValueError, RuntimeError):
         # The attach landed in the spec but the model it produced was refused,
         # so the robot's whole namespaced subtree is sitting in the live spec
