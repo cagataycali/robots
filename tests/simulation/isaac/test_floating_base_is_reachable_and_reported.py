@@ -108,6 +108,9 @@ def _engine(*, fixed_base: bool, articulation: Any = None) -> Any:
         fixed_base=fixed_base,
     )
     engine._robots = {"arm": robot}
+    # add_robot asks the shared recording mixin whether a dataset is open;
+    # the Isaac backend answers from this engine-owned dict.
+    engine._recording_state_dict = {}
     return engine
 
 

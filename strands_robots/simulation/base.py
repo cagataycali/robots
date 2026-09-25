@@ -1251,6 +1251,11 @@ class SimEngine(ABC):
         default) keeps the historical zero-pose spawn. An unknown keyframe
         name/index is a hard error that names the available keyframes; it
         never silently falls back to zeros.
+
+        Refused while a dataset recording is live, on every backend
+        (:meth:`~strands_robots.simulation.recording.DatasetRecordingMixin._recording_schema_frozen_error`):
+        the recorder's columns were declared at ``start_recording`` and a robot
+        added into them has nowhere to be written.
         """
         ...
 

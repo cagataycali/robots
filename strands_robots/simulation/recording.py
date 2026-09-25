@@ -1993,6 +1993,75 @@ class DatasetRecordingMixin:
             ],
         }
 
+    def _recording_schema_frozen_error(self, verb: str, robot_name: str | None = None) -> dict[str, Any] | None:
+        """The refusal ``add_robot`` gets while a dataset recording is live, or None.
+
+        A recorder declares its features ONCE, from the robots attached when
+        ``start_recording`` ran, and a LeRobotDataset cannot gain a column
+        afterwards. A robot added into a live recording therefore has nowhere to
+        be written, and both ways that ends are silent about the cause. Against
+        a camera-only schema (no robot attached at the start) the first recorded
+        rollout dies inside lerobot - "Feature mismatch in `frame` dictionary:
+        Extra features: {'action', 'observation.state'}" - after 0 frames,
+        leaving a ``meta/info.json`` shell on disk. Against a schema that DOES
+        carry ``observation.state``, nothing raises at all: a 9-joint robot
+        driven inside a 6-wide so101 schema saved 12 frames whose state and
+        action were all zeros, the values of the robot the schema was frozen
+        from, not of the robot the policy moved. The second outcome is the
+        dangerous one, because it trains.
+
+        Every backend's ``add_robot`` calls this first, for the reason
+        :meth:`_already_recording_error` is shared: the hazard is in the
+        recorder the three backends have in common, so the refusal is one
+        behaviour rather than three.
+
+        Args:
+            verb: The verb being gated, named in the refusal.
+            robot_name: The robot the call would have added, when it has a name
+                already - reported so the caller can re-issue the call after
+                ``stop_recording``.
+
+        Returns:
+            The agent-tool error envelope to return, or ``None`` when no
+            recording is live and the call may proceed.
+        """
+        state = self._recording_state()
+        if state is None:
+            return None
+        live = state.get("dataset_recorder")
+        if not state.get("recording") or live is None:
+            return None
+        features = getattr(getattr(live, "dataset", None), "features", None) or {}
+        shape = tuple((features.get("observation.state") or {}).get("shape") or ())
+        frozen = (
+            f"it declares observation.state/action shaped {list(shape)}"
+            if shape
+            else "it declares no observation.state/action columns at all (a camera-only recording)"
+        )
+        repo = self._active_dataset_repo_id() or "?"
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{verb}: a dataset recording is open on '{repo}' and its feature schema was frozen at "
+                        f"start_recording - {frozen}, and a robot added now gets no columns of its own. Its first "
+                        "recorded rollout would either fail inside lerobot with a feature mismatch or save the "
+                        "frozen robot's values under the frozen names. Call stop_recording first - it saves the "
+                        f"buffered frames - then {verb}, then start_recording again."
+                    )
+                },
+                {
+                    "json": {
+                        "recording": True,
+                        "repo_id": repo,
+                        "frozen_state_shape": list(shape),
+                        "requested_robot": robot_name,
+                    }
+                },
+            ],
+        }
+
     def get_recording_status(self) -> dict[str, Any]:
         """Returns success in every lifecycle state (no world / not
         recording / recording) with a distinguishing message so callers can

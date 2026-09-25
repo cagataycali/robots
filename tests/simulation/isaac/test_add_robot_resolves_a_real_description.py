@@ -95,6 +95,9 @@ def _engine() -> Any:
     engine._prim_registry = []
     engine._action_controllers = {}
     engine._replicated = False
+    # add_robot asks the shared recording mixin whether a dataset is open;
+    # the Isaac backend answers from this engine-owned dict.
+    engine._recording_state_dict = {}
     return engine
 
 

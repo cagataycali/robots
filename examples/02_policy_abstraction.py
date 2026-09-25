@@ -16,9 +16,12 @@ sim = Robot("so100", mesh=False)
 sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0, 0.05])
 
 # create_policy("mock") -> MockPolicy (sinusoidal test actions)
-# create_policy("lerobot/act_aloha_sim") -> LerobotLocalPolicy (HF inference)
+# create_policy("lerobot/act_aloha_sim_transfer_cube_human") -> LerobotLocalPolicy
 # create_policy("zmq://localhost:5555") -> Gr00tPolicy (ZMQ client)
-# create_policy("allenai/MolmoAct2-SO100_101", embodiment="so_real") -> MolmoAct2
+# create_policy("allenai/MolmoAct2-SO100_101", embodiment="so100") -> LerobotLocalPolicy
+# The embodiment names the robot BELOW, not a physical arm: a "*_real"
+# embodiment declares the driver's "<motor>.pos" keys, which bind none of
+# this sim robot's joints, and observation.state is never composed.
 policy = create_policy("mock")
 
 print(f"Policy: {type(policy).__name__}")

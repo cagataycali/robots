@@ -2738,6 +2738,13 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     "content": [{"text": "Cannot add robots after replicate(). Call destroy() first."}],
                 }
 
+            # A live recording's schema cannot gain columns for this robot, and
+            # the rollout that would discover it either dies inside lerobot or
+            # saves the wrong robot's values. Refused in the shared mixin, so
+            # every backend answers the same way.
+            if err := self._recording_schema_frozen_error("add_robot", name):
+                return err
+
             pos = [0.0, 0.0, 0.0] if position is None else position
             prim_path = f"{self._config.stage_path}/Robots/{name}"
 

@@ -415,6 +415,9 @@ def _isaac_stub() -> types.SimpleNamespace:
         _cameras={},
         _replicated=False,
         _prim_registry=[],
+        # add_robot asks the shared recording mixin whether a dataset is open;
+        # this stand-in records nothing, so nothing is refused on that ground.
+        _recording_schema_frozen_error=lambda *_a, **_k: None,
     )
 
 
