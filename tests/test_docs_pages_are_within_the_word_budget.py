@@ -48,7 +48,6 @@ _OVER_BUDGET = frozenset(
         "robots/humanoids.md",
         "rosbridge-integration.md",
         "simulation/domain-randomization.md",
-        "simulation/rollouts.md",
         "training/overview.md",
     }
 )
