@@ -105,6 +105,9 @@ def test_pose_manager_persists_across_reload(cwd_tmp) -> None:
 
 def test_pose_manager_load_corrupt_file_is_resilient(cwd_tmp) -> None:
     mgr = PoseManager("arm_c")
+    # Store a pose first, so the library exists on disk the way a real one does:
+    # the store is what creates the directory, not the construction above.
+    mgr.store_pose("home", {"elbow_flex": 0.0})
     mgr.pose_file.write_text("{ this is not valid json", encoding="utf-8")
     # Re-loading a corrupt file must not raise; it falls back to empty.
     recovered = PoseManager("arm_c")

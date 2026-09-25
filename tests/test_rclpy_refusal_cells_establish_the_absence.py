@@ -47,6 +47,7 @@ from there and raised nothing. Neither run graded the message.
 from __future__ import annotations
 
 import ast
+import functools
 import pathlib
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -56,6 +57,23 @@ _TESTS = _REPO_ROOT / "tests"
 #: What counts as establishing the absence: the shared helper, or replacing the
 #: probe itself (a double that raises is as deterministic as a blocked import).
 _ESTABLISHES = ("blocked", "require_optional")
+
+#: The refusal a cell expects, as the bare name ``pytest.raises`` is handed.
+_EXPECTED_NAME = "ImportError"
+
+
+@functools.cache
+def _package_trees() -> tuple[ast.Module, ...]:
+    """Every module in the package, parsed once for both derivations.
+
+    The class rule and the function rule each read the whole package, so without
+    this the package was parsed twice per derivation - and, before
+    :func:`_surfaces` was cached, four times per session. The class rule cannot
+    pre-filter on the ``"rclpy"`` literal the way the cell scan below does: a
+    subclass carries the obligation by base name alone, so every ``ClassDef`` in
+    the tree is its input.
+    """
+    return tuple(ast.parse(path.read_text(encoding="utf-8")) for path in sorted(_PACKAGE.rglob("*.py")))
 
 
 def _probes_rclpy(node: ast.AST) -> bool:
@@ -84,8 +102,7 @@ def _rclpy_probing_classes() -> set[str]:
     """
     classes: dict[str, list[str]] = {}
     probing: set[str] = set()
-    for path in sorted(_PACKAGE.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for tree in _package_trees():
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
@@ -119,15 +136,21 @@ def _rclpy_probing_functions() -> set[str]:
     """
     return {
         node.name
-        for path in sorted(_PACKAGE.rglob("*.py"))
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        for tree in _package_trees()
+        for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name != "__init__" and _probes_rclpy(node)
     }
 
 
-def _surfaces() -> set[str]:
-    """Every name a cell can reach the rclpy probe through."""
-    return _rclpy_probing_classes() | _rclpy_probing_functions()
+@functools.cache
+def _surfaces() -> frozenset[str]:
+    """Every name a cell can reach the rclpy probe through, derived once per session.
+
+    Both cells ask for it, and the derivation walks every module in the package
+    twice over the trees :func:`_package_trees` holds - so the second cell would
+    otherwise pay the walks again for a set the tree has not changed.
+    """
+    return frozenset(_rclpy_probing_classes() | _rclpy_probing_functions())
 
 
 def _expects_an_import_error(item: ast.withitem) -> bool:
@@ -135,29 +158,45 @@ def _expects_an_import_error(item: ast.withitem) -> bool:
     call = item.context_expr
     if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "raises"):
         return False
-    return any(isinstance(a, ast.Name) and a.id == "ImportError" for a in call.args)
+    return any(isinstance(a, ast.Name) and a.id == _EXPECTED_NAME for a in call.args)
 
 
-def _offending_cells(surfaces: set[str]) -> list[str]:
+def _offending_cells(surfaces: frozenset[str] | set[str], tests_root: pathlib.Path = _TESTS) -> list[str]:
     """Report every test function expecting an rclpy refusal it does not establish."""
     offenders: list[str] = []
-    for path in sorted(_TESTS.rglob("test_*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path in sorted(tests_root.rglob("test_*.py")):
+        source = path.read_text(encoding="utf-8")
+        # An offender is a cell whose ``pytest.raises(...)`` names ``ImportError``
+        # as a bare ``ast.Name``, and an identifier appears verbatim in the source
+        # that declares it - so a file without the substring holds no offender
+        # and is not parsed. Measured at 8022f8ad: 185 of 1,896 test files carry
+        # it, and the parse of the other 1,711 was 9 of this cell's 13 s locally.
+        # An aliased ``ImportError`` is invisible to the predicate either way.
+        if _EXPECTED_NAME not in source:
+            continue
+        tree = ast.parse(source)
         for func in ast.walk(tree):
             if not isinstance(func, ast.FunctionDef) or not func.name.startswith("test_"):
                 continue
-            names = {n.id for n in ast.walk(func) if isinstance(n, ast.Name)}
-            names |= {n.attr for n in ast.walk(func) if isinstance(n, ast.Attribute)}
-            # A patched probe names its target as a string: monkeypatch.setattr(
-            # mod, "require_optional", double). That is establishing it too.
-            names |= {n.value for n in ast.walk(func) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+            # One pass over the cell for everything the rule reads: the names it
+            # binds or attributes, the strings it spells (a patched probe names
+            # its target as a string: monkeypatch.setattr(mod, "require_optional",
+            # double), and that is establishing it too), and the ``with`` items.
+            names: set[str] = set()
+            expects = False
+            for node in ast.walk(func):
+                if isinstance(node, ast.Name):
+                    names.add(node.id)
+                elif isinstance(node, ast.Attribute):
+                    names.add(node.attr)
+                elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    names.add(node.value)
+                elif isinstance(node, ast.With):
+                    expects = expects or any(_expects_an_import_error(item) for item in node.items)
             reaches = names & surfaces
-            expects = any(
-                _expects_an_import_error(item) for w in ast.walk(func) if isinstance(w, ast.With) for item in w.items
-            )
             if reaches and expects and not (names & set(_ESTABLISHES)):
-                rel = path.relative_to(_REPO_ROOT)
-                offenders.append(f"{rel}::{func.name} reaches {sorted(reaches)} expecting ImportError")
+                rel = path.relative_to(tests_root.parent)
+                offenders.append(f"{rel}::{func.name} reaches {sorted(reaches)} expecting {_EXPECTED_NAME}")
     return offenders
 
 
@@ -180,3 +219,61 @@ def test_no_cell_assumes_rclpy_is_absent() -> None:
     offenders = _offending_cells(_surfaces())
 
     assert offenders == [], "these cells expect an rclpy refusal the host may not give:\n  " + "\n  ".join(offenders)
+
+
+class TestTheSourceFilterReadsTheNameThePredicateReads:
+    """The scan parses only files carrying ``ImportError``; that must lose no offender.
+
+    The pre-filter's one failure direction is a file it skips whose cell the
+    rule would have reported. The rule reads the exception as a bare
+    ``ast.Name`` inside ``pytest.raises(...)``, and an identifier appears
+    verbatim in the source that declares it, so the substring is implied by the
+    shape. These cells hold that against a root of their own, through the real
+    scan rather than a copy of it.
+    """
+
+    _OFFENDER = (
+        "import pytest\n"
+        "from strands_robots.ros_telemetry import RosTelemetryBridge\n"
+        "\n"
+        "\n"
+        "def test_reaches_the_probe_without_establishing_the_absence() -> None:\n"
+        "    with pytest.raises(\n"
+        "        ImportError,\n"
+        "        match='rclpy',\n"
+        "    ):\n"
+        "        RosTelemetryBridge()\n"
+    )
+
+    def test_an_offender_whose_name_sits_on_its_own_line_is_reported(self, tmp_path: pathlib.Path) -> None:
+        """The filter reads the identifier, not the call text - a wrapped call still parses."""
+        root = tmp_path / "tests"
+        root.mkdir()
+        (root / "test_probe.py").write_text(self._OFFENDER, encoding="utf-8")
+
+        offenders = _offending_cells({"RosTelemetryBridge"}, tests_root=root)
+
+        expected = (
+            "tests/test_probe.py::test_reaches_the_probe_without_establishing_the_absence "
+            "reaches ['RosTelemetryBridge'] expecting ImportError"
+        )
+        assert offenders == [expected]
+
+    def test_the_same_cell_establishing_the_absence_is_not_reported(self, tmp_path: pathlib.Path) -> None:
+        """Control: the file is parsed (it carries the name) and the rule clears it."""
+        root = tmp_path / "tests"
+        root.mkdir()
+        established = self._OFFENDER.replace(
+            "    with pytest.raises(", "    with blocked('rclpy'), pytest.raises("
+        ).replace("import pytest\n", "import pytest\nfrom tests._blocked_module import blocked\n")
+        (root / "test_probe.py").write_text(established, encoding="utf-8")
+
+        assert _offending_cells({"RosTelemetryBridge"}, tests_root=root) == []
+
+    def test_a_file_without_the_name_is_not_parsed(self, tmp_path: pathlib.Path) -> None:
+        """Skipping is observable only as the parse not happening, so a file that cannot parse stands in for it."""
+        root = tmp_path / "tests"
+        root.mkdir()
+        (root / "test_unparseable.py").write_text("def test_x(:\n    pass\n", encoding="utf-8")
+
+        assert _offending_cells({"RosTelemetryBridge"}, tests_root=root) == []

@@ -103,6 +103,27 @@ spelling - among them the sweep that grades every pacing loop in the package
 and three whose root is the installed package reached through an imported
 module's ``__file__``.
 
+The two spellings above compose, and the composition resolved under neither. A
+grader that walks several areas from one helper binds the area to a local
+*inside the loop* and walks the local::
+
+    _SCAN_ROOTS = ("strands_robots", "tests", "tests_integ", "examples", "scripts")
+
+    def _python_sources() -> list[Path]:
+        for name in _SCAN_ROOTS:
+            root = _REPO_ROOT / name
+            files.extend(root.rglob("*.py"))
+
+:func:`_enclosing_assignments` reads the local but resolves it through
+:func:`_resolve`, which cannot see a loop variable; :func:`_resolve_area_loop`
+reads the loop variable but only when ``base / <loop variable>`` is the walk's
+receiver itself. Bound to a name first, the walk resolved to nothing.
+:func:`_area_loop_alias` reads the receiver as the expression the enclosing
+functions bind it to, innermost binding first, and hands that expression to the
+loop resolver unchanged, so membership is still decided where it was. Issue
+#4044 measured three whole-tree graders unrostered on this spelling, one of
+which took an approved pull request red behind a green preflight.
+
 Two spellings remained after those, and both name the root through one more
 level of indirection than the resolvers above read. The first is a *symbol*
 rather than a module - deriving the root from an imported class or function is
@@ -793,6 +814,68 @@ def _enclosing_assignments(
     return extended
 
 
+def _area_loop_alias(
+    receiver: ast.expr,
+    call: ast.Call,
+    owners: dict[ast.AST, ast.AST | None],
+    segments: dict[str, tuple[str, ...]],
+) -> ast.expr | None:
+    """Return the ``base / <loop variable>`` expression a bare-name receiver is bound to.
+
+    A grader that walks several areas from one helper binds the area to a local
+    inside the loop and walks the local::
+
+        for name in _SCAN_ROOTS:
+            root = _REPO_ROOT / name
+            for path in root.rglob("*.py"):
+
+    :func:`_enclosing_assignments` cannot resolve that local - its value reaches
+    ``/`` through a loop variable, which :func:`_resolve` does not read - and
+    :func:`_resolve_area_loop` reads the loop variable only when the ``/``
+    expression is the receiver itself. This reads the receiver *as* that
+    expression, so the loop resolver sees the shape it already understands, and
+    :func:`walk_targets` still decides membership.
+
+    Only the assignments the enclosing functions own are read, outermost first
+    so a binding closer to the walk wins, exactly as :func:`_enclosing_assignments`
+    scopes its locals. ``None`` for a receiver that is not a bare name, or one no
+    enclosing function binds to a loop-variable segment.
+
+    :param receiver: The expression the walk method is called on.
+    :param call: The walk call whose receiver did not resolve.
+    :param owners: Node to its innermost enclosing function.
+    :param segments: Loop variables resolved to literal segments.
+    """
+    if not isinstance(receiver, ast.Name):
+        return None
+    chain: list[ast.AST] = []
+    owner = owners.get(call)
+    while owner is not None:
+        chain.append(owner)
+        owner = owners.get(owner)
+    alias: ast.expr | None = None
+    for function in reversed(chain):
+        for statement in ast.walk(function):
+            if owners.get(statement) is not function:
+                continue
+            if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+                target, value = statement.targets[0], statement.value
+            elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+                target, value = statement.target, statement.value
+            else:
+                continue
+            if not (isinstance(target, ast.Name) and target.id == receiver.id):
+                continue
+            if (
+                isinstance(value, ast.BinOp)
+                and isinstance(value.op, ast.Div)
+                and isinstance(value.right, ast.Name)
+                and value.right.id in segments
+            ):
+                alias = value
+    return alias
+
+
 def _walk_scopes(
     call: ast.Call,
     owners: dict[ast.AST, ast.AST | None],
@@ -852,8 +935,11 @@ def walked_paths(source: str, module_path: Path, root: Path) -> set[Path]:
             if found:
                 targets.update(found)
                 continue
+            alias = _area_loop_alias(receiver, node, owners, segments)
             for scope in _walk_scopes(node, owners, parameters, bindings, module_path, root):
                 targets.update(_receiver_targets(receiver, module_path, scope, segments, root))
+                if alias is not None:
+                    targets.update(_receiver_targets(alias, module_path, scope, segments, root))
     return targets
 
 

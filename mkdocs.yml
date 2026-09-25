@@ -28,6 +28,7 @@ nav:
   - simulation/overview.md
   - Physics and Actions: simulation/physics.md
   - Policy Rollouts: simulation/rollouts.md
+  - Rollout Results and Async-RTC: simulation/rollout-results.md
   - Rollout Observers: simulation/observers.md
   - Predicates: simulation/predicates.md
   - World Building: simulation/world-building.md
