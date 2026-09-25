@@ -87,7 +87,7 @@ construction rather than by discipline.
 | family | seam today | twin | robots unlocked | status |
 |---|---|---|---|---|
 | ROS 2 graph — `yahboom_m3pro` | `rosbridge_action` / `ros_action` callable | `M3ProTwinGraph` | yahboom_m3pro | **reference implementation** (#3941) |
-| Feetech serial bus | `FeetechBus` (`connect`, `sync_read`, `write_goal_positions`, `set_torque`, `to_value`/`to_counts`) | `FeetechTwinBus` - one class, degrees ↔ model radians through the same calibration records | so100, so101 (lekiwi, hope_jr, open_duck_mini need `joint_labels` / an asset first) | **landed** - [the SO arms' page](../robots/arms.md#the-same-agent-on-the-twin) |
+| Feetech serial bus | `FeetechBus` (`connect`, `sync_read`, `write_goal_positions`, `set_torque`, `to_value`/`to_counts`) | `FeetechTwinBus` - one class, degrees ↔ model radians through the same calibration records | so100, so101 (lekiwi, hope_jr, open_duck_mini need `joint_labels` / an asset first) | **landed** - [the SO arms' page](so-arms.md#the-same-agent-on-the-twin) |
 | Dynamixel serial bus | `dynamixel/` bus over `protocol.py` packets | `DynamixelTwinBus`, the Feetech twin's shape | aloha, koch, dynamixel_2r, trossen_wxai, vx300s, wx250s | next - the Feetech twin is its template |
 | HTTP client — EarthRover | `requests.Session` (`/control`, `/data`, `/v2/<view>`) | a session double writing the model's base | earthrover | small, one PR |
 | robotd socket — Microduck | `_RobotdClient` | a client double | microduck | small, one PR |
@@ -106,7 +106,7 @@ row flipped when it lands.
 `FeetechBus`, so `to_value` / `to_counts` / `value_bounds` and the calibration
 records are the bus's own, and reimplements `connect`, `sync_read`,
 `write_goal_positions` and `set_torque` against the engine. The full account,
-with the fidelity notes, is on [the SO arms' page](../robots/arms.md#the-same-agent-on-the-twin);
+with the fidelity notes, is on [the SO arms' page](so-arms.md#the-same-agent-on-the-twin);
 the decisions:
 
 - **Motors ↔ joints** through the registry's `joint_labels` (SO-101 `1`..`6`,
