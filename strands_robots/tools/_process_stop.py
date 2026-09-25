@@ -85,8 +85,14 @@ SIGKILL_CONFIRM_S = 2.0
 #: :class:`SessionManager`): a second definition of this path is a second
 #: independently-redirectable name for one file, which is how two policies came
 #: to be applied to it.
+#:
+#: Named here and created by whoever writes into it - :func:`session_log_path`
+#: and :func:`store_sessions` - rather than as this module body runs. An import
+#: that made the directory made it in whatever directory the caller happened to
+#: be in, for a caller who may only have been listing sessions, and raised
+#: ``PermissionError`` outright where that directory is read-only: a failure in
+#: the import statement, which no handler around the verb can answer.
 SESSION_DIR = Path.cwd() / ".strands_robots/.sessions"
-SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 #: Session-record key holding the identity of the process the record was written
 #: for: how long after boot that process started.
@@ -389,12 +395,17 @@ def session_log_path(session_name: str) -> Path:
     Resolved on each call rather than bound at import, so :data:`SESSION_DIR`
     has one redirect seam covering both the store and the logs beside it.
 
+    The directory is created here, because every caller opens the path this
+    returns for writing: a log is asked for only when a detached session is
+    being started.
+
     Args:
         session_name: The session key the record is stored under.
 
     Returns:
         The log file path for that session, inside :data:`SESSION_DIR`.
     """
+    SESSION_DIR.mkdir(parents=True, exist_ok=True)
     return SESSION_DIR / f"{session_name}.log"
 
 
@@ -430,8 +441,9 @@ def store_sessions(sessions_file: Path, sessions: Mapping[str, Any]) -> None:
     to decide who may read it.
 
     Args:
-        sessions_file: The store to replace. Its parent directory must exist -
-            both callers create it when their module loads.
+        sessions_file: The store to replace. Its parent directory is created if
+            it is not there yet, because a store nobody has written has no
+            directory either.
         sessions: The whole session map to store.
 
     Raises:
@@ -456,6 +468,9 @@ def store_sessions(sessions_file: Path, sessions: Mapping[str, Any]) -> None:
 
     tmp = sessions_file.with_suffix(sessions_file.suffix + ".tmp")
     try:
+        # After the serialization above, so a document this cannot encode leaves
+        # no directory behind either.
+        sessions_file.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_text(payload, encoding="utf-8")
         os.replace(tmp, sessions_file)
     except OSError:

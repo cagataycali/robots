@@ -147,8 +147,8 @@ def test_the_store_path_has_one_definition() -> None:
 
     A per-tool ``SESSION_DIR`` is what let the suite grade each half in its own
     temp dir while production had both halves on one file - the reason a
-    two-policy store went unnoticed. It is also an import-time ``mkdir`` under
-    ``cwd`` per copy.
+    two-policy store went unnoticed. It would also be a second directory under
+    ``cwd``, made the first time either copy's writer ran.
     """
     package = Path(_process_stop.__file__).resolve().parent.parent
     assignments = [

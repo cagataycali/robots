@@ -143,23 +143,17 @@ class TestMaterializingAToolDoesNotConfigureTheHostProcess:
     on a named logger are import-safe.
 
     ``mkdir()`` at the top level writes to the filesystem for an import that may
-    never call the tool. The one session store below does it under
-    ``Path.cwd()``, so merely reading a tool's help litters the directory the
-    process happens to be in; it is named here rather than fixed because its
-    contents are load-bearing session state, and moving it is a behaviour change
-    this contract does not make. A *second* one is refused - which is what a
-    tool defining its own copy of the store path would be.
+    never call the tool. The detached-session store did it under ``Path.cwd()``,
+    so merely reading a tool's help littered the directory the process happened
+    to be in - and raised ``PermissionError`` from the import statement where
+    that directory is read-only. Its two write doors make it now
+    (``tests/tools/test_the_session_directory_is_made_by_its_writer.py`` holds
+    that behaviour), so no tool module is expected to create anything here.
 
     Graded with ``ast``, not by importing, so each offender is attributed to its
     own module: ``basicConfig`` is a no-op once any handler exists, so the second
     module to call it looks clean at runtime.
     """
-
-    #: Top-level ``mkdir`` calls that predate this contract, with the store each
-    #: creates. A new entry here is a regression, not a waiver.
-    KNOWN_TOP_LEVEL_MKDIR = {
-        "_process_stop.py": "SESSION_DIR",
-    }
 
     @staticmethod
     def _import_time_calls(source: str) -> list[str]:
@@ -232,15 +226,16 @@ class TestMaterializingAToolDoesNotConfigureTheHostProcess:
             "logging.getLogger(__name__) instead, which configures nothing"
         )
 
-    def test_only_the_declared_session_stores_are_created_at_import(self) -> None:
-        """A top-level ``mkdir`` is confined to the two stores named above."""
+    def test_no_tool_module_creates_a_directory_at_import(self) -> None:
+        """A directory a verb writes into is made by the verb, not by the import."""
         offenders = sorted(
             module.name
             for module in self._tool_modules()
             if any(call.endswith(".mkdir") for call in self._import_time_calls(module.read_text(encoding="utf-8")))
         )
-        assert offenders == sorted(self.KNOWN_TOP_LEVEL_MKDIR), (
-            f"tool modules creating a directory at import are {offenders}, expected "
-            f"{sorted(self.KNOWN_TOP_LEVEL_MKDIR)}; a tool must not write to the "
-            "filesystem merely because it was imported"
+        assert offenders == [], (
+            f"{offenders} create a directory at import, so a caller who only read a "
+            "tool's help pays for it and one whose working directory is read-only "
+            "cannot import the tool at all; create it from the function that writes "
+            "into it"
         )

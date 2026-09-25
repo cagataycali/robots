@@ -266,9 +266,14 @@ def test_an_unwritable_store_is_reported_and_not_raised(
 
     Holds either way - it is the contract the tools already had, kept so the
     commit change is about durability and not about how a failure is reported.
+    Unwritable because a FILE stands where the store's directory would be; a
+    directory that is merely absent is made by the commit, which is how a first
+    session is recorded in a tree nothing has written to yet.
     """
     manager = managers["teleop"]
-    manager.sessions_file = manager.sessions_file.parent / "missing_dir" / "active_sessions.json"
+    blocked = manager.sessions_file.parent / "not_a_directory"
+    blocked.write_text("", encoding="utf-8")
+    manager.sessions_file = blocked / "active_sessions.json"
     with caplog.at_level("ERROR"):
         manager._save_sessions({"s": {"pid": 1}})
     assert any("Error saving sessions" in r.message for r in caplog.records)

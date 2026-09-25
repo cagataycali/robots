@@ -1038,10 +1038,16 @@ def test_dagger_dispatch_starts_session(monkeypatch: pytest.MonkeyPatch) -> None
 # ``tests.tools.test_the_session_store_keeps_a_live_pid``.
 # ---------------------------------------------------------------------------
 def test_save_sessions_swallows_oserror(tmp_path, caplog: pytest.LogCaptureFixture) -> None:
-    """``_save_sessions`` logs and returns when the store path is unwritable
-    (parent directory missing) instead of raising."""
+    """``_save_sessions`` logs and returns when the store is unwritable.
+
+    Unwritable because a FILE stands where the store's directory would be. A
+    directory that is merely absent is not a failure: ``store_sessions`` makes
+    it, so the first session of a run is recorded in a tree nothing has written
+    to yet.
+    """
     mgr = SessionManager()
-    mgr.sessions_file = tmp_path / "missing_dir" / "active_sessions.json"
+    (tmp_path / "not_a_directory").write_text("", encoding="utf-8")
+    mgr.sessions_file = tmp_path / "not_a_directory" / "active_sessions.json"
     with caplog.at_level("ERROR"):
         mgr._save_sessions({"s": {"pid": 1}})  # must not raise
     assert any("Error saving sessions" in r.message for r in caplog.records)
