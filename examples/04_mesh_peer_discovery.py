@@ -6,7 +6,8 @@ Zenoh. Every robot that joins the mesh is visible to every other - no DHCP,
 no config server, no manual IP lists.
 
 Dependencies: pip install "strands-robots[sim-mujoco,mesh]"
-Expected output: Prints local robot info and discovered peer list.
+Expected output: Prints local robot info and the discovered peer list - one row
+                 per robot a second copy runs, each addressable in its own right.
 Runtime: ~3 seconds (waits for one round of peer heartbeats, then exits and
          releases the mesh session).
 
@@ -30,7 +31,14 @@ from strands_robots.mesh.session import HEARTBEAT_HZ
 # also builds the world and adds the "so100" robot, so no create_world/add_robot
 # is needed. Use mesh=False in CI or when Zenoh is unavailable.
 use_mesh = os.environ.get("STRANDS_MESH", "true").lower() != "0"
-sim = Robot("so100", mesh=use_mesh, peer_id="example-arm-01")
+
+# A mesh identity belongs to one peer. The registry files a record under its
+# ``peer_id``, so two processes claiming the same one overwrite each other's row
+# and each reads the other as itself - the second terminal below would report no
+# discovery at all. Pass an id to give this arm a readable name; the default
+# cannot be shared with another process.
+peer_id = sys.argv[1] if len(sys.argv) > 1 else f"example-arm-{os.getpid()}"
+sim = Robot("so100", mesh=use_mesh, peer_id=peer_id)
 
 # Peers announce themselves by heartbeat, not on demand: a robot in another
 # process shows up here only after its next beat lands (~1/HEARTBEAT_HZ s).

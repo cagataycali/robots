@@ -31,6 +31,11 @@ routes a wildcard by intersection, so a segment holding one would address the
 reply at every peer - such a command is refused whole and audited, nothing
 dispatched. Omitting `sender_id` still means fire-and-forget.
 
+A record is filed under its `peer_id`, and that identity belongs to one peer:
+two processes claiming the same one overwrite each other's row, so each reads the
+other as itself and neither reports a discovery. Name a peer after the machine or
+the arm, not after the script.
+
 A record is the reader's, not the measured peer's. A presence payload is merged
 into a peer record for its capabilities (`tool_name`, `connected`, `cameras`,
 ...), but `peer_id`, `type`, `hostname`, `age` and `reachable` outrank it, so a

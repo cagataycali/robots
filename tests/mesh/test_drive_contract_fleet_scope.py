@@ -486,11 +486,11 @@ def test_the_docstring_names_what_every_other_drive_owner_does_instead() -> None
 
 def _drive_contract_bullets() -> dict[str, str]:
     """``label -> bullet text`` for the safety-semantics list on the docs page."""
-    page = Path(inspect.getfile(rosbridge_mod)).parents[2] / "docs" / "rosbridge-integration.md"
+    page = Path(inspect.getfile(rosbridge_mod)).parents[2] / "docs" / "ros2" / "rosbridge-robot.md"
     body = page.read_text(encoding="utf-8")
     section = re.search(r"\n### Drive contract\n(.*?)(?=\n### )", body, re.DOTALL)
     assert section is not None, (
-        "docs/rosbridge-integration.md should carry a '### Drive contract' section. It documented this "
+        "docs/ros2/rosbridge-robot.md should carry a '### Drive contract' section. It documented this "
         "bridge's clamp, ceiling and trailing zero under a 'Fleet drive contract' heading, which reads as "
         "though the ROS 2 and RTPS bridges carry them too."
     )
