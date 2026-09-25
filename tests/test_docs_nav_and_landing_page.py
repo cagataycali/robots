@@ -176,9 +176,7 @@ class TestTheLandingPageShowsTheProduct:
         assert targets, "docs/index.md carries no next-step cards for a reader to follow"
         missing = sorted(target for target in targets if not (DOCS_DIR / target).is_file())
         assert not missing, f"docs/index.md cards point at pages that do not exist: {missing}"
-        too_long = {
-            target: len((DOCS_DIR / target).read_text(encoding="utf-8").split()) for target in targets
-        }
+        too_long = {target: len((DOCS_DIR / target).read_text(encoding="utf-8").split()) for target in targets}
         over = {t: n for t, n in too_long.items() if n > MAX_NEXT_STEP_WORDS}
         assert not over, (
             f"docs/index.md next-step cards land on pages over "
