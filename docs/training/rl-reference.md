@@ -18,10 +18,18 @@ raises `ValueError` naming the class and the argument
 
 | Argument | Domain | Why |
 |---|---|---|
-| `action_scale` | positive finite | It multiplies every action sent: `0` disconnects the policy from the robot, a negative inverts every DOF, and `nan`/`inf` make each command unsendable - the rollout then banks its full return having moved nothing. |
+| `action_scale` | positive finite | It multiplies every action sent, and the action is the actuator *command* - so it bounds what the policy can reach rather than its rate. `0` disconnects the policy from the robot, a negative inverts every DOF, and `nan`/`inf` make each command unsendable - the rollout then banks its full return having moved nothing. |
 | `max_episode_steps` | positive whole number | `0` or below times out on the first step, as a *truncation* - which on-policy GAE value-bootstraps. |
-| `n_substeps` | positive whole number | The action is a position target; the PD controller needs several substeps to track it. `send_action`'s own domain. |
+| `n_substeps` | positive whole number | On a position-actuated robot the action is a position target the PD controller needs several substeps to track. `send_action`'s own domain. |
 | `action_dim` | positive integer, or `None` | `None` sizes the head from the robot's action keys; a width of `0` gives the policy no outputs. |
+
+The command is clamped to each actuator's `ctrlrange`, so an actor whose output
+is bounded - the `tanh`-squashed FastSAC / FastTD3 actors emit `[-1, 1]` - reaches
+only the part of each range overlapping `[-action_scale, action_scale]`. At the
+default `1.0` that is 46.4% of the so100's ranges, 57.6% of the g1's and 3.5% of
+the go2's torque limits; a robot with asymmetric ranges (`Pitch` is
+`[-3.32, 0.174]`) needs a per-actuator mapping in the actor, since one scalar
+cannot centre on two different midpoints.
 
 Nothing is refused that the code downstream accepts: `0.25`,
 `np.float32(0.25)`, `50.0` and `np.int64(50)` all normalize to the `float`/`int`

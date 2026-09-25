@@ -47,6 +47,7 @@ from __future__ import annotations
 import ast
 import inspect
 import math
+import re
 from typing import Any, cast
 
 import pytest
@@ -407,3 +408,116 @@ class TestEveryNumericHasADomain:
         engine_src = inspect.getsource(MuJoCoSimEngine.send_action)
         assert "positive_whole_number_error" in engine_src
         assert rl_env._NUMERIC_DOMAINS["n_substeps"] is positive_whole_number_error
+
+
+#: Wordings that state a *per-step displacement* bound rather than a bound on the
+#: command. Narrowed by attribution, not by keyword: each is read only inside the
+#: ``action_scale`` block of the constructor's own ``Args`` section, so a true
+#: statement about another parameter's step behaviour ("the PD controller needs
+#: several substeps") is not flagged for containing the word "step".
+_PER_STEP_CLAIMS = (
+    r"how far one\s+action\s+step",
+    r"how far one\s+step",
+    r"per[-\s]step",
+)
+
+
+def _argument_docs() -> dict[str, str]:
+    """The ``Args:`` section of ``SimEnv``, one whitespace-collapsed block per parameter.
+
+    The constructor's arguments are documented on the class docstring (``__init__``
+    carries none), which is what ``help(SimEnv)`` and the API reference render.
+    """
+    doc = inspect.getdoc(SimEnv) or ""
+    body = doc.split("Args:", 1)[1] if "Args:" in doc else ""
+    blocks: dict[str, str] = {}
+    current: str | None = None
+    for line in body.splitlines():
+        head = re.match(r"^ {4}(\w+): (.*)$", line)
+        if head is not None:
+            current = head.group(1)
+            blocks[current] = head.group(2)
+        elif current is not None and line.strip():
+            blocks[current] += " " + line.strip()
+        elif current is not None:
+            current = None
+    return {name: re.sub(r"\s+", " ", text) for name, text in blocks.items()}
+
+
+class TestTheScaleBoundsTheCommandNotTheStep:
+    """``action_scale`` multiplies the actuator command, so it caps what the policy can reach.
+
+    ``SimEnv.step`` sends ``action * action_scale`` to ``send_action``, which is an
+    actuator *command* - a position target on a position-actuated robot, a torque
+    on a torque-actuated one - and never a displacement from the current state.
+    The difference is not cosmetic. Measured on a real so100 in MuJoCo, a constant
+    ``Elbow`` command of ``1.0`` held for 200 steps:
+
+    ===============  =====================  ======================  ==================
+    ``action_scale``  largest step (rad)     ``Elbow`` after 200     reaches 0.9 rad?
+    ===============  =====================  ======================  ==================
+    ``0.1``           ``0.0085``             ``0.1084``              **never**
+    ``1.0``           ``0.0412``             ``0.9424``              yes
+    ===============  =====================  ======================  ==================
+
+    So the scale is neither the per-step bound it was documented as (``0.0085`` is
+    not ``0.1``) nor a rate limit a patient policy could integrate past: at
+    ``0.1`` the joint converges on ``0.1`` and stays there for any number of
+    steps. The consequence is the one a reader needs: the backend clamps the
+    product to each actuator's ``ctrlrange``, so a bounded actor - the
+    ``tanh``-squashed FastSAC / FastTD3 actors emit ``[-1, 1]`` - can only command
+    the overlap of that range with ``[-action_scale, action_scale]``: 46.4% of the
+    so100's six ranges at the default scale, 57.6% of the g1's twenty-nine, and
+    3.5% of the go2's twelve torque limits.
+    """
+
+    def test_the_command_sent_is_the_action_times_the_scale(self) -> None:
+        recorder = _Recorder()
+        env = _env(recorder, action_scale=0.1, max_episode_steps=100)
+        env.reset()
+        for _ in range(4):
+            env.step(torch.ones((1, 2)))
+        # Every command is the same 0.1: the scale does not accumulate over steps
+        # (a displacement would have reached 0.4) and does not rate-limit toward a
+        # larger target (a bounded actor never commands past the scale).
+        assert recorder.actions == [[0.1, 0.1]] * 4
+
+    def test_the_parser_reads_every_documented_numeric(self) -> None:
+        # Non-vacuity: the prose cells below assert over these blocks, and an
+        # empty parse would satisfy every one of them.
+        assert set(rl_env._NUMERIC_DOMAINS) <= set(_argument_docs())
+
+    def test_the_scale_is_not_documented_as_a_per_step_bound(self) -> None:
+        block = _argument_docs()["action_scale"]
+        offenders = [p for p in _PER_STEP_CLAIMS if re.search(p, block, re.IGNORECASE)]
+        assert not offenders, f"action_scale is documented as a per-step displacement bound {offenders}: {block}"
+
+    def test_the_scale_says_what_it_bounds(self) -> None:
+        block = _argument_docs()["action_scale"]
+        assert "reach" in block.lower(), f"action_scale does not say it bounds what the policy can reach: {block}"
+
+    def test_a_planted_per_step_claim_is_flagged(self) -> None:
+        # The patterns really do discriminate, so a clean ``action_scale`` block
+        # above is a statement about the prose and not about the regexes.
+        planted = "it is the magnitude bound on how far one action step may move a joint"
+        assert [p for p in _PER_STEP_CLAIMS if re.search(p, planted, re.IGNORECASE)]
+
+    def test_a_clean_block_is_not_flagged(self) -> None:
+        clean = "it scales the command itself, so it bounds what the policy can reach, not one step's motion"
+        assert not [p for p in _PER_STEP_CLAIMS if re.search(p, clean, re.IGNORECASE)]
+
+    def test_the_position_target_claim_is_qualified_by_the_actuator_kind(self) -> None:
+        # go2's twelve actuators have no position bias - the command is a torque -
+        # so an unqualified "the action is a position target" is false for the
+        # library's own locomotion robot.
+        block = _argument_docs()["n_substeps"]
+        if "position target" in block:
+            assert "position-actuated" in block, (
+                f"n_substeps calls the action a position target unconditionally: {block}"
+            )
+
+    def test_the_action_contract_states_the_clamp(self) -> None:
+        # The module docstring owns the action contract, so the ``ctrlrange``
+        # ceiling a bounded actor runs into belongs beside it.
+        doc = rl_env.__doc__ or ""
+        assert "ctrlrange" in doc, "the action contract does not say the command is clamped to each actuator's range"

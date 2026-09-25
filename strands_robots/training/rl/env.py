@@ -24,6 +24,20 @@ not always its joints - a tendon-driven gripper is one actuator over two finger
 joints, and the Newton backend's floating base is a joint with no commandable
 scalar - so the action head is sized from the action keys and a checkpoint
 records them as ``action_keys``. Pass ``action_dim`` to override the width.
+
+The vector is the actuator *command*, not a displacement: a position target on a
+position-actuated robot (so100, so101, g1, microduck) and a torque on a
+torque-actuated one (go2's twelve motors). ``action_scale`` multiplies it, and
+the backend clamps the product to each actuator's ``ctrlrange`` - so an actor
+whose output is bounded (the ``tanh``-squashed FastSAC / FastTD3 actors emit
+``[-1, 1]``) can only command the part of each range that overlaps
+``[-action_scale, action_scale]``, however many steps it takes. At the default
+scale of ``1.0`` that is 46.4% of the so100's six ranges (33.6% of ``Pitch``),
+57.6% of the g1's twenty-nine and 3.5% of the go2's torque limits, which is why
+a rollout of a bounded actor prints the backend's out-of-``ctrlrange`` warning.
+Scaling a robot whose ranges are asymmetric (``Pitch`` is ``[-3.32, 0.174]``)
+needs a per-actuator mapping in the actor, since one scalar cannot centre on two
+different midpoints.
 """
 
 from __future__ import annotations
@@ -152,13 +166,16 @@ class SimEnv:
             Must be a positive whole number; ``0`` reports a time-out on the
             first step, so every episode is over before it begins.
         action_scale: Scalar multiplier applied to actions before sending.
-            Must be a positive finite number: it is the magnitude bound on how
-            far one action step may move a joint, so ``0`` disconnects the
-            policy from the robot and a non-finite value makes every command
-            unsendable (see :data:`_NUMERIC_DOMAINS`).
-        n_substeps: Physics control substeps per env step. The action is a
-            position target; the PD controller needs several substeps to track
-            it, so a single substep barely moves the arm. Default 5. Shares
+            Must be a positive finite number: it scales the command itself,
+            so it bounds what the policy can *reach* rather than its rate - a
+            bounded actor never commands past ``±action_scale``, however many
+            steps it takes. ``0`` disconnects the policy from the robot and a
+            non-finite value makes every command unsendable (see
+            :data:`_NUMERIC_DOMAINS`).
+        n_substeps: Physics control substeps per env step. On a
+            position-actuated robot the action is a position target the PD
+            controller needs several substeps to track, so a single substep
+            barely moves the arm. Default 5. Shares
             ``send_action``'s own domain for this parameter (see
             :data:`_NUMERIC_DOMAINS`).
         success_fn: Optional predicate; when it returns ``True`` the episode
