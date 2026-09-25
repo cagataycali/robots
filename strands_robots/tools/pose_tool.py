@@ -224,10 +224,32 @@ class PoseManager:
     """Manages robot poses with persistence and safety."""
 
     def __init__(self, robot_id: str, storage_dir: Path | None = None):
+        """Bind a pose library to its file, without creating anything.
+
+        The directory is named here and created by the one writer of it,
+        :meth:`_save_poses`, rather than as this manager is constructed. Every
+        verb of the tool constructs one - including the ones that only read
+        (``list_poses``, ``show_pose``) and ``emergency_stop``, which is never
+        gated because stopping is never gated. A constructor that created the
+        directory therefore made it in whatever directory the caller happened to
+        be in for a caller who was only listing, and where that directory is
+        read-only it raised ``PermissionError`` out of the construction: an
+        emergency stop refused, in an exception this tool's error envelope does
+        not cover, because the arm could not be told about a pose file nobody
+        asked to write.
+
+        Args:
+            robot_id: Names the library's file inside the storage directory.
+            storage_dir: Where the library lives. Defaults to
+                ``.strands_robots/poses`` under the current directory.
+
+        Raises:
+            ValueError: ``storage_dir`` or ``robot_id`` resolves outside the
+                storage directory, or to a blocked system location.
+        """
         self.robot_id = robot_id
         raw_dir = str(storage_dir) if storage_dir else str(Path.cwd() / ".strands_robots" / "poses")
         self.storage_dir = Path(validate_save_path(raw_dir, label="storage_dir"))
-        self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.pose_file = Path(resolve_output_path(str(self.storage_dir), f"{robot_id}_poses.json", label="robot_id"))
         self.poses: dict[str, RobotPose] = {}
         self._load_poses()
@@ -281,8 +303,9 @@ class PoseManager:
                 before the stored library is touched, so it is still the last
                 one that loaded; the originating ``TypeError`` stays on
                 ``__cause__``, naming the offending type.
-            OSError: The temp file could not be written or renamed. The stored
-                library is likewise unchanged, and no temp file is left behind.
+            OSError: The storage directory could not be created, or the temp
+                file could not be written or renamed. The stored library is
+                likewise unchanged, and no temp file is left behind.
         """
         data = {name: pose.to_dict() for name, pose in self.poses.items()}
         try:
@@ -293,6 +316,13 @@ class PoseManager:
                 f"{exc}. The stored library is unchanged. Pass only JSON types (str, int, float, bool, "
                 "None, list, dict) - a NumPy scalar read off a joint must be converted first."
             ) from exc
+        # The directory is this method's to create: it is the only writer, and a
+        # caller who only reads must not be made to create it (see
+        # :meth:`__init__`). After the document is encoded, so a pose JSON cannot
+        # represent still leaves the file system untouched, and outside the
+        # commit below, whose cleanup would otherwise report the temp file it
+        # never got to write instead of the directory it could not make.
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
         tmp = self.pose_file.with_suffix(self.pose_file.suffix + ".tmp")
         try:
             tmp.write_text(payload, encoding="utf-8")
