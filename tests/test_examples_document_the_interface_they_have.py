@@ -42,20 +42,40 @@ that interface drifts from the file, the first two measured on ``74136572a``:
    ``agent_g1.py`` named it plus a seven-value vocabulary in the system prompt an
    LLM is handed, so the agent reported style switches it never made.
 
+5. ``examples/wbc/wbc_g1_gait.py`` documented no install line at all and drew its
+   PNG with ``matplotlib``. ``--plot-clock`` is the mode the file advertises as
+   needing no checkpoint and the command ``docs/policies/wbc_gait.md`` credits its
+   figure to, and in a venv built from the two sibling scripts' own line
+   (``pip install "strands-robots[wbc,sim-mujoco]"``) it exited 1 on
+   ``ModuleNotFoundError: No module named 'matplotlib'``. No extra of this project
+   declares matplotlib, so the import scan above skipped it by design.
+
 Why the install rule is keyed on distributions this project declares: an example
 may legitimately import something no extra covers (an optional third-party tool
 the header installs separately, or a module only the reader's own environment
 has). What it may not do is import a distribution ``pyproject.toml`` knows how to
 install and leave that out of its own line - that gap is always the line's bug,
 and the fix is always naming the extra.
+
+The undeclared half is the header's own obligation, which is the rule
+``test_a_script_names_every_dependency_no_extra_can_install`` adds: a module this
+project cannot install is exactly the one a reader has to be told about, because
+no extra spelling of the install line reaches it. It is scoped to scripts - an
+app's own submodule (``examples/isaac_gs/scene.py`` importing ``isaacsim``) is
+not run directly and its README carries the install - and the import-name roster
+below resolves the cases where a module and its distribution are spelled
+differently, so a declared dependency is not read as an undeclared one.
 """
 
 from __future__ import annotations
 
 import ast
 import re
+import sys
 import tomllib
 from pathlib import Path
+
+import pytest
 
 from strands_robots.training.lerobot import _LEROBOT_CALL_TIME_PACKAGES
 
@@ -65,6 +85,16 @@ _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
 _INSTALL_LINE = re.compile(r"(?:uv )?pip install(?P<rest>[^\n]*(?:\\\n[^\n]*)*)")
 _SELF_EXTRAS = re.compile(r"strands[-_]robots\[(?P<extras>[^\]]+)\]")
+
+# The import names whose distribution is spelled differently, so that a declared
+# dependency is not read as one this project cannot install. Each entry is
+# checked against the manifest by
+# ``test_each_import_name_alias_resolves_to_a_declared_distribution``.
+_DISTRIBUTION_BY_IMPORT_NAME = {
+    "PIL": "pillow",
+    "cv2": "opencv-python-headless",
+    "yaml": "pyyaml",
+}
 
 
 def _canonical(requirement: str) -> str:
@@ -424,3 +454,111 @@ def test_the_goal_rule_separates_a_read_key_from_a_dead_one() -> None:
     assert dead('CFG = {"width": 640, "height": 480, "locomotion_style": "run"}') == [], (
         "a camera config carries no target_* anchor and must not be read as a goal dict"
     )
+
+
+def _is_script(tree: ast.Module) -> bool:
+    """Whether the file is run directly, rather than imported by an app."""
+    return any(
+        isinstance(node, ast.If) and ast.unparse(node.test).replace('"', "'") == "__name__ == '__main__'"
+        for node in tree.body
+    )
+
+
+def _repo_local(module: str) -> bool:
+    """Whether the import resolves inside this repository, not to a dependency."""
+    return (_REPO_ROOT / module).is_dir() or any(_EXAMPLES_DIR.rglob(f"{module}.py"))
+
+
+def _installable() -> frozenset[str]:
+    """Every distribution the manifest knows how to install, module-spelled."""
+    by_extra, base = _declared()
+    return frozenset(base | {dist for dists in by_extra.values() for dist in dists})
+
+
+def _uninstallable_imports(tree: ast.Module) -> list[str]:
+    """Third-party modules the file imports that no extra of this project declares."""
+    installable = _installable()
+    unreachable = []
+    for module in sorted(_imported_top_level(tree)):
+        if module in sys.stdlib_module_names or module in {"strands_robots", "strands"} or _repo_local(module):
+            continue
+        if _canonical(_DISTRIBUTION_BY_IMPORT_NAME.get(module, module)) in installable:
+            continue
+        unreachable.append(module)
+    return unreachable
+
+
+def _unnamed_dependencies(tree: ast.Module) -> list[str]:
+    """Uninstallable imports the file's own docstring never mentions."""
+    docstring = (ast.get_docstring(tree) or "").lower()
+    return [module for module in _uninstallable_imports(tree) if module.lower() not in docstring]
+
+
+def test_a_script_names_every_dependency_no_extra_can_install() -> None:
+    """A runnable example names what ``pyproject.toml`` cannot install for it.
+
+    No spelling of ``pip install "strands-robots[...]"`` reaches these, so the
+    header is the only place a reader can learn about them - and the failure
+    lands wherever the import sits, which for a plotting or encoding import is
+    after the work the reader was waiting for.
+    """
+    graded, named, offenders = [], [], []
+    for path, tree in _examples():
+        if not _is_script(tree):
+            continue
+        graded.append(path)
+        where = path.relative_to(_REPO_ROOT).as_posix()
+        named += [
+            f"{where}:{module}" for module in _uninstallable_imports(tree) if module not in _unnamed_dependencies(tree)
+        ]
+        offenders += [f"{where} imports {module}" for module in _unnamed_dependencies(tree)]
+    assert graded, f"no runnable example found under {_EXAMPLES_DIR}"
+    assert named, "no script names an undeclared dependency; the scan is reading nothing"
+    assert not offenders, (
+        "a script must name a dependency no extra of this project declares, because no install "
+        "line can reach it: " + "; ".join(offenders)
+    )
+
+
+def test_each_import_name_alias_resolves_to_a_declared_distribution() -> None:
+    """The roster resolves spellings; it never excuses an undeclared module."""
+    installable = _installable()
+    stale = {
+        module: dist for module, dist in _DISTRIBUTION_BY_IMPORT_NAME.items() if _canonical(dist) not in installable
+    }
+    assert not stale, (
+        f"{stale} map onto distributions the manifest does not declare, so the roster hides an "
+        "undeclared dependency instead of resolving a spelling"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "unnamed"),
+    [
+        ('"""Plots it."""\nimport seaborn\n', ["seaborn"]),
+        ('"""Plots it with seaborn: pip install seaborn."""\nimport seaborn\n', []),
+        ('"""Renders it."""\nimport mujoco\n', []),
+        ('"""Reads an image."""\nfrom PIL import Image\n', []),
+        ('"""Parses a config."""\nimport yaml\n', []),
+        ('"""Reads the clock."""\nimport json\nimport math\n', []),
+        ('"""Drives the arm."""\nfrom strands_robots import Robot\n', []),
+    ],
+    ids=["undeclared", "named", "declared", "alias", "alias-yaml", "stdlib", "package"],
+)
+def test_the_undeclared_rule_separates_a_named_dependency_from_a_silent_one(source: str, unnamed: list[str]) -> None:
+    """Planted cases: only a dependency nothing can install and nothing names fails."""
+    assert _unnamed_dependencies(ast.parse(source)) == unnamed
+
+
+@pytest.mark.parametrize(
+    ("source", "is_script"),
+    [
+        ('if __name__ == "__main__":\n    main()\n', True),
+        ("if __name__ == '__main__':\n    main()\n", True),
+        ("def main() -> None:\n    pass\n", False),
+    ],
+    ids=["double-quoted", "single-quoted", "module"],
+)
+def test_the_script_gate_reads_the_entry_point_in_either_spelling(source: str, is_script: bool) -> None:
+    """An app's submodule is graded by its README, not by a header it has not got."""
+    assert _is_script(ast.parse(source)) is is_script

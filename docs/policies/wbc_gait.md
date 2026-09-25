@@ -55,7 +55,8 @@ static-stance freeze. It is a verbatim NumPy port of the upstream block (no
 torch) and is unit-tested against hand-computed values.
 [`examples/wbc/wbc_g1_gait.py --plot-clock`](https://github.com/strands-labs/robots/blob/main/examples/wbc/wbc_g1_gait.py)
 visualizes it through a static -> walk -> static schedule (no checkpoint
-needed):
+needed; `pip install "strands-robots[wbc]" matplotlib` - the PNG is drawn with
+matplotlib, which no extra of this project declares):
 
 <figure markdown>
   ![WBC gait-clock phase signal over a static-walk-static command schedule](../assets/wbc/g1_gait_clock.png)

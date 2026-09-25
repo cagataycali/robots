@@ -21,10 +21,13 @@ This example has two modes:
 
 Usage::
 
-    # Clock visualization (the demonstrable behavior, no weights needed):
+    # Clock visualization (the demonstrable behavior, no weights needed).
+    # matplotlib draws the PNG and no extra of this project declares it:
+    pip install "strands-robots[wbc]" matplotlib
     python examples/wbc/wbc_g1_gait.py --plot-clock --out /tmp/g1_gait_clock.png
 
     # Policy usage (needs a 95x6 gait checkpoint):
+    pip install "strands-robots[wbc,sim-mujoco]"
     python examples/wbc/wbc_g1_gait.py --checkpoint /path/to/gait-g1 --vx 0.5 --freq 1.5
 """
 
