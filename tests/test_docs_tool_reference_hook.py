@@ -33,7 +33,7 @@ _REPO = Path(strands_robots.__file__).resolve().parents[1]
 _PKG = _REPO / "strands_robots"
 
 # A hook that found nothing must not read as a clean sweep.
-_MINIMUM_TOOLS = 60
+_MINIMUM_TOOLS = 50
 
 
 def _hook():

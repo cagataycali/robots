@@ -11,12 +11,12 @@ whether the arm-SDK gate would admit today, and the driver's answer is
 ``WALK_FSMS``". This verb closes that gap: it calls
 :meth:`~strands_robots.drivers.g1.G1Driver.get_status`, then decides the
 ``admits_arm`` / ``admits_loco`` membership against the same driver
-constants :mod:`~strands_robots.tools.g1.g1_motion_gates` names.
+constants :func:`~strands_robots.tools.g1.g1_reference.g1_motion_gates` names.
 
 The verb takes a :class:`~strands_robots.drivers.g1.G1Driver` instance,
 which is the first driver-instance-taking verb in this package. Every
-earlier verb here (:mod:`~strands_robots.tools.g1.g1_joints`,
-:mod:`~strands_robots.tools.g1.g1_motion_gates`) is a pure reader over
+earlier verb here (the reference lookups in
+:mod:`~strands_robots.tools.g1.g1_reference`) is a pure reader over
 module-level constants and takes no argument; this one is a live read
 against a wired driver and cannot answer without one. The driver
 argument is typed :class:`~typing.Any` at runtime rather than as
@@ -107,7 +107,7 @@ async def g1_get_state(driver: Any) -> dict[str, Any]:
     against :data:`~strands_robots.drivers.unitree._common.HANDSHAKE_FSMS` (the arm-SDK gate)
     and :data:`~strands_robots.drivers.unitree._common.WALK_FSMS` (the locomotion gate). The
     membership answer is the same
-    one :func:`~strands_robots.tools.g1.g1_motion_gates.g1_fsm_admits` would compute for the
+    one :func:`~strands_robots.tools.g1.g1_reference.g1_motion_gates` would compute for the
     given ``fsm_id``; this verb saves the caller a second tool call by carrying it alongside
     the state read.
 

@@ -26,8 +26,10 @@ Organizing principle (post-consolidation, refs #2928):
                                  g1_set_stand_height, g1_set_swing_height,
                                  g1_balance_stand, the safe posture
                                  transitions, the arm and loco gestures)
-      * Gate introspection      (g1_motion_gates)
-      * Reference data          (g1_joints, g1_error_codes, g1_arm_actions)
+      * Reference data          (g1_reference: g1_joints, g1_motion_gates,
+                                 g1_arm_actions, g1_error_codes - each
+                                 lists its table with no query and
+                                 resolves one entry with one)
       * The escape hatch        (use_unitree)
 
 ``unitree_sdk2py`` is lazy-imported everywhere: importing this package or
@@ -74,17 +76,12 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "g1_shake_hand_loco": (".g1_actions", "g1_shake_hand_loco"),
     "g1_stop_move": (".g1_actions", "g1_stop_move"),
     "g1_wave_hand_loco": (".g1_actions", "g1_wave_hand_loco"),
-    # Gate introspection
-    "g1_list_motion_gates": (".g1_motion_gates", "g1_list_motion_gates"),
-    "g1_fsm_admits": (".g1_motion_gates", "g1_fsm_admits"),
-    # Reference data (pure Python, no robot needed)
-    "g1_joint_reference": (".g1_joints", "g1_joint_reference"),
-    "g1_joint_name": (".g1_joints", "g1_joint_name"),
-    "g1_joint_index": (".g1_joints", "g1_joint_index"),
-    "g1_list_error_codes": (".g1_error_codes", "g1_list_error_codes"),
-    "g1_decode_error_code": (".g1_error_codes", "g1_decode_error_code"),
-    "g1_list_arm_actions": (".g1_arm_actions", "g1_list_arm_actions"),
-    "g1_arm_action_admits": (".g1_arm_actions", "g1_arm_action_admits"),
+    # Reference data (pure Python, no robot needed): one verb per constant
+    # table, listing it with no query and resolving one entry with one
+    "g1_joints": (".g1_reference", "g1_joints"),
+    "g1_motion_gates": (".g1_reference", "g1_motion_gates"),
+    "g1_arm_actions": (".g1_reference", "g1_arm_actions"),
+    "g1_error_codes": (".g1_reference", "g1_error_codes"),
     # Universal SDK dispatcher (use_aws pattern)
     "use_unitree": (".use_unitree", "use_unitree"),
 }

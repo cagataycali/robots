@@ -181,7 +181,7 @@ def g1_arm_action(driver: Any, action: str = "", action_id: int | None = None) -
     Args:
         driver: The live G1Driver handle the orchestrator constructed.
         action: A gesture name like ``'clap'`` or ``'heart'`` - the full
-            name-to-id map is on :func:`~strands_robots.tools.g1.g1_arm_actions.g1_list_arm_actions`.
+            name-to-id map is on :func:`~strands_robots.tools.g1.g1_reference.g1_arm_actions`.
         action_id: The SDK's numeric id (like ``17`` or ``20``), an
             alternative to ``action``. Pass one of the two.
 
@@ -195,7 +195,7 @@ def g1_arm_action(driver: Any, action: str = "", action_id: int | None = None) -
         return _refusal(
             "g1_arm_action: pass one of `action` (a gesture name like 'clap' or "
             "'heart') or `action_id` (the SDK's numeric id like 17 or 20). The "
-            "full name-to-id map is on g1_list_arm_actions (refs "
+            "full name-to-id map is on g1_arm_actions (refs "
             "strands-labs/robots#2959)."
         )
     return driver.arm_action(action, action_id)
