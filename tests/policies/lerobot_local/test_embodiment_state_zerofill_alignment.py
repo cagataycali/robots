@@ -92,7 +92,6 @@ class TestPackStateZeroFillInPlace:
         """Arm joints keep their canonical model index; the two absent gripper
         actuator slots read 0.0. FAILS pre-fix: the right arm slid into the
         left-gripper slot and both zeros landed at the tail."""
-        E._WARNED_STATE_KEY_MISMATCH.clear()
         out = _step(ALOHA_14, 14).observation(_sim_obs_no_gripper())
         state = out["observation.state"].numpy()
         assert len(state) == 14
@@ -104,7 +103,6 @@ class TestPackStateZeroFillInPlace:
     def test_missing_keys_warn_once(self, caplog):
         """The degradation is surfaced once (naming the absent keys), then
         deduplicated across the hot control loop."""
-        E._WARNED_STATE_KEY_MISMATCH.clear()
         step = _step(ALOHA_14, 14)
         import logging
 
@@ -121,7 +119,6 @@ class TestPackStateZeroFillInPlace:
     def test_all_present_unchanged(self):
         """A fully-present key set is packed verbatim with no zero-fill (the
         so101-style path); this must not regress."""
-        E._WARNED_STATE_KEY_MISMATCH.clear()
         keys = ["a", "b", "c"]
         out = _step(keys, 3).observation({"a": 1.0, "b": 2.0, "c": 3.0})
         state = out["observation.state"].numpy()
@@ -131,7 +128,6 @@ class TestPackStateZeroFillInPlace:
     def test_all_missing_passthrough(self):
         """When NONE of the declared keys are present, leave the observation
         untouched so a clearer downstream error can fire (do not emit all-zero)."""
-        E._WARNED_STATE_KEY_MISMATCH.clear()
         obs = {"unrelated": 5.0}
         out = _step(["a", "b"], 2).observation(dict(obs))
         assert "observation.state" not in out
@@ -176,7 +172,6 @@ class TestTheZeroFillIsReported:
 
     def test_the_policy_flag_reports_the_filled_dims(self):
         """FAILS pre-fix: the flag read False while two dims carried no reading."""
-        E._WARNED_STATE_KEY_MISMATCH.clear()
         bridge, step = self._bridge(ALOHA_14, 14)
         step.observation(_sim_obs_no_gripper())
         policy = self._policy()
@@ -186,7 +181,6 @@ class TestTheZeroFillIsReported:
 
     def test_strict_keys_refuses_instead_of_filling(self):
         """strict_keys is one posture on every state path, not two."""
-        E._WARNED_STATE_KEY_MISMATCH.clear()
         _bridge, step = self._bridge(ALOHA_14, 14, strict_keys=True)
         with pytest.raises(ValueError) as exc:
             step.observation(_sim_obs_no_gripper())
@@ -197,7 +191,6 @@ class TestTheZeroFillIsReported:
 
     def test_a_fully_bound_observation_packs_and_reports_nothing(self):
         """The control: strict_keys set, every declared key present -> no raise, flag clear."""
-        E._WARNED_STATE_KEY_MISMATCH.clear()
         keys = ["a", "b", "c"]
         bridge, step = self._bridge(keys, 3, strict_keys=True)
         out = step.observation({"a": 1.0, "b": 2.0, "c": 3.0})
@@ -223,7 +216,6 @@ class TestAlohaEmbodimentActuatorConvention:
     def test_aloha_state_build_is_canonically_aligned(self):
         """End-to-end: build observation.state from a gripper-less sim obs through
         the real aloha embodiment config; arm stays aligned, grippers zero-filled."""
-        E._WARNED_STATE_KEY_MISMATCH.clear()
         emb = E.load_embodiment("aloha")
         step = _step(emb.state_keys, 14, dim_policy=emb.dim_policy)
         state = step.observation(_sim_obs_no_gripper())["observation.state"].numpy()

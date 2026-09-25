@@ -33,7 +33,6 @@ import mujoco  # noqa: E402
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 from strands_robots.simulation.predicates import (  # noqa: E402
-    _reset_resolution_warnings,
     make_predicate,
 )
 
@@ -175,9 +174,6 @@ def test_base_orientation_tracks_the_live_base_orientation(sim):
 def test_base_orientation_degrades_to_zero_on_fixed_base_arm(sim, caplog):
     """A fixed-base arm has no base orientation: the term degrades to 0.0 and warns."""
     sim.add_robot("arm", urdf_path=_write(FIXED_ARM_XML))
-    # Reset the module-global warn-once dedup so this assertion is independent of
-    # what other predicate tests warned first (the "robot base" key is shared).
-    _reset_resolution_warnings()
     with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.predicates"):
         val = make_predicate("base_orientation")(sim)
     assert val == 0.0

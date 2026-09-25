@@ -47,17 +47,11 @@ from strands_robots.mesh.session import PEER_TIMEOUT, PeerInfo, get_peer, get_pe
 
 @pytest.fixture
 def registry(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """The registry emptied, retention unset, and the warn-once ledger saved
-    and restored so these tests neither inherit spent spellings nor spend
-    them for the rest of the session."""
+    """The registry emptied and the retention window unset."""
     monkeypatch.delenv("STRANDS_MESH_PEER_RETENTION_S", raising=False)
     mesh_session._PEERS.clear()
-    saved = set(mesh_session._RETENTION_WARNED)
-    mesh_session._RETENTION_WARNED.clear()
     yield mesh_session
     mesh_session._PEERS.clear()
-    mesh_session._RETENTION_WARNED.clear()
-    mesh_session._RETENTION_WARNED.update(saved)
 
 
 def _age_peer(peer_id: str, age_s: float) -> None:

@@ -78,12 +78,6 @@ def _step(state_keys: list[str], expected_dim: int, **kw: Any) -> Any:
     return step_cls(state_keys=list(state_keys), expected_dim=expected_dim, **kw)
 
 
-@pytest.fixture(autouse=True)
-def _reset_warn_dedup() -> None:
-    """The missing-key warning is deduplicated process-wide; start each test clean."""
-    E._WARNED_STATE_KEY_MISMATCH.clear()
-
-
 class TestSimEmbodimentDrivenFromHardware:
     def test_the_declared_sim_keys_are_absent_from_a_hardware_observation(self) -> None:
         """Premise: the fixture really does reach the no-declared-key branch.

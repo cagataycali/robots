@@ -82,16 +82,6 @@ class _StubMqttClient:
         self.published.append(packet)
 
 
-@pytest.fixture(autouse=True)
-def _fresh_once_guard(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Give every test an empty once-per-topic guard.
-
-    The guard is module state that deliberately outlives a single publish, so a
-    sibling test's report would otherwise silence this one's.
-    """
-    monkeypatch.setattr(mesh_session, "_unencodable_topics_warned", set(), raising=False)
-
-
 @pytest.fixture
 def zenoh_wire(monkeypatch: pytest.MonkeyPatch) -> _StubZenohSession:
     """An open session on the legacy Zenoh path - the default backend's encode site."""

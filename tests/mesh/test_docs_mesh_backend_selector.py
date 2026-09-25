@@ -156,17 +156,6 @@ def _unnamed_routing_claims(text: str) -> list[str]:
     ]
 
 
-@pytest.fixture(autouse=True)
-def _forget_reported_typos() -> None:
-    """Let each test observe the once-per-value report.
-
-    ``select_backend`` reports an unknown value once per distinct value for the
-    life of the process, so a test that reads the report has to start from a
-    set that has not already seen its value.
-    """
-    _backend_select._UNKNOWN_WARNED.clear()
-
-
 class TestTheScanReachesThePages:
     """Non-vacuity: a rename or reformat must fail loudly, not report clean."""
 

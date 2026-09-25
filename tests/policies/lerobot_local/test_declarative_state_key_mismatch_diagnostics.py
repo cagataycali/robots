@@ -69,14 +69,6 @@ ALOHA_ARMS = [
 ]
 
 
-@pytest.fixture(autouse=True)
-def _fresh_warn_dedup():
-    """Each test starts with an empty warn-once ledger."""
-    E._WARNED_STATE_KEY_MISMATCH.clear()
-    yield
-    E._WARNED_STATE_KEY_MISMATCH.clear()
-
-
 def _step(state_keys, **kw):
     Step = E.register_pack_state_step()
     assert Step is not None, "lerobot processor framework unavailable"

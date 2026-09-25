@@ -22,17 +22,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import pytest
-
 from strands_robots.mesh import _zenoh_config as zc
-
-
-@pytest.fixture
-def reset_tls_warned():
-    """Reset the per-key-path warning set around each test."""
-    zc._NON_POSIX_TLS_WARNED_KEYS.clear()
-    yield
-    zc._NON_POSIX_TLS_WARNED_KEYS.clear()
 
 
 def _make_tls_files(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -46,7 +36,7 @@ def _make_tls_files(tmp_path: Path) -> tuple[Path, Path, Path]:
     return ca, cert, key
 
 
-def test_non_posix_emits_warning_once(monkeypatch, tmp_path, caplog, reset_tls_warned):
+def test_non_posix_emits_warning_once(monkeypatch, tmp_path, caplog):
     """First call on non-POSIX emits WARNING; second call is silent."""
     ca, cert, key = _make_tls_files(tmp_path)
     monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
@@ -66,7 +56,7 @@ def test_non_posix_emits_warning_once(monkeypatch, tmp_path, caplog, reset_tls_w
         assert second_warns == [], "second call must be silent (one-shot)"
 
 
-def test_posix_does_not_emit_warning(monkeypatch, tmp_path, caplog, reset_tls_warned):
+def test_posix_does_not_emit_warning(monkeypatch, tmp_path, caplog):
     """On POSIX, the actual mode check runs and the WARNING does NOT fire."""
     ca, cert, key = _make_tls_files(tmp_path)
     key.chmod(0o600)  # legit
@@ -81,7 +71,7 @@ def test_posix_does_not_emit_warning(monkeypatch, tmp_path, caplog, reset_tls_wa
         assert warns == [], "POSIX must use the actual mode check, not the warning"
 
 
-def test_warning_mentions_platform_and_path(monkeypatch, tmp_path, caplog, reset_tls_warned):
+def test_warning_mentions_platform_and_path(monkeypatch, tmp_path, caplog):
     """Warning surfaces enough context for an operator to act on it."""
     ca, cert, key = _make_tls_files(tmp_path)
     monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))

@@ -39,7 +39,6 @@ from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark  # noq
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 from strands_robots.simulation.predicates import (  # noqa: E402
     PREDICATE_REGISTRY,
-    _reset_resolution_warnings,
     make_predicate,
     predicate_kind,
     register_predicate,
@@ -242,7 +241,6 @@ def test_base_yaw_beyond_degrades_to_false_on_fixed_base_arm(sim, caplog):
     """A fixed-base arm has no base orientation: the predicate degrades to False
     (never turned -> never spuriously succeeds) and warns once."""
     sim.add_robot("arm", urdf_path=_write(FIXED_ARM_XML))
-    _reset_resolution_warnings()
     with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.predicates"):
         val = make_predicate("base_yaw_beyond", yaw=1.0)(sim)
     assert val is False

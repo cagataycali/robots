@@ -42,10 +42,9 @@ _SESSION_OPENERS = ("get_session", "_get_zenoh_session_directly")
 
 @pytest.fixture(autouse=True)
 def _fresh_session_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Start every test with no cached session and nothing reported yet."""
+    """Start every test with no cached session."""
     monkeypatch.setattr(session_mod, "_SESSION", None)
     monkeypatch.setattr(session_mod, "_SESSION_REFS", 0)
-    monkeypatch.setattr(session_mod, "_zenoh_missing_warned", set(), raising=False)
     # Keep get_session on the raw zenoh path rather than the transport factory.
     monkeypatch.delenv("STRANDS_MESH_BACKEND", raising=False)
     # These tests need the openers to REACH their zenoh import, so the kill switch must

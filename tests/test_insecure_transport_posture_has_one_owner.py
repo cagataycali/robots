@@ -151,10 +151,6 @@ class TestADriverCarriesItsOwnTransportToTheCheck:
 
         monkeypatch.setattr(sd_mod, "get_rpc_source_device", lambda: "ctrl")
 
-        az = _authz()
-        az._warned_insecure_acl.clear()
-        az._warned_permissive.clear()
-
         class _Sim:
             def __init__(self) -> None:
                 self.steps = 0

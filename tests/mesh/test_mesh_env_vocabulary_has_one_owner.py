@@ -51,21 +51,6 @@ _OWNER_LOGGER = "strands_robots._mesh_switch"
 UNRECOGNIZED = ("off", "on", "ture", "disabled")
 
 
-@pytest.fixture(autouse=True)
-def _forget_reported_values():
-    """Clear the once-per-value report ledger around each test.
-
-    The ledger is module state by design (the report must not repeat per call),
-    so a test that asserts a warning fires would otherwise depend on whether an
-    earlier test already spent that value.
-    """
-    saved = set(_mesh_switch._UNKNOWN_WARNED)
-    _mesh_switch._UNKNOWN_WARNED.clear()
-    yield
-    _mesh_switch._UNKNOWN_WARNED.clear()
-    _mesh_switch._UNKNOWN_WARNED.update(saved)
-
-
 class TestAnUnrecognizedValueIsReported:
     """The defect: a value belonging to neither half fell through in silence."""
 

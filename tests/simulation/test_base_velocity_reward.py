@@ -29,7 +29,6 @@ import mujoco  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 from strands_robots.simulation.predicates import (  # noqa: E402
     _quat_rotate_inverse_wxyz,
-    _reset_resolution_warnings,
     make_predicate,
 )
 
@@ -166,9 +165,6 @@ def test_base_velocity_degrades_to_zero_on_fixed_base_arm(sim, caplog):
     import logging
 
     sim.add_robot("arm", urdf_path=_write(FIXED_ARM_XML))
-    # Reset the module-global warn-once dedup so this assertion is independent of
-    # what other predicate tests warned first (the "robot base" key is shared).
-    _reset_resolution_warnings()
     with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.predicates"):
         val = make_predicate("base_velocity", vx=0.5)(sim)
     assert val == 0.0

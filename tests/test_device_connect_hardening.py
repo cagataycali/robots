@@ -116,12 +116,6 @@ def _clean_env(monkeypatch):
         "REACHY_DAEMON_TOKEN",
     ):
         monkeypatch.delenv(var, raising=False)
-    # reset the one-time warning memos
-    import strands_robots.device_connect._authz as az
-
-    az._warned_permissive.clear()
-    az._warned_insecure_acl.clear()
-    az._warned_unconfigured.clear()
     yield
 
 
@@ -234,7 +228,6 @@ def test_insecure_acl_logs_advisory_once(monkeypatch, caplog):
 
     monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "ctrl")
     monkeypatch.setenv("DEVICE_CONNECT_ALLOW_INSECURE", "true")
-    az._warned_insecure_acl.clear()
     with caplog.at_level(logging.WARNING, logger="strands_robots.device_connect._authz"):
         az.is_authorized_caller("ctrl", scope="rpc")
         az.is_authorized_caller("ctrl", scope="rpc")  # second call must not re-warn
@@ -250,7 +243,6 @@ def test_secure_acl_no_insecure_advisory(monkeypatch, caplog):
 
     monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "ctrl")
     monkeypatch.delenv("DEVICE_CONNECT_ALLOW_INSECURE", raising=False)
-    az._warned_insecure_acl.clear()
     with caplog.at_level(logging.WARNING, logger="strands_robots.device_connect._authz"):
         az.is_authorized_caller("ctrl", scope="rpc")
     assert not [r for r in caplog.records if "SELF-ASSERTED" in r.getMessage()]

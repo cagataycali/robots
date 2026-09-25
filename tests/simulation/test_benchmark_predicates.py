@@ -17,7 +17,6 @@ from strands_robots.simulation.predicates import (
     PREDICATE_REGISTRY,
     StatefulRewardTerm,
     _extract_json,
-    _reset_resolution_warnings,
     _StagedReward,
     make_predicate,
     register_predicate,
@@ -306,9 +305,6 @@ class TestJointPredicatesResolveSceneJoints:
     predicate *and its negation* both answered ``False`` and no success
     criterion over the joint could ever hold.
     """
-
-    def setup_method(self):
-        _reset_resolution_warnings()
 
     def test_open_drawer_criterion_holds_when_the_drawer_is_open(self):
         sim = _ScopedJointObsSim({"arm": {"shoulder": 0.0}, "cabinet": {"drawer": 0.18}})
@@ -966,9 +962,6 @@ class TestOrientationResolvesTheSameNamesAsPosition:
 
 
 class TestUnresolvedNameSurfacing:
-    def setup_method(self):
-        _reset_resolution_warnings()
-
     def test_reward_term_warns_on_unresolved_body(self, caplog):
         sim = _BodyStateSim({"a": [0, 0, 0]})
         term = make_predicate("distance_neg", body_a="a", body_b="ghost_reach_1", weight=1.0)

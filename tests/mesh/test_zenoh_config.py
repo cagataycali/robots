@@ -464,7 +464,6 @@ class TestTLSKeyModeNonPosix:
         key.chmod(0o644)  # POSIX would reject this; non-POSIX must skip + warn.
         self._set_env(monkeypatch, ca, cert, key)
         monkeypatch.setattr(zc, "_is_posix", lambda: False)
-        monkeypatch.setattr(zc, "_NON_POSIX_TLS_WARNED_KEYS", OrderedDict())
         with caplog.at_level(logging.WARNING, logger="strands_robots.mesh._zenoh_config"):
             paths = zc._resolve_tls_paths()
         assert paths == (ca, cert, key)
@@ -476,7 +475,6 @@ class TestTLSKeyModeNonPosix:
         ca, cert, key = self._make_tls_files(tmp_path)
         self._set_env(monkeypatch, ca, cert, key)
         monkeypatch.setattr(zc, "_is_posix", lambda: False)
-        monkeypatch.setattr(zc, "_NON_POSIX_TLS_WARNED_KEYS", OrderedDict())
         zc._resolve_tls_paths()  # first resolve arms + emits the warning
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger="strands_robots.mesh._zenoh_config"):

@@ -313,7 +313,6 @@ class TestUnverifiedReuseWarning:
     def test_reuse_of_breakglass_ca_emits_warning(self, tmp_path, monkeypatch, caplog):
         ca_path = tmp_path / "ca.pem"
         self._seed_breakglass_ca(ca_path, monkeypatch)
-        provision._UNVERIFIED_CA_WARNED.discard(ca_path)
         caplog.clear()
         with caplog.at_level("WARNING", logger="strands_robots.mesh.iot.provision"):
             provision._ensure_ca(ca_path)
@@ -328,7 +327,6 @@ class TestUnverifiedReuseWarning:
     def test_reuse_warning_fires_once_per_process(self, tmp_path, monkeypatch, caplog):
         ca_path = tmp_path / "ca.pem"
         self._seed_breakglass_ca(ca_path, monkeypatch)
-        provision._UNVERIFIED_CA_WARNED.discard(ca_path)
         with caplog.at_level("WARNING", logger="strands_robots.mesh.iot.provision"):
             provision._ensure_ca(ca_path)
             provision._ensure_ca(ca_path)
@@ -348,7 +346,6 @@ class TestUnverifiedReuseWarning:
             return_value=_REAL_CA,
         ):
             provision._ensure_ca(ca_path)
-        provision._UNVERIFIED_CA_WARNED.discard(ca_path)
         with caplog.at_level("WARNING", logger="strands_robots.mesh.iot.provision"):
             provision._ensure_ca(ca_path)
         warnings = [

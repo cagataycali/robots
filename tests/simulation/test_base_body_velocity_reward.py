@@ -39,7 +39,6 @@ import mujoco  # noqa: E402
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 from strands_robots.simulation.predicates import (  # noqa: E402
-    _reset_resolution_warnings,
     make_predicate,
 )
 
@@ -178,7 +177,6 @@ def test_lin_vel_z_tracks_the_live_base_velocity(sim):
 def test_lin_vel_z_degrades_to_zero_on_fixed_base_arm(sim, caplog):
     """A fixed-base arm has no base velocity: the term degrades to 0.0 and warns."""
     sim.add_robot("arm", urdf_path=_write(FIXED_ARM_XML))
-    _reset_resolution_warnings()
     with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.predicates"):
         val = make_predicate("base_lin_vel_z")(sim)
     assert val == 0.0
@@ -234,7 +232,6 @@ def test_ang_vel_xy_tracks_the_live_base_velocity(sim):
 def test_ang_vel_xy_degrades_to_zero_on_fixed_base_arm(sim, caplog):
     """A fixed-base arm has no base velocity: the term degrades to 0.0 and warns."""
     sim.add_robot("arm", urdf_path=_write(FIXED_ARM_XML))
-    _reset_resolution_warnings()
     with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.predicates"):
         val = make_predicate("base_ang_vel_xy")(sim)
     assert val == 0.0

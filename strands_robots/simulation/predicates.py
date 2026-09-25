@@ -123,11 +123,6 @@ def _warn_unresolved(kind: str, name: str, tried: tuple[str, ...] = ()) -> None:
     )
 
 
-def _reset_resolution_warnings() -> None:
-    """Clear the one-time-warning dedup cache (test isolation)."""
-    _RESOLUTION_WARNED.clear()
-
-
 # Helpers for digging values out of the structured ``{"status", "content"}``
 # dicts that MuJoCo-backend methods return. Defensive against empty content
 # lists and missing keys - predicates should never crash the eval loop.

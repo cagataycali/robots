@@ -1,9 +1,10 @@
 """Every process-global a test dirties is as the session found it by the next test.
 
-Five bindings in this package outlive the test that fills them - the mesh
+Six kinds of binding in this package outlive the test that fills them - the mesh
 rate-limit window, the optional-dependency memo, the predicate registry, the
-dashboard's auth state and the safety audit log's sequence counters and one-shot
-flags - so the test that fills one decides what a later test reads. ``tests/conftest.py`` restores each in an autouse fixture, and the pin is
+dashboard's auth state, the safety audit log's sequence counters and one-shot
+flags, and the sixteen warn-once memos that remember which postures have already
+been reported - so the test that fills one decides what a later test reads. ``tests/conftest.py`` restores each in an autouse fixture, and the pin is
 one shape: dirty it in one cell, find it as found in the next, with no fixture in
 this file. Three files each pinned one global in that shape; the shape is a table
 now, one row per global, so a global that joins the session's set joins the pin
@@ -16,6 +17,8 @@ restore that happened at the previous boundary as well as its own.
 
 from __future__ import annotations
 
+import ast
+import importlib
 import subprocess
 import sys
 import threading
@@ -24,15 +27,17 @@ import types
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+import strands_robots
 import strands_robots.audit as audit
 import strands_robots.dashboard.auth as auth
 import strands_robots.tools.robot_mesh as rmt
 from strands_robots.simulation.predicates import PREDICATE_REGISTRY, register_predicate
 from strands_robots.utils import require_optional
-from tests.conftest import AUDIT_PROCESS_FLAGS, DASHBOARD_AUTH_PROCESS_STATE
+from tests.conftest import AUDIT_PROCESS_FLAGS, DASHBOARD_AUTH_PROCESS_STATE, WARN_ONCE_MEMOS
 
 #: The mesh action whose window a row spends. Any of them would do; this one is
 #: the rate-limited verb the tool's own tests drain.
@@ -44,6 +49,10 @@ ABSENT_DEPENDENCY = "strands_robots_absent_optional_dependency"
 #: A predicate name only this module knows, so the registry row cannot collide
 #: with a shipped one.
 PREDICATE_NAME = "a_predicate_only_this_module_knows"
+
+#: The key the warn-once row spends. Nothing in the package reports this posture,
+#: so a memo holding it can only have been filled by that row.
+WARN_ONCE_KEY = "a posture only this module reported"
 
 
 @dataclass(frozen=True)
@@ -130,6 +139,33 @@ def _audit_process_state_is_as_found() -> bool:
     )
 
 
+def _spend_every_warn_once_key(_monkeypatch: pytest.MonkeyPatch) -> None:
+    """Spend the same key in all sixteen: a caller that emptied one left fifteen.
+
+    Written onto the memos rather than by provoking sixteen reports - each of
+    which needs its own environment, backend or checkpoint - because what is
+    pinned is the restore, not how the key got there. The modules are imported
+    here so the row grades all sixteen whatever else the session touched.
+    """
+    for memo in _warn_once_memos():
+        if isinstance(memo, set):
+            memo.add(WARN_ONCE_KEY)
+        else:
+            memo[WARN_ONCE_KEY] = None
+
+
+def _warn_once_memos() -> list[Any]:
+    """The live container behind every roster row, importing what is absent."""
+    memos = []
+    for module_name, name in WARN_ONCE_MEMOS:
+        memos.append(getattr(importlib.import_module(module_name), name))
+    return memos
+
+
+def _warn_once_memos_are_as_found() -> bool:
+    return not any(memo for memo in _warn_once_memos())
+
+
 PROCESS_GLOBALS = [
     ProcessGlobal(
         "the mesh rate-limit window", _spend_the_mesh_window, lambda: rmt._rate_limit_check(MESH_ACTION) is None
@@ -138,6 +174,7 @@ PROCESS_GLOBALS = [
     ProcessGlobal("the predicate registry", _register_a_predicate, lambda: PREDICATE_NAME not in PREDICATE_REGISTRY),
     ProcessGlobal("the dashboard auth state", _fill_the_dashboard_auth_state, _dashboard_auth_state_is_as_found),
     ProcessGlobal("the audit process state", _fill_the_audit_process_state, _audit_process_state_is_as_found),
+    ProcessGlobal("the warn-once memos", _spend_every_warn_once_key, _warn_once_memos_are_as_found),
 ]
 
 _IDS = [state.label for state in PROCESS_GLOBALS]
@@ -200,6 +237,39 @@ def test_the_audit_roster_names_every_piece_of_state_that_module_keeps() -> None
         and (isinstance(value, dict) or type(value).__module__ == audit.__name__)
     }
     assert mutable == {"_SEQ_COUNTERS", "_AUDIT_STATE"}
+
+
+def test_the_warn_once_roster_names_every_memo_in_the_package() -> None:
+    """A seventeenth warn-once memo joins the roster - or this cell says so.
+
+    The memo is the whole implementation of "report this once per process", so a
+    new one is added wherever a new report is added, by someone who is not
+    thinking about test isolation - and it would be emptied by nobody, which is
+    how thirty-three modules came to reset one memo each. Discovered from the
+    source rather than from imported modules, so a module this session never
+    imports is still graded: a module-level binding whose name says ``warn`` and
+    whose value is a fresh ``set()`` or ``OrderedDict()`` is a memo, and the
+    locks beside them (``_POSTURE_WARNINGS_LOCK``,
+    ``_NON_POSIX_TLS_WARNED_LOCK``) are not.
+    """
+    package = Path(strands_robots.__file__).parent
+    discovered = set()
+    for path in sorted(package.rglob("*.py")):
+        module = ".".join(("strands_robots", *path.relative_to(package).with_suffix("").parts))
+        module = module.removesuffix(".__init__")
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            value: ast.expr | None = None
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+                target, value = node.targets[0].id, node.value
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                target, value = node.target.id, node.value
+            else:
+                continue
+            if value is None or "warn" not in target.lower():
+                continue
+            if ast.unparse(value) in ("set()", "OrderedDict()", "dict()", "{}"):
+                discovered.add((module, target))
+    assert discovered == set(WARN_ONCE_MEMOS)
 
 
 def test_a_session_that_first_imports_the_registry_inside_a_test_keeps_the_shipped_set() -> None:

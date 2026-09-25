@@ -38,7 +38,6 @@ from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark  # noq
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 from strands_robots.simulation.predicates import (  # noqa: E402
     PREDICATE_REGISTRY,
-    _reset_resolution_warnings,
     make_predicate,
     predicate_kind,
 )
@@ -186,7 +185,6 @@ def test_base_below_z_degrades_to_false_on_fixed_base_arm(sim, caplog):
     """A fixed-base arm has no base position: the predicate degrades to False
     (never collapsed -> never spuriously fails an episode) and warns once."""
     sim.add_robot("arm", urdf_path=_write(FIXED_ARM_XML))
-    _reset_resolution_warnings()
     with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.predicates"):
         val = make_predicate("base_below_z", z=0.3)(sim)
     assert val is False

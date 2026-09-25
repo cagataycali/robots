@@ -211,28 +211,12 @@ class TestAnUnknownBackendIsReported:
     VALID = ("zenoh", "iot", "bridge", "IOT", " zenoh ", "Bridge")
 
     @staticmethod
-    def _fresh_warn_once(monkeypatch):
-        """Clear the process-wide warn-once set for this test.
-
-        The guard is keyed by offending value so a second distinct typo is still
-        news, but it outlives a test, so a sibling using the same value would
-        otherwise silence this one.
-        """
-        from strands_robots.mesh import _backend_select
-
-        # raising=False so this states a contract rather than an import shape:
-        # the tests below assert on what an operator sees, and fail on that
-        # rather than on the absence of the guard's own name.
-        monkeypatch.setattr(_backend_select, "_UNKNOWN_WARNED", set(), raising=False)
-
-    @staticmethod
     def _reports(caplog):
         """Captured messages that name the variable."""
         return [r.getMessage() for r in caplog.records if "STRANDS_MESH_BACKEND" in r.getMessage()]
 
     def test_a_typo_names_the_variable_the_value_and_the_vocabulary(self, monkeypatch, caplog):
         """The resolver on the live path reports an unknown value."""
-        self._fresh_warn_once(monkeypatch)
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "iott")
 
         with caplog.at_level(logging.WARNING):
@@ -251,7 +235,6 @@ class TestAnUnknownBackendIsReported:
 
     def test_a_typo_is_reported_on_the_publish_gate_too(self, monkeypatch, caplog):
         """``_is_transport_backend()`` is what ``put()`` asks; it reports as well."""
-        self._fresh_warn_once(monkeypatch)
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "brige")
 
         with caplog.at_level(logging.WARNING):
@@ -269,7 +252,6 @@ class TestAnUnknownBackendIsReported:
         """
         from strands_robots.mesh.transport import factory
 
-        self._fresh_warn_once(monkeypatch)
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "iott")
 
         calls: list[str] = []
@@ -290,7 +272,6 @@ class TestAnUnknownBackendIsReported:
 
     def test_a_typo_is_reported_once_not_once_per_message(self, monkeypatch, caplog):
         """The gate runs per published message; the report must not."""
-        self._fresh_warn_once(monkeypatch)
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "iott")
 
         with caplog.at_level(logging.WARNING):
@@ -305,7 +286,6 @@ class TestAnUnknownBackendIsReported:
 
     def test_each_distinct_typo_gets_its_own_report(self, monkeypatch, caplog):
         """Warn-once is keyed by value: a second, different typo is news."""
-        self._fresh_warn_once(monkeypatch)
 
         with caplog.at_level(logging.WARNING):
             monkeypatch.setenv("STRANDS_MESH_BACKEND", "iott")
@@ -328,7 +308,6 @@ class TestAnUnknownBackendIsReported:
         """
         from strands_robots.mesh import _backend_select
 
-        self._fresh_warn_once(monkeypatch)
         calls: list[str] = []
         real_select = _backend_select.select_backend
 
@@ -355,7 +334,6 @@ class TestAnUnknownBackendIsReported:
         module import time: a call-time import here would turn that documented
         quiet degradation into an ``ImportError`` out of ``get_session``.
         """
-        self._fresh_warn_once(monkeypatch)
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "iott")
 
         with caplog.at_level(logging.WARNING), patch("builtins.__import__", side_effect=ImportError("no zenoh")):
@@ -369,7 +347,6 @@ class TestAnUnknownBackendIsReported:
     @pytest.mark.parametrize("value", VALID)
     def test_an_accepted_value_is_never_reported(self, monkeypatch, caplog, value):
         """Only an unknown value is news."""
-        self._fresh_warn_once(monkeypatch)
         monkeypatch.setenv("STRANDS_MESH_BACKEND", value)
 
         with caplog.at_level(logging.WARNING):
@@ -381,7 +358,6 @@ class TestAnUnknownBackendIsReported:
 
     def test_an_unset_variable_is_never_reported(self, monkeypatch, caplog):
         """The default is not a typo."""
-        self._fresh_warn_once(monkeypatch)
         monkeypatch.delenv("STRANDS_MESH_BACKEND", raising=False)
 
         with caplog.at_level(logging.WARNING):
@@ -404,7 +380,6 @@ class TestAnUnknownBackendIsReported:
     )
     def test_the_resolved_backend_is_unchanged(self, monkeypatch, value, expected, transport):
         """Reporting a typo must not change which backend any value selects."""
-        self._fresh_warn_once(monkeypatch)
         monkeypatch.setenv("STRANDS_MESH_BACKEND", value)
 
         assert sess_mod._backend_choice() == expected

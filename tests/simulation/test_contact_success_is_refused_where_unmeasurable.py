@@ -90,17 +90,6 @@ def _runner(sim: Any) -> PolicyRunner:
     return PolicyRunner(sim)
 
 
-@pytest.fixture(autouse=True)
-def _fresh_warning_registry(monkeypatch):
-    """Each test observes the once-per-backend warning from a clean slate.
-
-    ``raising=False`` so the fixture does not itself fail on pre-fix code,
-    where the registry does not exist - the controls in this file must keep
-    passing there to stay controls.
-    """
-    monkeypatch.setattr(predicates, "_WARNED_NO_CONTACT_QUERY", set(), raising=False)
-
-
 class TestTheResolverRefusesUpFront:
     def test_contact_on_a_stub_backend_raises_before_any_rollout(self) -> None:
         with pytest.raises(ValueError) as exc:

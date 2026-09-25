@@ -154,7 +154,6 @@ class TestTheTwoHalvesOfOneCallAgree:
                 raise AssertionError("an unencodable payload must not reach the wire")
 
         monkeypatch.setattr(session_mod, "_SESSION", _Session())
-        monkeypatch.setattr(session_mod, "_unencodable_topics_warned", set())
         monkeypatch.setattr(sensors_mod, "log_safety_event", lambda **_kwargs: None)
         mesh = core_mod.Mesh(object(), peer_id=_PEER)
         mesh._running = True
@@ -283,7 +282,6 @@ class TestTheSafetyPathAuditWrapper:
                 raise _AuditUnwritable("session closed")
 
         monkeypatch.setattr(session_mod, "_SESSION", _ClosedSession())
-        monkeypatch.setattr(session_mod, "_unencodable_topics_warned", set())
         monkeypatch.setattr(sensors_mod, "log_safety_event", lambda **_kwargs: None)
         mesh = core_mod.Mesh(object(), peer_id=_PEER)
         mesh._running = True

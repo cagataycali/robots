@@ -79,12 +79,6 @@ def _warn_posture_once(kind: str, msg: str, *args: Any) -> bool:
     return True
 
 
-def _reset_posture_warnings() -> None:
-    """Forget which posture warnings were emitted (tests that assert on them)."""
-    with _POSTURE_WARNINGS_LOCK:
-        _POSTURE_WARNINGS_EMITTED.clear()
-
-
 #: Why ``Mesh.start`` refuses under mTLS with a permissive ACL, and the four
 #: ways out. Logged by :meth:`Mesh._refuse_under_permissive_default_acl` and
 #: printed by ``strands-robots doctor`` for the same posture, so the two never

@@ -15,22 +15,10 @@ import logging
 
 import pytest
 
-from strands_robots.mesh.transport import bridge_transport
 from strands_robots.mesh.transport.bridge_transport import _should_bridge
 
 EXACT_ONLY = frozenset({"telemetry"})
 PREFIXES = frozenset({"response"})
-
-
-@pytest.fixture(autouse=True)
-def _fresh_warning_memo(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Give each case its own warn-once memo, so order cannot mask a warning.
-
-    ``raising=False`` keeps the isolation from being the thing under test: a
-    build that never warns still reaches the assertions and fails on the
-    missing warning rather than erroring in setup.
-    """
-    monkeypatch.setattr(bridge_transport, "_WARNED_HALF_BRIDGED_HEADS", set(), raising=False)
 
 
 def _prefix_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:

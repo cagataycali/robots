@@ -72,7 +72,6 @@ class TestBackendSelection:
 
         from strands_robots.mesh import _backend_select
 
-        monkeypatch.setattr(_backend_select, "_UNKNOWN_WARNED", set())
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "unknownXYZ")
         with caplog.at_level(logging.WARNING):
             assert _backend_select.select_backend() == "zenoh"

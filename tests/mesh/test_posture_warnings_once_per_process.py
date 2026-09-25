@@ -56,13 +56,6 @@ def _run_start(mesh: Mesh, caplog: pytest.LogCaptureFixture) -> None:
                 mesh.stop()
 
 
-@pytest.fixture(autouse=True)
-def _fresh_process_state():
-    mesh_core._reset_posture_warnings()
-    yield
-    mesh_core._reset_posture_warnings()
-
-
 def _messages(caplog: pytest.LogCaptureFixture, marker: str) -> list[str]:
     return [r.getMessage() for r in caplog.records if marker in r.getMessage()]
 

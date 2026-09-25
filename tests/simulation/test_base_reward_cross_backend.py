@@ -42,7 +42,7 @@ pytest.importorskip("mujoco")
 import mujoco  # noqa: E402
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
-from strands_robots.simulation.predicates import _reset_resolution_warnings, make_predicate  # noqa: E402
+from strands_robots.simulation.predicates import make_predicate  # noqa: E402
 
 _HAS_NEWTON = importlib.util.find_spec("newton") is not None and importlib.util.find_spec("warp") is not None
 
@@ -276,7 +276,6 @@ def test_reward_terms_degrade_to_zero_on_newton_fixed_base_arm():
     eng = _build_newton(_FIXED_ARM_MJCF)
     obs = eng.get_observation("floater", skip_images=True)
     assert "base_pos" not in obs and "base_quat" not in obs
-    _reset_resolution_warnings()
     assert make_predicate("base_velocity", vx=1.0, vy=0.0, wz=0.0)(eng) == 0.0
     assert make_predicate("base_height", target=0.5)(eng) == 0.0
     assert make_predicate("base_orientation", weight=2.0)(eng) == 0.0

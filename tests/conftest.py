@@ -390,3 +390,72 @@ def _audit_process_state_is_left_as_found() -> Iterator[None]:
     for name, born in AUDIT_PROCESS_FLAGS.items():
         if getattr(module._AUDIT_STATE, name) != born:
             setattr(module._AUDIT_STATE, name, born)
+
+
+#: Every "warn once per process" memo in the package, as ``(module, name)``: a
+#: module-level container of the keys already reported, born empty, whose only
+#: job is to stop a repeat. Sixteen of them across eleven modules. Emptied by
+#: :func:`_warn_once_memos_are_left_empty` below, and discovered rather than
+#: trusted in ``tests/test_process_globals_do_not_cross_a_test_boundary.py``, so
+#: a seventeenth cannot appear without a row here.
+WARN_ONCE_MEMOS: tuple[tuple[str, str], ...] = (
+    ("strands_robots._mesh_switch", "_UNKNOWN_WARNED"),
+    ("strands_robots.device_connect._authz", "_warned_permissive"),
+    ("strands_robots.device_connect._authz", "_warned_insecure_acl"),
+    ("strands_robots.device_connect._authz", "_warned_unconfigured"),
+    ("strands_robots.mesh._backend_select", "_UNKNOWN_WARNED"),
+    ("strands_robots.mesh._zenoh_config", "_NON_POSIX_TLS_WARNED_KEYS"),
+    ("strands_robots.mesh.core", "_POSTURE_WARNINGS_EMITTED"),
+    ("strands_robots.mesh.iot.provision", "_UNVERIFIED_CA_WARNED"),
+    ("strands_robots.mesh.session", "_RETENTION_WARNED"),
+    ("strands_robots.mesh.session", "_unencodable_topics_warned"),
+    ("strands_robots.mesh.session", "_zenoh_missing_warned"),
+    ("strands_robots.mesh.transport.bridge_transport", "_WARNED_HALF_BRIDGED_HEADS"),
+    ("strands_robots.policies.lerobot_local.embodiment", "_WARNED_STATE_KEY_MISMATCH"),
+    ("strands_robots.simulation.mujoco.backend", "_software_render_warned"),
+    ("strands_robots.simulation.predicates", "_RESOLUTION_WARNED"),
+    ("strands_robots.simulation.predicates", "_WARNED_NO_CONTACT_QUERY"),
+)
+
+
+@pytest.fixture(autouse=True)
+def _warn_once_memos_are_left_empty() -> Iterator[None]:
+    """Leave no key spent in a warn-once memo once a test is over.
+
+    Sixteen places in the package report a posture once per process and keep the
+    keys they have reported in a module-level set - an unrecognised env value, a
+    TLS key with non-POSIX permissions, a state key a checkpoint does not
+    declare, a body a predicate spec cannot resolve. The dedup is deliberate:
+    the second report would be noise, and in the reward/eval hot loop it would
+    be a flood. It also means the *first* test to spend a key decides that every
+    later test reading that report gets silence - and the keys are shared, which
+    is why one of the resets this replaces carried the comment "so this
+    assertion is independent of what other predicate tests warned first (the
+    'robot base' key is shared)".
+
+    Measured over the twenty-three modules that touch the mesh ones, run in one
+    process: ``_POSTURE_WARNINGS_EMITTED`` was dirty at the end of 602 of 616
+    tests and at all 22 module boundaries, ``_zenoh_missing_warned`` at 544 and
+    20. Nobody reset either. Thirty-three modules reset one at sixty-one sites -
+    each only the memo it had been bitten by, in its own fixture with its own
+    docstring for one behaviour - and two of them *restored* the keys they found
+    spent, handing the next module exactly the leak they had cleared for
+    themselves.
+
+    Emptying them here makes it a property of the session, so a test that asserts
+    a report can assume it is the first to ask. A reset *inside* a test - between
+    two asks that grade the once-per-process gate itself - is that test's own
+    subject and stays where it is.
+
+    Each module is looked up rather than imported, so a session that never
+    touches the mesh or a policy does not pull one in, and every memo is born
+    empty, so emptying is the whole restore.
+    """
+    yield
+    for module_name, name in WARN_ONCE_MEMOS:
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        memo = getattr(module, name, None)
+        if memo:
+            memo.clear()
