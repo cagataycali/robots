@@ -113,17 +113,16 @@ sim.run_policy(policy_object=MicroduckPolicy(onnx_path="roller.onnx"), duration=
 
 Running a skill on the wrong scene is not an error: a roller policy with no
 wheels simply stands, a ball-kick policy swings at nothing, and both report
-success. The scene is the caller's to choose.
+success.
 
 ### The ball scene carries the ball, not the kick geometry
 
 `scene_ball.xml` declares the ball 0.3 m straight ahead (`ball.xml`:
 `pos="0.3 0 0.035"`). Pollen's training reset placed it 0.09 m ahead and
-0.042 m to the side of the kicking foot, in the robot's yaw frame — 3.3x closer
-and offset to the foot that swings. Driven from the shipped position,
-`ball_kick_left` reports success while no robot geom comes closer than 0.109 m
-to the ball centre (radius 0.035 m); the ball's low rolling resistance still
-carries it forward, so the miss reads as a weak kick. For the trained geometry,
+0.042 m to the side of the kicking foot — 3.3x closer, and offset. Driven from
+the shipped position, `ball_kick_left` reports success while no robot geom comes
+closer than 0.109 m to the ball centre (radius 0.035 m); its low rolling
+resistance still carries it forward, so the miss reads as a weak kick. For the trained geometry,
 teleport the ball before the rollout as Pollen's runtime does: write the ball
 free joint's `qpos` to that offset rotated into the trunk's yaw frame, zero its
 `qvel`, step. The file names the joint `ball_free`, but `add_robot(name=...)`
@@ -163,8 +162,8 @@ from `MICRODUCK_DEFAULT_POSE`, not copied numbers.
 
 ## The observation contract
 
-The vector is a fixed float32 concatenation (measured off Pollen's reference
-`infer_policy.py` and each ONNX's `observation_names` metadata):
+The vector is a fixed float32 concatenation (off Pollen's `infer_policy.py` and
+each ONNX's `observation_names`):
 
 | block | width | source |
 | --- | --- | --- |
@@ -175,13 +174,15 @@ The vector is a fixed float32 concatenation (measured off Pollen's reference
 | `last_action` | 14 | the **previous raw** ONNX output (not the motor target) |
 | `command` | C | unified command (`twist(3) + head_pose(4) + body_pose(6)`) |
 
-Total width is `48 + C`: **61** for the shipped alpha policies (C = 13) and 51
-for legacy twist-only policies (C = 3). The width is read from `command_names`,
-never hardcoded, and unused command slots stay present and zero so one layout
-serves every skill. `action_scale` — explicit or read from the ONNX metadata —
-must be a positive finite number: `0` would make every target exactly
-`DEFAULT_POSE` while the rollout reports success, and a non-finite one would
-make all fourteen targets `nan`.
+Total width is `48 + C`. **C comes from the graph's declared `obs` input**, not
+from summing `command_names`: seven of the ten weights name fewer slots than
+their graph consumes, and a summed C builds 51 for a 61-wide graph onnxruntime
+then refuses. `command_names` says which slots a skill READS; the rest stay
+present and zero, so one layout serves every skill (61 − 48 = 13 for every
+shipped export). A refusal names which it measured against. `action_scale` —
+explicit or from the ONNX metadata — must be a positive finite number: `0`
+targets `DEFAULT_POSE` forever under a reported success, a non-finite one makes
+every target `nan`.
 
 ## Commanding motion
 
@@ -196,7 +197,7 @@ await policy.get_actions(obs, "", target_velocity=[0.3, 0.0, 0.2])  # vx, vy, ω
 `target_velocity` takes three components or two (`[vx, vy]`, leaving `omega` as
 it was — the command vector persists across ticks); any other count, or a
 non-finite component, is refused before it reaches the command, and `command=`
-must be `command_names`-wide and finite. What the twist slots MEAN is a property
+must be that full width and finite. What the twist slots MEAN is a property
 of the weights: the locomotion exports (`alpha_walking`, `alpha_stand`, the
 `roller*` pair) read them as a velocity, but `alpha_ground_pick` reads the same
 three slots as a progress encoding through a one-shot motion, and the ONNX
@@ -235,7 +236,6 @@ left on the default keys constructs, validates, and never switches.
 ## Byte-compatibility
 
 `MicroduckPolicy.infer_raw(obs_vector)` runs the graph on a raw observation with
-no normalisation — exactly as Pollen's reference deployment does. The provider's
-test suite pins that an identical 61-D observation yields an action byte-identical
-(0.0 max abs delta) to a bare `onnxruntime` session, and that a real MuJoCo
-rollout moves the joints.
+no normalisation, as Pollen's reference deployment does. The test suite pins that
+an identical 61-D observation yields an action byte-identical to a bare
+`onnxruntime` session, and that a real MuJoCo rollout moves the joints.

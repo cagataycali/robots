@@ -45,7 +45,13 @@ from strands_robots.drivers.g1 import _resolve_message_class as _g1_resolve
 from strands_robots.drivers.go2 import Go2Driver
 from strands_robots.drivers.go2 import _resolve_message_class as _go2_resolve
 from strands_robots.drivers.unitree import _common
-from strands_robots.drivers.unitree._common import UNITREE_SDK_INSTALL, ensure_dds, reset_dds_state, sdk_missing
+from strands_robots.drivers.unitree._common import (
+    UNITREE_SDK_DOCS,
+    UNITREE_SDK_INSTALL,
+    ensure_dds,
+    reset_dds_state,
+    sdk_missing,
+)
 from strands_robots.drivers.unitree._dds_engine import DDSSubscriberSet
 from tests.drivers.test_go2_driver import _released_driver, _text, install_unitree_sdk_stub
 
@@ -59,7 +65,7 @@ _REQUIRED = (
     "--no-deps",
     "cyclonedds",
     "CYCLONEDDS_HOME",
-    "humanoids.md",
+    "unitree-g1.md",
 )
 
 
@@ -72,6 +78,22 @@ def test_the_text_names_the_install_line_and_keeps_the_exception() -> None:
         assert fragment in text, fragment
     assert "No module named 'unitree_sdk2py'" in text
     assert UNITREE_SDK_INSTALL in text
+
+
+def test_the_named_page_carries_the_named_section() -> None:
+    """The refusal's only value is that a reader can follow it.
+
+    ``UNITREE_SDK_DOCS`` is a path and a heading, so it goes stale silently when
+    the page is renamed or the recipe moves - the refusal still reads as an
+    answer while pointing nowhere. Both halves are resolved here.
+    """
+    path, _, heading = UNITREE_SDK_DOCS.partition(" (")
+    page = _PACKAGE.parent / path
+
+    assert page.is_file(), f"{UNITREE_SDK_DOCS} names {path}, which does not exist"
+    assert f"# {heading.rstrip(')')}" in page.read_text(encoding="utf-8"), (
+        f"{path} does not carry a '{heading.rstrip(')')}' heading"
+    )
 
 
 def test_the_install_line_is_the_recipe_that_was_proven() -> None:
