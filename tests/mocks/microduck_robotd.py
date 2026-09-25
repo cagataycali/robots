@@ -15,7 +15,11 @@ the test rather than passing a broken driver:
   and ``loop`` (never ``movement``/``control_loop``), the deadman-limited twist
   ``requested [0.4,0,0] applied [0.15,0,0]``, ``safety.gain 200``, ``loop.hz
   49.8``. Only the 15-wide ``joints``/``targets`` are made distinct
-  (``0..14``) so the 15->14 mouth-drop is observable.
+  (``0..14``) so the 15->14 mouth-drop is observable, and ``policy`` is taken
+  from the mutable :attr:`MockRobotd.policy` so a test can put the robot into a
+  skill for as long as it needs: the frame is republished every
+  ``state_interval``, so a cache a test writes by hand survives one interval
+  and no longer.
 * Discrete calls answer an ``IntentResult`` ``{accepted, reason?}``; ``hello``
   answers ``HelloResult`` ``{api_version, daemon_version, revision}``;
   ``robot.health`` answers a ``Battery`` under ``battery``.
@@ -58,6 +62,9 @@ class MockRobotd:
         path: The socket path to hand a driver as ``port=``.
         received: Every raw line the client sent, in order (bytes).
         methods: Every method name received, in order.
+        policy: The ``policy`` every streamed state frame carries. Assign a
+            skill name to hold the robot in that skill for the rest of the
+            session.
     """
 
     def __init__(
@@ -80,6 +87,7 @@ class MockRobotd:
         self.skills = list(skills)
         self.mode = mode
         self.sitting = sitting
+        self.policy = str(STATE_PARAMS["policy"])
         self.decline = dict(decline or {})
         self._dir = tempfile.mkdtemp(prefix="mock-robotd-")
         self.path = path or os.path.join(self._dir, "robotd.sock")
@@ -237,7 +245,8 @@ class MockRobotd:
             return
         while not self._stop.is_set():
             try:
-                self._send(conn, {"jsonrpc": "2.0", "method": "robot.state", "params": STATE_PARAMS})
+                frame = {**STATE_PARAMS, "policy": self.policy}
+                self._send(conn, {"jsonrpc": "2.0", "method": "robot.state", "params": frame})
             except OSError:
                 return
             time.sleep(self._state_interval)

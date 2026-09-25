@@ -331,11 +331,15 @@ class TestMove:
 
     def test_move_during_a_skill_is_refused(self, duck: Any) -> None:
         driver, mock = duck
-        with driver._cache_lock:
-            driver._last_state = {**(driver._last_state or {}), "policy": "kick_left"}
+        # The skill is the robot's, not the cache's: robotd keeps saying
+        # `kick_left` in every state frame until the skill finishes, so the
+        # refusal holds for as long as the robot is in it.
+        mock.policy = "kick_left"
+        _wait_for(lambda: _payload(driver.read_state()).get("policy") == "kick_left")
         envelope = _drive(driver, action="move", vx=0.1)
-        assert envelope["status"] == "error"
+        assert envelope["status"] == "error", envelope
         assert "kick_left" in _text(envelope)
+        assert _sent(mock, "robot.move") == []
 
 
 class TestHeadPoseMouth:
