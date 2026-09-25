@@ -48,7 +48,6 @@ _OVER_BUDGET = frozenset(
         "policies/protomotions.md",
         "policies/wbc.md",
         "reference/configuration.md",
-        "robots/arms.md",
         "robots/humanoids.md",
         "rosbridge-integration.md",
         "rtps-integration.md",
