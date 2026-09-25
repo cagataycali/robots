@@ -45,7 +45,6 @@ _OVER_BUDGET = frozenset(
         "hardware/teleoperation.md",
         "hardware/tools.md",
         "inference/remote.md",
-        "mesh.md",
         "policies/cosmos3.md",
         "policies/kimodo.md",
         "policies/lerobot-local.md",

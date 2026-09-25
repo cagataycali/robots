@@ -74,6 +74,7 @@ nav:
   - AI Agents: agents.md
   - Dashboard: dashboard.md
   - Multi-robot Mesh: mesh.md
+  - Mesh Topics & Peer State: mesh-topics.md
   - Tool Result Contract: contracts.md
 - Data & Training:
   - Recording: recording.md
