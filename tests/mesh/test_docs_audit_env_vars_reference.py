@@ -214,7 +214,7 @@ def test_audit_variables_the_module_reads_include_the_four_known_names():
 #
 # The posture rules are scoped to this one section deliberately: ``refuses to
 # start`` appears twice elsewhere in ``docs/security/audit-log.md`` and once in
-# ``docs/rtps-integration.md`` about ``HardwareRtpsBridge``, where it is
+# ``docs/ros2/rtps-robot.md`` about ``HardwareRtpsBridge``, where it is
 # accurate - that bridge really does refuse to construct without DDS Security
 # material.  A page-wide phrase rule would flag those true claims, so the
 # scope is the audit section and the derivation is the audit writer.

@@ -59,6 +59,7 @@ nav:
   - ROS 2 Mesh Bridge: ros2/mesh-bridge.md
   - rosbridge Integration: rosbridge-integration.md
   - Pure-RTPS ROS 2: rtps-integration.md
+  - Pure-RTPS ROS 2 Robot: ros2/rtps-robot.md
   - Device Connect: device-connect.md
 - Policies:
   - policies/overview.md

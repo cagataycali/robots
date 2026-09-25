@@ -118,7 +118,7 @@ harden it (both threaded through `Robot()`):
 - For the pure-RTPS transport (`ros2_transport="rtps"`), a `dds_security_config`
   (or the explicit `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1` opt-out) is
   **required** to expose the command surface - see the
-  [RTPS integration guide](../rtps-integration.md#securing-the-inbound-command-surface).
+  [pure-RTPS robot guide](rtps-robot.md#securing-the-inbound-command-surface).
   rclpy DDS Security is configured at the RMW layer (`ROS_SECURITY_*` / `sros2`),
   not by a config dict.
 

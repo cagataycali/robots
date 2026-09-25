@@ -140,7 +140,7 @@ caller learns the same thing whether or not `roslibpy` is installed.
 `drive()` takes the fleet-standard `(linear, angular, duration, count)` shape,
 and three of its guarantees are fleet-standard too: every value is checked
 against the same numeric domains the [ROS 2](ros2-integration.md) and
-[RTPS](rtps-integration.md) bridges use, a bare single-shot command latches, and
+[RTPS](ros2/rtps-robot.md) bridges use, a bare single-shot command latches, and
 a timed command is followed by a trailing zero Twist. The velocity clamps and the
 `max_duration` ceiling are shared with the Ackermann car bridge
 (`AckermannRosRobot`, which declares a `max_speed` and a `max_duration` of its
