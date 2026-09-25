@@ -7,7 +7,7 @@ the WBC policy with short ``run_policy`` segments, each reading the current goal
 out of the shared state and passing it through ``policy_kwargs``. Re-issuing the
 short segment is the closed loop - there is no library locomotion abstraction.
 
-Bindings: w/s forward/back, a/d strafe, q/e turn, space halt, 1-8 style, x quit.
+Bindings: w/s forward/back, a/d strafe, q/e turn, space halt, x quit.
 Needs a TTY. Install the optional ``pynput`` reader, or pipe single chars on stdin.
 
 Usage::
@@ -23,7 +23,6 @@ import threading
 
 from strands_robots import Robot
 
-_STYLES = ["run", "happy", "stealth", "injured", "hand_crawling", "elbow_crawling", "boxing"]
 _STEP = 0.3  # m/s or rad/s per keypress
 
 
@@ -33,12 +32,11 @@ class GoalState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._vel = [0.0, 0.0, 0.0]  # [forward, lateral, yaw_rate]
-        self._style = "run"
         self.running = True
 
     def snapshot(self) -> dict[str, object]:
         with self._lock:
-            return {"target_velocity": list(self._vel), "locomotion_style": self._style}
+            return {"target_velocity": list(self._vel)}
 
     def apply_key(self, key: str) -> None:
         with self._lock:
@@ -56,8 +54,6 @@ class GoalState:
                 self._vel[2] -= _STEP
             elif key == " ":
                 self._vel = [0.0, 0.0, 0.0]
-            elif key in "12345678":
-                self._style = _STYLES[min(int(key) - 1, len(_STYLES) - 1)]
             elif key == "x":
                 self.running = False
 
@@ -96,7 +92,7 @@ def main() -> int:
 
     robot = Robot("unitree_g1", mode="sim")
     policy_config = {"checkpoint": args.checkpoint, "walk": True}
-    print("Steer the G1: WASD move, QE turn, space halt, 1-8 style, x quit.")
+    print("Steer the G1: WASD move, QE turn, space halt, x quit.")
     while state.running:
         # Re-read the live goal each short segment: this re-issue IS the loop.
         result = robot.run_policy(

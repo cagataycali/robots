@@ -3,15 +3,15 @@
 
 The product pattern: the agent holds the robot (``Agent(tools=[robot])``) and
 steers it by issuing short-horizon ``run_policy`` calls, choosing the locomotion
-goal (``target_velocity`` / ``locomotion_style``) for each segment, observing the
-result, then deciding the next goal. That is the closed loop - at the agent's
+goal (``target_velocity``, optionally ``height`` / ``target_orientation``) for each
+segment, observing the result, then deciding the next goal. That is the closed loop - at the agent's
 own cadence - with no library locomotion abstraction: the goal channel is just
 ``policy_kwargs`` and the drive primitive is the robot's own ``run_policy`` tool.
 
 Usage::
 
     pip install "strands-robots[wbc,sim-mujoco]"
-    MUJOCO_GL=egl python examples/locomotion/agent_g1.py "walk forward, then switch to stealth" \
+    MUJOCO_GL=egl python examples/locomotion/agent_g1.py "walk forward, then veer left and halt" \
         --checkpoint /path/to/grootwbc-g1
 """
 
@@ -28,10 +28,11 @@ _SYSTEM = """You steer a simulated Unitree G1 humanoid toward a locomotion goal.
 Use the robot's run_policy tool, one short segment (duration ~2s) at a time:
   run_policy(policy_provider="wbc",
              policy_config={"checkpoint": <ckpt>, "walk": true},
-             policy_kwargs={"target_velocity": [vx, vy, wz], "locomotion_style": <style>},
+             policy_kwargs={"target_velocity": [vx, vy, wz]},
              duration=2.0, control_frequency=50.0)
-target_velocity is [forward, lateral, yaw_rate] in m/s and rad/s. locomotion_style
-is one of run/happy/stealth/injured/hand_crawling/elbow_crawling/boxing (optional).
+target_velocity is [forward, lateral, yaw_rate] in m/s and rad/s. WBC also reads
+two optional goal keys: height (target base height in m) and target_orientation
+([roll, pitch, yaw] in rad). It reads no other key.
 Issue one call, read the result, then issue the next with an updated goal until
 the user's goal is met. Halt with target_velocity [0, 0, 0]."""
 

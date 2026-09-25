@@ -1,7 +1,7 @@
 """Regression: the locomotion-intent ``planning`` package is gone.
 
 Locomotion intent is expressed through the well-known ``policy_kwargs`` goal
-channel (``target_velocity`` / ``target_height`` / ``locomotion_style``) that
+channel (``target_velocity`` / ``target_pose`` / ``target_joints``) that
 ``run_policy`` forwards to the policy - see
 ``test_policy_kwargs_forwarding.py``. The separate ``strands_robots.planning``
 package (a ``KinematicPlanner`` / ``InputSource`` abstraction that produced the

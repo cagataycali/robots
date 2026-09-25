@@ -4,8 +4,8 @@
 Self-contained: owns its own timed schedule of locomotion goals and drives the
 WBC policy with short-horizon ``run_policy`` calls, one per segment. Each call
 passes the goal through the well-known ``policy_kwargs`` channel
-(``target_velocity`` / ``locomotion_style``) - the same channel every locomotion
-provider reads. No library locomotion abstraction; the closed loop runs at this
+(``target_velocity``, the planar velocity every locomotion provider reads; WBC
+also reads ``height`` and ``target_orientation``). No library locomotion abstraction; the closed loop runs at this
 script's cadence (re-issue ``run_policy`` to change the goal). Headless-friendly
 (no TTY/agent) so it doubles as the reproducible demo artifact.
 

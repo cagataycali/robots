@@ -30,6 +30,18 @@ that interface drifts from the file, the first two measured on ``74136572a``:
    never imports it: the trainer names it in
    ``_LEROBOT_CALL_TIME_PACKAGES``, which is what the rule below reads.
 
+4. The three ``examples/locomotion/`` scripts steered the G1 through a
+   ``locomotion_style`` goal key. Its only consumer, the MotionBricks policy, was
+   removed with the rest of the policy tree-shake; no policy in the tree reads the
+   key today, and ``get_actions(obs, instruction, **policy_kwargs)`` drops an
+   unknown one in silence. Measured on ``55f38d17b`` with the published
+   GR00T-WBC Balance/Walk ONNX on a Unitree G1 in MuJoCo, the example's own
+   four-segment schedule run twice - once as shipped, once with a style added to
+   every segment - traced 408 control steps whose ``(x, y, z, yaw)`` differed by
+   ``0.000000``. ``keyboard_g1.py`` advertised eight keys for it, and
+   ``agent_g1.py`` named it plus a seven-value vocabulary in the system prompt an
+   LLM is handed, so the agent reported style switches it never made.
+
 Why the install rule is keyed on distributions this project declares: an example
 may legitimately import something no extra covers (an optional third-party tool
 the header installs separately, or a module only the reader's own environment
@@ -297,3 +309,118 @@ def test_the_install_rule_separates_a_covered_import_from_a_missing_one() -> Non
     assert "robot_descriptions" in named, "a distribution named directly on the line counts as installed"
     assert _install_line_provides("no install line here") is None
     assert base, "the base dependency list is empty; every example would look under-installed"
+
+
+def _goal_keys_policies_read() -> frozenset[str]:
+    """Every ``policy_kwargs`` key some policy in the tree actually reads.
+
+    Harvested from the ``kwargs.get("x")`` / ``kwargs.pop("x")`` calls in
+    ``strands_robots/policies/``, which is where a provider pulls its goal out of
+    the payload ``run_policy`` forwards verbatim.
+    """
+    keys: set[str] = set()
+    for path in sorted((_REPO_ROOT / "strands_robots" / "policies").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            receiver = node.func.value
+            if node.func.attr not in {"get", "pop"} or not isinstance(receiver, ast.Name):
+                continue
+            if receiver.id not in {"kwargs", "policy_kwargs"} or not node.args:
+                continue
+            first = node.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                keys.add(first.value)
+    return frozenset(keys)
+
+
+_DICT_KEY = re.compile(r'"([a-z_][a-z_0-9]*)"\s*:')
+_INLINE_CODE = re.compile(r"``([a-z_][a-z_0-9]*)``")
+_GOAL_DICT_IN_PROSE = re.compile(r"policy_kwargs\s*=\s*\{([^}]*)\}")
+_INLINE_CODE_RUN = re.compile(r"``[a-z_0-9]+``(?:\s*/\s*``[a-z_0-9]+``)+")
+
+
+def _goal_citations(source: str, tree: ast.Module, anchors: frozenset[str]) -> list[tuple[int, str, list[str]]]:
+    """``(line, kind, keys)`` for every place one file spells the goal channel.
+
+    A citation is recognised by carrying an ``anchor`` - a goal key whose name
+    starts with ``target_``. Those are unambiguous: nothing else in the tree
+    keys a dict on one, while ``height`` / ``command`` / ``video`` / ``seed`` are
+    read by a policy AND spelled by unrelated dicts, so anchoring on them would
+    grade camera configs and JSON-RPC envelopes. Three spellings are read: a dict
+    literal (the goal the script passes), a ``policy_kwargs={...}`` fragment
+    inside a string (the instructions an agent example hands a model), and a
+    slash-separated run of inline-code names (the channel a docstring describes).
+    """
+    found: list[tuple[int, str, list[str]]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            keys = [k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+            if anchors.intersection(keys):
+                found.append((node.lineno, "goal dict", keys))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            for fragment in _GOAL_DICT_IN_PROSE.findall(node.value):
+                keys = _DICT_KEY.findall(fragment)
+                if anchors.intersection(keys):
+                    found.append((node.lineno, "goal dict in a string", keys))
+    for lineno, line in enumerate(source.splitlines(), start=1):
+        for run in _INLINE_CODE_RUN.findall(line):
+            keys = _INLINE_CODE.findall(run)
+            if anchors.intersection(keys):
+                found.append((lineno, "prose channel list", keys))
+    return found
+
+
+def _anchors(read: frozenset[str]) -> frozenset[str]:
+    """The goal keys a citation is recognised by - see :func:`_goal_citations`."""
+    return frozenset(key for key in read if key.startswith("target_"))
+
+
+def test_every_goal_key_an_example_names_is_read_by_a_policy() -> None:
+    """No example steers through a ``policy_kwargs`` key nothing consumes."""
+    read = _goal_keys_policies_read()
+    anchors = _anchors(read)
+    offenders = []
+    for path, tree in _examples():
+        source = path.read_text(encoding="utf-8")
+        for lineno, kind, keys in _goal_citations(source, tree, anchors):
+            for key in keys:
+                if key not in read:
+                    where = f"{path.relative_to(_REPO_ROOT).as_posix()}:{lineno}"
+                    offenders.append(f"{where} [{kind}] {key}")
+    assert not offenders, (
+        "a goal key no policy reads is dropped in silence by "
+        "get_actions(obs, instruction, **policy_kwargs): " + "; ".join(sorted(set(offenders)))
+    )
+
+
+def test_the_goal_scan_reaches_real_citations() -> None:
+    """Non-vacuity: the rule above grades a populated set, on both sides."""
+    read = _goal_keys_policies_read()
+    anchors = _anchors(read)
+    assert {"target_velocity", "target_pose", "target_joints"} <= anchors, f"the anchor set moved: {sorted(anchors)}"
+    assert {"height", "world_update", "gait_frequency"} <= read, f"the read set moved: {sorted(read)}"
+    cited = {path for path, tree in _examples() if _goal_citations(path.read_text(encoding="utf-8"), tree, anchors)}
+    assert len(cited) >= 8, f"only {len(cited)} example(s) spell the goal channel; the scan stopped reaching them"
+
+
+def test_the_goal_rule_separates_a_read_key_from_a_dead_one() -> None:
+    """Planted cases: each spelling is recognised, and only a dead key fails."""
+    read = _goal_keys_policies_read()
+    anchors = _anchors(read)
+
+    def dead(text: str) -> list[str]:
+        tree = ast.parse(text)
+        return [key for _, _, keys in _goal_citations(text, tree, anchors) for key in keys if key not in read]
+
+    assert dead('G = {"target_velocity": [0.4, 0.0, 0.0], "height": 0.7}') == []
+    assert dead('G = {"target_velocity": [0.4, 0.0, 0.0], "locomotion_style": "run"}') == ["locomotion_style"]
+    assert dead('S = \'policy_kwargs={"target_velocity": [vx, vy, wz], "locomotion_style": <s>}\'') == [
+        "locomotion_style"
+    ]
+    assert dead('"""The ``target_velocity`` / ``locomotion_style`` channel."""') == ["locomotion_style"]
+    assert dead('"""The ``target_velocity`` / ``height`` channel."""') == []
+    assert dead('CFG = {"width": 640, "height": 480, "locomotion_style": "run"}') == [], (
+        "a camera config carries no target_* anchor and must not be read as a goal dict"
+    )
