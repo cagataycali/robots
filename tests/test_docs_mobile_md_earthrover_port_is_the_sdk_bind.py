@@ -53,12 +53,12 @@ _EARTHROVER_SECTION = re.compile(
 
 
 def _earthrover_section() -> str:
-    """The EarthRover section alone - the page teaches other robots' addresses too.
+    """The EarthRover section alone - the page documents more than one robot.
 
-    The Yahboom M3 Pro section below it spells its rosbridge endpoint on
-    ``:9090``, which is that bridge's bind and not a claim about the EarthRover
-    SDK; grading the whole page against one robot's port would refuse every
-    second robot the page documents.
+    A ``host:port`` in another robot's section is that robot's own bind and not
+    a claim about the EarthRover SDK - the Yahboom M3 Pro's rosbridge answers on
+    ``:9090``, on the mobile-manipulator page - so grading the whole page
+    against one robot's port would refuse every second robot that lands here.
     """
     match = _EARTHROVER_SECTION.search(_PAGE.read_text(encoding="utf-8"))
     assert match, "mobile.md has no '## Real hardware: the EarthRover native driver' section"

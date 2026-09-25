@@ -52,7 +52,6 @@ _OVER_BUDGET = frozenset(
         "reference/configuration.md",
         "robots/arms.md",
         "robots/humanoids.md",
-        "robots/mobile.md",
         "rosbridge-integration.md",
         "rtps-integration.md",
         "simulation/domain-randomization.md",

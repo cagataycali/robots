@@ -22,6 +22,8 @@ nav:
   - Hands: robots/hands.md
   - Humanoids: robots/humanoids.md
   - Mobile: robots/mobile.md
+  - Mobile manip: robots/mobile-manip.md
+  - Aerial: robots/aerial.md
 - Simulate:
   - simulation/overview.md
   - Physics and Actions: simulation/physics.md

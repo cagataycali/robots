@@ -64,7 +64,7 @@ sim = Robot("aloha")
 
     Mobile bases with arms.
 
-    [:octicons-arrow-right-24: Mobile manip catalog](mobile.md)
+    [:octicons-arrow-right-24: Mobile manip catalog](mobile-manip.md)
 
 -   :material-airplane:{ .lg .middle } **Aerial** · 2
 
@@ -72,7 +72,7 @@ sim = Robot("aloha")
 
     Quadcopters.
 
-    [:octicons-arrow-right-24: Aerial catalog](mobile.md)
+    [:octicons-arrow-right-24: Aerial catalog](aerial.md)
 
 -   :material-emoticon:{ .lg .middle } **Expressive** · 1
 
@@ -93,8 +93,8 @@ sim = Robot("aloha")
 | Humanoids | {{n:humanoid}} | [humanoids](humanoids.md) |
 | Hands | {{n:hand}} | [hands](hands.md) |
 | Mobile | {{n:mobile}} | [mobile](mobile.md) |
-| Mobile manip | {{n:mobile_manip}} | [mobile](mobile.md) |
-| Aerial | {{n:aerial}} | [mobile](mobile.md) |
+| Mobile manip | {{n:mobile_manip}} | [mobile-manip](mobile-manip.md) |
+| Aerial | {{n:aerial}} | [aerial](aerial.md) |
 | Expressive | {{n:expressive}} | [humanoids](humanoids.md) |
 | **Total** | **{{n:robots}}** | |
 
