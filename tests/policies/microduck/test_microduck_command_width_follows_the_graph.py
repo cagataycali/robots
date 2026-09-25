@@ -26,6 +26,7 @@ alongside the fix so widening one cannot quietly narrow the other.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import numpy as np
@@ -222,3 +223,67 @@ class TestTheCommandNamesFallbackIsUnchanged:
         policy = MicroduckPolicy(session=session)  # type: ignore[arg-type]
         policy.get_actions_sync(_obs(), "")
         assert session.obs_widths == [_fixed_width(JOINTS) + NARROW_SUM_WIDTH]
+
+
+class TestAWidthRefusalNamesWhereTheNumberCameFrom:
+    """A width refusal has to point at the quantity the width came from.
+
+    Both refusals credited ``command_names`` unconditionally - ``expected 13
+    (from command_names=['twist'])`` - and for the seven exports that declare
+    fewer slots than their graph consumes that credits a quantity the number
+    cannot come from: those names sum to 3. Nothing the message pointed at
+    yields 13, so a caller reading it had no way to reach the width the graph
+    wants, and a session that declares no ``command_names`` at all was told the
+    width came from ``command_names=None``.
+
+    The cells below ask what a reader can do with the message rather than how it
+    is worded: the numbers it prints must let the expected width be derived, and
+    it must not name a source that is not one.
+    """
+
+    #: Both paths a supplied command takes: the constructor's, and the per-call
+    #: override. Each has its own refusal, and each credited the same wrong source.
+    @staticmethod
+    def _initial_refusal(session: _Session, width: int) -> str:
+        policy = MicroduckPolicy(session=session, command=[0.0] * width)  # type: ignore[arg-type]
+        with pytest.raises(ValueError) as excinfo:
+            policy.get_actions_sync(_obs(), "")
+        return str(excinfo.value)
+
+    @staticmethod
+    def _override_refusal(session: _Session, width: int) -> str:
+        policy = MicroduckPolicy(session=session)  # type: ignore[arg-type]
+        policy.get_actions_sync(_obs(), "")
+        with pytest.raises(ValueError) as excinfo:
+            policy.get_actions_sync(_obs(), "", command=[0.0] * width)
+        return str(excinfo.value)
+
+    @staticmethod
+    def _numbers(message: str) -> list[int]:
+        return [int(found) for found in re.findall(r"\d+", message)]
+
+    @pytest.mark.parametrize("refusal", ["_initial_refusal", "_override_refusal"])
+    def test_the_expected_width_is_derivable_from_the_numbers_it_prints(self, refusal: str) -> None:
+        """61 - 48 = 13: the reader can check the width, not just be told it."""
+        message = getattr(self, refusal)(_Session(SHIPPED_OBS_WIDTH, NARROW_COMMAND_NAMES), NARROW_SUM_WIDTH)
+        numbers = self._numbers(message)
+        assert any(a - b == SHIPPED_COMMAND_WIDTH for a in numbers for b in numbers), (
+            f"nothing in {message!r} derives the expected width {SHIPPED_COMMAND_WIDTH}"
+        )
+
+    @pytest.mark.parametrize("refusal", ["_initial_refusal", "_override_refusal"])
+    def test_it_does_not_credit_names_that_sum_to_another_number(self, refusal: str) -> None:
+        """``command_names`` is what a skill reads, and here it sums to 3, not 13."""
+        message = getattr(self, refusal)(_Session(SHIPPED_OBS_WIDTH, NARROW_COMMAND_NAMES), NARROW_SUM_WIDTH)
+        assert f"expected {SHIPPED_COMMAND_WIDTH} (from command_names" not in message
+
+    def test_a_session_with_no_names_is_not_told_they_are_the_source(self) -> None:
+        """A shapeless stub with no metadata names cannot have summed them."""
+        message = self._initial_refusal(_Session(None, ""), NARROW_SUM_WIDTH)
+        assert "command_names=None" not in message
+
+    def test_a_summed_width_still_credits_the_names_it_summed(self) -> None:
+        """The boundary: when the sum IS the authority, the names are the source."""
+        message = self._initial_refusal(_Session(None, NARROW_COMMAND_NAMES), SHIPPED_COMMAND_WIDTH)
+        assert "command_names" in message
+        assert self._numbers(message)[-1] == NARROW_SUM_WIDTH or str(NARROW_SUM_WIDTH) in message

@@ -453,7 +453,7 @@ class MicroduckPolicy(Policy):
             if new.shape[0] != self._command.shape[0]:
                 raise ValueError(
                     f"MicroduckPolicy: command override has width {new.shape[0]}, "
-                    f"expected {self._command.shape[0]} (from command_names)."
+                    f"expected {self._command.shape[0]} ({self._command_width_source()})."
                 )
             self._command = new
         tv = kwargs.get("target_velocity")
@@ -570,7 +570,7 @@ class MicroduckPolicy(Policy):
         if cmd.shape[0] != width:
             raise ValueError(
                 f"MicroduckPolicy: initial command width {cmd.shape[0]} != "
-                f"expected {width} (from command_names={self._command_names})."
+                f"expected {width} ({self._command_width_source()})."
             )
         return cmd.copy()
 
@@ -599,6 +599,35 @@ class MicroduckPolicy(Policy):
         if not self._command_names:
             return _DEFAULT_COMMAND_WIDTH
         return sum(_COMMAND_COMPONENTS.get(name, 0) for name in self._command_names)
+
+    def _command_width_source(self) -> str:
+        """Where :meth:`_command_width` took its number from, as a refusal can say it.
+
+        Both width refusals credited ``command_names`` unconditionally, and for
+        the seven shipped exports that declare fewer slots than their graph
+        consumes that credits a quantity the number cannot come from: ``roulade``
+        declares ``twist`` and a 3-wide command was refused as ``expected 13
+        (from command_names=['twist'])``, where those names sum to 3. Nothing the
+        message pointed at yields 13, so a caller had no way to reach the width
+        the graph wants.
+
+        Returns:
+            The clause a width refusal prints after the expected width, naming
+            the graph's declared input when that is the authority and the
+            ``command_names`` sum when it is the fallback.
+        """
+        declared = self._declared_command_width()
+        if declared is not None:
+            fixed = _BASE_OBS_WIDTH + 3 * len(self._joint_names or ())
+            names = (
+                f"command_names={self._command_names} names which slots this skill reads, not a width"
+                if self._command_names
+                else "the metadata declares no command_names"
+            )
+            return f"the graph's obs input declares {fixed + declared} - {fixed} fixed blocks; {names}"
+        if not self._command_names:
+            return "the default command width; the metadata declares no command_names and the graph no shape"
+        return f"summed from command_names={self._command_names}, the graph declaring no usable shape"
 
     def _declared_command_width(self) -> int | None:
         """Command width implied by the graph's declared ``obs`` input, else ``None``.
