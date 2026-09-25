@@ -49,6 +49,7 @@ nav:
   - SO Arms over the Feetech Bus: hardware/so-arms.md
   - Universal Robots over RTDE: hardware/universal-robots.md
   - Teleoperation: hardware/teleoperation.md
+  - Teleoperation Loop: hardware/teleoperation-loop.md
   - Tools: hardware/tools.md
   - Twin Transport: hardware/twin-transport.md
   - ROS 2 Integration: ros2-integration.md

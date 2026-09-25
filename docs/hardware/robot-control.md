@@ -84,7 +84,7 @@ time rather than a point in time, so an NTP correction or a resume from suspend
 cannot cut a rollout short or hold the servo bus past the budget - and the
 `duration` the task reports back is the time that actually elapsed. The same
 holds for `teleoperate(duration=...)`; see
-[Teleoperation](teleoperation.md#mixin-api).
+[The teleoperation loop](teleoperation-loop.md#mixin-api).
 
 `cleanup()` (and `stop()`, which delegates to it) is terminal: it latches a
 shutdown, releases the task executor, tears down the mesh and ROS bridges, and

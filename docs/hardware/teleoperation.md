@@ -16,7 +16,8 @@ Two pieces:
 - **`attach_teleop()` / `teleoperate()`** - mixin methods present on every
   hardware `Robot` and every `Simulation` host. They poll each attached
   device's `get_action()`, optionally remap it, merge the results, and apply
-  the merged action via the host's `send_action()`.
+  the merged action via the host's `send_action()`. Every keyword, refusal and
+  per-tick rule is on [The teleoperation loop](teleoperation-loop.md).
 
 ```python
 from strands_robots import Robot, Teleoperator
@@ -78,132 +79,10 @@ ensure_lerobot_family_registered("teleoperators")
 print(sorted(TeleoperatorConfig.get_known_choices()))
 ```
 
-## Mixin API
-
-Every hardware `Robot` and `Simulation` host exposes:
-
-| Method | What |
-|--------|------|
-| `attach_teleop(device_or_spec, *, name=None, method=None, map_fn=None, **kwargs)` | Register an input stream (lazy - no hardware touched). `device_or_spec` is a built teleop instance **or** a type string built via `Teleoperator(**kwargs)`. |
-| `teleoperate(*, names=None, robot_name=None, hz=50.0, publish=False, block=False, duration=None)` | Run the control loop. |
-| `detach_teleop(name=None)` | Remove one (or all) attached streams. Stops the loop before touching a device when the detach would leave it with nothing to drive, and refuses with `detached: []` if that loop does not stop. |
-| `stop_teleoperate()` | Stop the loop, any mesh publishers, and disconnect devices. Reports `status="error"` with `stopped: false` when the loop outlasts its 3 s join budget - the devices are left connected rather than torn down mid-write, and a second call re-joins the same loop. Reached on the loop's own thread - which `Robot.__del__` does, since the thread's target is a closure over the robot - there is nothing to join, and it stops the publishers and disconnects as any clean stop does. |
-
-### `attach_teleop`
-
-- **`name`** - stable key for this stream (used in `teleoperate(names=[...])`,
-  mesh topics, `detach_teleop`). Defaults to the device's `id`, else type.
-- **`method`** - input-method label (`"arm"`, `"gamepad"`, `"keyboard"`,
-  `"phone"`); auto-derived from the type when omitted.
-- **`map_fn`** - optional `(action: dict) -> dict` applied **before**
-  `send_action`. The bridge for cross-vocabulary teleop (e.g. EE deltas →
-  joint `.pos`, or leader joint names → sim actuator names). Identity by
-  default.
-
-### `teleoperate`
-
-- **`names`** - subset of attached streams to run (`None`, the default, runs
-  every attached stream). The selection is read by membership, so only `None`
-  means "all": `names=[]` names no stream and is **refused** rather than widened
-  to every device, because a filter that matched nothing must not energise and
-  drive every leader attached to the host. The list is held to the shared
-  name-list domain - several distinct names, as a list - so `names="leader"` is
-  refused as a single string rather than read as one stream per character, a
-  repeated name is refused rather than polling that device twice per tick, and a
-  one-shot iterator is refused rather than being consumed before the loop can
-  poll it. Every one of these is refused before any device is connected.
-- **`robot_name`** - target robot in a multi-robot simulation world. Read
-  only inside the loop (`send_action(merged, robot_name=...)`, every tick),
-  so it is graded at the door like `hz` and `duration`: a name the host
-  cannot route to is **refused** - with the same close-match message
-  `send_action` would have given - before any device is connected, rather
-  than starting a session whose every frame the follower refuses. A
-  hardware `Robot` wraps one device and ignores the argument, so nothing
-  is unroutable there.
-- **`hz`** - control-loop rate (default `50.0`).
-- **`publish`** - also publish each device to the mesh via the host's
-  `start_teleop_publish` so remote peers can follow. Requires a hardware
-  `Robot` host.
-- **`block`** - run inline until `duration` elapses / Ctrl+C (`True`) vs
-  background thread (`False`, default).
-- **`duration`** - auto-stop after N seconds (`None` = until stopped).
-  Measured on a monotonic clock, so a wall-clock correction mid-session neither
-  ends it early nor keeps the follower driven past the budget, and the reported
-  `elapsed_s` is the time that actually elapsed. It is also measured from the end
-  of setup: connecting the devices and resolving the slew helpers happen before
-  the clock starts, so `duration` is time spent teleoperating rather than time
-  since the call. `teleoperate(block=False)` therefore returns once setup is
-  done - on the first session in a process that costs about two seconds, after
-  which the loop is polling.
-
-Each tick: poll every selected device's `get_action()` → apply its `map_fn` →
-**merge** (last-wins on key conflict, with a one-time warning) → check the
-merged frame against the **per-joint slew bound** → apply via
-`self.send_action(merged, robot_name=...)`.
-
-The slew bound is `STRANDS_TELEOP_SLEW_ABS` (default 500 units/second): the
-fastest any single joint may be commanded to travel. The local loop carries its
-own default because the shipped SO hardware speaks driver units - arm joints in
-degrees, gripper in 0-100 - while the mesh receive path's
-`STRANDS_MESH_INPUT_SLEW_ABS` (8π) is radian-scoped. Either bound is above what a
-leader arm's own servos can produce, so a physical leader never trips it - what does is a frame no arm could
-have generated, such as an encoder glitch or a USB re-enumerate reading
-full-scale. Such a frame is **refused and counted** in `slew_rejected`, not
-clamped: clamping toward the commanded value would silently alter an actuator
-command. Because the bound is a speed measured from each joint's last applied
-value, the allowance grows while a joint is still, so a refused stream resumes
-by itself once the commanded pose is reachable safely - there is no resync step.
-
-A device that stops reporting keeps its place. When a teleoperator returns `{}`
-for a while - a disconnect, a USB re-enumerate - the loop still applies the other
-attached devices' frames, and the quiet device's joints keep their last applied
-value as their baseline. Its first read back on reconnecting is therefore
-measured against where it actually left the follower, so a full-scale first read
-is refused like any other over-speed frame rather than applied because the device
-had been away.
-
-Refusals are not errors, but a session with any of them does not report
-`success`, so a device whose units the bound does not expect (degree-valued or
-normalized-percent) cannot look like a clean run while moving nothing - widen
-the bound for those.
-
-### `detach_teleop`
-
-- **`name`** - which attached stream to remove. `None` (the default) detaches
-  every one; any other value names a single stream. Read by membership, like
-  `teleoperate(names=)`, so a value naming no attached stream is refused rather
-  than widened to the whole set - `detach_teleop("")` reports
-  `No teleop named ''.` and leaves every stream attached. That matters mid-
-  session: `detach_teleop` stops the loop once nothing is left to drive, so a
-  detach widened to all streams would also end a running session.
-- **Order** - when the detach would leave the loop with nothing to drive, the
-  loop is joined *before* any device is disconnected. `_teleop_loop` reads
-  `self._teleops[name]` on every tick, so removing an entry under a live loop
-  tears down the leader it is parked reading from. If that join fails the whole
-  detach is refused: `status="error"` with `detached: []`, every stream left
-  attached and connected, and the reason forwarded from `stop_teleoperate` - call
-  it again to re-join the same loop.
-
-## Action-key compatibility
-
-A pairing is **zero-config** only when the teleop's action keys match what the
-robot's `send_action` consumes:
-
-| Teleop | Robot | Keys | Config |
-|--------|-------|------|--------|
-| `so101_leader` | `so101_follower` | `{motor}.pos` | identity ✅ |
-| `keyboard_rover` | `earthrover_mini_plus` | `linear_velocity`, `angular_velocity` | identity ✅ |
-| `gamepad` | `lekiwi` | base velocities | identity ✅ |
-| `keyboard_ee` | `so101` (joint) | EE deltas → `.pos` | needs `map_fn` ⚠️ |
-| `so101_leader` | `earthrover` | `.pos` → velocity | needs `map_fn` ⚠️ |
-
-The merge does **not** auto-convert `.pos` ↔ `velocity`. Cross-vocabulary
-pairings supply a `map_fn` - that hook exists exactly for this.
-
-> For a wheeled rover use **`keyboard_rover`** (WASD → velocity).
-> Plain `keyboard` / `keyboard_ee` emit joint / EE deltas, not base velocities.
-
 ## Recipes
+
+Every `attach_teleop` / `teleoperate` keyword these use, and whether a pairing
+needs a `map_fn`, is on [The teleoperation loop](teleoperation-loop.md).
 
 ### Leader arm → follower arm
 
@@ -264,9 +143,9 @@ robot.teleoperate(names=["arm", "base"])           # both stream into send_actio
 ### Bimanual leader → follower
 
 A bimanual device is two arms, so each side carries its own config object -
-there is no single `port` covering both. The registered follower name is
-`bi_so_follower`, and both `BiSOFollowerConfig` and `BiSOLeaderConfig` require a
-`left_arm_config` / `right_arm_config` pair.
+there is no single `port`. The registered follower name is `bi_so_follower`, and
+both `BiSOFollowerConfig` and `BiSOLeaderConfig` require a `left_arm_config` /
+`right_arm_config` pair.
 
 ```python
 from lerobot.robots.so_follower import SOFollowerConfig
@@ -313,9 +192,8 @@ chokepoint via `start_teleop_publish`. Remote followers consume it with
 
 Every door that accepts a teleoperator grades one contract - a callable
 `get_action()` - whether the device is attached locally, handed to
-`start_teleop_publish`, or used to build an `InputPublisher` directly. A device
-without it is refused at the call rather than starting a session that reports
-running and publishes nothing.
+`start_teleop_publish`, or used to build an `InputPublisher`. A device without it
+is refused at the call rather than starting a session that publishes nothing.
 
 ### Time-boxed / clean teardown
 
@@ -341,15 +219,15 @@ publish so remote followers mirror.
 Because that composition drives both followers from one `get_action()` stream,
 both paths hold a frame to a per-joint slew bound - the local loop to
 `STRANDS_TELEOP_SLEW_ABS`, the mesh receive path to
-`STRANDS_MESH_INPUT_SLEW_ABS` - otherwise one device would be judged by one rule
-and no rule, and the follower physically next to the operator would be the unguarded
-one. The mesh receive path adds guards the local path has no need of, since it
-accepts frames from another host: sender scoping, replay freshness, an
+`STRANDS_MESH_INPUT_SLEW_ABS` - otherwise the follower next to the operator
+would be the unguarded one. The mesh receive path adds guards the local path has
+no need of, since it accepts frames from another host: sender scoping, replay freshness, an
 apply-rate ceiling (`STRANDS_MESH_INPUT_MAX_HZ`) and a magnitude clamp
 (`STRANDS_MESH_INPUT_VALUE_ABS`).
 
 ## See also
 
+- [The teleoperation loop](teleoperation-loop.md) - the mixin API and the slew bound.
 - [Robot factory](../getting-started/robot-factory.md) - every `Robot()` kwarg.
 - [Robot control](robot-control.md) - hardware lifecycle + mesh teleop primitives.
 - [Hardware tools](tools.md) - `lerobot_teleoperate` @tool for agent-driven sessions.

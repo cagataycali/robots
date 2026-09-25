@@ -40,7 +40,6 @@ _OVER_BUDGET = frozenset(
     {
         "api-reference.md",
         "device-connect.md",
-        "hardware/teleoperation.md",
         "inference/remote.md",
         "policies/cosmos3.md",
         "policies/kimodo.md",

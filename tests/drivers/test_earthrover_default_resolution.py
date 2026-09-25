@@ -155,7 +155,7 @@ class TestTheVocabulariesDoNotAgree:
     def test_a_lerobot_action_key_is_refused_before_the_wire(self, key: str) -> None:
         """What a flipped default would do to a documented ``keyboard_rover`` frame.
 
-        ``docs/hardware/teleoperation.md`` records this pairing as
+        ``docs/hardware/teleoperation-loop.md`` records this pairing as
         ``identity`` - zero-config - and it is, against lerobot's robot. Against
         the native driver the same frame is refused, and nothing is posted, so a
         flip would strand the documented recipe at its first tick rather than
