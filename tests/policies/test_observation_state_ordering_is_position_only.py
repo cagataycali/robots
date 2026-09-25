@@ -51,6 +51,10 @@ _RULE_NAME = "drop_velocity_siblings"
 # The suffix the sim backends append to a joint's additive velocity companion,
 # spelled as the producer writes it (``simulation/mujoco/rendering.py``).
 _VEL = ".vel"
+#: The parameter both providers use to hand a resolver the observation's own
+#: scalar keys. A resolver that renames it drops out of the scan, which is what
+#: the roster guard below is for.
+_OBSERVATION_ORDERING_PARAMS = frozenset({"scalar_keys"})
 
 # A 7-DOF arm + gripper observation shaped exactly as the MuJoCo backend emits
 # it: every joint position immediately followed by its additive `.vel` companion.
@@ -98,6 +102,92 @@ def _inferred_ordering_fallbacks() -> dict[str, str]:
                 rel = source_file.relative_to(_PACKAGE_DIR)
                 found[f"{rel}:{node.lineno}"] = alternative
     return found
+
+
+def _is_observation_key_comprehension(node: ast.AST) -> bool:
+    """True for a comprehension yielding a mapping's own keys in its order.
+
+    ``[k for k, v in observation.items() if ...]`` infers an ordering; a dict
+    comprehension rebuilds a mapping and ``[f"joint_{i}" for i in range(n)]``
+    invents names the observation never carried, so neither is one.
+    """
+    if not isinstance(node, ast.ListComp | ast.SetComp | ast.GeneratorExp):
+        return False
+    if not node.generators:
+        return False
+    iterated = node.generators[0].iter
+    if not (isinstance(iterated, ast.Call) and isinstance(iterated.func, ast.Attribute)):
+        return False
+    if iterated.func.attr not in {"items", "keys"}:
+        return False
+    target = node.generators[0].target
+    key_name = (
+        getattr(target.elts[0], "id", None)
+        if isinstance(target, ast.Tuple) and target.elts
+        else getattr(target, "id", None)
+    )
+    return isinstance(node.elt, ast.Name) and node.elt.id == key_name
+
+
+def _resolver_inferred_returns() -> dict[str, str]:
+    """Map ``relpath:lineno`` -> returned expression, for a resolver's inferred branches.
+
+    The same two-branch fallback as ``robot_state_keys or <inferred ordering>``,
+    spelled as statements instead of an expression: a function that hands back
+    the declared ordering on one branch and an ordering it derived from the
+    observation on another. Both providers resolve their ordering this way, so
+    a scan that only reads the ``or`` form grades neither.
+
+    Only the observation-derived branches are returned. A branch that hands
+    back the declared keys is the declared side, and an ordering that never
+    came from the observation - MoveIt2's planner roster, a positional
+    ``joint_<i>`` label - is not an inferred ordering and carries no velocity
+    companions to drop.
+    """
+    found: dict[str, str] = {}
+    for source_file in sorted(_PACKAGE_DIR.rglob("*.py")):
+        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            returns = [stmt for stmt in ast.walk(node) if isinstance(stmt, ast.Return) and stmt.value is not None]
+            if len(returns) < 2:
+                continue
+            # One hop of local binding, so `order = drop_velocity_siblings(...)`
+            # followed by `return order` reads as the call it returns.
+            bound: dict[str, ast.expr] = {
+                stmt.targets[0].id: stmt.value
+                for stmt in ast.walk(node)
+                if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name)
+            }
+            parameters = {arg.arg for arg in node.args.args + node.args.kwonlyargs}
+            resolved: list[tuple[ast.Return, ast.expr, str]] = []
+            for stmt in returns:
+                value: ast.expr | None = stmt.value
+                if value is None:
+                    continue
+                if isinstance(value, ast.Name) and value.id in bound:
+                    value = bound[value.id]
+                resolved.append((stmt, value, ast.unparse(value)))
+            # Not a resolver unless one branch hands back the declared ordering.
+            if not any("robot_state_keys" in text for _, _, text in resolved):
+                continue
+            for stmt, value, text in resolved:
+                if "robot_state_keys" in text:
+                    continue
+                derived_here = any(_is_observation_key_comprehension(inner) for inner in ast.walk(value))
+                derived_by_caller = any(
+                    isinstance(inner, ast.Name) and inner.id in parameters and inner.id in _OBSERVATION_ORDERING_PARAMS
+                    for inner in ast.walk(value)
+                )
+                if derived_here or derived_by_caller:
+                    found[f"{source_file.relative_to(_PACKAGE_DIR)}:{stmt.lineno}"] = text
+    return found
+
+
+def _inferred_state_orderings() -> dict[str, str]:
+    """Every inferred ordering in the tree, in either spelling."""
+    return {**_inferred_ordering_fallbacks(), **_resolver_inferred_returns()}
 
 
 def _calls_the_shared_rule(expression: str) -> bool:
@@ -174,10 +264,15 @@ def test_the_rule_is_defined_once_and_in_the_shared_leaf() -> None:
 
 
 def test_every_inferred_state_ordering_routes_through_the_rule() -> None:
-    """A ``robot_state_keys or <inferred ordering>`` fallback must infer positions only."""
+    """An ordering inferred from the observation must infer positions only.
+
+    Graded in either spelling - the inline ``robot_state_keys or <inferred>``
+    and a resolver that returns the two branches as statements - so moving one
+    into the other cannot move it out of the rule.
+    """
     offenders = {
         site: alternative
-        for site, alternative in _inferred_ordering_fallbacks().items()
+        for site, alternative in _inferred_state_orderings().items()
         if not _calls_the_shared_rule(alternative)
     }
     assert not offenders, (
@@ -188,10 +283,17 @@ def test_every_inferred_state_ordering_routes_through_the_rule() -> None:
 
 
 def test_the_structural_scan_found_the_fallbacks_it_grades() -> None:
-    """Guard: a scan that reaches nothing would report every tree clean."""
-    fallbacks = _inferred_ordering_fallbacks()
-    assert fallbacks, "no declared-or-inferred state-ordering fallback was found at all"
-    assert any(site.startswith("policies/cosmos3/policy.py") for site in fallbacks), fallbacks
+    """Guard: a scan that reaches nothing would report every tree clean.
+
+    Both providers are named, not just one: the scan used to read only the
+    inline ``or`` spelling, which the LeRobot resolver never used, so it graded
+    a single site and went empty the moment that site was rewritten as the
+    statements the other provider already used.
+    """
+    orderings = _inferred_state_orderings()
+    assert orderings, "no declared-or-inferred state-ordering fallback was found at all"
+    for provider in ("policies/cosmos3/policy.py", "policies/lerobot_local/policy.py"):
+        assert any(site.startswith(provider) for site in orderings), (provider, orderings)
 
 
 def test_a_membership_test_against_the_declared_keys_is_not_graded() -> None:

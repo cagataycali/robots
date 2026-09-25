@@ -1,6 +1,7 @@
 """Unit tests for Cosmos3Policy - no GPU, no server (mocked client)."""
 
 import asyncio
+import logging
 
 import numpy as np
 import pytest
@@ -574,3 +575,42 @@ def test_unpack_rejects_rank_3_chunk():
     p = _make_droid_policy()
     with pytest.raises(ValueError, match="expected action chunk"):
         p._unpack_actions(np.zeros((2, 3, 4), dtype=np.float32))
+
+
+def test_absent_state_keys_fall_back_to_the_observation_and_flag_it(caplog):
+    """Declared keys naming no observation key bind from the observation, loudly.
+
+    ``run_policy`` declares the robot's actuator names, and the Panda's are
+    ``actuator1..8`` while its observation reports ``joint1..7`` and
+    ``finger_joint1/2``. Every declared key was absent, so the 7-joint request
+    was refused as "found 0" with the joints in plain sight and the documented
+    ``Robot("panda")`` rollout died at step 0. The order now falls back to the
+    observation's position keys, warning once and flagging the degradation as
+    ``generic_state_keys_used`` (the LeRobot provider's rule).
+    """
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(embodiment="droid", client=client)
+    p.set_robot_state_keys([f"actuator{i}" for i in range(1, 9)])
+    img = np.zeros((360, 640, 3), dtype=np.uint8)
+    obs = {
+        "observation/wrist_image_left": img,
+        "observation/exterior_image_1_left": img,
+        "observation/exterior_image_2_left": img,
+    }
+    for i in range(1, 8):
+        obs[f"joint{i}"] = round(0.1 * i, 3)
+        obs[f"joint{i}.vel"] = -100.0 - i
+    for finger in ("finger_joint1", "finger_joint2"):
+        obs[finger] = 0.04
+        obs[f"{finger}.vel"] = -900.0
+
+    with caplog.at_level(logging.WARNING, logger="strands_robots.policies.cosmos3.policy"):
+        asyncio.run(p.get_actions(obs, "go"))
+        asyncio.run(p.get_actions(obs, "go"))
+
+    joints = client.last_obs["observation/joint_position"][0]
+    np.testing.assert_allclose(joints, [0.1 * i for i in range(1, 8)], rtol=1e-6)
+    assert client.last_obs["observation/gripper_position"][0, 0] == pytest.approx(0.04)
+    assert p.generic_state_keys_used is True
+    warnings = [r for r in caplog.records if "actuator1" in r.getMessage()]
+    assert len(warnings) == 1, [r.getMessage() for r in caplog.records]

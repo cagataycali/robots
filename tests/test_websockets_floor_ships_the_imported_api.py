@@ -119,6 +119,9 @@ _PROBED_RELEASES = (
 _WEBSOCKETS_SYMBOL_FLOORS: dict[tuple[str, str], str] = {
     ("websockets", _MODULE): "9.1",
     ("websockets", "connect"): "9.1",
+    ("websockets.exceptions", _MODULE): "9.1",
+    ("websockets.exceptions", "ConnectionClosed"): "9.1",
+    ("websockets.exceptions", "InvalidHandshake"): "9.1",
     ("websockets.sync.client", _MODULE): "11.0",
     ("websockets.sync.client", "ClientConnection"): "11.0",
     ("websockets.sync.client", "connect"): "11.0",

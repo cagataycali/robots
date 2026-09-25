@@ -417,6 +417,12 @@ _SANITIZED_SINKS: dict[str, dict[str, list[str]]] = {
     "moveit2/policy.py": {
         "MoveIt2Policy._extract_joint_state": ["e", "repr(sorted(observation_dict))"],
     },
+    # Alerts 1281/1282, outside the #2853 census: the declared ``robot_state_keys``
+    # and the observation-derived order the fallback warning names, the same
+    # two provenances the LeRobot resolver's ``msg`` already carries.
+    "cosmos3/policy.py": {
+        "Cosmos3Policy._resolve_state_order": ["repr(order)", "repr(self.robot_state_keys[:8])"],
+    },
     # Alert 1159, outside the #2853 census: the ``seed`` the inference server
     # forwards verbatim off the wire (``PolicyServer`` owns no domain for it)
     # reaches this ``reset`` and is rendered into a record. See

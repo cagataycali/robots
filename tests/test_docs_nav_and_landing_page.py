@@ -19,6 +19,13 @@ whether the landing page's own call *builds a robot*. This module runs the call
 the page spells - read out of the fence with :mod:`ast`, not restated here - and
 hands the result to an ``Agent`` the way the next line does.
 
+**The first screen.** A reader arriving from a link decides in about thirty
+seconds, on one image and three links. The page opened on a control-loop
+drawing - an answer to "how is this built" for someone who has not yet decided
+whether to care - and its next-step cards pointed into pages of over a thousand
+words. Both are graded: the leading image is a recording of a robot rather than
+a drawing, and every card lands on a page a newcomer finishes in one sitting.
+
 The nav is read from ``mkdocs.yml`` as text rather than as YAML: the file
 carries ``!!python/name:`` tags that ``yaml.safe_load`` refuses, and indentation
 is what a reader sees anyway.
@@ -52,8 +59,19 @@ MAX_DEPTH = 1
 #: chapter: install, one runnable example, where to go next.
 MAX_LANDING_PAGE_LINES = 120
 
+#: What a next-step card may cost the reader who follows it. A page of this
+#: length is read in one sitting; the exhaustive treatment is one link further
+#: on, reached from there rather than from the landing page.
+MAX_NEXT_STEP_WORDS = 800
+
+#: Extensions that hold a drawing rather than a recording of a robot.
+DRAWING_SUFFIXES = (".svg",)
+
 _NAV_ITEM = re.compile(r"^(?P<indent> *)- (?P<body>.+?)\s*$")
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+_IMAGE = re.compile(r"!\[[^\]]*\]\((?P<src>[^)\s]+)")
+_CARDS_DIV = re.compile(r'<div class="grid cards" markdown>(?P<body>.*?)</div>', re.DOTALL)
+_MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\((?P<target>[^)\s]+)\)")
 
 
 def _nav_items() -> list[tuple[int, str]]:
@@ -130,6 +148,42 @@ class TestTheLandingPageShowsTheProduct:
             f"and link to it."
         )
 
+    def test_the_page_leads_with_a_robot_not_a_drawing(self) -> None:
+        """The first image shows the product working, not how it is built.
+
+        Graded on the suffix of the first image reference: an ``.svg`` on this
+        site is a hand-authored diagram, while a raster or a hosted clip is a
+        robot that moved. The diagram is not deleted - it belongs on the page
+        that explains the design, where a reader has already asked.
+        """
+        first = _IMAGE.search(LANDING_PAGE.read_text(encoding="utf-8"))
+        assert first, "docs/index.md carries no image; the first screen is the product working"
+        src = first["src"]
+        assert not src.endswith(DRAWING_SUFFIXES), (
+            f"docs/index.md leads with {src}, a drawing. The first image a reader "
+            f"meets is a robot doing the thing - a photo or a clip; move the "
+            f"diagram to the page that explains the design and link to it."
+        )
+
+    def test_every_next_step_card_lands_on_a_page_a_newcomer_finishes(self) -> None:
+        """The cards hand the reader onward, not into the exhaustive treatment.
+
+        The targets are read out of the page's card grid and measured the way
+        the budget is stated, so a card re-pointed at a reference page fails
+        here rather than on the reader's scroll.
+        """
+        targets = _next_step_card_targets()
+        assert targets, "docs/index.md carries no next-step cards for a reader to follow"
+        missing = sorted(target for target in targets if not (DOCS_DIR / target).is_file())
+        assert not missing, f"docs/index.md cards point at pages that do not exist: {missing}"
+        too_long = {target: len((DOCS_DIR / target).read_text(encoding="utf-8").split()) for target in targets}
+        over = {t: n for t, n in too_long.items() if n > MAX_NEXT_STEP_WORDS}
+        assert not over, (
+            f"docs/index.md next-step cards land on pages over "
+            f"{MAX_NEXT_STEP_WORDS} words: {over}. Point the card at the page a "
+            f"newcomer reads first and let that page link onward, or trim it."
+        )
+
     def test_the_example_builds_a_robot_an_agent_can_drive(self) -> None:
         """The page's own ``Robot(...)`` call is executed, not restated.
 
@@ -177,6 +231,15 @@ class TestTheLandingPageShowsTheProduct:
             f"docs/index.md says list_driver_coverage()[{robot!r}] is {shown['out'].strip()}; "
             f"it returns {list_driver_coverage()[robot]!r}."
         )
+
+
+def _next_step_card_targets() -> list[str]:
+    """Every page the landing page's card grid links to, in page order."""
+    grid = _CARDS_DIV.search(LANDING_PAGE.read_text(encoding="utf-8"))
+    assert grid, "docs/index.md no longer carries a 'grid cards' block of next steps"
+    return [
+        match["target"] for match in _MARKDOWN_LINK.finditer(grid["body"]) if not match["target"].startswith("http")
+    ]
 
 
 def _the_landing_robot_call() -> tuple[tuple[Any, ...], dict[str, Any]]:

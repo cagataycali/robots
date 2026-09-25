@@ -8,17 +8,19 @@ description: Two Robot() instances coordinating over the Zenoh mesh - peer disco
   ![Robot peers discovering and coordinating over the Zenoh mesh](assets/mesh_network.svg){ .brand-svg }
 </figure>
 
-`Robot(name, mesh=True)` joins a Zenoh mesh - joining is opt-in, so a bare `Robot()` leaves `robot.mesh` as `None` unless `STRANDS_MESH` is `true`/`1`/`yes`. Peers then discover each other on the LAN and can query, command, and e-stop one another.
+`Robot(name, mesh=True)` joins a Zenoh mesh. Joining is opt-in: a bare `Robot()`
+leaves `robot.mesh` as `None` unless `STRANDS_MESH` is `true`/`1`/`yes`. Peers
+discover each other on the LAN and can query, command and e-stop one another.
 
-!!! info "Device Connect is the recommended networking layer"
-    What's described here is the built-in **Zenoh mesh** — the automatic fallback. When the [`device-connect`](device-connect.md) extra is installed, `Robot().run()` and `robot_mesh()` use [**Device Connect**](device-connect.md) (structured RPC, presence, registry, safety) and fall back to this mesh only when it's unavailable. Both ride on Zenoh.
+With the [`device-connect`](device-connect.md) extra installed - the recommended
+networking layer - `Robot().run()` and `robot_mesh()` dispatch through it and
+fall back to this mesh only when it is unavailable. Both ride on Zenoh.
 
-On a fresh install the mesh refuses to start until you choose a security
-posture: with no ACL configured, `Robot(..., mesh=True)` logs `Mesh did NOT
-start` and leaves `robot.mesh.alive` as `False`. For localhost experiments set
-the developer preset in every process that joins; the lab and production
-postures (`STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`, `STRANDS_MESH_ACL_FILE`) are on
-the [mesh authentication](security/mesh.md) page.
+The mesh refuses to start until a security posture is chosen: with no ACL,
+`Robot(..., mesh=True)` logs `Mesh did NOT start` and leaves `robot.mesh.alive`
+`False`. Set the developer preset below in every process that joins for localhost
+work; the lab and production postures are on the
+[mesh authentication](security/mesh.md) page.
 
 ```bash
 export STRANDS_MESH_LOCAL_DEV=1   # both processes below; localhost only
@@ -36,16 +38,10 @@ sim_a.mesh.tell(sim_b.mesh.peer_id, "pick up the cube",
                 policy_provider="mock", duration=10.0)
 ```
 
-```bash
-uv pip install "strands-robots[mesh]"   # eclipse-zenoh; already in the default install
-```
-
-`[mesh]` requires `eclipse-zenoh>=1.6.1`. The safety handlers authenticate an
-e-stop / resume publisher at the wire level, below the JSON body, using
-`zenoh.SourceInfo` on the publisher and `Sample.source_info` on the receiver.
-Both names first ship in 1.6.1; on an older zenoh neither exists, so envelopes
-travel unattributed and a receiver refuses one published by a peer that *is*
-attributing. Upgrade every peer in a fleet together.
+`eclipse-zenoh>=1.6.1` (in the default install) is a floor: the safety handlers
+attribute an e-stop publisher below the JSON body with `zenoh.SourceInfo`, new in
+1.6.1, and an attributing receiver refuses an unattributed envelope. Upgrade a
+fleet together.
 
 ## Key mesh calls
 
@@ -53,7 +49,7 @@ attributing. Upgrade every peer in a fleet together.
 # Point-to-point status query
 result = sim_a.mesh.send(target_peer_id, {"action": "status"}, timeout=5.0)
 
-# Fan-out → list of responses collected within timeout
+# Fan-out -> responses collected within timeout
 results = sim_a.mesh.broadcast({"action": "status"}, timeout=2.0)
 
 # Safety primitive - writes a tamper-evident audit log
@@ -62,20 +58,12 @@ sim_a.mesh.emergency_stop()   # STRANDS_MESH_AUDIT_DIR overrides log location
 
 ## What a fleet e-stop reaches
 
-`emergency_stop()` stops the robot registered in the issuing process first, then
-broadcasts `{"action": "stop"}` with no `robot_name`, so each peer decides which
-of its own robots that reaches. The local stop is not an optimisation: a
-broadcast never returns to its sender, so without it the robot the operator is
-standing next to is the only one an e-stop never halts. Its answer leads the
-returned `responses` list under this peer's own id and is graded like any other.
-A hardware peer stops its task. A simulation peer asks every rollout it could be
-running: the rollouts its backend reports as in flight where it keeps such a
-registry (MuJoCo prunes finished ones), and otherwise every robot the engine
-lists. `stop_policy` is idempotent and reports `was_running` itself, so asking
-an idle robot costs nothing and the verdict is read rather than guessed -
-`stopped` names only the robots whose answer did not say they were idle.
-
-The peer's `ok` is derived from those per-robot answers, never assumed:
+`emergency_stop()` stops the robot in the issuing process first - a broadcast
+never returns to its sender - then broadcasts `{"action": "stop"}` with no
+`robot_name`, so each peer decides which of its own robots that reaches. A
+hardware peer stops its task; a sim peer asks the rollouts its backend reports in
+flight, else every robot the engine lists. `stop_policy` reports `was_running`, so
+`stopped` names only robots whose answer was not idle:
 
 ```python
 responses = sim_a.mesh.emergency_stop()
@@ -84,279 +72,46 @@ responses = sim_a.mesh.emergency_stop()
 # {"ok": False, "stopped": [], "not_stopped": ["arm"], ...}    a stop was refused
 ```
 
-A refusal puts the peer in `peers_not_stopped`, which `emergency_stop()` logs at
-CRITICAL and carries in the safety envelope. A backend that keeps no durable
-per-robot rollout claim refuses, and that refusal is what you want: on the safety
-path an acknowledgement that nothing was running is an affirmative answer given
-on no evidence. Bound such a rollout instead of stopping it -
-`run_policy(n_steps=...)` caps its length and `run_policy(stop_when={...})` ends
-it as soon as the world reaches a state.
+A refusal puts the peer in `peers_not_stopped`, logged at CRITICAL and carried in
+the safety envelope. A backend keeping no durable rollout claim refuses rather
+than affirm "nothing was running" on no evidence; bound such a rollout with
+`run_policy(n_steps=...)` or `stop_when={...}` instead.
 
 ## Recovering from an emergency stop
 
-`emergency_stop()` latches a **lockout** on every peer that receives it. While a
-peer is locked out it refuses every command except `status`, `resume` and
-`stop`; a second e-stop must still halt a rollout the first one missed, and a
-stop only ever de-energizes. Nothing clears the lockout on a timer - an e-stop
-that expired by itself would not be an e-stop. Recovery is always an explicit
-`resume`:
+An e-stop latches a **lockout** on every peer it reaches: that peer refuses every
+command except `status`, `resume` and `stop`, and nothing clears it on a timer.
 
 ```python
 sim_a.mesh.send(peer_id, {"action": "resume", "override_code": OPERATOR_CODE})
 ```
 
-Two prerequisites have to be in place *before* you e-stop a fleet, because both
-are only observable once you are already locked out.
+Configure both before you e-stop a fleet - each is only observable once you are
+already locked out.
 
-**1. Every peer needs the same override code.** `resume` is accepted only when
-`STRANDS_MESH_OVERRIDE_CODE` is set, and receivers re-verify the operator's proof
-against their own copy. With no code configured there is no remote resume at all
-and each robot must be restarted with one set - so the mesh logs a WARNING at
-startup when it is unset. Set it to the same value on every peer.
+| Knob | Default | Rule |
+|---|---|---|
+| `STRANDS_MESH_OVERRIDE_CODE` | unset | Receivers re-verify against their own copy; unset means no remote resume at all (WARNING at startup). Same value on every peer. |
+| `STRANDS_MESH_RESUME_FRESHNESS_S` | 60 | Stale past this. Trips when a receiver's clock is *ahead* of the operator. |
+| `STRANDS_MESH_RESUME_FORWARD_SKEW_S` | 5 | Future-dated past this. Trips when a receiver is *behind* - the tight bound. |
+| `STRANDS_MESH_RESUME_MAX_FAILS` | 5 | Wrong codes before a cooldown arms. |
+| `STRANDS_MESH_RESUME_BACKOFF_S` | 30 | Cooldown length; the correct code is refused during it. |
 
-**2. Fleet clocks have to agree.** A resume envelope is stamped with the
-operator's wall clock, and a receiver refuses one that is stale or future-dated:
-older than `STRANDS_MESH_RESUME_FRESHNESS_S` (default 60s) or more than
-`STRANDS_MESH_RESUME_FORWARD_SKEW_S` (default 5s) ahead. Each bound catches one
-direction of skew - a receiver *ahead of* the operator trips the freshness
-window, a receiver *behind* it trips the forward bound - so widening the other
-one does not help. The forward bound is the tight one, which is the trap: a robot
-whose clock is only **6 seconds behind** the operator sees a correct,
-correctly-signed resume as future-dated and refuses it, logging
+Each bound catches one direction of skew, so widening the other does not help: a
+robot 6 s behind the operator logs `refusing remote resume -- t=... in future`
+for every retry until its clock is fixed. Keep fleet clocks in NTP sync; every
+attempt, granted or refused, is audited.
 
-```
-[safety] robot-1: refusing remote resume -- ``t``=... in future (forward_skew_s=5.0, now=...)
-```
-
-and every retry fails the same way, so the robot stays locked out until its clock
-is corrected or the bound is widened. Keep fleet clocks in NTP sync - the same
-"upgrade every peer together" discipline the zenoh floor needs above - or raise
-both knobs on every peer.
-
-**Correcting those clocks does not cost you the fleet.** The bounds above are the
-only place a *stamp* crosses a machine boundary. Everything the mesh decides from
-a **duration** on its own - how old a peer's last heartbeat is (`age`), whether
-that peer has timed out (10s), which peer the registry evicts when it hits
-`STRANDS_MESH_MAX_PEERS`, and the sensor publish intervals - is measured on
-`time.monotonic()`, which no NTP correction, `date -s` or resume from suspend can
-move. So bringing a robot's clock into sync to satisfy the forward bound above
-will not make the next heartbeat tick drop every peer it can still hear.
-
-**Nor are those durations the measured peer's to report.** `age` is *your*
-process's reading of when it last heard from a peer, and the `peer_id` a peer is
-filed under is the one its topic and certificate bind - not a field inside the
-payload. A presence payload is merged into what you read about a peer so you get
-its capabilities (`tool_name`, `connected`, `cameras`, ...), and those five
-locally decided keys - `peer_id`, `type`, `hostname`, `age`, `reachable` - win a
-name collision with it. A peer heartbeating `"age": 0` does not report itself
-fresh, one claiming `"reachable": true` does not report itself in contact, and
-one naming another peer's id does not answer a lookup for that peer.
-
-**The same rule decides a lockout badge.** A safety envelope's `t` is the
-*sender's* wall clock, admitted anywhere inside the two bounds above, so it may
-sit a minute behind the clock of the process reading it. Anything a monitor ranks
-against its own observations - when it first saw a peer, when it last watched
-that peer accept a command - is therefore ordered against the instant it
-*learned* of the stop, not against `t`. `Lockout` records both:
-`since` is the reported instant, for display; `arrived` is the local one, and
-every verdict is decided on it. Reading `t` instead let a peer that was already
-on the mesh look freshly spawned ("may never have received it"), and let a
-command accepted before the stop was even known count as proof the peer was
-clear.
-
-Repeated wrong codes arm a brute-force cooldown
-(`STRANDS_MESH_RESUME_MAX_FAILS`, `STRANDS_MESH_RESUME_BACKOFF_S`): during the
-cooldown even the correct code is refused, so wait it out rather than retrying in
-a loop. Every attempt, granted or refused, is written to the safety audit log.
+Those bounds are the only place a *stamp* crosses a machine boundary, so
+correcting a clock cannot cost you the fleet: `age`, the 10 s peer timeout,
+`STRANDS_MESH_MAX_PEERS` eviction and the publish intervals are measured on
+`time.monotonic()`. `Lockout` follows from that - every verdict is decided on
+`arrived`, when this process learned of the stop, not on the sender's `since`.
 
 ## Published topics
 
-| Topic | Rate | Content |
-|-------|------|---------|
-| `strands/{peer_id}/presence` | 2 Hz | heartbeat / peer discovery |
-| `strands/{peer_id}/state` | 10 Hz | joints, sim time, task status, which robots are running a policy, degraded probes |
-| `strands/{peer_id}/cmd` | on demand | incoming RPC commands |
-| `strands/{requester}/response/{responder}/{turn_id}` | on demand | RPC replies (turn_id correlated) |
-| `strands/{peer_id}/stream` | on demand | VLA execution steps |
-| `strands/{peer_id}/pose` | on demand | SE(3) from SLAM/odom/VIO |
-| `strands/{peer_id}/imu` | on demand | orientation, gyro, accel |
-| `strands/{peer_id}/health` | on demand | battery, CPU, memory |
-| `strands/broadcast` | on demand | fan-out RPC |
-
-Sensor topics only publish when the robot exposes the attribute. Zero cost when unused.
-
-**A reply key is built from the request envelope, so its routing fields are
-identifiers.** A command carries `sender_id` (where to answer) and `turn_id`
-(which turn is being answered), and the reply is published on
-`strands/{sender_id}/response/{responder}/{turn_id}`. Both fields must match
-`[A-Za-z0-9_.-]+` and be at most 128 characters -- the same rule the teleop
-identifiers follow -- because Zenoh routes a wildcard by intersection, so a
-segment holding one would address the reply at every peer's
-`strands/{peer}/response/**` subscription instead of at the peer that asked. A
-command whose envelope breaks the rule is refused whole: nothing is dispatched,
-nothing is published, and the refusal is written to the safety audit log.
-Omitting `sender_id` is unchanged and still means fire-and-forget -- the command
-runs and no reply is published.
-
-
-**A sensor record's identity is the publisher's too.** A reader seeds each record
-with what this process decided, merges the robot's provider mapping over it, and
-publishes to a topic built from those same keys - so the same precedence applies:
-`peer_id`, and the `hand` a hand record is filed under, win a name collision with
-the provider mapping. A provider naming another peer does not move its readings
-onto that peer's topic, and one naming another hand does not relabel the hand it
-was published under. A `t` the provider supplies *is* honoured: it is a stamp
-rather than a locally computed duration, so a driver that stamps a reading when
-it decoded it reports something truer than the moment the loop published it.
-
-### Degraded state probes
-
-Every section of a state snapshot is optional, because a robot may be hardware,
-sim, both or neither. So an absent section is ambiguous on its own: a robot with
-no joints and a robot whose joint read just failed publish the same thing.
-
-A probe that fails therefore names itself, keyed by category, so the fault is on
-the wire rather than only in that peer's log:
-
-```json
-{
-  "peer_id": "arm-a1",
-  "t": 1755900000.123,
-  "degraded": {
-    "hw_joints": {
-      "reason": "ConnectionError",
-      "detail": "Port is in use!",
-      "failures": 37,
-      "for_seconds": 3.7
-    }
-  }
-}
-```
-
-`reason` is the exception's type name, which is what selects the next move: a
-`ConnectionError` from a contended serial port is a different job from a
-`RuntimeError` from an arm nobody calibrated, and both used to arrive as an
-absent `joints`. `detail` is that exception's message, bounded because it comes
-from a driver and the topic publishes ten times a second. `failures` counts the
-ticks that have raised since the fault began and `for_seconds` how long it has
-been failing, so one unlucky read is distinguishable from a standing fault.
-
-The entry is removed on the tick the probe answers again, so the block always
-describes the current state rather than the worst thing that ever happened. The
-key is absent entirely when nothing is degraded.
-
-It also keeps such a peer talking. A snapshot with nothing to report is not
-published, so a hardware-only peer whose one section was `joints` used to go
-silent on this topic for as long as its bus was contended -- while its presence
-heartbeat kept advertising it, and with nothing on the wire to inspect. A
-diagnosis is something to report, so the peer publishes it.
-
-The categories are `hw_joints` (the motor bus), `task_state` (the running
-rollout), `sim_world` and `sim_joints`.
-
-### Which robot is running
-
-A sim peer's snapshot carries a `robots` section naming every robot in its world,
-each with an `active` flag:
-
-```json
-{"robots": {"arm_a": {"active": true}, "arm_b": {"active": false}}}
-```
-
-`active` means *this robot is executing a policy right now*. It is read from the
-same in-flight population the `status` command answers `robots_running` from -
-one call, `_rollouts_in_flight`, which every simulation backend answers from the
-per-robot rollout claim it already keeps - so polling the topic and asking a peer
-directly never disagree, on any backend. A rollout counts however it was
-launched: one submitted in the background by `start_policy` and one being driven
-right now by the blocking `run_policy`, which registers no future, both read
-`true`. The scene's idle arms read `false`, which is what makes the one arm
-running a rollout identifiable, and the flag clears when that policy is stopped
-or its duration expires. Which robots *exist* is a separate question, answered by
-`sim_robots` on the presence topic.
-
-A peer that reports no in-flight population at all - a backend keeping no rollout
-claim, or one whose world has been torn down - still has its robots named, with
-**no `active` key beside them**, and the `status` command answers `unknown`. An
-absent flag reads as "not reported"; `false` would be an affirmative "this robot
-is idle" published on no evidence, which is indistinguishable from a rollout the
-peer cannot see. A population that cannot be read is a failing probe, so it is
-named under `sim_world` in `degraded` rather than answered with a flag nobody
-measured.
-
-### Pose orientation
-
-A robot that exposes a 4x4 SE(3) matrix as its pose provider has it decomposed
-into `x` / `y` / `z`, a planar `theta`, and a `quat`. The quaternion is
-scalar-first `[w, x, y, z]`, unit length, and sign-canonicalized to `w >= 0`
-(`q` and `-q` are the same rotation, so an unchanged pose reads back
-identically). `theta` and `quat` are decomposed from the same matrix, so they
-always agree: both describe the full rotation for every orientation, including
-the half of SO(3) past 120 degrees that a robot turning back the way it came
-lands in.
-
-### Out of contact vs gone
-
-A peer that stops heartbeating is *unreachable* after `PEER_TIMEOUT` (10 s)
-and, by default, deleted from the registry at that same moment. For fleets
-whose silence is planned - a rover in an RF shadow, a warehouse robot crossing
-a Wi-Fi dead zone, a satellite between ground-station passes - deletion answers
-"was it ever here?" with "no": a dispatcher reading absence as loss fails work
-over to another robot, and a fleet view renders a planned silence as a
-vanished peer.
-
-Set `STRANDS_MESH_PEER_RETENTION_S` to keep such peers on the books instead.
-The peer stays in `mesh.peers` with `reachable: false` (a locally-derived
-verdict the peer cannot claim about itself - it shares the collision rule
-`age` has) until its silence exceeds `max(PEER_TIMEOUT, retention)`, at which
-point it is gone for real. Retention off (the default) is byte-identical to
-the historic behavior. The `STRANDS_MESH_MAX_PEERS` eviction cap still
-outranks retention: at the cap, the longest-silent peer is evicted first.
-
-Readers that *act* on a peer record can state the freshness their decision
-needs instead of parsing `age` themselves:
-
-```python
-row = robot.mesh.get_peer(peer_id, max_age_s=30.0)
-if row is None:
-    ...  # unknown OR older than 30 s - for this decision, the same thing
-```
-
-`max_age_s=None` (default) accepts any age - right for displays that render
-staleness themselves. The bound must be positive and finite: `nan` would make
-the comparison answer False for every age, a bound failing open on exactly
-the stale record it was written to refuse, so it is refused instead.
-
-### Rejoining the mesh
-
-`stop()` then `start()` is how a peer leaves and rejoins - after a config
-change, or a hub that went away and came back. The peer keeps its identity
-across it: the `peer_id` is unchanged, and an engaged e-stop lockout stays
-engaged, so a network blip is not a way to forget a stop.
-
-`stop()` waits for the sensor loops before it releases anything they publish
-through, so by the time it returns the peer really is off the wire rather than
-merely flagged as gone. The wait is bounded and shared across the loops: a sensor
-read that blocks - a serial bus that stopped answering is the ordinary cause -
-holds one tick open past the budget, and that loop is then named at WARNING as
-still able to publish once more, instead of the stop being reported as complete.
-
-What does not survive is your own `subscribe()` topics. `start()` re-declares
-the peer's built-in topics from the table above; the subscribers `subscribe()`
-returned are undeclared with the session reference and their callbacks are not
-retained, so a rejoining consumer re-declares its own. `stop()` reports at INFO
-how many it dropped and their names, and `subscribe()` says at WARNING when it
-refuses - naming the topic and whether the peer is off the mesh, has no session,
-or had the declare itself fail - so a rejoin that has not finished is visible
-rather than a silent `None`.
-
-```python
-sim.mesh.stop()
-sim.mesh.start()
-name = sim.mesh.subscribe("strands/*/state", callback=on_state)
-if name is None:
-    ...  # the WARNING says which of the three refusals it was
-```
+What a peer publishes, and how a peer record ages:
+[mesh topics and peer state](mesh-topics.md).
 
 ## Agent-driven mesh
 
@@ -370,11 +125,21 @@ agent("E-STOP all peers")
 ```
 
 !!! warning "A single-peer stop is graded by the answer, not by delivery"
-    `robot_mesh(action="stop", target=...)` reads the envelope `Mesh.send` returns rather than whether the send raised. A peer whose handler reports it did not stop (the same rule `emergency_stop` grades with), a peer-level `type: error` (a lockout, replay or authorization rejection), a `send` precondition error, or no answer inside the budget (the caller's `timeout`, capped at 5s) each make the result `status="error"` naming the peer and its answer, audit the verdict as a failure, and log at `CRITICAL`. A response that reports no verdict either way is not read as a refusal. The timeout reading is deliberately this action's own: a fleet-wide `emergency_stop` keeps counting a silent peer as a gap in its count rather than a refusal.
+    `robot_mesh(action="stop", target=...)` reads the envelope `Mesh.send`
+    returns. A handler reporting it did not stop, a peer-level `type: error`
+    (lockout, replay, authorization), a `send` precondition error, or no answer
+    inside the budget (the caller's `timeout`, capped at 5 s) each make the result
+    `status="error"` naming the peer, audit a failure and log at CRITICAL. A
+    fleet-wide `emergency_stop` instead counts a silent peer as a gap, not a
+    refusal.
 
 !!! warning "An empty peer list is not the same as no discovery"
-    `robot_mesh(action="peers")` and `action="status"` answer from any process, including one with no local `Robot()`/`Simulation()` - such a process hears the fleet only through a robot-less gateway peer the tool brings up on demand. When that gateway does not come up, both actions report `no discovery ran` beside the count rather than an empty fleet nothing listened for, and name `STRANDS_MESH` when the kill switch is why: the standing "create a `Robot()`" remedy would be refused by that same switch. The audit record for the call carries `discovery=none`. A gateway that did come up and heard nothing keeps the plain `0 remote` - that zero is a measurement.
-
+    `action="peers"` and `action="status"` answer from any process, hearing the
+    fleet through a robot-less gateway the tool brings up on demand. When it does
+    not come up, both report `no discovery ran` beside the count, name
+    `STRANDS_MESH` when the kill switch is why, and audit `discovery=none`. A
+    gateway that came up and heard nothing keeps the plain `0 remote` - that zero
+    is a measurement.
 
 ## Mesh teleop
 
@@ -394,39 +159,28 @@ leader.stop_teleop("leader")
 follower.stop_teleop("leader")
 ```
 
-`get_teleop_status()` on either side inspects current teleop state.
+`get_teleop_status()` inspects either side. `frames` / `frames_received`,
+`errors` and `rejected` are cumulative for the life of the publisher or receiver,
+while `hz_actual` measures the session running now - `start()` opens a new
+window. Compare it against `hz_target` to judge the link, the totals to judge the
+device.
 
-The counts it reports -- `frames` / `frames_received`, `errors`, `rejected` and the
-rest -- are cumulative for the life of the publisher or receiver, while
-`hz_actual` is the rate achieved by the session running now: `start()` opens a
-new measurement window, so a stream stopped and started again reports the rate it
-is running at rather than one averaged over both sessions. Compare `hz_actual`
-against `hz_target` to judge a link; read the totals to judge the device.
+Each frame also carries the operator's signals from `get_teleop_events()`
+(`terminate_episode`, `success`, `rerecord_episode`, `is_intervention`). Reading
+them is best-effort - a dead event surface never stops the joint stream - and
+since the field is also `null` for a leader with no event surface, a failed read
+is reported as `event_read_errors` plus a warning.
 
-Each published frame carries the operator's control signals from the
-teleoperator's `get_teleop_events()` - `terminate_episode`, `success`,
-`rerecord_episode`, `is_intervention` - alongside the joint action. Reading them
-is best-effort: a teleoperator whose event surface stops answering (a keyboard
-listener thread that died, a gamepad unplugged mid-session) never stops the joint
-stream the follower is tracking. Because that field is also `null` for a leader
-arm with no event surface at all, a failed read is reported on the publisher
-rather than only on the wire - it increments `event_read_errors` in
-`get_teleop_status()` and logs a warning naming the device and the cause, so an
-operator whose signals are being dropped can see it.
-
-`source_peer_id` and `device_name` are single segments of the mesh key
-expression `strands/{peer_id}/input/{device_name}`, so both must be plain
-identifiers (`[A-Za-z0-9_.-]+`, at most 128 chars). A Zenoh wildcard (`*`,
-`**`) or an embedded `/` is refused with a `ValidationError` rather than
-silently widening the stream: `source_peer_id="**"` would subscribe to
-`strands/**/input/leader` and apply joint commands from every publishing peer,
-not just the configured leader.
+`source_peer_id` and `device_name` are single segments of
+`strands/{peer_id}/input/{device_name}`, so both must be plain identifiers
+(`[A-Za-z0-9_.-]+`, at most 128 chars). A wildcard or embedded `/` is refused
+with a `ValidationError` rather than silently widening the stream:
+`source_peer_id="**"` would apply commands from every publishing peer.
 
 ## Attach a mesh to a Simulation
 
-`Robot(name, mode="sim", mesh=True)` is the normal path: it resolves the
-`STRANDS_MESH` kill switch, starts a client, and stores it on the engine. To
-attach one to a `Simulation` you built yourself, start the client and assign it:
+`Robot(name, mode="sim", mesh=True)` is the normal path. For a `Simulation` you
+built yourself, start the client and assign it:
 
 ```python
 from strands_robots.mesh import init_mesh
@@ -436,63 +190,40 @@ sim = create_simulation("mujoco")
 sim.mesh = init_mesh(sim, peer_id="bench-sim")   # None when mesh is disabled
 ```
 
-The `Simulation(mesh=...)` constructor argument takes that same started client -
-it is not a boolean opt-in switch, and a truthy value with no `.stop()` (notably
-`mesh=True`) is rejected at construction. `cleanup()` stops the client before it
-tears down MuJoCo; a stop that fails is logged and stepped over, so the world,
-renderers and executor are always released.
+`Simulation(mesh=...)` takes that same started client - not a boolean opt-in, so
+a truthy value with no `.stop()` (notably `mesh=True`) is rejected at
+construction. `cleanup()` stops the client before tearing MuJoCo down, stepping
+over a failed stop so the world and renderers are always released.
 
 ## Enable and disable
 
-| Method | Scope |
-|--------|-------|
-| `Robot("so100", mesh=True)` | per-robot opt-in |
-| `STRANDS_MESH=true` (or `1`/`yes`) | process-wide opt-in for a bare `Robot()` |
-| `sim.mesh = init_mesh(sim, ...)` | a `Simulation` built directly (see above) |
-| `STRANDS_MESH=false` | process-wide kill switch, overrides `mesh=True`; also refuses the shared transport, so nothing in the process opens a session or binds the `STRANDS_MESH_PORT` listener |
-| `Robot("so100", mesh=False)` | per-robot opt-out |
-
-Unset `STRANDS_MESH` with no `mesh=` argument is the default, and it leaves the
-mesh off.
-
-Mesh failures are non-fatal - `robot.mesh` becomes `None`; the sim/hardware instance still works.
+`mesh=True` opts one robot in, `mesh=False` opts one out, and
+`STRANDS_MESH=true` (or `1`/`yes`) opts in process-wide for a bare `Robot()`.
+`STRANDS_MESH=false` is a kill switch: it overrides `mesh=True` and refuses the
+shared transport, so nothing binds the `STRANDS_MESH_PORT` listener. A mesh
+failure is non-fatal - `robot.mesh` becomes `None` and the instance still works.
 
 ## Transport selection: `STRANDS_MESH_BACKEND`
 
-The mesh has three transports and one env var chooses between them at runtime.
-An install extra brings the client dependency; the env var picks which client
-the session actually constructs. Both are needed to move off the default:
-the extra without the variable installs code that never runs, and the variable
-without the extra selects a backend whose client is not importable.
+An extra brings a transport's client; this variable picks which one the session
+constructs. Both are needed to leave the default: the extra alone installs code
+that never runs, the variable alone selects an absent client.
 
-| Value | Transport | Extra needed | Notes |
-|-------|-----------|--------------|-------|
-| `zenoh` (default) | Zenoh. The first process on a host listens on `tcp/127.0.0.1:7447` (`STRANDS_MESH_PORT`) and later ones dial it; cross-host peers need `ZENOH_CONNECT=tcp/<host>:7447`. Multicast scouting is off by default. | none - ships with `strands-robots`. | `STRANDS_MESH_MULTICAST=true` opts into LAN scouting on `224.0.0.224:7446` - a group shared with every other Zenoh application on the LAN, not just this fleet, so any of them sees this peer's presence. |
-| `iot` | AWS IoT Core MQTT with X.509 mutual TLS. | `strands-robots[mesh-iot]` (adds `awsiotsdk`). | Requires `STRANDS_IOT_ENDPOINT`, `STRANDS_IOT_THING_NAME`, `STRANDS_IOT_CERT_DIR`. See [Security](security/mesh.md#cross-network-fleets-aws-iot-core). |
-| `bridge` | Zenoh locally, mirrored to AWS IoT for fleet-wide fan-out. | `strands-robots[mesh-iot]`. | A peer speaks Zenoh to its lab neighbours and IoT to the cloud on the same publish. |
+| Value | Transport | Extra | Notes |
+|-------|-----------|-------|-------|
+| `zenoh` (default) | Zenoh: the first process on a host listens on `tcp/127.0.0.1:7447` (`STRANDS_MESH_PORT`) and later ones dial it. | none | Cross-host peers need `ZENOH_CONNECT=tcp/<host>:7447`. `STRANDS_MESH_MULTICAST=true` opts into LAN scouting on `224.0.0.224:7446`, a group shared with every Zenoh application on the LAN. |
+| `iot` | AWS IoT Core MQTT with X.509 mutual TLS. | `[mesh-iot]` | Needs `STRANDS_IOT_ENDPOINT`, `STRANDS_IOT_THING_NAME`, `STRANDS_IOT_CERT_DIR`. See [Security](security/mesh.md#cross-network-fleets-aws-iot-core). |
+| `bridge` | Zenoh locally, mirrored to AWS IoT for fleet-wide fan-out. | `[mesh-iot]` | One publish reaches both. |
 
-```bash
-# Local dev, nothing to set - peers on this host find each other through the local hub port.
-export STRANDS_MESH_BACKEND=zenoh   # or leave unset
-
-# AWS IoT Core - the peers are on different networks.
-export STRANDS_MESH_BACKEND=iot
-
-# Both at once - a lab peer is reachable from a remote operator.
-export STRANDS_MESH_BACKEND=bridge
-```
-
-Case and whitespace are normalised, so `IOT` and `" iot "` both select `iot`.
-An unrecognized value (`STRANDS_MESH_BACKEND=iott`) falls back to `zenoh` and
-is reported once per distinct offending value in the log - the policy is to
-keep the mesh running rather than crash a host on a typo, and to make the
-typo visible without one report per published message. The full vocabulary
-lives in `strands_robots/mesh/_backend_select.py`, which is the sole owner
-both the session gate and the transport factory read from.
+Case and whitespace are normalised, so `IOT` and `" iot "` both select `iot`. An
+unrecognized value falls back to `zenoh` and is reported once per distinct
+offending value: a typo keeps the mesh running and stays visible. The vocabulary
+lives in `strands_robots/mesh/_backend_select.py`, read by both the session gate
+and the transport factory.
 
 ## See also
 
+- [Mesh topics and peer state](mesh-topics.md) - what a peer publishes and how a record ages.
 - [Device Connect](device-connect.md) - the recommended networking layer this mesh backs.
 - [AI agents](agents.md) - drive the mesh with natural language.
-- [Architecture](architecture.md) - where the mesh sits in the module map.
 - [Mesh source](https://github.com/strands-labs/robots/tree/main/strands_robots/mesh) - `core.py`, `session.py`, `audit.py`, `sensors.py`, `input.py`.

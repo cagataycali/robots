@@ -64,6 +64,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from strands_robots.policies._log_safety import sanitize_log_value
 from strands_robots.policies._state_keys import drop_velocity_siblings
 from strands_robots.policies.base import Policy
 from strands_robots.utils import dial_host_error, name_list_error, tcp_port_error
@@ -262,6 +263,11 @@ class Cosmos3Policy(Policy):
                 )
         self._action_mapping = action_mapping or {}
         self.robot_state_keys: list[str] = []
+        # Set when the joint state had to be read from the observation because
+        # none of the declared robot_state_keys named a key in it; run_policy /
+        # eval_policy surface it as generic_state_keys_used telemetry.
+        self.generic_state_keys_used = False
+        self._state_key_mismatch_warned = False
         # Auxiliary rollout outputs (raw action chunk, predicted video / sound)
         # from the last get_actions call, surfaced WITHOUT changing the Policy
         # ABC return type. None until the first inference. Both backends
@@ -560,8 +566,10 @@ class Cosmos3Policy(Policy):
         Priority:
             1. Explicit keys already present in robot_obs / via obs_mapping.
             2. ``robot_state_keys`` (first 7 = joints, a 'gripper'-named key).
-            3. When no ``robot_state_keys`` was declared, the observation's own
-               scalar keys in insertion order. That ordering is position-only:
+            3. When no ``robot_state_keys`` was declared, or none of the declared
+               keys names a key of this observation (:meth:`_resolve_state_order`),
+               the observation's own scalar keys in insertion order. That
+               ordering is position-only:
                :func:`~strands_robots.policies._state_keys.drop_velocity_siblings`
                drops each ``<joint>.vel`` whose ``<joint>`` is present, so a sim
                observation - which emits a velocity companion beside every joint
@@ -574,11 +582,11 @@ class Cosmos3Policy(Policy):
         joints: list[float] = []
         gripper: float | None = None
 
-        # Use declared state-key order when available; an ordering inferred from
-        # the observation is position-only (see drop_velocity_siblings).
-        state_keys = self.robot_state_keys or drop_velocity_siblings(
-            [k for k, v in robot_obs.items() if np.isscalar(v) or np.ndim(v) == 0]
-        )
+        # Use declared state-key order when it names this observation; an
+        # ordering inferred from the observation is position-only (see
+        # drop_velocity_siblings).
+        scalar_keys = [k for k, v in robot_obs.items() if np.isscalar(v) or np.ndim(v) == 0]
+        state_keys = self._resolve_state_order(robot_obs, scalar_keys)
         present = [k for k in state_keys if k in robot_obs]
         # First pass: pull any explicitly gripper/finger-named key as the gripper.
         gripper_keys = [k for k in present if ("gripper" in k.lower() or "finger" in k.lower())]
@@ -618,6 +626,40 @@ class Cosmos3Policy(Policy):
                     f"Available observation keys: {sorted(robot_obs)}"
                 )
             obs["observation/gripper_position"] = np.asarray([[gripper]], dtype=np.float32)
+
+    def _resolve_state_order(self, robot_obs: dict[str, Any], scalar_keys: list[str]) -> list[str]:
+        """Resolve which observation keys hold this step's joint state.
+
+        Honors ``robot_state_keys`` when at least one of them is present in
+        the observation. When none is, the declared keys cannot describe this
+        observation and the order falls back to the observation's own
+        position keys, warning once and setting ``generic_state_keys_used``
+        (the rule the LeRobot provider applies). The canonical case is a sim
+        rollout: ``run_policy`` declares the robot's actuator names, and an arm
+        whose actuators are not named after its joints (the Panda's
+        ``actuator1..8`` beside ``joint1..7``/``finger_joint1``) names no
+        observation key, so every declared key was absent and the 7-joint
+        request was refused as "found 0" with the joints in plain sight.
+        """
+        if not self.robot_state_keys:
+            return drop_velocity_siblings(scalar_keys)
+        if any(k in robot_obs for k in self.robot_state_keys):
+            return self.robot_state_keys
+        order = drop_velocity_siblings(scalar_keys)
+        self.generic_state_keys_used = True
+        if not self._state_key_mismatch_warned:
+            logger.warning(
+                "Cosmos3Policy: none of the configured robot_state_keys %s are present in the "
+                "observation; reading the joint state from the observation's own position keys "
+                "%s instead. Call set_robot_state_keys() with the observed joint names to bind "
+                "them explicitly.",
+                # %s over the sanitized repr renders what %r rendered, with the
+                # observation-derived key names' line breaks escaped (alerts 1281/1282).
+                sanitize_log_value(repr(self.robot_state_keys[:8])),
+                sanitize_log_value(repr(order)),
+            )
+            self._state_key_mismatch_warned = True
+        return order
 
     def _active_action_layout(self) -> list[str]:
         """Column names for the action layout the active backend emits.

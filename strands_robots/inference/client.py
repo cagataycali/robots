@@ -316,15 +316,18 @@ class RemotePolicy(Policy):
         """Open the WebSocket, read the handshake, and flush pending config.
 
         Raises:
-            ConnectionError: When the server cannot be reached, when it
-                accepted the connection and then sent no handshake within
+            ConnectionError: When the server cannot be reached, when the peer
+                accepted the connection but did not complete the WebSocket
+                upgrade (it speaks another wire format), when it accepted the
+                connection and then sent no handshake within
                 ``connect_timeout``, or when the handshake it did send cannot be
                 read as a protocol message (:meth:`_parse`). Those are separate
-                reports on purpose: the second and third servers are listening,
+                reports on purpose: every server but the first is listening,
                 so telling the operator to start one names the only thing that
                 is not wrong. The read itself is bounded, so a peer that never
                 answers cannot hold the caller.
         """
+        from websockets.exceptions import ConnectionClosed, InvalidHandshake
         from websockets.sync.client import connect
 
         try:
@@ -341,6 +344,19 @@ class RemotePolicy(Policy):
                 f"  python -m strands_robots.inference.server --provider <name> "
                 f"--host 0.0.0.0 --port {self.uri.rsplit(':', 1)[-1]}\n"
                 f"Underlying error: {type(exc).__name__}: {exc}"
+            ) from exc
+        except (InvalidHandshake, ConnectionClosed) as exc:
+            # Neither is an ``OSError``: this peer accepted the TCP connection
+            # and answered the WebSocket upgrade with something else - an HTTP
+            # server, a ZMQ sidecar - or closed it mid-upgrade. It is listening, so
+            # the start-one-first hint above names the one thing that is not
+            # wrong; the report is the wrong-peer one ``_parse`` gives a frame
+            # in another wire format, one exchange earlier.
+            raise ConnectionError(
+                f"{_SERVER_NAME} at {self.uri} accepted the connection but did not complete the "
+                f"WebSocket handshake ({type(exc).__name__}: {exc}). A peer that answers here in "
+                "another wire format is not a PolicyServer: check the port serves "
+                "python -m strands_robots.inference.server and not another service."
             ) from exc
 
         # Everything from here on runs with ``self._ws`` already live, so a
