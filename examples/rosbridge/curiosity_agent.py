@@ -24,7 +24,7 @@ standup with Docker, headless, from the community Curiosity workspace:
 
 (or natively: ROS1 Noetic + https://github.com/mark-gl/curiosity_mars_rover_ws
  built with catkin_make, plus ros-noetic-rosbridge-suite. See
- docs/rosbridge-integration.md for the full recipe.)
+ docs/ros2/rosbridge-robot.md for the full recipe.)
 
 Expected output: the agent drives the rover across Mars terrain and reports
 the odometry displacement. Runtime: ~30 seconds (LLM latency + 2 drive legs).
