@@ -36,6 +36,8 @@ agent("Start a GR00T server on port 5555 with so100_dualcam, "
 ```
 
 Everything in `strands_robots/tools/` is a `@tool` the agent can call directly.
+`pose_tool` and `serial_tool` need `pyserial`, which no extra declares - it arrives
+inside `lerobot[feetech]`. See [Hardware tools](hardware/tools.md).
 
 ## Multi-turn
 
@@ -62,7 +64,7 @@ The agent sees the same tool spec in both modes; only the implementation changes
 | Instruction | Action chain |
 |-------------|--------------|
 | "Reset the world" | `reset` |
-| "Add a 5cm red cube" | `add_object(shape='box', size=[0.025]*3, color=[1,0,0,1])` |
+| "Add a 5cm red cube" | `add_object(shape='box', size=[0.05]*3, color=[1,0,0,1])` (full extent) |
 | "Take a picture" | `render` |
 | "Run the policy" | `run_policy(robot_name='so100', ...)` |
 | "What's in the scene?" | `list_objects` + `get_state` |
