@@ -79,6 +79,18 @@ sim.add_robot(name="helper", data_config="so101", position=[0.0, -0.6, 0.0])
 # 'panda' is still where the rollout left it; 'helper' starts at its zero pose
 ```
 
+The one thing a mid-session spawn cannot join is an open dataset recording. A
+recorder declares its columns once, from the robots attached when
+`start_recording` ran, and a LeRobotDataset cannot gain a column later - so
+`add_robot` is refused while a recording is live, naming the frozen schema and
+the order that works:
+
+```python
+sim.stop_recording()                                   # saves the buffered frames
+sim.add_robot(name="helper", data_config="so101")
+sim.start_recording(repo_id="lab/two", root="/data/two")  # declares both robots
+```
+
 To return the *whole* world to its initial state - every robot, every object and
 the clock - call `reset()`, which is what that method is for.
 

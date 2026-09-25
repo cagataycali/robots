@@ -390,6 +390,9 @@ def _isaac_stub() -> Any:
         _cameras={},
         _replicated=False,
         _prim_registry=[],
+        # add_robot asks the shared recording mixin whether a dataset is open;
+        # this stand-in records nothing, so nothing is refused on that ground.
+        _recording_schema_frozen_error=lambda *_a, **_k: None,
         _world=types.SimpleNamespace(scene=types.SimpleNamespace(add=lambda handle: None)),
         _construct_shape_prim=lambda **kwargs: (object(), kwargs.get("size")),
         _validate_mass=SimEngine._validate_mass,

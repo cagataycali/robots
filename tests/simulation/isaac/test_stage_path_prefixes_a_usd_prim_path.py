@@ -108,6 +108,8 @@ def _stub(stage_path: str) -> types.SimpleNamespace:
         _action_controllers={},
         _replicated=False,
         _prim_registry=[],
+        # No world, so no dataset recording for add_robot's shared guard to refuse.
+        _recording_schema_frozen_error=lambda *_a, **_k: None,
     )
 
 

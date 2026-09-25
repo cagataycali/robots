@@ -661,7 +661,6 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """
         if self._world is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
-
         # Refuse a name that cannot address the robot this call creates, on the
         # shared ``entity_name_error`` domain. Unlike the MuJoCo backend this
         # method documents no "derive a label" short form - ``name`` is required
@@ -690,6 +689,13 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             return {"status": "error", "content": [{"text": _oerr}]}
         if name in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{name}' already exists."}]}
+        # A live recording's schema cannot gain columns for this robot, and the
+        # rollout that would discover it either dies inside lerobot or saves the
+        # wrong robot's values. Refused in the shared mixin, so every backend
+        # answers the same way - beside the other world-state gates, so a call
+        # with a bad name or pose still hears about the name or the pose.
+        if err := self._recording_schema_frozen_error("add_robot", name):
+            return err
         if source not in _ROBOT_SOURCES:
             return {
                 "status": "error",

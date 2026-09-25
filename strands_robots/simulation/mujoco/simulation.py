@@ -2225,6 +2225,12 @@ class MuJoCoSimEngine(
         composing a scene incrementally cannot undo what has already happened in
         it. Use :meth:`reset` to return the whole world to its initial state.
 
+        The exception is an open dataset recording, whose feature schema was
+        frozen at ``start_recording`` and cannot gain a column for a robot added
+        afterwards: this call is REFUSED while one is live, naming the frozen
+        schema and the ``stop_recording`` / ``add_robot`` / ``start_recording``
+        order that records both robots.
+
         ``name`` is the instance label used to address this robot later
         (``run_policy(robot_name=...)``, ``get_robot_state``, etc.). It is
         OPTIONAL: when omitted (``None``, or ``""``) it is auto-derived from
@@ -2303,6 +2309,11 @@ class MuJoCoSimEngine(
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_robot"):
+            return err
+        # A live recording's schema cannot gain columns for this robot, and the
+        # rollout that would discover it either dies inside lerobot or saves the
+        # wrong robot's values. Refused in the shared mixin, on every backend.
+        if err := self._recording_schema_frozen_error("add_robot", name):
             return err
 
         # Refuse a name that cannot address the robot this call creates. ``None``

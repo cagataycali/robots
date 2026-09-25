@@ -107,6 +107,8 @@ def _stub(configured: int = _CONFIGURED) -> types.SimpleNamespace:
         _cameras={},
         _action_controllers={},
         _prim_registry=[],
+        # No world, so no dataset recording for add_robot's shared guard to refuse.
+        _recording_schema_frozen_error=lambda *_a, **_k: None,
         _replicated=False,
         _num_envs_active=1,
         _sim_time=0.0,
