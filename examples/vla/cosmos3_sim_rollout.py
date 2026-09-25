@@ -118,7 +118,7 @@ def main() -> int:
     #
     # To actually drive the MuJoCo arm from the diffusers backend, the raw
     # [-1, 1] unified action must be de-normalized + IK'd to joint targets
-    # (the cosmos3-sim extra: mink + mujoco). See docs/policies/cosmos3.md
+    # (the cosmos3-sim extra: mink + mujoco). See docs/policies/cosmos3-diffusers.md
     # "Closing the sim loop":
     #
     #   import mujoco, numpy as np

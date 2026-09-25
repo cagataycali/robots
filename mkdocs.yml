@@ -68,6 +68,7 @@ nav:
   - policies/overview.md
   - GR00T: policies/groot.md
   - Cosmos 3: policies/cosmos3.md
+  - Cosmos 3 in process (diffusers, action modes, sim IK): policies/cosmos3-diffusers.md
   - cuRobo: policies/curobo.md
   - MoveIt2: policies/moveit2.md
   - WBC (Whole-Body-Control): policies/wbc.md

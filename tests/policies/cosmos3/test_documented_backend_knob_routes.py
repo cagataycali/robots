@@ -1,4 +1,4 @@
-"""Every knob ``docs/policies/cosmos3.md`` tells a reader to pass must be passable.
+"""Every knob the cosmos3 pages tell a reader to pass must be passable.
 
 The in-process ``diffusers`` backend is configured on
 :class:`~strands_robots.policies.cosmos3.policy_diffusers.Cosmos3DiffusersBackend`,
@@ -17,8 +17,13 @@ the classes the page actually mentions rather than against a copied list, so a
 knob promoted onto the policy later, or a newly documented one, is graded
 without touching this file.
 
-The page's Python fences are graded the same way in the other direction: every
+The pages' Python fences are graded the same way in the other direction: every
 keyword they pass must be accepted by the call's own receiver.
+
+Two pages document one policy - the provider page and the in-process backend
+page it points at, which carries the safety-checker route and the diffusers
+worked examples - so they are read as one document. The rule graded is about
+the instruction a reader follows, not about which page carries it.
 """
 
 import ast
@@ -36,7 +41,11 @@ from strands_robots.policies.cosmos3.embodiments import get_embodiment
 from strands_robots.registry import build_policy_kwargs
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_DOC = _REPO_ROOT / "docs" / "policies" / "cosmos3.md"
+_DOCS = (
+    _REPO_ROOT / "docs" / "policies" / "cosmos3.md",
+    _REPO_ROOT / "docs" / "policies" / "cosmos3-diffusers.md",
+)
+_DOC_NAMES = " + ".join(p.name for p in _DOCS)
 
 # Classes the page can name as the receiver of a documented keyword.
 _RECEIVERS: dict[str, type] = {
@@ -51,7 +60,8 @@ _MINIMUM_FENCE_KEYWORDS = 15
 
 
 def _page() -> str:
-    return _DOC.read_text(encoding="utf-8")
+    """Return the cosmos3 pages as one document."""
+    return "\n".join(p.read_text(encoding="utf-8") for p in _DOCS)
 
 
 def _named_receivers(page: str) -> dict[str, type]:
@@ -107,7 +117,7 @@ class TestTheDocumentedKnobsNameAReachableReceiver:
         page = _page()
         instructed = _instructed_keywords(page)
         assert len(instructed) >= _MINIMUM_INSTRUCTIONS, (
-            f"premise: found {len(instructed)} 'pass `kw=`' instructions in {_DOC.name}; "
+            f"premise: found {len(instructed)} 'pass `kw=`' instructions in {_DOC_NAMES}; "
             "a clean sweep would prove nothing"
         )
         named = _named_receivers(page)
@@ -116,7 +126,7 @@ class TestTheDocumentedKnobsNameAReachableReceiver:
             reachable |= _params(cls)
         unreachable = sorted(k for k in instructed if k not in reachable)
         assert not unreachable, (
-            f"{_DOC.name} tells the reader to pass {unreachable}, which no receiver it "
+            f"{_DOC_NAMES} tells the reader to pass {unreachable}, which no receiver it "
             f"names accepts. Named receivers: {sorted(named)}. "
             "Name the class the keyword belongs to, or promote the keyword."
         )
@@ -126,11 +136,11 @@ class TestTheDocumentedKnobsNameAReachableReceiver:
         planted = _page() + "\nInstall it and pass `not_a_parameter_of_anything=True` to enable it.\n"
         assert "not_a_parameter_of_anything" in _instructed_keywords(planted)
 
-    @pytest.mark.parametrize("keyword", sorted(_instructed_keywords(_DOC.read_text(encoding="utf-8"))))
+    @pytest.mark.parametrize("keyword", sorted(_instructed_keywords(_page())))
     def test_each_instructed_keyword_resolves_to_exactly_the_class_that_declares_it(self, keyword: str) -> None:
         page = _page()
         owners = sorted(name for name, cls in _named_receivers(page).items() if keyword in _params(cls))
-        assert owners, f"{keyword!r} is instructed by {_DOC.name} but declared by no receiver it names"
+        assert owners, f"{keyword!r} is instructed by {_DOC_NAMES} but declared by no receiver it names"
 
 
 class TestTheInstructionRoundTrips:
@@ -163,7 +173,7 @@ class TestTheInstructionRoundTrips:
         backend_params = _params(Cosmos3DiffusersBackend)
         listed = _listed_backend_knobs(_page())
         unknown = sorted(listed - backend_params)
-        assert not unknown, f"{_DOC.name} lists {unknown} as backend knobs, which Cosmos3DiffusersBackend has not"
+        assert not unknown, f"{_DOC_NAMES} lists {unknown} as backend knobs, which Cosmos3DiffusersBackend has not"
 
         planted = "load and sampling knobs\n> (`resolution_tier`, `not_a_backend_parameter`)"
         assert _listed_backend_knobs(planted) - backend_params == {"not_a_backend_parameter"}
@@ -188,8 +198,8 @@ class TestThePolicySurfaceIsUnchanged:
             accepted = _params(cls)
             graded += len(keywords)
             offenders += [f"{target}({k}=)" for k in sorted(keywords) if k not in accepted]
-        assert graded >= _MINIMUM_FENCE_KEYWORDS, f"premise: graded only {graded} fenced keywords in {_DOC.name}"
-        assert not offenders, f"{_DOC.name} passes keywords its own receiver refuses: {offenders}"
+        assert graded >= _MINIMUM_FENCE_KEYWORDS, f"premise: graded only {graded} fenced keywords in {_DOC_NAMES}"
+        assert not offenders, f"{_DOC_NAMES} passes keywords its own receiver refuses: {offenders}"
 
     def test_the_forwarded_subset_still_reaches_the_backend(self) -> None:
         """``model`` and ``mode`` are the knobs the policy itself carries."""
