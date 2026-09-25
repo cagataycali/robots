@@ -26,8 +26,10 @@ same doctrine as the safety and dispatch layers:
    `disputes_verdict: true` while the verdict stands. Pinned by
    `tests/test_episode_labels.py` and `tests/tools/test_episode_judge.py`.
 
-End-to-end walkthrough: `examples/17_judge_recorded_episodes.py` (record ->
-verdicts -> judge -> agreement measurement -> filtered re-training).
+The judge's own tools and the agreement measurement that qualifies it are on
+[The episode judge](episode-judge.md). End-to-end walkthrough:
+`examples/17_judge_recorded_episodes.py` (record -> verdicts -> judge ->
+agreement measurement -> filtered re-training).
 
 ## The sidecar
 
@@ -40,12 +42,8 @@ rather than misread. Writes are two-phase (temp file + atomic rename).
 Reading is the boundary for a sidecar this build did not write, so the same
 refusal reaches the records: a verdict-bearing field outside its domain, or a
 block that cannot state the thing it exists to state, is reported against the
-file and the episode rather than reinterpreted. That is where the harm lands -
-a `success` spelled `"false"` is truthy, so a deterministically *failed*
-episode would clear `require_success=True`, and a `quality` outside the
-vocabulary reached `filter_episodes` as `tuple.index(x): x not in tuple` and
-`measure_agreement` as a silently understated agreement figure. The descriptive
-fields (`steps`, `cumulative_reward`, `seed`, `note`, `model`, `labeled_at`,
+file and the episode rather than reinterpreted. The descriptive fields
+(`steps`, `cumulative_reward`, `seed`, `note`, `model`, `labeled_at`,
 `success_opinion`) are carried through untouched: nothing branches on them, so
 a surprising value there is a record to read rather than a verdict to refuse.
 
@@ -94,147 +92,13 @@ make a success worth excluding from training data.
 
 `quality` grades the **execution visible in the recording** - smoothness,
 directness, control - never the outcome. The deterministic verdict already
-carries success/failure, and `filter_episodes` gates on that verdict, so a
-grade that re-derives the outcome carries no information in the one place it
-is consulted: with `require_success=True` it only ever discriminates among
-successes, and a jerky or lucky success graded `high` for succeeding is
-exactly the episode the grade exists to exclude. This is not a hypothetical
-drift: measured on a graded five-recording ladder with exact ground truth
-(PR #2486 review), an unsteered VLM's grade tracked the outcome - `low` for
-every failure, `high` only for the success - so `JUDGE_SYSTEM_PROMPT` states
-the contract where the model reads it (a clean failure can be `medium` or
-`high`; a jerky or lucky success can be `low`), and calibration
-(`measure_agreement`) is where to confirm a given judge honours it.
-
-## The judge agent
-
-Four tools drive the labeling, assembled by
-`strands_robots.tools.episode_judge.create_judge_agent` - model-provider
-agnostic (any strands model object; a local OpenAI-compatible VLM endpoint
-works, no cloud dependency required):
-
-- `load_episode` - frame count, features, whether a verdict/label exists.
-- `sample_frames` - evenly spaced state vectors plus a motion summary:
-  `rms_state_jerk` (rms third difference of the state series - jerk is the
-  third derivative, so this is the field that grounds `jerky_motion` from
-  state alone) and `max_state_delta` (peak per-step delta, for spotting
-  discontinuities); `include_images=True` decodes the camera frames into
-  image blocks for a multimodal judge (needs the `lerobot` extra). Every
-  recorded camera is included - one block per camera per sampled position,
-  position-major, cameras in sorted order, with the count and grouping
-  stated in the leading text block and every image block immediately
-  preceded by a text block naming its camera and `frame_index`, so a
-  per-view observation can be attributed to a view and joined back onto that
-  frame's state row. The label sits *before* its image because that is what
-  binds it: with the labels moved after their images and nothing else
-  changed - same bytes, same token count - naming the blocked view scored
-  0/40 rather than 40/40, and every wrong answer was the camera named by the
-  label that then preceded the blocked image, so a text block is read as a
-  caption of the image that follows it. The interleave itself is deliberate,
-  not a missing simplification: the same world motion can be well above a judge's
-  legibility threshold in one view and below it in another (a 185 mm slide
-  measured as 84 px of travel in one camera and 22 px in the other, with
-  the verdict lost on the weaker view alone - PR #2486 review), so
-  sampling one canonical camera would drop verdicts the interleave keeps.
-  The state is always reported as a vector, however narrow: LeRobot stores a
-  one-component state as a scalar column rather than a one-element list, and
-  both are read as the vector `meta/info.json` declares, so a single-DOF
-  recording (a gripper, a linear stage, a pan unit) samples like any other.
-  An episode whose frames are not all readable is refused rather than
-  summarised: both statistics are computed over consecutive frames, so a data
-  shard lost to a truncated download would make the surviving rows read as
-  consecutive across a gap and the summary would measure that gap instead of
-  the robot (on a uniform ramp, losing one middle shard of three took
-  `max_state_delta` from 0.010 to 0.070 and `rms_state_jerk` from 0.000 to
-  6123.7). The refusal names every unreadable shard. `load_episode` reads the
-  episode metadata rather than the frames, so it still describes such an
-  episode - including its true length.
-- `read_predicate_verdict` - the authoritative deterministic verdict.
-- `write_label` - the annotation; structurally unable to touch the verdict.
-
-All four answer with the `{"status", "content"}` envelope even when the
-parquet reader is missing. `pyarrow` ships with the `lerobot` extra, so a judge
-process that only reads datasets recorded elsewhere can be running without it;
-`load_episode` and `sample_frames` then refuse by naming the extra to install,
-and the two sidecar tools (`read_predicate_verdict`, `write_label`) read JSON
-and are unaffected. A judge run over a hundred episodes reports the episode it
-could not read rather than dying on it, so no tool raises past the dispatch.
-
-Two failure modes lean on judge capability rather than on a payload field,
-so calibrate before trusting them: `jerky_motion` is grounded for a
-text-only judge by `rms_state_jerk`, and `camera_occlusion` is a claim about
-*one* view, so it needs a payload in which that view can be named. It now
-can be - each image block carries its camera - and that turned out to be
-what the earlier measurement was reporting rather than judge capability: on
-a three-camera recording with one view fully blocked (0 visible object
-pixels in every sampled frame of that view, 1.2-2.1% of frame in the other
-two), naming the blocked camera from this payload scored 15/40 before the
-per-block labels and 40/40 after, with the same open-weights VLM scoring
-30/30 on the identical frames asked one at a time. Naming the view is not
-the same as emitting the tag over a real dataset, so still calibrate
-(`measure_agreement`) before trusting `camera_occlusion`, and treat any
-direction phrase in a free-text `note` as a statement about a camera frame,
-not about the world.
-The `note` is for humans and is never parsed by anything downstream - the
-filterable channels are the closed vocabularies, and that split is measured,
-not stylistic: on a frozen-arm control clip (arm silhouette travelling ~1 px
-over the whole episode) 11 of 12 sampled free-text descriptions from the same
-VLM said the arm moves toward the object, while the closed-vocabulary pick on
-the identical clip was right at mass 0.95 (PR #2486 review).
-
-```python
-from strands.models import BedrockModel  # or any strands model provider
-from strands_robots.tools.episode_judge import create_judge_agent
-
-judge = create_judge_agent(model=BedrockModel(model_id="us.anthropic.claude-sonnet-4-5-v1:0"))
-judge("Label every episode of the dataset at /data/pick_place. "
-      "Use sample_frames with include_images=True to look at the recording.")
-```
-
-## Calibration before trust
-
-Measure judge/human agreement on a small human-labeled holdout before letting
-the judge filter training data - the measurement ships with the pipeline
-(`measure_agreement`), not as a promise:
-
-```python
-from strands_robots.episode_labels import measure_agreement
-
-report = measure_agreement("/data/pick_place", {
-    3: {"quality": "high", "failure_mode": None},
-    7: {"quality": "low", "failure_mode": "jerky_motion"},
-})
-print(report["quality_agreement"], report["quality_baseline"], report["disagreements"])
-```
-
-Read each agreement fraction against the baseline reported beside it, never on
-its own. Both fractions are accuracies over a column with a class balance, and
-a recorded dataset is mostly clean, so a judge that emitted one label for every
-episode already scores the majority-class frequency having read nothing: on a
-20-episode holdout with a single tagged episode, a judge answering
-`quality="high", failure_mode=None` every time measures
-`quality_agreement 0.95` / `failure_mode_agreement 0.95`, and on a holdout
-where nothing is tagged it measures 1.0. `quality_baseline` and
-`failure_mode_baseline` are what that constant answer earns on the same
-holdout, over exactly the episodes compared, so a fraction at or below its
-baseline says the judge is indistinguishable from one that read nothing -
-however high the fraction reads. A judge is calibrated by the gap, not by the
-fraction. Both baselines are `None` in step with the fraction they accompany.
-
-The gap is also per-tag advice rather than one verdict, because the taxonomy is
-not uniformly legible: measured on a 16-episode two-camera recording with
-disjoint physically-induced ground truth (4 clean, 4 that never reach the
-object, 4 with 30x the commanded jerk, 4 with one camera fully blocked), an
-open-weights VLM asked for the `failure_mode` tag emitted `None` for all 16
-episodes and scored `failure_mode_agreement 0.25` - the exact base rate of the
-4 untagged episodes, and 0.25 was also its baseline. The same model on the same
-payload, asked instead whether a plain-English description of each tag was true
-of the recording, separated the blocked-camera episodes perfectly (0.42-0.67 on
-the four blocked, 0.00 on all twelve others) and the never-reached episodes
-well, and did not separate the jerky ones at all - four evenly spaced stills
-cannot show jitter, and the recorded `rms_state_jerk` moved only 1.8x where the
-commanded jerk moved 30x. So calibrate per tag and filter on the tags whose gap
-is real.
+carries success/failure and `filter_episodes` gates on that verdict, so with
+`require_success=True` a grade only ever discriminates among successes, and a
+jerky or lucky success graded `high` for succeeding is exactly the episode the
+grade exists to exclude. An unsteered judge grades the outcome instead, so
+`JUDGE_SYSTEM_PROMPT` states the contract where the model reads it (a clean
+failure can be `medium` or `high`; a jerky or lucky success can be `low`), and
+`measure_agreement` is where to confirm a given judge honours it.
 
 ## Filtering and re-training
 
@@ -276,3 +140,10 @@ language columns* into the dataset's parquet shards for training
 language-conditioned policies. Episode labels are the complementary layer:
 *episode-level* quality/failure metadata in a sidecar, for deciding **which**
 episodes to train on. The two compose - annotate the episodes the judge kept.
+
+## See also
+
+- [The episode judge](episode-judge.md) - the labeling tools and the calibration
+  step before trusting them.
+- [Verify a dataset](verifying-datasets.md) - the deterministic verdicts labels
+  sit on top of.

@@ -39,7 +39,6 @@ _BUDGET = 1500
 _OVER_BUDGET = frozenset(
     {
         "api-reference.md",
-        "data/episode-labels.md",
         "device-connect.md",
         "hardware/teleoperation.md",
         "inference/remote.md",
