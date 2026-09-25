@@ -1,15 +1,25 @@
 ---
-description: Robot control for Strands agents - name a robot and get one agent-callable tool that runs in MuJoCo simulation by default, and on real hardware when you ask for it.
+description: Name a robot and get one object your code and your agent can both drive - in MuJoCo simulation today, on the real machine when you plug it in.
 ---
 
 # Strands Robots
 
 <figure class="brand-figure" markdown="span">
-  ![Strands Robots: perceive, reason, act, world - the closed control loop around a Strands Agent core](assets/hero_loop.svg){ .brand-svg }
+  ![An SO-101 arm closing its gripper on a red cube and lifting it clear of the table in MuJoCo](https://github.com/user-attachments/assets/b5fb7582-5bcb-4053-a9f7-9f08ec42a411){ loading=lazy }
+  <figcaption>Your first pick - <code>examples/18_so101_pick_and_lift.py</code>, MuJoCo, laptop CPU.</figcaption>
 </figure>
 
-Name a robot, get one tool a [Strands agent](https://strandsagents.com) can drive: **{{n:robots}} robots**
-in MuJoCo simulation by default, on real hardware when you ask for it.
+Name a robot and you get one object your code and your agent can both drive: in simulation
+today, on the real machine when you plug it in.
+
+Written for you if:
+
+- **An arm sits on your desk.** SO-101, Franka, UR5e - one call in sim, the same call with
+  `mode="real"` once the cable is in.
+- **You train policies.** Roll out SmolVLA, GR00T or your own checkpoint, record the episodes
+  as a LeRobot dataset, replay them.
+- **Your agent needs hands.** One tool per robot; the agent picks the action and reads back
+  what happened.
 
 ## Install
 
@@ -33,31 +43,31 @@ The factory returns the backend itself, so the same object is callable from Pyth
 `arm.get_robot_state()`, `arm.run_policy(...)` - and `mode="real"` drives a physical SO-101
 through the same actions.
 
-## Three ways in
+## Next
 
 <div class="grid cards" markdown>
 
--   :material-cube-outline:{ .lg .middle } **Simulate**
+-   :material-play-circle-outline:{ .lg .middle } **Move something**
 
     ---
 
-    Load a scene, add objects and cameras, roll out a policy, record the episode.
+    Install, step a scene, save the first frame, run the pick that lifts a cube.
 
-    [:octicons-arrow-right-24: Simulation](simulation/overview.md)
+    [:octicons-arrow-right-24: Quickstart](getting-started/quickstart.md)
 
--   :material-robot-industrial:{ .lg .middle } **Drive real hardware**
-
-    ---
-
-    Native drivers and LeRobot buses, with an operator gate in front of every call that moves.
-
-    [:octicons-arrow-right-24: Real hardware](hardware/robot-control.md)
-
--   :material-robot-happy-outline:{ .lg .middle } **Give it to an agent**
+-   :material-robot-outline:{ .lg .middle } **Find your robot**
 
     ---
 
-    One tool per robot; the agent chooses the action and reads back what happened.
+    {{n:robots}} of them, {{n:hardware}} with a hardware path: arms, hands, humanoids, rovers.
+
+    [:octicons-arrow-right-24: Robot catalog](robots/index.md)
+
+-   :material-robot-happy-outline:{ .lg .middle } **Hand it to an agent**
+
+    ---
+
+    Give the robot to a Strands agent and ask for the task in plain English.
 
     [:octicons-arrow-right-24: AI agents](agents.md)
 
@@ -66,11 +76,6 @@ through the same actions.
 ## Robots at work
 
 <div class="grid" markdown>
-
-<figure markdown="span">
-  ![SO-101 picking up a cube and lifting it clear of the table in MuJoCo](https://github.com/user-attachments/assets/b5fb7582-5bcb-4053-a9f7-9f08ec42a411){ loading=lazy }
-  <figcaption><code>examples/18_so101_pick_and_lift.py</code> - a reference pick that lifts.</figcaption>
-</figure>
 
 <figure markdown="span">
   ![Unitree G1 walking forward under the whole-body-control policy provider](https://github.com/user-attachments/assets/b313e219-b985-4899-80ac-58582e0d90c5){ loading=lazy }
@@ -101,5 +106,5 @@ from strands_robots.drivers import list_driver_coverage
 list_driver_coverage()["so101"]     # ('lerobot', 'strands')
 ```
 
-[Robot catalog](robots/index.md) · [Policy providers](policies/overview.md) ·
-[Architecture](architecture.md) · [Quickstart](getting-started/quickstart.md)
+Deeper: [Policy providers](policies/overview.md) · [Architecture](architecture.md) ·
+[API reference](api-reference.md) · [Tool reference](reference/tools.md)

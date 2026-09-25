@@ -4,6 +4,10 @@ description: Hand a Robot() to a Strands Agent and control it with plain English
 
 # AI agents
 
+<figure class="brand-figure" markdown="span">
+  ![Perceive, reason, act, world - the closed control loop around a Strands Agent core](assets/hero_loop.svg){ .brand-svg }
+</figure>
+
 A `Robot()` is a Strands tool. Hand it to an `Agent` and it drives the robot for you - picking actions from natural language.
 
 ```python

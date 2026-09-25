@@ -4,8 +4,8 @@ The site and README open with three hand-authored animated SVGs that carry the
 project's visual identity (true-black glassmorphism, brand green ``#00FF77`` +
 cyan ``#22D3EE``):
 
-* ``hero_loop.svg`` - the perceive/reason/act/world control loop, on the docs
-  home page and at the top of the README.
+* ``hero_loop.svg`` - the perceive/reason/act/world control loop, on the AI
+  agents page and at the top of the README.
 * ``architecture_flow.svg`` - the four-layer stack with action/observation
   signal flow, on the architecture page and the README "How it works" section.
 * ``mesh_network.svg`` - peer coordination over the Zenoh mesh, on the mesh
@@ -48,9 +48,9 @@ def test_brand_svgs_are_valid_animated_xml() -> None:
 
 
 def test_docs_pages_embed_their_brand_svg() -> None:
-    """Home, architecture, and mesh pages each embed their SVG via the brand class."""
+    """Agents, architecture, and mesh pages each embed their SVG via the brand class."""
     pairs = {
-        DOCS / "index.md": "hero_loop.svg",
+        DOCS / "agents.md": "hero_loop.svg",
         DOCS / "architecture.md": "architecture_flow.svg",
         DOCS / "mesh.md": "mesh_network.svg",
     }
