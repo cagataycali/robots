@@ -126,6 +126,7 @@ nav:
   - Contributing: contributing.md
 hooks:
   - docs/hooks/coverage_matrix.py
+  - docs/hooks/media.py
   - docs/hooks/numbers.py
   - docs/hooks/robot_cards.py
   - docs/hooks/tool_reference.py
