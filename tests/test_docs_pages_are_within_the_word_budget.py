@@ -41,7 +41,6 @@ _OVER_BUDGET = frozenset(
         "api-reference.md",
         "device-connect.md",
         "reference/configuration.md",
-        "simulation/domain-randomization.md",
     }
 )
 

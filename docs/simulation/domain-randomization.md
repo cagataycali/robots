@@ -34,12 +34,10 @@ sim.randomize(randomize_position=True)   # singular
 ```
 
 **An axis flag must be a boolean.** The four flags select a *posture* - run this
-axis or leave it alone - so each is checked rather than read for truthiness.
-Every non-empty string is truthy, so `"false"`, `"no"`, `"off"` and `"0"` - the
-spellings you reach for when turning an axis off - each turned that axis **on**,
-and the call reported it applied. That is the same guarantee as the misspelled
-key above, one level down: a value an axis cannot be read from can never look
-like a successful randomization either.
+axis or leave it alone - so each is checked rather than read for truthiness. The
+spellings you reach for when turning an axis off - `"false"`, `"no"`, `"off"`,
+`"0"` - are all truthy strings, so each is refused rather than silently turning
+that axis on.
 
 ```python
 sim.randomize(randomize_physics="false")
@@ -78,15 +76,10 @@ it. The commanded pose is a fixed reference, so calling `randomize()` once per
 episode draws independent offsets that always stay inside `position_noise`
 instead of compounding into a random walk that eventually leaves the workspace.
 
-`randomize_lighting` measures its offset the same way, from each light's
-**authored** position - the pose the scene spec declares, which is also what a
-recompile restores - so a per-episode loop keeps every light inside +/-0.5 m of
-where the scene put it. Both axes need a fixed reference for the same reason:
-offsetting the live value makes each call start from the previous call's result,
-and the displacement then grows without limit while every individual draw still
-looks correctly bounded. A light authored 3.5 m above the scene walks 4.7 m away
-over 50 episodes that way, which is 9.4x the advertised bound. Because the
-offset is absolute rather than cumulative, replaying a `seed` now reproduces the
+`randomize_lighting` measures its offset the same way, from each light's **authored**
+position - the pose the scene spec declares, which is also what a recompile restores -
+so a per-episode loop keeps every light inside +/-0.5 m of where the scene put it.
+Because the offset is absolute rather than cumulative, replaying a `seed` reproduces the
 same lighting regardless of how many calls preceded it.
 
 `randomize()` leaves the sim in a forwarded, render-ready state: the next `render()` / `get_observation()` reflects the perturbation immediately, with no manual `step()` in between. This matters for lighting in particular - the renderer reads light positions from the derived `data.light_xpos`, not `model.light_pos`, so a light-position jitter only reaches a render after a forward.
