@@ -165,7 +165,20 @@ class TestPytestDeliversTheVerdictAndThenExits:
         )
         try:
             done = subprocess.run(  # noqa: S603 - fixed argv, no shell
-                [sys.executable, "-m", "pytest", str(generated), "-q", "--no-cov", "-p", "no:cacheprovider"],
+                # ``cwd`` puts ``tests`` on the child's path; ``--rootdir`` keeps
+                # the session out of the common ancestor of the two, which under
+                # xdist walks the worker's whole base temp (#3869).
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    str(generated),
+                    "--rootdir",
+                    str(tmp_path),
+                    "--no-cov",
+                    "-p",
+                    "no:cacheprovider",
+                ],
                 cwd=_ROOT,
                 capture_output=True,
                 text=True,
@@ -176,6 +189,9 @@ class TestPytestDeliversTheVerdictAndThenExits:
             pytest.fail("the child pytest run never exited after the failing wait")
         assert done.returncode != 0, "the abandoned wait should still fail the test"
         assert "1 failed" in done.stdout, done.stdout[-2000:]
+        # The header names the rootdir the session walked. Without ``--rootdir``
+        # it is the common ancestor of this repository and the worker's base temp.
+        assert f"rootdir: {tmp_path}" in done.stdout, done.stdout[:2000]
 
 
 class TestTheDropInContractHolds:

@@ -49,6 +49,17 @@ def _run_pytest(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
     The nested run deliberately does not sit under this repository's rootdir, so
     it inherits none of its ``addopts`` and the only plugin under test is the one
     named on the command line.
+
+    ``--rootdir`` names ``target`` because nothing else does. With no ini file in
+    reach, pytest takes the common ancestor of its cwd and its arguments as the
+    rootdir, and under xdist ``target`` is a ``tmp_path`` whose parent is the
+    worker's base temp - the directory every ``tmp_path`` that worker has made so
+    far lives in. The session's root ``Dir`` collector then ``scandir``s that
+    whole directory to walk one level down to ``target``: measured at 0.18 ms
+    per sibling entry on a hosted runner, which put the seven cells below at
+    8-12 s each late in a worker's run (#3869), against under a second for the
+    same child rooted at its own directory. Under ``-n 2`` each worker collects
+    again, so that row pays the scan three times.
     """
     env = {**os.environ, "PYTHONPATH": str(_REPO_ROOT)}
     env.pop("PYTEST_ADDOPTS", None)
@@ -57,6 +68,8 @@ def _run_pytest(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
             sys.executable,
             "-m",
             "pytest",
+            str(target),
+            "--rootdir",
             str(target),
             "-p",
             "tests.session_truncation",
@@ -185,3 +198,15 @@ class TestARunThatStopsEarlyReportsHowMuchNeverRan:
         result = _run_pytest(tmp_path, "--collect-only")
         assert "5 tests collected" in result.stdout, result.stdout
         assert "session truncated" not in result.stdout, result.stdout
+
+    def test_the_nested_session_is_rooted_at_its_own_directory(self, tmp_path: Path) -> None:
+        # A node id is spelled relative to the rootdir, so a session rooted one
+        # level up - at the worker's base temp, which is what the common-ancestor
+        # rule resolves without ``--rootdir`` - prefixes every id with this
+        # directory's name. That root is also the directory the session walks,
+        # so the prefix is the visible half of a scan over every sibling
+        # ``tmp_path`` the worker has made so far.
+        (tmp_path / "test_five.py").write_text(_FIVE_TESTS)
+        result = _run_pytest(tmp_path, "--collect-only")
+        ids = [line for line in result.stdout.splitlines() if "::" in line]
+        assert ids and all(line.startswith("test_five.py::") for line in ids), result.stdout
