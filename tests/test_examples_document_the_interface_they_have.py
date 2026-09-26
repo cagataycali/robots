@@ -427,7 +427,9 @@ def test_each_unpublished_sdk_is_one_the_library_refuses_to_install() -> None:
         text = refusal("No module named 'x'")
         assert module in text, f"{module} is not what {refusal.__name__} refuses"
         assert "not a strands-robots extra" in text, f"{refusal.__name__} no longer says pip cannot reach {module}"
-        assert module not in _pip_targets(recipe), f"{module} is a pip target of its own recipe; drop it from the roster"
+        assert module not in _pip_targets(recipe), (
+            f"{module} is a pip target of its own recipe; drop it from the roster"
+        )
 
 
 @pytest.mark.parametrize(
