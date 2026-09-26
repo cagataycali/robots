@@ -1,10 +1,15 @@
 """Tests for strands_robots.utils - require_optional lazy import helper."""
 
+from collections.abc import Callable
+from pathlib import Path
+
 import numpy as np
 import pytest
 
+from strands_robots.registry._overlay import user_registry_path
 from strands_robots.utils import (
     coerce_pose_vector,
+    get_assets_dir,
     process_rss_mb,
     require_optional,
     require_optionals,
@@ -270,6 +275,22 @@ class TestRequireOptionals:
 # Path-resolution tests (get_base_dir / get_assets_dir / resolve_asset_path)
 
 
+def _memory_store_dir() -> Path:
+    """Where a default-constructed harness memory store keeps its files."""
+    from strands_robots.tools.harness_memory import HarnessMemory
+
+    return HarnessMemory().storage_dir
+
+
+#: Every path that resolves through the Strands base directory, keyed by the
+#: name a reader of the failure would look up.
+_BASE_DIR_DERIVED: dict[str, Callable[[], Path]] = {
+    "get_assets_dir": get_assets_dir,
+    "user_registry_path": user_registry_path,
+    "harness memory store": _memory_store_dir,
+}
+
+
 class TestPathResolution:
     """Tests for the path-resolution helpers.
 
@@ -354,6 +375,31 @@ class TestPathResolution:
         result = get_assets_dir()
         assert result == default / "assets"
         assert result.is_dir()
+
+    @pytest.mark.parametrize(
+        "name, leaf",
+        [
+            ("get_assets_dir", "assets"),
+            ("user_registry_path", "user_robots.json"),
+            ("harness memory store", "memory"),
+        ],
+    )
+    def test_the_base_dir_override_moves_every_path_derived_from_it(self, name, leaf, tmp_path, monkeypatch):
+        """STRANDS_BASE_DIR relocates the base dir, so everything under it follows.
+
+        An operator sets it to put user data on a volume with room - the asset
+        cache is by far the largest of these directories, so a resolver that
+        keeps its own copy of the default leaves the bytes that motivated the
+        move on the home filesystem, silently.
+        """
+        target = tmp_path / "relocated"
+        monkeypatch.setenv("STRANDS_BASE_DIR", str(target))
+        for owned in ("STRANDS_ASSETS_DIR", "STRANDS_MEMORY_DIR"):
+            monkeypatch.delenv(owned, raising=False)
+
+        resolved = _BASE_DIR_DERIVED[name]()
+
+        assert resolved == target / leaf, f"{name} ignored STRANDS_BASE_DIR and answered {resolved}"
 
     def test_assets_env_does_not_move_base_dir(self, tmp_path, monkeypatch):
         """Documented contract: STRANDS_ASSETS_DIR moves ONLY the assets dir.

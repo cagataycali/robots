@@ -9,6 +9,7 @@ description: Every environment variable the package reads, the asset cache layou
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `STRANDS_ROBOT_MODE` | `Robot()` factory mode: `sim` / `real` / `auto` | `sim` |
+| `STRANDS_BASE_DIR` | Base directory every user-data path resolves under: the asset cache, the user registry (`user_robots.json`), the USD and checkpoint caches, the harness memory. The sandbox roots below keep their own variable | `~/.strands_robots/` |
 | `STRANDS_ASSETS_DIR` | Robot model asset cache directory | `~/.strands_robots/assets/` |
 | `STRANDS_MEMORY_DIR` | Harness memory store (`harness_memory` tool: task solution traces + global success rules / failure models) | `~/.strands_robots/memory/` |
 | `STRANDS_ROBOTS_RENDER_ROOT` | Sandbox directory that `Simulation.render(output_path=...)` may write into; per instance, `Simulation(render_dir=...)` / `Robot(name, render_dir=...)` takes precedence | `~/.strands_robots/renders/` |
@@ -158,9 +159,8 @@ Read by `strands_robots.dashboard.auth`, which fronts the dashboard routes that
 command real hardware. The credential store is the source of truth for whether
 auth is on: the moment a passkey is enrolled, it is. The three durations and the
 two challenge caps are **refused, not defaulted**, when they hold a value the
-module cannot use - each is a knob an operator uses to *narrow* a window, and a
-substituted default lands in the wider direction - so a misspelled value stops
-the server at import rather than surfacing as a failed login later.
+module cannot use: a misspelled value stops the server at import rather than
+surfacing as a failed login later.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -190,7 +190,8 @@ the server at import rather than surfacing as a failed login later.
 ```
 
 Clear with `rm -rf ~/.strands_robots/assets/`; relocate with
-`export STRANDS_ASSETS_DIR=/path/to/dir`.
+`export STRANDS_ASSETS_DIR=/path/to/dir`, or move it with the rest of the user
+data under `STRANDS_BASE_DIR`.
 
 ### CA Pin Rotation Runbook
 
@@ -214,10 +215,6 @@ print(hashlib.sha256(u.urlopen( \
 'https://www.amazontrust.com/repository/AmazonRootCA1.pem' \
 ).read()).hexdigest())"
 ```
-
-**Monitor** for rotations before they bite: AWS announces root-CA changes in its
-security bulletins with a deprecation timeline, so a planned rotation can be
-shipped ahead of the cutover rather than during an outage.
 
 **Rotate (planned):**
 
