@@ -43,11 +43,8 @@ def _isolate_session_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     within one tick; freezing it makes the collision the deterministic case
     instead of one that depends on how fast two calls land.
     """
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
     monkeypatch.setattr(_process_stop.time, "time", lambda: FROZEN)
-    return session_dir
+    return tmp_path / ".sessions"
 
 
 class _FakeProc:

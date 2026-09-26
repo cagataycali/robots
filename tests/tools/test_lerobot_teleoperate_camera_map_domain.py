@@ -56,19 +56,9 @@ pytest.importorskip("psutil")
 pytest.importorskip("lerobot")
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
-from strands_robots.tools import _process_stop  # noqa: E402
 
 build_lerobot_command = tele_mod.build_lerobot_command
 lerobot_teleoperate = tele_mod.lerobot_teleoperate
-
-
-@pytest.fixture(autouse=True)
-def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Keep the module-level session store inside the test's temp dir."""
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
-    return session_dir
 
 
 def _teleop(cameras: Any, **overrides: Any) -> list[str]:
@@ -242,7 +232,7 @@ class TestEveryModeThatEmitsTheMapChecksIt:
     """The map is on the argv of all four modes, so the rule cannot be per-mode."""
 
     @pytest.mark.parametrize("mode", ["teleoperate", "record", "replay", "dagger"])
-    def test_the_refusal_reaches_each_mode(self, mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_the_refusal_reaches_each_mode(self, mode: str) -> None:
         kwargs: dict[str, Any] = {
             "action": "start",
             "robot_type": "so101_follower",

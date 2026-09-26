@@ -31,7 +31,6 @@ import pytest
 pytest.importorskip("psutil")
 
 import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
-from strands_robots.tools import _process_stop  # noqa: E402
 from tests.tool_result_contract import tool_json  # noqa: E402
 
 build_train_command = train_mod.build_train_command
@@ -54,14 +53,6 @@ def _write_dataset(root: Path, total_episodes: int = 10) -> Path:
     meta.mkdir(parents=True, exist_ok=True)
     (meta / "info.json").write_text(json.dumps({"total_episodes": total_episodes}))
     return root
-
-
-@pytest.fixture(autouse=True)
-def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
-    return session_dir
 
 
 class _FakeProc:

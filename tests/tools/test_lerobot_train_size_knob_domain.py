@@ -43,7 +43,6 @@ import pytest
 pytest.importorskip("psutil")
 
 import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
-from strands_robots.tools import _process_stop  # noqa: E402
 from tests.tools.test_lerobot_train import _FakeProc, _write_dataset  # noqa: E402
 
 build_train_command = train_mod.build_train_command
@@ -76,15 +75,6 @@ def _build(**kwargs: Any) -> list[str]:
     base: dict[str, Any] = {"dataset_root": "/data/cubes", "policy_type": "act"}
     base.update(kwargs)
     return build_train_command(**base)
-
-
-@pytest.fixture(autouse=True)
-def _isolated_sessions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Keep the on-disk session store inside the test's own tmp_path."""
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
-    return session_dir
 
 
 class TestARunSizeThatCannotBeHonoredIsRefused:

@@ -146,7 +146,7 @@ def _json_block(result: dict[str, Any]) -> dict[str, Any]:
 
 
 @pytest.fixture
-def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def store(tmp_path: Path):
     """Point both tools' session stores at one file under ``tmp_path``.
 
     Both modules read a module-level ``SESSION_DIR`` when a manager is built, so
@@ -154,8 +154,7 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     whatever machine runs this.
     """
     session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
+    session_dir.mkdir(parents=True, exist_ok=True)
     path = session_dir / "active_sessions.json"
 
     def write(records: dict[str, Any]) -> None:

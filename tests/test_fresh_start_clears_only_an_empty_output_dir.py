@@ -47,7 +47,6 @@ pytest.importorskip("psutil")
 
 import strands_robots.tools.lerobot_train as tool_mod  # noqa: E402
 import strands_robots.training.lerobot as trainer_mod  # noqa: E402
-from strands_robots.tools import _process_stop  # noqa: E402
 from strands_robots.tools.lerobot_train import lerobot_train  # noqa: E402
 from strands_robots.training.base import TrainSpec  # noqa: E402
 from strands_robots.training.lerobot import LerobotTrainer  # noqa: E402
@@ -118,13 +117,6 @@ class _FakeProc:
 
     def __init__(self, pid: int = 4242) -> None:
         self.pid = pid
-
-
-@pytest.fixture(autouse=True)
-def _isolate_session_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
 
 
 class TestTheSharedBoundIsEmptiness:

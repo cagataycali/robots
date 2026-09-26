@@ -36,7 +36,6 @@ import pytest
 pytest.importorskip("psutil")
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
-from strands_robots.tools import _process_stop  # noqa: E402
 
 SessionManager = tele_mod.SessionManager
 lerobot_teleoperate = tele_mod.lerobot_teleoperate
@@ -57,15 +56,6 @@ _LIVE_PID = os.getpid()
 def _texts(result: dict[str, Any]) -> str:
     """Concatenate all content ``text`` fields from a tool result."""
     return "\n".join(item.get("text", "") for item in result.get("content", []) if "text" in item)
-
-
-@pytest.fixture(autouse=True)
-def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Redirect the module-level session dir so tests never touch the real store."""
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
-    return session_dir
 
 
 class _SyncThread:

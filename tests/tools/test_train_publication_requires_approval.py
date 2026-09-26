@@ -45,7 +45,6 @@ import pytest
 pytest.importorskip("psutil")
 
 import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
-from strands_robots.tools import _process_stop  # noqa: E402
 
 lerobot_train = train_mod.lerobot_train
 
@@ -87,10 +86,6 @@ def launcher(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     dataset = tmp_path / "ds"
     (dataset / "meta").mkdir(parents=True)
     (dataset / "meta" / "info.json").write_text(json.dumps({"total_episodes": 10}))
-
-    sessions = tmp_path / ".sessions"
-    sessions.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", sessions)
 
     launched: list[list[str]] = []
 

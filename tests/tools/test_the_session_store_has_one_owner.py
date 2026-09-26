@@ -47,12 +47,14 @@ LIVE_PID = os.getpid()
 
 
 @pytest.fixture(autouse=True)
-def _one_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect the one store both tools read. There is only one name to set."""
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
-    return session_dir
+def _one_store(tmp_path: Path) -> Path:
+    """The one store both tools read.
+
+    The store itself is redirected by the session-wide
+    ``_the_session_store_a_test_reaches_is_its_own`` fixture in
+    ``tests/conftest.py``; this names the directory it chose.
+    """
+    return tmp_path / ".sessions"
 
 
 def _stored(session_dir: Path) -> dict[str, Any]:

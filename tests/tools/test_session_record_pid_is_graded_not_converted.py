@@ -81,16 +81,19 @@ def _record(pid: Any) -> dict[str, Any]:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_both_stores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point both tools' session stores at a temp dir, never the tree."""
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
-    return session_dir
+def _isolate_both_stores(tmp_path: Path) -> Path:
+    """The store both tools read.
+
+    The store itself is redirected by the session-wide
+    ``_the_session_store_a_test_reaches_is_its_own`` fixture in
+    ``tests/conftest.py``; this names the directory it chose.
+    """
+    return tmp_path / ".sessions"
 
 
 def _write_store(session_dir: Path, name: str, pid: Any) -> None:
     """Write a one-record store, the way a hand-edited or damaged file reads."""
+    session_dir.mkdir(parents=True, exist_ok=True)
     (session_dir / "active_sessions.json").write_text(json.dumps({name: _record(pid)}))
 
 
@@ -191,6 +194,7 @@ def test_a_store_whose_pid_field_is_undecodable_still_names_the_record(_isolate_
     handle. The record survives the read either tool takes, because a damaged
     pid is the case where the record is the only thing left naming the process.
     """
+    _isolate_both_stores.mkdir(parents=True, exist_ok=True)
     store = _isolate_both_stores / "active_sessions.json"
     store.write_bytes(b'{"arm": {"pid": "12\xff34", "action": "teleoperate", "start_time": 0.0}}')
 
@@ -270,6 +274,7 @@ def test_an_absent_pid_and_an_unusable_one_are_refused_in_their_own_words(_isola
     operator who cannot tell them apart cannot tell whether to look for a running
     process at all.
     """
+    _isolate_both_stores.mkdir(parents=True, exist_ok=True)
     (_isolate_both_stores / "active_sessions.json").write_text(
         json.dumps({"nopid": _record(None), "bad": _record(4321.5)})
     )

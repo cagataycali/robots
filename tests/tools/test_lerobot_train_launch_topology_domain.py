@@ -50,7 +50,6 @@ pytest.importorskip("psutil")
 
 import strands_robots  # noqa: E402
 import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
-from strands_robots.tools import _process_stop  # noqa: E402
 from tests.tools.test_lerobot_train import _write_dataset  # noqa: E402
 
 build_train_command = train_mod.build_train_command
@@ -113,12 +112,14 @@ def _start(**kwargs: Any) -> dict[str, Any]:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_sessions(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> pathlib.Path:
-    """Keep the on-disk session store inside the test's own tmp_path."""
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
-    return session_dir
+def _isolated_sessions(tmp_path: pathlib.Path) -> pathlib.Path:
+    """The on-disk session store.
+
+    The store itself is redirected by the session-wide
+    ``_the_session_store_a_test_reaches_is_its_own`` fixture in
+    ``tests/conftest.py``; this names the directory it chose.
+    """
+    return tmp_path / ".sessions"
 
 
 class TestALaunchTopologyThatCannotBeHonoredIsRefused:

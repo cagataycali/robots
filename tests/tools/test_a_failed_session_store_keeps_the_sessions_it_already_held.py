@@ -42,7 +42,6 @@ import pytest
 
 pytest.importorskip("psutil")
 
-from strands_robots.tools import _process_stop  # noqa: E402
 from strands_robots.tools._process_stop import (  # noqa: E402
     PID_STARTED_SINCE_BOOT,
     process_started_since_boot,
@@ -117,16 +116,13 @@ def full_disk(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def managers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def managers(tmp_path: Path) -> dict[str, Any]:
     """Both session managers, pointed at one throwaway store.
 
     Both modules compute ``SESSION_DIR`` at import time from ``cwd``; rebind it
     so the tools share a temporary store, which is what they do in production -
     ``lerobot_train`` reuses the teleoperate directory on purpose.
     """
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
     return {"teleop": tele_mod.SessionManager(), "train": train_mod.SessionManager()}
 
 
@@ -272,6 +268,7 @@ def test_an_unwritable_store_is_reported_and_not_raised(
     """
     manager = managers["teleop"]
     blocked = manager.sessions_file.parent / "not_a_directory"
+    blocked.parent.mkdir(parents=True, exist_ok=True)
     blocked.write_text("", encoding="utf-8")
     manager.sessions_file = blocked / "active_sessions.json"
     with caplog.at_level("ERROR"):

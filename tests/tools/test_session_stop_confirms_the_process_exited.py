@@ -62,15 +62,6 @@ MODULES = [
 _SIGNAMES = {signal.SIGTERM: "SIGTERM", signal.SIGKILL: "SIGKILL"}
 
 
-@pytest.fixture(autouse=True)
-def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Redirect both session stores to a temp dir so no test touches the tree."""
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
-    return session_dir
-
-
 def _install(
     monkeypatch: pytest.MonkeyPatch,
     module: Any,

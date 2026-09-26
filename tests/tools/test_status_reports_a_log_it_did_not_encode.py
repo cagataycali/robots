@@ -42,7 +42,6 @@ pytest.importorskip("psutil")
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
 import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
-from strands_robots.tools import _process_stop  # noqa: E402
 
 
 class Tool(NamedTuple):
@@ -76,11 +75,10 @@ TOOLS = [
 UNDECODABLE_LOG = b"INFO step:1.2K loss:0.123\nWARN saving to caf\xe9/checkpoint\n"
 
 
-def _seed(tool: Tool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, log: bytes) -> tuple[str, int]:
+def _seed(tool: Tool, tmp_path: Path, log: bytes) -> tuple[str, int]:
     """One live session whose log file holds ``log``. Returns (name, pid)."""
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
 
     pid = os.getpid()
     assert tool.module.psutil.pid_exists(pid), "premise: the test process must exist"
@@ -100,7 +98,7 @@ def test_status_still_reports_the_session_it_was_asked_about(
     tool: Tool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The pid and the running verdict do not depend on the log being decodable."""
-    name, pid = _seed(tool, tmp_path, monkeypatch, UNDECODABLE_LOG)
+    name, pid = _seed(tool, tmp_path, UNDECODABLE_LOG)
 
     result = tool.status(name)
 
@@ -115,7 +113,7 @@ def test_the_tail_survives_with_the_damage_shown_where_it_is(
     tool: Tool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Substitution, not omission: the decodable log stays and U+FFFD marks the rest."""
-    name, _ = _seed(tool, tmp_path, monkeypatch, UNDECODABLE_LOG)
+    name, _ = _seed(tool, tmp_path, UNDECODABLE_LOG)
 
     text = _text(tool.status(name))
 
@@ -128,7 +126,7 @@ def test_the_tail_survives_with_the_damage_shown_where_it_is(
 @pytest.mark.parametrize("tool", TOOLS, ids=lambda t: t.name)
 def test_a_decodable_log_is_reported_unchanged(tool: Tool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Control: the ordinary case must read exactly as before, U+FFFD-free."""
-    name, _ = _seed(tool, tmp_path, monkeypatch, b"INFO step:1.2K loss:0.123\n")
+    name, _ = _seed(tool, tmp_path, b"INFO step:1.2K loss:0.123\n")
 
     text = _text(tool.status(name))
 

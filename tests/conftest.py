@@ -504,3 +504,46 @@ def _warn_once_memos_are_left_empty() -> Iterator[None]:
         memo = getattr(module, name, None)
         if memo:
             memo.clear()
+
+
+@pytest.fixture(autouse=True)
+def _the_session_store_a_test_reaches_is_its_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let no test read, rewrite or delete the session records of a live run.
+
+    :data:`strands_robots.tools._process_stop.SESSION_DIR` is
+    ``Path.cwd() / ".strands_robots/.sessions"``, resolved as that module is
+    imported - so for a suite run from a project directory it is that project's
+    real store, holding the records of whatever detached teleoperation or
+    training runs the operator has going. Every session verb reaches it:
+    :class:`~strands_robots.tools._process_stop.SessionManager` binds
+    ``SESSION_DIR / "active_sessions.json"`` when it is constructed, and
+    ``remove_session`` deletes out of the one document the store is - so a
+    ``stop`` cell reaches for a record it wrote and takes the file's other
+    entries with it, leaving an arm being driven by a process no verb can now
+    name. ``session_log_path`` creates the directory outright.
+
+    Twenty-four modules redirected it for themselves, eleven in an autouse
+    fixture whose body was the same three lines under five different docstrings
+    and thirteen inline in a helper or a cell. Pointing it here makes the
+    redirect a property of the session rather than twenty-four authors
+    remembering to, and ``tmp_path / ".sessions"`` is the path twenty of them
+    chose, so a module's own helper that seeds or reads that store needs no
+    change.
+
+    The directory is not created, only named: ``session_log_path`` and
+    ``store_sessions`` make it when something actually writes, and the readers
+    report an absent one as *no sessions* - which is the state a test wants. So a
+    session a test never starts costs a name and no I/O, and a cell that lists
+    its own ``tmp_path`` still finds it empty.
+    """
+    # Imported rather than looked up in sys.modules: the redirect has to be in
+    # place before the module under test imports it, which is what happens
+    # whenever nothing pulled it in at collection time. The module imports psutil,
+    # which arrives with the [lerobot] extra - so on a base install there is
+    # nothing to redirect, because every session verb is equally unreachable.
+    try:
+        from strands_robots.tools import _process_stop
+    except ImportError:
+        return
+
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", tmp_path / ".sessions")

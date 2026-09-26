@@ -82,15 +82,6 @@ lerobot_train = train_mod.lerobot_train
 UNUSED_DATASET = "/unused"
 
 
-@pytest.fixture(autouse=True)
-def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Redirect the session store to a temp dir so no test touches the tree."""
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
-    return session_dir
-
-
 def _live_pid() -> int:
     """A pid that certainly exists and that we own: this test process."""
     pid = os.getpid()

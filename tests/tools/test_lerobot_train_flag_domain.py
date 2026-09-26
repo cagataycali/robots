@@ -52,7 +52,6 @@ import pytest
 pytest.importorskip("psutil")
 
 import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
-from strands_robots.tools import _process_stop  # noqa: E402
 from strands_robots.tools.lerobot_train import build_train_command  # noqa: E402
 
 lerobot_train = train_mod.lerobot_train
@@ -205,7 +204,7 @@ class TestTheToolRefusesBeforeItActs:
         return calls
 
     @pytest.fixture
-    def recorded_dataset(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> str:
+    def recorded_dataset(self, tmp_path) -> str:
         """A dataset the ``start`` preflight accepts, so the gate is reachable.
 
         Without it the preflight answers "Dataset metadata not found" first and
@@ -214,7 +213,6 @@ class TestTheToolRefusesBeforeItActs:
         """
         (tmp_path / "ds" / "meta").mkdir(parents=True)
         (tmp_path / "ds" / "meta" / "info.json").write_text('{"total_episodes": 3}', encoding="utf-8")
-        monkeypatch.setattr(_process_stop, "SESSION_DIR", tmp_path / ".sessions")
         (tmp_path / ".sessions").mkdir()
         return str(tmp_path / "ds")
 
@@ -240,10 +238,7 @@ class TestTheToolRefusesBeforeItActs:
         assert f"{flag} must be a boolean" in _text(envelope)
 
     @pytest.mark.parametrize("action", ["list", "status"])
-    def test_an_action_that_reads_no_flag_is_not_refused_for_one(
-        self, action: str, monkeypatch: pytest.MonkeyPatch, tmp_path
-    ) -> None:
-        monkeypatch.setattr(_process_stop, "SESSION_DIR", tmp_path / ".sessions")
+    def test_an_action_that_reads_no_flag_is_not_refused_for_one(self, action: str, tmp_path) -> None:
         (tmp_path / ".sessions").mkdir()
         envelope = _run_tool(action=action, session_name="absent", resume="false")
         assert "must be a boolean" not in _text(envelope)

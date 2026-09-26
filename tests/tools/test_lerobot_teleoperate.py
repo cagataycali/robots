@@ -50,19 +50,6 @@ def _assert_ascii(text: str) -> None:
     assert not offenders, f"non-ASCII characters in tool output: {offenders}"
 
 
-@pytest.fixture(autouse=True)
-def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Redirect the module-level session dir + manager to a temp location.
-
-    The module computes ``SESSION_DIR`` at import time from ``cwd``; rebind it so
-    tests never touch the real working tree and start from an empty store.
-    """
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
-    return session_dir
-
-
 class _FakeProc:
     """Minimal stand-in for ``subprocess.Popen`` / ``run`` results."""
 
@@ -606,14 +593,16 @@ def test_session_manager_keeps_a_finished_session_and_reports_it_not_running(
     """
     mgr = SessionManager()
     # Persist a session with a pid that no longer exists.
+    mgr.sessions_file.parent.mkdir(parents=True, exist_ok=True)
     mgr.sessions_file.write_text(json.dumps({"ghost": {"pid": 999999}}))
     monkeypatch.setattr(_process_stop.psutil, "pid_exists", lambda pid: False)
     assert list(mgr.list_sessions()) == ["ghost"]
     assert session_is_running(mgr.get_session("ghost") or {}) is False
 
 
-def test_session_manager_handles_corrupt_store(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_session_manager_handles_corrupt_store() -> None:
     mgr = SessionManager()
+    mgr.sessions_file.parent.mkdir(parents=True, exist_ok=True)
     mgr.sessions_file.write_text("{ not valid json")
     # Corrupt store degrades to empty rather than raising.
     assert mgr.list_sessions() == {}
@@ -661,7 +650,7 @@ def test_status_unknown_session_errors() -> None:
     assert "not found" in _texts(result)
 
 
-def test_status_running_session_is_ascii(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_status_running_session_is_ascii() -> None:
     mgr = SessionManager()
     mgr.add_session("live", {"pid": os.getpid(), "action": "record", "start_time": 0.0, "robot_type": "so101_follower"})
     result = lerobot_teleoperate(action="status", session_name="live")
@@ -714,7 +703,7 @@ def test_start_foreground_runs_and_is_ascii(monkeypatch: pytest.MonkeyPatch) -> 
     _assert_ascii(_texts(result))
 
 
-def test_list_with_active_session_is_ascii(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_list_with_active_session_is_ascii() -> None:
     mgr = SessionManager()
     mgr.add_session(
         "live", {"pid": os.getpid(), "action": "teleoperate", "start_time": 0.0, "robot_type": "so101_follower"}
@@ -852,7 +841,7 @@ def test_stop_kill_failure_reports_error(monkeypatch: pytest.MonkeyPatch) -> Non
 # ---------------------------------------------------------------------------
 # status - log tail rendering
 # ---------------------------------------------------------------------------
-def test_status_includes_log_tail(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_status_includes_log_tail(tmp_path) -> None:
     """When a session has a readable log file, status echoes its last lines
     inside a fenced block and stays ASCII."""
     log_file = tmp_path / "sess.log"
@@ -1090,12 +1079,12 @@ def test_status_without_name_errors() -> None:
     assert "Session name required" in _texts(result)
 
 
-def test_status_log_tail_read_error_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_status_log_tail_read_error_is_reported() -> None:
     """When the recorded log path exists but cannot be read (here it is a
     directory), status still succeeds and folds the read error into the body
     instead of aborting."""
     log_dir = _process_stop.SESSION_DIR / "unreadable.log"
-    log_dir.mkdir()  # exists() is true but open() raises IsADirectoryError
+    log_dir.mkdir(parents=True)  # exists() is true but open() raises IsADirectoryError
     SessionManager().add_session("withbadlog", {"pid": os.getpid(), "start_time": 0.0, "log_file": str(log_dir)})
     result = lerobot_teleoperate(action="status", session_name="withbadlog")
     assert result["status"] == "success"

@@ -55,7 +55,6 @@ import psutil  # noqa: E402
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
 import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
-from strands_robots.tools import _process_stop  # noqa: E402
 from strands_robots.tools._process_stop import (  # noqa: E402
     _IDENTITY_TOLERANCE_S,
     PID_STARTED_SINCE_BOOT,
@@ -79,14 +78,6 @@ STALE_GAP_S = 3600.0
 def _tool(module: Any) -> Any:
     """The tool callable of a session module."""
     return getattr(module, module.__name__.rsplit(".", 1)[-1])
-
-
-@pytest.fixture(autouse=True)
-def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Point the store both tools share at a temp dir, never a real session."""
-    session_dir = tmp_path / ".sessions"
-    session_dir.mkdir()
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
 
 
 #: The real ``os.kill``, bound before any test can replace it. A cell that pins
