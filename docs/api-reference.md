@@ -38,25 +38,25 @@ from strands_robots.registry import (
 
 | Symbol | What |
 |--------|------|
-| `list_robots(mode)` | Robots filtered on backend support, not on category: `"all"`, `"sim"` (has a simulation asset), `"real"` (has a hardware backend) or `"both"`. An unrecognized mode raises rather than returning the unfiltered list. To group by category use `list_robots_by_category()`. |
-| `resolve_name(name)` | Alias → canonical name. The query is folded by `normalize_robot_name` first, so any spelling of a name or alias reaches the same robot. |
+| `list_robots(mode)` | Robots filtered on backend support, not on category: `"all"`, `"sim"` (has a simulation asset), `"real"` (has a hardware backend) or `"both"`. An unrecognized mode raises. |
+| `resolve_name(name)` | Alias → canonical name, after the `normalize_robot_name` fold. |
 | `get_robot(name)` | Full registry entry dict. |
 | `has_sim(name)` / `has_hardware(name)` | Sim / real support flags. |
 | `get_hardware_type(name)` | LeRobot type string for `mode="real"`. |
-| `list_robots_by_category()` | Group name to the `list_robots()` records in it. Every robot is in exactly one group, so the group sizes sum to `len(list_robots())`. `category` is optional, so a robot that declares none is grouped under `"other"` rather than under a nameless group, and a declared name is stripped of surrounding whitespace so a padded spelling joins its own group. `list_robots()` still reports each robot's own `category` exactly as its entry declares it. |
-| `list_aliases()` | All 121 aliases, keyed by `normalize_robot_name` (so every key is a spelling a folded query can produce), including every GR00T `data_config` spelling (so `data_config` names resolve as robot names). |
-| `normalize_robot_name(name)` | The fold every registry lookup applies: lowercase, trimmed, dashes as underscores. Canonical names, aliases and the uniqueness constraints over both are all keyed by it, so this is the rule that predicts which robot a name reaches. |
+| `list_robots_by_category()` | Group name to the `list_robots()` records in it. Every robot is in exactly one group, so the sizes sum to `len(list_robots())`. `category` is optional: one declaring none groups under `"other"`. |
+| `list_aliases()` | All 121 aliases, keyed by `normalize_robot_name`, including every GR00T `data_config` spelling. |
+| `normalize_robot_name(name)` | The fold every registry lookup applies: lowercase, trimmed, dashes as underscores. Canonical names, aliases and the uniqueness constraints over both are keyed by it. |
 | `format_robot_table()` | Pretty-printed robot table. |
-| `register_robot(name, *, model_xml, ...)` | Add user-defined robot at runtime. Every field after `name` is keyword-only. `model_xml`/`scene_xml` must name a file inside `asset_dir`. Values must be JSON types (a `Path` or a numpy scalar in `hardware` is refused, naming the offending type). |
+| `register_robot(name, *, model_xml, ...)` | Add user-defined robot at runtime. Every field after `name` is keyword-only. `model_xml`/`scene_xml` must name a file inside `asset_dir`. Values must be JSON types (a `Path` or a numpy scalar in `hardware` is refused). |
 | `unregister_robot(name)` | Remove a runtime-registered robot. |
-| Both write the whole overlay | `user_robots.json` is read, changed and stored back in one atomic commit, so a refused or failed write leaves every previously registered robot exactly as it was rather than truncating the document they all share. |
+| Both write the whole overlay | `user_robots.json` is read, changed and stored back in one atomic commit, so a refused or failed write leaves every previously registered robot as it was. |
 | `list_user_robots()` | Names from `register_robot`. |
-| `user_registry_source()` | Raw bytes of `user_robots.json`, or `None` when absent. What the loader keys its hot-reload cache on, so an edit by another writer is seen even when it lands inside one filesystem timestamp tick. |
-| `parse_user_robots(source)` | Robot definitions held in those bytes; empty when absent or malformed. Parsing the bytes the cache was keyed on is what keeps the cached merge and the key describing the same overlay. |
+| `user_registry_source()` | Raw bytes of `user_robots.json`, or `None` when absent; what the loader keys its hot-reload cache on. |
+| `parse_user_robots(source)` | Robot definitions held in those bytes; empty when absent or malformed. |
 | `list_policy_providers()` | Providers from `policies.json`, canonical names only. |
 | `list_policy_aliases()` | Alias/shorthand -> canonical provider, from `policies.json`. Peer of `list_aliases()` for robots. |
 | `resolve_policy(uri)` | URI → provider name. |
-| `build_policy_kwargs(provider, **kw)` | Normalise + validate kwargs. An explicit value beats the provider's registry default; the provider's own key (`host=`) beats the generic parameter (`policy_host=`). Every generic parameter defaults to `None`, meaning "unset", so an omitted one leaves the provider's own default -- registry, else constructor -- in place. |
+| `build_policy_kwargs(provider, **kw)` | Normalise + validate kwargs. An explicit value beats the provider's registry default; the provider's own key (`host=`) beats the generic parameter (`policy_host=`). An omitted generic parameter leaves the provider's own default in place. |
 
 ## `strands_robots.simulation`
 
@@ -73,7 +73,7 @@ from strands_robots.simulation.base import SimEngine
 | `Simulation` | MuJoCo backend - 60+ agent actions. |
 | `SimWorld`, `SimRobot`, `SimObject`, `SimCamera` | Shared dataclasses. |
 | `create_simulation(backend='mujoco')` | Factory for non-`Robot()` construction. |
-| `list_backends()` / `register_backend(name, loader)` | Backend registry. `loader` is a zero-arg callable returning the class (`lambda: MyEngine`), so the import stays deferred. |
+| `list_backends()` / `register_backend(name, loader)` | Backend registry. `loader` is a zero-arg callable returning the class (`lambda: MyEngine`). |
 | `SimEngine` | ABC custom backends implement. |
 
 Selected actions:
@@ -81,8 +81,8 @@ Selected actions:
 | Action | What |
 |--------|------|
 | `run_policy(robot_name, ...)` | Blocking policy rollout. |
-| `start_policy(robot_name, ...)` | Rollout in a background thread on MuJoCo; a blocking passthrough to `run_policy` on the other backends. `describe()['methods']['start_policy']` states which one the engine you hold implements. |
-| `stop_policy(robot_name)` | Cooperatively stop a rollout, then wait (bounded, 1 s) for its worker to exit, so the caller's next action on that robot is admitted. The `json` block reports `was_running` and `exited`: `true` when the worker was joined and is gone, `false` when it is still live after that budget (the text says so, and names the action that stays refused), `null` when there was nothing to join - no rollout, or a blocking `run_policy` driven on its caller's own thread. An empty `robot_name` means the only rollout in flight, and is otherwise refused naming what is running. Refused (naming the class) by a backend with no durable per-robot claim. |
+| `start_policy(robot_name, ...)` | Rollout in a background thread on MuJoCo; a blocking passthrough to `run_policy` on the other backends, which `describe()['methods']['start_policy']` names. |
+| `stop_policy(robot_name)` | Cooperatively stop a rollout, then wait (bounded, 1 s) for its worker to exit. The `json` block reports `was_running` and `exited`, `null` when there was nothing to join. An empty `robot_name` means the only rollout in flight, and is otherwise refused naming what is running. |
 | `run_multi_policy(policies, ...)` | Synchronized multi-robot rollout, one merged frame per step. |
 | `eval_policy(robot_name, n_episodes, ...)` | Multi-episode evaluation. |
 | `evaluate_benchmark(benchmark_name, ...)` | Run registered benchmark. |
@@ -127,7 +127,7 @@ from strands_robots.policies.cosmos3 import Cosmos3Policy
 | `create_policy(provider, **kw)` | Resolve + construct. Accepts `zmq://`, `cosmos3://`, HF `org/model`. |
 | `import_policy_class(provider)` | Lazy import of a provider's class: the registry entry's module, else auto-discovery of `strands_robots.policies.<provider>`. Raises `ImportError` naming the extra when the module's optional dependency is absent, `ValueError` when no provider resolves. |
 | `register_policy(name, loader, aliases)` | Runtime registration. |
-| `list_providers()` | Sorted canonical names of every JSON-registered provider, plus any runtime `register_policy` names and their aliases. Canonical names only for the JSON registry: pair it with `list_aliases()` for the rest. |
+| `list_providers()` | Sorted canonical names of every JSON-registered provider, plus any runtime `register_policy` names and their aliases. |
 | `list_aliases()` | Every provider alias and the canonical name it resolves to, across both registries. Together with `list_providers()` they are every *registered* spelling - not every spelling `create_policy` resolves. A module under `strands_robots.policies` exporting a `Policy` subclass also resolves under its own module name: `composite` (builds through the factory) and `persistent` (resolves; constructed directly). |
 | `list_policy_types()` | `policy_type` strings the installed lerobot resolves; `[]` without lerobot. Discovery peer of `list_providers`. |
 | `UntrustedRemoteCodeError` | Raised when `STRANDS_TRUST_REMOTE_CODE` is required but unset. |
@@ -145,8 +145,7 @@ from strands_robots import (
 )
 # Each tool lives in a submodule of the same name (strands_robots.tools.use_ros),
 # so read it off the package root as above or off its own submodule
-# (from strands_robots.tools.use_ros import use_ros); never off strands_robots.tools,
-# where the name is the submodule once anything has imported it.
+# (from strands_robots.tools.use_ros import use_ros), never off strands_robots.tools.
 # All return {"status": "...", "content": [{"text": "..."}]}
 ```
 
@@ -168,7 +167,7 @@ from strands_robots.dataset_recorder import DatasetRecorder, has_lerobot_dataset
 | `recorder.finalize()` | Flush and close. |
 | `recorder.push_to_hub(tags=None, private=False)` | Upload to HuggingFace. `private` must be a boolean — it selects the repo's visibility. |
 | `has_lerobot_dataset()` | Cached import check (True if `LeRobotDataset` imports). |
-| `lerobot_dataset_import_error()` | `None` if it imports, else why not - names the missing package and the install that supplies it. Use this when reporting to a human. |
+| `lerobot_dataset_import_error()` | `None` if it imports, else why not - names the missing package and the install that supplies it. |
 
 See [Recording](recording.md).
 

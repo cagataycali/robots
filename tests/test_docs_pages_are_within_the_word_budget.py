@@ -38,7 +38,6 @@ _BUDGET = 1500
 #: (a page whose body is a hook token) belongs here permanently.
 _OVER_BUDGET = frozenset(
     {
-        "api-reference.md",
         "device-connect.md",
         "policies/protomotions.md",
         "reference/configuration.md",
