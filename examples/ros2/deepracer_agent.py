@@ -40,4 +40,10 @@ result = agent(
     "seconds, stop, and read the lidar to tell me the nearest obstacle."
 )
 
+# An unapproved gated command pauses the run rather than finishing it: nothing
+# has moved, and the question carries both ways to answer it. Printing that as a
+# completed run would report a drive the car never made.
+if result.stop_reason == "interrupt":
+    raise RuntimeError(f"paused at the command gate - the car did not move: {result.interrupts}")
+
 print(f"Agent completed: {result}")

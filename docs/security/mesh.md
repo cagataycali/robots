@@ -30,7 +30,7 @@ Off a trusted LAN, `STRANDS_MESH_AUTH_MODE=mtls` is required, and it is the defa
 
 ### Transport credentials (mTLS material)
 
-Three filesystem paths are the whole of the Zenoh transport's TLS configuration under the default `mtls` mode, and they are required *together*: with any one unset, `_resolve_tls_paths` raises `ValueError` naming all three and the session never opens rather than silently downgrading to plain TCP. A fleet with no dev flag and no TLS material does not come up at all.
+Three filesystem paths are the whole of the Zenoh transport's TLS configuration under the default `mtls` mode, and they are required *together*: with any one unset, `_resolve_tls_paths` raises `ValueError` naming all three and the session never opens rather than silently downgrading to plain TCP.
 
 - `STRANDS_MESH_TLS_CA` - the CA bundle used to validate peer certificates. It is the trust root that decides which peers are in the fleet, so the ACL's CN pinning is only as good as the CA that issued those CNs.
 - `STRANDS_MESH_TLS_CERT` - this peer's certificate (PEM). Its CN is what an operator ACL pins, so it must match the CN that ACL names.
@@ -40,10 +40,10 @@ None may be a symlink: the loader rejects a symlinked CA, certificate or key by 
 
 ### Fleet routing isolation (namespace)
 
-`STRANDS_MESH_NAMESPACE` is the Zenoh `namespace` field on every peer. It prefixes every mesh key expression - presence, safety, sensors, commands - and Zenoh routes only between peers whose namespaces match, so two fleets with different namespaces cannot exchange application traffic even when their key expressions collide. That is the property fleet isolation rests on when a test rig shares a LAN with production hardware.
+`STRANDS_MESH_NAMESPACE` is the Zenoh `namespace` field on every peer. It prefixes every mesh key expression - presence, safety, sensors, commands - and Zenoh routes only between peers whose namespaces match, so two fleets with different namespaces cannot exchange application traffic even when their key expressions collide - the property fleet isolation rests on.
 
 - Optional; defaults to `strands`. It must be the *same* value on every peer of one fleet: mismatched peers still complete the TLS handshake and then exchange no application traffic, so the failure mode is silent - a peer that appears absent rather than one that raises. Provision it alongside the TLS material.
-- Empty and whitespace-only values fall back to the default, because the alternative would be topics like `//presence` where the leading `/` is the missing namespace and a wildcard a permissive ACL admits could match against them.
+- Empty and whitespace-only values fall back to the default, rather than leaving topics like `//presence` for a wildcard to match.
 - The default tracks the `strands/...` prefix every mesh component emits (`mesh.core`, `mesh.sensors`, `mesh.input`, the IoT path). Change it only across every peer at once - a rolling change leaves one half of a fleet unable to see the other.
 
 Reference: `strands_robots.mesh._zenoh_config.resolve_namespace`.
@@ -55,7 +55,7 @@ An operator ACL supplied via `STRANDS_MESH_ACL_FILE` can be written in one of tw
 - `default_permission: "deny"` **+ explicit `allow` rules** - a *whitelist*. A gap in the rule set silently denies rather than exposes.
 - `default_permission: "allow"` **+ explicit `rules`** - a *blacklist*. A gap - a key expression nobody named - is silently open on the wire.
 
-`_acl_config._load_acl_file` refuses the second shape at ACL load with a `PermissiveACLError` unless `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL` is set to `1`, `true` or `yes` (case-insensitive, whitespace-stripped); any other spelling is not an acknowledgement and nothing raises. The token is read in `_acl_config._parse_acl_bytes`, the step `_load_acl_file` validates the file's bytes in, so the refusal applies to every read of the file. Its message names the path, the rule count and both remediations: rewrite as `deny` plus `allow` rules, or set the token.
+`_acl_config._load_acl_file` refuses the second shape at ACL load with a `PermissiveACLError` unless `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL` is set to `1`, `true` or `yes` (case-insensitive, whitespace-stripped); any other spelling is not an acknowledgement and nothing raises. The refusal applies to every read of the file, and its message names the path, the rule count and both remediations: rewrite as `deny` plus `allow` rules, or set the token.
 
 The token has two further effects on the built-in permissive default (`default_permission: "allow"` with no rules), a different posture reaching a different gate: under `mtls` it is refused by `Mesh._refuse_under_permissive_default_acl` and the token is what lets the wire come up, and the per-session `WARNING` from `session._build_config` that `STRANDS_MESH_ACL_FILE` is unset is suppressed by the same token. So a token set to load a blacklist ACL in CI also waives the start gate: if the ACL file is later dropped from that environment, the fleet runs wire-open with no log signal.
 
