@@ -218,7 +218,11 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
 
             - ``"all"``: every registered robot (no filter).
             - ``"sim"``: robots with a simulation asset (``has_sim``).
-            - ``"real"``: robots with a hardware backend (``has_hardware``).
+            - ``"real"``: robots *declaring* a hardware backend
+              (``has_hardware``). A robot a native driver can build without a
+              declaration is not in this list;
+              :func:`~strands_robots.drivers.list_driver_coverage` is the
+              complete answer.
             - ``"both"``: robots that have BOTH sim and real.
 
     Returns:
@@ -326,7 +330,12 @@ def format_robot_table(max_width: int = 100) -> str:
     """Human-readable table of all robots for CLI/tool output.
 
     The ``Sim`` and ``Real`` columns hold the ASCII token ``"yes"`` when the
-    robot supports that mode and are left blank otherwise. The output is
+    robot declares that mode and are left blank otherwise. ``Real`` reads the
+    registry's ``hardware`` block, the same declaration
+    :func:`has_hardware` reports: a robot a native driver can build without
+    declaring one is left blank here, and
+    :func:`~strands_robots.drivers.list_driver_coverage` is what answers "can
+    this robot be driven for real" completely. The output is
     pure ASCII so it aligns correctly in any monospace terminal and is safe
     to embed in logs and tool responses.
 

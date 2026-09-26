@@ -59,7 +59,7 @@ through the same actions.
 
     ---
 
-    {{n:robots}} of them, {{n:hardware}} with a hardware path: arms, hands, humanoids, rovers.
+    {{n:robots}} of them, {{n:hardware}} declaring a driver: arms, hands, humanoids, rovers.
 
     [:octicons-arrow-right-24: Robot catalog](robots/index.md)
 
@@ -96,9 +96,9 @@ through the same actions.
 
 ## What runs on what
 
-**{{n:robots}} robots** in the registry, {{n:hardware}} of them with a hardware path, across
-{{n:categories}} categories and {{n:sim_backends}} simulation backends. Which driver builds which
-robot is derived from the registries rather than declared:
+**{{n:robots}} robots** in the registry, {{n:hardware}} of them declaring a driver, across
+{{n:categories}} categories and {{n:sim_backends}} simulation backends. More are drivable - a
+native driver needs no declaration - and the join is derived, not typed out:
 
 ```python
 from strands_robots.drivers import list_driver_coverage

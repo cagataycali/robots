@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""End-to-end: every LeRobot robot is reachable through ``strands_robots.Robot``.
+"""End-to-end: every robot a driver can build is reachable through ``strands_robots.Robot``.
 
-``strands_robots`` is a thin natural-language + policy layer over LeRobot's
-hardware drivers. This example walks the strands registry and shows that every
-robot with hardware support resolves a canonical name and a LeRobot
-``robot_type`` - the mapping ``Robot(name, mode="real")`` uses to construct the
-underlying LeRobot driver. It then builds a real Unitree G1 in simulation (no
-hardware, no GPU) to prove the same factory drives the catalog's most complex
-robot.
+``strands_robots`` is a thin natural-language + policy layer over two sets of
+hardware drivers: LeRobot's, and this package's own native ones. This example
+walks the join of both - ``list_driver_coverage()`` - and reports, per robot,
+which ``driver=`` values can build it and the LeRobot ``robot_type`` where one
+exists. A robot reached only by a native driver has no LeRobot type at all, so
+the join is wider than the registry's own ``hardware`` declarations. It then
+builds a real Unitree G1 in simulation (no hardware, no GPU) to prove the same
+factory drives the catalog's most complex robot.
 
 Everything here goes through the ``strands_robots`` public API - the registry
-read helpers and the ``Robot()`` factory - never ``import lerobot`` directly.
-That is the whole point: users program against ``Robot("g1")``, not the driver.
+read helpers, the driver-coverage join and the ``Robot()`` factory - never
+``import lerobot`` directly. That is the whole point: users program against
+``Robot("g1")``, not the driver.
 
 Run:
     python examples/registry/lerobot_hardware_catalog.py        # hardware catalog
@@ -28,27 +30,29 @@ os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 
 def show_catalog() -> int:
-    """List every strands robot with hardware support + its LeRobot type."""
-    from strands_robots.registry import format_robot_table, get_hardware_type, list_robots, resolve_name
+    """List every robot a driver can build, and which driver builds it."""
+    from strands_robots.drivers import list_driver_coverage, list_native_drivers
+    from strands_robots.registry import format_robot_table, get_hardware_type
 
-    hw_robots = list_robots(mode="real")
-    print(f"strands_robots exposes {len(hw_robots)} robot(s) with LeRobot hardware support.")
-    print("Each maps a friendly name -> canonical name -> LeRobot robot_type:\n")
+    coverage = {name: drivers for name, drivers in list_driver_coverage().items() if drivers}
+    native = list_native_drivers()
+    print(f"strands_robots reaches hardware for {len(coverage)} robot(s): the join of")
+    print("LeRobot's robot types and this package's own native drivers.\n")
 
-    header = f"{'name':<16} {'canonical':<16} {'lerobot_type':<24} category"
+    header = f"{'name':<16} {'driver=':<18} {'lerobot_type':<24} native driver"
     print(header)
     print("-" * len(header))
-    for entry in hw_robots:
-        name = entry["name"]
-        canonical = resolve_name(name)
-        lerobot_type = get_hardware_type(canonical) or "?"
-        print(f"{name:<16} {canonical:<16} {lerobot_type:<24} {entry.get('category', '')}")
+    for name, drivers in coverage.items():
+        print(f"{name:<16} {' '.join(drivers):<18} {get_hardware_type(name) or '-':<24} {native.get(name, '-')}")
 
-    print("\nDrive any of them for real with, e.g.:")
+    print("\nDrive a robot with a LeRobot type for real with, e.g.:")
     print("    from strands_robots import Robot")
     print("    arm = Robot('so100', mode='real', port='/dev/ttyACM0')")
     print("    arm('pick up the red cube', policy_port=8080)")
-    print("\nFull registry (sim + real):\n")
+    print("\nA robot listed 'strands' only has no LeRobot type, so name its driver:")
+    print("    arm = Robot('vx300s', mode='real', driver='strands', port='/dev/ttyUSB0')")
+    print("\nFull registry (sim + real). Its Real column is the registry's own hardware")
+    print("declaration, which is narrower than the join above:\n")
     print(format_robot_table())
     return 0
 
@@ -56,10 +60,11 @@ def show_catalog() -> int:
 def show_g1() -> int:
     """Build a Unitree G1 in simulation through the same ``Robot()`` factory.
 
-    The G1 is the catalog's most complex robot - a 29-DOF humanoid. In
-    ``mode='real'`` a background ONNX locomotion controller owns the legs+waist
-    while the agent commands the arms; here we use the default ``mode='sim'`` so
-    it runs in MuJoCo with no hardware and no GPU.
+    The G1 is the catalog's most complex robot - a 29-DOF humanoid. Its registry
+    entry declares ``hardware.driver = "strands"``, so ``mode='real'`` builds the
+    native CycloneDDS driver and motion goes through its FSM-gated tool bundle;
+    here we use the default ``mode='sim'`` so it runs in MuJoCo with no hardware
+    and no GPU.
     """
     from strands_robots import Robot
     from strands_robots.registry import get_hardware_type, get_robot, resolve_name
@@ -80,11 +85,10 @@ def show_g1() -> int:
     finally:
         sim.destroy()
 
-    print("\n  Drive it for real (locomotion + agent-controlled arms):")
-    print("    g1 = Robot('g1', mode='real',")
-    print("               robot_ip='192.168.123.164',")
-    print("               controller='GrootLocomotionController')")
-    print("    # Background thread owns legs+waist; send_action() publishes arm targets.")
+    print("\n  Drive it for real over CycloneDDS:")
+    print("    g1 = Robot('g1', mode='real', port='192.168.123.164')")
+    print("    # network_interface='eth0' by default; motion is FSM-gated, see")
+    print("    # docs/hardware/unitree-g1.md.")
     return 0
 
 
