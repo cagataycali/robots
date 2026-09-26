@@ -38,6 +38,7 @@ from strands_robots.policies.protomotions.policy import ProtoMotionsPolicy
 _ROOT = Path(__file__).resolve().parents[3]
 _PACKAGE = _ROOT / "strands_robots" / "policies" / "protomotions"
 _DOC = _ROOT / "docs" / "policies" / "protomotions.md"
+_CACHE_DOC = _ROOT / "docs" / "policies" / "protomotions-motion-cache.md"
 
 #: Stated locally so these cells are an independent oracle rather than a
 #: restatement of the module constants they grade.
@@ -164,10 +165,12 @@ class TestTheInstallSectionDoesNotPromiseAFetch:
 class TestTheInstallLineCarriesEveryExtraThePageUses:
     """The page's own examples must run from the line it opens with.
 
-    ``[protomotions]`` declares no MuJoCo, and both halves of the page need one:
-    the ``Robot("unitree_g1", mode="sim")`` fence refuses with ``ImportError:
-    'mujoco' is required for MuJoCo simulation``, and ``qpos_to_motion_data``
-    parses the reference MJCF through it. The extras table is the independent
+    ``[protomotions]`` declares no MuJoCo, and both halves of the pipeline need
+    one: the ``Robot("unitree_g1", mode="sim")`` fence on this page refuses with
+    ``ImportError: 'mujoco' is required for MuJoCo simulation``, and
+    ``qpos_to_motion_data``, documented on :data:`_CACHE_DOC`, parses the
+    reference MJCF through it - which is why the one install line this family
+    opens with has to carry both extras. The extras table is the independent
     oracle here - these cells read it rather than restating the sentence.
     """
 
@@ -197,12 +200,15 @@ class TestTheReferenceMJCFIsNamed:
     none, so a page that states the requirement without naming a file leaves the
     reader to guess among five upstream candidates - four of which need a Git LFS
     mesh tree beside them, and one of which the bridge refuses outright.
+
+    The bridge is documented on :data:`_CACHE_DOC`, which is read whole: the
+    requirement and the file that satisfies it have to reach the same reader,
+    wherever in that page they are stated.
     """
 
     @staticmethod
     def _bridge_section() -> str:
-        text = " ".join(_DOC.read_text(encoding="utf-8").split())
-        return text.split("## Bridging a qpos clip", 1)[-1].split("## ", 1)[0]
+        return " ".join(_CACHE_DOC.read_text(encoding="utf-8").split())
 
     @pytest.mark.parametrize(
         "needle",
