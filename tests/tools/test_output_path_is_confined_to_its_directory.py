@@ -40,11 +40,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pytest
 
 import strands_robots.tools.lerobot_camera as cam_mod
 from strands_robots._path_validation import resolve_output_path, validate_save_path
+from tests.tools._camera_stand_in import Camera, stands_in_for
 
 # Names that resolve outside the directory they are joined onto. The first two are
 # the realistic shapes - a traversal in the name, and a traversal reached through
@@ -136,34 +136,10 @@ class TestResolveOutputPath:
             resolve_output_path(root, name)
 
 
-class _Recorder:
-    """A camera stand-in: connects, yields one frame, records nothing else."""
-
-    def __init__(self) -> None:
-        self.width = 8
-        self.height = 6
-        self.fps = 30
-        self.color_mode = type("_M", (), {"value": "RGB"})()
-
-    def connect(self, warmup: bool = True) -> None:
-        return None
-
-    def disconnect(self) -> None:
-        return None
-
-    def read(self) -> np.ndarray:
-        return np.zeros((6, 8, 3), dtype=np.uint8)
-
-    def async_read(self, timeout_ms: float = 1000) -> np.ndarray:
-        return self.read()
-
-
 @pytest.fixture
-def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
+def recorder(monkeypatch: pytest.MonkeyPatch) -> Camera:
     """Install the stand-in for every camera the tool opens."""
-    cam = _Recorder()
-    monkeypatch.setattr(cam_mod, "_create_camera", lambda *a, **k: cam)
-    return cam
+    return stands_in_for(monkeypatch)
 
 
 def _text(result: dict[str, Any]) -> str:
@@ -190,7 +166,7 @@ class TestTheCameraToolRefusesAnEscapingName:
     @pytest.mark.parametrize("action", ["capture", "record"])
     @pytest.mark.parametrize("filename", ["../escaped", "../../../../tmp/escaped"])
     def test_an_escaping_filename_is_refused(
-        self, recorder: _Recorder, tmp_path: Path, action: str, filename: str
+        self, recorder: Camera, tmp_path: Path, action: str, filename: str
     ) -> None:
         result = cam_mod.lerobot_camera(
             action=action,
@@ -205,7 +181,7 @@ class TestTheCameraToolRefusesAnEscapingName:
         assert result["status"] == "error", result
         assert "outside the directory it must be written into" in _text(result)
 
-    def test_an_escaping_format_is_refused(self, recorder: _Recorder, tmp_path: Path) -> None:
+    def test_an_escaping_format_is_refused(self, recorder: Camera, tmp_path: Path) -> None:
         """The extension is the other half of the same composed name."""
         result = cam_mod.lerobot_camera(
             action="capture",
@@ -217,7 +193,7 @@ class TestTheCameraToolRefusesAnEscapingName:
         assert result["status"] == "error", result
         assert "outside the directory it must be written into" in _text(result)
 
-    def test_an_escaping_filename_is_refused_for_a_batch(self, recorder: _Recorder, tmp_path: Path) -> None:
+    def test_an_escaping_filename_is_refused_for_a_batch(self, recorder: Camera, tmp_path: Path) -> None:
         result = cam_mod.lerobot_camera(
             action="capture_batch",
             camera_ids=[0],
@@ -229,7 +205,7 @@ class TestTheCameraToolRefusesAnEscapingName:
         assert result["status"] == "error", result
         assert "outside the directory it must be written into" in _text(result)
 
-    def test_nothing_is_written_outside_the_directory(self, recorder: _Recorder, tmp_path: Path) -> None:
+    def test_nothing_is_written_outside_the_directory(self, recorder: Camera, tmp_path: Path) -> None:
         """The property under test, asserted on the filesystem rather than the message."""
         root = tmp_path / "captures"
         before = sorted(p.name for p in tmp_path.iterdir())
@@ -251,7 +227,7 @@ class TestTheCameraToolStillHonorsEveryWorkingName:
 
     @pytest.mark.parametrize("format", ["jpg", "png", "bmp", "tiff"])
     def test_an_unlisted_extension_is_still_honored(
-        self, recorder: _Recorder, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, format: str
+        self, recorder: Camera, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, format: str
     ) -> None:
         written: list[str] = []
         monkeypatch.setattr(cam_mod.cv2, "imwrite", _recording_imwrite(written))
@@ -269,7 +245,7 @@ class TestTheCameraToolStillHonorsEveryWorkingName:
         assert written and written[0].endswith(f"shot.{format}")
 
     def test_a_filename_with_a_space_is_still_honored(
-        self, recorder: _Recorder, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self, recorder: Camera, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """A containment check has no reason to refuse this; an allowlist would."""
         written: list[str] = []

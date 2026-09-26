@@ -20,6 +20,7 @@ import pytest
 
 import strands_robots.tools.lerobot_camera as cam_mod
 from strands_robots.tools.lerobot_camera import lerobot_camera
+from tests.tools._camera_stand_in import Camera, stands_in_for
 
 
 def _texts(result: dict[str, Any]) -> str:
@@ -33,42 +34,10 @@ def _assert_ascii(text: str) -> None:
     assert not offenders, f"non-ASCII characters in tool output: {offenders}"
 
 
-class FakeCamera:
-    """Minimal stand-in for a LeRobot camera object.
-
-    Records connect/disconnect calls and serves a fixed RGB frame for both the
-    synchronous ``read`` and asynchronous ``async_read`` paths.
-    """
-
-    def __init__(self, width: int = 8, height: int = 6, fps: int = 30) -> None:
-        self.width = width
-        self.height = height
-        self.fps = fps
-        self.color_mode = SimpleNamespace(value="RGB")
-        self.rotation: Any = None
-        self.connected = False
-        self.disconnect_calls = 0
-
-    def connect(self, warmup: bool = True) -> None:
-        self.connected = True
-
-    def read(self) -> np.ndarray:
-        return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-    def async_read(self, timeout_ms: float = 1000) -> np.ndarray:
-        return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-    def disconnect(self) -> None:
-        self.connected = False
-        self.disconnect_calls += 1
-
-
 @pytest.fixture
-def fake_camera(monkeypatch: pytest.MonkeyPatch) -> FakeCamera:
+def fake_camera(monkeypatch: pytest.MonkeyPatch) -> Camera:
     """Patch ``_create_camera`` so every action uses a hardware-free camera."""
-    camera = FakeCamera()
-    monkeypatch.setattr(cam_mod, "_create_camera", lambda *a, **k: camera)
-    return camera
+    return stands_in_for(monkeypatch)
 
 
 # --- dispatcher routing + required-parameter validation -------------------
@@ -207,7 +176,7 @@ def test_discover_uses_ascii_bullets(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize("async_mode,expected", [(True, "Async mode: on"), (False, "Async mode: off")])
 def test_capture_single_reports_async_state_ascii(
-    fake_camera: FakeCamera, tmp_path, async_mode: bool, expected: str
+    fake_camera: Camera, tmp_path, async_mode: bool, expected: str
 ) -> None:
     result = lerobot_camera(
         action="capture",
@@ -225,7 +194,7 @@ def test_capture_single_reports_async_state_ascii(
     assert any("image" in item for item in result["content"])
 
 
-def test_capture_batch_reports_async_state_ascii(fake_camera: FakeCamera, tmp_path) -> None:
+def test_capture_batch_reports_async_state_ascii(fake_camera: Camera, tmp_path) -> None:
     result = lerobot_camera(
         action="capture_batch",
         camera_ids=[0, 1],
@@ -239,7 +208,7 @@ def test_capture_batch_reports_async_state_ascii(fake_camera: FakeCamera, tmp_pa
     _assert_ascii(body)
 
 
-def test_record_video_summary_ascii(fake_camera: FakeCamera, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_record_video_summary_ascii(fake_camera: Camera, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     writer = SimpleNamespace(write=lambda f: None, release=lambda: None)
     monkeypatch.setattr(cam_mod.cv2, "VideoWriter", lambda *a, **k: writer)
     monkeypatch.setattr(cam_mod.cv2, "VideoWriter_fourcc", lambda *a, **k: 0, raising=False)
@@ -261,7 +230,7 @@ def test_record_video_summary_ascii(fake_camera: FakeCamera, tmp_path, monkeypat
     _assert_ascii(body)
 
 
-def test_preview_summary_ascii(fake_camera: FakeCamera, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_preview_summary_ascii(fake_camera: Camera, monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("imshow", "putText", "destroyAllWindows"):
         monkeypatch.setattr(cam_mod.cv2, name, lambda *a, **k: None, raising=False)
     monkeypatch.setattr(cam_mod.cv2, "waitKey", lambda *a, **k: 0, raising=False)
@@ -274,7 +243,7 @@ def test_preview_summary_ascii(fake_camera: FakeCamera, monkeypatch: pytest.Monk
     _assert_ascii(body)
 
 
-def test_performance_summary_uses_ascii_labels(fake_camera: FakeCamera) -> None:
+def test_performance_summary_uses_ascii_labels(fake_camera: Camera) -> None:
     result = lerobot_camera(action="test", camera_id=0, async_mode=False)
     assert result["status"] == "success"
     body = _texts(result)
@@ -286,7 +255,7 @@ def test_performance_summary_uses_ascii_labels(fake_camera: FakeCamera) -> None:
 
 
 @pytest.mark.parametrize("warmup,expected", [(True, "Warmup: on"), (False, "Warmup: off")])
-def test_configure_reports_warmup_state_ascii(fake_camera: FakeCamera, tmp_path, warmup: bool, expected: str) -> None:
+def test_configure_reports_warmup_state_ascii(fake_camera: Camera, tmp_path, warmup: bool, expected: str) -> None:
     result = lerobot_camera(
         action="configure",
         camera_id=0,
@@ -366,7 +335,7 @@ def test_discover_tolerates_realsense_probe_failure(monkeypatch: pytest.MonkeyPa
 def test_list_probes_specific_camera_success(monkeypatch: pytest.MonkeyPatch) -> None:
     """``list`` with a camera_id connects to that camera and reports its actual
     resolution / fps / color mode."""
-    probe = FakeCamera(width=1920, height=1080, fps=60)
+    probe = Camera(width=1920, height=1080, fps=60)
     monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", SimpleNamespace)
     monkeypatch.setattr(cam_mod, "OpenCVCamera", lambda config: probe)
 
@@ -433,7 +402,7 @@ def test_list_unknown_camera_type_is_reported(monkeypatch: pytest.MonkeyPatch) -
 # --- capture / batch save-failure paths ------------------------------------
 
 
-def test_capture_reports_save_failure(fake_camera: FakeCamera, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_capture_reports_save_failure(fake_camera: Camera, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When cv2.imwrite returns False the capture is reported as an error with
     the target path, not a false success."""
     monkeypatch.setattr(cam_mod.cv2, "imwrite", lambda *a, **k: False)
@@ -446,7 +415,7 @@ def test_capture_reports_save_failure(fake_camera: FakeCamera, tmp_path, monkeyp
 
 
 def test_capture_batch_all_fail_returns_error_status(
-    fake_camera: FakeCamera, tmp_path, monkeypatch: pytest.MonkeyPatch
+    fake_camera: Camera, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """If every camera fails to save, the batch reports overall error status and
     a 0/N success summary."""
@@ -459,7 +428,7 @@ def test_capture_batch_all_fail_returns_error_status(
 
 
 def test_capture_batch_defaults_camera_ids_when_omitted(
-    fake_camera: FakeCamera, tmp_path, monkeypatch: pytest.MonkeyPatch
+    fake_camera: Camera, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Omitting camera_ids falls back to the default robot camera set rather
     than failing."""
@@ -479,7 +448,7 @@ def test_capture_batch_defaults_camera_ids_when_omitted(
 # --- performance test async branch -----------------------------------------
 
 
-def test_performance_async_branch_reports_speedup(fake_camera: FakeCamera) -> None:
+def test_performance_async_branch_reports_speedup(fake_camera: Camera) -> None:
     """With async_mode the performance test also measures async capture and
     reports a sync/async speedup figure."""
     result = lerobot_camera(action="test", camera_id=0, async_mode=True)
@@ -582,18 +551,6 @@ def test_list_realsense_available_reports_capabilities(monkeypatch: pytest.Monke
 # --- error-dict contract: hardware failures must degrade, never raise -------
 
 
-class _ExplodingCamera:
-    """A camera whose construction succeeds but whose ``connect`` fails.
-
-    Models a device that vanishes between enumeration and use (cable yanked,
-    busy handle, driver fault) - the failure mode the per-action error wrappers
-    exist to absorb.
-    """
-
-    def connect(self, warmup: bool = True) -> None:
-        raise RuntimeError("device disappeared")
-
-
 @pytest.mark.parametrize(
     "action,expected_phrase",
     [
@@ -610,7 +567,9 @@ def test_single_camera_actions_return_error_dict_on_hardware_failure(
     """Every single-camera action must catch a mid-operation hardware fault and
     return a structured ``{"status": "error"}`` dict - the agent-tool contract
     forbids raising past the dispatcher."""
-    monkeypatch.setattr(cam_mod, "_create_camera", lambda *a, **k: _ExplodingCamera())
+    # A device that vanishes between enumeration and use: constructed, then its
+    # connect fails - the fault the per-action error wrappers exist to absorb.
+    stands_in_for(monkeypatch, connect_error=RuntimeError("device disappeared"))
     result = lerobot_camera(action=action, camera_id=0, save_path=str(tmp_path))
     assert result["status"] == "error"
     body = _texts(result)
@@ -622,7 +581,9 @@ def test_single_camera_actions_return_error_dict_on_hardware_failure(
 def test_capture_batch_aggregates_per_camera_failures(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     """When each camera in a batch fails, the per-camera errors are aggregated
     into a single error-status result rather than propagating an exception."""
-    monkeypatch.setattr(cam_mod, "_create_camera", lambda *a, **k: _ExplodingCamera())
+    # A device that vanishes between enumeration and use: constructed, then its
+    # connect fails - the fault the per-action error wrappers exist to absorb.
+    stands_in_for(monkeypatch, connect_error=RuntimeError("device disappeared"))
     result = lerobot_camera(
         action="capture_batch",
         camera_ids=[0, 1],
@@ -634,7 +595,7 @@ def test_capture_batch_aggregates_per_camera_failures(monkeypatch: pytest.Monkey
     _assert_ascii(body)
 
 
-def test_capture_batch_rejects_path_traversal(fake_camera: FakeCamera) -> None:
+def test_capture_batch_rejects_path_traversal(fake_camera: Camera) -> None:
     """A traversal ``save_path`` is rejected by validation and surfaces as a
     batch-level error dict, never an unhandled ValueError."""
     result = lerobot_camera(
@@ -652,7 +613,7 @@ def test_capture_batch_rejects_path_traversal(fake_camera: FakeCamera) -> None:
 
 
 def test_record_async_mode_drives_progress_branch(
-    fake_camera: FakeCamera, tmp_path, monkeypatch: pytest.MonkeyPatch
+    fake_camera: Camera, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Recording in async mode reads via ``async_read`` and emits a periodic
     progress line once a full second of frames is captured."""
@@ -677,7 +638,7 @@ def test_record_async_mode_drives_progress_branch(
     _assert_ascii(body)
 
 
-def test_preview_async_fps_report_and_quit_key(fake_camera: FakeCamera, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_preview_async_fps_report_and_quit_key(fake_camera: Camera, monkeypatch: pytest.MonkeyPatch) -> None:
     """Async preview reads via ``async_read``, reports a live-FPS line after a
     second elapses, and honours the 'q' quit key to break the loop early."""
     for name in ("imshow", "putText", "destroyAllWindows"):
@@ -707,7 +668,7 @@ def test_preview_async_fps_report_and_quit_key(fake_camera: FakeCamera, monkeypa
 
 
 def test_capture_batch_uses_custom_filename_prefix(
-    fake_camera: FakeCamera, tmp_path, monkeypatch: pytest.MonkeyPatch
+    fake_camera: Camera, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A caller-supplied ``filename`` becomes the per-camera file prefix instead
     of the default ``batch_<type>_...`` naming."""
@@ -729,7 +690,7 @@ def test_capture_batch_uses_custom_filename_prefix(
     assert written and "mission_0_" in written[0]
 
 
-def test_configure_emits_rotation_when_camera_exposes_it(fake_camera: FakeCamera, tmp_path) -> None:
+def test_configure_emits_rotation_when_camera_exposes_it(fake_camera: Camera, tmp_path) -> None:
     """A camera that reports a non-null ``rotation`` has that rotation surfaced
     in the configuration summary."""
     fake_camera.rotation = SimpleNamespace(value="ROTATE_90")

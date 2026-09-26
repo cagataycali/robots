@@ -32,7 +32,6 @@ import glob
 import inspect
 import json
 import os
-import time
 from typing import Any
 
 import numpy as np
@@ -42,6 +41,7 @@ import pytest
 # for the roster's signature scan, so every name is reached through this alias.
 import strands_robots.tools.lerobot_camera as cam_mod
 from strands_robots.utils import boolean_flag_error
+from tests.tools._camera_stand_in import Camera, stands_in_for
 
 # One value per rejection reason of the shared posture domain: the two spellings
 # of *off* that read as *on*, the integers that pass as a silent posture, and the
@@ -52,44 +52,11 @@ BAD_POSTURES: tuple[Any, ...] = ("false", "no", 0, 1, None, [])
 ACTION_FLAGS = tuple((action, flag) for action, flags in cam_mod._ACTION_POSTURE_FLAGS.items() for flag in flags)
 
 
-class _Camera:
-    """A camera stand-in recording every posture and read path it is driven with."""
-
-    def __init__(self) -> None:
-        self.warmups: list[Any] = []
-        self.sync_reads = 0
-        self.async_reads = 0
-        self.width = 8
-        self.height = 6
-        self.fps = 30
-        self.color_mode = type("_M", (), {"value": "RGB"})()
-        self.rotation: Any = None
-
-    def connect(self, warmup: bool = True) -> None:
-        self.warmups.append(warmup)
-
-    def disconnect(self) -> None:
-        return None
-
-    def _frame(self) -> np.ndarray:
-        # A measurable span keeps the tool's own rate arithmetic off zero.
-        time.sleep(0.0005)
-        return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-    def read(self) -> np.ndarray:
-        self.sync_reads += 1
-        return self._frame()
-
-    def async_read(self, timeout_ms: float = 1000) -> np.ndarray:
-        self.async_reads += 1
-        return self._frame()
-
-
 @pytest.fixture
-def camera(monkeypatch: pytest.MonkeyPatch) -> _Camera:
+def camera(monkeypatch: pytest.MonkeyPatch) -> Camera:
     """Substitute the camera factory and neutralise every sink a handler writes to."""
-    cam = _Camera()
-    monkeypatch.setattr(cam_mod, "_create_camera", lambda *a, **k: cam)
+    # A measurable read span keeps the tool's own rate arithmetic off zero.
+    cam = stands_in_for(monkeypatch, read_seconds=0.0005)
     writer = type("_W", (), {"write": lambda self, f: None, "release": lambda self: None})()
     monkeypatch.setattr(cam_mod.cv2, "VideoWriter", lambda *a, **k: writer)
     monkeypatch.setattr(cam_mod.cv2, "VideoWriter_fourcc", lambda *a, **k: 0, raising=False)
@@ -146,7 +113,7 @@ class TestAPostureTheToolCannotReadIsRefused:
     @pytest.mark.parametrize(("action", "flag"), ACTION_FLAGS)
     @pytest.mark.parametrize("value", BAD_POSTURES)
     def test_a_non_boolean_posture_is_refused_before_the_camera_opens(
-        self, camera: _Camera, tmp_path: Any, action: str, flag: str, value: Any
+        self, camera: Camera, tmp_path: Any, action: str, flag: str, value: Any
     ) -> None:
         result = _call(**_action_kwargs(action, tmp_path) | {flag: value})
 
@@ -155,12 +122,12 @@ class TestAPostureTheToolCannotReadIsRefused:
         assert camera.warmups == [], "the camera was opened on a posture the tool cannot read"
 
     @pytest.mark.parametrize("value", BAD_POSTURES + (True, False, np.True_, np.False_))
-    def test_the_posture_domain_matches_the_shared_helper(self, camera: _Camera, tmp_path: Any, value: Any) -> None:
+    def test_the_posture_domain_matches_the_shared_helper(self, camera: Camera, tmp_path: Any, value: Any) -> None:
         refused = _call(**_action_kwargs("capture", tmp_path) | {"async_mode": value})["status"] == "error"
 
         assert refused == (boolean_flag_error(value, "async_mode", "capture") is not None)
 
-    def test_an_action_that_consumes_no_posture_refuses_none_of_them(self, camera: _Camera, tmp_path: Any) -> None:
+    def test_an_action_that_consumes_no_posture_refuses_none_of_them(self, camera: Camera, tmp_path: Any) -> None:
         """``discover`` reads none of the three, so a value it never consults stands.
 
         The rule the numeric table already follows: an option no handler consumes
@@ -174,14 +141,14 @@ class TestAPostureTheToolCannotReadIsRefused:
 class TestTheRefusalPrecedesTheEffectTheTruthyValueHad:
     """The three postures measured on the pre-fix tree, each now not taken."""
 
-    def test_an_unreadable_save_posture_writes_no_configuration_file(self, camera: _Camera, tmp_path: Any) -> None:
+    def test_an_unreadable_save_posture_writes_no_configuration_file(self, camera: Camera, tmp_path: Any) -> None:
         result = _call(**_action_kwargs("configure", tmp_path) | {"save_config": "false"})
 
         assert result["status"] == "error"
         assert _saved_configs(tmp_path) == [], "the opt-out left a configuration file behind"
 
     def test_an_unreadable_warmup_posture_reaches_neither_the_driver_nor_the_file(
-        self, camera: _Camera, tmp_path: Any
+        self, camera: Camera, tmp_path: Any
     ) -> None:
         result = _call(**_action_kwargs("configure", tmp_path) | {"save_config": True, "warmup": "false"})
 
@@ -189,9 +156,7 @@ class TestTheRefusalPrecedesTheEffectTheTruthyValueHad:
         assert camera.warmups == []
         assert _saved_configs(tmp_path) == []
 
-    def test_an_unreadable_read_path_posture_performs_no_asynchronous_read(
-        self, camera: _Camera, tmp_path: Any
-    ) -> None:
+    def test_an_unreadable_read_path_posture_performs_no_asynchronous_read(self, camera: Camera, tmp_path: Any) -> None:
         result = _call(**_action_kwargs("capture", tmp_path) | {"async_mode": "false"})
 
         assert result["status"] == "error"
@@ -207,7 +172,7 @@ class TestAnHonestPostureStillSelectsBothPaths:
         ids=["true", "false", "numpy-true", "numpy-false"],
     )
     def test_a_boolean_read_path_is_honoured_unchanged(
-        self, camera: _Camera, tmp_path: Any, async_mode: Any, expected: tuple[int, int]
+        self, camera: Camera, tmp_path: Any, async_mode: Any, expected: tuple[int, int]
     ) -> None:
         result = _call(**_action_kwargs("capture", tmp_path) | {"async_mode": async_mode})
 
@@ -215,7 +180,7 @@ class TestAnHonestPostureStillSelectsBothPaths:
         assert (camera.async_reads, camera.sync_reads) == expected
 
     def test_a_boolean_save_posture_still_persists_the_posture_it_was_given(
-        self, camera: _Camera, tmp_path: Any
+        self, camera: Camera, tmp_path: Any
     ) -> None:
         result = _call(**_action_kwargs("configure", tmp_path) | {"save_config": True, "warmup": False})
 
@@ -232,20 +197,20 @@ class TestAnHonestPostureStillSelectsBothPaths:
 class TestTheGateCannotSwitchOffTheBudgetRow:
     """``timeout_ms`` is refused under ``async_mode``, so the gate is graded first."""
 
-    def test_a_falsy_gate_no_longer_discards_the_budget_row(self, camera: _Camera, tmp_path: Any) -> None:
+    def test_a_falsy_gate_no_longer_discards_the_budget_row(self, camera: Camera, tmp_path: Any) -> None:
         """Pre-fix ``async_mode=0`` reported success with an unusable budget."""
         result = _call(**_action_kwargs("capture", tmp_path) | {"async_mode": 0, "timeout_ms": -5})
 
         assert result["status"] == "error"
         assert camera.sync_reads == 0
 
-    def test_the_refusal_names_the_flag_rather_than_the_budget_it_gates(self, camera: _Camera, tmp_path: Any) -> None:
+    def test_the_refusal_names_the_flag_rather_than_the_budget_it_gates(self, camera: Camera, tmp_path: Any) -> None:
         """Placement pin: the numeric guard would blame ``timeout_ms`` instead."""
         result = _call(**_action_kwargs("capture", tmp_path) | {"async_mode": "false", "timeout_ms": -5})
 
         assert _text(result).startswith("capture: async_mode must be a boolean")
 
-    def test_a_boolean_gate_still_decides_whether_the_budget_is_read(self, camera: _Camera, tmp_path: Any) -> None:
+    def test_a_boolean_gate_still_decides_whether_the_budget_is_read(self, camera: Camera, tmp_path: Any) -> None:
         """The row is still gated, so a budget the synchronous read never uses stands."""
         result = _call(**_action_kwargs("capture", tmp_path) | {"async_mode": False, "timeout_ms": -5})
 

@@ -31,6 +31,7 @@ against, so the accepted set and the enforced set cannot drift.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -40,6 +41,7 @@ import pytest
 # imports and for the vocabulary maps the drift guards read - so every name in it,
 # the tool included, is reached through this one alias.
 import strands_robots.tools.lerobot_camera as cam_mod
+from tests.tools._camera_stand_in import Camera, Opened, stands_in_for
 
 # Actions that open a camera configured with the caller's selectors. Every one of
 # them must therefore have those selectors validated.
@@ -52,49 +54,15 @@ BAD_COLOR_MODES = ("rgb ", "RBG", "GBR", "grayscale", "", None, 0, ["RGB"])
 BAD_ROTATIONS = ("ROTATE_90_DEG", "90", "rotate 90", "ROTATE_45", "", None, 90, ["ROTATE_90"])
 
 
-class _Recorder:
-    """A camera stand-in that records the selectors it was configured with."""
-
-    def __init__(self) -> None:
-        self.opened: list[tuple[Any, Any]] = []
-        self.width = 8
-        self.height = 6
-        self.fps = 30
-        self.color_mode = type("_M", (), {"value": "RGB"})()
-        self.rotation: Any = None
-
-    def connect(self, warmup: bool = True) -> None:
-        return None
-
-    def disconnect(self) -> None:
-        return None
-
-    def read(self) -> np.ndarray:
-        return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-    def async_read(self, timeout_ms: float = 1000) -> np.ndarray:
-        return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-
 @pytest.fixture
-def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
+def recorder(monkeypatch: pytest.MonkeyPatch) -> Camera:
     """Substitute the camera factory and record every selector pair it is handed."""
-    cam = _Recorder()
+    return stands_in_for(monkeypatch)
 
-    def _create(
-        camera_type: str,
-        camera_id: Any,
-        width: Any,
-        height: Any,
-        fps: Any,
-        color_mode: Any,
-        rotation: Any,
-    ) -> _Recorder:
-        cam.opened.append((color_mode, rotation))
-        return cam
 
-    monkeypatch.setattr(cam_mod, "_create_camera", _create)
-    return cam
+def _selectors(camera: Camera) -> list[tuple[Any, Any]]:
+    """The ``(color_mode, rotation)`` each camera was opened with."""
+    return [(opened.color_mode, opened.rotation) for opened in camera.opened]
 
 
 def _text(result: dict[str, Any]) -> str:
@@ -118,7 +86,7 @@ class TestASelectorThatSilentlyChoseAnotherIsRefused:
     @pytest.mark.parametrize("action", CAMERA_ACTIONS)
     @pytest.mark.parametrize("value", BAD_COLOR_MODES)
     def test_an_unrecognised_color_mode_is_refused_on_every_camera_action(
-        self, recorder: _Recorder, tmp_path: Any, action: str, value: Any
+        self, recorder: Camera, tmp_path: Any, action: str, value: Any
     ) -> None:
         result = _call(action=action, camera_id=0, save_path=str(tmp_path), color_mode=value)
 
@@ -131,7 +99,7 @@ class TestASelectorThatSilentlyChoseAnotherIsRefused:
     @pytest.mark.parametrize("action", CAMERA_ACTIONS)
     @pytest.mark.parametrize("value", BAD_ROTATIONS)
     def test_an_unrecognised_rotation_is_refused_on_every_camera_action(
-        self, recorder: _Recorder, tmp_path: Any, action: str, value: Any
+        self, recorder: Camera, tmp_path: Any, action: str, value: Any
     ) -> None:
         result = _call(action=action, camera_id=0, save_path=str(tmp_path), rotation=value)
 
@@ -139,9 +107,7 @@ class TestASelectorThatSilentlyChoseAnotherIsRefused:
         assert "rotation" in _text(result)
         assert recorder.opened == []
 
-    def test_the_refusal_names_the_action_the_option_and_the_vocabulary(
-        self, recorder: _Recorder, tmp_path: Any
-    ) -> None:
+    def test_the_refusal_names_the_action_the_option_and_the_vocabulary(self, recorder: Camera, tmp_path: Any) -> None:
         text = _text(_call(action="capture", camera_id=0, save_path=str(tmp_path), color_mode="RBG"))
 
         assert text.startswith("capture:")
@@ -157,50 +123,28 @@ class TestTheChannelOrderThatWasSilentlyTransposed:
     """The harm behind the ``color_mode`` half, measured on the saved pixels."""
 
     @pytest.fixture
-    def honoring_camera(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def honoring_camera(self, monkeypatch: pytest.MonkeyPatch) -> Camera:
         """Substitute a camera that delivers the channel order it is configured with.
 
         This is what makes the transposition observable: the real driver honors the
         ``ColorMode`` in its config, and the capture path then applies
         ``COLOR_RGB2BGR`` to whatever it is handed regardless.
         """
+        camera = stands_in_for(monkeypatch)
 
-        class _Honoring:
-            def __init__(self, bgr: bool) -> None:
-                self.bgr = bgr
-                self.color_mode = type("_M", (), {"value": "BGR" if bgr else "RGB"})()
-                self.rotation = None
+        def _honor(opened: Opened) -> None:
+            frame: np.ndarray = np.zeros((4, 4, 3), dtype=np.uint8)
+            frame[:, :, 0] = 255  # a red scene, in RGB order
+            bgr = str(opened.color_mode).upper() != "RGB"
+            camera.color_mode = SimpleNamespace(value="BGR" if bgr else "RGB")
+            camera.frame = frame[:, :, ::-1].copy() if bgr else frame
 
-            def connect(self, warmup: bool = True) -> None:
-                return None
+        camera.configure = _honor
+        return camera
 
-            def disconnect(self) -> None:
-                return None
-
-            def read(self) -> np.ndarray:
-                frame: np.ndarray = np.zeros((4, 4, 3), dtype=np.uint8)
-                frame[:, :, 0] = 255  # a red scene, in RGB order
-                if self.bgr:
-                    frame = frame[:, :, ::-1].copy()
-                return frame
-
-            def async_read(self, timeout_ms: float = 1000) -> np.ndarray:
-                return self.read()
-
-        def _create(
-            camera_type: str,
-            camera_id: Any,
-            width: Any,
-            height: Any,
-            fps: Any,
-            color_mode: Any,
-            rotation: Any,
-        ) -> _Honoring:
-            return _Honoring(bgr=str(color_mode).upper() != "RGB")
-
-        monkeypatch.setattr(cam_mod, "_create_camera", _create)
-
-    def test_a_declared_color_mode_writes_the_scene_it_photographed(self, honoring_camera: None, tmp_path: Any) -> None:
+    def test_a_declared_color_mode_writes_the_scene_it_photographed(
+        self, honoring_camera: Camera, tmp_path: Any
+    ) -> None:
         result = _call(
             action="capture", camera_id=0, save_path=str(tmp_path), filename="shot", color_mode="RGB", format="png"
         )
@@ -213,7 +157,7 @@ class TestTheChannelOrderThatWasSilentlyTransposed:
         assert red > blue, f"expected a red pixel, got BGR {(blue, _green, red)}"
 
     def test_a_trailing_space_no_longer_writes_that_scene_transposed(
-        self, honoring_camera: None, tmp_path: Any
+        self, honoring_camera: Camera, tmp_path: Any
     ) -> None:
         result = _call(
             action="capture", camera_id=0, save_path=str(tmp_path), filename="shot", color_mode="rgb ", format="png"
@@ -229,22 +173,20 @@ class TestEveryDeclaredSpellingStillWorks:
     """The fix refuses only the spellings that used to be silently replaced."""
 
     @pytest.mark.parametrize("value", ["RGB", "BGR", "rgb", "bgr", "Rgb"])
-    def test_a_declared_color_mode_is_accepted_in_any_case(
-        self, recorder: _Recorder, tmp_path: Any, value: str
-    ) -> None:
+    def test_a_declared_color_mode_is_accepted_in_any_case(self, recorder: Camera, tmp_path: Any, value: str) -> None:
         result = _call(action="capture", camera_id=0, save_path=str(tmp_path), color_mode=value)
 
         assert result["status"] == "success", result
-        assert recorder.opened == [(value, "NO_ROTATION")]
+        assert _selectors(recorder) == [(value, "NO_ROTATION")]
 
     @pytest.mark.parametrize("value", ["NO_ROTATION", "ROTATE_90", "ROTATE_180", "ROTATE_270", "rotate_90"])
-    def test_a_declared_rotation_is_accepted_in_any_case(self, recorder: _Recorder, tmp_path: Any, value: str) -> None:
+    def test_a_declared_rotation_is_accepted_in_any_case(self, recorder: Camera, tmp_path: Any, value: str) -> None:
         result = _call(action="capture", camera_id=0, save_path=str(tmp_path), rotation=value)
 
         assert result["status"] == "success", result
-        assert recorder.opened == [("RGB", value)]
+        assert _selectors(recorder) == [("RGB", value)]
 
-    def test_the_default_selectors_are_themselves_declared(self, recorder: _Recorder, tmp_path: Any) -> None:
+    def test_the_default_selectors_are_themselves_declared(self, recorder: Camera, tmp_path: Any) -> None:
         """A caller who names neither selector is never refused for the defaults."""
         result = _call(action="capture", camera_id=0, save_path=str(tmp_path))
 
@@ -265,7 +207,7 @@ class TestOnlyTheOptionsAnActionReadsAreValidated:
         assert "must be one of" not in text, text
         assert not text.startswith(f"{action}:"), text
 
-    def test_the_image_format_is_left_to_its_own_consumers(self, recorder: _Recorder, tmp_path: Any) -> None:
+    def test_the_image_format_is_left_to_its_own_consumers(self, recorder: Camera, tmp_path: Any) -> None:
         """``format`` is deliberately outside this domain.
 
         Unlike the two selectors, an unlisted ``format`` is *honored* rather than
@@ -340,7 +282,7 @@ class TestTheVocabulariesCannotDriftFromTheResolver:
         for spelling in cam_mod._ROTATIONS:
             assert f'"{spelling}"' in doc, spelling
 
-    def test_the_numeric_domain_beside_it_is_unchanged(self, recorder: _Recorder, tmp_path: Any) -> None:
+    def test_the_numeric_domain_beside_it_is_unchanged(self, recorder: Camera, tmp_path: Any) -> None:
         """The sibling gate still refuses a rate no camera can honor."""
         result = _call(action="capture", camera_id=0, save_path=str(tmp_path), fps=0)
 

@@ -31,7 +31,6 @@ asynchronous read again without taking a budget.
 from __future__ import annotations
 
 import inspect
-import time
 from typing import Any
 
 import numpy as np
@@ -42,6 +41,7 @@ import pytest
 # it, the tool included, is reached through this one alias.
 import strands_robots.tools.lerobot_camera as cam_mod
 from strands_robots.utils import positive_finite_number_error
+from tests.tools._camera_stand_in import Camera, stands_in_for
 
 # Actions whose handler selects the asynchronous read, and therefore consumes the
 # caller's budget.
@@ -51,52 +51,11 @@ ASYNC_ACTIONS = ("capture", "capture_batch", "record", "preview", "test")
 BAD_BUDGETS = (0.0, -3.0, float("nan"), float("inf"), True, "1", None, [1.0])
 
 
-class _BudgetCamera:
-    """A camera stand-in that records every read budget it is handed.
-
-    ``needs_ms`` models a camera slower than the budget: a read whose budget does
-    not cover it raises the driver's own ``TimeoutError``, naming the budget, the
-    way :meth:`lerobot.cameras.opencv.OpenCVCamera.async_read` does.
-    """
-
-    def __init__(self, needs_ms: float = 0.0) -> None:
-        self.budgets: list[Any] = []
-        self.sync_reads = 0
-        self.needs_ms = needs_ms
-        self.width = 8
-        self.height = 6
-        self.fps = 30
-        self.color_mode = type("_M", (), {"value": "RGB"})()
-        self.rotation: Any = None
-
-    def connect(self, warmup: bool = True) -> None:
-        return None
-
-    def disconnect(self) -> None:
-        return None
-
-    def _frame(self) -> np.ndarray:
-        # A measurable span keeps the tool's own rate arithmetic off zero.
-        time.sleep(0.0005)
-        return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-    def read(self) -> np.ndarray:
-        self.sync_reads += 1
-        return self._frame()
-
-    def async_read(self, timeout_ms: float = 1000) -> np.ndarray:
-        self.budgets.append(timeout_ms)
-        if self.needs_ms > float(timeout_ms):
-            raise TimeoutError(f"Timed out waiting for frame from camera after {timeout_ms} ms.")
-        return self._frame()
-
-
 @pytest.fixture
-def camera(monkeypatch: pytest.MonkeyPatch) -> _BudgetCamera:
+def camera(monkeypatch: pytest.MonkeyPatch) -> Camera:
     """Substitute the camera factory and neutralise every sink a handler writes to."""
-    cam = _BudgetCamera()
-
-    monkeypatch.setattr(cam_mod, "_create_camera", lambda *a, **k: cam)
+    # A measurable read span keeps the tool's own rate arithmetic off zero.
+    cam = stands_in_for(monkeypatch, read_seconds=0.0005)
     writer = type("_W", (), {"write": lambda self, f: None, "release": lambda self: None})()
     monkeypatch.setattr(cam_mod.cv2, "VideoWriter", lambda *a, **k: writer)
     monkeypatch.setattr(cam_mod.cv2, "VideoWriter_fourcc", lambda *a, **k: 0, raising=False)
@@ -151,7 +110,7 @@ class TestTheBudgetReachesTheDriver:
 
     @pytest.mark.parametrize("action", ASYNC_ACTIONS)
     def test_every_asynchronous_action_hands_the_callers_budget_to_the_read(
-        self, camera: _BudgetCamera, tmp_path: Any, action: str
+        self, camera: Camera, tmp_path: Any, action: str
     ) -> None:
         result = _call(timeout_ms=137.0, **_action_kwargs(action, tmp_path))
 
@@ -159,14 +118,14 @@ class TestTheBudgetReachesTheDriver:
         assert camera.budgets, f"{action} performed no asynchronous read"
         assert set(camera.budgets) == {137.0}
 
-    def test_the_default_budget_still_reaches_the_read_unchanged(self, camera: _BudgetCamera, tmp_path: Any) -> None:
+    def test_the_default_budget_still_reaches_the_read_unchanged(self, camera: Camera, tmp_path: Any) -> None:
         """A caller who sets nothing keeps the budget the recording always used."""
         result = _call(**_action_kwargs("record", tmp_path))
 
         assert result["status"] == "success"
         assert set(camera.budgets) == {1000.0}
 
-    def test_a_synchronous_recording_is_handed_no_budget(self, camera: _BudgetCamera, tmp_path: Any) -> None:
+    def test_a_synchronous_recording_is_handed_no_budget(self, camera: Camera, tmp_path: Any) -> None:
         kwargs = _action_kwargs("record", tmp_path) | {"async_mode": False}
 
         result = _call(timeout_ms=137.0, **kwargs)
@@ -180,7 +139,7 @@ class TestABudgetTheCameraExceedsIsTheCallersToRaise:
     """The failure must name the budget the caller set, and raising it must help."""
 
     def test_a_camera_slower_than_the_budget_reports_the_budget_the_caller_set(
-        self, camera: _BudgetCamera, tmp_path: Any
+        self, camera: Camera, tmp_path: Any
     ) -> None:
         camera.needs_ms = 1500.0
 
@@ -190,7 +149,7 @@ class TestABudgetTheCameraExceedsIsTheCallersToRaise:
         assert "250.0 ms" in _text(result)
 
     def test_raising_the_budget_over_the_camera_completes_the_same_recording(
-        self, camera: _BudgetCamera, tmp_path: Any
+        self, camera: Camera, tmp_path: Any
     ) -> None:
         """The remedy the option exists for: a camera needing 1.5 s per frame."""
         camera.needs_ms = 1500.0
@@ -206,7 +165,7 @@ class TestRecordValidatesTheBudgetItReads:
 
     @pytest.mark.parametrize("value", BAD_BUDGETS)
     def test_an_unusable_budget_is_refused_before_the_camera_opens(
-        self, camera: _BudgetCamera, tmp_path: Any, value: Any
+        self, camera: Camera, tmp_path: Any, value: Any
     ) -> None:
         result = _call(timeout_ms=value, **_action_kwargs("record", tmp_path))
 
@@ -216,9 +175,7 @@ class TestRecordValidatesTheBudgetItReads:
         assert camera.budgets == []
 
     @pytest.mark.parametrize("value", BAD_BUDGETS + (1.0, 250.0, 1000, np.float32(1.5)))
-    def test_the_budget_domain_matches_the_shared_helper(
-        self, camera: _BudgetCamera, tmp_path: Any, value: Any
-    ) -> None:
+    def test_the_budget_domain_matches_the_shared_helper(self, camera: Camera, tmp_path: Any, value: Any) -> None:
         refused = _call(timeout_ms=value, **_action_kwargs("record", tmp_path))["status"] == "error"
 
         assert refused == (positive_finite_number_error(value, "timeout_ms", "record") is not None)

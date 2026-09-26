@@ -48,6 +48,7 @@ import pytest
 # the tool included, is reached through this one alias.
 import strands_robots.tools.lerobot_camera as cam_mod
 from strands_robots.utils import positive_finite_number_error, positive_whole_number_error
+from tests.tools._camera_stand_in import Camera, stands_in_for
 
 # Actions that open a camera configured with the caller's geometry. Every one of
 # them must therefore have its geometry validated.
@@ -58,41 +59,15 @@ BAD_WHOLE_NUMBERS = (0, -10, 2.7, float("nan"), float("inf"), True, "10", None)
 BAD_SPANS = (0.0, -3.0, float("nan"), float("inf"), True, "1", None, [1.0])
 
 
-class _Recorder:
-    """A camera stand-in that records the geometry it was configured with."""
-
-    def __init__(self) -> None:
-        self.opened: list[tuple[Any, Any, Any]] = []
-        self.width = 8
-        self.height = 6
-        self.fps = 30
-        self.color_mode = type("_M", (), {"value": "RGB"})()
-        self.rotation: Any = None
-
-    def connect(self, warmup: bool = True) -> None:
-        return None
-
-    def disconnect(self) -> None:
-        return None
-
-    def read(self) -> np.ndarray:
-        return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-    def async_read(self, timeout_ms: float = 1000) -> np.ndarray:
-        return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-
 @pytest.fixture
-def recorder(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
+def recorder(monkeypatch: pytest.MonkeyPatch) -> Camera:
     """Substitute the camera factory and record every geometry it is handed."""
-    cam = _Recorder()
+    return stands_in_for(monkeypatch)
 
-    def _create(camera_type: str, camera_id: Any, width: Any, height: Any, fps: Any, *rest: Any) -> _Recorder:
-        cam.opened.append((width, height, fps))
-        return cam
 
-    monkeypatch.setattr(cam_mod, "_create_camera", _create)
-    return cam
+def _geometry(camera: Camera) -> list[tuple[Any, Any, Any]]:
+    """The ``(width, height, fps)`` each camera was opened with."""
+    return [(opened.width, opened.height, opened.fps) for opened in camera.opened]
 
 
 def _text(result: dict[str, Any]) -> str:
@@ -131,7 +106,7 @@ class TestARecordingThatCannotHappenIsRefused:
 
     @pytest.mark.parametrize("duration", BAD_SPANS)
     def test_a_capture_duration_that_records_no_frame_is_refused(
-        self, recorder: _Recorder, tmp_path: Any, duration: Any
+        self, recorder: Camera, tmp_path: Any, duration: Any
     ) -> None:
         result = _call(
             action="record",
@@ -148,7 +123,7 @@ class TestARecordingThatCannotHappenIsRefused:
         assert recorder.opened == []
         assert list(tmp_path.iterdir()) == []
 
-    def test_the_refusal_names_the_action_and_the_option(self, recorder: _Recorder, tmp_path: Any) -> None:
+    def test_the_refusal_names_the_action_and_the_option(self, recorder: Camera, tmp_path: Any) -> None:
         text = _text(_call(action="record", camera_id=0, save_path=str(tmp_path), fps=10, capture_duration=0.0))
 
         assert text.startswith("record:")
@@ -156,7 +131,7 @@ class TestARecordingThatCannotHappenIsRefused:
         assert all(ord(c) < 128 for c in text), text
 
     def test_a_usable_span_still_records(
-        self, recorder: _Recorder, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+        self, recorder: Camera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         writer = type("_W", (), {"write": lambda self, f: None, "release": lambda self: None})()
         monkeypatch.setattr(cam_mod.cv2, "VideoWriter", lambda *a, **k: writer)
@@ -170,7 +145,7 @@ class TestARecordingThatCannotHappenIsRefused:
 
     @pytest.mark.parametrize(("fps", "duration"), EMPTY_RECORDINGS)
     def test_a_span_shorter_than_one_frame_period_is_refused(
-        self, recorder: _Recorder, tmp_path: Any, fps: int, duration: float
+        self, recorder: Camera, tmp_path: Any, fps: int, duration: float
     ) -> None:
         """Each value is in its own domain, so only the product can refuse this."""
         assert positive_whole_number_error(fps, "fps", "record") is None
@@ -186,7 +161,7 @@ class TestARecordingThatCannotHappenIsRefused:
 
     @pytest.mark.parametrize(("fps", "duration"), ONE_FRAME_RECORDINGS)
     def test_the_shortest_span_a_rate_can_honor_still_records(
-        self, recorder: _Recorder, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, fps: int, duration: float
+        self, recorder: Camera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, fps: int, duration: float
     ) -> None:
         """A frame count of exactly one is honored, not rounded away."""
         writer = type("_W", (), {"write": lambda self, f: None, "release": lambda self: None})()
@@ -199,9 +174,7 @@ class TestARecordingThatCannotHappenIsRefused:
         assert result["status"] == "success"
         assert "Frames: 1" in _text(result)
 
-    def test_the_refusal_names_both_factors_and_the_span_that_would_work(
-        self, recorder: _Recorder, tmp_path: Any
-    ) -> None:
+    def test_the_refusal_names_both_factors_and_the_span_that_would_work(self, recorder: Camera, tmp_path: Any) -> None:
         text = _text(_call(action="record", camera_id=0, save_path=str(tmp_path), fps=30, capture_duration=0.02))
 
         assert text.startswith("record:")
@@ -212,7 +185,7 @@ class TestARecordingThatCannotHappenIsRefused:
         assert all(ord(c) < 128 for c in text), text
 
     def test_a_preview_shorter_than_one_frame_period_is_not_refused(
-        self, recorder: _Recorder, monkeypatch: pytest.MonkeyPatch
+        self, recorder: Camera, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``preview_duration`` is a deadline, not a factor of a frame count.
 
@@ -229,7 +202,7 @@ class TestARecordingThatCannotHappenIsRefused:
         result = _call(action="preview", camera_id=0, fps=30, preview_duration=0.001)
 
         assert result["status"] == "success", _text(result)
-        assert recorder.opened == [(640, 480, 30)]
+        assert _geometry(recorder) == [(640, 480, 30)]
 
 
 class TestGeometryIsValidatedOnEveryCameraAction:
@@ -238,7 +211,7 @@ class TestGeometryIsValidatedOnEveryCameraAction:
     @pytest.mark.parametrize("action", CAMERA_ACTIONS)
     @pytest.mark.parametrize("param", ("width", "height", "fps"))
     def test_a_geometry_no_camera_can_honor_is_refused(
-        self, recorder: _Recorder, tmp_path: Any, action: str, param: str
+        self, recorder: Camera, tmp_path: Any, action: str, param: str
     ) -> None:
         result = _call(action=action, camera_id=0, camera_ids=[0], save_path=str(tmp_path), **{param: 0})
 
@@ -247,7 +220,7 @@ class TestGeometryIsValidatedOnEveryCameraAction:
         assert recorder.opened == []
 
     @pytest.mark.parametrize("value", BAD_WHOLE_NUMBERS)
-    def test_every_unusable_rate_is_refused(self, recorder: _Recorder, tmp_path: Any, value: Any) -> None:
+    def test_every_unusable_rate_is_refused(self, recorder: Camera, tmp_path: Any, value: Any) -> None:
         result = _call(action="record", camera_id=0, save_path=str(tmp_path), fps=value, capture_duration=1.0)
 
         assert result["status"] == "error"
@@ -255,7 +228,7 @@ class TestGeometryIsValidatedOnEveryCameraAction:
         assert recorder.opened == []
 
     def test_an_integral_float_geometry_is_honored_as_an_int(
-        self, recorder: _Recorder, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+        self, recorder: Camera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``640.0`` is usable, and reaches the camera and the container as ``640``."""
         writer = type("_W", (), {"write": lambda self, f: None, "release": lambda self: None})()
@@ -274,8 +247,8 @@ class TestGeometryIsValidatedOnEveryCameraAction:
         )
 
         assert result["status"] == "success"
-        assert recorder.opened == [(640, 480, 2)]
-        assert [type(v) for v in recorder.opened[0]] == [int, int, int]
+        assert _geometry(recorder) == [(640, 480, 2)]
+        assert [type(v) for v in _geometry(recorder)[0]] == [int, int, int]
 
 
 class TestOnlyTheOptionsAnActionReadsAreValidated:
@@ -288,7 +261,7 @@ class TestOnlyTheOptionsAnActionReadsAreValidated:
         assert result["status"] != "error" or "width" not in _text(result)
 
     def test_a_synchronous_recording_does_not_refuse_a_budget_it_never_reads(
-        self, recorder: _Recorder, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+        self, recorder: Camera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The synchronous read takes no timeout, so ``record`` must accept any value here.
 
@@ -314,7 +287,7 @@ class TestOnlyTheOptionsAnActionReadsAreValidated:
 
         assert result["status"] == "success"
 
-    def test_a_timeout_is_effective_only_on_the_asynchronous_read(self, recorder: _Recorder, tmp_path: Any) -> None:
+    def test_a_timeout_is_effective_only_on_the_asynchronous_read(self, recorder: Camera, tmp_path: Any) -> None:
         common = {"action": "capture", "camera_id": 0, "save_path": str(tmp_path), "timeout_ms": -1.0}
 
         assert _call(async_mode=False, **common)["status"] == "success"
@@ -329,7 +302,7 @@ class TestTheDomainCannotDriftFromTheSharedHelpers:
 
     @pytest.mark.parametrize("value", BAD_WHOLE_NUMBERS + BAD_SPANS + (1, 30, 0.5, 2.5, np.int64(64)))
     def test_the_tool_agrees_with_the_shared_domain_for_a_rate(
-        self, recorder: _Recorder, tmp_path: Any, value: Any
+        self, recorder: Camera, tmp_path: Any, value: Any
     ) -> None:
         tool_refuses = (
             _call(action="record", camera_id=0, save_path=str(tmp_path), fps=value, capture_duration=1.0)["status"]
@@ -340,7 +313,7 @@ class TestTheDomainCannotDriftFromTheSharedHelpers:
 
     @pytest.mark.parametrize("value", BAD_SPANS + (0.5, 2.5, 30, np.float32(1.5)))
     def test_the_tool_agrees_with_the_shared_domain_for_a_span(
-        self, recorder: _Recorder, tmp_path: Any, value: Any
+        self, recorder: Camera, tmp_path: Any, value: Any
     ) -> None:
         tool_refuses = (
             _call(action="record", camera_id=0, save_path=str(tmp_path), fps=10, capture_duration=value)["status"]

@@ -31,45 +31,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pytest
 
 # The module object is needed for the factory seam the recorder replaces, so the
 # tool is reached through this alias rather than off the tools package.
 import strands_robots.tools.lerobot_camera as cam_mod
-
-
-class _Camera:
-    """A camera stand-in that answers a frame and nothing else."""
-
-    width = 8
-    height = 6
-    fps = 30
-
-    def connect(self, warmup: bool = True) -> None:
-        return None
-
-    def disconnect(self) -> None:
-        return None
-
-    def read(self) -> np.ndarray:
-        return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-    def async_read(self, timeout_ms: float = 1000) -> np.ndarray:
-        return self.read()
+from tests.tools._camera_stand_in import Camera, stands_in_for
 
 
 @pytest.fixture
-def opened(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+def camera(monkeypatch: pytest.MonkeyPatch) -> Camera:
     """Replace the camera factory and record every camera id it is asked to open."""
-    ids: list[Any] = []
+    return stands_in_for(monkeypatch)
 
-    def _create(camera_type: str, camera_id: Any, *selectors: Any) -> _Camera:
-        ids.append(camera_id)
-        return _Camera()
 
-    monkeypatch.setattr(cam_mod, "_create_camera", _create)
-    return ids
+def _opened(camera: Camera) -> list[Any]:
+    """The camera ids the tool asked the factory to open."""
+    return [opened.camera_id for opened in camera.opened]
 
 
 def _text(result: dict[str, Any]) -> str:
@@ -118,7 +96,7 @@ UNHONORABLE: list[tuple[str, Any]] = [
 
 class TestAnUnhonorableSelectionIsRefusedBeforeAnyCameraOpens:
     @pytest.mark.parametrize(("reason", "camera_ids"), UNHONORABLE, ids=[r for r, _ in UNHONORABLE])
-    def test_refused_by_value(self, opened: list[Any], tmp_path: Path, reason: str, camera_ids: Any) -> None:
+    def test_refused_by_value(self, camera: Camera, tmp_path: Path, reason: str, camera_ids: Any) -> None:
         save_path = tmp_path / "captures"
 
         result = _capture_batch(save_path, camera_ids=camera_ids)
@@ -129,49 +107,49 @@ class TestAnUnhonorableSelectionIsRefusedBeforeAnyCameraOpens:
         assert "capture_batch" in text, text
         # The refusal has no partial effect: no camera was opened and the save
         # directory the batch would have created does not exist.
-        assert opened == [], (reason, opened)
+        assert _opened(camera) == [], (reason, _opened(camera))
         assert not save_path.exists(), reason
 
-    def test_the_empty_selection_is_not_widened_to_the_defaults(self, opened: list[Any], tmp_path: Path) -> None:
+    def test_the_empty_selection_is_not_widened_to_the_defaults(self, camera: Camera, tmp_path: Path) -> None:
         result = _capture_batch(tmp_path / "captures", camera_ids=[])
 
         text = _text(result)
         assert "selects no camera" in text, text
         # The remedy names the spelling that does select the defaults.
         assert "Omit camera_ids" in text, text
-        assert opened == []
+        assert _opened(camera) == []
 
-    def test_a_bare_string_is_not_read_one_camera_per_character(self, opened: list[Any], tmp_path: Path) -> None:
+    def test_a_bare_string_is_not_read_one_camera_per_character(self, camera: Camera, tmp_path: Path) -> None:
         result = _capture_batch(tmp_path / "captures", camera_ids="/dev/video4")
 
         text = _text(result)
         assert "one camera per character" in text, text
         assert "['/dev/video4']" in text, text
-        assert opened == []
+        assert _opened(camera) == []
 
-    def test_a_repeat_names_the_id_repeated(self, opened: list[Any], tmp_path: Path) -> None:
+    def test_a_repeat_names_the_id_repeated(self, camera: Camera, tmp_path: Path) -> None:
         result = _capture_batch(tmp_path / "captures", camera_ids=[2, "/dev/video0", 2])
 
         text = _text(result)
         assert "more than once" in text, text
         assert "2" in text
-        assert opened == []
+        assert _opened(camera) == []
 
 
 class TestTheHonoredSpellingsAreUnchanged:
-    def test_none_selects_the_default_robot_cameras(self, opened: list[Any], tmp_path: Path) -> None:
+    def test_none_selects_the_default_robot_cameras(self, camera: Camera, tmp_path: Path) -> None:
         result = _capture_batch(tmp_path / "captures", camera_ids=None)
 
         assert result["status"] == "success", _text(result)
         # The literal rather than the module constant: this is a control, so it
         # must hold on the pre-fix tree too, where the constant did not exist.
-        assert sorted(map(str, opened)) == sorted(map(str, DEFAULT_ROBOT_CAMERAS))
+        assert sorted(map(str, _opened(camera))) == sorted(map(str, DEFAULT_ROBOT_CAMERAS))
 
-    def test_omitting_the_selector_is_the_same_as_none(self, opened: list[Any], tmp_path: Path) -> None:
+    def test_omitting_the_selector_is_the_same_as_none(self, camera: Camera, tmp_path: Path) -> None:
         result = _capture_batch(tmp_path / "captures")
 
         assert result["status"] == "success", _text(result)
-        assert sorted(map(str, opened)) == sorted(map(str, DEFAULT_ROBOT_CAMERAS))
+        assert sorted(map(str, _opened(camera))) == sorted(map(str, DEFAULT_ROBOT_CAMERAS))
 
     @pytest.mark.parametrize(
         "camera_ids",
@@ -185,14 +163,14 @@ class TestTheHonoredSpellingsAreUnchanged:
         ids=["one index", "one path", "the defaults spelled out", "a tuple", "an index and a path"],
     )
     def test_a_well_formed_selection_opens_exactly_the_cameras_it_names(
-        self, opened: list[Any], tmp_path: Path, camera_ids: Any
+        self, camera: Camera, tmp_path: Path, camera_ids: Any
     ) -> None:
         result = _capture_batch(tmp_path / "captures", camera_ids=camera_ids)
 
         assert result["status"] == "success", _text(result)
         # Captures run on a thread pool, so the open order is not the list order;
         # the SET of cameras opened, each once, is the claim.
-        assert sorted(map(str, opened)) == sorted(map(str, camera_ids))
+        assert sorted(map(str, _opened(camera))) == sorted(map(str, camera_ids))
         assert f"Success: {len(camera_ids)}/{len(camera_ids)} cameras" in _text(result)
 
     def test_the_refusal_quotes_the_defaults_the_tool_resolves(self) -> None:
@@ -206,7 +184,7 @@ class TestTheHonoredSpellingsAreUnchanged:
 
 
 class TestOnlyTheActionThatReadsTheSelectorIsRefusedForIt:
-    def test_capture_ignores_camera_ids(self, opened: list[Any], tmp_path: Path) -> None:
+    def test_capture_ignores_camera_ids(self, camera: Camera, tmp_path: Path) -> None:
         """``capture`` reads ``camera_id``; an unusable ``camera_ids`` beside it is not its business."""
         result = cam_mod.lerobot_camera(
             action="capture",
@@ -217,9 +195,9 @@ class TestOnlyTheActionThatReadsTheSelectorIsRefusedForIt:
         )
 
         assert result["status"] == "success", _text(result)
-        assert opened == [0]
+        assert _opened(camera) == [0]
 
-    def test_list_ignores_camera_ids(self, opened: list[Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_list_ignores_camera_ids(self, camera: Camera, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             cam_mod, "_list_camera_details", lambda camera_type, camera_id: {"status": "success", "content": []}
         )
@@ -229,4 +207,4 @@ class TestOnlyTheActionThatReadsTheSelectorIsRefusedForIt:
         result = cam_mod.lerobot_camera(action="list", camera_ids=unusable)
 
         assert result["status"] == "success"
-        assert opened == []
+        assert _opened(camera) == []

@@ -47,49 +47,15 @@ import re
 import time
 from typing import Any
 
-import numpy as np
 import pytest
 
 import strands_robots.tools.lerobot_camera as cam_mod
+from tests.tools._camera_stand_in import Camera, stands_in_for
 
 #: Real seconds each modelled device operation takes. Wide enough that a clock
 #: step can be armed to land inside a specific window, and small enough to keep
 #: the whole file under a second of real time.
 _READ_SECONDS = 0.02
-
-
-class _SlowCamera:
-    """A camera stand-in whose every operation takes a measurable span.
-
-    ``tests/tools/test_lerobot_camera_async_read_budget.py`` has a sibling double
-    for the read *budget*; this one exists for the read *span*, so its reads are
-    slow enough (``_READ_SECONDS``) for a clock step to be placed inside one and
-    fast enough that a real camera's verdicts still hold: 20 ms per frame is
-    ``Good`` (under 100 ms) at an estimated 50 FPS.
-    """
-
-    def __init__(self) -> None:
-        self.width = 8
-        self.height = 6
-        self.fps = 30
-        self.color_mode = type("_M", (), {"value": "RGB"})()
-        self.rotation: Any = None
-
-    def connect(self, warmup: bool = True) -> None:
-        time.sleep(_READ_SECONDS)
-
-    def disconnect(self) -> None:
-        return None
-
-    def _frame(self) -> np.ndarray:
-        time.sleep(_READ_SECONDS)
-        return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-    def read(self) -> np.ndarray:
-        return self._frame()
-
-    def async_read(self, timeout_ms: float = 1000) -> np.ndarray:
-        return self._frame()
 
 
 class _SteppingWallClock:
@@ -119,11 +85,15 @@ class _SteppingWallClock:
 
 
 @pytest.fixture
-def camera(monkeypatch: pytest.MonkeyPatch) -> _SlowCamera:
-    """Substitute the camera factory and neutralise every sink a handler writes to."""
-    cam = _SlowCamera()
+def camera(monkeypatch: pytest.MonkeyPatch) -> Camera:
+    """Substitute the camera factory and neutralise every sink a handler writes to.
 
-    monkeypatch.setattr(cam_mod, "_create_camera", lambda *a, **k: cam)
+    Every modelled device operation takes ``_READ_SECONDS``: wide enough for a
+    clock step to be placed inside one read, and narrow enough that a real
+    camera's verdicts still hold - 20 ms per frame is ``Good`` (under 100 ms) at
+    an estimated 50 FPS.
+    """
+    cam = stands_in_for(monkeypatch, read_seconds=_READ_SECONDS, connect_seconds=_READ_SECONDS)
     writer = type("_W", (), {"write": lambda self, f: None, "release": lambda self: None})()
     monkeypatch.setattr(cam_mod.cv2, "VideoWriter", lambda *a, **k: writer)
     monkeypatch.setattr(cam_mod.cv2, "VideoWriter_fourcc", lambda *a, **k: 0, raising=False)
@@ -162,7 +132,7 @@ class TestASpanIsNotTheSizeOfAClockCorrection:
     """A reported span is the work's, so a step cannot appear in it."""
 
     def test_a_capture_reports_the_connect_and_read_spans_it_measured(
-        self, camera: _SlowCamera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+        self, camera: Camera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A -30 s step inside the connect makes a wall-clock span negative."""
         _install(monkeypatch, _SteppingWallClock(step_after=_READ_SECONDS / 2, step_by=-30.0))
@@ -177,7 +147,7 @@ class TestASpanIsNotTheSizeOfAClockCorrection:
         assert 0.0 <= _reported(text, "Capture time:") < 5.0, text
 
     def test_a_batch_reports_a_total_that_is_the_work_rather_than_the_step(
-        self, camera: _SlowCamera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+        self, camera: Camera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The batch total shared one variable with its own base, so it is graded too."""
         _install(monkeypatch, _SteppingWallClock(step_after=_READ_SECONDS / 2, step_by=+30.0))
@@ -191,7 +161,7 @@ class TestASpanIsNotTheSizeOfAClockCorrection:
 
     @pytest.mark.parametrize("step_by", (+30.0, -30.0))
     def test_a_recording_reports_the_duration_it_actually_took(
-        self, camera: _SlowCamera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, step_by: float
+        self, camera: Camera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, step_by: float
     ) -> None:
         """The recording is frame-bounded, so only its reported duration can be wrong.
 
@@ -221,7 +191,7 @@ class TestAPerformanceVerdictIsAboutTheCameraNotTheClock:
     """``test`` turns each span into a verdict, so a step becomes a device claim."""
 
     def test_a_forward_step_does_not_report_a_fast_camera_as_slow(
-        self, camera: _SlowCamera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+        self, camera: Camera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """One +30 s sample among ten 20 ms reads averages 3 s: ``Slow`` at 0.3 FPS."""
         _install(monkeypatch, _SteppingWallClock(step_after=_READ_SECONDS * 3, step_by=+30.0))
@@ -237,7 +207,7 @@ class TestAPerformanceVerdictIsAboutTheCameraNotTheClock:
         assert _reported(text, "Est. FPS:") > 5.0, text
 
     def test_a_backward_step_does_not_report_a_negative_frame_rate(
-        self, camera: _SlowCamera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+        self, camera: Camera, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A negative average is also below every threshold, so the verdict flatters."""
         _install(monkeypatch, _SteppingWallClock(step_after=_READ_SECONDS * 3, step_by=-30.0))
