@@ -66,9 +66,8 @@ server.stop()
 
 Either teardown stops the server *serving*, not just listening: `stop()` (and
 `serve()` returning) closes the listening socket **and** every client connection
-still open, and returns only once every connection handler has terminated - so the
-wrapped policy is no longer invoked for a client that was already connected, and
-neither call returns while a handler could still send one more action chunk. A
+still open, and returns only once every connection handler has terminated, so the
+wrapped policy is no longer invoked for a client that was already connected. A
 teardown that lands mid-inference returns when that inference does.
 
 `port` is an `int` in `[1, 65535]`, plus `0` for the ephemeral bind above. A
@@ -97,12 +96,9 @@ forwarded unchanged, but the endpoint under any other name (e.g. `uri=`) logs a
 WARNING naming the ignored kwarg and the endpoint in use, rather than silently
 connecting to the default `ws://127.0.0.1:8765`.
 
-When `port=` is the effective spelling it must be an `int` in `[1, 65535]`, and
-is refused before the endpoint is built. Unlike the server the client cannot
-accept `0`: only the binding side can ask the kernel for a free port, so there is
-nothing for a client to dial. A WebSocket target is resolved on first use, so an
-unusable port the transport accepts surfaces later as an unreachable server and
-implicates the service you were dialling.
+When `port=` is the effective spelling it must be an `int` in `[1, 65535]`, `0`
+included in the refusal - unlike the server's bind side above - and is refused
+before the endpoint is built.
 
 `host=` is the other half of that same URI and is held to the same terms: a bare
 hostname or IP literal, IPv6 bracketed (`"[::1]"`), with no `/`, `:`, scheme or
@@ -110,6 +106,19 @@ credentials in it - a delimiter is otherwise read as a later URI component and t
 validated port with it, so `host="127.0.0.1/foo"` dials port **80**. Pass a full URL as
 `endpoint=` instead. `host="0.0.0.0"` still reaches a server bound on every interface.
 Whether the host resolves is left to the connect path, which already reports it.
+
+Two read deadlines bound the client:
+
+| Parameter         | Default | Bounds                      |
+|-------------------|---------|-----------------------------|
+| `connect_timeout` | `10.0`  | the WebSocket handshake     |
+| `request_timeout` | `60.0`  | each inference reply        |
+
+Both must be a positive finite number: `0`, a negative, `nan` and `inf` are
+refused at construction, naming the class and the parameter rather than the
+server, so an unbounded wait is not expressible through these knobs. A server
+that accepted the connection and then went quiet is told apart from an absent
+one - the expiring budget names the read and the parameter carrying it.
 
 Then drive it exactly like a local policy. In simulation:
 
@@ -137,27 +146,25 @@ running the policy in-process:
 | `supports_rtc`       | whether Real-Time Chunking blending runs server-side       |
 | `required_bodies`    | which named bodies' world pose to merge into every observation, and which names to check against the scene before the rollout |
 
-`required_bodies` is the one entry whose work happens entirely on the robot
-host: the runtime resolves the names once before the rollout, refuses one the
-scene does not contain (naming the bodies it does hold), and merges
-`body.<name>.pos` / `.quat` / `.lin_vel` / `.ang_vel` into every observation it
-sends. The server advertises its whole served tree's declaration - a wrapper does
-not hide the policy inside it - and the client declares the same set, so a mimic
-tracker such as [ProtoMotions](../policies/protomotions.md) reads its anchor link
-over the wire exactly as it does in-process.
+`required_bodies` is the one entry whose work happens entirely on the robot host: the
+runtime resolves the names once before the rollout, refuses one the scene does not
+contain (naming the bodies it does hold), and merges `body.<name>.pos` / `.quat` /
+`.lin_vel` / `.ang_vel` into every observation it sends. The server advertises its whole
+served tree's declaration - a wrapper does not hide the policy inside it - and the
+client declares the same set, so a mimic tracker such as
+[ProtoMotions](../policies/protomotions.md) reads its anchor link over the wire exactly
+as it does in-process.
 
-Advertised metadata is held to the same domain the local property is, because a peer's
-numbers become this policy's introspection answers. `execution_horizon` and
-`actions_per_step` are slice bounds over the action chunk, so they share
-`chunk_count_error`'s domain with the constructor parameters they mirror - a positive
-`int`, nothing else - `requires_images` / `supports_rtc` must be JSON booleans, and
-`required_bodies` is held to `required_bodies_error`, the same owner
-`collect_required_bodies` asks when the policy is local. Nothing is coerced, because a
-coerced value is silent rather than lenient. A repeated body name is accepted, the local
-owner de-duplicates it. A field the handshake omits is not refused - the client keeps
-its own default, so a server advertising a subset stays usable - and a value it cannot
-mirror raises a `ConnectionError` naming the field, the value and the peer, without the
-connection being cached.
+Advertised metadata is held to the same domain the local property is.
+`execution_horizon` and `actions_per_step` are slice bounds over the action chunk, so
+they share `chunk_count_error`'s domain with the constructor parameters they mirror - a
+positive `int`, nothing else - `requires_images` / `supports_rtc` must be JSON booleans,
+and `required_bodies` is held to `required_bodies_error`, the same owner
+`collect_required_bodies` asks when the policy is local. Nothing is coerced. A repeated
+body name is accepted, the local owner de-duplicates it. A field the handshake omits is
+not refused - the client keeps its own default, so a server advertising a subset stays
+usable - and a value it cannot mirror raises a `ConnectionError` naming the field, the
+value and the peer, without the connection being cached.
 
 ## Real-Time Chunking across the wire
 
@@ -166,10 +173,8 @@ elapse during inference and sets it via `Policy.set_rtc_observed_delay(steps)`;
 `RemotePolicy` forwards that count on every request, and the server applies it to the
 wrapped policy immediately before inference. Chunk-seam blending therefore happens
 server-side against the correct, deterministic step offset. Per-episode `reset(seed)`
-and `set_control_frequency(hz)` are forwarded too, so seeded episodes stay reproducible.
-A policy samples from the RNG of the process it runs in, and the rollout's own
-`set_eval_seed` seeds the robot host, so the forwarded `reset(seed)` is the only seeding
-the inference host gets.
+and `set_control_frequency(hz)` are forwarded too, so seeded episodes stay reproducible:
+the forwarded `reset(seed)` is the only seeding the inference host gets.
 
 Both forwarded values are validated by the policy itself, so a remote caller reaches
 exactly the accepted domain an in-process one does: `hz` must be a finite positive

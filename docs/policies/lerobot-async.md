@@ -14,7 +14,7 @@ checkpoint in-process), the async client keeps the control loop off the GPU that
 runs the model - the same split as LeRobot's own `robot_client` / `policy_server`.
 
 For a WebSocket-based alternative served by this library's own
-`strands_robots.inference` server, see [`remote`](remote.md). `lerobot_async`
+`strands_robots.inference` server, see [`remote`](../inference/remote.md). `lerobot_async`
 differs in that it speaks LeRobot's gRPC protocol directly, so it interoperates
 with a stock `lerobot.async_inference.policy_server`.
 
