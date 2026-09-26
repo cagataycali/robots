@@ -105,6 +105,7 @@ nav:
   - Episode Labels (VLM judge): data/episode-labels.md
   - The Episode Judge: data/episode-judge.md
   - Training: training/overview.md
+  - Training Provider Knobs: training/provider-knobs.md
   - VLA-on-G1 Workflow: training/vla_workflow.md
   - Reinforcement Learning: training/rl.md
   - RL API Reference: training/rl-reference.md

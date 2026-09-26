@@ -1,8 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Every policy-type roster ``docs/training/overview.md`` spells matches its gate.
+"""Every policy-type roster ``docs/training/provider-knobs.md`` spells matches its gate.
 
-The Training page's ``validate()`` paragraph tells a reader which policy types a
+The provider-knobs page's ``validate()`` paragraph tells a reader which policy types a
 capability gate accepts - which types normalize with QUANTILES, and which expose
 ``use_relative_actions``. Those rosters are discovered from lerobot's live
 registry at runtime (see
@@ -40,7 +40,7 @@ from strands_robots.training.lerobot import (
 )
 from tests.training._lerobot_capability_range import roster_problem
 
-_PAGE = Path(__file__).resolve().parents[2] / "docs" / "training" / "overview.md"
+_PAGE = Path(__file__).resolve().parents[2] / "docs" / "training" / "provider-knobs.md"
 
 #: Marker of the paragraph that lists what the preflight refuses before launch.
 _PARAGRAPH_MARKER = "`validate()` refuses before launch"

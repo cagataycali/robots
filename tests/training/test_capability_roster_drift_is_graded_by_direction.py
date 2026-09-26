@@ -4,7 +4,7 @@
 
 ``strands_robots.training.lerobot`` writes down which lerobot policy types carry
 a capability (the ``*_POLICY_TYPES_FALLBACK`` snapshots, plus the ``validate()``
-paragraph of ``docs/training/overview.md``), and those rosters are graded against
+paragraph of ``docs/training/provider-knobs.md``), and those rosters are graded against
 the set derived from the INSTALLED lerobot's config registry.
 
 Graded for equality that cannot hold, because the manifest admits a RANGE and

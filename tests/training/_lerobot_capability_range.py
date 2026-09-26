@@ -6,7 +6,7 @@ Two written rosters name the lerobot policy types that expose a capability: the
 ``*_POLICY_TYPES_FALLBACK`` snapshots in
 :mod:`strands_robots.training.lerobot` (the answer each gate gives when lerobot
 cannot be imported), and the ``validate()`` paragraph of
-``docs/training/overview.md``. Both are graded against the capability set
+``docs/training/provider-knobs.md``. Both are graded against the capability set
 derived from the INSTALLED lerobot's config registry.
 
 The manifest admits a range - ``lerobot>=0.6.1,<0.7.0`` - and lerobot moves a

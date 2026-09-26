@@ -10,9 +10,12 @@ refuse them with a message that spells the key, e.g.::
     'progress_path', 'type'] (the fields of lerobot's SampleWeightingConfig)
 
 A caller who reads that message needs somewhere to look up what the accepted
-fields mean, and the Training overview is that page. A refusal naming a key the
-docs never mention is a dead end: the message proves the knob exists and the
-documentation denies it.
+fields mean, and the Training pages are where: the overview carries the spec
+and the installs, ``docs/training/provider-knobs.md`` the per-backend
+vocabulary. They are read here as one document, because the rule is that a
+reader of the message finds the key - not which page carries it. A refusal
+naming a key the docs never mention is a dead end: the message proves the knob
+exists and the documentation denies it.
 
 The population is derived from the refusal strings themselves rather than
 listed here, so a new refusal that names a new ``extra`` key joins the guard on
@@ -29,7 +32,11 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TRAINING_DIR = _REPO_ROOT / "strands_robots" / "training"
-_OVERVIEW = _REPO_ROOT / "docs" / "training" / "overview.md"
+#: The pages a reader of a refusal message is sent to, read as one document.
+_DOCS: tuple[Path, ...] = (
+    _REPO_ROOT / "docs" / "training" / "overview.md",
+    _REPO_ROOT / "docs" / "training" / "provider-knobs.md",
+)
 
 # ``extra['key']`` / ``extra["key"]`` inside a message, dotted keys included.
 _EXTRA_KEY_IN_MESSAGE = re.compile(r"""extra\[['"]([a-z_.]+)['"]\]""")
@@ -73,9 +80,16 @@ def _refused_extra_keys() -> dict[str, list[str]]:
 _REFUSED = _refused_extra_keys()
 
 
+def _documentation() -> str:
+    """Every page a refused key may be documented on, joined."""
+    return "\n".join(path.read_text(encoding="utf-8") for path in _DOCS)
+
+
 def test_the_walk_finds_the_structured_extra_dicts() -> None:
     """The scan reads real refusals, so an empty walk cannot pass the guard."""
     assert len(_REFUSED) >= 5, _REFUSED
+    missing = [str(path.relative_to(_REPO_ROOT)) for path in _DOCS if not path.is_file()]
+    assert not missing, f"the documented-knob pages moved: {missing} - repoint _DOCS"
     # The two dicts with their own field allowlists - the keys most in need of a
     # documented vocabulary, because the refusal names fields, not just the key.
     assert "reward_model" in _REFUSED
@@ -84,11 +98,10 @@ def test_the_walk_finds_the_structured_extra_dicts() -> None:
 
 @pytest.mark.parametrize("key", sorted(_REFUSED))
 def test_refused_extra_key_is_documented(key: str) -> None:
-    """A key a preflight refuses by name is named in the Training overview."""
-    overview = _OVERVIEW.read_text(encoding="utf-8")
-    assert key in overview, (
+    """A key a preflight refuses by name is named on one of the Training pages."""
+    pages = ", ".join(str(path.relative_to(_REPO_ROOT)) for path in _DOCS)
+    assert key in _documentation(), (
         f"extra['{key}'] is refused by name at {_REFUSED[key]} but never appears in "
-        f"{_OVERVIEW.relative_to(_REPO_ROOT)}. A caller sent to a key by a refusal "
-        "message has nowhere to look up what it accepts; document the key or stop "
-        "naming it in the message."
+        f"{pages}. A caller sent to a key by a refusal message has nowhere to look "
+        "up what it accepts; document the key or stop naming it in the message."
     )
