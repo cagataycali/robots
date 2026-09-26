@@ -40,7 +40,6 @@ _OVER_BUDGET = frozenset(
     {
         "api-reference.md",
         "device-connect.md",
-        "policies/kimodo.md",
         "policies/protomotions.md",
         "reference/configuration.md",
         "simulation/domain-randomization.md",

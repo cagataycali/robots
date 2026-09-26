@@ -44,9 +44,8 @@ sim.run_policy(
 
 The flag is a real boolean, not a spelling of one. A JSON `policy_config` that
 writes `"trust_remote_code": "false"` is refused at construction, naming the key
-and the value, rather than forwarded: `from_pretrained` reads the flag by
-truthiness and every non-empty string is truthy, so the string would have run
-the checkpoint's code for the caller who asked it not to.
+and the value, rather than forwarded to a `from_pretrained` that reads it by
+truthiness.
 
 Weights are fetched from HuggingFace on first use under the NVIDIA Open Model
 License; nothing is bundled with `strands_robots`.
@@ -94,14 +93,11 @@ sim.run_policy(
 Run standalone (the example above) the 29 joint targets are applied directly -
 with no tracker in between, but still to the G1's position actuators under
 gravity, and the clip's own 7 root values are not applied. So the motion plays in
-place and a standing G1 handed a walking clip topples: measured on
-`nvidia/Kimodo-G1-RP-v1`, a 120-frame "walking forward" sample whose own root
-travels 3.6 m put the pelvis on the floor within 4 s at 50 Hz (0.793 m -> 0.064 m),
-while the same clip replayed through `set_joint_positions` (the chaining snippet
-below, which holds the root) shows the generated motion with the pelvis steady at
-0.793 m. Use that route to *look* at a sample; making the robot follow it under
-physics needs a controller that **tracks the reference**, in series over the same
-joints:
+place and a standing G1 handed a walking clip topples. Replaying the clip through
+`set_joint_positions` holds the root, so that is the route to *look* at a sample
+(the [chaining snippet](kimodo-sampling.md#chaining-prompts-into-a-long-horizon-sequence));
+making the robot follow it under physics needs a controller that **tracks the
+reference**, in series over the same joints:
 
 ```text
 prompt -> Kimodo -> 29 joint targets -> reference tracker -> torques -> robot
@@ -156,71 +152,6 @@ names the file in every refusal, and does not check the extension:
 ```python
 KimodoPolicy(config=KimodoConfig.from_json("~/kimodo.json"))
 ```
-
-## When the sampler runs again
-
-One `sample()` call produces a motion buffer that `get_actions` drains one frame
-per control tick, holding the last frame once exhausted. The buffer is keyed on
-the four inputs that determine it — the prompt plus `diffusion_steps`,
-`guidance_scale` and `seed` — so the sampler runs again as soon as any of them
-differs, and otherwise the buffered frames are reused:
-
-```python
-await policy.get_actions({}, "walking forward")                     # samples
-await policy.get_actions({}, "walking forward")                     # drains
-await policy.get_actions({}, "waving")                              # samples
-await policy.get_actions({}, "waving", diffusion_steps=25)          # samples
-policy.reset()                                                      # rewinds
-policy.reset(seed=7); await policy.get_actions({}, "waving")        # samples
-```
-
-Per-call overrides keep the config fields' domains and are checked before the
-key is built, so a refused override costs neither a diffusion run nor a frame.
-The seed must be a whole number on every surface that sets one: a fractional
-seed would key as `int(seed)`, making `2.5` and `2.9` replay one motion. This is
-what makes a multi-episode `eval_policy` meaningful — `PolicyRunner.evaluate`
-hands each episode its own seed through `reset(seed=...)`, so every episode
-samples its own motion and the run replays exactly at the same master `seed=`.
-
-## Chaining prompts into a long-horizon sequence
-
-Because a changed prompt samples the next segment and the stream simply
-continues, a long-horizon episode is a rollout that changes the instruction as
-it goes; a `policy_object` driven directly is the smallest version:
-
-```python
-import asyncio
-
-from strands_robots import Robot
-from strands_robots.policies.kimodo import KIMODO_G1_JOINTS, KimodoPolicy
-
-CHAIN = [
-    ("a person walking forward with confident strides", 90),
-    ("a person turning to the left", 60),
-    ("a person waving with the right hand", 60),
-    ("a person crouching down to pick an object off the floor", 90),
-    ("a person walking forward with confident strides", 90),
-]
-
-sim = Robot("g1", mesh=False)
-policy = KimodoPolicy()
-policy.set_robot_state_keys(list(KIMODO_G1_JOINTS))
-
-for instruction, ticks in CHAIN:
-    for _ in range(ticks):
-        action = asyncio.run(policy.get_actions({}, instruction))[0]
-        sim.set_joint_positions(action, robot_name="g1")
-```
-
-Each segment is sampled once, on the tick its instruction first appears. Kimodo
-samples every motion from its own canonical start pose, so a new segment is
-eased off the pose last commanded across `transition_frames` native frames
-(default 5, the sampler's own `num_transition_frames`; minimum 1). Without it,
-across the 600 ordered pairs of a 25-motion corpus the median seam moved a joint
-1.6 rad in one tick. Easing shifts where a segment starts, not how it moves (the
-root orientation takes the rotational form of the same offset, so a turn keeps
-its rate); it removes the discontinuity without re-planning the motion. An
-episode boundary is not a seam: `reset()` forgets the last commanded pose.
 
 ## When the checkpoint is not a Kimodo checkpoint
 
@@ -285,7 +216,8 @@ sim.run_policy(
 `(num_frames, 7+29)` array; `guidance_scale` has no counterpart there and is
 ignored. `seed` goes through `torch.manual_seed` because the runtime draws from
 the global generator — an adapter that accepts `seed` and ignores it still
-satisfies the protocol, raises nothing, and defeats the per-episode seed above.
+satisfies the protocol, raises nothing, and defeats the
+[per-episode seed](kimodo-sampling.md#when-the-sampler-runs-again).
 
 ## Driving the real robot
 
@@ -315,3 +247,11 @@ Inject a `KimodoMotionAgent` stub — no torch/diffusers/CUDA needed. See
 ## References
 
 * Kimodo: <https://huggingface.co/nvidia/Kimodo-G1-RP-v1>
+
+## See also
+
+- [Kimodo sampling and chaining](kimodo-sampling.md) - when the sampler runs
+  again, the seed contract, and chaining prompts into a long-horizon sequence.
+- [ProtoMotions](protomotions.md) - the tracker that follows a Kimodo clip under
+  physics.
+- [Policy providers](overview.md) - what `policy_provider` may name.
