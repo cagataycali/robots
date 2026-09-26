@@ -84,20 +84,17 @@ sim = Robot("aloha")
 
 </div>
 
-## Counts at a glance
+## Drivable for real
 
-| Category | Count | Page |
-|----------|------:|------|
-| Arms | {{n:arm}} | [arms](arms.md) |
-| Bimanual | {{n:bimanual}} | [bimanual](bimanual.md) |
-| Humanoids | {{n:humanoid}} | [humanoids](humanoids.md) |
-| Hands | {{n:hand}} | [hands](hands.md) |
-| Mobile | {{n:mobile}} | [mobile](mobile.md) |
-| Mobile manip | {{n:mobile_manip}} | [mobile-manip](mobile-manip.md) |
-| Aerial | {{n:aerial}} | [aerial](aerial.md) |
-| Expressive | {{n:expressive}} | [humanoids](humanoids.md) |
-| **Total** | **{{n:robots}}** | |
+Generated from `strands_robots/registry/robots.json` and the native-driver table in
+`strands_robots/drivers` by `docs/hooks/coverage_matrix.py` at build - do not edit. One row
+per registered robot: the lerobot robot type the registry declares, the native driver this
+package registers, both, or neither - and neither is simulation-only until one of the two
+arrives. Which of the two `driver="auto"` picks is
+[the factory's answer](../getting-started/robot-factory.md#choosing-a-driver); what a native
+driver must satisfy is on [Native drivers](../hardware/native-drivers.md).
 
+{{coverage_matrix}}
 
 ## Add a new robot
 
