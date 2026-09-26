@@ -409,6 +409,11 @@ _SANITIZED_SINKS: dict[str, dict[str, list[str]]] = {
         "LerobotLocalPolicy._to_lerobot_observation": ["feat", "k"],
         "LerobotLocalPolicy._build_observation_batch": ["instruction[:50]"],
         "LerobotLocalPolicy._resolve_camera_targets": ["cam", "feat"],
+        # The under-supplied WARN both routers share: the camera names come
+        # straight off the observation, and the declared feature names and the
+        # policy type off the checkpoint's own config - the same provenance
+        # ``feat`` already carries above.
+        "LerobotLocalPolicy._under_supplied_cameras_error": ["feat", "name", "self.policy_type"],
     },
     "curobo/policy.py": {
         "CuroboPolicy._apply_world_update": ["repr(shown)"],

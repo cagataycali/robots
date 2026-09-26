@@ -46,12 +46,12 @@ except ValidationError as refusal:
         print(refusal_codes.REFUSAL_GRANTS[refusal.code])   # STRANDS_MESH_HF_REPO_ALLOW
 ```
 
-- **`code` is stable; the message is not.** `code` is a member of `refusal_codes.REFUSAL_CODES`, a closed vocabulary you may switch on. The message is an operator-facing sentence and may be reworded at any time, so matching on prose couples you to wording that is free to change.
+- **`code` is stable; the message is not.** `code` is a member of `refusal_codes.REFUSAL_CODES`, a closed vocabulary you may switch on. The message is an operator-facing sentence and may be reworded at any time.
 - **`subject` is what the refusal is about**, so you do not parse it back out: the repo id, the host or whole `server_address`, the policy type or provider name, the joint key, the refused provider.
 - **`REFUSAL_GRANTS` names the environment variable that lifts each refusal**, so your consumer and this package cannot drift apart. The variable is half the answer - what to set it to differs by code. `HF_REPO_NOT_ALLOWED`, `POLICY_TYPE_NOT_ALLOWED` and `POLICY_HOST_NOT_ALLOWED` are allowlists you add `subject` to; `TRUST_REMOTE_CODE_REQUIRED` is a flag you set to `1`; `TELEOP_VALUE_OUT_OF_RANGE` is a bound you raise above the refused magnitude. Each code states its own operation in `refusal_codes`.
 - **A refusal with no code is not continuable.** `code` is `None` for rejections an operator cannot grant their way past - a schema failure, an over-long instruction, a lockout. Treat `code is None` as "show the message and stop", not as an unknown code.
 - **Codes are additive.** Switch on the codes you know and fall through to the message for the rest.
-- **Every code you receive is in `REFUSAL_CODES`.** Nothing validates `code` at runtime, so what backs the closed vocabulary is a static scan over every raise site in the package. `REFUSAL_GRANTS[refusal.code]` is therefore safe for any code you are handed: a code outside the vocabulary is a defect in this package.
+- **Every code you receive is in `REFUSAL_CODES`.** `REFUSAL_GRANTS[refusal.code]` is safe for any code you are handed: a code outside the vocabulary is a defect in this package.
 
 The in-tree consumer is `strands_robots.dashboard.consent.classify_refusal`, which builds the dashboard's consent card from `code` and `subject` alone.
 

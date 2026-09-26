@@ -47,17 +47,16 @@ keys rather than the canonical ones LeRobot looks up, so the diagnostic lists th
 spellings it found per missing key -- `lerobot/smolvla_base` reports
 `{'observation.state': [], 'action': ['so100-blue.buffer.action',
 'so100-red.buffer.action', 'so100.buffer.action']}`. Remap one onto `action` and
-pass it as the override above. They are listed rather than adopted because the
-three describe different distributions, so the choice is the caller's; an empty
-list means the checkpoint ships no stats for that feature.
+pass it as the override above. They are listed rather than adopted: the choice
+is the caller's, and an empty list means the checkpoint ships no stats for that
+feature.
 
 Stats also carry the *units* the dataset was recorded in, and that is the second
 half a sim caller owes. An SO-arm dataset comes through the driver's
-`MotorNormMode` - arm joints in servo **degrees**, gripper in `RANGE_0_100`
-(`smolvla_base`'s `so100.buffer.action.std` is
-`[26.4, 52.4, 49.9, 37.0, 59.4, 19.0]`) - while a MuJoCo state is **radians**.
-Feeding radians to degree stats is not a small error, it is a change of scale, so
-`observation.state` reaches the model as a near-constant:
+`MotorNormMode` - arm joints in servo **degrees**, gripper in `RANGE_0_100` -
+while a MuJoCo state is **radians**.
+Feeding radians to degree stats makes `observation.state` reach the model as a
+near-constant:
 
 | `state_units` | full so101 joint range, in sigma |
 | --- | --- |
@@ -79,9 +78,8 @@ policy = create_policy(
 )
 ```
 
-Together, because the units half on its own is refused rather than run: a map
-that converts writes its conversion into the very tensor the inert normalizer
-then leaves alone. The load names the inert features and both ways out - supply
+Together, because the units half on its own is refused rather than run. The load
+names the inert features and both ways out - supply
 the stats above, or drop the conversion (`set_robot_state_keys([...])`, or a
 `"native"` map).
 
@@ -91,8 +89,7 @@ hardware - an SO follower already reports driver units - and wrong for a sim
 packing radians. Those two spellings are the whole vocabulary
 (`embodiment.UNIT_FRAMES`); any other is refused wherever a frame is held - when
 the map is built, and when LeRobot rebuilds the pack-state step from a saved
-`policy_preprocessor.json`, where `"DEGREES"` (LeRobot's own `MotorNormMode`
-spelling) would otherwise mean `"native"` and convert nothing.
+`policy_preprocessor.json`.
 
 Both halves of a declared map are installed as *preprocessor* steps, so a
 checkpoint that ships no `policy_preprocessor.json` (only a postprocessor) has
@@ -127,22 +124,19 @@ back to the observation's own state vector. Both degradations are logged, and
 `strict_keys=True` turns them into raises.
 
 The remedy names an `embodiment=` only when a shipped one declares `state_keys`
-the observation carries, so following it cannot land back on the same mismatch.
-One exception is reported instead of recommended. A declared embodiment that was
-already **rejected** at load time (its `obs_rename` names an image feature the
-checkpoint does not declare, so the whole map including the state binding is
-discarded - see [the pre-flight check](#embodiment-obs_rename-and-the-pre-flight-check))
-would loop if re-passed, so the remedy says it was rejected and points at
+the observation carries.
+One exception is reported instead of recommended. A declared embodiment already
+**rejected** at load time (see [the pre-flight
+check](#embodiment-obs_rename-and-the-pre-flight-check)) would loop if
+re-passed, so the remedy says it was rejected and points at
 `camera_key_map=` / `obs_rename_override=` to make it validate, or
 `set_robot_state_keys([...])`.
 
 A candidate that converts units is withheld too when normalization is inert
 (the "stats do not cover" warning above): `so100` and `so101` declare
-`state_units='degrees'`, correct only against degree-recorded stats, and with
-none the so101 joint range reaches the model at up to 160.0 where packing it
-natively reaches 2.79. The remedy points at `set_robot_state_keys([...])`, which
-leaves the units alone, and names the `processor_overrides` that would make the
-embodiment correct.
+`state_units='degrees'`, correct only against degree-recorded stats. The remedy points
+at `set_robot_state_keys([...])`, which leaves the units alone, and names the
+`processor_overrides` that would make the embodiment correct.
 
 ## Camera routing
 
@@ -209,6 +203,12 @@ this checkpoint cannot accept.
 Both halves are needed: the drops alone leave the declarative path with no
 camera routing, and the model then raises "All image features are missing from
 the batch".
+
+Fewer cameras than the checkpoint declares is refused only where the family needs
+every view. `smolvla`, `pi0`, `pi05`, `pi0_fast` and `xvla` prepare
+the views they are given: the cameras present are routed and a WARN names the
+absent features. Every other family indexes each declared feature, so there the
+missing camera is still refused by name.
 
 A single-camera checkpoint needs no embodiment: declare the joint names with
 `set_robot_state_keys([...])` and the policy synthesizes a state-only embodiment

@@ -13,6 +13,12 @@ Dependencies:
   AWS credentials for Bedrock (or any strands-agents model provider).
   Optional: MODEL=<bedrock model id> to override the default model.
 
+The rover's cmd_vel is a gated command surface, so the agent prompts for
+operator approval before each drive it sends. For an unattended run, pre-approve
+exactly that surface instead:
+
+    export STRANDS_ROS2_COMMAND_ALLOW=/curiosity_mars_rover/ackermann_drive_controller/cmd_vel
+
 The simulation runs separately (it is NOT part of this package). One-time
 standup with Docker, headless, from the community Curiosity workspace:
 
@@ -53,5 +59,11 @@ result = agent(
         "and report how far the rover moved across the Martian terrain.",
     )
 )
+
+# An unapproved gated command pauses the run rather than finishing it: nothing
+# has moved, and the question carries both ways to answer it. Printing that as a
+# completed run would report a drive across Mars that never happened.
+if result.stop_reason == "interrupt":
+    raise RuntimeError(f"paused at the command gate - the rover did not move: {result.interrupts}")
 
 print(f"Agent completed: {result}")

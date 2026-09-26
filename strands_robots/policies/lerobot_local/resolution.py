@@ -642,4 +642,46 @@ def declared_image_features(pretrained_name_or_path: str, revision: str | None =
     return {name for name, spec in features.items() if isinstance(spec, dict) and spec.get("type") == "VISUAL"}
 
 
-__all__ = ["declared_image_features", "resolve_policy_class_by_name", "resolve_policy_class_from_hub"]
+#: LeRobot policy types whose image preparation accepts a batch carrying only
+#: SOME of the image features the checkpoint declares.
+#:
+#: ``smolvla``, ``pi0``, ``pi05`` and ``pi0_fast`` build their view list from the
+#: declared features PRESENT in the batch, pad absent ones up to
+#: ``config.empty_cameras`` and refuse only when none is present ("All image
+#: features are missing from the batch. At least one expected."); ``xvla``
+#: applies the same split behind a per-view mask. Every other type indexes
+#: ``batch[key]`` for each declared feature, so an absent one is a ``KeyError``
+#: raised deep inside lerobot, and ``evo1`` refuses more absent views than its
+#: own ``empty_cameras`` budget allows - for those the router's under-supplied
+#: refusal is the accurate answer and stays.
+PARTIAL_IMAGE_POLICY_TYPES: frozenset[str] = frozenset({"pi0", "pi0_fast", "pi05", "smolvla", "xvla"})
+
+
+def accepts_partial_images(policy_type: str | None) -> bool:
+    """Whether a policy type runs on fewer image inputs than it declares.
+
+    A one-camera robot against ``lerobot/smolvla_base`` (three declared image
+    features) is a flow lerobot supports: it prepares the view it was given and
+    treats the rest as absent. Which types do that is the checkpoint family's
+    property, not the caller's, so the camera routers ask here instead of
+    refusing every under-supplied observation.
+
+    Args:
+        policy_type: The resolved lerobot policy type (``"smolvla"``,
+            ``"act"``, ...), or ``None`` when it could not be resolved.
+
+    Returns:
+        ``True`` only for a type named in :data:`PARTIAL_IMAGE_POLICY_TYPES`.
+        An unresolved type answers ``False``: the conservative half is the
+        refusal, which names both sides of the mismatch.
+    """
+    return policy_type in PARTIAL_IMAGE_POLICY_TYPES
+
+
+__all__ = [
+    "PARTIAL_IMAGE_POLICY_TYPES",
+    "accepts_partial_images",
+    "declared_image_features",
+    "resolve_policy_class_by_name",
+    "resolve_policy_class_from_hub",
+]
