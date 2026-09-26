@@ -40,7 +40,12 @@ from .embodiment import (
     state_key_remedy,
 )
 from .processor import POSTPROCESSOR_CONFIG, PREPROCESSOR_CONFIG, ProcessorBridge
-from .resolution import declared_image_features, resolve_policy_class_by_name, resolve_policy_class_from_hub
+from .resolution import (
+    accepts_partial_images,
+    declared_image_features,
+    resolve_policy_class_by_name,
+    resolve_policy_class_from_hub,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -3279,17 +3284,14 @@ class LerobotLocalPolicy(Policy):
             out[feat] = v
             used_feats.add(feat)
         # Hard error if the policy still has image slots the robot cannot fill -
-        # the same refusal _resolve_camera_targets raises at its step 4, so a
+        # the same rule _resolve_camera_targets applies at its step 4, so a
         # state-only observation is refused by name on this path too instead of
         # reaching lerobot's bare KeyError on the first declared image key.
         unfilled = [feat for feat in declared_img_feats if feat not in used_feats]
-        if unfilled:
-            cam_names = [k for k, _ in image_items]
-            raise ValueError(
-                f"Robot supplies {len(cam_names)} camera(s) {cam_names} but the policy "
-                f"requires image input(s) {declared_img_feats}; unmatched policy keys: {unfilled}. "
-                f"Add the missing camera(s) to the observation or pass camera_key_map."
-            )
+        if unfilled and (
+            error := self._under_supplied_cameras_error([k for k, _ in image_items], declared_img_feats, unfilled)
+        ):
+            raise ValueError(error)
 
         # 2) Collect scalar joint values into observation.state - unless the
         #    caller already supplied the composed vector.
@@ -3609,14 +3611,58 @@ class LerobotLocalPolicy(Policy):
 
         # 4) Hard error if the policy still has image slots the robot cannot fill.
         unfilled = [feat for feat in targets if feat not in used]
-        if unfilled:
-            raise ValueError(
-                f"Robot supplies {len(cam_names)} camera(s) {cam_names} but the policy "
-                f"requires image input(s) {targets}; unmatched policy keys: {unfilled}. "
-                f"Add the missing camera(s) to the observation or pass camera_key_map."
-            )
+        if unfilled and (error := self._under_supplied_cameras_error(cam_names, targets, unfilled)):
+            raise ValueError(error)
 
         return result
+
+    def _under_supplied_cameras_error(
+        self, cam_names: list[str], declared: list[str], unfilled: list[str]
+    ) -> str | None:
+        """The refusal for image slots the robot cannot fill - or ``None``.
+
+        Both routers end here, because whether a checkpoint ships a preprocessor
+        is not something a camera binding may depend on.
+
+        A missing declared image is a hard error for most checkpoints: they
+        index ``batch[key]`` for every declared feature, so the alternative is a
+        ``KeyError`` raised deep inside lerobot. The flow-matching VLAs do not -
+        ``lerobot/smolvla_base`` declares three image features and prepares the
+        views it was actually given - and refusing them turned the commonest
+        real pairing, a one-camera arm against a public SmolVLA checkpoint, into
+        a dead end whose remedy (cameras the robot does not have) could not be
+        followed. For those types this warns and routes what there is;
+        :func:`~strands_robots.policies.lerobot_local.resolution.accepts_partial_images`
+        holds which ones, and an unresolved type keeps the refusal.
+
+        Args:
+            cam_names: Camera names the observation supplied.
+            declared: The image features the policy declares, in declaration order.
+            unfilled: The declared features no camera was routed to.
+
+        Returns:
+            The refusal message, or ``None`` when the policy runs on the views
+            it was given (a WARN is emitted in that case).
+        """
+        if accepts_partial_images(self.policy_type) and len(unfilled) < len(declared):
+            logger.warning(
+                "Robot supplies %d camera(s) %s for the %d image input(s) the policy declares; "
+                "%s stay absent. A %r checkpoint prepares the views it was given and treats the "
+                "rest as absent, so the rollout runs on fewer views than the checkpoint was "
+                "trained with - add the missing camera(s) or pass camera_key_map to bind the "
+                "ones you have.",
+                len(cam_names),
+                [sanitize_log_value(name) for name in cam_names],
+                len(declared),
+                [sanitize_log_value(feat) for feat in unfilled],
+                sanitize_log_value(self.policy_type),
+            )
+            return None
+        return (
+            f"Robot supplies {len(cam_names)} camera(s) {cam_names} but the policy "
+            f"requires image input(s) {declared}; unmatched policy keys: {unfilled}. "
+            f"Add the missing camera(s) to the observation or pass camera_key_map."
+        )
 
     def _build_batch_from_strands_format(
         self, observation_dict: dict[str, Any], batch: dict[str, Any]

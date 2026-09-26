@@ -53,9 +53,8 @@ list means the checkpoint ships no stats for that feature.
 
 Stats also carry the *units* the dataset was recorded in, and that is the second
 half a sim caller owes. An SO-arm dataset comes through the driver's
-`MotorNormMode` - arm joints in servo **degrees**, gripper in `RANGE_0_100`
-(`smolvla_base`'s `so100.buffer.action.std` is
-`[26.4, 52.4, 49.9, 37.0, 59.4, 19.0]`) - while a MuJoCo state is **radians**.
+`MotorNormMode` - arm joints in servo **degrees**, gripper in `RANGE_0_100` -
+while a MuJoCo state is **radians**.
 Feeding radians to degree stats is not a small error, it is a change of scale, so
 `observation.state` reaches the model as a near-constant:
 
@@ -138,11 +137,9 @@ would loop if re-passed, so the remedy says it was rejected and points at
 
 A candidate that converts units is withheld too when normalization is inert
 (the "stats do not cover" warning above): `so100` and `so101` declare
-`state_units='degrees'`, correct only against degree-recorded stats, and with
-none the so101 joint range reaches the model at up to 160.0 where packing it
-natively reaches 2.79. The remedy points at `set_robot_state_keys([...])`, which
-leaves the units alone, and names the `processor_overrides` that would make the
-embodiment correct.
+`state_units='degrees'`, correct only against degree-recorded stats. The remedy points
+at `set_robot_state_keys([...])`, which leaves the units alone, and names the
+`processor_overrides` that would make the embodiment correct.
 
 ## Camera routing
 
@@ -209,6 +206,12 @@ this checkpoint cannot accept.
 Both halves are needed: the drops alone leave the declarative path with no
 camera routing, and the model then raises "All image features are missing from
 the batch".
+
+A robot with fewer cameras than the checkpoint declares is refused only where the
+family needs every view. `smolvla`, `pi0`, `pi05`, `pi0_fast` and `xvla` prepare
+the views they are given: the cameras present are routed and a WARN names the
+absent features. Every other family indexes each declared feature, so there the
+missing camera is still refused by name.
 
 A single-camera checkpoint needs no embodiment: declare the joint names with
 `set_robot_state_keys([...])` and the policy synthesizes a state-only embodiment
