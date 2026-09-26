@@ -9,21 +9,36 @@ it so the fleet dashboard's presence card, IMU chip, battery chip and lidar
 summary appear the moment the driver's DDS callbacks deliver their first
 messages.
 
-Dependencies (on the robot's control PC): ``pip install
-"strands-robots[mesh]" cyclonedds unitree_sdk2py``. The SDK is lazy-imported by
-the driver, so ``strands_robots`` remains importable on a machine without it -
-that is what makes every headless test pass.
+Dependencies (on the robot's control PC)::
+
+    pip install 'strands-robots[mesh,ros2]'
+    git clone https://github.com/unitreerobotics/unitree_sdk2_python
+    pip install --no-deps -e ./unitree_sdk2_python
+
+``unitree_sdk2py`` is Unitree's vendor SDK and is not on PyPI under that name -
+the published ``unitree-sdk2`` wheel ships no ``g1`` package and pins a
+CycloneDDS with no ``py>=3.12`` wheel, so the checkout above is the install and
+``[ros2]`` is where this project declares the CycloneDDS range. That is the
+recipe the driver's own missing-SDK refusal names, and
+docs/hardware/unitree-g1.md carries the aarch64 variant. The SDK is
+lazy-imported by the driver, so ``strands_robots`` remains importable on a
+machine without it - that is what makes every headless test pass.
 
 Runtime: keeps running until Ctrl-C. The DDS subscribers deliver at ~1 kHz
 (low-state), 10 Hz (lidar) and 1-2 Hz (battery); the mesh pacer decides what
 to publish and at what rate.
 
-Hardware note: **this example only makes sense against a real G1**. On Thor,
-in CI or on any laptop without CycloneDDS on the same LAN as the robot, the
-DDS init fails with a named reason and the driver stays in the
-"usable but not connected" state. That is deliberate - a mesh peer that never
-connects is still a valid peer, so ``Mesh(...)`` publishes an "offline" card
-instead of raising.
+Hardware note: **this example only makes sense against a real G1**. Which
+absence you have decides what you see, and only one of them is a refusal.
+Without the SDK - in CI, or on a laptop that skipped the checkout above -
+``connect_eagerly()`` returns a named reason and the driver stays in the
+"usable but not connected" state; the example prints it and carries on, because
+a mesh peer that never connects is still a valid peer and ``Mesh(...)``
+publishes an "offline" card instead of raising. With the SDK installed but no
+robot on the bus, DDS has nothing to fail at: ``connect_eagerly()`` returns
+``None`` and ``get_status()`` reports ``connected`` - the subscribers are bound
+and simply never receive, so the card appears with its IMU, battery and lidar
+chips empty rather than marked offline.
 """
 
 from __future__ import annotations
