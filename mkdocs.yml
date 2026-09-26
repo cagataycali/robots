@@ -80,6 +80,7 @@ nav:
   - Kimodo (G1 text-to-motion diffusion): policies/kimodo.md
   - Kimodo Sampling and Chaining: policies/kimodo-sampling.md
   - ProtoMotions (G1 motion tracker): policies/protomotions.md
+  - ProtoMotions Motion Cache (qpos bridge): policies/protomotions-motion-cache.md
   - Microduck (Pollen 14-DOF biped): policies/microduck.md
   - LeRobot Local: policies/lerobot-local.md
   - LeRobot Local observations: policies/lerobot-local-observations.md
