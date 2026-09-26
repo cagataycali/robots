@@ -19,19 +19,38 @@ A ROS 2 turtle on the same DDS domain (e.g. host networking):
      source /opt/ros/jazzy/setup.bash && \\
      QT_QPA_PLATFORM=offscreen ros2 run turtlesim turtlesim_node"
 
+``/turtle1/cmd_vel`` is a gated command surface and this script has no operator
+to prompt, so pre-approve that one topic before running it:
+
+  export STRANDS_ROS2_COMMAND_ALLOW=/turtle1/cmd_vel
+
 Expected: the turtle drives forward and to the left for ~1.5 seconds.
 Runtime: ~2 seconds.
 """
 
 from strands_robots.mesh import RtpsRobot
 
+
+def _check(result: dict, what: str) -> dict:
+    """Raise if a bridge call returned an error dict - never continue silently.
+
+    ``drive`` / ``stop`` / ``advertise`` REPORT a refusal by returning
+    ``{"status": "error", ...}`` rather than raising, and ``/turtle1/cmd_vel`` is
+    a gated command surface a script has no operator to approve, so a discarded
+    result prints this demo's closing line for a turtle that never moved.
+    """
+    if isinstance(result, dict) and result.get("status") == "error":
+        raise RuntimeError(f"{what} failed: " + "; ".join(c.get("text", "") for c in result.get("content", [])))
+    return result
+
+
 # 1. Wrap the turtle as a pure-RTPS robot. No ROS 2 needed in this interpreter.
 turtle = RtpsRobot.from_rtps(node_name="turtlesim", cmd_vel_topic="/turtle1/cmd_vel")
 
 # 2. Appear on the ROS 2 graph as a cmd_vel publisher, then drive.
-turtle.advertise()
-turtle.drive(linear=2.0, angular=1.5, duration=1.5)  # publish Twist over RTPS
-turtle.stop()
+_check(turtle.advertise(), "advertise")
+_check(turtle.drive(linear=2.0, angular=1.5, duration=1.5), "drive")  # publish Twist over RTPS
+_check(turtle.stop(), "stop")
 print("done - the turtle should have moved (check the turtlesim window)")
 
 # 3. Or hand the robot to an agent. Its methods become named tools

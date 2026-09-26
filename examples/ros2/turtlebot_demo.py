@@ -32,6 +32,21 @@ Runtime: ~10 seconds (plus LLM latency for the agent section).
 
 from strands_robots.mesh import RosBridgedRobot
 
+
+def _check(result: dict, what: str) -> dict:
+    """Raise if a bridge call returned an error dict - never continue silently.
+
+    ``drive`` / ``stop`` REPORT a refusal by returning
+    ``{"status": "error", ...}`` rather than raising, and ``/turtle1/cmd_vel`` is
+    a gated command surface a script has no operator to approve, so a discarded
+    result prints an "after" pose identical to the "before" one as if that were
+    the drive's outcome.
+    """
+    if isinstance(result, dict) and result.get("status") == "error":
+        raise RuntimeError(f"{what} failed: " + "; ".join(c.get("text", "") for c in result.get("content", [])))
+    return result
+
+
 # 1. Wrap the remote ROS 2 robot. Nothing connects yet - the bridge is thin.
 turtle = RosBridgedRobot.from_ros(
     node_name="turtlesim",
@@ -46,9 +61,9 @@ turtle = RosBridgedRobot.from_ros(
 #    carry one - the bridge's drive/stop tools forward it, so the operator is
 #    prompted per command instead.
 print("before:", turtle.get_pose()["content"][0]["text"])
-turtle.drive(linear=2.0, angular=1.5, duration=1.5)
+_check(turtle.drive(linear=2.0, angular=1.5, duration=1.5), "drive")
 print("after: ", turtle.get_pose()["content"][0]["text"])
-turtle.stop()
+_check(turtle.stop(), "stop")
 
 # 3. Hand the robot to an agent - its methods become named tools. Uncomment to
 #    run (needs strands-agents + a model provider configured):
