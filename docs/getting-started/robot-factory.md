@@ -29,8 +29,8 @@ robot = Robot("so100", mode="auto")  # probes USB, falls back to sim
 | `peer_id` | str | `None` | Stable mesh peer id. Auto-generated if omitted. |
 | `orientation` | list | `None` | Robot base orientation `[w, x, y, z]` in sim world. Ignored when `mode="real"` (reported at debug level). |
 | `keyframe` | str \| int | `None` | Spawn in a model `<keyframe>` pose (name or index) instead of the zero configuration. Ignored when `mode="real"` (reported at debug level). |
-| `driver` | str | `"auto"` | Which implementation drives a real robot: `"auto"` / `"lerobot"` / `"strands"`. `"auto"` honours the robot's registry `hardware.driver` and otherwise builds the lerobot driver. Checked in every mode; only `mode="real"` acts on it (sim reports it as ignored at debug level). See [Choosing a driver](#choosing-a-driver). |
-| `tool_name` | str | `None` | The name the agent sees this robot under. `None` keeps the default - `"<name>_sim"` in sim, the canonical robot name on hardware - which is why two `Robot("so101")` in one `Agent` used to collide at registration. Name each one (`tool_name="left_arm"`) to put a bimanual pair, or a real arm beside its sim twin, in one agent. Letters, digits, `_` or `-`, at most 64 characters; anything else raises `ValueError` before the backend builds. |
+| `driver` | str | `"auto"` | Which implementation drives a real robot: `"auto"` / `"lerobot"` / `"strands"`. Checked in every mode; only `mode="real"` acts on it (sim reports it as ignored at debug level). See [Choosing a driver](#choosing-a-driver). |
+| `tool_name` | str | `None` | The name the agent sees this robot under. `None` keeps the default - `"<name>_sim"` in sim, the canonical robot name on hardware - so two `Robot("so101")` in one `Agent` collide at registration. Name each one (`tool_name="left_arm"`) to put a bimanual pair, or a real arm beside its sim twin, in one agent. Letters, digits, `_` or `-`, at most 64 characters; anything else raises `ValueError` before the backend builds. |
 | `**kwargs` | | | Forwarded to the backend or driver constructor. `mode="real"` grades the name and raises `ValueError` on one it does not know: the lerobot driver against the robot's config dataclass plus the forwardable list below, a native driver against its own constructor parameters (`driver='strands'`, so `prot=` is refused naming the keyword and that driver's roster). A sim keyword the backend does not recognize is still ignored. |
 
 ## Name resolution
@@ -44,12 +44,11 @@ resolve_name("g1")        # 'unitree_g1'
 ```
 
 Case-insensitive, hyphens/underscores interchangeable. That fold is
-`registry.normalize_robot_name`, and it is the rule the registry is keyed by, not
-just the rule queries pass through: a canonical name is stored folded and an
-alias is keyed folded, so an alias declared `"My-Arm"` answers `my_arm`,
-`MY-ARM` and `My-Arm` alike. Two aliases that fold to one key are therefore one
-alias, and `register_robot` refuses an alias that folds onto another robot's name
-or alias rather than letting it resolve to that robot. Full alias map in
+`registry.normalize_robot_name`, and it is the rule the registry is keyed by: a
+canonical name is stored folded and an alias is keyed folded, so an alias
+declared `"My-Arm"` answers `my_arm`, `MY-ARM` and `My-Arm` alike. Two aliases
+that fold to one key are one alias, and `register_robot` refuses an alias that
+folds onto another robot's name or alias. Full alias map in
 `registry/robots.json`.
 
 ## Real hardware
@@ -68,8 +67,7 @@ robot = Robot(
 ```
 
 Each `cameras` entry is a serialized lerobot `CameraConfig`, so `type` is resolved
-against lerobot's own choice registry - the same registry the robot name itself is
-resolved against. Every backend lerobot ships is therefore attachable
+against lerobot's own choice registry. Every backend lerobot ships is therefore attachable
 (`opencv`, `intelrealsense`, `zmq`, `reachy2_camera`), as is any installed
 `lerobot_camera_*` plugin, and the remaining keys are the fields of the class the
 `type` resolves to. Note the registered name for Intel RealSense is
@@ -79,15 +77,13 @@ backend and default to 30/640/480 when unset - a vendor SDK the backend needs
 (`pyrealsense2` for `intelrealsense`) is required when the device is opened, not
 when the config is built.
 
-
-Cameras are attached by the **lerobot** driver; a native driver addresses its own and
-refuses `cameras=` by name. See [Native drivers](../hardware/native-drivers.md).
+Cameras are attached by the **lerobot** driver. See
+[Native drivers](../hardware/native-drivers.md).
 
 `control_frequency` (Hz) sets the control loop's per-action period,
 `1 / control_frequency` - the only throttle between two servo commands. It must be a
 positive finite number: `0`, a negative rate, `nan` or `inf` raises `ValueError` at
-construction, before the serial port is opened, rather than leaving the loop free-running
-against the arm. This is the same domain the simulation applies to `run_policy`'s
+construction, before the serial port is opened. This is the same domain the simulation applies to `run_policy`'s
 `control_frequency`, so a rollout rehearsed in sim is honored identically on hardware.
 
 Forwardable kwargs: `port`, `robot_ip`, `kp`, `kd`, `default_positions`, `control_dt`,
@@ -99,17 +95,15 @@ robot-specific. `max_relative_target` is the exception: it caps how far each com
 position may move from the joint's present position, so it must be a positive finite number
 (or a mapping of motor name to one). `0`, a negative limit, `nan`, `inf`, a bool or a
 non-numeric value raises `ValueError` when the config is built, before the serial port is
-opened - a non-finite limit would otherwise disable the clamp with no signal, and a negative
-one inverts it into a fixed-magnitude step that ignores the policy. An `int` limit is
+opened. An `int` limit is
 normalized to `float` so it reaches the motors. Omit the parameter (or pass `None`) to leave
 the clamp disabled.
 
 ## Choosing a driver
 
-`mode="real"` builds a driver. By default that is the lerobot one - it constructs a lerobot
-`RobotConfig` and wraps a lerobot driver, which is what most robots in the shipped registry
-use. A robot lerobot cannot model needs a native driver, but the two are not exclusive - a
-robot lerobot *can* build may have one as well, and then `driver=` decides which is used.
+`mode="real"` builds a driver. By default that is the lerobot one, which wraps a lerobot
+`RobotConfig` and serves most of the registry. A robot lerobot cannot model needs a native
+driver; a robot it *can* build may have one too, and then `driver=` decides.
 
 `driver=` selects a different one:
 
@@ -126,17 +120,19 @@ can build it, and an empty tuple where neither can.
 from strands_robots.drivers import list_driver_coverage
 
 coverage = list_driver_coverage()
-coverage["so101"], coverage["vx300s"], coverage["panda"]
+coverage["so101"], coverage["vx300s"], coverage["sawyer"]
 # (('lerobot', 'strands'), ('strands',), ())
 
 sim_only = [name for name, drivers in coverage.items() if not drivers]
 ```
 
 `so101` is reported as both and `resolve_driver("so101")` returns `"lerobot"` - coverage is
-what *can* build a robot, resolution is what *does*. `vx300s` has no lerobot robot type, so its
-native driver is the only one that can build it. An empty tuple is the driver gap: `sim_only`
-is every robot `mode="real"` has nowhere to go for, derived on each call rather than
-maintained by hand.
+what *can* build a robot, resolution is what *does*. `vx300s` has no lerobot robot type and no
+`hardware` block at all, so its native driver is the only one that can build it and the two
+declaration readers - `list_robots(mode="real")` and the `Real` column of
+`format_robot_table()` - leave it out. This join reads what is registered, and is the wider
+answer. An empty tuple is the driver gap: `sim_only` is every robot `mode="real"` has nowhere
+to go for, derived on each call rather than maintained by hand.
 
 What a native driver is, the contract one satisfies, and how a robot declares one are on
 [Native drivers](../hardware/native-drivers.md).

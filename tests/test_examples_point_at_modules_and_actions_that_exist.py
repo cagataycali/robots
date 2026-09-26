@@ -4,7 +4,7 @@ An example's prose is run, not read: a reader copies the ``python -m ...`` line
 out of its README, and a model is handed the system prompt the example builds
 for it. Both name things by hand, and nothing graded either name against the
 tree, so a deletion elsewhere leaves the prose selling what is gone. Two shapes,
-both measured on ``edd8ae092``:
+both measured on ``edd8ae092``, and a third on ``982013eeb``:
 
 1. ``examples/mujoco_gs/README.md`` ran ``python -m
    examples.mujoco_gs.app_groot_libero`` and ``python -m
@@ -24,10 +24,20 @@ both measured on ``edd8ae092``:
    README says out loud that the compositing is a display layer and "not an
    agent tool".
 
-Both rules are one-directional: prose need not name every module or every
-action, only nothing the tree lacks. Each carries a floor over what it read, so
-a reflow that hides the commands (or a rename of the prompt builders) reports a
-shrunken sweep instead of a clean one.
+3. ``examples/registry/lerobot_hardware_catalog.py --g1`` closed by printing
+   ``Robot('g1', mode='real', robot_ip='192.168.123.164',
+   controller='GrootLocomotionController')``. Neither keyword exists: the
+   factory grades a native driver's kwargs against its own signature and
+   refuses with ``ValueError: Unknown kwarg(s) for 'unitree_g1' on
+   driver='strands': ['controller', 'robot_ip']``, and
+   ``GrootLocomotionController`` was a name nothing else in the tree carried.
+   The working spelling is ``port=``, which is what the G1 bring-up page has
+   always documented.
+
+Every rule is one-directional: prose need not name every module, every action or
+every keyword, only nothing the tree lacks. Each carries a floor over what it
+read, so a reflow that hides the commands (or a rename of the prompt builders)
+reports a shrunken sweep instead of a clean one.
 """
 
 from __future__ import annotations
@@ -37,6 +47,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from strands_robots.drivers import constructor_keywords, get_native_driver_class, resolve_driver
 from strands_robots.simulation.mujoco.simulation import _PUBLISHED_ACTIONS
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -58,6 +69,16 @@ _PROMPT_CALLED = re.compile(r"\bcall\s+`([a-z_][a-z0-9_]*)`")
 #: The functions and constants that build the text a model is handed.
 _PROMPT_BUILDER = re.compile(r"prompt|scene_description", re.IGNORECASE)
 
+#: A ``Robot(...)`` call an example spells inside text it prints or documents,
+#: up to the first closing paren - a recipe a reader copies rather than runs.
+_RECIPE = re.compile(r"Robot\(\s*['\"](?P<robot>[a-z0-9_]+)['\"](?P<tail>[^)]*)\)", re.S)
+#: A keyword named in that call. ``(?<![\w.])`` keeps ``==`` comparisons and
+#: attribute defaults out.
+_RECIPE_KEYWORD = re.compile(r"(?<![\w.])(?P<keyword>[a-z_][a-z0-9_]*)\s*=")
+#: Keywords :class:`~strands_robots.robot.Robot` itself reads, so no driver has
+#: to declare them.
+_FACTORY_KEYWORDS = frozenset({"mode", "driver"})
+
 # Floors: the population each sweep must still reach, well under what the tree
 # carries, so a reflow or a rename is reported rather than read as a clean pass.
 _MINIMUM_RUNS = 20
@@ -65,6 +86,8 @@ _MINIMUM_LOCAL_RUNS = 6
 _MINIMUM_PAGES = 3
 _MINIMUM_PROMPT_ACTIONS = 5
 _MINIMUM_PROMPT_FILES = 2
+_MINIMUM_RECIPES = 4
+_MINIMUM_GRADED_RECIPES = 2
 
 
 @dataclass(frozen=True)
@@ -98,6 +121,77 @@ class _PromptAction:
 
     def __str__(self) -> str:
         return f"{self.source}: {self.action!r}"
+
+
+@dataclass(frozen=True)
+class _RealModeRecipe:
+    """A ``Robot(name, mode="real", ...)`` call an example's text spells out."""
+
+    source: str
+    robot: str
+    keywords: frozenset[str]
+    names_native_driver: bool
+
+    @property
+    def driver_class(self) -> type | None:
+        """The native driver this recipe builds, or ``None`` when lerobot does.
+
+        A recipe is graded only when a native driver is what the factory reaches
+        for it: the lerobot driver's keyword roster is its config dataclass,
+        which needs lerobot installed, and this repository's test environment is
+        not where that dependency is decided.
+        """
+        if not (self.names_native_driver or resolve_driver(self.robot) == "strands"):
+            return None
+        return get_native_driver_class(self.robot)
+
+    def unaccepted(self) -> list[str]:
+        """The keywords this recipe names that its driver would refuse."""
+        driver = self.driver_class
+        if driver is None:
+            return []
+        return sorted(self.keywords - set(constructor_keywords(driver)) - _FACTORY_KEYWORDS)
+
+    def __str__(self) -> str:
+        return f"{self.source}: Robot({self.robot!r}, ...) names {self.unaccepted()}"
+
+
+def real_mode_recipes_in(source: str, name: str) -> list[_RealModeRecipe]:
+    """The ``mode="real"`` recipes one module's printed and documented text gives.
+
+    Read from string literals rather than from calls: the recipe is text a reader
+    copies out of the output or the docstring, and it is routinely split across
+    several ``print`` lines, so the literals are joined and searched as one
+    document.
+    """
+    text = "\n".join(
+        node.value
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    )
+    found: list[_RealModeRecipe] = []
+    for match in _RECIPE.finditer(text):
+        tail = match.group("tail")
+        keywords = frozenset(_RECIPE_KEYWORD.findall(tail))
+        if "mode" not in keywords or "real" not in tail:
+            continue
+        found.append(
+            _RealModeRecipe(
+                source=name,
+                robot=match.group("robot"),
+                keywords=keywords,
+                names_native_driver="'strands'" in tail or '"strands"' in tail,
+            )
+        )
+    return found
+
+
+def _example_real_mode_recipes() -> list[_RealModeRecipe]:
+    """Every ``mode="real"`` recipe the shipped examples hand a reader."""
+    found: list[_RealModeRecipe] = []
+    for module in sorted(_EXAMPLES_DIR.glob("**/*.py")):
+        found += real_mode_recipes_in(module.read_text(encoding="utf-8"), module.relative_to(_REPO_ROOT).as_posix())
+    return found
 
 
 def module_runs_in(text: str, page: str) -> list[_ModuleRun]:
@@ -196,6 +290,24 @@ class TestEveryPromptActionIsPublished:
         assert len({named.source for named in found}) >= _MINIMUM_PROMPT_FILES, "the sweep must reach two prompt files"
 
 
+class TestEveryPrintedRealModeRecipeIsAccepted:
+    """A keyword a printed ``mode="real"`` recipe names must reach the driver."""
+
+    def test_no_example_prints_a_recipe_the_factory_refuses(self) -> None:
+        """The shape the G1 recipe had must fail on arrival."""
+        offenders = [recipe for recipe in _example_real_mode_recipes() if recipe.unaccepted()]
+        assert not offenders, "examples print mode='real' recipes the factory refuses:\n" + "\n".join(
+            f"  {offender}" for offender in offenders
+        )
+
+    def test_the_sweep_reaches_the_recipes(self) -> None:
+        """A reflow that hides the recipes reports a shrunken sweep, not a pass."""
+        recipes = _example_real_mode_recipes()
+        graded = [recipe for recipe in recipes if recipe.driver_class is not None]
+        assert len(recipes) >= _MINIMUM_RECIPES, f"read {len(recipes)} mode='real' recipes"
+        assert len(graded) >= _MINIMUM_GRADED_RECIPES, f"graded {len(graded)} native-driver recipes"
+
+
 class TestTheGradersAreLoadBearing:
     """Each sweep reports a planted offender, and only the offender."""
 
@@ -231,3 +343,25 @@ class TestTheGradersAreLoadBearing:
         """A docstring elsewhere in an example names whatever it likes."""
         planted = prompt_actions_in('def encode() -> None:\n    """Writes through `mimsave(...)`."""\n', "planted.py")
         assert planted == []
+
+    def test_a_planted_refused_keyword_is_reported(self) -> None:
+        """The G1 recipe's shape is reported; the ``port=`` spelling beside it is not."""
+        planted = real_mode_recipes_in(
+            "def show() -> None:\n"
+            "    print(\"    g1 = Robot('g1', mode='real',\")\n"
+            "    print(\"               robot_ip='192.168.123.164')\")\n"
+            "    print(\"    ok = Robot('g1', mode='real', port='192.168.123.164')\")\n",
+            "planted.py",
+        )
+        assert [recipe.unaccepted() for recipe in planted] == [["robot_ip"], []]
+
+    def test_a_lerobot_recipe_is_not_graded_here(self) -> None:
+        """lerobot owns its own keyword roster, and it need not be installed."""
+        planted = real_mode_recipes_in(
+            "print(\"arm = Robot('so100', mode='real', port='/dev/ttyACM0')\")\n", "planted.py"
+        )
+        assert [recipe.driver_class for recipe in planted] == [None]
+
+    def test_a_sim_recipe_is_not_a_hardware_recipe(self) -> None:
+        """Only a ``mode="real"`` call names a driver keyword at all."""
+        assert real_mode_recipes_in("print(\"sim = Robot('g1', position=[0, 0, 0])\")\n", "planted.py") == []

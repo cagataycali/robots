@@ -31,6 +31,7 @@ import pytest
 from fastapi import HTTPException
 
 from strands_robots.dashboard import auth
+from tests._dashboard_connection import connection
 
 PROXY_HEADERS = [
     "x-forwarded-for",
@@ -43,12 +44,6 @@ PROXY_HEADERS = [
 ]
 
 
-class FakeRequest:
-    def __init__(self, headers: dict[str, str] | None = None, client_host: str = "127.0.0.1") -> None:
-        self.headers = {"host": "localhost:8090", **(headers or {})}
-        self.client = type("C", (), {"host": client_host})()
-
-
 def test_the_roster_is_the_one_the_guard_reads() -> None:
     assert tuple(PROXY_HEADERS) == auth._PROXY_EVIDENCE_HEADERS
 
@@ -56,7 +51,7 @@ def test_the_roster_is_the_one_the_guard_reads() -> None:
 class TestAProxiedLoopbackPeerIsNotTheMachine:
     @pytest.mark.parametrize("header", PROXY_HEADERS)
     def test_each_forwarding_header_refuses_the_first_enrollment(self, header: str) -> None:
-        request = FakeRequest({header: "anything"}, client_host="127.0.0.1")
+        request = connection(**{header: "anything"})
         with pytest.raises(HTTPException) as raised:
             auth.begin_registration(request, label="stranger-through-the-tunnel")
         assert raised.value.status_code == 403
@@ -65,26 +60,26 @@ class TestAProxiedLoopbackPeerIsNotTheMachine:
 
     def test_the_header_value_is_not_read_so_a_loopback_claim_is_no_better(self) -> None:
         """A proxied stranger who spells the forwarded address as loopback is still proxied."""
-        request = FakeRequest({"x-forwarded-for": "127.0.0.1"}, client_host="127.0.0.1")
+        request = connection(x_forwarded_for="127.0.0.1")
         with pytest.raises(HTTPException) as raised:
             auth.begin_registration(request, label="stranger")
         assert raised.value.status_code == 403
 
     def test_header_names_are_matched_case_insensitively(self) -> None:
-        request = FakeRequest({"X-Forwarded-For": "203.0.113.9"}, client_host="127.0.0.1")
+        request = connection(**{"X-Forwarded-For": "203.0.113.9"})
         with pytest.raises(HTTPException) as raised:
             auth.begin_registration(request, label="stranger")
         assert raised.value.status_code == 403
 
     @pytest.mark.parametrize("peer", ["127.0.0.1", "::1"])
     def test_an_ipv6_or_ipv4_loopback_peer_is_refused_alike(self, peer: str) -> None:
-        request = FakeRequest({"cf-ray": "8a1b2c3d4e5f-IAD"}, client_host=peer)
+        request = connection(peer=peer, cf_ray="8a1b2c3d4e5f-IAD")
         with pytest.raises(HTTPException):
             auth.begin_registration(request, label="stranger")
 
     def test_no_user_id_is_minted_and_no_challenge_stashed_on_refusal(self, tmp_path: Path) -> None:
         """The refusal happens before ``user_id`` is minted or a challenge stashed."""
-        request = FakeRequest({"x-forwarded-proto": "https"}, client_host="127.0.0.1")
+        request = connection(x_forwarded_proto="https")
         before = len(auth._challenges)
         with pytest.raises(HTTPException):
             auth.begin_registration(request, label="stranger")
@@ -97,17 +92,12 @@ class TestTheMachineItselfIsStillLetIn:
 
     @pytest.mark.parametrize("peer", ["127.0.0.1", "::1"])
     def test_loopback_with_no_forwarding_header_enrolls_with_the_local_token(self, peer: str) -> None:
-        opts = auth.begin_registration(
-            FakeRequest(client_host=peer), label="owner", bootstrap=auth._local_enroll_token()
-        )
+        opts = auth.begin_registration(connection(peer=peer), label="owner", bootstrap=auth._local_enroll_token())
         assert opts.get("challenge_id")
 
     def test_ordinary_browser_headers_are_not_proxy_evidence(self) -> None:
         """The refusal an unproven local browser gets does not accuse it of being proxied."""
-        request = FakeRequest(
-            {"user-agent": "Mozilla/5.0", "accept": "*/*", "origin": "http://localhost:8090", "cookie": "a=b"},
-            client_host="127.0.0.1",
-        )
+        request = connection(user_agent="Mozilla/5.0", accept="*/*", origin="http://localhost:8090", cookie="a=b")
         assert auth._arrived_through_a_proxy(request) is None
         with pytest.raises(HTTPException) as raised:
             auth.begin_registration(request, label="owner")
@@ -119,7 +109,7 @@ class TestTheMachineItselfIsStillLetIn:
 class TestTheBootstrapTokenIsStillTheWayInFromAnywhere:
     def test_a_proxied_request_with_the_token_enrolls(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", "correct-horse")
-        request = FakeRequest({"x-forwarded-for": "203.0.113.9", "cf-ray": "x"}, client_host="127.0.0.1")
+        request = connection(x_forwarded_for="203.0.113.9", cf_ray="x")
         opts = auth.begin_registration(request, label="owner-remote", bootstrap="correct-horse")
         assert opts.get("challenge_id")
 
@@ -127,7 +117,7 @@ class TestTheBootstrapTokenIsStillTheWayInFromAnywhere:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", "correct-horse")
-        request = FakeRequest({"x-forwarded-for": "203.0.113.9"}, client_host="127.0.0.1")
+        request = connection(x_forwarded_for="203.0.113.9")
         with pytest.raises(HTTPException) as raised:
             auth.begin_registration(request, label="stranger", bootstrap="wrong")
         assert raised.value.status_code == 403
@@ -139,12 +129,12 @@ class TestTheGuardOnlyBitesTheFirstEnrollment:
         """Once an owner exists the route enforces a session; the proxy check is not that gate."""
         store = {"user_id": "AAAA", "credentials": [{"id": "AQID", "public_key": "x", "sign_count": 0, "label": "k"}]}
         auth._save(store)
-        request = FakeRequest({"x-forwarded-for": "203.0.113.9"}, client_host="127.0.0.1")
+        request = connection(x_forwarded_for="203.0.113.9")
         opts = auth.begin_registration(request, label="second-device")
         assert opts.get("challenge_id")
 
 
 def test_arrived_through_a_proxy_is_a_pure_function_of_the_request() -> None:
-    assert auth._arrived_through_a_proxy(FakeRequest()) is None
-    assert auth._arrived_through_a_proxy(FakeRequest({"Forwarded": "for=1.2.3.4"})) == "forwarded"
+    assert auth._arrived_through_a_proxy(connection()) is None
+    assert auth._arrived_through_a_proxy(connection(**{"Forwarded": "for=1.2.3.4"})) == "forwarded"
     assert auth._arrived_through_a_proxy(object()) is None

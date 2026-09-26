@@ -12,7 +12,8 @@ Keys (all derived, none configured):
 * ``categories``        distinct ``category`` values in the registry
 * ``<category>``        robots in that category, e.g. ``{{n:arm}}``,
                         ``{{n:humanoid}}``, ``{{n:mobile_manip}}``
-* ``hardware``          robots with a ``hardware`` block (drivable for real)
+* ``hardware``          robots declaring a ``hardware`` block (a native driver
+                        needs none, so more robots than this are drivable)
 * ``aliases``           alias strings across the registry
 * ``tools``             ``@tool`` decorators under ``strands_robots/``
 * ``sim_backends``      simulation backend packages (mujoco, newton, isaac)

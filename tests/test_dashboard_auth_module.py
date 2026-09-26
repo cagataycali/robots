@@ -11,28 +11,12 @@ import json
 import os
 import stat
 import time
-from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 from strands_robots.dashboard import auth
-
-
-class FakeRequest:
-    """A request as it arrived: over a SCHEME, from a PEER, carrying headers.
-
-    Both are properties of the connection rather than of a header, and both are
-    read -- the origin a ceremony is verified against comes from the scheme, and
-    the first-enrollment gate comes from the socket peer. A stand-in answering
-    only one leaves the other reading a default, so it carries both. These cells
-    are the owner enrolling at the machine, so the peer is loopback.
-    """
-
-    def __init__(self, headers=None, scheme="http", client_host="127.0.0.1"):
-        self.headers = headers or {"host": "localhost:8090"}
-        self.url = SimpleNamespace(scheme=scheme)
-        self.client = type("C", (), {"host": client_host})()
+from tests._dashboard_connection import connection
 
 
 def test_store_created_with_0600_and_secret(tmp_path):
@@ -101,12 +85,12 @@ def test_rpid_rules():
 
 def test_begin_registration_rejects_raw_ip():
     with pytest.raises(HTTPException) as exc:
-        auth.begin_registration(FakeRequest({"host": "192.168.1.166:8090"}))
+        auth.begin_registration(connection(host="192.168.1.166:8090"))
     assert exc.value.status_code == 400
 
 
 def test_begin_registration_yields_options_and_challenge():
-    out = auth.begin_registration(FakeRequest(), label="test key", bootstrap=auth._local_enroll_token())
+    out = auth.begin_registration(connection(), label="test key", bootstrap=auth._local_enroll_token())
     assert out["challenge_id"]
     assert out["options"]["rp"]["id"] == "localhost"
     assert out["options"]["challenge"]
@@ -115,15 +99,15 @@ def test_begin_registration_yields_options_and_challenge():
 def test_bootstrap_token_gates_first_enrollment(monkeypatch):
     monkeypatch.setenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", "sekrit")
     with pytest.raises(HTTPException) as exc:
-        auth.begin_registration(FakeRequest(), bootstrap="wrong")
+        auth.begin_registration(connection(), bootstrap="wrong")
     assert exc.value.status_code == 403
-    out = auth.begin_registration(FakeRequest(), bootstrap="sekrit")
+    out = auth.begin_registration(connection(), bootstrap="sekrit")
     assert out["challenge_id"]
 
 
 def test_begin_authentication_requires_enrollment():
     with pytest.raises(HTTPException) as exc:
-        auth.begin_authentication(FakeRequest())
+        auth.begin_authentication(connection())
     assert exc.value.status_code == 400
 
 
@@ -143,7 +127,7 @@ def test_delete_credential_refuses_last(tmp_path):
 
 
 def test_status_shape():
-    out = auth.status(FakeRequest())
+    out = auth.status(connection())
     assert out["setup_required"] is True
     assert out["enabled"] is False
     assert out["rp_id"] == "localhost"
@@ -202,6 +186,6 @@ def test_env_whitespace_is_unset(tmp_path, monkeypatch):
 
 def test_status_reports_enabled_after_enrollment(tmp_path):
     _enroll_fake_credential(tmp_path)
-    s = auth.status(FakeRequest())
+    s = auth.status(connection())
     assert s["enabled"] is True
     assert s["setup_required"] is False

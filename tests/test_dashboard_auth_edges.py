@@ -21,13 +21,7 @@ import pytest
 from fastapi import HTTPException
 
 from strands_robots.dashboard import auth
-
-
-class FakeRequest:
-    def __init__(self, headers=None):
-        self.headers = headers or {"host": "localhost:8090"}
-        self.client = None
-
+from tests._dashboard_connection import connection
 
 # --- 1. challenge TTL is enforced at POP, not only by eviction ---------------
 
@@ -67,7 +61,7 @@ def _enroll_fake_credential():
 def test_begin_authentication_refuses_pinned_ip_rp_id(monkeypatch):
     _enroll_fake_credential()
     monkeypatch.setenv("STRANDS_DASH_AUTH_RP_ID", "10.0.0.5")
-    req = FakeRequest({"host": "10.0.0.5:8090"})
+    req = connection(host="10.0.0.5:8090", peer=None)
     with pytest.raises(HTTPException) as e:
         auth.begin_authentication(req)
     assert e.value.status_code == 400
@@ -76,7 +70,7 @@ def test_begin_authentication_refuses_pinned_ip_rp_id(monkeypatch):
 
 def test_begin_authentication_needs_enrollment_first():
     with pytest.raises(HTTPException) as e:
-        auth.begin_authentication(FakeRequest())
+        auth.begin_authentication(connection(peer=None))
     assert "no credentials" in str(e.value.detail)
 
 

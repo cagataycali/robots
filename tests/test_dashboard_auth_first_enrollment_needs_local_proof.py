@@ -32,8 +32,7 @@ from fastapi import HTTPException
 from webauthn.helpers import bytes_to_base64url
 
 from strands_robots.dashboard import auth
-
-_STRANGER = "203.0.113.9"  # TEST-NET-3, never a real peer
+from tests._dashboard_connection import STRANGER, connection
 
 #: Forwarding headers the proxy roster does not list. A proxy emitting only one
 #: of these re-opened the L7 path under the header-presence rule; under the
@@ -48,18 +47,6 @@ _UNLISTED_FORWARDING_HEADERS = [
 ]
 
 
-class FakeRequest:
-    def __init__(
-        self,
-        headers: dict[str, str] | None = None,
-        client_host: str | None = "127.0.0.1",
-        scheme: str = "http",
-    ) -> None:
-        self.headers = {"host": "localhost:8090", **(headers or {})}
-        self.url = SimpleNamespace(scheme=scheme)
-        self.client = None if client_host is None else type("C", (), {"host": client_host})()
-
-
 def _token_file(tmp_path: Path) -> Path:
     return tmp_path / "enroll_token"
 
@@ -69,7 +56,7 @@ class TestTheL4ForwarderCaseIsRefused:
 
     @pytest.mark.parametrize("peer", ["127.0.0.1", "127.0.0.53", "::1", "localhost"])
     def test_a_bare_loopback_peer_does_not_enroll(self, peer: str) -> None:
-        request = FakeRequest(client_host=peer)
+        request = connection(peer=peer)
         assert auth._arrived_through_a_proxy(request) is None, "this must be the header-free case"
         before = len(auth._challenges)
         with pytest.raises(HTTPException) as e:
@@ -80,7 +67,7 @@ class TestTheL4ForwarderCaseIsRefused:
 
     def test_the_refusal_names_the_forwarder_class_and_where_the_token_is(self, tmp_path: Path) -> None:
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(), label="stranger")
+            auth.begin_registration(connection(), label="stranger")
         detail = e.value.detail
         assert "127.0.0.1" in detail and "forward" in detail
         assert str(_token_file(tmp_path)) in detail
@@ -88,7 +75,7 @@ class TestTheL4ForwarderCaseIsRefused:
 
     def test_the_refusal_never_carries_the_token(self, tmp_path: Path) -> None:
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(), label="stranger")
+            auth.begin_registration(connection(), label="stranger")
         token = _token_file(tmp_path).read_text().strip()
         assert token and token not in e.value.detail
 
@@ -96,48 +83,48 @@ class TestTheL4ForwarderCaseIsRefused:
     def test_a_forwarding_header_the_roster_omits_changes_nothing(self, header: str) -> None:
         """The proxy roster is diagnosis, not defence: an unlisted header is refused all the same."""
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest({header: _STRANGER}), label="stranger")
+            auth.begin_registration(connection(**{header: STRANGER}), label="stranger")
         assert e.value.status_code == 403
 
     def test_a_wrong_token_is_refused_in_constant_time_shape(self, tmp_path: Path) -> None:
         auth._local_enroll_token()
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(), label="stranger", bootstrap="guess")
+            auth.begin_registration(connection(), label="stranger", bootstrap="guess")
         assert e.value.status_code == 403
 
     def test_a_non_ascii_guess_is_a_mismatch_not_a_server_error(self) -> None:
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(), label="stranger", bootstrap="pässwörd")
+            auth.begin_registration(connection(), label="stranger", bootstrap="pässwörd")
         assert e.value.status_code == 403
 
     def test_a_connection_with_no_peer_is_refused(self) -> None:
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(client_host=None), label="unknown")
+            auth.begin_registration(connection(peer=None), label="unknown")
         assert e.value.status_code == 403
 
 
 class TestTheLocalTokenIsTheProof:
     def test_the_token_admits_the_first_enrollment(self, tmp_path: Path) -> None:
-        opts = auth.begin_registration(FakeRequest(), label="owner", bootstrap=auth._local_enroll_token())
+        opts = auth.begin_registration(connection(), label="owner", bootstrap=auth._local_enroll_token())
         assert opts.get("challenge_id")
 
     def test_the_token_is_read_off_disk_not_off_memory(self, tmp_path: Path) -> None:
         """What the operator ``cat``s is what the gate checks - the file is the contract."""
         auth._local_enroll_token()
         on_disk = _token_file(tmp_path).read_text().strip()
-        opts = auth.begin_registration(FakeRequest(), label="owner", bootstrap=on_disk)
+        opts = auth.begin_registration(connection(), label="owner", bootstrap=on_disk)
         assert opts.get("challenge_id")
 
     def test_whoever_holds_the_token_is_the_operator_wherever_they_connect_from(self) -> None:
         """A headless robot has no browser: reading the file over ssh and pasting it is the remote path."""
         opts = auth.begin_registration(
-            FakeRequest(client_host=_STRANGER), label="remote-owner", bootstrap=auth._local_enroll_token()
+            connection(peer=STRANGER), label="remote-owner", bootstrap=auth._local_enroll_token()
         )
         assert opts.get("challenge_id")
 
     def test_the_file_is_created_owner_only_beside_the_store(self, tmp_path: Path) -> None:
         with pytest.raises(HTTPException):
-            auth.begin_registration(FakeRequest(), label="stranger")
+            auth.begin_registration(connection(), label="stranger")
         path = _token_file(tmp_path)
         assert path.is_file()
         assert path.parent == Path(auth._store_path()).parent
@@ -155,7 +142,7 @@ class TestTheLocalTokenIsTheProof:
         assert second != first
         assert stat.S_IMODE(_token_file(tmp_path).stat().st_mode) == 0o600
         with pytest.raises(HTTPException):
-            auth.begin_registration(FakeRequest(), label="stranger", bootstrap=first)
+            auth.begin_registration(connection(), label="stranger", bootstrap=first)
 
     def test_an_empty_or_missing_file_is_reminted(self, tmp_path: Path) -> None:
         auth._local_enroll_token()
@@ -168,13 +155,13 @@ class TestTheLocalTokenIsTheProof:
         elsewhere = tmp_path / "run" / "dash.token"
         monkeypatch.setenv("STRANDS_DASH_AUTH_ENROLL_TOKEN_FILE", str(elsewhere))
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(), label="stranger")
+            auth.begin_registration(connection(), label="stranger")
         assert elsewhere.is_file() and str(elsewhere) in e.value.detail
         assert not _token_file(tmp_path).exists()
 
     def test_the_token_is_retired_once_a_passkey_exists(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """With an owner enrolled the file guards nothing and would only be a secret left lying around."""
-        request = FakeRequest()
+        request = connection()
         begun = auth.begin_registration(request, label="owner", bootstrap=auth._local_enroll_token())
         assert _token_file(tmp_path).is_file()
         monkeypatch.setattr(
@@ -190,7 +177,7 @@ class TestTheLocalTokenIsTheProof:
         """The gate is on the one-way door only; the route guards later enrollments with a session."""
         auth._save({"jwt_secret": "s" * 32, "credentials": [{"id": "AAAA", "name": "existing"}]})
         auth._cache = {}
-        opts = auth.begin_registration(FakeRequest({"x-forwarded-for": _STRANGER}, client_host=_STRANGER))
+        opts = auth.begin_registration(connection(peer=STRANGER, x_forwarded_for=STRANGER))
         assert opts.get("challenge_id")
         assert not _token_file(tmp_path).exists(), "no token is minted when there is nothing to guard"
 
@@ -201,7 +188,7 @@ class TestTheConfiguredTokenTakesPrecedence:
     ) -> None:
         monkeypatch.setenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", "let-me-in")
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(), label="stranger")
+            auth.begin_registration(connection(), label="stranger")
         assert "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN" in e.value.detail
         assert not _token_file(tmp_path).exists()
         assert auth._first_enrollment_proof() == ("env", "let-me-in")
@@ -209,15 +196,15 @@ class TestTheConfiguredTokenTakesPrecedence:
     def test_the_configured_token_is_required_even_on_loopback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", "let-me-in")
         with pytest.raises(HTTPException):
-            auth.begin_registration(FakeRequest(client_host="127.0.0.1"), label="owner")
-        assert auth.begin_registration(FakeRequest(client_host=_STRANGER), bootstrap="let-me-in")["challenge_id"]
+            auth.begin_registration(connection(), label="owner")
+        assert auth.begin_registration(connection(peer=STRANGER), bootstrap="let-me-in")["challenge_id"]
 
 
 class TestTheOrderingOfRefusals:
     def test_an_unusable_rp_id_is_still_reported_first(self) -> None:
         """A bare-IP Host cannot hold a passkey from anywhere; that diagnosis beats the ownership one."""
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest({"host": "192.168.1.166:8090"}), label="lan")
+            auth.begin_registration(connection(host="192.168.1.166:8090"), label="lan")
         assert e.value.status_code == 400
 
     def test_a_damaged_store_is_named_in_the_refusal(self, tmp_path: Path) -> None:
@@ -225,7 +212,7 @@ class TestTheOrderingOfRefusals:
         auth._cache = {}
         auth._load()
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(), label="stranger")
+            auth.begin_registration(connection(), label="stranger")
         assert "unreadable" in e.value.detail and "corrupt-" in e.value.detail
 
 

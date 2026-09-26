@@ -23,21 +23,13 @@ sealed against enrollment from anywhere but the machine while it does.
 
 import json
 import time
-from types import SimpleNamespace
 
 import jwt
 import pytest
 from fastapi import HTTPException
 
 from strands_robots.dashboard import auth
-
-
-class FakeRequest:
-    def __init__(self, headers=None, client_host="127.0.0.1", scheme="http"):
-        self.headers = headers or {"host": "localhost:8090"}
-        self.client = type("C", (), {"host": client_host})()
-        self.url = SimpleNamespace(scheme=scheme)
-
+from tests._dashboard_connection import STRANGER, connection
 
 # Every way a store can parse and still be unusable, with the fault each one used to
 # produce. The reason fragment is what an operator reads out of `store_corruption()` and
@@ -81,7 +73,7 @@ class TestTheRequestGetsAnAnswerRatherThanATraceback:
         (tmp_path / "auth.json").write_text(body)
         assert auth.auth_enabled() is False, "the recovered default holds no passkey yet"
         assert auth.list_credentials() == []
-        assert auth.status(FakeRequest())["setup_required"] is True
+        assert auth.status(connection())["setup_required"] is True
 
     @unusable
     def test_signing_in_works_again(self, body, reason, tmp_path):
@@ -120,7 +112,7 @@ class TestTheOperatorsFileAndTheDiagnosis:
         auth._load()
 
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(client_host="203.0.113.9"), label="attacker")
+            auth.begin_registration(connection(peer=STRANGER), label="attacker")
         assert e.value.status_code == 403
         assert "corrupt-" in e.value.detail and "BOOTSTRAP_TOKEN" in e.value.detail
 

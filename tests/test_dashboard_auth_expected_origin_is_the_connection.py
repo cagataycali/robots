@@ -22,15 +22,14 @@ from __future__ import annotations
 
 import time
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
-from starlette.websockets import WebSocket
 from webauthn.helpers import bytes_to_base64url
 
 from strands_robots.dashboard import auth
+from tests._dashboard_connection import STRANGER, connection, websocket
 
 SERVED_AT = "https://dash.example.com"
 ELSEWHERE = "https://evil.example.com"
@@ -51,48 +50,14 @@ def contradiction(offered: str) -> str:
     return f"Origin {offered!r} is not this deployment's origin {SERVED_AT!r}"
 
 
-def request(scheme: str = "https", **headers: str) -> Request:
-    """A request that really arrived over ``scheme`` carrying ``headers``."""
-    return Request(
-        {
-            "type": "http",
-            "scheme": scheme,
-            "method": "POST",
-            "path": "/",
-            "query_string": b"",
-            "server": ("10.0.0.1", 443),
-            "client": ("203.0.113.9", 51234),
-            "headers": [(k.replace("_", "-").encode(), v.encode()) for k, v in headers.items()],
-        }
-    )
+def request(scheme: str = "https", *, host: str | None = None, **headers: str) -> Request:
+    """A request that really arrived over ``scheme`` carrying ``headers``.
 
-
-async def _never_receives() -> Any:
-    raise AssertionError("deciding an origin must not read from the socket")
-
-
-async def _never_sends(message: Any) -> None:
-    raise AssertionError("deciding an origin must not write to the socket")
-
-
-def websocket(scheme: str, **headers: str) -> WebSocket:
-    """A websocket that really arrived over ``scheme``.
-
-    Its receive/send channels refuse: the decision under test reads the
-    connection's scope, and must not depend on talking to the peer.
+    From a REMOTE browser: these cells hold the first-enrollment gate constant
+    with a bootstrap token and leave the origin the only variable, so the peer
+    is deliberately not loopback.
     """
-    return WebSocket(
-        {
-            "type": "websocket",
-            "scheme": scheme,
-            "path": "/ws",
-            "query_string": b"",
-            "server": ("10.0.0.1", 443),
-            "headers": [(k.replace("_", "-").encode(), v.encode()) for k, v in headers.items()],
-        },
-        receive=_never_receives,
-        send=_never_sends,
-    )
+    return connection(scheme, peer=STRANGER, host=host, **headers)
 
 
 # --- the expectation is never the caller's claim -------------------------------
