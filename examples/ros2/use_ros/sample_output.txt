@@ -55,9 +55,9 @@ use_ros LIVE SHOWCASE - in-process rclpy against a real turtlesim
 [success] echo /turtle1/pose (turtlesim/msg/Pose):
 [
   {
-    "x": 4.428230285644531,
-    "y": 6.499973297119141,
-    "theta": -1.4447853565216064,
+    "x": 4.4176483154296875,
+    "y": 6.627468585968018,
+    "theta": -1.5599852800369263,
     "linear_velocity": 2.0,
     "angular_velocity": 1.7999999523162842
   }
@@ -83,6 +83,48 @@ use_ros LIVE SHOWCASE - in-process rclpy against a real turtlesim
 /turtle1/rotate_absolute/_action/feedback [turtlesim/action/RotateAbsolute_FeedbackMessage]
 /turtle1/rotate_absolute/_action/sta
 
+### use_ros(action='list_actions')
+[success] /t2/rotate_absolute [turtlesim/action/RotateAbsolute]
+/turtle1/rotate_absolute [turtlesim/action/RotateAbsolute]
+
+### use_ros(action='action_send_goal', action_name='/turtle1/rotate_absolute', type='turtlesim/action/RotateAbsolute', fields={'theta': 1.5708}, timeout=20.0)
+[success] goal to /turtle1/rotate_absolute finished:
+{
+  "goal_status": "SUCCEEDED",
+  "result": {
+    "delta": -2.5759999752044678
+  },
+  "feedback": [
+    {
+      "remaining": 2.583585262298584
+    },
+    {
+      "remaining": 2.5675852298736572
+    },
+    {
+      "remaining": 2.5515851974487305
+    },
+    {
+      "remaining": 2.5355851650238037
+    },
+    {
+      "remaining": 0.007585287094116211
+    }
+  ]
+}
+
+### use_ros(action='echo', topic='/turtle1/pose', count=1, timeout=3.0)
+[success] echo /turtle1/pose (turtlesim/msg/Pose):
+[
+  {
+    "x": 4.594415187835693,
+    "y": 6.053613185882568,
+    "theta": 1.563214659690857,
+    "linear_velocity": 0.0,
+    "angular_velocity": 0.0
+  }
+]
+
 ### use_ros(action='echo', topic='/turtle1/pose', type='nonexistent_pkg/msg/Foo')
 [error] use_ros: echo failed: No module named 'nonexistent_pkg'
 
@@ -92,6 +134,7 @@ use_ros LIVE SHOWCASE - in-process rclpy against a real turtlesim
 ======================================================================
 PROOF: pose changed via use_ros publish (in-process rclpy, no CLI):
   before: (5.544444561004639, 5.544444561004639, 0.0)
-  after:  (4.428230285644531, 6.499973297119141, -1.4447853565216064)
+  after:  (4.4176483154296875, 6.627468585968018, -1.5599852800369263)
+  goal:   SUCCEEDED -> theta 1.563214659690857 (asked 1.5708)
 ======================================================================
-PASS: a real ROS 2 turtle was driven and read back through use_ros.
+PASS: a real ROS 2 turtle was driven, turned and read back through use_ros.

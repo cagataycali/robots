@@ -131,7 +131,7 @@ prompt:
 
 ```bash
 cd examples/ros2/use_ros
-docker compose run --build --rm showcase   # every action; exits 0 iff the turtle moved
+docker compose run --build --rm showcase   # every action; exits 0 iff the turtle moved and turned
 docker compose run --build --rm agent      # a Strands Agent drives a closed-loop square
 ```
 

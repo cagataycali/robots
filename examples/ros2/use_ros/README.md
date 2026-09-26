@@ -49,7 +49,8 @@ docker compose run --build --rm showcase
 ```
 
 Builds `ros:jazzy` + `turtlesim` + `strands-agents`, starts a real turtlesim
-node, and runs `showcase.py` against it. Exits `0` iff the turtle moved.
+node, and runs `showcase.py` against it. Exits `0` iff the turtle both moved and
+completed a rotate goal.
 
 ## What it proves
 
@@ -61,6 +62,8 @@ node, and runs `showcase.py` against it. Exits `0` iff the turtle moved.
 | `echo` | real `turtlesim/msg/Pose` samples as JSON |
 | `publish` | a `geometry_msgs/msg/Twist` that **moves the turtle** (velocities latch to the exact values sent) |
 | `service_call` | `/spawn` returns `{"name": "t2"}`, and `t2`'s topics then appear in `list_topics` |
+| `list_actions` | the graph's action servers - `/turtle1/rotate_absolute [turtlesim/action/RotateAbsolute]` |
+| `action_send_goal` | a goal to that server comes back `{"goal_status": "SUCCEEDED", "result": {"delta": ...}}` with the streamed `feedback`, and the pose confirms the new heading |
 | error: bad type | `nonexistent_pkg/msg/Foo` -> `{"status": "error"}` (`No module named 'nonexistent_pkg'`), never a crash |
 | error: bad name | `/bad; rm -rf` rejected by input validation |
 
@@ -78,7 +81,7 @@ A captured run is saved in [`sample_output.txt`](./sample_output.txt).
 
 | File | Role |
 |------|------|
-| `showcase.py` | Exercises every `use_ros` action; asserts the turtle moved. |
+| `showcase.py` | Exercises every `use_ros` action; asserts the turtle moved and turned. |
 | `run_showcase.sh` | Starts a headless turtlesim, then runs `showcase.py`. |
 | `Dockerfile` | `ros:jazzy` (provides rclpy) + turtlesim + `strands-agents`. |
 | `docker-compose.yml` | One-command build + run. |

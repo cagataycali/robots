@@ -7,8 +7,9 @@
 # Builds ros:jazzy + turtlesim + strands-agents, starts a real turtlesim node,
 # and runs use_ros in-process through rclpy.
 #
-#   showcase: exercises every action incl. a closed sense->act->sense loop;
-#             exits 0 iff the turtle moved. No model/credentials needed.
+#   showcase: exercises every action incl. a closed sense->act->sense loop and a
+#             goal to turtlesim's rotate_absolute action server; exits 0 iff the
+#             turtle moved and turned. No model/credentials needed.
 #   agent:    a Bedrock-backed Strands agent drives a closed-loop square from a
 #             natural-language prompt. Needs AWS credentials in the environment
 #             (e.g. AWS_BEARER_TOKEN_BEDROCK), forwarded below.
