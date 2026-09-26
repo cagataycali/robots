@@ -17,8 +17,8 @@ list can only shrink.
 A page coming inside the ceiling does not mean the site got shorter. A split
 pays a front matter, a nav row and a see-also block, so the per-page rule is
 satisfied by moving words rather than removing them: over the 22 pages added
-most recently the site grew from 113,472 words to 114,048 while the number of
-pages owing a split fell from 25 to 3, and nothing graded the difference.
+most recently the site grew from 113,472 words to 113,954 while the number of
+pages owing a split fell from 25 to 2, and nothing graded the difference.
 :data:`_SITE_BUDGET` grades the site the way the rule above grades the page,
 and it only ever moves down - a diff that adds words pays for them with a cut,
 and a diff that cuts words lowers the ceiling so the room it freed cannot be
@@ -50,14 +50,13 @@ _OVER_BUDGET = frozenset(
     {
         "device-connect.md",
         "reference/configuration.md",
-        "simulation/domain-randomization.md",
     }
 )
 
 
 #: The whole-site ceiling, in words, counted over every page :func:`_pages`
 #: finds. Lower it whenever a change cuts words; never raise it to admit them.
-_SITE_BUDGET = 113_754
+_SITE_BUDGET = 113_660
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
