@@ -162,9 +162,13 @@ docker run -d --name curiosity -p 9090:9090 curiosity-sim
 
 # 2. Agent side (this machine - no ROS needed)
 pip install "strands-robots[rosbridge]" strands-agents
+export STRANDS_ROS2_COMMAND_ALLOW=/curiosity_mars_rover/ackermann_drive_controller/cmd_vel
 python examples/rosbridge/curiosity_agent.py
 ```
 
 The simulation takes ~30 seconds to warm up. Then the agent will read the
 rover's initial pose, execute two drive legs with a turn, and report the
-displacement.
+displacement. The export is what makes those legs go out unattended: `cmd_vel`
+is a gated command surface, so without it the first drive pauses the run for an
+operator instead of finishing it, and the script reports the paused question
+rather than a displacement.
