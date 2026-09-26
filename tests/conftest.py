@@ -11,12 +11,18 @@ sessions and background heartbeat threads when ``eclipse-zenoh`` is
 installed in the test environment.  Mesh-specific tests opt back in
 explicitly via ``monkeypatch.delenv`` or by patching ``init_mesh``.
 
-Finally, registers the session-truncation reporter from
+Registers the session-truncation reporter from
 :mod:`tests.session_truncation`, so a run that stops before every collected test
 has started says so instead of reporting counts that read as a total.
+
+Finally, removes a passed test's ``<name>current`` symlink in the same teardown
+that removes its ``tmp_path`` (:func:`pytest_runtest_teardown` below): every
+test here creates a ``tmp_path``, and the base temp is listed in full to name
+each one, so an entry left behind is paid for by every test after it.
 """
 
 import os
+import re
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -547,3 +553,61 @@ def _the_session_store_a_test_reaches_is_its_own(tmp_path: Path, monkeypatch: py
         return
 
     monkeypatch.setattr(_process_stop, "SESSION_DIR", tmp_path / ".sessions")
+
+
+def remove_dead_current_symlink(tmp_path: Path, test_name: str) -> None:
+    """Remove the ``<name>current`` symlink pytest left beside ``tmp_path`` once the directory is gone.
+
+    ``make_numbered_dir`` writes two entries into the base temp for every
+    ``tmp_path``: the numbered directory, and a ``<prefix>current`` symlink to it
+    where ``<prefix>`` is the test name with every non-word character replaced
+    by ``_`` and cut to 30 characters (``_pytest.tmpdir._mk_tmp``). Under
+    ``tmp_path_retention_policy = "failed"`` the directory of a passed test is
+    removed at that test's own teardown; the symlink is not - pytest removes
+    dead symlinks only in ``pytest_sessionfinish`` - so one per distinct prefix
+    accumulates for the whole session. Every ``tmp_path`` after it is named by
+    listing the base temp in full (``find_suffixes`` -> ``root.iterdir()``), so
+    a worker's setup cost grows with the distinct test names it has run rather
+    than with its failed tests: ~25,600 prefixes across the suite's ~58,000
+    cells, ~13,000 per worker under ``-n 2 --dist loadfile``.
+
+    This does what the session-end cleanup does, per test: a symlink whose
+    target no longer exists is unlinked. A symlink whose directory is still
+    there - a failed test's, or every test's under ``all`` - is left alone, so
+    what a policy keeps for inspection keeps its ``current`` link too. Measured
+    on ubuntu-latest (2 vCPU, ``-n 2 --dist loadfile``) with 20,000 trivial
+    tests of distinct names under one autouse ``tmp_path`` fixture and the
+    ``failed`` policy: 101-108 s without this, 44-45 s with it, against 34 s
+    with no ``tmp_path`` at all; sampled mid-run, each worker's base temp held
+    7,000+ symlinks and no directory. The 250-name suite the policy was measured
+    on ran the same 20,000 in 42.7 s - so this takes the distinct-name suite to
+    the floor the policy alone reaches only when names repeat.
+
+    Named from the test name rather than found by listing: a listing is the
+    cost. Pinned by ``tests/test_tmp_path_of_a_passed_test_is_not_kept.py``.
+    """
+    if tmp_path.exists():
+        return
+    prefix = re.sub(r"[\W]", "_", test_name)[:30]
+    link = tmp_path.parent / (prefix + "current")
+    if link.is_symlink():
+        link.unlink(missing_ok=True)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item: pytest.Item) -> Iterator[None]:
+    """Drop a passed test's ``current`` symlink after its ``tmp_path`` finaliser has run.
+
+    A wrapper rather than a fixture because the order is the point: the
+    ``tmp_path`` fixture removes the directory in its own finaliser, and a
+    fixture that requests ``tmp_path`` is torn down *before* it, so at no
+    fixture's teardown is the directory already gone. After the ``yield`` every
+    finaliser has run. ``item.funcargs`` still holds the resolved fixtures here
+    - ``runtestprotocol`` clears it only once the teardown report is made - and
+    a test that never resolved a ``tmp_path`` has nothing to remove.
+    """
+    yield
+    funcargs = getattr(item, "funcargs", None) or {}
+    tmp_path = funcargs.get("tmp_path")
+    if isinstance(tmp_path, Path):
+        remove_dead_current_symlink(tmp_path, item.name)

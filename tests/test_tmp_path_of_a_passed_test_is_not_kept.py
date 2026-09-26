@@ -33,20 +33,30 @@ run, against 0.27 s with ``--rootdir`` naming the target - the shape of the
 holds a few hundred entries rather than tens of thousands (#3869).
 
 ``failed`` keeps a failed test's directory for inspection and removes a passed
-one at its own teardown, when nothing can read it any more. It does not empty
-the base temp while the session runs: pytest also writes one ``<name>current``
-symlink per distinct test-name prefix and removes those only at session end,
-so within a run the scan still grows with the number of distinct names rather
-than the number of tests - about 25,600 against 58,000 here.
+one at its own teardown, when nothing can read it any more. On its own it does
+not empty the base temp while the session runs: pytest also writes one
+``<name>current`` symlink per distinct test-name prefix and removes those only
+at session end, so within a run the scan still grew with the number of distinct
+names rather than the number of tests - about 25,600 against 58,000 here,
+~13,000 per worker. Measured with 20,000 trivial tests of *distinct* names
+under the ``failed`` policy: 101-108 s, against the 42.7 s the 250-name suite
+above took, and a mid-run sample of each worker's base temp held 7,000+
+symlinks and no directory. ``pytest_runtest_teardown`` in ``tests/conftest.py``
+removes the symlink in the same motion as the directory - only once the
+directory is gone, so a failed test keeps both - which took the distinct-name
+suite to 44-45 s. The two halves are pinned below, on the fixture itself.
 """
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 from typing import ClassVar
 
 import pytest
+
+from tests.conftest import remove_dead_current_symlink
 
 _PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 
@@ -68,24 +78,101 @@ def test_the_session_runs_under_that_policy(pytestconfig: pytest.Config) -> None
     assert pytestconfig.getini("tmp_path_retention_policy") == "failed"
 
 
+def _current_symlink_of(tmp_path: Path, test_name: str) -> Path:
+    """The ``<prefix>current`` symlink ``make_numbered_dir`` writes beside a test's ``tmp_path``.
+
+    Spelled as ``_pytest.tmpdir._mk_tmp`` spells the prefix - non-word characters
+    to ``_``, cut to 30 - so the cell that reads it back checks the spelling
+    against what pytest actually wrote, and the cleanup that shares it is graded
+    on the same name.
+    """
+    return tmp_path.parent / (re.sub(r"[\W]", "_", test_name)[:30] + "current")
+
+
 class TestAPassedTestsDirectoryIsGoneBeforeTheNextTestRuns:
-    """Driven on the fixture itself rather than on the option: the first cell passes, the second looks."""
+    """Driven on the fixture itself rather than on the option: the first cell passes, the later ones look."""
 
-    #: The ``tmp_path`` the first cell was handed, read by the second. ``--dist
-    #: loadfile`` keeps the two on one worker, in file order.
-    _handed_out: ClassVar[list[Path]] = []
+    #: The ``tmp_path`` the first cell was handed and the ``current`` symlink
+    #: pytest wrote for it, read by the cells after. ``--dist loadfile`` keeps
+    #: them on one worker, in file order.
+    _handed_out: ClassVar[list[tuple[Path, Path]]] = []
 
-    def test_a_cell_that_passes_leaves_its_tmp_path_behind_for_teardown(self, tmp_path: Path) -> None:
+    def test_a_cell_that_passes_leaves_its_tmp_path_behind_for_teardown(
+        self, tmp_path: Path, request: pytest.FixtureRequest
+    ) -> None:
         (tmp_path / "written.txt").write_text("a file the teardown has to remove with the directory", encoding="utf-8")
         assert tmp_path.is_dir()
-        self._handed_out.append(tmp_path)
+        link = _current_symlink_of(tmp_path, request.node.name)
+        # The control for the name: pytest wrote this symlink, for this
+        # directory. A prefix spelled differently from pytest's would leave a
+        # symlink the teardown never looks at, and the third cell would then
+        # be asserting the absence of a name nothing ever created.
+        assert link.is_symlink() and link.resolve() == tmp_path.resolve(), (
+            f"{link} is not the current symlink pytest wrote for {tmp_path}; the prefix spelling here "
+            "has drifted from _pytest.tmpdir._mk_tmp, so the cleanup keyed on it removes nothing"
+        )
+        self._handed_out.append((tmp_path, link))
 
     def test_that_directory_no_longer_exists(self) -> None:
         if not self._handed_out:
             pytest.skip("the cell before this one did not run in this process, so there is nothing to look for")
-        (earlier,) = self._handed_out
+        ((earlier, _link),) = self._handed_out
         assert not earlier.exists(), (
             f"{earlier} survived the teardown of the passed test it was created for; under "
             "tmp_path_retention_policy = 'failed' a passed test's directory is removed at its own teardown, "
             "and one that stays is one more entry every later tmp_path in this worker has to scan past"
         )
+
+    def test_nor_does_its_current_symlink(self) -> None:
+        if not self._handed_out:
+            pytest.skip("the first cell did not run in this process, so there is nothing to look for")
+        ((earlier, link),) = self._handed_out
+        assert not link.is_symlink(), (
+            f"{link} survived the teardown that removed {earlier}; pytest removes a dead current symlink only "
+            "at session end, so one stays per distinct test name for the whole run and every later tmp_path "
+            "in this worker scans past it - pytest_runtest_teardown in tests/conftest.py removes it with the "
+            "directory"
+        )
+
+
+class TestTheCurrentSymlinkIsRemovedOnlyOnceItsDirectoryIsGone:
+    """Both directions of the cleanup, on a staged base temp rather than the session's own."""
+
+    @staticmethod
+    def _stage(base: Path, test_name: str) -> tuple[Path, Path]:
+        """A numbered directory and its ``current`` symlink, as ``make_numbered_dir`` leaves them."""
+        base.mkdir()
+        directory = base / f"{test_name}0"
+        directory.mkdir()
+        link = _current_symlink_of(directory, test_name)
+        link.symlink_to(directory, target_is_directory=True)
+        return directory, link
+
+    def test_a_directory_that_is_gone_takes_its_symlink_with_it(self, tmp_path: Path) -> None:
+        directory, link = self._stage(tmp_path / "base", "test_passed")
+        directory.rmdir()
+        remove_dead_current_symlink(directory, "test_passed")
+        assert not link.is_symlink()
+        assert list((tmp_path / "base").iterdir()) == []
+
+    def test_a_directory_that_is_kept_keeps_its_symlink(self, tmp_path: Path) -> None:
+        """A failed test's directory stays under the policy, and so does the link that names it."""
+        directory, link = self._stage(tmp_path / "base", "test_failed")
+        remove_dead_current_symlink(directory, "test_failed")
+        assert directory.is_dir()
+        assert link.is_symlink() and link.resolve() == directory.resolve()
+
+    def test_a_parametrized_name_is_spelled_as_pytest_spells_it(self, tmp_path: Path) -> None:
+        """``test_x[a-b]`` becomes ``test_x_a_b_``, cut to 30: the same prefix pytest named the directory by."""
+        name = "test_a_long_parametrized_name[value-1]"
+        directory, link = self._stage(tmp_path / "base", re.sub(r"[\W]", "_", name)[:30])
+        directory.rmdir()
+        remove_dead_current_symlink(directory, name)
+        assert not link.is_symlink()
+
+    def test_no_symlink_is_not_an_error(self, tmp_path: Path) -> None:
+        """A platform that could not write the symlink, or a second call, has nothing to remove."""
+        base = tmp_path / "base"
+        base.mkdir()
+        remove_dead_current_symlink(base / "test_bare0", "test_bare")
+        assert list(base.iterdir()) == []
