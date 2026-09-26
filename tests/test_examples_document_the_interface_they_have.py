@@ -50,6 +50,18 @@ that interface drifts from the file, the first two measured on ``74136572a``:
    ``ModuleNotFoundError: No module named 'matplotlib'``. No extra of this project
    declares matplotlib, so the import scan above skipped it by design.
 
+6. ``examples/robots/neon.py`` documented ``pip install "strands-robots[mesh]"
+   cyclonedds unitree_sdk2py``, and ``unitree_sdk2py`` is not on PyPI under that
+   name - ``uv pip install`` ends the whole command with ``unitree-sdk2py was not
+   found in the package registry``, so nothing is installed and the reader never
+   reaches the G1. The driver's own missing-SDK refusal already names the working
+   recipe (``[ros2]`` for the CycloneDDS binding plus the vendor checkout), which
+   is what the rule below reads. The line was invisible to the scan above because
+   it wrapped: ``pip install`` ended one source line and its arguments began the
+   next, and a reader ending at the newline resolved the only unsatisfiable line
+   in ``examples/`` to no arguments at all - the one docstring of 52 whose
+   install command read as empty.
+
 Why the install rule is keyed on distributions this project declares: an example
 may legitimately import something no extra covers (an optional third-party tool
 the header installs separately, or a module only the reader's own environment
@@ -77,13 +89,15 @@ from pathlib import Path
 
 import pytest
 
+from strands_robots.drivers.unitree._common import UNITREE_SDK_INSTALL, sdk_missing
 from strands_robots.training.lerobot import _LEROBOT_CALL_TIME_PACKAGES
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
-_INSTALL_LINE = re.compile(r"(?:uv )?pip install(?P<rest>[^\n]*(?:\\\n[^\n]*)*)")
+_INSTALL_START = re.compile(r"(?:uv )?pip install")
+_CODE_FENCES = ("``", "`")
 _SELF_EXTRAS = re.compile(r"strands[-_]robots\[(?P<extras>[^\]]+)\]")
 
 # The import names whose distribution is spelled differently, so that a declared
@@ -94,6 +108,15 @@ _DISTRIBUTION_BY_IMPORT_NAME = {
     "PIL": "pillow",
     "cv2": "opencv-python-headless",
     "yaml": "pyyaml",
+}
+
+# The vendor SDKs this project refuses to pip-install, each paired with the
+# refusal that says so and the recipe that refusal names. Both halves are
+# checked against the library by
+# ``test_each_unpublished_sdk_is_one_the_library_refuses_to_install``, so the
+# roster cannot become a list of names nothing in the tree stands behind.
+_UNPUBLISHED_VENDOR_SDKS = {
+    "unitree_sdk2py": (sdk_missing, UNITREE_SDK_INSTALL),
 }
 
 
@@ -126,22 +149,54 @@ def _declared() -> tuple[dict[str, frozenset[str]], frozenset[str]]:
     )
 
 
+def _install_arguments(text: str) -> str | None:
+    """Everything the first ``pip install`` in ``text`` is handed, verbatim.
+
+    A docstring wraps, so a command ends at its own delimiter and not at the
+    line break: opened inside a code span the arguments run to the matching
+    closer across as many source lines as the span takes, bounded by the blank
+    line no code span crosses. Only an undelimited command ends at the newline.
+    Ending every command at the newline instead drops every argument of a
+    wrapped one, and a command that installs nothing is graded as a docstring
+    with nothing to install rather than as the line it is.
+
+    ``None`` when ``text`` documents no install command.
+    """
+    match = _INSTALL_START.search(text)
+    if match is None:
+        return None
+    fence = next((f for f in _CODE_FENCES if text[: match.start()].endswith(f)), "")
+    rest = text[match.end() :]
+    limits = [len(rest)]
+    if fence:
+        limits += [index for index in (rest.find(fence), rest.find("\n\n")) if index != -1]
+    else:
+        limits += [index for index in (rest.find("\n"),) if index != -1]
+    return rest[: min(limits)].replace("\\\n", " ")
+
+
+def _pip_targets(arguments: str) -> list[str]:
+    """The requirement arguments of an install command, flags and quotes gone."""
+    targets = []
+    for token in re.findall(r"\"[^\"]+\"|'[^']+'|\S+", arguments):
+        token = token.strip("\"'")
+        if token and not token.startswith("-"):
+            targets.append(token)
+    return targets
+
+
 def _install_line_provides(docstring: str) -> frozenset[str] | None:
     """Distributions the docstring's install line ends up installing.
 
     ``None`` when the docstring documents no install line, which is most
     examples: the quickstart install is assumed and there is nothing to grade.
     """
-    match = _INSTALL_LINE.search(docstring)
-    if not match:
+    arguments = _install_arguments(docstring)
+    if arguments is None:
         return None
     by_extra, base = _declared()
     provided = set(base)
-    rest = match.group("rest").replace("\\\n", " ")
-    for token in re.findall(r"\"[^\"]+\"|'[^']+'|\S+", rest):
-        token = token.strip("\"'")
-        if token.startswith("-"):
-            continue
+    for token in _pip_targets(arguments):
         extras = _SELF_EXTRAS.search(token)
         if extras:
             for extra in extras.group("extras").split(","):
@@ -225,8 +280,8 @@ def test_an_install_line_declares_every_distribution_the_example_imports() -> No
 
 def _install_line_text(docstring: str) -> str | None:
     """The docstring's install line verbatim, or ``None`` when it has none."""
-    match = _INSTALL_LINE.search(docstring)
-    return None if match is None else match.group(0).replace("\\\n", " ")
+    arguments = _install_arguments(docstring)
+    return None if arguments is None else "pip install" + arguments
 
 
 def _lerobot_extras_named(install_line: str) -> frozenset[str]:
@@ -339,6 +394,89 @@ def test_the_install_rule_separates_a_covered_import_from_a_missing_one() -> Non
     assert "robot_descriptions" in named, "a distribution named directly on the line counts as installed"
     assert _install_line_provides("no install line here") is None
     assert base, "the base dependency list is empty; every example would look under-installed"
+
+
+def test_no_install_line_names_a_vendor_sdk_pip_cannot_reach() -> None:
+    """No example tells a reader to ``pip install`` an unpublished vendor SDK.
+
+    A vendor SDK that is not on PyPI under the name it is imported by has one
+    install, and the library already holds it: the missing-SDK refusal names a
+    recipe, and an install line that names the module instead resolves to
+    nothing at all. That is worse than a missing extra, because the reader's
+    whole command fails before anything is installed.
+    """
+    offenders = []
+    for path, tree in _examples():
+        arguments = _install_arguments(ast.get_docstring(tree) or "")
+        if arguments is None:
+            continue
+        for target in _pip_targets(arguments):
+            module = _canonical(target).replace("-", "_")
+            if module in _UNPUBLISHED_VENDOR_SDKS:
+                offenders.append(f"{path.relative_to(_REPO_ROOT).as_posix()} installs {target}")
+    assert not offenders, (
+        "a vendor SDK pip cannot reach must be installed by the recipe its refusal names, "
+        "not named as a target: " + "; ".join(offenders)
+    )
+
+
+def test_each_unpublished_sdk_is_one_the_library_refuses_to_install() -> None:
+    """Premise: every roster entry is a module the library says pip cannot get."""
+    assert _UNPUBLISHED_VENDOR_SDKS, "the roster is empty; the rule above grades nothing"
+    for module, (refusal, recipe) in _UNPUBLISHED_VENDOR_SDKS.items():
+        text = refusal("No module named 'x'")
+        assert module in text, f"{module} is not what {refusal.__name__} refuses"
+        assert "not a strands-robots extra" in text, f"{refusal.__name__} no longer says pip cannot reach {module}"
+        assert module not in _pip_targets(recipe), (
+            f"{module} is a pip target of its own recipe; drop it from the roster"
+        )
+
+
+@pytest.mark.parametrize(
+    ("docstring", "targets"),
+    [
+        pytest.param(
+            'Dependencies: ``pip install\n"strands-robots[mesh]" cyclonedds unitree_sdk2py``. The SDK is\nlazy-imported.',
+            ["strands-robots[mesh]", "cyclonedds", "unitree_sdk2py"],
+            id="a-wrapped-code-span-keeps-every-target",
+        ),
+        pytest.param(
+            'Dependencies: ``pip install "strands-robots[mesh,ros2]"``\n\nThen clone the SDK.',
+            ["strands-robots[mesh,ros2]"],
+            id="a-closed-code-span-stops-at-its-closer",
+        ),
+        pytest.param(
+            "Dependencies::\n\n    pip install 'strands-robots[mesh,ros2]'\n    git clone https://example/sdk\n",
+            ["strands-robots[mesh,ros2]"],
+            id="an-undelimited-command-stops-at-the-newline",
+        ),
+        pytest.param(
+            "Dependencies: pip install --no-deps -e ./unitree_sdk2_python\nRuntime: forever.",
+            ["./unitree_sdk2_python"],
+            id="flags-are-not-targets",
+        ),
+        pytest.param(
+            "Dependencies: ``pip install robot_descriptions`` + a working GPU.",
+            ["robot_descriptions"],
+            id="prose-after-the-closer-is-not-a-target",
+        ),
+        pytest.param("Runtime: ~3 seconds.", None, id="no-command-reads-as-none"),
+    ],
+)
+def test_the_install_reader_ends_a_command_at_its_own_delimiter(docstring: str, targets: list[str] | None) -> None:
+    """Planted pair: the wrap is what the line-scoped reader used to lose."""
+    arguments = _install_arguments(docstring)
+    assert (None if arguments is None else _pip_targets(arguments)) == targets
+
+
+def test_the_unpublished_sdk_rule_separates_the_recipe_from_the_module() -> None:
+    """Planted pair: the checkout installs, the module name does not."""
+    bad = _install_arguments('Dependencies: ``pip install\n"strands-robots[mesh]" cyclonedds unitree_sdk2py``.')
+    good = _install_arguments("Dependencies: ``pip install 'strands-robots[mesh,ros2]'``")
+    assert bad is not None and good is not None
+    assert "unitree_sdk2py" in _pip_targets(bad)
+    assert not set(_pip_targets(good)) & set(_UNPUBLISHED_VENDOR_SDKS)
+    assert not set(_pip_targets(UNITREE_SDK_INSTALL)) & set(_UNPUBLISHED_VENDOR_SDKS)
 
 
 def _goal_keys_policies_read() -> frozenset[str]:

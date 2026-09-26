@@ -56,7 +56,7 @@ _OVER_BUDGET = frozenset(
 
 #: The whole-site ceiling, in words, counted over every page :func:`_pages`
 #: finds. Lower it whenever a change cuts words; never raise it to admit them.
-_SITE_BUDGET = 113_264
+_SITE_BUDGET = 113_262
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
