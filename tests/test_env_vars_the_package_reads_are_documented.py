@@ -1,4 +1,4 @@
-"""Every ``STRANDS_*`` environment variable the package reads is documented.
+"""Every environment variable the package reads is documented.
 
 The README's Configuration section calls itself the single source of truth for
 these variables, and ``AGENTS.md`` asks that a new one be added there in the
@@ -78,8 +78,26 @@ resolver may prepend or append such text to the parameter it reads through;
 the parameter must appear exactly once, and a chain that involves a local or
 a second parameter still names nothing a page could spell.
 
+Ownership is declared, not inferred from the spelling. This test used to grade
+the ``STRANDS_*`` names alone, on the reasoning that anything else is another
+tool's to document - true of ``MUJOCO_GL`` and ``HF_TOKEN``, and false of every
+name this package defines without the prefix. :data:`FOREIGN_NAMESPACES` names
+the borrowed ones and who defines them, so a name outside it is this package's
+to document however it is spelled. Measured when that changed, twelve unprefixed
+names were the package's own and two of them appeared in no page:
+``DEVICE_CONNECT_CLIENT_ID``, the fallback caller identity a device's RPC
+allowlist matches against, and ``UNITREE_SDK_PATH``, the first checkout the G1
+tool reads a service's methods from. Both sat in the gap between this test's
+prefix and the two module-scoped reference tests either side of it
+(``tests/test_docs_device_connect_env_reference.py`` walks
+``strands_robots/device_connect`` only, and ``DEVICE_CONNECT_CLIENT_ID`` is read
+in ``tools/robot_mesh.py``).
+
 Out of scope, and why: a name that appears only inside a string literal is not
-read by this process. ``mesh.iot.bootstrap`` ships the e-stop fan-out Lambda's
+read by this process, and a name spelled with a leading underscore is the
+package's own private marker rather than a knob - ``_STRANDS_ROBOTS_DYLD_REEXEC``
+is set by the dyld shim so its single re-exec cannot repeat, and no operator
+sets it. ``mesh.iot.bootstrap`` ships the e-stop fan-out Lambda's
 source as text and sets that Lambda's ``STRANDS_SAFETY_TABLE`` itself, so the
 variable is provisioned rather than exposed, and the AST walk does not see it
 by construction.
@@ -101,23 +119,62 @@ PACKAGE = Path(strands_robots.__file__).parent
 REPO_ROOT = PACKAGE.parent
 PAGES = (REPO_ROOT / "README.md", *sorted((REPO_ROOT / "docs").rglob("*.md")))
 
-#: The prefix every variable this package owns is spelled with. Names read
-#: from another tool's namespace (``MUJOCO_GL``, ``ZENOH_CONNECT``,
-#: ``GROOT_API_TOKEN``) are that tool's to document and are not graded here.
-OWN_PREFIX = "STRANDS_"
+#: Variables another project or the operating system defines. This package
+#: reads them, so their own documentation is the reference and a page here need
+#: not name them (several do, where this package's use of one needs explaining).
+#: Every other name a read spells is this package's own, whatever its prefix.
+FOREIGN_NAMESPACES: dict[str, str] = {
+    "AWS_DEFAULT_REGION": "boto3",
+    "AWS_REGION": "boto3",
+    "BEDROCK_REGION": "strands.models.bedrock",
+    "CUBLAS_WORKSPACE_CONFIG": "cuBLAS",
+    "CUDA_VISIBLE_DEVICES": "the CUDA runtime",
+    "DISPLAY": "the X11 display server",
+    "DOCKER_BUILDKIT": "Docker",
+    "HF_HOME": "huggingface_hub",
+    "HF_TOKEN": "huggingface_hub",
+    "HF_TOKEN_PATH": "huggingface_hub",
+    "HOMEBREW_PREFIX": "Homebrew",
+    "HUGGING_FACE_HUB_TOKEN": "huggingface_hub",
+    "LOCAL_RANK": "torch.distributed.elastic",
+    "LOGURU_LEVEL": "loguru",
+    "MUJOCO_GL": "MuJoCo",
+    "NO_COLOR": "the no-color.org convention",
+    "PYTORCH_CUDA_ALLOC_CONF": "torch",
+    "ROBOT_DESCRIPTIONS_CACHE": "robot_descriptions",
+    "ROS_DOMAIN_ID": "ROS 2",
+    "TERM": "POSIX",
+    "USER": "POSIX",
+    "WAYLAND_DISPLAY": "the Wayland compositor",
+    "XDG_CACHE_HOME": "the XDG base directory specification",
+    "ZENOH_CONNECT": "zenoh",
+    "ZENOH_LISTEN": "zenoh",
+    "__EGL_VENDOR_LIBRARY_DIRS": "libglvnd",
+    "__EGL_VENDOR_LIBRARY_FILENAMES": "libglvnd",
+}
 
-#: A whole ``STRANDS_*`` token on a page - not a prefix of a longer name, so a
-#: page naming ``STRANDS_GR00T_REPO_URL_ALLOW`` has not named
-#: ``STRANDS_GR00T_REPO_URL``.
-_FULL_NAME = re.compile(r"(?<![A-Z0-9_])(STRANDS_[A-Z0-9_]+)(?![A-Z0-9_])")
+
+#: A leading underscore marks a name this package sets itself and no operator
+#: sets - the dyld shim's one-shot re-exec guard is the only one - the same
+#: convention the code uses for a private attribute. It is read, so it counts
+#: towards the floor below, but a page owes it no row.
+def _is_private(name: str) -> bool:
+    return name.startswith("_")
+
+
+#: A whole environment-variable token on a page - upper snake case, and not a
+#: prefix of a longer name, so a page naming ``STRANDS_GR00T_REPO_URL_ALLOW``
+#: has not named ``STRANDS_GR00T_REPO_URL``.
+_FULL_NAME = re.compile(r"(?<![A-Z0-9_])([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(?![A-Z0-9_])")
 
 #: The README's sibling shorthand: a backticked ``_SUFFIX`` standing beside a
 #: full name it shares a prefix with.
 _SHORTHAND = re.compile(r"`(_[A-Z0-9_]+)`")
 
 #: Floors so a walk that silently reads nothing fails rather than passing. The
-#: tree this arrived in read 88 names across 107 sites and documented them on
-#: 6 pages; both floors sit well below that.
+#: tree this arrived in read 145 names across 184 sites - 27 of them borrowed
+#: from another project - and 72 pages name one; both floors sit well below
+#: that.
 MINIMUM_NAMES_READ = 60
 MINIMUM_PAGES_NAMING_ONE = 3
 
@@ -391,7 +448,7 @@ def _key_string(key: ast.AST, constants: dict[str, str]) -> str | None:
 
 
 def names_read(trees: dict[str, ast.AST]) -> dict[str, list[str]]:
-    """``{name: [label:line, ...]}`` for every own-prefix key the trees read."""
+    """``{name: [label:line, ...]}`` for every key the trees read as their own."""
     resolvers = environment_resolvers(trees)
     found: dict[str, list[str]] = {}
     for label, tree in trees.items():
@@ -404,7 +461,7 @@ def names_read(trees: dict[str, ast.AST]) -> dict[str, list[str]]:
             if key is None:
                 continue
             name = _key_string(key, constants)
-            if name is not None and name.startswith(OWN_PREFIX):
+            if name is not None and name not in FOREIGN_NAMESPACES:
                 found.setdefault(name, []).append(f"{label}:{node.lineno}")
     return found
 
@@ -435,7 +492,7 @@ def documented_names(pages: dict[str, str]) -> set[str]:
         names |= full
         prefixes = {name[:idx] for name in full for idx, char in enumerate(name) if char == "_"}
         for suffix in _SHORTHAND.findall(text):
-            names |= {prefix + suffix for prefix in prefixes if (prefix + suffix).startswith(OWN_PREFIX)}
+            names |= {prefix + suffix for prefix in prefixes}
     return names
 
 
@@ -449,15 +506,15 @@ def test_every_environment_variable_the_package_reads_is_documented() -> None:
     documented = documented_names(pages)
 
     assert len(read) >= MINIMUM_NAMES_READ, (
-        f"the walk over {PACKAGE} found {len(read)} {OWN_PREFIX}* names, below the floor of "
+        f"the walk over {PACKAGE} found {len(read)} environment names, below the floor of "
         f"{MINIMUM_NAMES_READ}; the read shapes this test recognises have drifted from the package"
     )
-    naming_pages = [page for page, text in pages.items() if _FULL_NAME.search(text)]
+    naming_pages = [page for page, text in pages.items() if documented & set(_FULL_NAME.findall(text))]
     assert len(naming_pages) >= MINIMUM_PAGES_NAMING_ONE, (
-        f"only {len(naming_pages)} page(s) name a {OWN_PREFIX}* variable; the reference pages have moved"
+        f"only {len(naming_pages)} page(s) name a variable the package reads; the reference pages have moved"
     )
 
-    undocumented = sorted(name for name in read if name not in documented)
+    undocumented = sorted(name for name in read if name not in documented and not _is_private(name))
     assert not undocumented, (
         f"{len(undocumented)} environment variable(s) the package reads appear in no page under "
         f"README.md or docs/:\n"
@@ -601,7 +658,8 @@ class TestTheReadShapesAreAllRecognised:
         source = 'BODY = """\nimport os\n_TABLE = os.environ.get("STRANDS_PROBE")\n"""\n'
         assert names_read(_parse({"probe.py": source})) == {}
 
-    def test_a_name_outside_the_owned_prefix_is_not_graded(self) -> None:
+    def test_a_name_another_project_defines_is_not_graded(self) -> None:
+        """``MUJOCO_GL`` is MuJoCo's to document, and :data:`FOREIGN_NAMESPACES` says so."""
         assert names_read(_parse({"probe.py": 'import os\nx = os.getenv("MUJOCO_GL")\n'})) == {}
 
 

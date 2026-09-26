@@ -72,6 +72,11 @@ live G1 bus; if the robot's topics stay silent under 11.x, build 0.10.2 as
 above. Point `CYCLONEDDS_URI` at the robot's `cyclonedds.xml` when the default
 multicast discovery does not find it.
 
+To list a service's methods `use_unitree` reads the SDK's *source* rather than
+importing it, searching `UNITREE_SDK_PATH`, then `/tmp/unitree_sdk2_python`,
+then a checkout beside the installed package. It is a search root, not an
+import path - the install above is what makes the SDK importable.
+
 ## See also
 
 - [Native drivers](native-drivers.md) - the contract this driver satisfies.
