@@ -15,24 +15,12 @@ import pytest
 
 import strands_robots.mesh.ros_bridge as bridge_mod
 from strands_robots.mesh import RosBridgedRobot
-
-
-class _Recorder:
-    """Records the kwargs of each forwarded ``ros_action`` call."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-
-    def __call__(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(kwargs)
-        return {"status": "success", "content": [{"text": "ok"}]}
+from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 
 @pytest.fixture
-def rec(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
-    recorder = _Recorder()
-    monkeypatch.setattr(bridge_mod, "ros_action", recorder)
-    return recorder
+def rec(monkeypatch: pytest.MonkeyPatch) -> Transport:
+    return stands_in_for(monkeypatch, bridge_mod, "ros_action")
 
 
 def _turtle() -> RosBridgedRobot:
@@ -65,7 +53,7 @@ def test_invalid_names_rejected_at_construction(node_name: str, cmd_vel_topic: s
         RosBridgedRobot(node_name, cmd_vel_topic, odom_topic)
 
 
-def test_drive_publishes_twist(rec: _Recorder) -> None:
+def test_drive_publishes_twist(rec: Transport) -> None:
     _turtle().drive(linear=2.0, angular=1.5)
     (call,) = rec.calls
     assert call["action"] == "publish"
@@ -75,18 +63,18 @@ def test_drive_publishes_twist(rec: _Recorder) -> None:
     assert call["count"] == 1
 
 
-def test_drive_duration_sets_message_count(rec: _Recorder) -> None:
+def test_drive_duration_sets_message_count(rec: Transport) -> None:
     # publish_rate defaults to 10 Hz -> 1.5 s == 15 messages.
     _turtle().drive(linear=1.0, duration=1.5)
     assert rec.calls[0]["count"] == 15
 
 
-def test_stop_publishes_zero_velocity(rec: _Recorder) -> None:
+def test_stop_publishes_zero_velocity(rec: Transport) -> None:
     _turtle().stop()
     assert rec.calls[0]["fields"] == {"linear": {"x": 0.0}, "angular": {"z": 0.0}}
 
 
-def test_get_pose_echoes_odom_topic(rec: _Recorder) -> None:
+def test_get_pose_echoes_odom_topic(rec: Transport) -> None:
     _turtle().get_pose()
     (call,) = rec.calls
     assert call["action"] == "echo"
@@ -94,13 +82,13 @@ def test_get_pose_echoes_odom_topic(rec: _Recorder) -> None:
     assert call["type"] == "turtlesim/msg/Pose"
 
 
-def test_get_scan_without_topic_returns_error(rec: _Recorder) -> None:
+def test_get_scan_without_topic_returns_error(rec: Transport) -> None:
     result = _turtle().get_scan()
     assert result["status"] == "error"
     assert rec.calls == []  # nothing forwarded
 
 
-def test_get_scan_with_topic_echoes(rec: _Recorder) -> None:
+def test_get_scan_with_topic_echoes(rec: Transport) -> None:
     robot = RosBridgedRobot("tb", "/cmd_vel", "/odom", scan_topic="/scan")
     robot.get_scan()
     assert rec.calls[0]["action"] == "echo"
@@ -134,7 +122,7 @@ def test_drive_and_stop_tools_are_always_paired() -> None:
         assert f"stop_{suffix}" in names
 
 
-def test_stop_tool_publishes_a_single_zero_twist(rec: _Recorder) -> None:
+def test_stop_tool_publishes_a_single_zero_twist(rec: Transport) -> None:
     stop_tool: Any = next(t for t in _turtle().tools if t.tool_name == "stop_turtlesim")
     stop_tool()
     (call,) = rec.calls
@@ -149,7 +137,7 @@ def test_tools_include_scan_only_when_configured() -> None:
     assert "get_scan_tb" in names
 
 
-def test_drive_tool_forwards_to_instance(rec: _Recorder) -> None:
+def test_drive_tool_forwards_to_instance(rec: Transport) -> None:
     tools = {t.tool_name: t for t in _turtle().tools}
     drive_tool: Any = tools["drive_turtlesim"]
     drive_tool(linear=1.0)
@@ -170,7 +158,7 @@ def _nav_turtle() -> RosBridgedRobot:
     )
 
 
-def test_navigate_to_forwards_action_goal(rec: _Recorder) -> None:
+def test_navigate_to_forwards_action_goal(rec: Transport) -> None:
     import math
 
     _nav_turtle().navigate_to(x=1.0, y=2.0, yaw=math.pi / 2, timeout=60.0)
@@ -187,7 +175,7 @@ def test_navigate_to_forwards_action_goal(rec: _Recorder) -> None:
     assert pose["pose"]["orientation"]["w"] == pytest.approx(math.cos(math.pi / 4))
 
 
-def test_navigate_to_without_nav_action_is_error(rec: _Recorder) -> None:
+def test_navigate_to_without_nav_action_is_error(rec: Transport) -> None:
     result = _turtle().navigate_to(x=1.0, y=1.0)
     assert result["status"] == "error"
     assert "no nav_action configured" in result["content"][0]["text"]
@@ -206,7 +194,7 @@ def test_navigate_tool_exposed_only_when_configured() -> None:
     assert not any(name.startswith("navigate_") for name in without_nav)
 
 
-def test_navigate_tool_forwards_to_navigate_to(rec: _Recorder) -> None:
+def test_navigate_tool_forwards_to_navigate_to(rec: Transport) -> None:
     robot = _nav_turtle()
     nav_tool: Any = next(t for t in robot.tools if t.tool_name == "navigate_tb4")
     nav_tool(x=0.5, y=-0.5)

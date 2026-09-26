@@ -11,26 +11,17 @@ from typing import Any
 
 import pytest
 
+import strands_robots.mesh.rtps_robot as rtps_mod
 from strands_robots.mesh.rtps_robot import RtpsRobot
-
-
-class _Recorder:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-
-    def __call__(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(kwargs)
-        return {"status": "success", "content": [{"text": "ok"}]}
+from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 
 @pytest.fixture
-def rec(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
-    recorder = _Recorder()
-    monkeypatch.setattr("strands_robots.mesh.rtps_robot.rtps_action", recorder)
-    return recorder
+def rec(monkeypatch: pytest.MonkeyPatch) -> Transport:
+    return stands_in_for(monkeypatch, rtps_mod, "rtps_action")
 
 
-def test_drive_maps_twist_fields(rec: _Recorder) -> None:
+def test_drive_maps_twist_fields(rec: Transport) -> None:
     robot = RtpsRobot.from_rtps(node_name="turtlesim", cmd_vel_topic="/turtle1/cmd_vel")
     robot.drive(linear=2.0, angular=1.5)
     call = rec.calls[0]
@@ -40,27 +31,27 @@ def test_drive_maps_twist_fields(rec: _Recorder) -> None:
     assert call["fields"] == {"linear": {"x": 2.0}, "angular": {"z": 1.5}}
 
 
-def test_drive_duration_to_count(rec: _Recorder) -> None:
+def test_drive_duration_to_count(rec: Transport) -> None:
     robot = RtpsRobot.from_rtps(node_name="bot", cmd_vel_topic="/cmd_vel", publish_rate=10.0)
     robot.drive(linear=1.0, duration=1.5)
     assert rec.calls[0]["count"] == 15  # round(1.5 * 10)
 
 
-def test_stop_publishes_zero(rec: _Recorder) -> None:
+def test_stop_publishes_zero(rec: Transport) -> None:
     robot = RtpsRobot.from_rtps(node_name="bot", cmd_vel_topic="/cmd_vel")
     robot.stop()
     assert rec.calls[0]["fields"] == {"linear": {"x": 0.0}, "angular": {"z": 0.0}}
     assert rec.calls[0]["count"] == 1
 
 
-def test_advertise_forwards(rec: _Recorder) -> None:
+def test_advertise_forwards(rec: Transport) -> None:
     robot = RtpsRobot.from_rtps(node_name="bot", cmd_vel_topic="/cmd_vel")
     robot.advertise()
     assert rec.calls[0]["action"] == "advertise"
     assert rec.calls[0]["topic"] == "/cmd_vel"
 
 
-def test_tools_are_uniquely_named(rec: _Recorder) -> None:
+def test_tools_are_uniquely_named(rec: Transport) -> None:
     robot = RtpsRobot.from_rtps(node_name="turtlesim", cmd_vel_topic="/turtle1/cmd_vel")
     names = {t.tool_name for t in robot.tools}
     assert names == {"drive_turtlesim", "stop_turtlesim"}
@@ -71,7 +62,7 @@ def test_invalid_topic_rejected_at_construction() -> None:
         RtpsRobot.from_rtps(node_name="bot", cmd_vel_topic="not absolute")
 
 
-def test_generated_drive_tool_publishes_over_rtps(rec: _Recorder) -> None:
+def test_generated_drive_tool_publishes_over_rtps(rec: Transport) -> None:
     """The agent-facing drive_<node> tool forwards to the RTPS publish path.
 
     ``.tools`` builds per-instance ``@tool`` closures; invoking the drive tool
@@ -91,7 +82,7 @@ def test_generated_drive_tool_publishes_over_rtps(rec: _Recorder) -> None:
     assert call["fields"] == {"linear": {"x": 2.0}, "angular": {"z": 1.5}}
 
 
-def test_generated_stop_tool_publishes_zero(rec: _Recorder) -> None:
+def test_generated_stop_tool_publishes_zero(rec: Transport) -> None:
     """The agent-facing stop_<node> tool publishes a single zero-velocity Twist."""
     robot = RtpsRobot.from_rtps(node_name="turtlesim", cmd_vel_topic="/turtle1/cmd_vel")
     stop_tool: Any = next(t for t in robot.tools if t.tool_name == "stop_turtlesim")

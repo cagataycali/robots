@@ -33,45 +33,24 @@ import strands_robots.mesh.ros_bridge as ros_mod
 import strands_robots.mesh.rosbridge_robot as rbr_mod
 import strands_robots.mesh.rtps_robot as rtps_mod
 from strands_robots.mesh import RosBridgedRobot, RosbridgeRobot, RtpsRobot
+from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 ZERO_TWIST = {"linear": {"x": 0.0}, "angular": {"z": 0.0}}
 
 
-#: Forwarded arguments that carry the operator decision rather than the message.
-#: A gate is a fresh closure per call, so two calls of one method are never equal
-#: dicts while it is in them - and nothing in it reaches the robot.
-_OFF_THE_WIRE = frozenset({"gate", "tool_context"})
+def _ros(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Transport]:
+    rec = stands_in_for(monkeypatch, ros_mod, "ros_action")
+    return RosBridgedRobot.from_ros(node_name="rover", cmd_vel_topic="/cmd_vel", odom_topic="/odom"), rec
 
 
-class _Recorder:
-    """Records the kwargs of each forwarded transport call."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-
-    def __call__(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(kwargs)
-        return {"status": "success", "content": [{"text": "ok"}]}
-
-    @property
-    def on_the_wire(self) -> list[dict[str, Any]]:
-        """The recorded calls without the operator decision travelling beside them."""
-        return [{k: v for k, v in call.items() if k not in _OFF_THE_WIRE} for call in self.calls]
+def _rosbridge(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Transport]:
+    rec = stands_in_for(monkeypatch, rbr_mod, "rosbridge_action")
+    return RosbridgeRobot(node_name="rover", cmd_vel_topic="/cmd_vel", odom_topic="/odom"), rec
 
 
-def _ros(rec: _Recorder, monkeypatch: pytest.MonkeyPatch) -> Any:
-    monkeypatch.setattr(ros_mod, "ros_action", rec)
-    return RosBridgedRobot.from_ros(node_name="rover", cmd_vel_topic="/cmd_vel", odom_topic="/odom")
-
-
-def _rosbridge(rec: _Recorder, monkeypatch: pytest.MonkeyPatch) -> Any:
-    monkeypatch.setattr(rbr_mod, "rosbridge_action", rec)
-    return RosbridgeRobot(node_name="rover", cmd_vel_topic="/cmd_vel", odom_topic="/odom")
-
-
-def _rtps(rec: _Recorder, monkeypatch: pytest.MonkeyPatch) -> Any:
-    monkeypatch.setattr(rtps_mod, "rtps_action", rec)
-    return RtpsRobot.from_rtps(node_name="rover", cmd_vel_topic="/cmd_vel")
+def _rtps(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Transport]:
+    rec = stands_in_for(monkeypatch, rtps_mod, "rtps_action")
+    return RtpsRobot.from_rtps(node_name="rover", cmd_vel_topic="/cmd_vel"), rec
 
 
 #: Every transport that turns a mobile base into strands agent tools.
@@ -92,7 +71,8 @@ def _tools(robot: Any) -> dict[str, Any]:
 @pytest.mark.parametrize("build", BRIDGES)
 def test_a_bridge_exposing_a_drive_tool_also_exposes_a_stop_tool(build: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """A transport that can start motion must offer the halt in the same set."""
-    names = set(_tools(build(_Recorder(), monkeypatch)))
+    robot, _rec = build(monkeypatch)
+    names = set(_tools(robot))
     assert "drive_rover" in names, f"no drive tool to pair a halt with: {sorted(names)}"
     assert "stop_rover" in names, f"drive without a halt: {sorted(names)}"
 
@@ -100,8 +80,8 @@ def test_a_bridge_exposing_a_drive_tool_also_exposes_a_stop_tool(build: Any, mon
 @pytest.mark.parametrize("build", BRIDGES)
 def test_the_stop_tool_publishes_a_zero_velocity_twist(build: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """The halt is a real zero command on the wire, not just a present name."""
-    rec = _Recorder()
-    stop_tool: Any = _tools(build(rec, monkeypatch))["stop_rover"]
+    robot, rec = build(monkeypatch)
+    stop_tool: Any = _tools(robot)["stop_rover"]
     rec.calls.clear()
     result = stop_tool()
     assert result["status"] == "success"
@@ -120,8 +100,8 @@ def test_a_drive_tool_with_no_duration_publishes_one_latching_command(
     This is why the halt has to be reachable - the base keeps the last command
     until something else is published.
     """
-    rec = _Recorder()
-    drive_tool: Any = _tools(build(rec, monkeypatch))["drive_rover"]
+    robot, rec = build(monkeypatch)
+    drive_tool: Any = _tools(robot)["drive_rover"]
     rec.calls.clear()
     drive_tool(linear=0.5)
     (call,) = rec.calls  # a single publish, with no trailing zero
@@ -131,7 +111,7 @@ def test_a_drive_tool_with_no_duration_publishes_one_latching_command(
 
 def test_the_ros2_stop_tool_is_present_without_any_optional_topic(monkeypatch: pytest.MonkeyPatch) -> None:
     """The halt is unconditional, unlike get_scan and navigate."""
-    robot = _ros(_Recorder(), monkeypatch)
+    robot, _rec = _ros(monkeypatch)
     assert robot.scan_topic is None and robot.nav_action is None
     names = set(_tools(robot))
     assert "stop_rover" in names
@@ -140,8 +120,7 @@ def test_the_ros2_stop_tool_is_present_without_any_optional_topic(monkeypatch: p
 
 def test_the_ros2_stop_tool_forwards_to_the_instance_method(monkeypatch: pytest.MonkeyPatch) -> None:
     """The tool is the documented ``stop()``, not a re-implementation."""
-    rec = _Recorder()
-    robot = _ros(rec, monkeypatch)
+    robot, rec = _ros(monkeypatch)
     stop_tool: Any = _tools(robot)["stop_rover"]
 
     rec.calls.clear()
@@ -156,8 +135,7 @@ def test_the_ros2_stop_tool_forwards_to_the_instance_method(monkeypatch: pytest.
 
 
 def test_the_ros2_pose_and_scan_tools_forward_to_the_instance(monkeypatch: pytest.MonkeyPatch) -> None:
-    rec = _Recorder()
-    monkeypatch.setattr(ros_mod, "ros_action", rec)
+    rec = stands_in_for(monkeypatch, ros_mod, "ros_action")
     robot = RosBridgedRobot("rover", "/cmd_vel", "/odom", scan_topic="/scan")
     tools = _tools(robot)
 
@@ -173,8 +151,7 @@ def test_the_ros2_pose_and_scan_tools_forward_to_the_instance(monkeypatch: pytes
 
 
 def test_the_rosbridge_stop_and_scan_tools_forward_to_the_instance(monkeypatch: pytest.MonkeyPatch) -> None:
-    rec = _Recorder()
-    monkeypatch.setattr(rbr_mod, "rosbridge_action", rec)
+    rec = stands_in_for(monkeypatch, rbr_mod, "rosbridge_action")
     robot = RosbridgeRobot(node_name="rover", cmd_vel_topic="/cmd_vel", odom_topic="/odom", scan_topic="/scan")
     tools = _tools(robot)
 

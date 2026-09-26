@@ -38,18 +38,7 @@ from strands_robots.utils import (
     positive_finite_number_error,
     positive_whole_number_error,
 )
-
-
-class _Recorder:
-    """Records the kwargs of each forwarded transport call."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-
-    def __call__(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(kwargs)
-        return {"status": "success", "content": [{"text": "ok"}]}
-
+from tests.mesh._transport_stand_in import stands_in_for
 
 #: The wire fields a bridge publishes for the usable probe command below
 #: (``linear=0.5``, ``angular=-0.25``). A differential-drive base sends the
@@ -111,8 +100,7 @@ UNUSABLE_COUNTS: list[Any] = [0, -5, 2.7, float("nan"), float("inf"), "3", True,
 def _drive(monkeypatch: pytest.MonkeyPatch, transport: tuple[Any, ...], **kwargs: Any) -> Any:
     """Drive one bridge with the transport recorded, returning (result, recorder)."""
     _label, module, symbol, ctor, _fields = transport
-    rec = _Recorder()
-    monkeypatch.setattr(module, symbol, rec)
+    rec = stands_in_for(monkeypatch, module, symbol)
     return ctor(publish_rate=10.0).drive(**kwargs), rec
 
 
@@ -229,8 +217,7 @@ def test_a_non_numeric_command_value_does_not_escape_the_bound_agent_tool(
     """
     if param == "duration" and value is None:
         pytest.skip("an omitted duration means no hold, which is valid")
-    rec = _Recorder()
-    monkeypatch.setattr(rosbridge_mod, "rosbridge_action", rec)
+    rec = stands_in_for(monkeypatch, rosbridge_mod, "rosbridge_action")
     rover = rosbridge_mod.RosbridgeRobot("rover", "/cmd_vel", "/odom")
     drive_tool: Any = next(t for t in rover.tools if t.tool_name == "drive_rover")
 
@@ -244,8 +231,7 @@ def test_a_non_numeric_command_value_does_not_escape_the_bound_agent_tool(
 @pytest.mark.parametrize("value", [True, False], ids=repr)
 def test_a_boolean_velocity_is_refused_rather_than_commanded(monkeypatch: pytest.MonkeyPatch, value: bool) -> None:
     """``bool`` is an int subclass, so ``True`` would command 1.0 m/s in silence."""
-    rec = _Recorder()
-    monkeypatch.setattr(rosbridge_mod, "rosbridge_action", rec)
+    rec = stands_in_for(monkeypatch, rosbridge_mod, "rosbridge_action")
     rover = rosbridge_mod.RosbridgeRobot("rover", "/cmd_vel", "/odom")
 
     result = rover.drive(linear=value)
@@ -274,8 +260,7 @@ def test_a_refused_command_leaves_the_trailing_stop_rule_intact(monkeypatch: pyt
     guard placed wrongly could either skip it for a valid command or fire it
     for a refused one.
     """
-    rec = _Recorder()
-    monkeypatch.setattr(rosbridge_mod, "rosbridge_action", rec)
+    rec = stands_in_for(monkeypatch, rosbridge_mod, "rosbridge_action")
     rover = rosbridge_mod.RosbridgeRobot("rover", "/cmd_vel", "/odom", publish_rate=10.0)
 
     assert rover.drive(linear=0.5, duration=1.0)["status"] == "success"

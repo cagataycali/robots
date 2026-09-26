@@ -28,18 +28,7 @@ import pytest
 import strands_robots.mesh.ros_bridge as ros_mod
 import strands_robots.mesh.rtps_robot as rtps_mod
 from strands_robots.mesh import RosBridgedRobot, RtpsRobot
-
-
-class _Wire:
-    """Stands in for the transport, recording every published message batch."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-
-    def __call__(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(kwargs)
-        return {"status": "success", "content": [{"text": "ok"}]}
-
+from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 # (label, module, forwarded-symbol name, factory) for each transport.
 _TRANSPORTS: list[tuple[str, Any, str, Callable[..., Any]]] = [
@@ -58,12 +47,10 @@ _BAD_VELOCITIES = [float("nan"), float("inf"), float("-inf"), "1.0", None, [1.0]
 
 
 @pytest.fixture(params=_TRANSPORTS, ids=_TRANSPORT_IDS)
-def bridge(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, _Wire]:
+def bridge(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Transport]:
     """A bridge for one transport plus the wire recorder it forwards to."""
     _label, module, symbol, factory = request.param
-    wire = _Wire()
-    monkeypatch.setattr(module, symbol, wire)
-    return factory(), wire
+    return factory(), stands_in_for(monkeypatch, module, symbol)
 
 
 def _text(result: dict[str, Any]) -> str:
@@ -74,7 +61,7 @@ class TestRefusedCommandNeverReachesTheWire:
     """A refusable value yields an error result and publishes nothing."""
 
     @pytest.mark.parametrize("duration", _BAD_DURATIONS)
-    def test_a_hold_no_message_count_expresses_is_refused(self, bridge: tuple[Any, _Wire], duration: Any) -> None:
+    def test_a_hold_no_message_count_expresses_is_refused(self, bridge: tuple[Any, Transport], duration: Any) -> None:
         robot, wire = bridge
         result = robot.drive(linear=0.5, duration=duration)
         assert result["status"] == "error"
@@ -82,7 +69,7 @@ class TestRefusedCommandNeverReachesTheWire:
         assert wire.calls == []
 
     @pytest.mark.parametrize("count", _BAD_COUNTS)
-    def test_a_message_count_that_publishes_nothing_is_refused(self, bridge: tuple[Any, _Wire], count: Any) -> None:
+    def test_a_message_count_that_publishes_nothing_is_refused(self, bridge: tuple[Any, Transport], count: Any) -> None:
         robot, wire = bridge
         result = robot.drive(linear=0.5, count=count)
         assert result["status"] == "error"
@@ -92,7 +79,7 @@ class TestRefusedCommandNeverReachesTheWire:
     @pytest.mark.parametrize("velocity", _BAD_VELOCITIES)
     @pytest.mark.parametrize("param", ["linear", "angular"])
     def test_a_velocity_the_controller_cannot_integrate_is_refused(
-        self, bridge: tuple[Any, _Wire], param: str, velocity: Any
+        self, bridge: tuple[Any, Transport], param: str, velocity: Any
     ) -> None:
         robot, wire = bridge
         result = robot.drive(**{param: velocity})
@@ -100,7 +87,7 @@ class TestRefusedCommandNeverReachesTheWire:
         assert param in _text(result)
         assert wire.calls == []
 
-    def test_the_first_refusable_parameter_is_named(self, bridge: tuple[Any, _Wire]) -> None:
+    def test_the_first_refusable_parameter_is_named(self, bridge: tuple[Any, Transport]) -> None:
         """Several bad values at once name one parameter, not a merged message."""
         robot, wire = bridge
         result = robot.drive(linear=float("nan"), duration=-1)
@@ -112,12 +99,12 @@ class TestRefusedCommandNeverReachesTheWire:
 class TestHonoredCommandsStillPublish:
     """The guards do not narrow the set of commands that already worked."""
 
-    def test_a_duration_sizes_the_burst_from_the_publish_rate(self, bridge: tuple[Any, _Wire]) -> None:
+    def test_a_duration_sizes_the_burst_from_the_publish_rate(self, bridge: tuple[Any, Transport]) -> None:
         robot, wire = bridge
         assert robot.drive(linear=1.0, duration=1.5)["status"] == "success"
         assert wire.calls[0]["count"] == 15
 
-    def test_a_hold_shorter_than_one_period_still_sends_the_command_once(self, bridge: tuple[Any, _Wire]) -> None:
+    def test_a_hold_shorter_than_one_period_still_sends_the_command_once(self, bridge: tuple[Any, Transport]) -> None:
         """The ``max(1, ...)`` floor is a rounding rule for a valid duration."""
         robot, wire = bridge
         assert robot.drive(linear=1.0, duration=0.01)["status"] == "success"
@@ -125,19 +112,19 @@ class TestHonoredCommandsStillPublish:
 
     @pytest.mark.parametrize("linear,angular", [(-1.5, 0.0), (0.0, -2.0), (0.0, 0.0), (1e-9, 1e9)])
     def test_a_signed_velocity_is_published_verbatim(
-        self, bridge: tuple[Any, _Wire], linear: float, angular: float
+        self, bridge: tuple[Any, Transport], linear: float, angular: float
     ) -> None:
         robot, wire = bridge
         assert robot.drive(linear=linear, angular=angular)["status"] == "success"
         assert wire.calls[0]["fields"] == {"linear": {"x": linear}, "angular": {"z": angular}}
 
-    def test_a_count_the_call_never_reads_is_not_refused(self, bridge: tuple[Any, _Wire]) -> None:
+    def test_a_count_the_call_never_reads_is_not_refused(self, bridge: tuple[Any, Transport]) -> None:
         """``duration`` supersedes ``count``, so an unread ``count`` is not the horizon."""
         robot, wire = bridge
         assert robot.drive(linear=1.0, duration=2.0, count=0)["status"] == "success"
         assert wire.calls[0]["count"] == 20
 
-    def test_stop_still_publishes_zero_velocity(self, bridge: tuple[Any, _Wire]) -> None:
+    def test_stop_still_publishes_zero_velocity(self, bridge: tuple[Any, Transport]) -> None:
         robot, wire = bridge
         assert robot.stop()["status"] == "success"
         assert wire.calls[0]["fields"] == {"linear": {"x": 0.0}, "angular": {"z": 0.0}}
@@ -165,7 +152,7 @@ class TestAgentToolContract:
 
     @pytest.mark.parametrize("kwargs", [{"duration": float("nan")}, {"duration": 0}, {"linear": float("inf")}])
     def test_the_bound_drive_tool_reports_instead_of_raising(
-        self, bridge: tuple[Any, _Wire], kwargs: dict[str, Any]
+        self, bridge: tuple[Any, Transport], kwargs: dict[str, Any]
     ) -> None:
         robot, wire = bridge
         drive_tool: Any = next(t for t in robot.tools if t.tool_name.startswith("drive_"))
@@ -183,8 +170,7 @@ class TestTransportsAgreeOnTheAcceptedDomain:
     ) -> None:
         verdicts = {}
         for label, module, symbol, factory in _TRANSPORTS:
-            wire = _Wire()
-            monkeypatch.setattr(module, symbol, wire)
+            stands_in_for(monkeypatch, module, symbol)
             verdicts[label] = factory().drive(linear=0.5, duration=value)["status"]
         assert verdicts["ros"] == verdicts["rtps"], f"verdicts differ for duration={value!r}: {verdicts}"
 
@@ -194,8 +180,7 @@ class TestTransportsAgreeOnTheAcceptedDomain:
     ) -> None:
         verdicts = {}
         for label, module, symbol, factory in _TRANSPORTS:
-            wire = _Wire()
-            monkeypatch.setattr(module, symbol, wire)
+            stands_in_for(monkeypatch, module, symbol)
             verdicts[label] = factory().drive(linear=value)["status"]
         assert verdicts["ros"] == verdicts["rtps"], f"verdicts differ for linear={value!r}: {verdicts}"
 

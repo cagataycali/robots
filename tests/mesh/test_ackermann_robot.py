@@ -17,6 +17,7 @@ import pytest
 
 from strands_robots.mesh import ackermann_robot as ack_mod
 from strands_robots.mesh.ackermann_robot import _twist_to_servo
+from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 # Bicycle model ---------------------------------------------------------------
 
@@ -73,28 +74,9 @@ def test_model_reverse_steering_geometry() -> None:
     assert rev_angle == pytest.approx(-fwd_angle)
 
 
-# Recorder --------------------------------------------------------------------
-
-
-class _Recorder:
-    """Stand-in for the transport: records calls, returns scripted results."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-        self.responses: list[dict[str, Any]] = []
-
-    def __call__(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(kwargs)
-        if self.responses:
-            return self.responses.pop(0)
-        return {"status": "success", "content": [{"text": "ok"}]}
-
-
 @pytest.fixture
-def rec(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
-    recorder = _Recorder()
-    monkeypatch.setattr(ack_mod, "ros_action", recorder)
-    return recorder
+def rec(monkeypatch: pytest.MonkeyPatch) -> Transport:
+    return stands_in_for(monkeypatch, ack_mod, "ros_action")
 
 
 def _car(**overrides: Any) -> ack_mod.AckermannRosRobot:
@@ -164,7 +146,7 @@ def test_from_deepracer_accepts_overrides() -> None:
 # enable ----------------------------------------------------------------------
 
 
-def test_enable_calls_init_services_in_order(rec: _Recorder) -> None:
+def test_enable_calls_init_services_in_order(rec: Transport) -> None:
     car = _car(init_services=_HANDSHAKE)
     result = car.enable()
     assert result["status"] == "success"
@@ -176,14 +158,14 @@ def test_enable_calls_init_services_in_order(rec: _Recorder) -> None:
     assert rec.calls[1]["fields"] == {"is_active": True}
 
 
-def test_enable_is_idempotent(rec: _Recorder) -> None:
+def test_enable_is_idempotent(rec: Transport) -> None:
     car = _car(init_services=_HANDSHAKE)
     car.enable()
     car.enable()
     assert len(rec.calls) == 2  # handshake ran once, not twice
 
 
-def test_enable_failure_surfaces_and_does_not_latch(rec: _Recorder) -> None:
+def test_enable_failure_surfaces_and_does_not_latch(rec: Transport) -> None:
     car = _car(init_services=_HANDSHAKE)
     failure = {"status": "error", "content": [{"text": "use_ros: service not available"}]}
     rec.responses = [failure]
@@ -196,7 +178,7 @@ def test_enable_failure_surfaces_and_does_not_latch(rec: _Recorder) -> None:
     assert len(rec.calls) == 3
 
 
-def test_enable_without_init_services_is_success(rec: _Recorder) -> None:
+def test_enable_without_init_services_is_success(rec: Transport) -> None:
     result = _car().enable()
     assert result["status"] == "success"
     assert rec.calls == []
@@ -205,7 +187,7 @@ def test_enable_without_init_services_is_success(rec: _Recorder) -> None:
 # stop / get_scan ---------------------------------------------------------------
 
 
-def test_stop_publishes_zero_and_needs_no_enable(rec: _Recorder) -> None:
+def test_stop_publishes_zero_and_needs_no_enable(rec: Transport) -> None:
     car = _car(init_services=_HANDSHAKE)
     result = car.stop()
     assert result["status"] == "success"
@@ -217,14 +199,14 @@ def test_stop_publishes_zero_and_needs_no_enable(rec: _Recorder) -> None:
     assert call["count"] == 1
 
 
-def test_get_scan_without_topic_is_error(rec: _Recorder) -> None:
+def test_get_scan_without_topic_is_error(rec: Transport) -> None:
     result = _car().get_scan()
     assert result["status"] == "error"
     assert "no scan_topic" in result["content"][0]["text"]
     assert rec.calls == []
 
 
-def test_get_scan_forwards_echo(rec: _Recorder) -> None:
+def test_get_scan_forwards_echo(rec: Transport) -> None:
     car = _car(scan_topic="/scan")
     car.get_scan(timeout=3.0)
     call = rec.calls[0]
@@ -237,7 +219,7 @@ def test_get_scan_forwards_echo(rec: _Recorder) -> None:
 # drive -------------------------------------------------------------------------
 
 
-def test_drive_converts_and_publishes(rec: _Recorder) -> None:
+def test_drive_converts_and_publishes(rec: Transport) -> None:
     car = _car()
     result = car.drive(linear=1.5, angular=0.0)
     assert result["status"] == "success"
@@ -251,7 +233,7 @@ def test_drive_converts_and_publishes(rec: _Recorder) -> None:
     assert len(rec.calls) == 1  # single-shot command: no trailing zero needed
 
 
-def test_drive_runs_enable_first_and_only_once(rec: _Recorder) -> None:
+def test_drive_runs_enable_first_and_only_once(rec: Transport) -> None:
     car = _car(init_services=_HANDSHAKE)
     car.drive(linear=0.5)
     car.drive(linear=0.5)
@@ -259,7 +241,7 @@ def test_drive_runs_enable_first_and_only_once(rec: _Recorder) -> None:
     assert actions == ["service_call", "service_call", "publish", "publish"]
 
 
-def test_drive_aborts_when_enable_fails(rec: _Recorder) -> None:
+def test_drive_aborts_when_enable_fails(rec: Transport) -> None:
     car = _car(init_services=_HANDSHAKE)
     failure = {"status": "error", "content": [{"text": "use_ros: service not available"}]}
     rec.responses = [failure]
@@ -268,7 +250,7 @@ def test_drive_aborts_when_enable_fails(rec: _Recorder) -> None:
     assert [c["action"] for c in rec.calls] == ["service_call"]  # nothing published
 
 
-def test_drive_rejects_overlong_duration(rec: _Recorder) -> None:
+def test_drive_rejects_overlong_duration(rec: Transport) -> None:
     car = _car(max_duration=2.0)
     result = car.drive(linear=0.5, duration=3.0)
     assert result["status"] == "error"
@@ -276,13 +258,13 @@ def test_drive_rejects_overlong_duration(rec: _Recorder) -> None:
     assert rec.calls == []  # rejected loudly, nothing published
 
 
-def test_drive_clamps_linear_to_max_speed(rec: _Recorder) -> None:
+def test_drive_clamps_linear_to_max_speed(rec: Transport) -> None:
     car = _car()
     car.drive(linear=99.0)
     assert rec.calls[0]["fields"]["throttle"] == 1.0
 
 
-def test_drive_duration_publishes_n_then_trailing_zero(rec: _Recorder) -> None:
+def test_drive_duration_publishes_n_then_trailing_zero(rec: Transport) -> None:
     car = _car()
     car.drive(linear=1.0, duration=1.0)  # 20 Hz -> 20 messages
     assert len(rec.calls) == 2
@@ -293,7 +275,7 @@ def test_drive_duration_publishes_n_then_trailing_zero(rec: _Recorder) -> None:
     assert trailing["count"] == 1
 
 
-def test_drive_trailing_zero_sent_even_when_publish_errors(rec: _Recorder) -> None:
+def test_drive_trailing_zero_sent_even_when_publish_errors(rec: Transport) -> None:
     car = _car()
     failure = {"status": "error", "content": [{"text": "use_ros: publish failed"}]}
     rec.responses = [failure]
@@ -303,7 +285,7 @@ def test_drive_trailing_zero_sent_even_when_publish_errors(rec: _Recorder) -> No
     assert rec.calls[1]["fields"] == {"angle": 0.0, "throttle": 0.0}
 
 
-def test_drive_reports_a_failed_trailing_halt_rather_than_the_publish_success(rec: _Recorder) -> None:
+def test_drive_reports_a_failed_trailing_halt_rather_than_the_publish_success(rec: Transport) -> None:
     """The other direction of the case above: the halt is what fails.
 
     ``use_ros`` reports a transport failure as an error dict rather than raising,
@@ -324,7 +306,7 @@ def test_drive_reports_a_failed_trailing_halt_rather_than_the_publish_success(re
     assert len(rec.calls) == 2
 
 
-def test_drive_failing_on_both_publishes_reports_the_drive_failure(rec: _Recorder) -> None:
+def test_drive_failing_on_both_publishes_reports_the_drive_failure(rec: Transport) -> None:
     """A failed drive is the cause; a halt that also failed does not replace it."""
     drive_failure = {"status": "error", "content": [{"text": "use_ros: publish failed"}]}
     rec.responses = [drive_failure, {"status": "error", "content": [{"text": "halt failed too"}]}]
@@ -333,7 +315,7 @@ def test_drive_failing_on_both_publishes_reports_the_drive_failure(rec: _Recorde
     assert len(rec.calls) == 2
 
 
-def test_drive_single_shot_success_is_not_reinterpreted(rec: _Recorder) -> None:
+def test_drive_single_shot_success_is_not_reinterpreted(rec: Transport) -> None:
     """Control: no halt is sent for a latching command, so none can be judged.
 
     A scripted failure sits next in the queue; a verdict read from a publish
@@ -348,13 +330,13 @@ def test_drive_single_shot_success_is_not_reinterpreted(rec: _Recorder) -> None:
     assert len(rec.calls) == 1
 
 
-def test_drive_sustained_zero_command_has_no_trailing_zero(rec: _Recorder) -> None:
+def test_drive_sustained_zero_command_has_no_trailing_zero(rec: Transport) -> None:
     car = _car()
     car.drive(linear=0.0, duration=1.0)  # already zero: trailing zero is redundant
     assert len(rec.calls) == 1
 
 
-def test_drive_rejects_nonfinite_inputs(rec: _Recorder) -> None:
+def test_drive_rejects_nonfinite_inputs(rec: Transport) -> None:
     # NaN passes a min/max clamp silently - it must be rejected loudly, not
     # published as full throttle / full steering.
     cases: list[dict[str, Any]] = [
@@ -373,7 +355,7 @@ def test_constructor_rejects_nonfinite_numerics() -> None:
         _car(wheelbase_m=float("nan"))
 
 
-def test_drive_rejects_nonpositive_duration(rec: _Recorder) -> None:
+def test_drive_rejects_nonpositive_duration(rec: Transport) -> None:
     for bad in (0.0, -2.0):
         result = _car().drive(linear=0.5, duration=bad)
         assert result["status"] == "error"
@@ -381,7 +363,7 @@ def test_drive_rejects_nonpositive_duration(rec: _Recorder) -> None:
     assert rec.calls == []
 
 
-def test_drive_short_duration_still_gets_trailing_zero(rec: _Recorder) -> None:
+def test_drive_short_duration_still_gets_trailing_zero(rec: Transport) -> None:
     # duration=0.01 rounds to a single message - but it is still a TIMED
     # command, so the trailing zero must go out (the latch hole).
     _car().drive(linear=1.0, duration=0.01)
@@ -408,7 +390,7 @@ _REST_SUBSTITUTIONS: list[tuple[dict[str, Any], str]] = [
 
 @pytest.mark.parametrize(("kwargs", "expected"), _REST_SUBSTITUTIONS)
 def test_drive_refuses_a_command_the_rest_mapping_would_replace(
-    rec: _Recorder, kwargs: dict[str, Any], expected: str
+    rec: Transport, kwargs: dict[str, Any], expected: str
 ) -> None:
     """A command that maps to rest is refused, not published as a halt.
 
@@ -427,7 +409,7 @@ def test_drive_refuses_a_command_the_rest_mapping_would_replace(
     assert rec.calls == []
 
 
-def test_drive_still_accepts_the_commands_the_geometry_can_execute(rec: _Recorder) -> None:
+def test_drive_still_accepts_the_commands_the_geometry_can_execute(rec: Transport) -> None:
     """The refusal narrows nothing: rest itself, and any yaw with speed, still go out.
 
     ``drive(0, 0)`` maps to the zero pair because it *asked* for rest, and an arc
@@ -441,7 +423,7 @@ def test_drive_still_accepts_the_commands_the_geometry_can_execute(rec: _Recorde
     assert turn["throttle"] > 0 and turn["angle"] > 0
 
 
-def test_drive_overlong_duration_rejected_before_enable(rec: _Recorder) -> None:
+def test_drive_overlong_duration_rejected_before_enable(rec: Transport) -> None:
     # Validation precedes side effects: an invalid request must not switch the
     # car into manual mode.
     car = _car(init_services=_HANDSHAKE, max_duration=2.0)
@@ -469,7 +451,7 @@ def test_drive_tool_description_states_turning_radius() -> None:
     assert "0.28" in spec_desc
 
 
-def test_tools_forward_to_instance(rec: _Recorder) -> None:
+def test_tools_forward_to_instance(rec: Transport) -> None:
     car = _car(scan_topic="/scan")
     tools: dict[str, Any] = {t.tool_name: t for t in car.tools}
     tools["drive_car"](linear=1.5)

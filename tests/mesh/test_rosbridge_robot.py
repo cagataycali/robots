@@ -13,25 +13,12 @@ import pytest
 
 import strands_robots.mesh.rosbridge_robot as rbr_mod
 from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
-
-
-class _Recorder:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-        self.responses: list[dict[str, Any]] = []
-
-    def __call__(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(kwargs)
-        if self.responses:
-            return self.responses.pop(0)
-        return {"status": "success", "content": [{"text": "ok"}]}
+from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 
 @pytest.fixture
-def rec(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
-    recorder = _Recorder()
-    monkeypatch.setattr(rbr_mod, "rosbridge_action", recorder)
-    return recorder
+def rec(monkeypatch: pytest.MonkeyPatch) -> Transport:
+    return stands_in_for(monkeypatch, rbr_mod, "rosbridge_action")
 
 
 def _rover(**overrides: Any) -> RosbridgeRobot:
@@ -83,7 +70,7 @@ def test_from_curiosity_accepts_overrides() -> None:
 # drive -------------------------------------------------------------------------
 
 
-def test_drive_forwards_clamped_twist(rec: _Recorder) -> None:
+def test_drive_forwards_clamped_twist(rec: Transport) -> None:
     rover = _rover(max_linear=2.0, max_angular=1.0)
     result = rover.drive(linear=5.0, angular=-3.0)
     assert result["status"] == "success"
@@ -97,7 +84,7 @@ def test_drive_forwards_clamped_twist(rec: _Recorder) -> None:
     assert len(rec.calls) == 1  # single-shot: no trailing zero
 
 
-def test_drive_rejects_nonfinite(rec: _Recorder) -> None:
+def test_drive_rejects_nonfinite(rec: Transport) -> None:
     for kwargs in (
         {"linear": float("nan")},
         {"angular": float("inf")},
@@ -108,7 +95,7 @@ def test_drive_rejects_nonfinite(rec: _Recorder) -> None:
     assert rec.calls == []
 
 
-def test_drive_rejects_bad_durations(rec: _Recorder) -> None:
+def test_drive_rejects_bad_durations(rec: Transport) -> None:
     for bad in (0.0, -1.0, 31.0):  # max_duration default 30.0
         result = _rover().drive(linear=1.0, duration=bad)
         assert result["status"] == "error"
@@ -116,7 +103,7 @@ def test_drive_rejects_bad_durations(rec: _Recorder) -> None:
     assert rec.calls == []
 
 
-def test_drive_duration_publishes_n_then_trailing_zero(rec: _Recorder) -> None:
+def test_drive_duration_publishes_n_then_trailing_zero(rec: Transport) -> None:
     _rover().drive(linear=1.0, duration=2.0)  # 10 Hz -> 20 messages
     assert len(rec.calls) == 2
     assert rec.calls[0]["count"] == 20
@@ -124,12 +111,12 @@ def test_drive_duration_publishes_n_then_trailing_zero(rec: _Recorder) -> None:
     assert rec.calls[1]["count"] == 1
 
 
-def test_drive_short_duration_still_gets_trailing_zero(rec: _Recorder) -> None:
+def test_drive_short_duration_still_gets_trailing_zero(rec: Transport) -> None:
     _rover().drive(linear=1.0, duration=0.05)  # rounds to a single message, still timed
     assert len(rec.calls) == 2
 
 
-def test_drive_trailing_zero_even_when_publish_errors(rec: _Recorder) -> None:
+def test_drive_trailing_zero_even_when_publish_errors(rec: Transport) -> None:
     failure = {"status": "error", "content": [{"text": "use_rosbridge: publish failed"}]}
     rec.responses = [failure]
     result = _rover().drive(linear=1.0, duration=1.0)
@@ -137,7 +124,7 @@ def test_drive_trailing_zero_even_when_publish_errors(rec: _Recorder) -> None:
     assert len(rec.calls) == 2
 
 
-def test_drive_sustained_zero_command_has_no_trailing_zero(rec: _Recorder) -> None:
+def test_drive_sustained_zero_command_has_no_trailing_zero(rec: Transport) -> None:
     _rover().drive(linear=0.0, duration=1.0)
     assert len(rec.calls) == 1
 
@@ -145,12 +132,12 @@ def test_drive_sustained_zero_command_has_no_trailing_zero(rec: _Recorder) -> No
 # stop / observations -------------------------------------------------------------
 
 
-def test_stop_publishes_zero(rec: _Recorder) -> None:
+def test_stop_publishes_zero(rec: Transport) -> None:
     _rover().stop()
     assert rec.calls[0]["fields"] == {"linear": {"x": 0.0}, "angular": {"z": 0.0}}
 
 
-def test_get_pose_echoes_odom(rec: _Recorder) -> None:
+def test_get_pose_echoes_odom(rec: Transport) -> None:
     _rover().get_pose(timeout=3.0)
     call = rec.calls[0]
     assert call["action"] == "echo"
@@ -158,7 +145,7 @@ def test_get_pose_echoes_odom(rec: _Recorder) -> None:
     assert call["timeout"] == 3.0 and call["count"] == 1
 
 
-def test_get_scan_conditional(rec: _Recorder) -> None:
+def test_get_scan_conditional(rec: Transport) -> None:
     result = _rover().get_scan()
     assert result["status"] == "error"
     assert "no scan_topic" in result["content"][0]["text"]
@@ -184,7 +171,7 @@ def test_drive_tool_description_discloses_latch_and_limits() -> None:
     assert "2.0" in desc  # max_linear disclosed
 
 
-def test_tools_forward(rec: _Recorder) -> None:
+def test_tools_forward(rec: Transport) -> None:
     tools: dict[str, Any] = {t.tool_name: t for t in _rover(scan_topic="/scan").tools}
     tools["drive_rover"](linear=1.0)
     assert rec.calls[-1]["action"] == "publish"

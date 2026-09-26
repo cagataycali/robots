@@ -31,6 +31,7 @@ import strands_robots.mesh.ackermann_robot as ackermann_mod
 import strands_robots.mesh.ros_bridge as ros_bridge_mod
 import strands_robots.mesh.rosbridge_robot as rosbridge_mod
 from strands_robots.utils import positive_finite_number_error
+from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 #: Values no wait budget can express. ``inf`` matters as much as ``0``: it passes
 #: a bare ``timeout > 0`` test and then waits forever on a topic that is silent.
@@ -76,21 +77,9 @@ _READS: list[tuple[str, Any, str, Callable[[], Any], str]] = [
 ]
 
 
-class _Recorder:
-    """Records each forwarded transport call, so a read that happened is visible."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-
-    def __call__(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(kwargs)
-        return {"status": "success", "content": [{"text": "{}"}]}
-
-
-def _read(monkeypatch: pytest.MonkeyPatch, row: tuple[Any, ...], timeout: Any) -> tuple[dict[str, Any], _Recorder]:
+def _read(monkeypatch: pytest.MonkeyPatch, row: tuple[Any, ...], timeout: Any) -> tuple[dict[str, Any], Transport]:
     _label, module, symbol, factory, verb = row
-    rec = _Recorder()
-    monkeypatch.setattr(module, symbol, rec)
+    rec = stands_in_for(monkeypatch, module, symbol, text="{}")
     return getattr(factory(), verb)(timeout=timeout), rec
 
 

@@ -32,6 +32,7 @@ import pytest
 import strands_robots.mesh.ros_bridge as ros_mod
 from strands_robots.mesh import RosBridgedRobot
 from strands_robots.utils import finite_number_error, positive_finite_number_error
+from tests.mesh._transport_stand_in import Transport, stands_in_for
 from tests.mesh.test_bridge_read_timeout_domain import UNUSABLE_TIMEOUTS
 
 _NAV_ACTION = "/navigate_to_pose"
@@ -43,22 +44,10 @@ _NAV_ACTION = "/navigate_to_pose"
 _BAD_POSE_VALUES = [math.nan, math.inf, -math.inf, "1.0", None, [1.0], True, False]
 
 
-class _Wire:
-    """Stands in for the ROS 2 transport, recording every forwarded request."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-
-    def __call__(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(kwargs)
-        return {"status": "success", "content": [{"text": "goal reached"}]}
-
-
 @pytest.fixture
-def bridge(monkeypatch: pytest.MonkeyPatch) -> tuple[RosBridgedRobot, _Wire]:
+def bridge(monkeypatch: pytest.MonkeyPatch) -> tuple[RosBridgedRobot, Transport]:
     """A nav-capable bridge plus the wire recorder it forwards goals to."""
-    wire = _Wire()
-    monkeypatch.setattr(ros_mod, "ros_action", wire)
+    wire = stands_in_for(monkeypatch, ros_mod, "ros_action", text="goal reached")
     return RosBridgedRobot("tb", "/cmd_vel", "/odom", nav_action=_NAV_ACTION), wire
 
 
@@ -77,7 +66,7 @@ class TestRefusedGoalNeverReachesTheWire:
     @pytest.mark.parametrize("value", _BAD_POSE_VALUES)
     @pytest.mark.parametrize("param", ["x", "y", "yaw"])
     def test_a_pose_component_the_planner_cannot_resolve_is_refused(
-        self, bridge: tuple[RosBridgedRobot, _Wire], param: str, value: Any
+        self, bridge: tuple[RosBridgedRobot, Transport], param: str, value: Any
     ) -> None:
         robot, wire = bridge
         goal: dict[str, Any] = {"x": 1.0, "y": 2.0}
@@ -87,7 +76,7 @@ class TestRefusedGoalNeverReachesTheWire:
         assert param in _text(result)
         assert wire.calls == []
 
-    def test_the_first_refusable_component_is_named(self, bridge: tuple[RosBridgedRobot, _Wire]) -> None:
+    def test_the_first_refusable_component_is_named(self, bridge: tuple[RosBridgedRobot, Transport]) -> None:
         """Several bad components at once name one parameter, not a merged message."""
         robot, wire = bridge
         result = robot.navigate_to(x=math.nan, y=math.inf, yaw=math.nan)
@@ -107,7 +96,7 @@ class TestRefusedGoalNeverReachesTheWire:
 class TestHonoredGoalsAreStillSent:
     """The guard does not narrow the set of goals that already worked."""
 
-    def test_a_planar_goal_is_encoded_as_a_unit_quaternion(self, bridge: tuple[RosBridgedRobot, _Wire]) -> None:
+    def test_a_planar_goal_is_encoded_as_a_unit_quaternion(self, bridge: tuple[RosBridgedRobot, Transport]) -> None:
         robot, wire = bridge
         assert robot.navigate_to(x=1.5, y=-2.5, yaw=math.pi / 2)["status"] == "success"
         pose = _goal_pose(wire.calls[0])
@@ -117,19 +106,19 @@ class TestHonoredGoalsAreStillSent:
 
     @pytest.mark.parametrize("x,y,yaw", [(0.0, 0.0, 0.0), (-12.0, 8.5, -math.pi), (1e-9, 1e9, 2.5)])
     def test_a_signed_finite_goal_is_forwarded_verbatim(
-        self, bridge: tuple[RosBridgedRobot, _Wire], x: float, y: float, yaw: float
+        self, bridge: tuple[RosBridgedRobot, Transport], x: float, y: float, yaw: float
     ) -> None:
         robot, wire = bridge
         assert robot.navigate_to(x=x, y=y, yaw=yaw)["status"] == "success"
         assert _goal_pose(wire.calls[0])["position"] == {"x": x, "y": y}
 
-    def test_an_integer_goal_is_usable(self, bridge: tuple[RosBridgedRobot, _Wire]) -> None:
+    def test_an_integer_goal_is_usable(self, bridge: tuple[RosBridgedRobot, Transport]) -> None:
         """A coordinate is continuous, so a whole-number goal is a valid one."""
         robot, wire = bridge
         assert robot.navigate_to(x=3, y=-4)["status"] == "success"
         assert _goal_pose(wire.calls[0])["position"] == {"x": 3.0, "y": -4.0}
 
-    def test_a_numpy_scalar_goal_is_usable(self, bridge: tuple[RosBridgedRobot, _Wire]) -> None:
+    def test_a_numpy_scalar_goal_is_usable(self, bridge: tuple[RosBridgedRobot, Transport]) -> None:
         """A goal read out of a pose array arrives as a NumPy scalar."""
         import numpy as np
 
@@ -140,7 +129,7 @@ class TestHonoredGoalsAreStillSent:
         assert robot.navigate_to(**goal)["status"] == "success"
         assert _goal_pose(wire.calls[0])["position"]["x"] == pytest.approx(0.5)
 
-    def test_the_frame_and_timeout_are_still_forwarded(self, bridge: tuple[RosBridgedRobot, _Wire]) -> None:
+    def test_the_frame_and_timeout_are_still_forwarded(self, bridge: tuple[RosBridgedRobot, Transport]) -> None:
         robot, wire = bridge
         assert robot.navigate_to(x=1.0, y=1.0, frame_id="odom", timeout=30.0)["status"] == "success"
         assert wire.calls[0]["fields"]["pose"]["header"]["frame_id"] == "odom"
@@ -152,7 +141,7 @@ class TestAgentToolContract:
 
     @pytest.mark.parametrize("kwargs", [{"yaw": math.inf}, {"x": None}, {"y": [1.0]}, {"x": math.nan}])
     def test_the_bound_navigate_tool_reports_instead_of_raising(
-        self, bridge: tuple[RosBridgedRobot, _Wire], kwargs: dict[str, Any]
+        self, bridge: tuple[RosBridgedRobot, Transport], kwargs: dict[str, Any]
     ) -> None:
         robot, wire = bridge
         goal: dict[str, Any] = {"x": 1.0, "y": 2.0, **kwargs}
@@ -167,7 +156,7 @@ class TestTheGoalBudgetIsGradedBeforeTheGoalIsSent:
 
     @pytest.mark.parametrize("value", UNUSABLE_TIMEOUTS, ids=repr)
     def test_an_unusable_budget_is_refused_and_reaches_no_transport(
-        self, bridge: tuple[RosBridgedRobot, _Wire], value: Any
+        self, bridge: tuple[RosBridgedRobot, Transport], value: Any
     ) -> None:
         robot, wire = bridge
         expected = positive_finite_number_error(value, "timeout", "navigate_to")
@@ -179,7 +168,9 @@ class TestTheGoalBudgetIsGradedBeforeTheGoalIsSent:
         assert _text(result) == expected
         assert wire.calls == [], f"a goal was sent for timeout={value!r}"
 
-    def test_the_bound_navigate_tool_reports_an_unusable_budget(self, bridge: tuple[RosBridgedRobot, _Wire]) -> None:
+    def test_the_bound_navigate_tool_reports_an_unusable_budget(
+        self, bridge: tuple[RosBridgedRobot, Transport]
+    ) -> None:
         """The agent-reachable spelling: JSON ``1e999`` parses to ``inf``."""
         robot, wire = bridge
         navigate_tool: Any = next(t for t in robot.tools if t.tool_name.startswith("navigate_"))
@@ -189,7 +180,7 @@ class TestTheGoalBudgetIsGradedBeforeTheGoalIsSent:
         assert result["status"] == "error"
         assert wire.calls == []
 
-    def test_the_pose_is_named_before_the_budget(self, bridge: tuple[RosBridgedRobot, _Wire]) -> None:
+    def test_the_pose_is_named_before_the_budget(self, bridge: tuple[RosBridgedRobot, Transport]) -> None:
         """Both unusable: the goal itself is the first thing reported, as ``drive`` reports its velocity."""
         robot, wire = bridge
 
@@ -204,7 +195,7 @@ class TestPoseAndVelocityShareOneDomain:
 
     @pytest.mark.parametrize("value", [*_BAD_POSE_VALUES, 0.0, -1.0, 2.5, 1e300])
     def test_navigate_to_and_drive_return_the_same_verdict(
-        self, bridge: tuple[RosBridgedRobot, _Wire], value: Any
+        self, bridge: tuple[RosBridgedRobot, Transport], value: Any
     ) -> None:
         robot, _wire = bridge
         nav = robot.navigate_to(x=value, y=0.0)["status"]
