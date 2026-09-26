@@ -335,8 +335,11 @@ def base_dir_path() -> Path:
     Resolution (in priority order):
 
     1. ``STRANDS_BASE_DIR`` env var - explicit override. Use this when
-       you want to relocate *all* strands-robots user data (assets,
-       user registry, caches) to a non-default location.
+       you want to relocate strands-robots user data (the asset cache,
+       the user registry, the USD and checkpoint caches, the harness
+       memory) to a non-default location. The render, scene, video and
+       audit sandboxes each carry their own variable and are not moved
+       by this one.
     2. ``~/.strands_robots/`` - default.
 
     This answers where the directory *is* without creating it, which is what
@@ -379,7 +382,10 @@ def get_assets_dir() -> Path:
 
     Resolution:
         1. ``STRANDS_ASSETS_DIR`` env var - used as-is
-        2. ``~/.strands_robots/assets/`` - default
+        2. ``assets/`` under :func:`base_dir_path`, so relocating the base
+           dir takes the asset cache - the largest directory of the set -
+           with it rather than leaving it on the home filesystem
+        3. ``~/.strands_robots/assets/`` - default
 
     Returns:
         Path to the assets directory (created if needed).
@@ -388,7 +394,7 @@ def get_assets_dir() -> Path:
     if custom:
         d = Path(custom)
     else:
-        d = DEFAULT_BASE_DIR / "assets"
+        d = base_dir_path() / "assets"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

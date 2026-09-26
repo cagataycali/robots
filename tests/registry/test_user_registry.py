@@ -23,7 +23,7 @@ from strands_robots.registry.user_registry import (
     register_robot,
     unregister_robot,
 )
-from strands_robots.utils import get_assets_dir, get_base_dir, resolve_asset_path
+from strands_robots.utils import base_dir_path, get_assets_dir, get_base_dir, resolve_asset_path
 
 # (section)
 # Helpers
@@ -376,13 +376,11 @@ class TestStrandsBaseDirIntegration:
 
 
 class TestGetAssetsDir:
-    """get_assets_dir() returns STRANDS_ASSETS_DIR or ~/.strands_robots/assets/."""
+    """get_assets_dir() returns STRANDS_ASSETS_DIR, else ``assets`` under the base dir."""
 
     def test_default(self, monkeypatch):
         monkeypatch.delenv("STRANDS_ASSETS_DIR", raising=False)
-        result = get_assets_dir()
-        assert str(result).endswith("assets")
-        assert ".strands_robots" in str(result)
+        assert get_assets_dir() == base_dir_path() / "assets"
 
     def test_custom(self, tmp_path, monkeypatch):
         custom = tmp_path / "my_assets"
