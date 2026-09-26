@@ -44,6 +44,7 @@ from strands_robots.training._validate import warmup_reachability_problems
 torch = pytest.importorskip("torch")
 
 from strands_robots.training.rl import RLTrainSpec, SimEnv  # noqa: E402
+from tests.training._engine_stand_in import EngineStandIn  # noqa: E402
 
 #: The two backends whose loop waits for a warmup fill.
 OFF_POLICY = ["fast_sac", "fast_td3"]
@@ -65,35 +66,8 @@ UNREACHABLE: dict[str, tuple[dict[str, Any], str]] = {
 }
 
 
-class _FakeEngine:
-    """One-joint fake engine: enough surface for ``SimEnv`` to wrap."""
-
-    def __init__(self) -> None:
-        self._j = 0.0
-
-    def list_robots(self) -> list[str]:
-        return ["fake"]
-
-    def robot_joint_names(self, robot_name: str) -> list[str]:
-        return ["J"]
-
-    def robot_action_keys(self, robot_name: str) -> list[str]:
-        return ["J"]
-
-    def reset(self) -> dict:
-        self._j = 0.0
-        return {"status": "success"}
-
-    def get_observation(self, robot_name: str | None = None, *, skip_images: bool = False) -> dict:
-        return {"J": self._j, "J.vel": 0.0}
-
-    def send_action(self, action: Any, robot_name: str | None = None, n_substeps: int = 1) -> dict:
-        self._j += 0.1 * (float(action[0]) if len(action) else 0.0)
-        return {"status": "success"}
-
-
 def _make_env() -> SimEnv:
-    return SimEnv(_FakeEngine(), actor_obs_keys=["J", "J.vel"], reward_terms=[lambda e: 0.0], action_dim=1)  # type: ignore[arg-type]
+    return SimEnv(EngineStandIn(), actor_obs_keys=["J", "J.vel"], reward_terms=[lambda e: 0.0], action_dim=1)  # type: ignore[arg-type]
 
 
 def _spec(**overrides: Any) -> RLTrainSpec:

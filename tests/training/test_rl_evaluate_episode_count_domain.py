@@ -44,42 +44,13 @@ from strands_robots.simulation.base import SimEngine  # noqa: E402
 from strands_robots.training.rl import PpoTrainer, RLTrainSpec, SimEnv  # noqa: E402
 from strands_robots.training.rl.normalization import EmpiricalNormalization  # noqa: E402
 from strands_robots.utils import positive_count_error  # noqa: E402
+from tests.training._engine_stand_in import EngineStandIn  # noqa: E402
 
 # Every value the method cannot honor as an episode count. ``0`` and ``-1`` are
 # the two the replaced ``<= 0`` test already refused, kept as the rows that hold
 # both before and after the fix; the rest are the ones it let through.
 REFUSED: list[Any] = [0, -1, False, True, 2.5, 3.0, float("nan"), float("inf"), "2", None]
 ACCEPTED: list[int] = [1, 3]
-
-
-class _StandInEngine:
-    """One joint ``J`` integrated by the action - no physics backend needed."""
-
-    def __init__(self) -> None:
-        self._j = 0.0
-        self._vel = 0.0
-
-    def list_robots(self) -> list[str]:
-        return ["arm"]
-
-    def robot_joint_names(self, robot_name: str) -> list[str]:
-        return ["J"]
-
-    def robot_action_keys(self, robot_name: str) -> list[str]:
-        return ["J"]
-
-    def reset(self) -> dict[str, Any]:
-        self._j = 0.0
-        self._vel = 0.0
-        return {"status": "success"}
-
-    def get_observation(self, robot_name: Any = None, *, skip_images: bool = False) -> dict[str, float]:
-        return {"J": self._j, "J.vel": self._vel}
-
-    def send_action(self, action: Any, robot_name: Any = None, n_substeps: int = 1) -> dict[str, Any]:
-        self._vel = 0.1 * (float(action[0]) if len(action) else 0.0)
-        self._j += self._vel
-        return {"status": "success"}
 
 
 def _env_factory(reward: Any = None) -> Any:
@@ -90,7 +61,7 @@ def _env_factory(reward: Any = None) -> Any:
         # methods above, so the cast is safe here - the same idiom
         # ``test_rl_sim_env.py`` uses for its own stand-ins.
         return SimEnv(
-            cast(SimEngine, _StandInEngine()),
+            cast(SimEngine, EngineStandIn(robots=("arm",))),
             actor_obs_keys=["J", "J.vel"],
             reward_terms=[reward or (lambda e: 1.0)],
             action_dim=1,

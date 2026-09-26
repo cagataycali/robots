@@ -29,8 +29,8 @@ The checkpoint metadata is the same contract on the deployment side. It carries
 names cannot serve that purpose when the widths differ, so it names the action
 keys and ``len(action_keys) == num_actions`` holds.
 
-The unit-level engine here is a purpose-built double rather than a backend, so
-these pins run on every CI job. The behavioural half uses the real MuJoCo
+The unit-level engine here is the shared ``EngineStandIn`` rather than a
+backend, so these pins run on every CI job. The behavioural half uses the real MuJoCo
 ``panda`` and the narrowing half the real ``NewtonSimEngine``, built solver-free
 via ``__new__`` the way ``tests/simulation/newton/test_free_base_is_not_an_actuator.py``
 does.
@@ -51,94 +51,12 @@ import strands_robots.training.rl as rl_pkg
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.models import SimRobot, SimWorld
 from strands_robots.training.rl.env import SimEnv
+from tests.training._engine_stand_in import EngineStandIn
 
 _ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
 _FINGER_JOINTS = ["finger_joint1", "finger_joint2"]
 _ARM_ACTUATORS = [f"actuator{i}" for i in range(1, 8)]
 _GRASP_TENDON = "actuator8"
-
-
-class _TwoVocabEngine(SimEngine):
-    """A concrete engine whose action keys are not its joint names.
-
-    Models the tendon-gripper shape: two mimic finger joints driven by one
-    tendon actuator, so the actuator vocabulary is both differently spelled and
-    one narrower than the joint list. ``send_action`` reproduces the width rule
-    every backend publishes - a vector must match the action-key count - so a
-    mis-sized head is refused here exactly as it is on a real backend, without
-    needing one.
-    """
-
-    def __init__(self, *, joints: list[str], action_keys: list[str]) -> None:
-        self._joints = list(joints)
-        self._action_keys = list(action_keys)
-        self.applied: list[list[float]] = []
-        self.refused: list[int] = []
-
-    # The action vocabulary under test.
-    def robot_joint_names(self, robot_name: str) -> list[str]:
-        return list(self._joints)
-
-    def robot_action_keys(self, robot_name: str) -> list[str]:
-        return list(self._action_keys)
-
-    def list_robots(self) -> list[str]:
-        return ["arm"]
-
-    def get_observation(self, robot_name: str | None = None, skip_images: bool = False) -> dict[str, Any]:
-        return {j: 0.0 for j in self._joints} | {f"{j}.vel": 0.0 for j in self._joints}
-
-    def send_action(
-        self, action: Any, robot_name: str | None = None, n_substeps: int = 1, **kwargs: Any
-    ) -> dict[str, Any]:
-        width = len(action)
-        if width != len(self._action_keys):
-            self.refused.append(width)
-            return {
-                "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"send_action: action vector length {width} does not match robot "
-                            f"'arm' action-key count {len(self._action_keys)}."
-                        )
-                    }
-                ],
-            }
-        self.applied.append([float(v) for v in action])
-        return {"status": "success", "content": [{"text": f"Action applied to 'arm' ({width} keys)."}]}
-
-    # Inert scaffolding: present only so the class is concrete. Permissive
-    # signatures keep them Liskov-safe without restating each contract.
-    def add_object(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"status": "success"}
-
-    def add_robot(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"status": "success"}
-
-    def create_world(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"status": "success"}
-
-    def destroy(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"status": "success"}
-
-    def get_state(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"status": "success"}
-
-    def remove_object(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"status": "success"}
-
-    def remove_robot(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"status": "success"}
-
-    def render(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"status": "success"}
-
-    def reset(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"status": "success"}
-
-    def step(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"status": "success"}
 
 
 def _env(engine: SimEngine, **kwargs: Any) -> SimEnv:
@@ -149,7 +67,9 @@ class TestTheHeadIsSizedFromTheActionKeys:
     """``num_actions`` is the count ``send_action`` binds a vector against."""
 
     def test_the_default_width_is_the_action_key_count(self) -> None:
-        engine = _TwoVocabEngine(joints=_ARM_JOINTS + _FINGER_JOINTS, action_keys=_ARM_ACTUATORS + [_GRASP_TENDON])
+        engine = EngineStandIn(
+            robots=("arm",), joints=_ARM_JOINTS + _FINGER_JOINTS, action_keys=_ARM_ACTUATORS + [_GRASP_TENDON]
+        )
         # Premise: the two vocabularies really do disagree, so a width taken
         # from the wrong one is observable rather than accidentally correct.
         assert len(engine.robot_joint_names("arm")) == 9
@@ -157,33 +77,36 @@ class TestTheHeadIsSizedFromTheActionKeys:
         assert _env(engine).num_actions == 8
 
     def test_the_default_width_is_accepted_by_send_action(self) -> None:
-        engine = _TwoVocabEngine(joints=_ARM_JOINTS + _FINGER_JOINTS, action_keys=_ARM_ACTUATORS + [_GRASP_TENDON])
+        engine = EngineStandIn(
+            robots=("arm",), joints=_ARM_JOINTS + _FINGER_JOINTS, action_keys=_ARM_ACTUATORS + [_GRASP_TENDON]
+        )
         env = _env(engine)
         env.step(torch.zeros(1, env.num_actions))
-        assert engine.refused == []
+        assert engine.refused_widths == []
         assert len(engine.applied) == 1
 
     def test_a_narrower_action_list_is_honored(self) -> None:
         """The floating-base shape: same spelling, one fewer key."""
-        engine = _TwoVocabEngine(joints=["free_base"] + _ARM_JOINTS, action_keys=list(_ARM_JOINTS))
+        engine = EngineStandIn(robots=("arm",), joints=["free_base"] + _ARM_JOINTS, action_keys=list(_ARM_JOINTS))
         env = _env(engine)
         assert env.num_actions == len(_ARM_JOINTS)
         env.step(torch.zeros(1, env.num_actions))
-        assert engine.refused == []
+        assert engine.refused_widths == []
 
     def test_an_explicit_action_dim_still_wins(self) -> None:
         """The override is the escape hatch for a robot the default mis-sizes."""
-        engine = _TwoVocabEngine(joints=_ARM_JOINTS + _FINGER_JOINTS, action_keys=_ARM_ACTUATORS + [_GRASP_TENDON])
+        engine = EngineStandIn(
+            robots=("arm",), joints=_ARM_JOINTS + _FINGER_JOINTS, action_keys=_ARM_ACTUATORS + [_GRASP_TENDON]
+        )
         assert _env(engine, action_dim=3).num_actions == 3
 
     def test_a_robot_whose_actuators_match_its_joints_is_unchanged(self) -> None:
         """The overwhelmingly common shape: the two lists already agreed."""
-        engine = _TwoVocabEngine(joints=list(_ARM_JOINTS), action_keys=list(_ARM_JOINTS))
+        engine = EngineStandIn(robots=("arm",), joints=list(_ARM_JOINTS), action_keys=list(_ARM_JOINTS))
         assert _env(engine).num_actions == len(_ARM_JOINTS)
 
     def test_no_robot_and_no_action_dim_is_still_refused(self) -> None:
-        engine = _TwoVocabEngine(joints=[], action_keys=[])
-        engine.list_robots = lambda: []  # type: ignore[method-assign]
+        engine = EngineStandIn(robots=(), joints=[], action_keys=[])
         with pytest.raises(ValueError, match="action_dim must be given"):
             SimEnv(engine, actor_obs_keys=["joint1"], reward_terms=[lambda _e: 1.0])
 
@@ -192,7 +115,9 @@ class TestARefusedActionWritesNoTarget:
     """Why the mis-sized head was silent: ``step`` does not read the result."""
 
     def test_a_mis_sized_head_banks_reward_without_applying_anything(self) -> None:
-        engine = _TwoVocabEngine(joints=_ARM_JOINTS + _FINGER_JOINTS, action_keys=_ARM_ACTUATORS + [_GRASP_TENDON])
+        engine = EngineStandIn(
+            robots=("arm",), joints=_ARM_JOINTS + _FINGER_JOINTS, action_keys=_ARM_ACTUATORS + [_GRASP_TENDON]
+        )
         env = _env(engine, action_dim=9)  # the width the joint list would have given
         total = 0.0
         for _ in range(20):
@@ -201,7 +126,7 @@ class TestARefusedActionWritesNoTarget:
             assert not bool(done.item())
         # Every action was refused, yet a full rollout of reward was collected.
         assert engine.applied == []
-        assert engine.refused == [9] * 20
+        assert engine.refused_widths == [9] * 20
         assert total == 20.0
 
 

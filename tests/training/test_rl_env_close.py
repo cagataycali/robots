@@ -31,37 +31,7 @@ from strands_robots.training.rl import (  # noqa: E402
     SimEnv,
     VecSimEnv,
 )
-
-
-class _FakeEngine:
-    def __init__(self) -> None:
-        self._j = 0.0
-        self._v = 0.0
-
-    def list_robots(self) -> list[str]:
-        return ["fake"]
-
-    def robot_joint_names(self, robot_name: str) -> list[str]:
-        return ["J"]
-
-    def robot_action_keys(self, robot_name: str) -> list[str]:
-        # Duck-typed fake: this robot's one joint is its one actuator, the
-        # shape ``SimEnv`` sizes its action head from.
-        return ["J"]
-
-    def reset(self) -> dict:
-        self._j = 0.0
-        self._v = 0.0
-        return {"status": "success"}
-
-    def get_observation(self, robot_name=None, *, skip_images: bool = False) -> dict:
-        return {"J": self._j, "J.vel": self._v}
-
-    def send_action(self, action, robot_name=None, n_substeps: int = 1) -> dict:
-        a = float(action[0]) if len(action) else 0.0
-        self._v = 0.1 * a
-        self._j += self._v
-        return {"status": "success"}
+from tests.training._engine_stand_in import EngineStandIn  # noqa: E402
 
 
 class _CloseRecordingEnv(SimEnv):
@@ -83,7 +53,7 @@ class _CloseRecordingEnv(SimEnv):
 
 def _make_env():  # type: ignore[no-untyped-def]
     return _CloseRecordingEnv(
-        _FakeEngine(),
+        EngineStandIn(),
         actor_obs_keys=["J", "J.vel"],
         reward_terms=[lambda e: -abs(float(e.get_observation(skip_images=True)["J"]) - 0.2)],
         action_dim=1,

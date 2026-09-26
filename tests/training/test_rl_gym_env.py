@@ -15,39 +15,12 @@ torch = pytest.importorskip("torch")
 gym = pytest.importorskip("gymnasium")
 
 from strands_robots.training.rl import GymSimEnv, SimEnv  # noqa: E402
-
-
-class _FakeEngine:
-    """1-DOF fake engine; joint ``J`` integrates the action."""
-
-    def __init__(self) -> None:
-        self._j = 0.0
-        self._v = 0.0
-
-    def list_robots(self) -> list[str]:
-        return ["fake"]
-
-    def robot_joint_names(self, robot_name: str) -> list[str]:
-        return ["J"]
-
-    def reset(self) -> dict:
-        self._j = 0.0
-        self._v = 0.0
-        return {"status": "success"}
-
-    def get_observation(self, robot_name=None, *, skip_images: bool = False) -> dict:
-        return {"J": self._j, "J.vel": self._v}
-
-    def send_action(self, action, robot_name=None, n_substeps: int = 1) -> dict:
-        a = float(action[0]) if len(action) else 0.0
-        self._v = 0.1 * a
-        self._j += self._v
-        return {"status": "success"}
+from tests.training._engine_stand_in import EngineStandIn  # noqa: E402
 
 
 def _make_sim_env(*, success_fn=None, max_steps=5):  # type: ignore[no-untyped-def]
     return SimEnv(
-        _FakeEngine(),
+        EngineStandIn(),
         actor_obs_keys=["J", "J.vel"],
         critic_obs_keys=["J", "J.vel"],
         reward_terms=[lambda e: 1.0],

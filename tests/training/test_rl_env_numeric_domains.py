@@ -48,7 +48,7 @@ import ast
 import inspect
 import math
 import re
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -57,10 +57,10 @@ torch = pytest.importorskip("torch")
 import numpy as np  # noqa: E402 - after torch importorskip
 
 import strands_robots.training.rl.env as rl_env  # noqa: E402
-from strands_robots.simulation.base import SimEngine  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine  # noqa: E402
 from strands_robots.training.rl import SimEnv  # noqa: E402
 from strands_robots.utils import positive_whole_number_error  # noqa: E402
+from tests.training._engine_stand_in import EngineStandIn  # noqa: E402
 
 # Values no numeric of this constructor can honor. ``0`` and a negative are in
 # both lists: for the continuous scale they make the multiplier degenerate or
@@ -72,51 +72,7 @@ UNUSABLE_SCALES: list[Any] = [0, 0.0, -1.0, -0.25, math.nan, math.inf, -math.inf
 UNUSABLE_COUNTS: list[Any] = [0, -5, True, False, 2.7, math.nan, math.inf, "10", None, [2]]
 
 
-class _Recorder:
-    """Fake engine that records every method the constructor calls on it.
-
-    Two robots' worth of shape is unnecessary here; what matters is that each
-    call is observable, so a test can assert a *refused* construction touched the
-    engine not at all.
-    """
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-        self.actions: list[list[float]] = []
-        self.statuses: list[str] = []
-
-    def list_robots(self) -> list[str]:
-        self.calls.append("list_robots")
-        return ["fake"]
-
-    def robot_joint_names(self, robot_name: str) -> list[str]:
-        self.calls.append("robot_joint_names")
-        return ["A", "B"]
-
-    def robot_action_keys(self, robot_name: str) -> list[str]:
-        self.calls.append("robot_action_keys")
-        return ["A", "B"]
-
-    def reset(self) -> dict[str, Any]:
-        self.calls.append("reset")
-        return {"status": "success"}
-
-    def get_observation(self, robot_name: str | None = None, *, skip_images: bool = False) -> dict[str, Any]:
-        self.calls.append("get_observation")
-        return {"A": 0.0, "B": 0.0}
-
-    def send_action(self, action: Any, robot_name: str | None = None, n_substeps: int = 1) -> dict[str, Any]:
-        self.calls.append("send_action")
-        vals = [float(v) for v in action]
-        self.actions.append(vals)
-        # Mirror the real ``SimEngine._coerce_action`` contract: a non-finite
-        # command is refused rather than clamped.
-        status = "success" if all(math.isfinite(v) for v in vals) else "error"
-        self.statuses.append(status)
-        return {"status": status}
-
-
-def _env(engine: _Recorder, **kwargs: Any) -> SimEnv:
+def _env(engine: EngineStandIn, **kwargs: Any) -> SimEnv:
     """Build a ``SimEnv`` over the recorder.
 
     ``kwargs`` is splatted so a deliberately off-type value reaches the runtime
@@ -124,7 +80,7 @@ def _env(engine: _Recorder, **kwargs: Any) -> SimEnv:
     individual call site.
     """
     return SimEnv(
-        cast(SimEngine, engine),
+        engine,
         actor_obs_keys=["A", "B"],
         reward_terms=[lambda _e: 1.0],
         **kwargs,
@@ -137,17 +93,17 @@ class TestEveryUnusableNumericIsRefused:
     @pytest.mark.parametrize("value", UNUSABLE_SCALES, ids=[repr(v) for v in UNUSABLE_SCALES])
     def test_action_scale(self, value: Any) -> None:
         with pytest.raises(ValueError, match=r"SimEnv: action_scale"):
-            _env(_Recorder(), action_scale=value)
+            _env(EngineStandIn(joints=("A", "B")), action_scale=value)
 
     @pytest.mark.parametrize("value", UNUSABLE_COUNTS, ids=[repr(v) for v in UNUSABLE_COUNTS])
     def test_max_episode_steps(self, value: Any) -> None:
         with pytest.raises(ValueError, match=r"SimEnv: max_episode_steps"):
-            _env(_Recorder(), max_episode_steps=value)
+            _env(EngineStandIn(joints=("A", "B")), max_episode_steps=value)
 
     @pytest.mark.parametrize("value", UNUSABLE_COUNTS, ids=[repr(v) for v in UNUSABLE_COUNTS])
     def test_n_substeps(self, value: Any) -> None:
         with pytest.raises(ValueError, match=r"SimEnv: n_substeps"):
-            _env(_Recorder(), n_substeps=value)
+            _env(EngineStandIn(joints=("A", "B")), n_substeps=value)
 
     # ``None`` is excluded deliberately: for ``action_dim`` alone it is the
     # documented "size the head from the robot's action keys" spelling, so it is a
@@ -159,53 +115,53 @@ class TestEveryUnusableNumericIsRefused:
     )
     def test_action_dim(self, value: Any) -> None:
         with pytest.raises(ValueError, match=r"SimEnv: action_dim"):
-            _env(_Recorder(), action_dim=value)
+            _env(EngineStandIn(joints=("A", "B")), action_dim=value)
 
     def test_the_message_names_the_reason_not_only_the_parameter(self) -> None:
         with pytest.raises(ValueError, match=r"action_scale must be > 0, got 0\.0"):
-            _env(_Recorder(), action_scale=0.0)
+            _env(EngineStandIn(joints=("A", "B")), action_scale=0.0)
         with pytest.raises(ValueError, match=r"max_episode_steps must be a positive whole number, got 0"):
-            _env(_Recorder(), max_episode_steps=0)
+            _env(EngineStandIn(joints=("A", "B")), max_episode_steps=0)
         with pytest.raises(ValueError, match=r"action_dim must be a positive integer, got 0"):
-            _env(_Recorder(), action_dim=0)
+            _env(EngineStandIn(joints=("A", "B")), action_dim=0)
 
 
 class TestUsableValuesAreUntouched:
     """The change is additive: nothing that could be honored is now refused."""
 
     def test_the_defaults_build(self) -> None:
-        env = _env(_Recorder())
+        env = _env(EngineStandIn(joints=("A", "B")))
         assert (env.action_scale, env.max_episode_steps, env.n_substeps) == (1.0, 200, 5)
 
     def test_a_fractional_scale_is_honored(self) -> None:
-        assert _env(_Recorder(), action_scale=0.25).action_scale == 0.25
+        assert _env(EngineStandIn(joints=("A", "B")), action_scale=0.25).action_scale == 0.25
 
     def test_a_numpy_real_scale_is_honored_and_normalized(self) -> None:
         # ``positive_finite_number_error`` deliberately admits any real scalar so a
         # rate or scale read from a config array passes; the stored value is a
         # plain ``float``.
-        env = _env(_Recorder(), action_scale=np.float32(0.25))
+        env = _env(EngineStandIn(joints=("A", "B")), action_scale=np.float32(0.25))
         assert isinstance(env.action_scale, float)
         assert env.action_scale == pytest.approx(0.25)
 
     def test_a_single_step_episode_is_honored(self) -> None:
-        assert _env(_Recorder(), max_episode_steps=1, n_substeps=1).max_episode_steps == 1
+        assert _env(EngineStandIn(joints=("A", "B")), max_episode_steps=1, n_substeps=1).max_episode_steps == 1
 
     def test_an_omitted_action_dim_still_sizes_from_the_action_keys(self) -> None:
         # ``None`` is the documented "size the head from the robot's action keys"
         # spelling, not a value with a domain.
-        engine = _Recorder()
+        engine = EngineStandIn(joints=("A", "B"))
         assert _env(engine, action_dim=None).num_actions == 2
         assert "robot_action_keys" in engine.calls
 
     def test_an_explicit_action_dim_is_honored(self) -> None:
-        assert _env(_Recorder(), action_dim=3).num_actions == 3
+        assert _env(EngineStandIn(joints=("A", "B")), action_dim=3).num_actions == 3
 
     @pytest.mark.parametrize("value", [3.0, np.int64(3), np.float64(4.0)], ids=["3.0", "np.int64", "np.float64"])
     def test_an_integral_real_substep_count_is_honored(self, value: Any) -> None:
         # ``send_action`` honors these spellings, so this constructor must too;
         # the stored value is normalized to a plain ``int``.
-        env = _env(_Recorder(), n_substeps=value)
+        env = _env(EngineStandIn(joints=("A", "B")), n_substeps=value)
         assert env.n_substeps == 3 or env.n_substeps == 4
         assert isinstance(env.n_substeps, int)
 
@@ -213,7 +169,7 @@ class TestUsableValuesAreUntouched:
     def test_an_integral_real_episode_ceiling_is_honored(self, value: Any) -> None:
         # Only ever compared against the step counter, so an integral real is
         # equally usable; normalized to a plain ``int``.
-        env = _env(_Recorder(), max_episode_steps=value)
+        env = _env(EngineStandIn(joints=("A", "B")), max_episode_steps=value)
         assert env.max_episode_steps == 50
         assert isinstance(env.max_episode_steps, int)
 
@@ -222,14 +178,14 @@ class TestUsableValuesAreUntouched:
         # The one knob that is deliberately narrower: it sizes the trainers'
         # action head, where an integral float raises rather than being coerced.
         with pytest.raises(ValueError, match=r"SimEnv: action_dim"):
-            _env(_Recorder(), action_dim=value)
+            _env(EngineStandIn(joints=("A", "B")), action_dim=value)
 
     def test_a_usable_env_still_steps(self) -> None:
-        engine = _Recorder()
+        engine = EngineStandIn(joints=("A", "B"))
         env = _env(engine, action_scale=0.5, max_episode_steps=4, n_substeps=2)
         env.reset()
         _obs, reward, done, info = env.step(torch.tensor([1.0, -1.0]))
-        assert engine.actions[-1] == pytest.approx([0.5, -0.5])
+        assert engine.sent[-1] == pytest.approx([0.5, -0.5])
         assert engine.statuses == ["success"]
         assert float(reward.item()) == 1.0
         assert not bool(done.item()) and not info["time_out"]
@@ -250,7 +206,7 @@ class TestTheRefusalPrecedesTheEngine:
         ids=["scale=0", "scale=nan", "max_episode_steps=0", "n_substeps=0", "action_dim=0"],
     )
     def test_no_engine_call_is_made(self, kwargs: dict[str, Any]) -> None:
-        engine = _Recorder()
+        engine = EngineStandIn(joints=("A", "B"))
         with pytest.raises(ValueError):
             _env(engine, **kwargs)
         assert engine.calls == []
@@ -258,7 +214,7 @@ class TestTheRefusalPrecedesTheEngine:
     def test_a_usable_construction_does_read_the_engine(self) -> None:
         # Non-vacuity: the assertion above would hold for any refusal reason if the
         # constructor never read the engine at all.
-        engine = _Recorder()
+        engine = EngineStandIn(joints=("A", "B"))
         _env(engine)
         assert "get_observation" in engine.calls
 
@@ -272,20 +228,14 @@ class TestWhatTheUnusableScalesDid:
     """
 
     def test_a_non_finite_scale_makes_every_command_unsendable(self) -> None:
-        engine = _Recorder()
+        engine = EngineStandIn(joints=("A", "B"))
         scaled = (np.array([0.9, -0.7], dtype=np.float64) * math.nan).tolist()
         assert engine.send_action(scaled)["status"] == "error"
 
     def test_step_discards_the_send_action_status(self) -> None:
         # Why a non-finite scale is silent: the refusal never reaches the caller.
         # ``step`` banks the reward for a step whose command the engine rejected.
-        class _AlwaysRefuses(_Recorder):
-            def send_action(self, action: Any, robot_name: str | None = None, n_substeps: int = 1) -> dict[str, Any]:
-                super().send_action(action, robot_name, n_substeps)
-                self.statuses[-1] = "error"
-                return {"status": "error", "content": [{"text": "refused"}]}
-
-        engine = _AlwaysRefuses()
+        engine = EngineStandIn(joints=("A", "B"), refuse="refused")
         env = _env(engine)
         env.reset()
         _obs, reward, _done, _info = env.step(torch.tensor([0.9, -0.7]))
@@ -295,24 +245,24 @@ class TestWhatTheUnusableScalesDid:
     def test_a_zero_scale_commands_the_same_target_every_step(self) -> None:
         # The policy's output cannot reach the robot: whatever it asks for, the
         # command is the zero vector.
-        engine = _Recorder()
+        engine = EngineStandIn(joints=("A", "B"))
         env = _env(engine, action_scale=1.0)
         env.reset()
         env.step(torch.tensor([0.9, -0.7]) * 0.0)
-        assert engine.actions[-1] == pytest.approx([0.0, 0.0])
+        assert engine.sent[-1] == pytest.approx([0.0, 0.0])
 
     def test_a_negative_scale_inverts_every_commanded_dof(self) -> None:
-        engine = _Recorder()
+        engine = EngineStandIn(joints=("A", "B"))
         env = _env(engine, action_scale=1.0)
         env.reset()
         env.step(torch.tensor([0.9, -0.7]) * -1.0)
-        assert engine.actions[-1] == pytest.approx([-0.9, 0.7])
+        assert engine.sent[-1] == pytest.approx([-0.9, 0.7])
 
     def test_a_zero_max_episode_steps_would_time_out_before_the_first_step(self) -> None:
         # ``time_out = step_count >= max_episode_steps`` is evaluated after the
         # increment, so a ceiling of 1 is the smallest that runs a step; 0 or below
         # reports a truncation the trainer would value-bootstrap.
-        env = _env(_Recorder(), max_episode_steps=1)
+        env = _env(EngineStandIn(joints=("A", "B")), max_episode_steps=1)
         env.reset()
         _obs, _r, done, info = env.step(torch.tensor([0.0, 0.0]))
         assert bool(done.item()) and info["time_out"]
@@ -472,7 +422,7 @@ class TestTheScaleBoundsTheCommandNotTheStep:
     """
 
     def test_the_command_sent_is_the_action_times_the_scale(self) -> None:
-        recorder = _Recorder()
+        recorder = EngineStandIn(joints=("A", "B"))
         env = _env(recorder, action_scale=0.1, max_episode_steps=100)
         env.reset()
         for _ in range(4):
@@ -480,7 +430,7 @@ class TestTheScaleBoundsTheCommandNotTheStep:
         # Every command is the same 0.1: the scale does not accumulate over steps
         # (a displacement would have reached 0.4) and does not rate-limit toward a
         # larger target (a bounded actor never commands past the scale).
-        assert recorder.actions == [[0.1, 0.1]] * 4
+        assert recorder.sent == [[0.1, 0.1]] * 4
 
     def test_the_parser_reads_every_documented_numeric(self) -> None:
         # Non-vacuity: the prose cells below assert over these blocks, and an

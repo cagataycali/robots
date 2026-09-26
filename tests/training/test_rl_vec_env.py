@@ -12,41 +12,13 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from strands_robots.training.rl import SimEnv, VecSimEnv  # noqa: E402 - after torch importorskip
-
-
-class _CountdownEngine:
-    """Fake engine whose joint ``J`` counts steps; lets us script per-env dones.
-
-    ``J`` starts at 0 and increments by 1 each step. With max_episode_steps=K
-    the SimEnv times out after K steps -> done. Each engine instance is
-    independent, so different envs advance independently.
-    """
-
-    def __init__(self) -> None:
-        self._j = 0.0
-
-    def list_robots(self) -> list[str]:
-        return ["fake"]
-
-    def robot_joint_names(self, robot_name: str) -> list[str]:
-        return ["J"]
-
-    def reset(self) -> dict:
-        self._j = 0.0
-        return {"status": "success"}
-
-    def get_observation(self, robot_name=None, *, skip_images: bool = False) -> dict:
-        return {"J": self._j, "J.vel": 1.0}
-
-    def send_action(self, action, robot_name=None, n_substeps: int = 1) -> dict:
-        self._j += 1.0
-        return {"status": "success"}
+from tests.training._engine_stand_in import EngineStandIn  # noqa: E402
 
 
 def _factory(max_steps=3):  # type: ignore[no-untyped-def]
     def make():  # type: ignore[no-untyped-def]
         return SimEnv(
-            _CountdownEngine(),
+            EngineStandIn(gain=0.0, drift=1.0),
             actor_obs_keys=["J", "J.vel"],
             reward_terms=[lambda e: 1.0],
             action_dim=1,
@@ -112,7 +84,7 @@ def test_per_env_independent_dones() -> None:
         ms = envs_specs[idx["i"] % len(envs_specs)]
         idx["i"] += 1
         return SimEnv(
-            _CountdownEngine(),
+            EngineStandIn(gain=0.0, drift=1.0),
             actor_obs_keys=["J", "J.vel"],
             reward_terms=[lambda e: 1.0],
             action_dim=1,
@@ -153,7 +125,7 @@ def test_rejects_heterogeneous_envs() -> None:
         keys = ["J", "J.vel"] if flip["n"] == 0 else ["J"]
         flip["n"] += 1
         return SimEnv(
-            _CountdownEngine(),
+            EngineStandIn(gain=0.0, drift=1.0),
             actor_obs_keys=keys,
             reward_terms=[lambda e: 1.0],
             action_dim=1,

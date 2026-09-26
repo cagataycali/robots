@@ -16,50 +16,11 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from strands_robots.training.rl import PpoTrainer, RLTrainSpec, SimEnv  # noqa: E402
-
-
-class _FakeEngine:
-    """Minimal SimEngine stand-in: one joint ``J`` integrated by the action.
-
-    ``J`` starts at 0.0; each ``send_action([a])`` moves it by ``0.1 * a``.
-    ``J.vel`` reports the last delta. Enough to exercise reset/step/observe and
-    a success predicate without any physics backend.
-    """
-
-    def __init__(self) -> None:
-        self._j = 0.0
-        self._vel = 0.0
-
-    def list_robots(self) -> list[str]:
-        return ["fake"]
-
-    def robot_joint_names(self, robot_name: str) -> list[str]:
-        return ["J"]
-
-    def robot_action_keys(self, robot_name: str) -> list[str]:
-        # These fakes are duck-typed rather than ``SimEngine`` subclasses, so
-        # they do not inherit the default that mirrors the joint names. This
-        # robot's one joint is its one actuator, so the two vocabularies agree -
-        # which is the shape ``SimEnv`` sizes its action head from.
-        return ["J"]
-
-    def reset(self) -> dict:
-        self._j = 0.0
-        self._vel = 0.0
-        return {"status": "success"}
-
-    def get_observation(self, robot_name=None, *, skip_images: bool = False) -> dict:
-        return {"J": self._j, "J.vel": self._vel}
-
-    def send_action(self, action, robot_name=None, n_substeps: int = 1) -> dict:
-        a = float(action[0]) if len(action) else 0.0
-        self._vel = 0.1 * a
-        self._j += self._vel
-        return {"status": "success"}
+from tests.training._engine_stand_in import EngineStandIn  # noqa: E402
 
 
 def _make_env():  # type: ignore[no-untyped-def]
-    eng = _FakeEngine()
+    eng = EngineStandIn()
     return SimEnv(
         eng,
         actor_obs_keys=["J", "J.vel"],
@@ -91,7 +52,7 @@ def _threshold_env_factory(threshold: float, **kwargs):  # type: ignore[no-untyp
     """
 
     def factory():  # type: ignore[no-untyped-def]
-        eng = _FakeEngine()
+        eng = EngineStandIn()
         return SimEnv(
             eng,
             actor_obs_keys=["J", "J.vel"],
@@ -382,7 +343,7 @@ class TestSuccessRateSaysWhetherThePolicyEarnedIt:
 
         def factory():  # type: ignore[no-untyped-def]
             return SimEnv(
-                _FakeEngine(),
+                EngineStandIn(),
                 actor_obs_keys=["J", "J.vel"],
                 reward_terms=[lambda e: 1.0],
                 action_dim=1,
