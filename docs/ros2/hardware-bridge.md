@@ -14,7 +14,10 @@ subclasses of the same `RosTelemetryBridge`, and the pure-RTPS transport
 (`HardwareRtpsBridge`) shares the same wire contract through their common
 `RosTelemetryBase`, so a physical arm and its digital twin publish **identical
 topics** - a simulated robot and the real one it mirrors are indistinguishable on
-the ROS 2 graph:
+the ROS 2 graph. The RTPS transport shares the topics and the payloads, but not
+the graph metadata: it has no node name and no type hash
+([what a ROS 2 node can still tell apart](rtps-robot.md#what-a-ros-2-node-can-still-tell-apart)).
+The topics either transport publishes:
 
 | Topic | Direction | Type | Content |
 |-------|-----------|------|---------|

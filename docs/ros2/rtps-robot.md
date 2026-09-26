@@ -8,7 +8,8 @@ description: RtpsRobot and Robot(ros2_transport="rtps") - drive and publish a ro
 publish. The two surfaces here go the other way: they make a robot - simulated by `RtpsRobot`
 or physical behind `Robot(ros2_bridge=True, ros2_transport="rtps")` - appear on the graph as
 the robot itself, with no `rclpy` and no sourced ROS 2 distro. Both publish through the same
-participant, so a real ROS 2 node cannot tell either from hardware on the wire.
+participant, so the samples a real ROS 2 node decodes are hardware's - but the participant
+is not a ROS 2 node, and [the graph says so](#what-a-ros-2-node-can-still-tell-apart).
 
 ## RtpsRobot: a ROS 2 robot over pure RTPS
 
@@ -65,8 +66,9 @@ from strands_robots import Robot
 arm = Robot("so101", mode="real", ros2_bridge=True, ros2_transport="rtps", ros2_commands=False)
 ```
 
-The two transports emit byte-identical topics, so a real ROS 2 node (or
-`ros2 topic echo` / `ros2 topic pub`) cannot tell them apart on the wire:
+The two transports emit the same topics with byte-identical payloads, so anything that
+consumes the **data** - rviz, nav2, a teleop node, `ros2 topic echo` / `ros2 topic pub` -
+reads one the same as the other:
 
 ```bash
 ros2 topic echo /so101/joint_states     # decodes the cyclonedds-published JointState
@@ -81,6 +83,25 @@ derive from one `strands_robots.ros_telemetry.RosTelemetryBase`, which owns the
 topic names and the inbound `joint_command` parsing, so both transports present
 the identical `publish_joint_states` / `publish_image` / inbound-`joint_command`
 surface.
+
+## What a ROS 2 node can still tell apart
+
+The payload is identical; the **graph metadata** is not. A bare DDS participant carries no
+ROS 2 node name and no type hash, so a node that inspects the graph rather than the data
+sees the RTPS bridge differently. Measured on one domain with a real `rclpy` subscriber
+decoding both transports' `/so101/joint_states`:
+
+| read with | rclpy bridge | pure-RTPS bridge |
+|---|---|---|
+| `ros2 topic echo` | decodes | decodes, field for field identical |
+| `ros2 node list` | `/strands_hardware` | absent - not a node |
+| `ros2 topic info -v` publisher | `Node name: strands_hardware` | `Node name: _CREATED_BY_BARE_DDS_APP_` |
+| `ros2 topic info -v` type hash | `RIHS01_a13ee3a3...` | `INVALID`, plus one `rmw_cyclonedds_cpp` "Failed to parse type hash" warning per subscriber |
+| `ros2 topic info -v` history | `KEEP_LAST (10)` (`qos_depth`) | `KEEP_LAST (1)` - the cyclonedds default, no knob |
+
+So a launch file that waits for a node, `ros2 node info`, or tooling that requires a
+matching type hash needs the rclpy transport. Everything that subscribes to the topic
+works either way.
 
 ## Securing the inbound command surface
 

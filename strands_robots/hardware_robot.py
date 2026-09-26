@@ -583,8 +583,11 @@ class Robot(TeleopMixin, AgentTool):
                 ``"rclpy"`` (default) - full ``sensor_msgs`` fidelity, needs a
                 sourced ROS 2 distro; ``"rtps"`` - pure cyclonedds (a single
                 pip wheel, no rclpy / no sourced distro), type coverage bounded
-                by the local IDL bundle (joint_states + image_raw). Both emit
-                byte-identical topics. Ignored unless ``ros2_bridge=True``.
+                by the local IDL bundle (joint_states + image_raw). Both emit the
+                same topics with byte-identical payloads; only the rclpy bridge
+                appears on the ROS 2 graph as a node, since a bare DDS
+                participant carries no node name and no type hash (see
+                ``docs/ros2/rtps-robot.md``). Ignored unless ``ros2_bridge=True``.
             joint_limits: Optional ``{"<motor>.pos": (min, max)}`` clamp ranges
                 threaded into the ROS 2 bridge, keyed by the joint name as it
                 arrives on the wire (the same ``<motor>.pos`` names the bridge

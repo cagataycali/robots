@@ -14,9 +14,12 @@ ROS 2 distro:
                                          # DDS C install (CYCLONEDDS_HOME) - see
                                          # docs/rtps-integration.md
 
-The two transports emit byte-identical topics, so a real ROS 2 node, rviz, or
-the stock `ros2` CLI cannot tell this apart from the rclpy bridge or a real
-hardware node:
+The two transports emit the same topics with byte-identical payloads, so a real
+ROS 2 node, rviz, or `ros2 topic echo` reads this exactly as it reads the rclpy
+bridge or a real hardware node. The graph metadata differs - a bare participant
+has no ROS 2 node name and no type hash, so `ros2 node list` does not list it and
+`ros2 topic info -v` reports `_CREATED_BY_BARE_DDS_APP_` with an `INVALID` type
+hash (docs/ros2/rtps-robot.md#what-a-ros-2-node-can-still-tell-apart):
 
     ros2 topic echo /so101/joint_states
     ros2 topic pub --once /so101/joint_command sensor_msgs/msg/JointState \

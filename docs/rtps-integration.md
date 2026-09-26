@@ -23,7 +23,8 @@ interoperates with Humble, Jazzy, Rolling, and beyond.
 Use `use_ros` when you have ROS 2 sourced and need full type coverage or
 services. Use `use_rtps` when you want zero-install interop or to **act as a
 robot** - publishing topics a real ROS 2 stack (rviz, nav2, a teleop node) will
-consume, indistinguishable from hardware on the wire.
+consume, with hardware's own payloads. A bare participant is not a ROS 2 *node*, though:
+see [what a ROS 2 node can still tell apart](ros2/rtps-robot.md#what-a-ros-2-node-can-still-tell-apart).
 
 ```bash
 pip install 'strands-robots[ros2]'   # cyclonedds - a self-contained wheel on macOS / Windows / Linux x86_64

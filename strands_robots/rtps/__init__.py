@@ -8,7 +8,9 @@ implementation interoperates with every ROS 2 version.
 
 Unlike ``use_ros`` (a *client/observer* that needs rclpy), an RTPS participant
 can **act as a robot**: advertise and publish topics a real node will consume,
-and subscribe to command topics - indistinguishable on the wire from hardware.
+and subscribe to command topics - with hardware's own payloads. What a subscriber
+reads is identical; the graph metadata is not, because a bare participant carries
+no ROS 2 node name and no type hash (``docs/ros2/rtps-robot.md``).
 
 Scope (v1): topics only - ``advertise`` / ``publish`` / ``subscribe`` / ``echo``
 / discovery. Services and actions need the ROS 2 request/reply-over-DDS protocol

@@ -11,8 +11,10 @@ install instead (``docs/rtps-integration.md#linux-aarch64-jetson``).
 
 The headline capability: an RTPS participant can **act as a robot**. It can
 advertise and publish a topic that a real ROS 2 node (rviz, nav2, a teleop
-joystick) will consume, and subscribe to command topics - indistinguishable on
-the wire from physical hardware.
+joystick) will consume, and subscribe to command topics - with hardware's own
+payloads. A bare participant is not a ROS 2 *node*, though: it carries no node
+name and no type hash, so the graph shows it differently from an rclpy publisher
+(``docs/ros2/rtps-robot.md``).
 
 This module is the agent-facing envelope: the numeric-option domains an agent
 can get wrong, the operator gate, and the tool docstring a model reads. The

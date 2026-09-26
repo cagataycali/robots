@@ -30,7 +30,12 @@ nothing else. The trade-off is type coverage: RTPS publishing needs a *local*
 IDL definition, so only the messages in
 :mod:`strands_robots.rtps.idl` work (now ``geometry_msgs`` + the ``sensor_msgs``
 ``JointState``/``Image`` chain this bridge needs). The rclpy bridge keeps full
-``sensor_msgs`` fidelity for anything outside the bundle.
+``sensor_msgs`` fidelity for anything outside the bundle. The second trade-off is
+the ROS 2 *graph*: a bare DDS participant has no node name and no type hash, so
+``ros2 node list`` does not list this bridge and ``ros2 topic info -v`` reports
+its publisher as ``_CREATED_BY_BARE_DDS_APP_`` with an ``INVALID`` type hash -
+the payload a subscriber decodes is identical either way
+(``docs/ros2/rtps-robot.md``).
 
 Selection is the hardware ``Robot``'s job (``ros2_transport="rclpy"|"rtps"``);
 this module only implements the RTPS path. Both bridges present an identical
