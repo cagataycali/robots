@@ -20,6 +20,7 @@ from webauthn.helpers import bytes_to_base64url  # noqa: E402
 
 from strands_robots.dashboard import auth, settings  # noqa: E402
 from strands_robots.dashboard.log_redaction import one_line  # noqa: E402
+from tests._dashboard_connection import connection  # noqa: E402
 
 FORGED_SECOND_LINE = "WARNING strands_robots.dashboard.auth: passkey enrolled for root"
 FORGED = "evil.example\r\n" + FORGED_SECOND_LINE
@@ -50,23 +51,11 @@ class TestOneLine:
         assert one_line(42) == "42"
 
 
-class _Url:
-    scheme = "http"
-
-
-class _Req:
-    def __init__(self, **headers: str) -> None:
-        self.headers = headers
-        self.client = None
-        self.cookies: dict[str, str] = {}
-        self.url = _Url()
-
-
 class TestTheDashboardLogsThroughIt:
     def test_a_refused_origin_is_logged_on_one_line(self, caplog, monkeypatch) -> None:
         monkeypatch.delenv("STRANDS_DASH_AUTH_ORIGIN", raising=False)
         monkeypatch.delenv("STRANDS_DASH_AUTH_RP_ID", raising=False)
-        request = _Req(host="localhost:8090", origin="http://" + FORGED)
+        request = connection(peer=None, origin="http://" + FORGED)
         with caplog.at_level(logging.WARNING, logger="strands_robots.dashboard.auth"), pytest.raises(HTTPException):
             auth._derive_origin(request)
         assert len(caplog.records) == 1
@@ -132,7 +121,9 @@ class TestTheDashboardLogsThroughIt:
         monkeypatch.setattr(auth, "known_rp_ids", lambda store=None: {"good.example"})
         # The pad precedes the CRLF because _host_only cuts the Host at its first colon.
         value = "evil.example" + "x" * 500 + "\r\n" + FORGED_SECOND_LINE
-        request = _Req(host=value) if header == "host" else _Req(host="localhost:8090", origin="http://" + value)
+        request = (
+            connection(peer=None, host=value) if header == "host" else connection(peer=None, origin="http://" + value)
+        )
         with caplog.at_level(logging.WARNING, logger="strands_robots.dashboard.auth"), pytest.raises(HTTPException):
             getattr(auth, door)(request)
         (message,) = [r.getMessage() for r in caplog.records]
@@ -166,7 +157,7 @@ class TestAValuePersistedInTheStoreIsStillCallerSupplied:
         monkeypatch.delenv("STRANDS_DASH_AUTH_RP_ID", raising=False)
         monkeypatch.delenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", raising=False)
         auth._cache = {}
-        request = _Req(host="localhost:8090")
+        request = connection(peer=None)
         _enroll_with_label(monkeypatch, request, "owner\r\n" + FORGED_SECOND_LINE)
 
         # Erase the binding, as a credential enrolled before rp_ids were recorded

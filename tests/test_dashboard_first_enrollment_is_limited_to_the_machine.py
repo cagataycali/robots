@@ -46,26 +46,10 @@ import pytest
 from fastapi import HTTPException
 
 from strands_robots.dashboard import auth
+from tests._dashboard_connection import LOOPBACK, STRANGER, connection
 
 # Headers _client_ip reads ahead of the socket peer, and which a caller can therefore set.
 _SPOOFABLE = ["cf-connecting-ip", "x-forwarded-for", "x-real-ip"]
-
-_STRANGER = "203.0.113.9"  # TEST-NET-3, never a real peer
-
-
-class FakeRequest:
-    """A request whose socket peer, headers and Host can be set independently."""
-
-    def __init__(
-        self,
-        client_host: str | None = _STRANGER,
-        headers: dict[str, str] | None = None,
-        host: str = "localhost:8090",
-    ) -> None:
-        self.headers = {"host": host, **(headers or {})}
-        # client_host=None models a connection with no peer address, which is what an
-        # ASGI scope carries for a unix socket or a broken transport.
-        self.client = None if client_host is None else type("C", (), {"host": client_host})()
 
 
 class TestTheFirstEnrollmentOnAFreshStore:
@@ -73,20 +57,20 @@ class TestTheFirstEnrollmentOnAFreshStore:
 
     def test_a_stranger_cannot_seize_a_fresh_dashboard(self) -> None:
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(), label="attacker")
+            auth.begin_registration(connection(peer=STRANGER), label="attacker")
         assert e.value.status_code == 403
 
     def test_the_refusal_names_the_two_ways_forward(self) -> None:
         """A 403 an operator cannot act on is a support ticket, so both remedies are named."""
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(), label="attacker")
+            auth.begin_registration(connection(peer=STRANGER), label="attacker")
         detail = e.value.detail
         assert "the machine itself" in detail
         assert "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN" in detail
 
     def test_the_refusal_does_not_blame_a_disk_error_that_did_not_happen(self) -> None:
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(), label="attacker")
+            auth.begin_registration(connection(peer=STRANGER), label="attacker")
         assert "unreadable" not in e.value.detail
         assert "corrupt-" not in e.value.detail
         assert auth.store_corruption() is None, "no damage was staged, so none may be reported"
@@ -94,7 +78,7 @@ class TestTheFirstEnrollmentOnAFreshStore:
     def test_nothing_is_written_by_a_refused_enrollment(self) -> None:
         """A refusal must not leave the store half-created; auth stays off, not sealed-by-nobody."""
         with pytest.raises(HTTPException):
-            auth.begin_registration(FakeRequest(), label="attacker")
+            auth.begin_registration(connection(peer=STRANGER), label="attacker")
         assert auth.auth_enabled() is False
         assert auth._load().get("credentials") == []
 
@@ -103,17 +87,15 @@ class TestTheFirstEnrollmentOnAFreshStore:
         the service user can read (F-007 follow-up: the loopback peer alone stopped
         being proof, because a same-host L4 forwarder gives every remote client one)."""
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(client_host="127.0.0.1"), label="owner")
+            auth.begin_registration(connection(peer=LOOPBACK), label="owner")
         assert e.value.status_code == 403
-        opts = auth.begin_registration(
-            FakeRequest(client_host="127.0.0.1"), label="owner", bootstrap=auth._local_enroll_token()
-        )
+        opts = auth.begin_registration(connection(peer=LOOPBACK), label="owner", bootstrap=auth._local_enroll_token())
         assert opts.get("challenge_id")
 
     @pytest.mark.parametrize("peer", ["127.0.0.1", "127.0.0.53", "::1", "localhost"])
     def test_no_spelling_of_the_machine_itself_is_accepted_without_the_proof(self, peer: str) -> None:
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(client_host=peer), label="owner")
+            auth.begin_registration(connection(peer=peer), label="owner")
         assert e.value.status_code == 403
 
 
@@ -127,7 +109,7 @@ class TestWhatCountsAsTheMachine:
         The damaged-store route was already pinned against this. The fresh route is the
         one an attacker reaches without needing a disk error first, so it is pinned too.
         """
-        request = FakeRequest(client_host=_STRANGER, headers={header: "127.0.0.1"})
+        request = connection(peer=STRANGER, **{header: "127.0.0.1"})
         with pytest.raises(HTTPException) as e:
             auth.begin_registration(request, label="attacker")
         assert e.value.status_code == 403
@@ -135,7 +117,7 @@ class TestWhatCountsAsTheMachine:
     def test_a_connection_with_no_peer_is_not_the_machine(self) -> None:
         """Fail closed on an unknown peer: absence of evidence is not evidence of locality."""
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(client_host=None), label="unknown")
+            auth.begin_registration(connection(peer=None), label="unknown")
         assert e.value.status_code == 403
 
 
@@ -144,20 +126,20 @@ class TestTheBootstrapTokenIsTheRemoteRoute:
 
     def test_the_right_token_enrolls_from_anywhere(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", "let-me-in")
-        opts = auth.begin_registration(FakeRequest(), label="remote-owner", bootstrap="let-me-in")
+        opts = auth.begin_registration(connection(peer=STRANGER), label="remote-owner", bootstrap="let-me-in")
         assert opts.get("challenge_id"), "the documented remote path must not be closed by this gate"
 
     def test_a_wrong_token_is_refused_from_anywhere(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", "let-me-in")
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(), label="attacker", bootstrap="guess")
+            auth.begin_registration(connection(peer=STRANGER), label="attacker", bootstrap="guess")
         assert e.value.status_code == 403
 
     def test_a_configured_token_is_required_even_at_the_machine(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Loopback does not waive a token the operator deliberately set."""
         monkeypatch.setenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", "let-me-in")
         with pytest.raises(HTTPException):
-            auth.begin_registration(FakeRequest(client_host="127.0.0.1"), label="owner")
+            auth.begin_registration(connection(peer=LOOPBACK), label="owner")
 
 
 class TestTheGateIsBoundedToTheFirstEnrollment:
@@ -173,7 +155,7 @@ class TestTheGateIsBoundedToTheFirstEnrollment:
         auth._cache = {}
         assert auth.auth_enabled() is True
 
-        opts = auth.begin_registration(FakeRequest(), label="second-key")
+        opts = auth.begin_registration(connection(peer=STRANGER), label="second-key")
         assert opts.get("challenge_id")
 
 
@@ -188,7 +170,7 @@ class TestWhichRefusalTheCallerGets:
         them to move to the console would send them somewhere that also fails.
         """
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(host="192.168.1.166:8090"), label="lan")
+            auth.begin_registration(connection(peer=STRANGER, host="192.168.1.166:8090"), label="lan")
         assert e.value.status_code == 400
         assert "BOOTSTRAP_TOKEN" not in e.value.detail
 
@@ -200,6 +182,6 @@ class TestWhichRefusalTheCallerGets:
         auth._load()
 
         with pytest.raises(HTTPException) as e:
-            auth.begin_registration(FakeRequest(), label="attacker")
+            auth.begin_registration(connection(peer=STRANGER), label="attacker")
         assert e.value.status_code == 403
         assert "unreadable" in e.value.detail and "corrupt-" in e.value.detail

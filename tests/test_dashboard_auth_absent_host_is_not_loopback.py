@@ -32,24 +32,17 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from strands_robots.dashboard import auth
+from tests._dashboard_connection import connection
 
 ENROLLED = {"dash.example.com"}
 
 
-def request(scheme: str = "https", **headers: str) -> Request:
-    """A request that really arrived over ``scheme`` carrying only ``headers``."""
-    return Request(
-        {
-            "type": "http",
-            "scheme": scheme,
-            "method": "POST",
-            "path": "/auth/login/begin",
-            "query_string": b"",
-            "headers": [(k.replace("_", "-").encode(), v.encode()) for k, v in headers.items()],
-            "server": ("dash.example.com", 443),
-            "client": ("203.0.113.9", 5555),
-        }
-    )
+def request(scheme: str = "https", *, host: str | None = None, **headers: str) -> Request:
+    """A request that really arrived over ``scheme`` carrying only ``headers``.
+
+    No ``Host`` unless the cell sends one: absence is the subject of this file.
+    """
+    return connection(scheme, host=host, **headers)
 
 
 @pytest.fixture

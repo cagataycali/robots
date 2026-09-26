@@ -12,27 +12,12 @@ machine re-enroll while a stranger who merely benefited from a disk error cannot
 
 import json
 import logging
-from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 from strands_robots.dashboard import auth
-
-
-class FakeRequest:
-    """A request as it arrived: over a SCHEME, carrying headers.
-
-    The scheme is a property of the connection, not of a header, so a stand-in
-    that answers headers alone cannot represent one -- and an expectation
-    derived from it would look right here while being caller-controlled in
-    production.
-    """
-
-    def __init__(self, headers=None, client_host="127.0.0.1", scheme="http"):
-        self.headers = headers or {"host": "localhost:8090"}
-        self.client = type("C", (), {"host": client_host})()
-        self.url = SimpleNamespace(scheme=scheme)
+from tests._dashboard_connection import STRANGER, connection
 
 
 def _corrupt_store(tmp_path, body: str = '{"credentials": [{"id": "AAA'):
@@ -75,7 +60,7 @@ def test_a_stranger_cannot_seize_the_dashboard_through_a_disk_error(tmp_path):
     auth._load()
 
     with pytest.raises(HTTPException) as e:
-        auth.begin_registration(FakeRequest(client_host="203.0.113.9"), label="attacker")
+        auth.begin_registration(connection(peer=STRANGER), label="attacker")
     assert e.value.status_code == 403
     # The refusal must say what happened and where the bytes went -- an operator reading only
     # this message has to be able to recover.
@@ -89,13 +74,11 @@ def test_the_person_at_the_machine_can_still_recover(tmp_path):
     auth._load()
 
     with pytest.raises(HTTPException) as e:
-        auth.begin_registration(FakeRequest(client_host="127.0.0.1"), label="recovery")
+        auth.begin_registration(connection(), label="recovery")
     assert e.value.status_code == 403
     assert "unreadable" in e.value.detail and str(auth._enroll_token_path()) in e.value.detail
 
-    opts = auth.begin_registration(
-        FakeRequest(client_host="127.0.0.1"), label="recovery", bootstrap=auth._local_enroll_token()
-    )
+    opts = auth.begin_registration(connection(), label="recovery", bootstrap=auth._local_enroll_token())
     assert opts.get("challenge_id"), "recovery must not be a dead end for the owner"
 
 
@@ -105,8 +88,8 @@ def test_bootstrap_token_still_works_from_anywhere(tmp_path, monkeypatch):
     auth._load()
 
     with pytest.raises(HTTPException):
-        auth.begin_registration(FakeRequest(client_host="203.0.113.9"), bootstrap="wrong")
-    opts = auth.begin_registration(FakeRequest(client_host="203.0.113.9"), bootstrap="let-me-in")
+        auth.begin_registration(connection(peer=STRANGER), bootstrap="wrong")
+    opts = auth.begin_registration(connection(peer=STRANGER), bootstrap="let-me-in")
     assert opts.get("challenge_id")
 
 
@@ -120,7 +103,7 @@ def test_a_genuinely_new_dashboard_is_gated_too_and_says_so_differently(tmp_path
     is not at the machine; only the diagnosis differs, and neither mentions the other's cause.
     """
     with pytest.raises(HTTPException) as e:
-        auth.begin_registration(FakeRequest(client_host="203.0.113.9"), label="fresh")
+        auth.begin_registration(connection(peer=STRANGER), label="fresh")
     assert e.value.status_code == 403
     # The wording must fit the cause: no disk error happened here, so it must not claim one.
     assert "unreadable" not in e.value.detail and "corrupt-" not in e.value.detail
@@ -166,7 +149,7 @@ class TestTheLastNineLines:
         assert "JSONDecodeError" in damage["reason"] or "Expecting" in damage["reason"]
         # ... and the narrowing it exists for still applies, naming the missing backup gracefully.
         with pytest.raises(HTTPException) as err:
-            auth.begin_registration(FakeRequest(client_host="203.0.113.9"), label="stranger")
+            auth.begin_registration(connection(peer=STRANGER), label="stranger")
         assert err.value.status_code == 403
         assert "a backup" in str(err.value.detail), (
             "the refusal must read sensibly when there is no backup path to name"
@@ -245,7 +228,7 @@ class TestTheLastNineLines:
             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("verdict unavailable")),
         )
         caplog.set_level(logging.DEBUG, logger="strands_robots.dashboard.auth")
-        out = auth.status(FakeRequest())
+        out = auth.status(connection())
         assert "rp_id" not in out, "a half-derived advisory must not be published"
         assert "rpid_usable" not in out and "warning" not in out
         # ... and the skip is attributable rather than silent: an operator staring at a
@@ -256,6 +239,6 @@ class TestTheLastNineLines:
 
     def test_a_healthy_request_still_gets_its_advisory(self, tmp_path):
         """The control: the merge must not have cost the working path its hints."""
-        out = auth.status(FakeRequest())
+        out = auth.status(connection())
         assert out["rp_id"] == "localhost"
         assert out["rpid_usable"] is True

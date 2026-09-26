@@ -21,23 +21,7 @@ from fastapi import HTTPException
 from webauthn.helpers import bytes_to_base64url
 
 from strands_robots.dashboard import auth
-
-
-class FakeRequest:
-    """A request as it arrived: over a SCHEME, from a PEER, carrying headers.
-
-    Both are properties of the connection rather than of a header, and both are
-    read -- the origin a ceremony is verified against comes from the scheme, and
-    the first-enrollment gate comes from the socket peer. A stand-in answering
-    only one leaves the other reading a default, so it carries both. These cells
-    are the owner enrolling at the machine, so the peer is loopback.
-    """
-
-    def __init__(self, headers=None, scheme="http", client_host="127.0.0.1"):
-        self.headers = headers or {"host": "localhost:8090"}
-        self.url = SimpleNamespace(scheme=scheme)
-        self.client = type("C", (), {"host": client_host})()
-
+from tests._dashboard_connection import connection
 
 CRED_ID = b"\x01" * 16
 CRED_ID_B64 = bytes_to_base64url(CRED_ID)
@@ -67,7 +51,7 @@ def _proof() -> str:
 
 def _enroll(monkeypatch, request=None, label="phone") -> str:
     """Run a full (verifier-stubbed) enrollment; returns the credential id."""
-    request = request or FakeRequest()
+    request = request or connection()
     begun = auth.begin_registration(request, label=label, bootstrap=_proof())
     _passing_reg_verifier(monkeypatch)
     out = auth.finish_registration(request, begun["challenge_id"], {"id": CRED_ID_B64})
@@ -78,7 +62,7 @@ def _enroll(monkeypatch, request=None, label="phone") -> str:
 
 
 def test_finish_registration_stores_binding_and_mints_valid_session(monkeypatch):
-    request = FakeRequest()
+    request = connection()
     begun = auth.begin_registration(request, label="phone", bootstrap=_proof())
     _passing_reg_verifier(monkeypatch)
 
@@ -100,7 +84,7 @@ def test_finish_registration_stores_binding_and_mints_valid_session(monkeypatch)
 
 
 def test_registration_challenge_is_single_use(monkeypatch):
-    request = FakeRequest()
+    request = connection()
     begun = auth.begin_registration(request, label="phone", bootstrap=_proof())
     _passing_reg_verifier(monkeypatch)
     auth.finish_registration(request, begun["challenge_id"], {"id": CRED_ID_B64})
@@ -110,7 +94,7 @@ def test_registration_challenge_is_single_use(monkeypatch):
 
 
 def test_duplicate_credential_is_409_and_not_stored_twice(monkeypatch):
-    request = FakeRequest()
+    request = connection()
     _enroll(monkeypatch, request)
     # A second ceremony that "verifies" to the SAME credential id must refuse -
     # otherwise a replayed enrollment quietly forks the credential list.
@@ -123,7 +107,7 @@ def test_duplicate_credential_is_409_and_not_stored_twice(monkeypatch):
 
 def test_finish_registration_bubbles_verifier_refusal(monkeypatch):
     """When the library refuses, no credential and no token appear."""
-    request = FakeRequest()
+    request = connection()
     begun = auth.begin_registration(request, label="phone", bootstrap=_proof())
 
     def refuse(**kw):
@@ -149,7 +133,7 @@ def _passing_auth_verifier(monkeypatch, new_sign_count=42):
 
 
 def test_finish_authentication_mints_session_and_persists_sign_count(monkeypatch):
-    request = FakeRequest()
+    request = connection()
     _enroll(monkeypatch, request)
     begun = auth.begin_authentication(request)
     _passing_auth_verifier(monkeypatch, new_sign_count=42)
@@ -166,7 +150,7 @@ def test_finish_authentication_mints_session_and_persists_sign_count(monkeypatch
 
 
 def test_unknown_credential_is_404_before_any_crypto(monkeypatch):
-    request = FakeRequest()
+    request = connection()
     _enroll(monkeypatch, request)
     begun = auth.begin_authentication(request)
 
@@ -180,7 +164,7 @@ def test_unknown_credential_is_404_before_any_crypto(monkeypatch):
 
 
 def test_authentication_challenge_is_single_use(monkeypatch):
-    request = FakeRequest()
+    request = connection()
     _enroll(monkeypatch, request)
     begun = auth.begin_authentication(request)
     _passing_auth_verifier(monkeypatch)
@@ -193,7 +177,7 @@ def test_authentication_challenge_is_single_use(monkeypatch):
 def test_rp_id_backfill_for_pre_rpid_credential(monkeypatch, tmp_path):
     """cagatay's real passkey predates rp_id recording: a login that VERIFIES
     against a rp_id back-fills it (proof, not a guess), tightening the guard."""
-    request = FakeRequest()
+    request = connection()
     _enroll(monkeypatch, request)
 
     # Erase the binding, as if enrolled before the field existed.
@@ -214,7 +198,7 @@ def test_rp_id_backfill_for_pre_rpid_credential(monkeypatch, tmp_path):
 
 
 def test_rp_id_backfill_never_overwrites_an_existing_binding(monkeypatch):
-    request = FakeRequest()
+    request = connection()
     _enroll(monkeypatch, request)
     begun = auth.begin_authentication(request)
     _passing_auth_verifier(monkeypatch)
@@ -240,7 +224,7 @@ def test_delete_credential_refuses_unknown_and_last(monkeypatch):
 
 
 def test_delete_credential_removes_one_of_two(monkeypatch):
-    request = FakeRequest()
+    request = connection()
     _enroll(monkeypatch, request)
     other = b"\x03" * 16
     begun = auth.begin_registration(request, label="backup", bootstrap=_proof())
@@ -257,20 +241,20 @@ def test_delete_credential_removes_one_of_two(monkeypatch):
 
 
 def test_status_warns_on_insecure_context():
-    out = auth.status(FakeRequest({"host": "robots.example.com"}))
+    out = auth.status(connection(host="robots.example.com"))
     assert out["secure_context"] is False
     assert "secure context" in out["warning"]
 
 
 def test_status_warns_on_unusable_rpid():
     # Reached over https, but the host is an IP: rpId can never work.
-    out = auth.status(FakeRequest({"host": "192.168.1.50:8090"}, scheme="https"))
+    out = auth.status(connection("https", host="192.168.1.50:8090"))
     assert out["rpid_usable"] is False
     assert "rpId" in out.get("warning", "")
 
 
 def test_status_clean_on_localhost():
-    out = auth.status(FakeRequest({"host": "localhost:8090"}))
+    out = auth.status(connection())
     assert out["secure_context"] is True
     assert out["rpid_usable"] is True
     assert "warning" not in out

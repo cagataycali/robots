@@ -32,17 +32,10 @@ import pytest
 from fastapi import HTTPException
 
 from strands_robots.dashboard import auth
+from tests._dashboard_connection import STRANGER, connection
 
 # Headers a caller can set that _client_ip reads ahead of the socket peer.
 _SPOOFABLE = ["cf-connecting-ip", "x-forwarded-for", "x-real-ip"]
-
-
-class FakeRequest:
-    """A request whose socket peer and headers can disagree."""
-
-    def __init__(self, headers: dict[str, str] | None = None, client_host: str = "127.0.0.1") -> None:
-        self.headers = {"host": "localhost:8090", **(headers or {})}
-        self.client = type("C", (), {"host": client_host})()
 
 
 def _corrupt_store(tmp_path: Path) -> None:
@@ -59,14 +52,14 @@ class TestAForwardedHeaderCannotForgeLocality:
     @pytest.mark.parametrize("claimed", ["127.0.0.1", "::1", "localhost"])
     def test_the_stranger_is_still_refused(self, tmp_path: Path, header: str, claimed: str) -> None:
         _corrupt_store(tmp_path)
-        request = FakeRequest({header: claimed}, client_host="203.0.113.9")
+        request = connection(peer=STRANGER, **{header: claimed})
         with pytest.raises(HTTPException) as raised:
             auth.begin_registration(request, label="attacker")
         assert raised.value.status_code == 403
 
     def test_a_chained_forwarded_for_is_no_better(self, tmp_path: Path) -> None:
         _corrupt_store(tmp_path)
-        request = FakeRequest({"x-forwarded-for": "127.0.0.1, 10.0.0.1"}, client_host="203.0.113.9")
+        request = connection(peer=STRANGER, x_forwarded_for="127.0.0.1, 10.0.0.1")
         with pytest.raises(HTTPException) as raised:
             auth.begin_registration(request, label="attacker")
         assert raised.value.status_code == 403
@@ -83,13 +76,11 @@ class TestThePersonAtTheMachineIsStillLetIn:
     def test_a_local_peer_can_recover_with_the_local_token(self, tmp_path: Path, peer: str) -> None:
         _corrupt_store(tmp_path)
         with pytest.raises(HTTPException) as raised:
-            auth.begin_registration(FakeRequest(client_host=peer), label="recovery")
+            auth.begin_registration(connection(peer=peer), label="recovery")
         assert raised.value.status_code == 403
         assert str(auth._enroll_token_path()) in raised.value.detail, "the refusal must say where the token is"
 
-        opts = auth.begin_registration(
-            FakeRequest(client_host=peer), label="recovery", bootstrap=auth._local_enroll_token()
-        )
+        opts = auth.begin_registration(connection(peer=peer), label="recovery", bootstrap=auth._local_enroll_token())
         assert opts.get("challenge_id")
 
     def test_a_local_peer_behind_a_proxy_is_refused_and_told_the_remedy(self, tmp_path: Path) -> None:
@@ -101,7 +92,7 @@ class TestThePersonAtTheMachineIsStillLetIn:
         machine is not locked out: their browser sends no such header, and
         the message names the bootstrap token as the other way in."""
         _corrupt_store(tmp_path)
-        request = FakeRequest({"cf-connecting-ip": "203.0.113.9"}, client_host="127.0.0.1")
+        request = connection(cf_connecting_ip="203.0.113.9")
         with pytest.raises(HTTPException) as raised:
             auth.begin_registration(request, label="recovery")
         assert raised.value.status_code == 403
@@ -114,7 +105,7 @@ class TestTheTwoReadersAreDeliberatelyDifferent:
 
     @pytest.mark.parametrize("header", _SPOOFABLE)
     def test_socket_peer_ignores_the_header_client_ip_honours(self, header: str) -> None:
-        request = FakeRequest({header: "198.51.100.7"}, client_host="203.0.113.9")
+        request = connection(peer=STRANGER, **{header: "198.51.100.7"})
         assert auth._client_ip(request) == "198.51.100.7"
         assert auth._socket_peer(request) == "203.0.113.9"
 
