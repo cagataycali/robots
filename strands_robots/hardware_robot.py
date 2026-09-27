@@ -3558,9 +3558,11 @@ class Robot(TeleopMixin, AgentTool):
         self._task_state.status = TaskStatus.STOPPED
         self._settle_task_duration()
 
-        # Cancel future if it exists
-        if self._task_state.task_future:
-            self._task_state.task_future.cancel()
+        # A job still queued behind the single worker is cancelled outright,
+        # so ``_drive_claimed_task`` - the claim's only releaser - never runs;
+        # release the claim here or every later task is refused as running.
+        if self._task_state.task_future and self._task_state.task_future.cancel():
+            self._release_task()
 
         logger.info(f"Task stopped: {self._task_state.instruction}")
 

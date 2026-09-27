@@ -273,6 +273,23 @@ class TestTheRequestIsLatched:
         assert rig.robot._task_state.status == TaskStatus.STOPPED
         rig.robot._executor.shutdown(wait=False)
 
+    def test_a_stop_before_the_worker_picks_the_job_up_releases_the_claim(self, rig):
+        # The single worker is busy, so the submitted job is still PENDING and
+        # the stop's cancel wins: nothing on the executor will release the claim.
+        busy = threading.Event()
+        rig.robot._executor.submit(busy.wait, DEADLINE)
+        assert rig.robot._claim_task("pick the cube") is None
+        rig.robot._task_state.task_future = rig.robot._executor.submit(
+            rig.robot._drive_claimed_task, "pick the cube", policy_object=_OneStepPolicy(), duration=5.0, n_steps=3
+        )
+
+        rig.robot.stop_task()
+        busy.set()
+
+        assert rig.robot._task_state.task_future.cancelled()
+        assert rig.robot._claim_task("place the cube") is None, "the next task must be admitted"
+        rig.robot._executor.shutdown(wait=True)
+
 
 class TestTheLatchDoesNotLeakForward:
     def test_the_next_task_runs_after_a_stop_on_an_idle_robot(self, rig):
