@@ -144,9 +144,7 @@ class TestTheReportIsAttachedToTheMissingDependencyOnly:
             and isinstance(node.func, ast.Name)
             and node.func.id == "_report_zenoh_missing"
         ]
-        assert len(calls) == len(_SESSION_OPENERS), (
-            f"expected one report per session opener ({len(_SESSION_OPENERS)}), found {len(calls)}"
-        )
+        assert len(calls) == 1, f"expected one report in the one session-open body, found {len(calls)}"
 
         guarded: set[int] = set()
         for handler in (n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)):
