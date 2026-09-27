@@ -1317,6 +1317,16 @@ class SimEngine(ABC):
         """
         return self.robot_joint_names(robot_name)
 
+    def actuator_ranges(self, robot_name: str) -> dict[str, tuple[float, float]]:
+        """Return the ``(low, high)`` control range of each range-limited actuator of ``robot_name``.
+
+        Keyed like :meth:`robot_action_keys`. A backend clamps a ``send_action``
+        target past these bounds silently, so a driver reports the clamp from
+        this map rather than from the backend's model. An unlimited actuator is
+        absent; the default is ``{}`` for backends that cannot report ranges.
+        """
+        return {}
+
     # Guards the one-time creation of an engine's per-thread binding slot.
     # Two rollouts starting on two threads must not each create a slot and
     # have one of them lost; after creation the slot itself is thread-local.
