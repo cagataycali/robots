@@ -70,9 +70,32 @@ hooks:
   - docs/hooks/manifest.py
   - docs/hooks/coverage.py
   - docs/hooks/robot_pages.py
+  - docs/hooks/providers.py
+  - docs/hooks/tools_ref.py
+  - docs/hooks/env_vars.py
+  - docs/hooks/refusals.py
+  - docs/hooks/module_map.py
 
 plugins:
   - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+          options:
+            docstring_style: google
+            docstring_options:
+              warnings: false
+              warn_unknown_params: false
+            docstring_section_style: table
+            show_source: false
+            show_signature_annotations: true
+            separate_signature: true
+            merge_init_into_class: true
+            show_if_no_docstring: false
+            show_root_toc_entry: false
+            allow_inspection: false
+            heading_level: 3
   - redirects:
       redirect_maps:
         agents.md: learn/agents.md
@@ -403,7 +426,52 @@ nav:
           - robots/reachy_mini.md
   - Learn:
       - learn/index.md
+      - Agents: learn/agents.md
+      - Policies:
+          - learn/policies/index.md
+          - LeRobot local: learn/policies/lerobot-local.md
+          - GR00T: learn/policies/groot.md
+          - Cosmos 3: learn/policies/cosmos3.md
+          - cuRobo: learn/policies/curobo.md
+          - MoveIt2: learn/policies/moveit2.md
+          - WBC: learn/policies/wbc.md
+          - Kimodo: learn/policies/kimodo.md
+          - ProtoMotions: learn/policies/protomotions.md
+          - Microduck: learn/policies/microduck.md
+          - RL checkpoint: learn/policies/rl.md
+      - Simulation:
+          - learn/simulation/index.md
+          - MuJoCo: learn/simulation/mujoco.md
+          - Isaac Sim: learn/simulation/isaac.md
+          - Newton: learn/simulation/newton.md
+          - Worlds and objects: learn/simulation/worlds-and-objects.md
+          - Predicates and rollouts: learn/simulation/predicates-and-rollouts.md
+          - Randomization: learn/simulation/randomization.md
+      - Training:
+          - learn/training/index.md
+          - LeRobot: learn/training/lerobot.md
+          - RL: learn/training/rl.md
+      # D4 sections (data, hardware, mesh, dashboard, ros2, security) are appended when the lane lands.
   - Reference:
       - reference/index.md
+      - Tools: reference/tools.md
+      - Command line: reference/cli.md
+      - Configuration: reference/configuration.md
+      - Refusal codes: reference/refusal-codes.md
+      - Changelog: reference/changelog.md
+      - API:
+          - reference/api/index.md
+          - Robot and factory: reference/api/robot.md
+          - Registry: reference/api/registry.md
+          - Simulation: reference/api/simulation.md
+          - Policies: reference/api/policies.md
+          - Drivers: reference/api/drivers.md
+          - Tools: reference/api/tools.md
+          - Data: reference/api/data.md
+          - Mesh: reference/api/mesh.md
   - Project:
       - project/index.md
+      - Architecture: project/architecture.md
+      - Contributing: project/contributing.md
+      - Roadmap: project/roadmap.md
+      - Security policy: project/security-policy.md
