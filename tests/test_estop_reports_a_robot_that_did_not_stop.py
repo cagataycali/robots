@@ -120,16 +120,14 @@ class TestTheRefusalShapesAreReal:
     """
 
     def test_a_refused_stop_carries_text_and_no_stopped_flag(self):
-        """``_refuse`` is how both drivers report a refusal, and it carries no json block."""
-        from strands_robots.drivers.g1 import _refuse as g1_refuse
-        from strands_robots.drivers.reachy import _refuse as reachy_refuse
+        """``refuse`` is how both drivers report a refusal, and it carries no json block."""
+        from strands_robots.drivers.base import refuse
 
-        for refuse in (g1_refuse, reachy_refuse):
-            envelope = refuse("stop_task: daemon refused the stop: connection reset")
-            assert envelope["status"] == "error"
-            assert [b for b in envelope["content"] if "json" in b] == [], (
-                "a refusal carries text only, which is why a stopped-flag reader alone misses it"
-            )
+        envelope = refuse("stop_task: daemon refused the stop: connection reset")
+        assert envelope["status"] == "error"
+        assert [b for b in envelope["content"] if "json" in b] == [], (
+            "a refusal carries text only, which is why a stopped-flag reader alone misses it"
+        )
 
     def test_the_g1_stop_reports_the_join_outcome_in_its_payload(self):
         """G1's ``stop_task`` puts the join outcome under ``stopped``."""

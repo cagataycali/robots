@@ -300,6 +300,13 @@ class TestParseStatusPacket:
         with pytest.raises(ProtocolError, match="checksum mismatch"):
             parse_status_packet(raw, expected_id=1, expected_param_count=2)
 
+    def test_unused_error_bit_refused(self) -> None:
+        # Bit 7 of the error byte is unused, so ``scservo_sdk``'s ``rxPacket``
+        # treats a header followed by it as payload, not a reply - checksum or not.
+        raw = self._make_status(1, bytes([0x00, 0x04]), error=0x80)
+        with pytest.raises(ProtocolError, match="error byte"):
+            parse_status_packet(raw, expected_id=1, expected_param_count=2)
+
     def test_expected_id_broadcast_refused(self) -> None:
         # Expecting a reply from the broadcast is a caller bug.
         raw = self._make_status(1, b"")

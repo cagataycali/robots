@@ -33,7 +33,7 @@ def _stop_task_refusal(envelope: object) -> str | None:
     ``G1Driver.stop_task`` reports ``status="error"`` and carries ``stopped``
     in a ``json`` block when its control loop outlasts the join budget, while
     ``ReachyDriver.stop_task`` reports a daemon that refused the stop through
-    ``_refuse``, whose envelope carries a ``text`` block and no ``stopped`` key
+    ``drivers.base.refuse``, whose envelope carries a ``text`` block and no ``stopped`` key
     at all. So both signals are read: an explicit ``stopped`` flag is
     authoritative where the driver supplies one, and ``status`` answers for the
     envelopes that do not.
