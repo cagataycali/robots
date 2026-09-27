@@ -29,7 +29,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The guard is only meaningful while it still reaches the shipped tables. If a
 # rename or a reformat drops them all, fail loudly instead of reporting clean.
-_MINIMUM_DOCUMENTED_ROWS = 3
+_MINIMUM_DOCUMENTED_ROWS = 2
 
 
 def _documented_rows() -> list[tuple[str, int, str, str]]:

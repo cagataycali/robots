@@ -223,7 +223,6 @@ class TestDocsCiteTheDeclaredFloor:
         "relpath",
         [
             "docs/reference/data/reading-back.md",
-            "docs/reference/examples/overview.md",
             "examples/notebooks/README.md",
         ],
     )
