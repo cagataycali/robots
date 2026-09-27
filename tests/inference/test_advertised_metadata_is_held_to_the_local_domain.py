@@ -227,7 +227,7 @@ def test_the_wire_and_the_constructor_agree_about_a_chunk_count(monkeypatch: pyt
 
     Grounded in ``chunk_count_error`` itself -- the domain
     :class:`~strands_robots.policies.lerobot_local.policy.LerobotLocalPolicy`
-    and ``LerobotAsyncPolicy`` hold their ``actions_per_step`` to -- rather than
+    holds its ``actions_per_step`` to -- rather than
     in a list of values this test picked, so the two cannot drift apart.
     """
     constructor_refuses = chunk_count_error(value, "actions_per_step", "lerobot_local") is not None

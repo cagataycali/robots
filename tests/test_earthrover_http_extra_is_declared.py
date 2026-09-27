@@ -10,7 +10,7 @@ runtime distributions in the same shape.
 
 What that left, measured against the checked-in lock: ``requests`` is absent from
 the base install and from 26 of the 32 extras other than ``[all]``, and the six
-that do resolve to it -- ``[lerobot]``, ``[lerobot-async]``, ``[molmoact2]``,
+that do resolve to it -- ``[lerobot]``, ``[molmoact2]``,
 ``[smolvla]``, ``[kimodo]`` and ``[cosmos3-diffusers]`` -- reach it as a
 transitive of an unrelated machine learning stack (``lerobot`` itself, or
 ``diffusers``). So a rover install

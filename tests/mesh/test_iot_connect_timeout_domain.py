@@ -4,7 +4,6 @@
 parameter name, and it was the one left without a domain. The other two are the
 remote-inference clients settled by #1984 -
 :class:`~strands_robots.inference.RemotePolicy` over WebSocket and
-:class:`~strands_robots.policies.lerobot_async.LerobotAsyncPolicy` over gRPC -
 whose contracts live in :mod:`tests.test_remote_client_timeout_domain`. That
 module's own framing is why this one was missed: it settled "the knobs left
 behind on the same two constructors", and the survey it describes was scoped to
@@ -56,7 +55,6 @@ import pytest
 
 from strands_robots.inference import RemotePolicy
 from strands_robots.mesh.transport.iot_transport import IotMqttTransport
-from strands_robots.policies.lerobot_async import LerobotAsyncPolicy
 from strands_robots.utils import positive_finite_number_error
 
 from .test_iot_reconnect_client_lifecycle import _FakeClient, _make_certs
@@ -285,9 +283,6 @@ class TestTheThreeSurfacesShareOneDomain:
         builders: dict[str, Callable[[], object]] = {
             "IotMqttTransport": lambda: _transport(tmp_path, connect_timeout=value),
             "RemotePolicy": lambda: RemotePolicy(connect_timeout=value),
-            "LerobotAsyncPolicy": lambda: LerobotAsyncPolicy(
-                policy_type="act", pretrained_name_or_path="org/model", connect_timeout=value
-            ),
         }
         for name, build in builders.items():
             assert _refuses_the_timeout(build) is shared, f"{name} disagrees for {value!r}"
@@ -336,7 +331,6 @@ class TestEverySurfaceTakingAConnectTimeoutRoutesThroughTheDomain:
         "drivers/microduck.py::ssh_forward_argv",
         "inference/client.py::RemotePolicy.__init__",
         "mesh/transport/iot_transport.py::IotMqttTransport.__init__",
-        "policies/lerobot_async/policy.py::LerobotAsyncPolicy.__init__",
     }
 
     @staticmethod

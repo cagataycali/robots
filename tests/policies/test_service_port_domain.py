@@ -3,7 +3,7 @@
 Four providers reach a policy service over TCP and build the endpoint by
 interpolating a caller-supplied ``port``: ``groot`` and ``moveit2`` into
 ``tcp://<host>:<port>`` (ZMQ), ``cosmos3`` into ``ws://<host>:<port>``, and
-``lerobot_async`` into a gRPC target. Every one of those transports connects
+Every one of those transports connects
 lazily, so the socket does not reject a port outside the 16-bit range - it
 accepts it and the request fails much later as an unreachable service, naming
 the server rather than the port that could never have addressed it.
@@ -73,10 +73,6 @@ def _cosmos3(port: Any) -> Any:
     return create_policy("cosmos3", port=port, embodiment="droid")
 
 
-def _lerobot_async(port: Any) -> Any:
-    return create_policy("lerobot_async", port=port, policy_type="act", pretrained_name_or_path="org/ckpt")
-
-
 #: ``(provider label, constructor, class name, optional dependency)``. The
 #: refusal happens before any transport is built, so a rejected port needs no
 #: optional dependency; only the accepted-value controls dial and therefore
@@ -85,7 +81,6 @@ PROVIDERS: list[tuple[str, Any, str, str | None]] = [
     ("groot", _groot, "Gr00tPolicy", "zmq"),
     ("moveit2", _moveit2, "MoveIt2Policy", "zmq"),
     ("cosmos3", _cosmos3, "Cosmos3Policy", None),
-    ("lerobot_async", _lerobot_async, "LerobotAsyncPolicy", None),
 ]
 
 _IDS = [p[0] for p in PROVIDERS]
@@ -206,18 +201,6 @@ class TestOnlyTheDialedPortIsValidated:
         )
         assert policy.backend == "diffusers"
 
-    def test_lerobot_async_server_address_supersedes_the_port(self) -> None:
-        """``server_address`` is the effective spelling when it is given."""
-        from strands_robots.policies.lerobot_async import LerobotAsyncPolicy
-
-        policy = LerobotAsyncPolicy(
-            server_address="gpu-box:8080",
-            port=99999,
-            policy_type="act",
-            pretrained_name_or_path="org/ckpt",
-        )
-        assert policy.server_address == "gpu-box:8080"
-
 
 class TestTransportDoesNotRefuseItself:
     """Why the boundary guard is load-bearing rather than belt-and-braces."""
@@ -296,7 +279,7 @@ class TestNoProviderShipsAnUnguardedPort:
                 seen.append(cls.name)
                 if not _calls_the_shared_domain(cls):
                     offenders.append(f"{path.name}::{cls.name}")
-        assert set(_IDS) and {"Gr00tPolicy", "MoveIt2Policy", "Cosmos3Policy", "LerobotAsyncPolicy"} <= set(seen), seen
+        assert set(_IDS) and {"Gr00tPolicy", "MoveIt2Policy", "Cosmos3Policy"} <= set(seen), seen
         assert offenders == [], (
             "these provider constructors accept a port without validating it against "
             f"strands_robots.utils.tcp_port_error: {offenders}"

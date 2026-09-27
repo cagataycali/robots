@@ -1,7 +1,7 @@
 """A constructor kwarg ``lerobot_local`` does not read is named, not dropped.
 
 ``create_policy`` forwards one shared kwargs bag to every provider, so the
-constructor tolerates keys it does not own - the contract ``lerobot_async``
+constructor tolerates keys it does not own - the contract ``remote``
 already grades. Tolerating them silently is a different thing: ``rtc=True``
 (the spelling ``docs/reference/policies/lerobot-local.md`` warns against, for
 ``rtc_enabled=``) built a policy with RTC off and no line anywhere saying the

@@ -20,9 +20,9 @@ that message. Two properties of the extras table let it survive:
   extras (``[molmoact2]``, ``[smolvla]``, ``[kimodo]``, ``[cosmos3-diffusers]``).
   CI installs ``[all,dev]``, which folds three of those in, so the suite was
   green over an extra that could not import the tools it exists to serve. The
-  parametrized cell below states that per extra: ``[lerobot]`` and
-  ``[lerobot-async]`` are the two rows that were red, and the three that passed
-  passed for a reason unrelated to the session tools.
+  parametrized cell below states that per extra: ``[lerobot]`` is the row
+  that was red, and the three that passed passed for a reason unrelated to the
+  session tools.
 * Nothing graded the *shape*. ``pip`` reports success on an extra that installs
   none of what an import needs, and ``ruff``/``mypy`` cannot know that a
   module-scope ``import psutil`` implies a packaging obligation.
@@ -86,7 +86,7 @@ _PSUTIL_IMPORTERS = (
 #: everything that folds it in. Each must supply ``psutil``, and three of them
 #: did so already by accident -- via ``accelerate`` under a VLA's aux deps --
 #: which is the accident this pin removes reliance on.
-_EXTRAS_REACHING_THE_SESSION_TOOLS = ("lerobot", "lerobot-async", "molmoact2", "smolvla", "all")
+_EXTRAS_REACHING_THE_SESSION_TOOLS = ("lerobot", "molmoact2", "smolvla", "all")
 
 #: Import name -> distribution that supplies it, for every third-party module
 #: this package imports unconditionally at module scope. Only the rows where the

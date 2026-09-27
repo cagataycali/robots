@@ -287,7 +287,8 @@ class TestNoProviderChunkCountSkipsTheSharedDomain:
         each of zero modules, which passes.
         """
         found = self._modules_accepting_a_chunk_count()
-        assert len(found) >= 3, f"expected at least three providers accepting a chunk count, found {found}"
+        assert len(found) >= 2, f"expected at least two providers accepting a chunk count, found {found}"
+        assert sum(len(params) for params in found.values()) >= 3, f"only {found} of the family is reached"
         assert any("curobo" in module for module in found), (
             f"the provider this guard was written for is no longer found by it: {sorted(found)}"
         )

@@ -12,7 +12,6 @@ extra_javascript:
 nav:
 - Start:
   - index.md
-  - Quickstart: getting-started/quickstart.md
   - Installation: getting-started/installation.md
   - Robot Factory: getting-started/robot-factory.md
 - Robots:
@@ -24,6 +23,18 @@ nav:
   - Mobile: robots/mobile.md
   - Mobile manip: robots/mobile-manip.md
   - Aerial: robots/aerial.md
+- Recipes:
+  - recipes/index.md
+  - Quickstart: getting-started/quickstart.md
+  - Pick up a cube: recipes/pick-and-lift.md
+  - Swap the policy: recipes/swap-the-policy.md
+  - Record a dataset: recipes/record-a-dataset.md
+  - Record, train, deploy: recipes/record-train-deploy.md
+  - Judge episodes: recipes/judge-episodes.md
+  - Score a benchmark: recipes/score-a-benchmark.md
+  - Rough terrain: recipes/rough-terrain.md
+  - Randomize for sim2real: recipes/randomize-for-sim2real.md
+  - Rewind and perturb: recipes/rewind-and-perturb.md
 - Reference: reference/index.md
 plugins:
 - search
@@ -42,7 +53,8 @@ plugins:
       data/reading-back.md: reference/data/reading-back.md
       data/verifying-datasets.md: reference/data/verifying-datasets.md
       device-connect.md: reference/device-connect.md
-      examples/overview.md: reference/examples/overview.md
+      examples/overview.md: recipes/index.md
+      reference/examples/overview.md: recipes/index.md
       hardware/booster-t1.md: reference/hardware/booster-t1.md
       hardware/microduck.md: reference/hardware/microduck.md
       hardware/native-drivers.md: reference/hardware/native-drivers.md
@@ -66,7 +78,6 @@ plugins:
       policies/groot.md: reference/policies/groot.md
       policies/kimodo-sampling.md: reference/policies/kimodo-sampling.md
       policies/kimodo.md: reference/policies/kimodo.md
-      policies/lerobot-async.md: reference/policies/lerobot-async.md
       policies/lerobot-local-observations.md: reference/policies/lerobot-local-observations.md
       policies/lerobot-local.md: reference/policies/lerobot-local.md
       policies/microduck.md: reference/policies/microduck.md
@@ -160,6 +171,9 @@ markdown_extensions:
 - pymdownx.highlight:
     anchor_linenums: true
 - pymdownx.inlinehilite
+- pymdownx.snippets:
+    base_path: ['.']
+    check_paths: true
 - pymdownx.superfences:
     custom_fences:
     - name: mermaid

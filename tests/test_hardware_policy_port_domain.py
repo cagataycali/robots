@@ -391,7 +391,7 @@ class TestEveryPortTakingSurfaceIsAccountedFor:
 
 
 # Providers whose registry entry declares a ``port`` keyword, and so read one.
-PORT_READING_PROVIDERS: tuple[str, ...] = ("cosmos3", "groot", "lerobot_async", "moveit2", "remote")
+PORT_READING_PROVIDERS: tuple[str, ...] = ("cosmos3", "groot", "moveit2", "remote")
 
 
 class TestAPortTheProviderDoesNotReadIsRefused:

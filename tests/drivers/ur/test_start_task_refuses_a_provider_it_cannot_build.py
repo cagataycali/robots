@@ -261,7 +261,7 @@ class TestARequiredKeywordIsJudgedBeforeTheBuild:
         This is the domain the previous cell grades at one point: ``port``
         travels as the named ``policy_port`` and the rest inside
         ``**policy_kwargs``, so a guard that read only one of the two would pass
-        for ``groot`` and refuse ``lerobot_async`` for a checkpoint it was given.
+        for ``groot`` and refuse ``lerobot_local`` for a checkpoint it was given.
         """
         supplied: dict[str, Any] = {key: "smolvla" if key == "policy_type" else "x" for key in requires}
         port = supplied.pop("port", None) and 5555

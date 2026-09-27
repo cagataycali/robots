@@ -419,27 +419,21 @@ class M3ProTwinGraph:
         return _ok(f"published {count} message(s) to {CMD_VEL_TOPIC}{note}")
 
     def _clamp_note(self, magnitudes: dict[str, float]) -> str:
-        """Name the base actuators whose ``ctrlrange`` is narrower than what was asked.
+        """Name the base actuators whose control range is narrower than what was asked.
 
         The driver's envelope is the *robot's* (the vendor teleop ceilings); the
-        model's velocity actuators declare their own ``ctrlrange`` and MuJoCo
-        clamps a target past it silently. A twin that drove at half the speed
+        model's velocity actuators declare their own range
+        (:meth:`~strands_robots.simulation.base.SimEngine.actuator_ranges`) and
+        the engine clamps a target past it silently. A twin that drove at half the speed
         the agent asked for and said nothing would teach the agent the wrong
         robot, so the clamp is reported on the reply and logged.
         """
-        model = getattr(self._sim, "mj_model", None)
-        if model is None:
-            return ""
-        clamped: list[str] = []
-        for actuator, magnitude in magnitudes.items():
-            try:
-                index = model.actuator(f"{self.robot_name}/{actuator}").id
-            except (KeyError, ValueError, AttributeError):
-                continue
-            if model.actuator_ctrllimited[index]:
-                ceiling = float(model.actuator_ctrlrange[index][1])
-                if magnitude > ceiling + 1e-9:
-                    clamped.append(f"{actuator} {magnitude:g} -> {ceiling:g}")
+        ranges = self._sim.actuator_ranges(self.robot_name) if self._sim is not None else {}
+        clamped = [
+            f"{actuator} {magnitude:g} -> {ranges[actuator][1]:g}"
+            for actuator, magnitude in magnitudes.items()
+            if actuator in ranges and magnitude > ranges[actuator][1] + 1e-9
+        ]
         if not clamped:
             return ""
         logger.warning("twin: the model's ctrlrange clamped the base command: %s", "; ".join(clamped))

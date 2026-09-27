@@ -28,38 +28,18 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 | `[rl]` | `sim-mujoco` + `torch>=2.0`, `gymnasium>=0.29,<2.0` | From-scratch RL: `create_trainer("ppo")`, `FastSacTrainer`, `FastTd3Trainer`, `GymSimEnv` |
 | `[mesh]` | `eclipse-zenoh>=1.6.1,<2.0.0`, `json5` | Multi-robot mesh discovery + RPC |
 | `[mesh-iot]` | `mesh` + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport for mesh |
-| `[all]` | 21 of the 33 extras - **not** a union. `[cosmos3-diffusers]`, `[cosmos3-service]`, `[cosmos3-sim]`, `[crazyflie]` (GPLv3), `[curobo]`, `[microduck]`, `[ros2]`, `[sim-gs]`, `[sim-isaac]`, `[sim-newton]` and `[ur]` (compiled binding) stay opt-in | Demos, CI, exploration |
+| `[all]` | 20 of the 32 extras - **not** a union. `[cosmos3-diffusers]`, `[cosmos3-service]`, `[cosmos3-sim]`, `[crazyflie]` (GPLv3), `[curobo]`, `[microduck]`, `[ros2]`, `[sim-gs]`, `[sim-isaac]`, `[sim-newton]` and `[ur]` (compiled binding) stay opt-in | Demos, CI, exploration |
 | `[dev]` | `pytest`, `pytest-cov`, `ruff`, `mypy`, `pytest-timeout` | Contributing |
 
 ```bash
 # inside the activated venv from above
 uv pip install "strands-robots[sim-mujoco]"                  # sim only
-uv pip install "strands-robots[all]"                         # the 21-extra bundle
+uv pip install "strands-robots[all]"                         # the 20-extra bundle
 uv pip install "strands-robots[sim-mujoco,cosmos3-service]"  # Cosmos 3
 uv pip install "strands-robots[sim-mujoco,lerobot,mesh]"     # pick and choose
 ```
 
-The `[sim]` floor is set by the robot catalog rather than by an API: each entry in
-the built-in registry names the `robot_descriptions` submodule that fetches its
-MJCF and meshes, and that package gains one module per newly packaged robot.
-`robot_descriptions` 1.23.0 is the oldest release providing a module for every
-registered robot - on an older one, robots such as `so100` and `so101` have no
-module to import and no fallback, so `Robot("so101", mode="sim")` cannot resolve
-a model file.
-
-The `websockets` floor in `[inference]` and `[cosmos3-service]` is set the same
-way, by what the code needs rather than by preference - and by a *behaviour*
-rather than a name. `PolicyServer.stop()` is documented to stop the server
-serving, not merely listening; through websockets 16.x `Server.shutdown()` closed
-the listening socket alone, so a client that was already connected went on being
-answered with action chunks after the caller was told the server stopped, which on
-a robot is the policy still driving the arm. websockets 17.0 closes the
-connections it accepted and waits for their handlers. Measured against the
-released wheels on unchanged sources: 16.1.1 still serves that client, 17.0 does
-not - so both extras declare `>=17.0`. (13.0 remains the floor of the API *names*
-reached for, `websockets.sync.server.Server`; the higher of the two wins.) They
-declare the *same* floor on purpose: an environment resolves one `websockets`, so
-two different floors would leave the lower one describing an install nobody gets.
+Each extra's floor is the oldest release the code was measured against; the reason for each is in `pyproject.toml`.
 
 ## Platform notes
 
@@ -78,16 +58,9 @@ sudo usermod -aG dialout $USER   # USB serial access; re-login after
 uv pip install "strands-robots[sim-mujoco,lerobot]"
 ```
 
-The same line as everywhere else. `lerobot >= 0.6` requires `numpy >= 2`, and
-JetPack's torch (R38.2, torch 2.11 `+cu130`) runs on it - `strands-robots doctor`
-passes on a Thor devkit with numpy 2.2.6. Do not pin `numpy < 2` first: the
-resolver replaces it on this very line, so the pin buys nothing, and a package
-that only works on numpy 1.x cannot share an environment with lerobot at all.
+Do not pin `numpy < 2` first: `lerobot >= 0.6` requires `numpy >= 2`, and JetPack's torch runs on it.
 
-lerobot 0.6 pulls `torchcodec` on aarch64 itself (its dependency marker now
-covers linux aarch64 and pins the torch-ABI-matched torchcodec 0.11), so the
-video decoder resolves without a strands override. If torch CUDA is needed on
-Jetson, ensure you install from NVIDIA's index or set `UV_TORCH_BACKEND=auto`:
+For CUDA torch on Jetson, let `uv` pick NVIDIA's wheels:
 
 ```bash
 export UV_TORCH_BACKEND=auto   # resolves +cu130 wheels for Thor/Jetson
@@ -96,10 +69,7 @@ uv pip install "strands-robots[sim-mujoco,lerobot]"
 
 ### MolmoAct2 on Jetson
 
-MolmoAct2 checkpoints (e.g. `allenai/MolmoAct2-SO100_101`) resolve straight from
-PyPI now that lerobot >= 0.6 ships `MolmoAct2Policy` (it was added after lerobot
-0.5.1). See [LeRobot Local: MolmoAct2](../reference/policies/lerobot-local.md#molmoact2)
-for full instructions. Quick path:
+Details on [LeRobot Local: MolmoAct2](../reference/policies/lerobot-local.md#molmoact2).
 
 ```bash
 # The [molmoact2] extra layers transformers, peft, scipy on top of lerobot >= 0.6;
@@ -112,13 +82,6 @@ uv pip install "strands-robots[molmoact2]"
 ```bash
 export MUJOCO_GL=osmesa     # software rendering - Linux
 export MUJOCO_GL=egl        # hardware EGL
-```
-
-Or in Python before first import:
-```python
-import os
-os.environ["MUJOCO_GL"] = "osmesa"
-from strands_robots import Robot
 ```
 
 ## Verify
@@ -146,20 +109,9 @@ print(list(obs.keys()))
 
 Assets cache under `~/.strands_robots/assets/`.
 
-## Environment variables
-
-| Env var | What | Default |
-|---------|------|---------|
-| `STRANDS_ASSETS_DIR` | Robot model asset cache | `~/.strands_robots/assets/` |
-| `STRANDS_MESH_AUDIT_DIR` | Safety audit log | `~/.strands_robots/` |
-| `MUJOCO_GL` | GL backend | auto |
-| `STRANDS_TRUST_REMOTE_CODE` | Allow HF `trust_remote_code=True` | `false` |
-| `STRANDS_ROBOT_MODE` | Default `Robot()` mode | `sim` |
-| `STRANDS_MESH` | Set to `true` to opt a bare `Robot()` into the mesh; `false` disables it globally | unset (mesh off) |
-| `GROOT_API_TOKEN` | GR00T service API token (falls back from `api_token=` kwarg) | unset |
-
 ## See also
 
 - [Quickstart](quickstart.md) - five minutes after install.
 - [Robot factory](robot-factory.md) - every kwarg `Robot()` accepts.
 - [Troubleshooting](../reference/troubleshooting.md) - install gotchas.
+- [Configuration](../reference/configuration.md) - every environment variable.

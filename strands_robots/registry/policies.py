@@ -299,6 +299,55 @@ def _with_lowercase_url_scheme(policy: str) -> str:
     return _URL_SCHEME_RE.sub(lambda m: f"{m.group(1).lower()}://", policy, count=1)
 
 
+def _scheme_spellings(pattern: str) -> set[str]:
+    """Every scheme literal an anchored ``url_patterns`` entry can match.
+
+    The entries are regexes over the whole policy string, and the only regex
+    metacharacter the shipped ones use in the scheme is ``?`` on a single
+    preceding character (``^wss?://`` matches both ``ws`` and ``wss``). This
+    expands that, so a refusal can name the spellings a caller may type rather
+    than the regex the registry stores.
+
+    Args:
+        pattern: One ``url_patterns`` entry, e.g. ``"^wss?://"``.
+
+    Returns:
+        The candidate scheme spellings, unverified - the caller keeps only the
+        ones ``pattern`` really matches, which is what stops a pattern this
+        expansion cannot read from advertising a scheme that does not resolve.
+    """
+    fragment = pattern.removeprefix("^").split("://")[0]
+    out = {""}
+    index = 0
+    while index < len(fragment):
+        char = fragment[index]
+        optional = index + 1 < len(fragment) and fragment[index + 1] == "?"
+        out = {prefix + char for prefix in out} | (out if optional else set())
+        index += 2 if optional else 1
+    return out
+
+
+def _declared_url_schemes() -> list[str]:
+    """The URL schemes :func:`resolve_policy` resolves, sorted.
+
+    Stage 1 of resolution is the whole vocabulary of transports this package
+    ships, and it is declared - each provider's ``url_patterns`` in
+    ``policies.json``. A caller who typed a scheme nobody declares needs to be
+    told which ones exist, so this reads that vocabulary back out of the same
+    entries stage 1 matches on, and keeps only a spelling those entries really
+    match: a scheme this package does not ship is never advertised.
+
+    Returns:
+        Lowercase scheme names without the ``://``, e.g.
+        ``["cosmos3", "ws", "wss", "zmq"]``.
+    """
+    schemes: set[str] = set()
+    for prov_info in _load("policies").get("providers", {}).values():
+        for pattern in prov_info.get("url_patterns", []):
+            schemes |= {s for s in _scheme_spellings(pattern) if s and re.match(pattern, f"{s}://")}
+    return sorted(schemes)
+
+
 def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
     """Resolve a smart policy string to (provider_name, kwargs).
 
@@ -307,20 +356,27 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
 
     Resolution order:
         1. URL patterns declared in ``policies.json`` (ws://, wss://, zmq://,
-           grpc://, cosmos3://)
+           cosmos3://)
         2. Shorthand names (mock, groot, lerobot_local, ...)
         3. HuggingFace model IDs (org/model)
         4. Registered provider name
         5. Fallback to lerobot_local
 
     Stage 1 recognises exactly the forms the registry declares: the
-    ``url_patterns`` entries providers carry are the whole vocabulary, so a
-    scheme this package does not ship is not a URL here. A scheme-less
-    ``host:port`` address is matched only by a provider that declares a
-    scheme-less pattern -- the generic ``server_address`` branch below exists
-    for that -- and none of the shipped providers declares one, so with the
-    shipped registry such a string reaches stage 5 and is forwarded to
-    ``lerobot_local`` as a checkpoint id rather than dialled as an address.
+    ``url_patterns`` entries providers carry are the whole vocabulary. A
+    ``scheme://`` outside it is refused here, naming
+    :func:`_declared_url_schemes`, because it is an address and no later stage
+    can dial one -- it would reach stage 3 or stage 5 and be forwarded to
+    ``lerobot_local`` as a checkpoint id, so the caller's next report is a
+    HuggingFace lookup failure for a string that was never a repo id.
+
+    A scheme-less ``host:port`` address is matched only by a provider that
+    declares a scheme-less pattern -- the generic ``server_address`` branch
+    below exists for that -- and none of the shipped providers declares one, so
+    with the shipped registry such a string reaches stage 5 and is forwarded to
+    ``lerobot_local`` as a checkpoint id rather than dialled as an address. It
+    carries no scheme, so the refusal above does not read it as an address
+    either.
 
     Every stage matches case-insensitively. A URL scheme is folded per RFC 3986
     section 3.1 (``ZMQ://gpu:5555`` resolves exactly as ``zmq://gpu:5555``, and
@@ -335,15 +391,15 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
     Returns:
         (provider_name, kwargs_dict) tuple.
 
+    Raises:
+        ValueError: The string carries a ``scheme://`` no provider declares.
+
     Examples::
         resolve_policy("lerobot/act_aloha_sim")
         # → ("lerobot_local", {"pretrained_name_or_path": "lerobot/act_aloha_sim"})
 
         resolve_policy("zmq://localhost:5555")
         # → ("groot", {"host": "localhost", "port": 5555})
-
-        resolve_policy("grpc://gpu-box:8080")
-        # → ("lerobot_async", {"server_address": "gpu-box:8080"})
 
         resolve_policy("mock")
         # → ("mock", {})
@@ -385,8 +441,6 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
                     if match:
                         kwargs["host"] = match.group(1)
                         kwargs["port"] = int(match.group(2))
-                elif pattern.startswith("^grpc://"):
-                    kwargs["server_address"] = url.removeprefix("grpc://")
                 elif ":" in url and "/" not in url:
                     # Generic scheme-less ``host:port``. Reached only when a
                     # provider declares a scheme-less ``url_patterns`` entry
@@ -398,6 +452,18 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
                     kwargs["server_address"] = url
                 kwargs.update(extra_kwargs)
                 return prov_name, kwargs
+
+    # An address whose scheme stage 1 does not declare. Every later stage reads
+    # the string as a name - a shorthand, a repo id, a provider - so falling
+    # through hands an address to ``lerobot_local`` as a checkpoint id and the
+    # caller's next report names a HuggingFace repo it never asked for.
+    if scheme := _URL_SCHEME_RE.match(url):
+        declared = _declared_url_schemes()
+        raise ValueError(
+            f"No policy provider handles the URL scheme '{scheme.group(1)}://' "
+            f"(from {policy!r}). Declared schemes: "
+            f"{', '.join(f'{s}://' for s in declared)}."
+        )
 
     # 2. Shorthand names - built from each provider's shorthands list
     alias_map = _build_alias_map()

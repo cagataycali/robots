@@ -1,8 +1,7 @@
 """A per-inference chunk count the consumer cannot execute is refused, not floored.
 
 ``actions_per_step`` (how many actions of one inference chunk a consumer executes
-before re-querying) and ``actions_per_chunk`` (how many the provider emits) were
-stored verbatim by both LeRobot providers and only ever reconciled on the read
+before re-querying) was stored verbatim and only ever reconciled on the read
 path, where :attr:`~strands_robots.policies.base.Policy.execution_horizon`
 resolves them through ``max(1, int(...))``. That floor converts a count no
 consumer can execute into ``1`` and reports success.
@@ -35,14 +34,12 @@ These tests pin:
   the default does with the same checkpoint;
 * the RTC re-query horizon shares that domain, and an accepted one is the same
   number the consumer executes and the model is told;
-* every value outside the domain is refused by both providers, with parity
-  between them apart from the one documented asymmetry (``None`` is
-  ``lerobot_async``'s "use ``actions_per_chunk``" and not a count at all);
+* every value outside the domain is refused where it arrives, ``None``
+  included - the signature declares ``int = 1``, so there is no chunk length to
+  fall back to;
 * the refusal precedes the checkpoint download, in the constructor and in
   ``preflight`` (which the rollout entry points run first, so the same mistake
   surfaces as a structured error rather than a raise);
-* ``actions_per_chunk`` is refused too - it is the default for
-  ``actions_per_step``, so an unchecked one reopens the same path;
 * the duck-typed floor in ``resolve_chunk_length`` is deliberately untouched.
 """
 
@@ -55,7 +52,6 @@ import pytest
 
 from strands_robots.policies import MockPolicy, preflight_policy
 from strands_robots.policies.base import resolve_chunk_length
-from strands_robots.policies.lerobot_async.policy import LerobotAsyncPolicy
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
 # Values no chunk consumer can execute, or cannot execute as written. Each is a
@@ -69,10 +65,6 @@ TRAINED_CHUNK = 100
 # Deliberately unequal to TRAINED_CHUNK: the RTC horizon exists to re-query
 # mid-chunk, so a fixture where they matched could not tell the two apart.
 MODEL_RTC_HORIZON = 10
-
-# Annotated ``Any`` so mypy does not narrow the splat against the mixed-type
-# signature; the two required identifiers are strings.
-ASYNC_REQUIRED: dict[str, Any] = {"policy_type": "act", "pretrained_name_or_path": "acme/act-cube"}
 
 
 class _ChunkTrainedConfig:
@@ -221,58 +213,26 @@ class TestTheRefusalPrecedesTheCheckpointLoad:
         preflight_policy("lerobot_local", {"joint_1", "front"}, actions_per_step=30)
 
 
-class TestBothProvidersShareTheDomain:
-    """The same chunk count cannot be refused locally and accepted remotely."""
+class TestTheWholeDomainIsRefusedWhereItArrives:
+    """Every unusable spelling, so none of them can reach the read-path floor.
+
+    The parity half of this rule - the same count cannot be refused by a local
+    checkpoint and accepted by the server serving it - is graded where the
+    server's numbers arrive, in
+    ``tests/inference/test_advertised_metadata_is_held_to_the_local_domain.py``.
+    """
 
     @pytest.mark.parametrize("value", REJECTED, ids=repr)
     def test_lerobot_local_refuses_it(self, value: Any) -> None:
         with pytest.raises(ValueError, match="actions_per_step must be a positive integer"):
             _local(actions_per_step=value)
 
-    @pytest.mark.parametrize("value", REJECTED, ids=repr)
-    def test_lerobot_async_refuses_it(self, value: Any) -> None:
-        with pytest.raises(ValueError, match="actions_per_step must be a positive integer"):
-            LerobotAsyncPolicy(**ASYNC_REQUIRED, actions_per_step=value)
-
-    @pytest.mark.parametrize("value", REJECTED, ids=repr)
-    def test_the_two_providers_reach_the_same_verdict(self, value: Any) -> None:
-        """Parity, so the domains cannot drift apart again."""
-
-        def verdict(build: Any) -> str:
-            try:
-                build()
-            except ValueError as exc:
-                return "refused" if "must be a positive integer" in str(exc) else "other-error"
-            return "accepted"
-
-        local = verdict(lambda: _local(actions_per_step=value))
-        remote = verdict(lambda: LerobotAsyncPolicy(**ASYNC_REQUIRED, actions_per_step=value))
-        assert local == remote, f"verdicts differ for actions_per_step={value!r}"
-
     @pytest.mark.parametrize("value", [1, 8, 30, TRAINED_CHUNK])
-    def test_both_providers_accept_an_executable_count(self, value: int) -> None:
+    def test_an_executable_count_is_accepted(self, value: int) -> None:
         assert _local(actions_per_step=value).actions_per_step == value
-        assert LerobotAsyncPolicy(**ASYNC_REQUIRED, actions_per_step=value).actions_per_step == value
 
-
-class TestTheAsyncChunkLength:
-    """``actions_per_chunk`` is the default for ``actions_per_step``, so it is checked too."""
-
-    @pytest.mark.parametrize("value", REJECTED, ids=repr)
-    def test_an_unusable_chunk_length_cannot_supply_the_step_count(self, value: Any) -> None:
-        """Otherwise omitting ``actions_per_step`` reopens the same path."""
-        with pytest.raises(ValueError, match="actions_per_chunk must be a positive integer"):
-            LerobotAsyncPolicy(**ASYNC_REQUIRED, actions_per_chunk=value)
-
-    def test_omitting_the_step_count_still_adopts_the_chunk_length(self) -> None:
-        """``None`` is this provider's documented default, not a count."""
-        policy = LerobotAsyncPolicy(**ASYNC_REQUIRED, actions_per_chunk=32, actions_per_step=None)
-
-        assert policy.actions_per_step == 32
-        assert policy.execution_horizon == 32
-
-    def test_lerobot_local_has_no_such_default_and_refuses_none(self) -> None:
-        """The one asymmetry, and it follows from the two signatures.
+    def test_none_is_not_a_spelling_of_the_default(self) -> None:
+        """It follows from the signature.
 
         ``lerobot_local`` declares ``actions_per_step: int = 1``, so ``None`` is
         not a spelling of its default and there is no chunk length to fall back

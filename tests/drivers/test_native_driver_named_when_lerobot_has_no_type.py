@@ -9,9 +9,8 @@ Mini has no lerobot robot type, so before this driver ``mode="real"`` raised
 
 The Reachy Mini also declares ``hardware.driver="strands"`` on its registry
 entry, so :func:`~strands_robots.drivers.resolve_driver` sends it to its driver
-and it never meets that refusal. Five robots the Dynamixel driver serves declare
-nothing, so the default routes them to lerobot - which has no robot type for any
-of them. They reached the generic listing of lerobot's sixteen robot types, and
+and it never meets that refusal. The Franka and UR arms declare nothing, so the
+default routes them to lerobot - which has no robot type for any of them. They reached the generic listing of lerobot's sixteen robot types, and
 that listing never mentioned that this package ships the driver that builds
 them: an answer to the wrong question, and a dead end for a caller who has no
 reason to guess at ``driver="strands"``.
@@ -31,9 +30,9 @@ asked for.
 
 What is deliberately unchanged: which driver *wins*. Resolution precedence is
 untouched, no registry entry gains a declaration, and a robot lerobot can build
-still goes to lerobot. Whether ``koch`` - the one robot left with both a working
-lerobot type and a native driver - should prefer the native one is a preference,
-and ``unitree_g1`` shows the registry is where such a preference is declared. This changes only what a caller is told when the driver they were
+still goes to lerobot. Whether a robot with both a working lerobot type and a
+native driver should prefer the native one is a preference, and ``unitree_g1``
+shows the registry is where such a preference is declared. This changes only what a caller is told when the driver they were
 routed to cannot build the robot at all.
 """
 
@@ -59,11 +58,6 @@ from strands_robots.registry import get_robot, list_robots
 #: which is how the Franka arms and the UR arms arrived here, each having moved
 #: out of :data:`NO_DRIVER_OF_EITHER_KIND` when its own driver landed.
 NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
-    "aloha",
-    "vx300s",
-    "wx250s",
-    "trossen_wxai",
-    "dynamixel_2r",
     "open_duck_mini",
     "panda",
     "fr3",
@@ -79,8 +73,18 @@ NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
 #: :class:`~strands_robots.drivers.franka.driver.FrankaDriver` gave the Franka
 #: family a real-mode path, and ``ur5e`` until :class:`~strands_robots.drivers.ur.URDriver`
 #: did the same for the UR arms, which is exactly the transition these two tuples
-#: exist to keep honest. ``xarm7`` takes the slot ``ur5e`` vacated.
-NO_DRIVER_OF_EITHER_KIND = ("shadow_hand", "allegro_hand", "xarm7")
+#: exist to keep honest. ``xarm7`` takes the slot ``ur5e`` vacated. The five
+#: Dynamixel arms sit here until a serial bus gives their codec a driver.
+NO_DRIVER_OF_EITHER_KIND = (
+    "shadow_hand",
+    "allegro_hand",
+    "xarm7",
+    "aloha",
+    "vx300s",
+    "wx250s",
+    "trossen_wxai",
+    "dynamixel_2r",
+)
 
 #: The generic listing's own words, which must be absent from a refusal that has
 #: a better answer and present from one that does not.
@@ -260,9 +264,9 @@ class TestTheHelperReportsRatherThanRaises:
         assert _native_driver_refusal("no-such-robot-anywhere") is None
 
     def test_a_robot_with_a_native_driver_gets_a_reason(self) -> None:
-        reason = _native_driver_refusal("vx300s")
+        reason = _native_driver_refusal("fr3")
         assert reason is not None
-        assert "DynamixelDriver" in reason
+        assert "FrankaDriver" in reason
 
     def test_an_alias_finds_the_same_driver_as_its_canonical_name(self) -> None:
         """The lookup goes through ``resolve_name``, so an alias is not a miss."""
@@ -347,12 +351,7 @@ class TestNothingElseChanged:
 
     @pytest.mark.parametrize("name", ["koch"])
     def test_a_robot_lerobot_can_resolve_is_not_diverted(self, name: str) -> None:
-        """This has both drivers, so the preference is the registry's to declare.
-
-        ``koch`` alone: ``aloha`` held this position on the strength of a
-        ``lerobot_type`` naming two Feetech SO arms, and moved into
-        :data:`NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE` when that went away.
-        """
+        """A robot lerobot resolves fails on its config fields, not with a driver pointer."""
         assert _type_handed_to_lerobot(name) in _lerobot_robot_types()
         refusal = _refusal_for(name)
         assert "driver='strands'" not in refusal

@@ -2,7 +2,7 @@
 
 ``create_policy`` forwards one shared kwargs bag to every provider, so the
 constructor tolerates keys it does not own - the contract ``lerobot_local`` and
-``lerobot_async`` already grade with a WARNING naming the keys. ``Gr00tPolicy``
+``remote`` already grades with a WARNING naming the keys. ``Gr00tPolicy``
 had the same ``**kwargs`` sink and read it nowhere, so ``denoising_steps=8`` (a
 parameter this class once had) or ``strict_key=True`` built a service-mode
 client on the defaults with no line anywhere saying the request was never read.

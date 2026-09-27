@@ -46,12 +46,11 @@ from strands_robots.drivers.registry import (
 #: with the first, and the drift would show up as a robot that resolves to
 #: ``lerobot`` for no reason a reader can see.
 #:
-#: Dynamixel is first because it registers the most robots and its codec has no
-#: optional import that can fail: an ordering mistake then surfaces as the
-#: smaller driver failing after the bigger one rather than the reverse, which
-#: is the easier direction to read.
+#: A driver is listed only once it can move the robots it names: a registered
+#: driver whose every write refuses would hand back a robot that builds and
+#: cannot move. The Dynamixel codec (:mod:`strands_robots.drivers.dynamixel`)
+#: ships without a driver until its serial bus lands.
 _SHIPPED_DRIVERS: tuple[tuple[str, str, tuple[str, ...] | str], ...] = (
-    ("strands_robots.drivers.dynamixel.driver", "DynamixelDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.feetech.driver", "FeetechDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.franka.driver", "FrankaDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.g1", "G1Driver", ("g1", "unitree_g1")),
