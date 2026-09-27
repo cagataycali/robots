@@ -502,7 +502,7 @@ class TestDescribeSaysWhichStartPolicyYouHold:
 # --------------------------------------------------------------------------- #
 def _selected_actions() -> list[str]:
     """Action names from the SimEngine "Selected actions" table in api-reference."""
-    lines = (_DOCS / "api-reference.md").read_text(encoding="utf-8").splitlines()
+    lines = (_DOCS / "reference" / "api-reference.md").read_text(encoding="utf-8").splitlines()
     start = next(i for i, line in enumerate(lines) if line.strip() == "Selected actions:")
     names: list[str] = []
     for line in lines[start:]:
@@ -558,7 +558,7 @@ def _start_policy_claims() -> list[tuple[str, str]]:
         ("SimEngine.start_policy docstring summary line", summary),
         ("SimEngine.start_policy docstring body", body),
     ]
-    for name in ("api-reference.md", "troubleshooting.md"):
+    for name in ("reference/api-reference.md", "reference/troubleshooting.md"):
         for number, line in enumerate((_DOCS / name).read_text(encoding="utf-8").splitlines(), start=1):
             if "start_policy" in line:
                 claims.append((f"docs/{name}:{number}", line))

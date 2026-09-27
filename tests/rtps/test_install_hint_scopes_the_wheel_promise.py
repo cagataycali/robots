@@ -27,7 +27,7 @@ _HEADING = "### Linux aarch64 (Jetson)"
 
 
 def _aarch64_section() -> str:
-    text = (_DOCS / "rtps-integration.md").read_text()
+    text = (_DOCS / "reference" / "rtps-integration.md").read_text()
     assert _HEADING in text, f"{_HEADING!r} is the section every remedy points at"
     return text.split(_HEADING, 1)[1]
 
@@ -78,7 +78,7 @@ def test_the_anchor_resolves_to_a_recipe_with_both_routes() -> None:
     section = _aarch64_section()
     assert "CYCLONEDDS_HOME=/opt/ros/$ROS_DISTRO" in section, "the sourced-distro route"
     assert "eclipse-cyclonedds/cyclonedds" in section, "the build-from-source route"
-    for page in ("ros2-integration.md", "troubleshooting.md"):
+    for page in ("reference/ros2-integration.md", "reference/troubleshooting.md"):
         assert "rtps-integration.md#linux-aarch64-jetson" in (_DOCS / page).read_text(), page
 
 

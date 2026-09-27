@@ -296,7 +296,9 @@ class TestTheDocumentedOrderIsEveryBackendsOrder:
 
     def test_the_randomization_range_order_matches_the_randomization_page(self) -> None:
         names = ("color_range", "friction_range", "mass_range")
-        documented = _documented_call_order("docs/reference/simulation/domain-randomization.md", "sim.randomize(", names)
+        documented = _documented_call_order(
+            "docs/reference/simulation/domain-randomization.md", "sim.randomize(", names
+        )
         assert documented == ["color_range", "friction_range", "mass_range"], documented
         engines = _engines()
         graded = 0

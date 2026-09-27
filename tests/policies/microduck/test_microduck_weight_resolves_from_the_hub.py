@@ -202,7 +202,9 @@ class TestNothingShippedSendsAReaderToTheGoneLayout:
     def test_the_docs_page_names_the_hub_repository_and_not_the_old_directory(self) -> None:
         text = _PAGE.read_text(encoding="utf-8")
         assert MICRODUCK_POLICIES_HF_REPO in text
-        assert not _GONE.search(text), "docs/reference/policies/microduck.md still points at Pollen's removed policies/ dir"
+        assert not _GONE.search(text), (
+            "docs/reference/policies/microduck.md still points at Pollen's removed policies/ dir"
+        )
 
     @pytest.mark.parametrize("example", _EXAMPLES, ids=lambda p: p.name)
     def test_no_example_defaults_to_the_old_directory(self, example: Path) -> None:

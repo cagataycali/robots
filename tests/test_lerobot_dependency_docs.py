@@ -269,8 +269,12 @@ def test_no_userfacing_file_invokes_removed_lerobot_scripts_train() -> None:
 #     * The shard-size claim understated lerobot's defaults: 100 MB is the
 #       data-parquet default; video MP4 shards default to 200 MB. ---
 
-_STREAMED_TRAINING = _REPO_ROOT / "docs" / "reference" / "data" / "reading-back.md"  # the streamed-training page (was README)
-_BUCKET_GUIDANCE = _REPO_ROOT / "docs" / "reference" / "data" / "dataset-recorder.md"  # the sync_to_bucket page (was README)
+_STREAMED_TRAINING = (
+    _REPO_ROOT / "docs" / "reference" / "data" / "reading-back.md"
+)  # the streamed-training page (was README)
+_BUCKET_GUIDANCE = (
+    _REPO_ROOT / "docs" / "reference" / "data" / "dataset-recorder.md"
+)  # the sync_to_bucket page (was README)
 _DATASET_RECORDER = _REPO_ROOT / "strands_robots" / "dataset_recorder.py"
 _DATASET_TRANSFER = _REPO_ROOT / "strands_robots" / "dataset_transfer.py"  # the bucket-sync source
 

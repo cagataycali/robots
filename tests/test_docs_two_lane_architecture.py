@@ -164,9 +164,7 @@ class TestEveryMovedUrlStillResolves:
     """A redirect for each retired URL, pointing at a page that exists."""
 
     def test_every_reference_page_that_moved_has_a_redirect(self) -> None:
-        moved = sorted(
-            p for p in _pages() if p.startswith("reference/") and p not in BORN_IN_REFERENCE
-        )
+        moved = sorted(p for p in _pages() if p.startswith("reference/") and p not in BORN_IN_REFERENCE)
         redirects = _redirects()
         missing = [p for p in moved if redirects.get(p[len("reference/") :]) != p]
         assert not missing, (

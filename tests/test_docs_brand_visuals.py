@@ -50,9 +50,9 @@ def test_brand_svgs_are_valid_animated_xml() -> None:
 def test_docs_pages_embed_their_brand_svg() -> None:
     """Agents, architecture, and mesh pages each embed their SVG via the brand class."""
     pairs = {
-        DOCS / "agents.md": "hero_loop.svg",
-        DOCS / "architecture.md": "architecture_flow.svg",
-        DOCS / "mesh.md": "mesh_network.svg",
+        DOCS / "reference" / "agents.md": "hero_loop.svg",
+        DOCS / "reference" / "architecture.md": "architecture_flow.svg",
+        DOCS / "reference" / "mesh.md": "mesh_network.svg",
     }
     for page, asset in pairs.items():
         text = page.read_text(encoding="utf-8")

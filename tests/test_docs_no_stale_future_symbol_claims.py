@@ -226,7 +226,7 @@ class TestNoDocsPageCallsAShippedSymbolFuture:
         """A clean result must mean the docs are right, not that nothing was read."""
         pages = _docs_pages()
         assert len(pages) > 50, f"only {len(pages)} docs pages were read"
-        assert DOCS_DIR / "policies" / "wbc.md" in pages
+        assert DOCS_DIR / "reference" / "policies" / "wbc.md" in pages
         assert len(_defined_symbols()) > 100, "the package symbol index is suspiciously small"
         # The sweep is exercised on a known bad-shaped sentence rather than on
         # the live tree: a docs tree with no not-yet claim at all is the goal
@@ -269,7 +269,7 @@ class TestTheWBCPagePointsAtTheCompositeSection:
     resolved and read there - but it has to exist and to carry the call.
     """
 
-    _PAGE = DOCS_DIR / "policies" / "wbc.md"
+    _PAGE = DOCS_DIR / "reference" / "policies" / "wbc.md"
 
     @pytest.fixture
     def page(self) -> str:
