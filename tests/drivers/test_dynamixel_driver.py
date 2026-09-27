@@ -1,8 +1,5 @@
 """Tests for :mod:`strands_robots.drivers.dynamixel`.
 
-The codec and the driver are graded apart, so a failure in one does not
-obscure the other.
-
 The codec:
 
 * :class:`TestProtocol` grades the wire format against expected bytes. Every
@@ -15,35 +12,19 @@ The codec:
   frame field, where a value the field cannot hold would otherwise be
   truncated into one it can.
 
-The driver:
+No native driver is registered for a Dynamixel robot until a bus opens the
+port; one table pins that ``driver="strands"`` refuses each of them by name.
 
-* :class:`TestDriver` grades the driver's surface, its stub behaviour, and
-  its refusal envelopes. Nothing here opens a port; every path is exercised
-  by construction, agent-tool invocation, and direct method calls.
-* :class:`TestRegistration` grades which robots resolve to this driver.
-
-Every suite is hardware-free by construction: the codec is pure and the
-driver's I/O paths are stubs.
+Every suite is hardware-free by construction: the codec is pure.
 """
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-
 import pytest
-from strands.types.tools import ToolUse
 
-from strands_robots.drivers import (
-    DRIVER_SURFACE,
-    HardwareDriver,
-    get_native_driver_class,
-    list_native_drivers,
-    missing_driver_members,
-)
+from strands_robots.drivers import get_native_driver_class, list_native_drivers
 from strands_robots.drivers.dynamixel import (
     CONTROL_TABLE,
-    DynamixelDriver,
     Instruction,
     build_packet,
     checksum,
@@ -51,7 +32,6 @@ from strands_robots.drivers.dynamixel import (
     parse_status_packet,
     sync_write_packet,
 )
-from strands_robots.drivers.dynamixel.driver import _NOT_WIRED, SUPPORTED_ROBOTS
 from strands_robots.drivers.dynamixel.protocol import (
     BROADCAST_ID,
     HEADER,
@@ -375,211 +355,40 @@ class TestProtocol:
 
 
 # ============================================================================
-# Driver.
+# No native driver until the bus lands.
 # ============================================================================
 
-
-class TestDriver:
-    """Driver surface tests."""
-
-    # --------------------------- protocol surface ---------------------------
-
-    def test_satisfies_the_hardware_driver_protocol(self) -> None:
-        """Both the class and an instance satisfy every DRIVER_SURFACE member."""
-        assert missing_driver_members(DynamixelDriver) == ()
-        driver = DynamixelDriver(tool_name="koch")
-        assert missing_driver_members(driver) == ()
-        # Structural is enough for the seam; nominal is a stronger claim.
-        assert isinstance(driver, HardwareDriver)
-
-    def test_driver_surface_shape_is_stable(self) -> None:
-        """A regression pin: the surface tuple must include every callable a
-        consumer relies on. If a new member lands, this test says so."""
-        expected = {
-            "cleanup",
-            "get_task_status",
-            "run_policy",
-            "send_action",
-            "start_task",
-            "stop_task",
-            "stream",
-            "tool_name",
-            "tool_spec",
-            "tool_type",
-        }
-        assert expected <= set(DRIVER_SURFACE), f"DRIVER_SURFACE is missing {expected - set(DRIVER_SURFACE)}"
-
-    # ---------------------------- construction ------------------------------
-
-    def test_construction_with_a_single_port(self) -> None:
-        driver = DynamixelDriver(tool_name="koch", port="/dev/tty.usbserial-KOCH")
-        status = asyncio.run(driver.get_status())
-        payload = status["content"][0]["json"]
-        assert payload["ports"] == ["/dev/tty.usbserial-KOCH"]
-        assert payload["baud_rate"] == 1_000_000
-        assert payload["connected"] is False
-
-    def test_construction_with_multiple_ports_bimanual(self) -> None:
-        driver = DynamixelDriver(
-            tool_name="aloha",
-            ports=["/dev/tty.usbserial-A", "/dev/tty.usbserial-B"],
-        )
-        status = asyncio.run(driver.get_status())
-        payload = status["content"][0]["json"]
-        assert payload["ports"] == ["/dev/tty.usbserial-A", "/dev/tty.usbserial-B"]
-
-    def test_port_and_ports_together_is_a_named_refusal(self) -> None:
-        with pytest.raises(ValueError, match="port= for a single bus"):
-            DynamixelDriver(tool_name="aloha", port="/dev/a", ports=["/dev/a", "/dev/b"])
-
-    def test_construction_with_neither_port_nor_ports_is_valid(self) -> None:
-        """The factory constructs before it hands the driver to whoever brings
-        it up. A driver instance with no port is a valid intermediate state."""
-        driver = DynamixelDriver(tool_name="koch")
-        status = asyncio.run(driver.get_status())
-        assert status["content"][0]["json"]["ports"] == []
-
-    def test_tool_name_and_type(self) -> None:
-        driver = DynamixelDriver(tool_name="koch")
-        assert driver.tool_name == "koch"
-        assert driver.tool_type == "robot"
-
-    def test_tool_spec_declares_the_three_read_only_verbs(self) -> None:
-        driver = DynamixelDriver(tool_name="koch")
-        spec = driver.tool_spec
-        assert spec["name"] == "koch"
-        actions = spec["inputSchema"]["json"]["properties"]["action"]["enum"]
-        assert set(actions) == {"status", "sensors", "stop"}
-
-    # --------------------------- refusal envelopes --------------------------
-
-    def test_send_action_refuses_with_the_named_reason(self) -> None:
-        driver = DynamixelDriver(tool_name="koch")
-        result = driver.send_action({"joints": [0.0] * 6})
-        assert result["status"] == "error"
-        assert _NOT_WIRED in result["content"][0]["text"]
-        assert "send_action" in result["content"][0]["text"]
-
-    def test_start_task_refuses(self) -> None:
-        driver = DynamixelDriver(tool_name="koch")
-        result = driver.start_task("do X")
-        assert result["status"] == "error"
-        assert _NOT_WIRED in result["content"][0]["text"]
-
-    def test_run_policy_refuses(self) -> None:
-        driver = DynamixelDriver(tool_name="koch")
-        result = driver.run_policy(policy_object=None)  # type: ignore[arg-type]
-        assert result["status"] == "error"
-        assert _NOT_WIRED in result["content"][0]["text"]
-
-    def test_get_task_status_returns_success_with_empty_flight(self) -> None:
-        driver = DynamixelDriver(tool_name="koch")
-        result = driver.get_task_status()
-        assert result["status"] == "success"
-        assert result["content"][0]["json"]["in_flight"] is False
-
-    def test_stop_task_is_a_success_noop(self) -> None:
-        driver = DynamixelDriver(tool_name="koch")
-        assert driver.stop_task()["status"] == "success"
-
-    def test_cleanup_is_a_no_op(self) -> None:
-        """``cleanup`` is declared ``-> None``, so asserting on its result is a
-        type error rather than a check. Calling it twice is the property worth
-        holding: a teardown that has nothing to release must stay safe to
-        repeat."""
-        driver = DynamixelDriver(tool_name="koch", port="/dev/a")
-        driver.cleanup()
-        driver.cleanup()
-
-    # ------------------------------ connect ---------------------------------
-
-    def test_connect_eagerly_reports_a_named_bus_absence(self) -> None:
-        driver = DynamixelDriver(tool_name="koch", port="/dev/a")
-        reason = driver.connect_eagerly()
-        assert reason == _NOT_WIRED
-
-    def test_connect_eagerly_is_idempotent_on_a_connected_driver(self) -> None:
-        """The G1 driver's contract; this stub follows it so a caller cannot
-        tell the two shapes apart at the ``connect_eagerly`` seam."""
-        driver = DynamixelDriver(tool_name="koch", port="/dev/a")
-        driver._connected = True  # simulate a bus that lands later
-        assert driver.connect_eagerly() is None
-
-    # ------------------------------ stream ----------------------------------
-
-    def _stream_once(self, driver: DynamixelDriver, action: str) -> dict[str, Any]:
-        """Run ``stream`` and return the single event it yields."""
-
-        async def _collect() -> dict[str, Any]:
-            tool_use: ToolUse = {
-                "toolUseId": "abc",
-                "name": driver.tool_name,
-                "input": {"action": action},
-            }
-            events: list[dict[str, Any]] = []
-            async for event in driver.stream(tool_use, invocation_state={}):
-                events.append(event)
-            assert len(events) == 1, f"stream yielded {len(events)} events, expected 1"
-            return events[0]
-
-        return asyncio.run(_collect())
-
-    def test_stream_status_returns_the_get_status_payload(self) -> None:
-        driver = DynamixelDriver(tool_name="koch", port="/dev/a")
-        event = self._stream_once(driver, "status")
-        assert event["toolUseId"] == "abc"
-        assert event["status"] == "success"
-        # ``stream`` wraps ``get_status()`` inside a ``{"json": <envelope>}``
-        # content block, so the shape is content[0].json.content[0].json.tool_name.
-        # This matches the G1 driver's pattern.
-        inner = event["content"][0]["json"]
-        assert inner["content"][0]["json"]["tool_name"] == "koch"
-
-    def test_stream_sensors_names_the_deferred_reason(self) -> None:
-        driver = DynamixelDriver(tool_name="koch")
-        event = self._stream_once(driver, "sensors")
-        assert event["status"] == "success"
-        json_payload = event["content"][0]["json"]
-        assert json_payload["joint_state"] is None
-        assert json_payload["reason"] == _NOT_WIRED
-
-    def test_stream_stop_yields_success(self) -> None:
-        driver = DynamixelDriver(tool_name="koch")
-        event = self._stream_once(driver, "stop")
-        assert event["status"] == "success"
-        assert _NOT_WIRED in event["content"][0]["text"]
+#: The Dynamixel robots the package registry knows. None of them has a native
+#: driver: the codec above is the whole of the native Dynamixel path until a bus
+#: opens the port, so ``driver="strands"`` must refuse rather than build a robot
+#: that cannot read or move a joint.
+DYNAMIXEL_ROBOTS = ("koch", "aloha", "vx300s", "wx250s", "trossen_wxai", "dynamixel_2r")
 
 
-# ============================================================================
-# Registration.
-# ============================================================================
+@pytest.mark.parametrize(
+    ("canonical", "recipe"),
+    [
+        ("koch", "driver='lerobot'"),
+        *((name, "lerobot has no robot type for it either") for name in DYNAMIXEL_ROBOTS[1:]),
+    ],
+)
+def test_a_dynamixel_robot_on_the_native_driver_is_refused_with_the_path_that_moves_it(
+    canonical: str, recipe: str
+) -> None:
+    """``Robot(<dynamixel robot>, mode="real", driver="strands")`` refuses at build.
 
+    A registered driver whose every write refused handed back a robot under
+    ``status=success`` that could not move, so the failure surfaced at the first
+    ``send_action``. The refusal names the path that does move the arm (lerobot,
+    for a robot that declares a lerobot type) or says no shipped driver can.
+    """
+    from strands_robots import Robot
 
-class TestRegistration:
-    """The driver is registered for every robot in :data:`SUPPORTED_ROBOTS`."""
-
-    @pytest.mark.parametrize("canonical", SUPPORTED_ROBOTS)
-    def test_get_native_driver_class_returns_dynamixel_driver(self, canonical: str) -> None:
-        cls = get_native_driver_class(canonical)
-        assert cls is DynamixelDriver, f"expected DynamixelDriver for {canonical!r}, got {cls!r}"
-
-    def test_list_native_drivers_reports_every_supported_robot(self) -> None:
-        listing = list_native_drivers()
-        for canonical in SUPPORTED_ROBOTS:
-            assert listing.get(canonical) == "DynamixelDriver", (
-                f"list_native_drivers() missing or wrong entry for {canonical!r}: {listing!r}"
-            )
-
-    def test_a_robot_this_driver_does_not_serve_is_not_registered_here(self) -> None:
-        """A regression pin: registration must not silently expand to robots
-        this driver has not been verified against. Feetech (:issue:`360`)
-        is the obvious neighbour."""
-        # so101 / so100 / lekiwi are Feetech, not Dynamixel.
-        for canonical in ("so101", "so100", "lekiwi"):
-            cls = get_native_driver_class(canonical)
-            assert cls is not DynamixelDriver, (
-                f"DynamixelDriver must not serve {canonical!r} (that is Feetech, issue #360)"
-            )
+    assert get_native_driver_class(canonical) is None
+    assert canonical not in list_native_drivers()
+    with pytest.raises(ValueError, match="No native driver is registered") as excinfo:
+        Robot(canonical, mode="real", driver="strands", port="/dev/null")
+    assert recipe in str(excinfo.value)
 
 
 # ============================================================================

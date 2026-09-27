@@ -82,9 +82,7 @@ logger = logging.getLogger(__name__)
 # registering for a robot we cannot verify is a promise this driver does not
 # yet keep.
 #
-# Mirrors :data:`~strands_robots.drivers.dynamixel.driver.SUPPORTED_ROBOTS`
-# in shape and spirit: canonical names, deliberately excluding any robot the
-# scope note does not name.
+# Canonical names, deliberately excluding any robot the scope note does not name.
 # ---------------------------------------------------------------------------
 # ``hope_jr`` and ``open_duck_mini`` share the SCS bus but NOT the six-servo
 # SO-arm layout, and no joint map for either is established in this package. A
@@ -358,9 +356,8 @@ class FeetechDriver:
     ) -> AsyncGenerator[Any, None]:
         """Handle one agent invocation and yield exactly one tool result.
 
-        Follows the shape :class:`DynamixelDriver` uses for its own deferred
-        motion path so a caller writes the same error-checking code either
-        way.
+        Follows the shape :class:`~strands_robots.drivers.g1.G1Driver` uses so
+        a caller writes the same error-checking code either way.
         """
         del kwargs  # forward-compat only
         del invocation_state
@@ -757,8 +754,8 @@ class FeetechDriver:
     async def get_status(self) -> dict[str, Any]:
         """Report the driver's construction and configuration.
 
-        Shape matches :meth:`DynamixelDriver.get_status` so both peers publish
-        identically; fields absent on a Feetech bus (an FSM, a battery
+        Shape matches :meth:`~strands_robots.drivers.g1.G1Driver.get_status` so
+        both peers publish identically; fields absent on a Feetech bus (an FSM, a battery
         percentage) are simply not in the payload.
         """
         return {
@@ -807,9 +804,7 @@ class FeetechDriver:
 # ---------------------------------------------------------------------------
 # Envelope helpers. Kept private and one-liner-ish rather than reaching for a
 # shared library, because the shape is small and the tests grade against the
-# literal envelope. Duplicated with :mod:`strands_robots.drivers.dynamixel.driver`
-# on purpose: two drivers with two two-line helpers is smaller than one driver
-# and one shared module that binds their evolution together.
+# literal envelope.
 # ---------------------------------------------------------------------------
 def _twin_robot(tool_name: str, sim: Any, context: str) -> str:
     """Name the registry robot the twin models, or refuse.
