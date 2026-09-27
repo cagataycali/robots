@@ -268,7 +268,7 @@ class CalibrationRun:
             try:
                 os.killpg(self.proc.pid, signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
-                pass
+                pass  # already gone, or not ours to signal: either way there is nothing left to stop
             deadline = time.time() + 3
             while self.alive() and time.time() < deadline:
                 time.sleep(0.05)
@@ -276,7 +276,7 @@ class CalibrationRun:
                 try:
                     os.killpg(self.proc.pid, signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):
-                    pass
+                    pass  # same as the SIGTERM above
 
     def close(self) -> None:
         """Cancel and release the pty."""
@@ -284,7 +284,7 @@ class CalibrationRun:
         try:
             os.close(self._master)
         except OSError:
-            pass
+            pass  # the pty master may already be closed by the child's exit
 
     def status(self) -> dict[str, Any]:
         """The wizard view right now: identity, liveness, the current step and the output tail."""

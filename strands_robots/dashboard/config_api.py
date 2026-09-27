@@ -153,7 +153,7 @@ def upsert_env_file(updates: dict[str, str]) -> list[str]:
     try:
         os.chmod(ENV_FILE, 0o600)
     except OSError:
-        pass
+        pass  # best effort: a filesystem that refuses modes (some mounts) still holds the file
     return list(updates)
 
 
@@ -193,7 +193,7 @@ def delete_env_keys(keys: Sequence[str]) -> list[str]:
         try:
             os.chmod(ENV_FILE, 0o600)
         except OSError:
-            pass
+            pass  # best effort, as above
     return removed
 
 

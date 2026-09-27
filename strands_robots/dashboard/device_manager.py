@@ -34,9 +34,6 @@ LOG_TAIL_LINES = 200  # ring buffer per managed robot
 # : How long /api/devices/spawn watches a new child before answering.
 SPAWN_SETTLE_S = float(os.environ.get("STRANDS_DASHBOARD_SPAWN_SETTLE_S", "5") or 5)
 
-# : Lines that name a *consequence*, not the cause.
-_CONSEQUENCE_MARKERS = ("cleanup error", "during handling of the above")
-
 # Where USB device profiles live.
 DEFAULT_PROFILES_PATH = os.path.join(Path.home(), ".strands_dashboard", "profiles.json")
 
@@ -374,7 +371,6 @@ def scan_camera_names() -> list[dict[str, Any]]:
     """
     names: list[dict[str, Any]] = []
     if sys.platform == "darwin":
-        import re
         import shutil
 
         ffmpeg = shutil.which("ffmpeg") or next(
@@ -1002,8 +998,16 @@ def validate_replay(repo_id: Any, episode: Any, root: Any = None, speed: Any = 1
     if root is not None:
         if not isinstance(root, str) or not root.strip():
             return {"error": f"root must be a path string, got {type(root).__name__}"}
-        if not os.path.isdir(os.path.expanduser(root)):
-            return {"error": f"root {root!r} does not exist on this machine - a replay from it can only fail"}
+        # Containment before existence, and one sentence either way: a caller who names a
+        # directory outside the dataset home learns nothing about whether it is there.
+        from strands_robots.dataset_source import _lerobot_home
+
+        home = os.path.normpath(os.path.realpath(os.path.expanduser(str(_lerobot_home()))))
+        candidate = os.path.normpath(os.path.realpath(os.path.expanduser(root.strip())))
+        if candidate != home and not candidate.startswith(home + os.sep):
+            return {"error": "root must live under the dataset home ($HF_LEROBOT_HOME)"}
+        if not os.path.isdir(candidate):
+            return {"error": "root does not exist under the dataset home - a replay from it can only fail"}
     return None
 
 
@@ -1605,7 +1609,7 @@ class DeviceManager:
         try:
             readings = json.loads(proc.stdout or "{}")
         except json.JSONDecodeError:
-            pass
+            pass  # no readings: role_verdict({}) below says the bus answered nothing usable
         verdict = arm_roles.role_verdict(readings)
         verdict["port"] = port
         if verdict["role"] == "unknown" and proc.stderr:

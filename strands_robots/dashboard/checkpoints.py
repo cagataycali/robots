@@ -417,7 +417,7 @@ def declared_features(repo_id: str) -> dict[str, Any]:
             if art is not None:
                 candidates.append(art)
     except OSError:
-        pass
+        pass  # an unreadable output dir contributes no candidates; the ledger still lists the job
 
     # 2. the HF cache snapshot for an org/name repo id
     try:
@@ -427,7 +427,7 @@ def declared_features(repo_id: str) -> dict[str, Any]:
             if snaps:
                 candidates.append(snaps[-1])
     except OSError:
-        pass
+        pass  # an unreadable Hub cache contributes no candidates
 
     for d in candidates:
         for fname in ("config.json", "train_config.json"):

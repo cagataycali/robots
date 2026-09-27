@@ -218,20 +218,25 @@ async def run_voice_session(ws: Any, *, bridge: Any = None) -> None:
     import json
     import queue as _queue
 
+    # The bidi event vocabulary is experimental and has been renamed between SDK
+    # releases (``BidiAudioStreamEvent`` became ``BidiAudioDeltaEvent``, and so on).
+    # Resolve the input class by candidate name and classify output events by the
+    # ``type`` string they all carry, so a rename is a no-op here rather than an
+    # ImportError at the first spoken word.
+    import strands.experimental.bidi.types.events as _bidi_events
     from starlette.websockets import WebSocketDisconnect
 
-    try:
-        from strands.experimental.bidi.types.events import (
-            BidiAudioInputEvent,
-            BidiAudioStreamEvent,
-            BidiTranscriptStreamEvent,
-        )
-    except ImportError:
-        BidiTranscriptStreamEvent = None  # type: ignore[assignment,misc]
-        from strands.experimental.bidi.types.events import (  # type: ignore[no-redef]
-            BidiAudioInputEvent,
-            BidiAudioStreamEvent,
-        )
+    audio_input_cls: Any = next(
+        (getattr(_bidi_events, n) for n in ("BidiAudioInputEvent",) if hasattr(_bidi_events, n)), None
+    )
+    if audio_input_cls is None:
+        raise ImportError("strands.experimental.bidi has no audio input event this dashboard knows how to send")
+
+    def _event_type(event: Any) -> str:
+        try:
+            return str(event.get("type", "") if hasattr(event, "get") else getattr(event, "type", ""))
+        except Exception:  # noqa: BLE001 - an event that cannot say its type is not one we forward
+            return ""
 
     in_q: asyncio.Queue[bytes] = asyncio.Queue()
     stop_evt = asyncio.Event()
@@ -270,7 +275,7 @@ async def run_voice_session(ws: Any, *, bridge: Any = None) -> None:
 
         async def __call__(self) -> Any:
             data = await in_q.get()
-            return BidiAudioInputEvent(
+            return audio_input_cls(
                 audio=base64.b64encode(data).decode(),
                 channels=self._cfg.get("channels", 1),
                 format=self._cfg.get("format", "pcm"),
@@ -286,9 +291,10 @@ async def run_voice_session(ws: Any, *, bridge: Any = None) -> None:
             pass
 
         async def __call__(self, event: Any) -> None:
-            if isinstance(event, BidiAudioStreamEvent):
+            kind = _event_type(event)
+            if kind.startswith("bidi_audio") and hasattr(event, "get") and event.get("audio"):
                 await ws.send_text(json.dumps({"type": "audio", "data": event["audio"]}))
-            elif BidiTranscriptStreamEvent is not None and isinstance(event, BidiTranscriptStreamEvent):
+            elif kind.startswith("bidi_transcript") and hasattr(event, "get") and event.get("text") is not None:
                 try:
                     await ws.send_text(
                         json.dumps(
