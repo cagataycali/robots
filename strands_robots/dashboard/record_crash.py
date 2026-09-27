@@ -34,7 +34,8 @@ def write_crumb(session: Mapping[str, Any], *, path: Path | None = None, now: fl
                     "opened_at": now if now is not None else time.time(),
                     "pid": os.getpid(),
                 }
-            )
+            ),
+            encoding="utf-8",
         )
     except Exception:  # noqa: BLE001
         pass
@@ -54,7 +55,7 @@ def read_crumb(path: Path | None = None) -> dict[str, Any] | None:
     try:
         if not p.exists():
             return None
-        data = json.loads(p.read_text())
+        data = json.loads(p.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) and data.get("dataset") else None
     except Exception:  # noqa: BLE001 - a corrupt crumb is no evidence, not an error
         return None

@@ -164,7 +164,7 @@ def remember_dataset_root(root: str) -> None:
         with _LOCK:
             roots: list[str] = []
             if ROOTS_FILE.exists():
-                data = json.loads(ROOTS_FILE.read_text())
+                data = json.loads(ROOTS_FILE.read_text(encoding="utf-8"))
                 if isinstance(data, list):
                     roots = data
             if root not in roots:
@@ -177,7 +177,7 @@ def remember_dataset_root(root: str) -> None:
 def _remembered_roots() -> list[Path]:
     try:
         if ROOTS_FILE.exists():
-            data = json.loads(ROOTS_FILE.read_text())
+            data = json.loads(ROOTS_FILE.read_text(encoding="utf-8"))
             if isinstance(data, list):
                 return [Path(r) for r in data]
     except Exception:  # noqa: BLE001
@@ -359,10 +359,19 @@ def _spec_kwargs(body: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str,
     """(kwargs, None) for a clean body, (None, error-result) for a bad one."""
     unknown = sorted(k for k in body if k not in SPEC_KEYS and k != "action")
     if unknown:
+        # A train_policy parameter this form leaves out is refused with the
+        # reason it was left out, so the operator learns where it belongs.
+        why = [f"{k} ({_NOT_IN_FORM[k]})" for k in unknown if k in _NOT_IN_FORM]
         return None, {
             "status": "error",
             "data": {},
-            "text": ("unknown field(s): " + ", ".join(unknown) + ". Valid fields: " + ", ".join(SPEC_KEYS)),
+            "text": (
+                "unknown field(s): "
+                + ", ".join(unknown)
+                + ". Valid fields: "
+                + ", ".join(SPEC_KEYS)
+                + (". Not offered by this form: " + "; ".join(why) if why else "")
+            ),
         }
     return {k: body[k] for k in SPEC_KEYS if body.get(k) is not None}, None
 
@@ -498,7 +507,7 @@ def local_datasets(query: str = "") -> list[dict[str, Any]]:
                 seen.add(str(d))
                 meta: dict[str, Any] = {}
                 try:
-                    raw = json.loads(info.read_text())
+                    raw = json.loads(info.read_text(encoding="utf-8"))
                     meta = {
                         "total_episodes": raw.get("total_episodes"),
                         "total_frames": raw.get("total_frames"),

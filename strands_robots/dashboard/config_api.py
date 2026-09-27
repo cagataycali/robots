@@ -113,7 +113,7 @@ def read_env_file() -> dict[str, str]:
     try:
         if not ENV_FILE.exists():
             return out
-        for line in ENV_FILE.read_text().splitlines():
+        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith("#") or "=" not in stripped:
                 continue
@@ -137,7 +137,7 @@ def upsert_env_file(updates: dict[str, str]) -> list[str]:
             raise ValueError(problem)
     lines: list[str] = []
     if ENV_FILE.exists():
-        lines = ENV_FILE.read_text().splitlines()
+        lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
     remaining = dict(updates)
     for i, line in enumerate(lines):
         stripped = line.strip()
@@ -149,7 +149,7 @@ def upsert_env_file(updates: dict[str, str]) -> list[str]:
     for key, value in remaining.items():
         lines.append(f"{key}={value}")
     ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    ENV_FILE.write_text("\n".join(lines) + "\n")
+    ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
     try:
         os.chmod(ENV_FILE, 0o600)
     except OSError:
@@ -180,7 +180,7 @@ def delete_env_keys(keys: Sequence[str]) -> list[str]:
         return []
     kept: list[str] = []
     removed: list[str] = []
-    for line in ENV_FILE.read_text().splitlines():
+    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#") and "=" in stripped:
             key = stripped.partition("=")[0].strip()
@@ -189,7 +189,7 @@ def delete_env_keys(keys: Sequence[str]) -> list[str]:
                 continue
         kept.append(line)
     if removed:
-        ENV_FILE.write_text("\n".join(kept) + ("\n" if kept else ""))
+        ENV_FILE.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
         try:
             os.chmod(ENV_FILE, 0o600)
         except OSError:

@@ -206,7 +206,7 @@ async def dataset_labels(root: str | None = None, path: str | None = None) -> di
 
     total: int | None = None
     try:
-        total = json.loads((target / "meta" / "info.json").read_text()).get("total_episodes")
+        total = json.loads((target / "meta" / "info.json").read_text(encoding="utf-8")).get("total_episodes")
     except Exception:  # noqa: BLE001 - a dataset mid-recording has no readable info.json yet
         pass
 

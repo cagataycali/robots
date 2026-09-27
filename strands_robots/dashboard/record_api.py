@@ -61,7 +61,7 @@ def _target_facts(dataset: str) -> dict[str, Any]:
         meta = (d / "meta" / "info.json").exists()
         episodes = None
         if meta:
-            episodes = _as_int(json.loads((d / "meta" / "info.json").read_text()).get("total_episodes"))
+            episodes = _as_int(json.loads((d / "meta" / "info.json").read_text(encoding="utf-8")).get("total_episodes"))
         return {
             "exists": True,
             "has_meta": meta,

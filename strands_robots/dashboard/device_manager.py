@@ -406,7 +406,7 @@ def scan_camera_names() -> list[dict[str, Any]]:
         for path in sorted(glob.glob("/sys/class/video4linux/video*/name")):
             try:
                 idx = int(path.split("video")[-1].split("/")[0])
-                with open(path) as f:
+                with open(path, encoding="utf-8") as f:
                     names.append({"listing_index": idx, "name": f.read().strip()})
             except (OSError, ValueError):
                 continue

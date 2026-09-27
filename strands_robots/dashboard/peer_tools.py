@@ -157,7 +157,7 @@ def _sim_input_schema() -> dict[str, Any]:
     """The MuJoCo published-action schema, with wire-refused actions removed."""
     global _sim_schema_cache
     if _sim_schema_cache is None:
-        raw = json.loads(_SIM_SPEC_PATH.read_text())
+        raw = json.loads(_SIM_SPEC_PATH.read_text(encoding="utf-8"))
         actions = [a for a in raw["properties"]["action"]["enum"] if a not in SIM_CALL_BLOCKED]
         schema = json.loads(json.dumps(raw))  # deep copy; the file is trusted JSON
         schema["properties"]["action"]["enum"] = actions

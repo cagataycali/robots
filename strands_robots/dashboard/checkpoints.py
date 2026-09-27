@@ -140,7 +140,7 @@ def local_checkpoints(query: str = "") -> list[dict[str, Any]]:
             if cfg.exists():
                 import json
 
-                data = json.loads(cfg.read_text())
+                data = json.loads(cfg.read_text(encoding="utf-8"))
                 # lerobot policy configs carry "type"; transformers configs
                 # carry "model_type" - only the former is runnable here.
                 policy_type = data.get("type")
@@ -345,7 +345,7 @@ def trained_checkpoints(query: str = "") -> list[dict[str, Any]]:
 
             cfg = artifact / "config.json"
             if cfg.exists():
-                policy_type = _json.loads(cfg.read_text()).get("type")
+                policy_type = _json.loads(cfg.read_text(encoding="utf-8")).get("type")
         except Exception:  # noqa: BLE001 - unreadable config -> still list it
             pass
         out.append(
@@ -435,7 +435,7 @@ def declared_features(repo_id: str) -> dict[str, Any]:
             try:
                 if not f.exists():
                     continue
-                data = json.loads(f.read_text())
+                data = json.loads(f.read_text(encoding="utf-8"))
             except Exception:  # noqa: BLE001 - unreadable config = no evidence
                 continue
             if not isinstance(data, dict):
@@ -464,7 +464,7 @@ def _declared_norm_tags(d: Path) -> list[str]:
     try:
         if not f.exists():
             return []
-        data = json.loads(f.read_text())
+        data = json.loads(f.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - unreadable stats = no evidence, same as an absent config
         return []
     if not isinstance(data, dict):
