@@ -86,6 +86,7 @@ implemented by it.
 | `rtc_observed_delay_steps` (attribute) | no | `None` |
 | `reads_instruction` (class attribute) | no | `True` - declare `False` when the instruction never shapes the actions (the task envelopes then say so) |
 | `instruction_free_actions` (class attribute) | no | `None` - with `reads_instruction = False`, the words the envelope uses for your actions (`"a test motion on every joint"` on the mock); `None` names no motion |
+| `requires_action_controller` (class attribute) | no | `None` - the reason a rollout needs a controller the engine installs; an engine that cannot install it refuses with this text |
 
 `preflight` is the fail-fast seam: the simulation, the hardware task path
 (`Robot(..., mode="real").start_task`) and a native driver's own `start_task`

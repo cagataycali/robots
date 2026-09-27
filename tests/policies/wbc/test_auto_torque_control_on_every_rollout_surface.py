@@ -7,7 +7,7 @@
 servos directly and the gait diverged within a fraction of a second - the
 documented quickstart silently fell over.
 
-The fix gives the MuJoCo engine a ``_maybe_install_wbc_torque_control`` hook
+The fix gives the MuJoCo engine a ``_maybe_install_action_controller`` hook
 that a rollout surface invokes after binding the policy: when a WBCPolicy meets
 a position-servo scene it auto-installs the torque shim for the duration of the
 call and restores the actuators afterwards. The opt-out is the
@@ -148,19 +148,23 @@ _XML_NO_WBC_JOINTS = """
 
 
 def _hook_no_op_guards() -> int:
-    """Count the hook's ``return None`` early-outs by AST.
+    """Count the hook's early-outs by AST: ``return None`` or a defer to the base.
 
     The hook's only other exit returns the cleanup callable, so this is exactly
     the number of conditions under which it declines to touch the scene.
     """
     from strands_robots.simulation.mujoco.simulation import Simulation
 
-    src = textwrap.dedent(inspect.getsource(Simulation._maybe_install_wbc_torque_control))
+    src = textwrap.dedent(inspect.getsource(Simulation._maybe_install_action_controller))
     fn = ast.parse(src).body[0]
     return sum(
         1
         for node in ast.walk(fn)
-        if isinstance(node, ast.Return) and isinstance(node.value, ast.Constant) and node.value.value is None
+        if isinstance(node, ast.Return)
+        and (
+            (isinstance(node.value, ast.Constant) and node.value.value is None)
+            or (isinstance(node.value, ast.Call) and "super()" in ast.unparse(node.value))
+        )
     )
 
 
@@ -208,7 +212,7 @@ class TestAutoInstallHook:
         assert int(mujoco.mjtBias.mjBIAS_AFFINE) in driven_before  # stock = servo
 
         with caplog.at_level(logging.INFO):
-            cleanup = sim._maybe_install_wbc_torque_control(policy, "unitree_g1")
+            cleanup = sim._maybe_install_action_controller(policy, "unitree_g1")
 
         assert callable(cleanup), "expected a cleanup callable when shim is installed"
         assert "auto-installed WBC torque control" in caplog.text
@@ -238,7 +242,7 @@ class TestAutoInstallHook:
         model, data = _build_g1_model()
         sim = _mujoco_sim_with_world(model, data)
 
-        cleanup = sim._maybe_install_wbc_torque_control(_g1_policy(), "unitree_g1")
+        cleanup = sim._maybe_install_action_controller(_g1_policy(), "unitree_g1")
         assert callable(cleanup)
         controller = sim._world._backend_state["action_controller"]
         driven = controller.leg_waist_actuator_ids[0]
@@ -251,7 +255,7 @@ class TestAutoInstallHook:
         assert "action_controller" not in sim._world._backend_state
 
         # ... so the next rollout on the same sim installs the shim again.
-        again = sim._maybe_install_wbc_torque_control(_g1_policy(), "unitree_g1")
+        again = sim._maybe_install_action_controller(_g1_policy(), "unitree_g1")
         assert callable(again), "the second rollout must get the shim too"
         assert int(model.actuator_biastype[driven]) == int(mujoco.mjtBias.mjBIAS_NONE)
         again()
@@ -266,7 +270,7 @@ class TestAutoInstallHook:
         model, data = _build_g1_model()
         sim = _mujoco_sim_with_world(model, data)
 
-        cleanup = sim._maybe_install_wbc_torque_control(_g1_policy(), "unitree_g1")
+        cleanup = sim._maybe_install_action_controller(_g1_policy(), "unitree_g1")
         assert callable(cleanup)
         sentinel = object()
         sim._world._backend_state["action_controller"] = sentinel
@@ -279,26 +283,26 @@ class TestAutoInstallHook:
         model, data = _build_g1_model()
         sim = _mujoco_sim_with_world(model, data)
         sim._world._backend_state["action_controller"] = object()  # manual install wins
-        assert sim._maybe_install_wbc_torque_control(_g1_policy(), "unitree_g1") is None
+        assert sim._maybe_install_action_controller(_g1_policy(), "unitree_g1") is None
 
     def test_skips_for_non_wbc_policy(self) -> None:
         model, data = _build_g1_model()
         sim = _mujoco_sim_with_world(model, data)
-        assert sim._maybe_install_wbc_torque_control(MockPolicy(), "unitree_g1") is None
+        assert sim._maybe_install_action_controller(MockPolicy(), "unitree_g1") is None
         assert "action_controller" not in sim._world._backend_state
 
     def test_skips_when_the_wbc_extra_is_absent(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
         # A minimal install has no [wbc] extra, so the hook's import fails and
         # run_policy must carry on unchanged rather than raise out of binding.
         premise = _mujoco_sim_with_world(*_build_g1_model())
-        assert callable(premise._maybe_install_wbc_torque_control(_g1_policy(), "unitree_g1")), (
+        assert callable(premise._maybe_install_action_controller(_g1_policy(), "unitree_g1")), (
             "premise: this pair installs the shim while [wbc] is importable"
         )
 
         sim = _mujoco_sim_with_world(*_build_g1_model())
         policy = _g1_policy()  # built while the extra is still importable
         monkeypatch.setitem(sys.modules, "strands_robots.policies.wbc", None)
-        assert sim._maybe_install_wbc_torque_control(policy, "unitree_g1") is None
+        assert sim._maybe_install_action_controller(policy, "unitree_g1") is None
         assert "action_controller" not in sim._world._backend_state
 
     def test_skips_without_a_world(self) -> None:
@@ -306,7 +310,7 @@ class TestAutoInstallHook:
 
         sim = Simulation()
         assert sim._world is None, "premise: a bare engine has no world yet"
-        assert sim._maybe_install_wbc_torque_control(_g1_policy(), "unitree_g1") is None
+        assert sim._maybe_install_action_controller(_g1_policy(), "unitree_g1") is None
 
     def test_skips_when_the_world_has_no_compiled_model(self) -> None:
         from strands_robots.simulation.mujoco.simulation import Simulation
@@ -319,7 +323,7 @@ class TestAutoInstallHook:
         world = _FakeWorld(None, None, "")
         sim._world = world  # type: ignore[assignment]
         assert world._model is None
-        assert sim._maybe_install_wbc_torque_control(_g1_policy(), "unitree_g1") is None
+        assert sim._maybe_install_action_controller(_g1_policy(), "unitree_g1") is None
         assert "action_controller" not in world._backend_state
 
     def test_skips_when_the_driven_actuators_are_already_torque_motors(self) -> None:
@@ -336,7 +340,7 @@ class TestAutoInstallHook:
             assert int(model.actuator_biastype[ai]) == int(mujoco.mjtBias.mjBIAS_NONE)
         assert wbc_uses_position_servo(cast(SimEngine, sim), _g1_policy(), "unitree_g1") is False
 
-        assert sim._maybe_install_wbc_torque_control(_g1_policy(), "unitree_g1") is None
+        assert sim._maybe_install_action_controller(_g1_policy(), "unitree_g1") is None
         assert "action_controller" not in sim._world._backend_state
 
     def test_skips_when_no_wbc_joint_resolves_in_the_scene(self) -> None:
@@ -344,7 +348,7 @@ class TestAutoInstallHook:
         sim = _mujoco_sim_with_world(model, mujoco.MjData(model))
         assert wbc_uses_position_servo(cast(SimEngine, sim), _g1_policy(), "unitree_g1") is False
 
-        assert sim._maybe_install_wbc_torque_control(_g1_policy(), "unitree_g1") is None
+        assert sim._maybe_install_action_controller(_g1_policy(), "unitree_g1") is None
         assert "action_controller" not in sim._world._backend_state
 
 
@@ -379,7 +383,7 @@ class TestAutoInstallHookThroughWrappers:
 
         sim = self._sim()
         composite = CompositePolicy(lower=_g1_policy(), upper=MockPolicy())
-        undo = sim._maybe_install_wbc_torque_control(composite, "unitree_g1")
+        undo = sim._maybe_install_action_controller(composite, "unitree_g1")
         assert undo is not None, "a WBCPolicy inside a CompositePolicy still needs the torque shim"
         assert isinstance(sim._world._backend_state["action_controller"], WBCTorqueController)
         undo()
@@ -392,7 +396,7 @@ class TestAutoInstallHookThroughWrappers:
         sim = self._sim()
         wbc = _g1_policy()
         composite = CompositePolicy(lower=wbc, upper=MockPolicy())
-        undo = sim._maybe_install_wbc_torque_control(composite, "unitree_g1")
+        undo = sim._maybe_install_action_controller(composite, "unitree_g1")
         assert undo is not None
         controller = cast(WBCTorqueController, sim._world._backend_state["action_controller"])
         assert controller.policy is wbc
@@ -403,7 +407,7 @@ class TestAutoInstallHookThroughWrappers:
 
         sim = self._sim()
         wbc = _g1_policy()
-        undo = sim._maybe_install_wbc_torque_control(PersistentPolicy("wbc", policy_object=wbc), "unitree_g1")
+        undo = sim._maybe_install_action_controller(PersistentPolicy("wbc", policy_object=wbc), "unitree_g1")
         assert undo is not None, "a WBCPolicy held warm by a PersistentPolicy still needs the torque shim"
         assert cast(WBCTorqueController, sim._world._backend_state["action_controller"]).policy is wbc
         undo()
@@ -415,7 +419,7 @@ class TestAutoInstallHookThroughWrappers:
 
         sim = self._sim()
         composite = CompositePolicy(lower=MockPolicy(), upper=MockPolicy())
-        assert sim._maybe_install_wbc_torque_control(composite, "unitree_g1") is None
+        assert sim._maybe_install_action_controller(composite, "unitree_g1") is None
         assert "action_controller" not in sim._world._backend_state
 
     def test_wbc_nested_two_wrappers_deep_is_still_found(self) -> None:
@@ -425,7 +429,7 @@ class TestAutoInstallHookThroughWrappers:
         sim = self._sim()
         wbc = _g1_policy()
         nested = CompositePolicy(lower=PersistentPolicy("wbc", policy_object=wbc), upper=MockPolicy())
-        undo = sim._maybe_install_wbc_torque_control(nested, "unitree_g1")
+        undo = sim._maybe_install_action_controller(nested, "unitree_g1")
         assert undo is not None
         assert cast(WBCTorqueController, sim._world._backend_state["action_controller"]).policy is wbc
         undo()
@@ -568,11 +572,41 @@ class TestABackendThatCannotInstallTheShimRefusesInsteadOfFalling:
     def test_the_mujoco_engine_installs_rather_than_reports(self) -> None:
         """The override wins: a backend that can install one never refuses."""
         sim = _mujoco_sim_with_world(*_build_g1_model())
-        outcome = sim._maybe_install_wbc_torque_control(_g1_policy(), "unitree_g1")
+        outcome = sim._maybe_install_action_controller(_g1_policy(), "unitree_g1")
 
         assert not isinstance(outcome, str), outcome
         assert callable(outcome)
         outcome()
+
+
+class _NeedsAController(MockPolicy):
+    """A non-WBC policy that declares a controller no shipped engine installs."""
+
+    requires_action_controller = "it needs the example controller."
+
+
+class TestTheRequirementIsReadFromThePolicyNotTheEngine:
+    """The base engine refuses on the policy's declaration, not on its class.
+
+    Keyed on ``isinstance(p, WBCPolicy)``, the backend-agnostic base knew one
+    policy family by name and let any other policy that needs a controller roll
+    out without it - on every engine, MuJoCo included for a policy MuJoCo cannot
+    serve either.
+    """
+
+    @pytest.mark.parametrize("engine", ["other", "mujoco"])
+    @pytest.mark.parametrize("shape", ["bare", "composite"])
+    def test_a_declared_controller_no_engine_installs_is_refused(self, engine: str, shape: str) -> None:
+        from strands_robots.policies.composite import CompositePolicy
+
+        policy = _NeedsAController()
+        if shape == "composite":
+            policy = CompositePolicy(lower=policy, upper=MockPolicy())  # type: ignore[assignment]
+        sim = _OtherBackendSim() if engine == "other" else _mujoco_sim_with_world(*_build_g1_model())
+        outcome = sim._maybe_install_action_controller(policy, "unitree_g1")
+
+        assert isinstance(outcome, str), outcome
+        assert "_NeedsAController" in outcome and "it needs the example controller." in outcome, outcome
 
 
 # ---------------------------------------------------------------------------
@@ -742,7 +776,7 @@ class TestEveryRolloutSurfaceReadsTheOneInstaller:
         call site reaching past it is the shape this module's defect had.
         """
         src = inspect.getsource(SimEngine)
-        assert src.count("self._maybe_install_wbc_torque_control(") == 1, (
-            "_maybe_install_wbc_torque_control has readers other than _install_action_controller; route them through it"
+        assert src.count("self._maybe_install_action_controller(") == 1, (
+            "_maybe_install_action_controller has readers other than _install_action_controller; route them through it"
         )
         assert src.count("self._install_action_controller(") == len(_SURFACES)

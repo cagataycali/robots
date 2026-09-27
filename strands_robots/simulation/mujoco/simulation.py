@@ -3480,10 +3480,10 @@ class MuJoCoSimEngine(
         except Exception as exc:  # noqa: BLE001 - non-fatal (mirrors set_robot_state_keys)
             logger.debug("bind_policy_sim_context(%s) failed: %s", robot_name, exc)
 
-    def _maybe_install_wbc_torque_control(self, policy: Any, robot_name: str) -> Callable[[], None] | None:
+    def _maybe_install_action_controller(self, policy: Any, robot_name: str) -> Callable[[], None] | str | None:
         """Auto-install the WBC torque shim when a WBCPolicy drives a servo scene.
 
-        Overrides :meth:`SimEngine._maybe_install_wbc_torque_control`. WBC emits
+        Overrides :meth:`SimEngine._maybe_install_action_controller`. WBC emits
         joint-position targets; on the stock position-servo Unitree G1 those
         targets fight the uniform ``kp=500`` servo gain and override SONIC's
         tuned per-joint PD, so ``sim.run_policy(policy_provider="wbc")`` would
@@ -3532,7 +3532,8 @@ class MuJoCoSimEngine(
         # WBCPolicy. Walk the declared tree instead of type-testing the argument.
         wbc_policy = next((p for p in iter_policy_tree(policy) if isinstance(p, WBCPolicy)), None)
         if wbc_policy is None:
-            return None
+            # Any other declared controller is one this engine cannot install.
+            return super()._maybe_install_action_controller(policy, robot_name)
         world = self._world
         if world is None or world._model is None:
             return None
