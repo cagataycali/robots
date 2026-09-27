@@ -54,7 +54,8 @@ extra_css:
   - stylesheets/extra.css
 
 extra_javascript:
-  - assets/viewer/robot-viewer.js
+  - path: assets/viewer/robot-viewer.js
+    type: module
 
 extra:
   generator: false

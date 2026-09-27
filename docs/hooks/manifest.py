@@ -31,6 +31,18 @@ _CDN = "https://cdn.jsdelivr.net/gh"
 _GITHUB_REFS: dict[str, str] = {}
 
 
+def _lfs_url(name: str, asset: dict) -> str | None:
+    """GitHub's LFS media endpoint for the same directory; jsDelivr serves LFS pointers, not blobs."""
+    source = asset.get("source") or {"type": "menagerie"}
+    if source.get("type") == "menagerie":
+        return f"https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/{MENAGERIE_REF}/{asset['dir']}/"
+    if source.get("type") == "github" and source.get("repo"):
+        ref = _GITHUB_REFS.get(name, source.get("ref") or "main")
+        subdir = source.get("subdir", "").strip("/")
+        return f"https://media.githubusercontent.com/media/{source['repo']}/{ref}/{subdir}/" if subdir else f"https://media.githubusercontent.com/media/{source['repo']}/{ref}/"
+    return None
+
+
 def _base_url(name: str, asset: dict) -> str | None:
     """Where the robot's asset directory is served from, with a trailing slash."""
     source = asset.get("source") or {"type": "menagerie"}
@@ -61,6 +73,7 @@ def build_manifest() -> dict:
             "real": bool(spec.get("hardware")),
             "driver": (spec.get("hardware") or {}).get("driver"),
             "base_url": base,
+            "lfs_url": _lfs_url(name, asset) if base else None,
             "scene": asset.get("scene_xml") if base else None,
             "model": asset.get("model_xml") if base else None,
             "thumbnail": f"assets/img/robots/{name}.webp" if thumb.exists() else None,
