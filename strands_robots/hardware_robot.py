@@ -2748,6 +2748,61 @@ class Robot(TeleopMixin, AgentTool):
             ],
         }
 
+    def _preflight(
+        self,
+        method: str,
+        *,
+        duration: Any,
+        n_steps: Any = None,
+        builds_policy: bool = False,
+        policy_provider: Any = None,
+        policy_port: Any = None,
+        policy_kwargs: Mapping[str, Any] | None = None,
+        claim: str | None = None,
+    ) -> dict[str, Any] | None:
+        """The one admission chain every command entry point runs, in one order.
+
+        Shut down, ``duration``, ``n_steps``, then - when the policy is built from
+        the registry rather than handed in - provider, port and required
+        keywords, and last the bus claim. Each step is the ``_*_error`` method
+        named for it; this fixes their order and which apply, so ``start_task``,
+        ``run_policy``, ``execute_task`` and the agent tool's pre-approval check
+        cannot drift apart, and the next check is added once.
+        The stateless checks run before the claim, so a refused call never takes
+        the bus from a rollout that could still start.
+
+        Args:
+            method: Public entry point name, used to prefix every refusal.
+            duration: Wall-clock budget to judge.
+            n_steps: Step cap to judge; ``None`` requests no cap.
+            builds_policy: Whether the policy is built from ``policy_provider``;
+                ``False`` for a pre-built ``policy_object``.
+            policy_provider: Provider name, judged when ``builds_policy``.
+            policy_port: Port, judged when ``builds_policy``.
+            policy_kwargs: Checkpoint keywords, judged when ``builds_policy``.
+            claim: Instruction to claim the motors bus for; ``None`` checks only.
+
+        Returns:
+            The first refusal, or ``None``. With ``claim`` given, ``None`` means
+            the caller now owns the bus and must release it via
+            :meth:`_drive_claimed_task` or :meth:`_release_task`.
+        """
+        if err := self._shutdown_error(method):
+            return err
+        if err := self._duration_error(duration, method):
+            return err
+        if err := self._n_steps_error(n_steps, method):
+            return err
+        if builds_policy:
+            # Provider first: the port and keyword checks read its registry entry.
+            if err := self._policy_provider_error(policy_provider, method):
+                return err
+            if err := self._policy_port_error(policy_port, method, policy_provider):
+                return err
+            if err := self._policy_requires_error(policy_provider, dict(policy_kwargs or {}), method):
+                return err
+        return None if claim is None else self._claim_task(claim)
+
     def _claim_task(self, instruction: str) -> dict[str, Any] | None:
         """Claim the motors bus for one rollout, or refuse a concurrent one.
 
@@ -2831,33 +2886,16 @@ class Robot(TeleopMixin, AgentTool):
             Tool-shaped result for the finished rollout, or an error naming the
             offending parameter.
         """
-        # Validated here as well as at the public methods below: a peer-supplied
-        # budget is refused before the arm is commanded rather than after. The
-        # check is stateless, so it runs before the claim - a rejected budget
-        # must not take the bus away from a rollout that could still start.
-        if err := self._shutdown_error("execute_task"):
-            return err
-        if err := self._duration_error(duration, "execute_task"):
-            return err
-        if err := self._n_steps_error(n_steps, "execute_task"):
-            return err
-        # Same reasoning one parameter over: a port no policy can be built from
-        # is refused before the arm is connected rather than after. Gated on
-        # ``policy_object``, because a pre-built policy makes the port inert -
-        # ``_execute_task_async`` never reads it on that path - and refusing a
-        # value the call ignores would be a false rejection.
-        # Gated on ``policy_object`` for the same reason the port is: a
-        # pre-built policy is never resolved from the provider name, so
-        # refusing an unresolvable one would be a false rejection.
-        if policy_object is None and (err := self._policy_provider_error(policy_provider, "execute_task")):
-            return err
-        if policy_object is None and (err := self._policy_port_error(policy_port, "execute_task", policy_provider)):
-            return err
-        if policy_object is None and (
-            err := self._policy_requires_error(policy_provider, policy_kwargs, "execute_task")
+        if err := self._preflight(
+            "execute_task",
+            duration=duration,
+            n_steps=n_steps,
+            builds_policy=policy_object is None,
+            policy_provider=policy_provider,
+            policy_port=policy_port,
+            policy_kwargs=policy_kwargs,
+            claim=instruction,
         ):
-            return err
-        if err := self._claim_task(instruction):
             return err
 
         return self._drive_claimed_task(
@@ -3039,38 +3077,18 @@ class Robot(TeleopMixin, AgentTool):
             executor and bridges are gone, so a rollout started now would
             command the arm zero times.
         """
-        # Before the submit: the work happens on a background thread, so a
-        # budget checked inside it would still report "Task started" to the
-        # caller for a task that commands nothing (or never ends).
-        # Checked before the budget and before the claim: once ``cleanup()`` has
-        # run, the executor submit below raises ``RuntimeError`` from inside
-        # concurrent.futures, which names an executor internal rather than the
-        # robot. Refusing here reports it in the same tool shape as the other
-        # two entry points.
-        if err := self._shutdown_error("start_task"):
-            return err
-        if err := self._duration_error(duration, "start_task"):
-            return err
-        # Unconditional here, unlike ``_execute_task_sync``: this entry point
-        # takes no ``policy_object``, so the port is always the only thing a
-        # policy can be built from. Pre-fix every unusable value returned
-        # "Task started" and failed on the executor thread after the arm was
-        # already connected.
-        # Unconditional here for the same reason the port check is: this
-        # entry point takes no ``policy_object``, so the provider name is
-        # always what the policy is resolved from.
-        if err := self._policy_provider_error(policy_provider, "start_task"):
-            return err
-        if err := self._policy_port_error(policy_port, "start_task", policy_provider):
-            return err
-        if err := self._policy_requires_error(policy_provider, policy_kwargs, "start_task"):
-            return err
-
-        # Claim the bus here, not on the executor thread: this method returns
-        # before its job begins, so a claim taken inside the job would report
-        # "Task started" to a second caller and only then turn it away, with
-        # nobody left to tell.
-        if err := self._claim_task(instruction):
+        # Judged and claimed here, not on the executor thread: this method
+        # returns before its job begins, so a refusal raised inside the job
+        # would follow a "Task started" with nobody left to tell.
+        if err := self._preflight(
+            "start_task",
+            duration=duration,
+            builds_policy=True,
+            policy_provider=policy_provider,
+            policy_port=policy_port,
+            policy_kwargs=policy_kwargs,
+            claim=instruction,
+        ):
             return err
 
         # Start task in background. The claim is released by
@@ -3183,13 +3201,7 @@ class Robot(TeleopMixin, AgentTool):
                 "status": "error",
                 "content": [{"text": "policy_object is required (for the provider+port path use start_task)"}],
             }
-        if err := self._shutdown_error("run_policy"):
-            return err
-        if err := self._duration_error(duration, "run_policy"):
-            return err
-        if err := self._n_steps_error(n_steps, "run_policy"):
-            return err
-        if err := self._claim_task(instruction):
+        if err := self._preflight("run_policy", duration=duration, n_steps=n_steps, claim=instruction):
             return err
 
         self._drive_claimed_task(instruction, duration=duration, policy_object=policy_object, n_steps=n_steps)
@@ -3672,45 +3684,6 @@ class Robot(TeleopMixin, AgentTool):
         """Create a ToolResult dict with the given tool_use_id merged into result."""
         return cast(ToolResult, {"toolUseId": tool_use_id, **result})
 
-    def _pre_gate_error(
-        self, action: str, policy_port: Any, policy_provider: str, duration: Any
-    ) -> dict[str, Any] | None:
-        """The input checks that decide a command's fate with no operator and no hardware.
-
-        ``execute``/``start`` ask the operator before dispatch, and the
-        dispatcher (:meth:`execute_task` / :meth:`start_task`) then checks
-        the inputs. Every check here is a pure function of the call and of
-        this object - a shut-down robot, a duration that is not a positive
-        number, a ``policy_port`` outside 1-65535 or missing for a provider
-        that needs one - so a call that fails one was never going to move
-        the arm. Asking first would spend an approval on nothing and leave
-        the operator reading an error under the "y" they just typed, with
-        the agent's corrected retry costing a second round. Run them before
-        the gate; the dispatcher runs them again, which is defence in depth,
-        not a second answer.
-
-        Args:
-            action: ``"execute"`` or ``"start"``; names the dispatcher the
-                refusal speaks for.
-            policy_port: As supplied by the tool input.
-            policy_provider: As supplied by the tool input.
-            duration: As supplied by the tool input.
-
-        Returns:
-            The dispatcher's error envelope, or None when the call reaches
-            the operator.
-        """
-        method = "execute_task" if action == "execute" else "start_task"
-        if err := self._shutdown_error(method):
-            return err
-        if err := self._duration_error(duration, method):
-            return err
-        # Before the port check, which cannot judge a port for a provider it
-        # cannot resolve - see _policy_provider_error.
-        if err := self._policy_provider_error(policy_provider, method):
-            return err
-        return self._policy_port_error(policy_port, method, policy_provider)
-
     def _gate_motion(
         self, action: str, tool_input: Mapping[str, Any], tool_use: ToolUse, invocation_state: Mapping[str, Any]
     ) -> str | None:
@@ -3886,33 +3859,31 @@ class Robot(TeleopMixin, AgentTool):
                 result = await asyncio.to_thread(self._observe, action, input_data)
                 yield ToolResultEvent(self._make_tool_result(tool_use_id, result))
 
-            elif action == "execute":
-                # Blocking execution (legacy behavior)
+            elif action in ("execute", "start"):
                 instruction = input_data.get("instruction", "")
                 policy_port = input_data.get("policy_port")
                 policy_host = input_data.get("policy_host", "localhost")
                 policy_provider = input_data.get("policy_provider", "groot")
                 duration = input_data.get("duration", 30.0)
+                method = "execute_task" if action == "execute" else "start_task"
 
-                # Only ``instruction`` is judged here. Whether a ``policy_port``
-                # is missing, unusable or unread is the named provider's call
-                # (``mock`` and ``lerobot_local`` build without one), and the
-                # dispatcher below asks :meth:`_policy_port_error` that.
+                # Only ``instruction`` is judged here; whether a port is needed is
+                # the named provider's call, which the preflight below asks.
                 if not instruction:
-                    yield ToolResultEvent(
-                        self._make_tool_result(
-                            tool_use_id,
-                            {
-                                "status": "error",
-                                "content": [{"text": "instruction is required for execute action"}],
-                            },
-                        )
-                    )
+                    missing = {"status": "error", "content": [{"text": f"instruction is required for {action} action"}]}
+                    yield ToolResultEvent(self._make_tool_result(tool_use_id, missing))
                     return
 
-                # A call the dispatcher would refuse on its inputs alone is
-                # refused here, before the operator is asked to approve it.
-                if err := self._pre_gate_error(action, policy_port, policy_provider, duration):
+                # The dispatcher's own preflight, without the claim, before the
+                # operator is asked: a call it would refuse on its inputs alone
+                # must not spend an approval. The dispatcher runs it again.
+                if err := self._preflight(
+                    method,
+                    duration=duration,
+                    builds_policy=True,
+                    policy_provider=policy_provider,
+                    policy_port=policy_port,
+                ):
                     yield ToolResultEvent(self._make_tool_result(tool_use_id, err))
                     return
 
@@ -3932,55 +3903,9 @@ class Robot(TeleopMixin, AgentTool):
                     )
                     return
 
-                # Execute task synchronously
-                task_result = self._execute_task_sync(instruction, policy_port, policy_host, policy_provider, duration)
-                yield ToolResultEvent(self._make_tool_result(tool_use_id, task_result))
-
-            elif action == "start":
-                # Asynchronous execution start
-                instruction = input_data.get("instruction", "")
-                policy_port = input_data.get("policy_port")
-                policy_host = input_data.get("policy_host", "localhost")
-                policy_provider = input_data.get("policy_provider", "groot")
-                duration = input_data.get("duration", 30.0)
-
-                # Only ``instruction`` is judged here. Whether a ``policy_port``
-                # is missing, unusable or unread is the named provider's call
-                # (``mock`` and ``lerobot_local`` build without one), and the
-                # dispatcher below asks :meth:`_policy_port_error` that.
-                if not instruction:
-                    yield ToolResultEvent(
-                        self._make_tool_result(
-                            tool_use_id,
-                            {
-                                "status": "error",
-                                "content": [{"text": "instruction is required for start action"}],
-                            },
-                        )
-                    )
-                    return
-
-                if err := self._pre_gate_error(action, policy_port, policy_provider, duration):
-                    yield ToolResultEvent(self._make_tool_result(tool_use_id, err))
-                    return
-
-                try:
-                    refusal = self._gate_motion(action, input_data, tool_use, invocation_state)
-                except InterruptException as exc:
-                    yield ToolInterruptEvent(tool_use, [exc.interrupt])
-                    return
-                if refusal is not None:
-                    yield ToolResultEvent(
-                        self._make_tool_result(
-                            tool_use_id,
-                            {"status": "error", "content": [{"text": f"{self.tool_name_str}: {refusal}"}]},
-                        )
-                    )
-                    return
-
-                # Start task asynchronously
-                start_result = self.start_task(instruction, policy_port, policy_host, policy_provider, duration)
-                yield ToolResultEvent(self._make_tool_result(tool_use_id, start_result))
+                dispatch = self._execute_task_sync if action == "execute" else self.start_task
+                result = dispatch(instruction, policy_port, policy_host, policy_provider, duration)
+                yield ToolResultEvent(self._make_tool_result(tool_use_id, result))
 
             elif action == "status":
                 # Get current task status
