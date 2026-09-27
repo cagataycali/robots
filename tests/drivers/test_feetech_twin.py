@@ -672,6 +672,15 @@ class TestLifecycle:
             Robot("so101", mode="real", driver="strands", transport="twin", mesh=False)
         assert engine.destroyed is True
 
+    def test_a_constructor_refusal_destroys_the_factory_built_engine(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import strands_robots.simulation as sim_module
+
+        engine = _FakeEngine("so101")
+        monkeypatch.setattr(sim_module, "create_simulation", lambda *a, **k: engine)
+        with pytest.raises(ValueError, match="realtime"):
+            Robot("so101", mode="real", driver="strands", transport="twin", realtime="yes", mesh=False)
+        assert engine.destroyed is True
+
     def test_a_refusal_from_the_model_is_the_drivers_refusal(self, twin, engine) -> None:
         engine.refuse = "No robots in the world."
         reply = _invoke(twin, action="move_to", targets={"shoulder_pan": 1.0})

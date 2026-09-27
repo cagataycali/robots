@@ -429,17 +429,26 @@ def _build_native_driver(
 
     # The twin transport steps an engine that is built here, one layer above the
     # driver, so no driver imports the simulation package.
+    # An engine built here is destroyed if the constructor then refuses, since
+    # the caller never receives a handle to it.
+    engine: Simulation | None = None
     if kwargs.get("transport") == "twin" and kwargs.get("sim") is None and "sim" in accepted:
-        kwargs = {**kwargs, "sim": _build_twin_engine(canonical, getattr(driver_cls, "twin_keyframe", None))}
+        engine = _build_twin_engine(canonical, getattr(driver_cls, "twin_keyframe", None))
+        kwargs = {**kwargs, "sim": engine}
 
     # The constructor contract documented on strands_robots.drivers.base: the
     # three keywords every driver takes, and the keywords it declares itself.
     # ``robot=`` is deliberately NOT forwarded - it carries the lerobot type
     # name, which means nothing to a driver that does not go through lerobot.
-    return cast(
-        "HardwareDriver",
-        driver_cls(tool_name=tool_name or canonical, cameras=cameras, data_config=data_config, **kwargs),
-    )
+    try:
+        return cast(
+            "HardwareDriver",
+            driver_cls(tool_name=tool_name or canonical, cameras=cameras, data_config=data_config, **kwargs),
+        )
+    except BaseException:
+        if engine is not None:
+            engine.destroy()
+        raise
 
 
 @overload
