@@ -171,7 +171,7 @@ def require_peer(request: Request, peer_id: str) -> None:
 
 
 @router.get("/fleet")
-async def fleet(request: Request, _: dict = Depends(access.require_session)) -> dict[str, Any]:
+async def fleet(request: Request, mode: str = "all", _: dict = Depends(access.require_session)) -> dict[str, Any]:
     """The whole fleet as the mesh sees it, plus whether the mesh is delivering at all.
 
     Roles ride along inside ``snapshot()`` (``bridge.peer_annotations``), so this
@@ -192,8 +192,16 @@ async def fleet(request: Request, _: dict = Depends(access.require_session)) -> 
         getattr(app.state, "mesh_ingest_prev", None),
         stale_after=PEER_STALE_S,
     )
+    from strands_robots.dashboard.fleet import registry_robots
+    from strands_robots.registry.robots import LIST_ROBOTS_MODES
+
+    if mode not in LIST_ROBOTS_MODES:
+        raise HTTPException(400, f"mode must be one of {', '.join(LIST_ROBOTS_MODES)}")
+    robots = registry_robots(mode)
     out: dict[str, Any] = {
         **snapshot,
+        "robots": robots,
+        "count": len(robots),
         "mesh_online": bool(getattr(app.state, "mesh_online", False)),
         "dashboard_peer_id": bridge.peer_id,
         "peer_count": len(snapshot.get("peers") or {}),

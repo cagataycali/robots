@@ -1,23 +1,34 @@
 """The dashboard app: ``create_app()`` and nothing that is not routing.
 
-Every decision that matters is made by a module that landed on its own with its
-own tests - :mod:`.auth` (who may sign in), :mod:`.access` (who may call),
-:mod:`.settings` (what may be configured), :mod:`.log_redaction` (what a log may
-say), :mod:`.safety_state` (what an e-stop means). This file wires them to
-paths. A route that does not take ``access.require_session`` is public on
-purpose, and there are exactly three: the login screen's ``/api/auth/status``,
-the ceremonies it drives, and ``/api/health`` which says only that the process
-is up and what version it is.
+Every decision that matters is made by a module that landed on its own -
+:mod:`.auth` (who may sign in), :mod:`.access` (who may call), :mod:`.settings`
+(what may be configured), :mod:`.log_redaction` (what a log may say),
+:mod:`.safety_state` (what an e-stop means), :mod:`.consent` (what a refusal
+offers). This file wires them to paths. A route that does not take
+``access.require_session`` is public on purpose, and there are exactly three: the
+login screen's ``/api/auth/status``, the ceremonies it drives, and
+``/api/health`` which says only that the process is up and what version it is.
 
-The static UI is plain files under ``static/`` served by this process: no build
-step, so it ships in the wheel and works offline. Later slices add a router each
-(fleet, sim, agent) and register it in :func:`create_app`.
+One router per concern, each in its own module, each with an optional
+``attach(app)`` that puts its state on ``app.state`` and appends the work it
+needs at startup and shutdown to ``app.state.startup_hooks`` /
+``app.state.shutdown_hooks``; the lifespan below runs those lists in order.
+Order matters once: :mod:`.routes_mesh` goes before :mod:`.fleet` so the
+literal ``/api/robots/registry`` outranks ``/api/robots/{name}``, and before
+:mod:`.routes_devices` / :mod:`.routes_record` so the bridge exists when they
+attach.
+
+The UI is the built operator SPA committed under ``static/`` (source in
+``frontend/``; rebuild with ``cd strands_robots/dashboard/frontend && npm ci &&
+npm run build``). No node at runtime: it ships in the wheel and works offline.
 """
 
 from __future__ import annotations
 
 import contextlib
+import inspect
 import logging
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -26,7 +37,21 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from strands_robots.dashboard import access, fleet, log_redaction, routes_agent, routes_auth, routes_sim, settings
+from strands_robots.dashboard import (
+    access,
+    fleet,
+    log_redaction,
+    routes_agent,
+    routes_auth,
+    routes_config,
+    routes_devices,
+    routes_mesh,
+    routes_record,
+    routes_sim,
+    routes_train,
+    routes_voice,
+    settings,
+)
 from strands_robots.dashboard.sim_session import SessionStore
 
 logger = logging.getLogger(__name__)
@@ -36,6 +61,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 # What a settings read may return. `security.auth_token` is a secret: the UI
 # only needs to know whether one is set.
 _SECRET_KEYS = {("security", "auth_token")}
+_SPA_PATH = re.compile(r"(?!\.)[A-Za-z0-9._-]+(?:/(?!\.)[A-Za-z0-9._-]+)*")
 
 
 def _version() -> str:
@@ -60,10 +86,25 @@ def redacted_settings(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, An
     return out
 
 
+async def _run_hooks(app: FastAPI, name: str) -> None:
+    """Run every callable a router left in ``app.state.<name>``; one failing hook is logged, not fatal."""
+    for hook in list(getattr(app.state, name, None) or []):
+        try:
+            result = hook()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:  # noqa: BLE001 - the dashboard stays up without that subsystem
+            logger.exception("%s hook %s failed", name, getattr(hook, "__qualname__", hook))
+
+
 @contextlib.asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    yield
-    app.state.safety.store.shutdown()
+    await _run_hooks(app, "startup_hooks")
+    try:
+        yield
+    finally:
+        await _run_hooks(app, "shutdown_hooks")
+        app.state.safety.store.shutdown()
 
 
 def create_app() -> FastAPI:
@@ -91,11 +132,28 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, Any]:
         return {"ok": True, "version": _version(), "service": "strands-robots dashboard"}
 
+    app.state.startup_hooks = []
+    app.state.shutdown_hooks = []
     app.include_router(routes_auth.router)
+    app.include_router(routes_mesh.router)
+    routes_mesh.attach(app)
     app.include_router(fleet.router)
     app.include_router(routes_sim.router)
     app.include_router(routes_agent.router)
     app.state.safety = routes_sim.Safety(SessionStore())
+    app.include_router(routes_devices.router)
+    routes_devices.attach(app)
+    app.include_router(routes_record.router)
+    routes_record.attach(app)
+    app.include_router(routes_train.router)
+    routes_train.attach(app)
+    app.include_router(routes_config.router)
+    app.include_router(routes_voice.router)
+    # The bridge tells the fleet apart from processes this dashboard spawned itself.
+    devices = app.state.devices
+    app.state.bridge.protected_peer_ids = lambda: {pid for pid, m in list(devices.robots.items()) if m.alive()}
+    app.state.bridge.peer_annotations = devices.annotations_by_peer
+    app.state.bridge.managed_children = devices.managed_children
 
     @app.get("/api/settings")
     async def get_settings(_: dict = Depends(access.require_session)) -> dict[str, Any]:
@@ -118,9 +176,19 @@ def create_app() -> FastAPI:
 
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+        index_html = STATIC_DIR / "index.html"
 
         @app.get("/", include_in_schema=False)
         async def index() -> FileResponse:
-            return FileResponse(STATIC_DIR / "index.html")
+            return FileResponse(index_html)
+
+        @app.get("/{path:path}", include_in_schema=False)
+        async def spa(path: str) -> FileResponse:
+            # Client-side routes reload to the same document. The request path is
+            # only compared, never joined to a filesystem path: anything that is
+            # not a plain SPA segment list, or that names an API, is a 404.
+            if not _SPA_PATH.fullmatch(path) or path.split("/", 1)[0] in ("api", "ws", "static"):
+                raise HTTPException(404, "not found")
+            return FileResponse(index_html)
 
     return app

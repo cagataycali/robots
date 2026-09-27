@@ -1,5 +1,5 @@
 ---
-description: The operator dashboard - one process on your machine that shows the fleet, runs a simulated robot you can watch, and puts a Strands Agent behind consent cards.
+description: The operator dashboard - one process that joins the mesh, sees every robot and camera, records datasets, trains and deploys policies, and puts a Strands Agent (typed or spoken) behind consent cards.
 ---
 
 # Dashboard
@@ -38,21 +38,37 @@ python -m strands_robots dashboard --host 0.0.0.0 --port 8090
 
 ## What is on the page
 
+The page is the operator SPA (React, built and committed under
+`strands_robots/dashboard/static/`; no node at runtime). One process serves it
+and joins the Zenoh mesh as a robot-less gateway, so the same page drives real
+hardware, simulators, or a mix.
+
 | Tab | What it shows | Where the rules live |
 |---|---|---|
-| Fleet | every robot the registry knows, sim and real, whether its sim asset is already on this disk, and the mesh peers when the `[mesh]` extra is installed - a read of what is here; the page fetches nothing | `strands_robots.registry` |
+| Fleet | every live mesh peer with its joints, cameras, task and lockout state, plus every robot the registry knows; teleop pairing (leader / follower) and a per-robot task form | `dashboard.routes_mesh`, `dashboard.mesh_bridge`, `dashboard.peer_tools` |
+| Devices | the serial ports and cameras on this machine; spawn a robot process for a port (it joins the mesh as a managed child), assign cameras, read its log, despawn it | `dashboard.routes_devices`, `dashboard.device_manager`, `dashboard.bus_claim` |
+| Record | a LeRobot dataset session: pick arms and cameras, start / stop / redo / discard episodes, thumbnails, labels, close and optionally upload | `dashboard.routes_record`, `dashboard.record_api` |
+| Train | datasets and trainers, a graded job form, live loss, checkpoints search, policy validation against a robot, a deploy snippet | `dashboard.routes_train`, `dashboard.training`, `dashboard.checkpoints`, `dashboard.deploy` |
+| Calibrate | the LeRobot calibration wizard for an arm, step by step, with the port owner and a confirm before the arm moves | `dashboard.calibration_run` |
 | Sim | a MuJoCo robot stepping in this process - an MJPEG stream and the same model in your browser. Or a **mirror**: that twin posed from the real arm's servo bus, read and never written | `strands_robots.simulation`, `dashboard.mirror` |
-| Agent | a Strands Agent whose tools are the simulations on this page; anything that moves a robot pauses on a consent card | `dashboard.agent_console`, `dashboard.agent_hitl`, `dashboard.consent` |
-| Settings | the file `~/.strands_robots/dashboard/settings.json` - agent model, mesh endpoints, static token (shown only as set / unset) | `dashboard.settings` |
+| Agent | a Strands Agent over the fleet and the simulations; anything that moves a robot pauses on a consent card. The microphone button opens the voice operator | `dashboard.agent_console`, `dashboard.agent_hitl`, `dashboard.voice` |
+| Settings | agent model and prompt, mesh endpoints, voice provider, the `.env` keys the page may edit, static token (shown only as set / unset) | `dashboard.settings`, `dashboard.config_api` |
 
-Each tab has an address - `#fleet`, `#sim`, `#agent`, `#settings`. Bookmark one
-and it opens there; Back and Forward move between the tabs you visited.
+Each tab has an address - `#fleet`, `#devices`, `#record`, `#train`, `#sim`,
+`#agent`, `#settings`. Bookmark one and it opens there.
 
-Every string a route serves is rendered as text, never as markup: a Fleet row can
-carry a mesh peer's name, and script running in this page would be same-origin -
-it carries the session cookie and names this origin as its own, so it is behind
-every guard above by construction. `tests/test_dashboard_static_renders_data_as_text.py`
-reads that rule off the files the wheel ships.
+Every path a client names - a dataset root, an output directory, a checkpoint -
+is resolved and must sit under its home (`HF_LEROBOT_HOME`,
+`STRANDS_TRAIN_OUTPUT_DIR`, the Hub cache); anything else is refused with one
+sentence that does not say whether the path exists.
+
+## Two e-stops
+
+`/api/safety/estop` stops the simulations this process runs. `/api/mesh/safety/estop`
+is the signed fleet stop: it reaches every peer, and its answer says how many
+replied and which did not (`responses_received`, `peers_not_stopped`), so a stop
+that reached nobody never reads like one that reached everyone. The page fires
+both when the mesh is online.
 
 ## The Agent tab
 
@@ -126,6 +142,13 @@ render: the session reports **error** and the port is released.
 | `DASHBOARD_AUTH_TOKEN` | unset | a static bearer for scripts; a passkey session is still needed to remove a passkey |
 | `DASHBOARD_SETTINGS_FILE` | `~/.strands_robots/dashboard/settings.json` | where Settings are written |
 | `STRANDS_MODEL_ID` | the model the installed SDK defaults to | which Bedrock model the Agent tab talks to |
+| `STRANDS_MESH` | on | `false` keeps this process off the mesh entirely; the fleet tab then shows the registry only |
+| `HF_LEROBOT_HOME` | `~/.cache/huggingface/lerobot` | the dataset home every record / replay / label path must sit under |
+| `STRANDS_ROBOTS_DATA_DIRS` | unset | extra dataset roots, colon separated, admitted next to the home |
+| `STRANDS_TRAIN_OUTPUT_DIR` | `~/.strands_robots/training` | where training jobs may write |
+| `STRANDS_DASH_AGENT_PHYSICAL_MOTION` | unset | the standing grant that lets a task or calibration move real hardware without a confirm; leave unset unless the operator is watching |
+| `VOICE_PROVIDER` / `VOICE_NAME` | `openai` | the speech-to-speech provider behind `/ws/voice` (`openai`, `nova_sonic`, `gemini`) |
+| `DASHBOARD_ENV_FILE` | `.env` | the file Settings writes env keys to |
 
 Every auth duration knob (`STRANDS_DASH_AUTH_TOKEN_TTL`, `SESSION_MAX_AGE`,
 `HANDOFF_TTL`) is documented in the [configuration reference](configuration.md);
