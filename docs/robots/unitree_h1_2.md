@@ -25,6 +25,6 @@ Aliases `Robot()` accepts: `h1_2`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Model: [google-deepmind/mujoco_menagerie/h1_2_description](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/h1_2_description), scene `h1_2.xml`.
+Model: [unitreerobotics/unitree_ros/robots/h1_2_description](https://github.com/unitreerobotics/unitree_ros/tree/267182b8521c8d6a631bab1fe63836873237a525/robots/h1_2_description), scene `h1_2.xml`.
 
 Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

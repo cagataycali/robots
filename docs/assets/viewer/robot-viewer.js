@@ -171,6 +171,7 @@ class RobotViewer extends HTMLElement {
     if (this._state !== "idle") return;
     if (!e) return this._fail(`No robot named "${this.getAttribute("name")}" in the registry.`);
     if (!e.sim) return this._fail(`${e.description} has no simulation model, so there is nothing to render.`);
+    if (!e.viewer) return this._fail(`${e.description} simulates locally, but its model has no public source to stream from.`);
     const thumb = e.thumbnail ? `<img alt="" src="${new URL("../../" + e.thumbnail, import.meta.url)}">` : "";
     p.innerHTML = `${thumb}<div class="card"><h4>${e.description}</h4><p>${e.joints ?? "?"} joints. Runs MuJoCo in your browser. Meshes stream from ${this._sourceLabel()}.</p><button data-act="load">Load 3D</button></div>`;
     p.hidden = false;
@@ -222,7 +223,7 @@ class RobotViewer extends HTMLElement {
       if (!this._entry) {
         const m = await loadManifest();
         this._entry = m.robots[this.getAttribute("name")] ?? null;
-        if (!this._entry?.sim) throw new Error(`no simulation model for "${this.getAttribute("name")}"`);
+        if (!this._entry?.viewer) throw new Error(`no streamable model for "${this.getAttribute("name")}"`);
       }
       const e = this._entry;
       this.$(".poster").hidden = true;

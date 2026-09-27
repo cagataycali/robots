@@ -25,6 +25,6 @@ Aliases `Robot()` accepts: `jvrc1`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Model: [google-deepmind/mujoco_menagerie/jvrc_mj_description](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/jvrc_mj_description), scene `xml/jvrc1.xml`.
+Model: [isri-aist/jvrc_mj_description](https://github.com/isri-aist/jvrc_mj_description/tree/0f0ce7daefdd66c54e0909a6bf2c22154844f5f3), scene `xml/jvrc1.xml`.
 
 Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

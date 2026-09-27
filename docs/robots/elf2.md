@@ -25,6 +25,6 @@ Aliases `Robot()` accepts: `bxi_elf2`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Model: [google-deepmind/mujoco_menagerie/xml](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/xml), scene `scene.xml`.
+Model: [bxirobotics/robot_models/elf2_dof25/xml](https://github.com/bxirobotics/robot_models/tree/eabe24ce937f8e633077a163b883e92e8996c36e/elf2_dof25/xml), scene `scene.xml`.
 
 Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

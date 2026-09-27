@@ -25,6 +25,6 @@ Aliases `Robot()` accepts: `rby1a`, `rainbow_rby1`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Model: [google-deepmind/mujoco_menagerie/mujoco](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/mujoco), scene `model.xml`.
+Model: [uynitsuj/rby1_description/models/rby1a/mujoco](https://github.com/uynitsuj/rby1_description/tree/e4c07203aa0a0d1b6b3b39da105cb00a77e2bc72/models/rby1a/mujoco), scene `model.xml`.
 
 Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

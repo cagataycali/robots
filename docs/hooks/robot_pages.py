@@ -380,7 +380,10 @@ def robot_page(name: str) -> str:
         intro = f"`{name}` is registered by name and alias, with no simulation asset and no driver at this commit."
     lines += [intro, ""]
     if sim:
-        lines += [f'<robot-viewer name="{name}"></robot-viewer>', ""]
+        if entry.get("viewer"):
+            lines += [f'<robot-viewer name="{name}"></robot-viewer>', ""]
+        else:
+            lines += ["The model has no public source to stream, so this page has no 3D view; the thumbnail is a local render.", ""]
         lines += ["```python", "from strands_robots import Robot", "", f'robot = Robot("{name}")', "```", ""]
     if cov.real:
         lines += [

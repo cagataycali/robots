@@ -35,6 +35,6 @@ Aliases `Robot()` accepts: `enactic_openarm`, `open_arm`, `openarm_v10`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Model: [google-deepmind/mujoco_menagerie/enactic_openarm](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/enactic_openarm), scene `scene.xml`.
+Model: [enactic/openarm_mujoco/v1](https://github.com/enactic/openarm_mujoco/tree/cd30dd4c0a97832d1c063bf759514ed18fbe04a5/v1), scene `scene.xml`.
 
 Back to [Arms](arm/index.md) or the [catalog](index.md).

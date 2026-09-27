@@ -25,6 +25,6 @@ Aliases `Robot()` accepts: `a1`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Model: [google-deepmind/mujoco_menagerie/unitree_a1](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_a1), scene `xml/a1.xml`.
+Model: [unitreerobotics/unitree_mujoco/data/a1](https://github.com/unitreerobotics/unitree_mujoco/tree/f3300ff1bf0ab9efbea0162717353480d9b05d73/data/a1), scene `xml/a1.xml`.
 
 Back to [Mobile bases](mobile/index.md) or the [catalog](index.md).

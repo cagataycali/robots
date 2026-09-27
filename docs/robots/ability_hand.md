@@ -25,6 +25,6 @@ Aliases `Robot()` accepts: `psyonic_ability_hand`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Model: [google-deepmind/mujoco_menagerie/mujoco_xml](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/mujoco_xml), scene `scene.xml`.
+Model: [psyonicinc/ability-hand-api/python/ah_simulators/mujoco_xml](https://github.com/psyonicinc/ability-hand-api/tree/89407424edfc22faceaedcd7c3ea2b7947cbbb2c/python/ah_simulators/mujoco_xml), scene `scene.xml`.
 
 Back to [Hands and grippers](hand/index.md) or the [catalog](index.md).
