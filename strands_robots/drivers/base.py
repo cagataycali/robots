@@ -340,6 +340,18 @@ def drifted_driver_parameters(candidate: object) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(drifted))
 
 
+def refuse(reason: str) -> dict[str, Any]:
+    """Wrap ``reason`` in the error envelope every driver verb returns on refusal.
+
+    Args:
+        reason: Text naming what refused.
+
+    Returns:
+        ``{"status": "error", "content": [{"text": reason}]}``.
+    """
+    return {"status": "error", "content": [{"text": reason}]}
+
+
 def halt_failure_detail(envelope: dict[str, Any]) -> str | None:
     """Read why a halt did not complete, or ``None`` when it did.
 
@@ -417,17 +429,10 @@ def undeclared_verb_error(driver: Any, action: Any) -> dict[str, Any]:
     Returns:
         A ``status="error"`` envelope naming the action and every declared verb.
     """
-    return {
-        "status": "error",
-        "content": [
-            {
-                "text": (
-                    f"{type(driver).__name__}: unknown action {refusal_repr(action)}; "
-                    f"declared verbs are {declared_verbs(driver.tool_spec)}"
-                )
-            }
-        ],
-    }
+    return refuse(
+        f"{type(driver).__name__}: unknown action {refusal_repr(action)}; "
+        f"declared verbs are {declared_verbs(driver.tool_spec)}"
+    )
 
 
 def policy_step(

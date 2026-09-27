@@ -87,7 +87,7 @@ def _refusal_envelope(text: str) -> dict[str, Any]:
 
     Kept as a small free helper so every ``action``-refusal path in this
     module renders the same shape a caller can grep for, matching the
-    driver's own :func:`~strands_robots.drivers.g1._refuse` free
+    driver's own :func:`~strands_robots.drivers.base.refuse` free
     function on the write side.
     """
     return {"status": "error", "content": [{"text": text}]}

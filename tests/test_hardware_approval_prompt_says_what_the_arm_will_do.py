@@ -93,9 +93,9 @@ class TestTheSentenceTheOperatorApproves:
 
     def test_the_budget_is_dropped_not_crashed_for_a_value_the_pre_gate_refuses(self, arm, monkeypatch) -> None:
         """A ``duration`` that is not a positive finite number never reaches the
-        gate - :meth:`_pre_gate_error` refuses it first - so the clause is the
+        gate - :meth:`_preflight` refuses it first - so the clause is the
         only thing lost if a caller ever arrives without that check."""
-        assert arm._pre_gate_error("execute", None, "mock", "soon") is not None
+        assert arm._preflight("execute_task", duration="soon") is not None
         text = warning_for(arm, monkeypatch, policy_provider="mock", duration="soon")
         assert "for up to" not in text
         assert text.startswith("'execute' drives the real robot 'so101' with 'Wave the arm' ")
