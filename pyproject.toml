@@ -69,7 +69,11 @@ dependencies = [
     "strands-agents>=1.13.0,<2.0.0",
     "numpy>=1.21.0,<3.0.0",
     "opencv-python-headless>=4.5.0,<5.0.0",
-    "Pillow>=8.0.0,<13.0.0",
+    # Pillow < 12.3.0 carries eleven HIGH advisories (heap OOB write in
+    # ImageCmsTransform / Image.paste / RankFilter, decompression bombs in
+    # PdfParser and the font-file loaders, GHSA-9hw9-ch79-4vh6 et al.); 12.3.0
+    # is the first release that clears all of them.
+    "Pillow>=12.3.0,<13.0.0",
 ]
 
 [project.optional-dependencies]
@@ -787,6 +791,30 @@ constraint-dependencies = [
     "ujson>=5.12.1",
     # GHSA-5pwr-322w-8jr4 (HIGH): DTLS cookie-callback buffer overflow, >= 22.0.0 < 26.0.0.
     "pyopenssl>=26.0.0",
+    # GHSA-284h-m62q-gf8w (CRITICAL) + sixteen HIGH option-injection / file
+    # disclosure advisories in GitPython <= 3.1.58 (under robot-descriptions);
+    # 3.1.59 clears the whole series.
+    "gitpython>=3.1.59",
+    # GHSA-82r6-8w77-94w6 (CRITICAL): TLSStream IDNA 2003 host-name encoding
+    # defeats certificate checks, < 4.14.2 (under httpx / mcp / starlette).
+    "anyio>=4.14.2",
+    # GHSA-g6cj-pr64-35w5 (HIGH): PKCS#7 EnvelopedData Bleichenbacher oracle,
+    # >= 44.0.0 < 50.0.0 (under autobahn / pyjwt / pyopenssl / webauthn).
+    "cryptography>=50.0.0",
+    # GHSA-cq5v-8q36-5273 (HIGH): OOB heap read in the C response parser,
+    # <= 3.14.2 (under fsspec).
+    "aiohttp>=3.14.3",
+    # GHSA-vj7q-gjh5-988w (HIGH): WebSocket server transport skips Host /
+    # Origin validation, < 1.28.1 (under strands-agents).
+    "mcp>=1.28.1",
+    # GHSA-h35f-9h28-mq5c (MEDIUM): MANIFEST.in exclusion bypass via Unicode
+    # normalisation, < 83.0.0. lerobot 0.6.1 caps setuptools < 82.0.0, so the
+    # floor sits at the newest release that resolves; lift it to 83.0.0 when
+    # lerobot lifts its cap.
+    "setuptools>=81.0.0",
+    # GHSA-hxp9-w8x3-p566 (MEDIUM): permessage-deflate bypasses
+    # maxMessagePayloadSize, < 26.7.1 (under roslibpy).
+    "autobahn>=26.7.1",
 ]
 override-dependencies = [
         # SECURITY + CAPABILITY: diffusers <0.36 is vulnerable to a GHSA
