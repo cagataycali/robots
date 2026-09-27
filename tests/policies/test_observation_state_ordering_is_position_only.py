@@ -296,15 +296,6 @@ def test_the_structural_scan_found_the_fallbacks_it_grades() -> None:
         assert any(site.startswith(provider) for site in orderings), (provider, orderings)
 
 
-def test_a_membership_test_against_the_declared_keys_is_not_graded() -> None:
-    """``key in self.robot_state_keys or key == "task"`` is a boolean, not an ordering.
-
-    Grading it would demand a velocity filter from a camera-partitioning loop
-    that never builds a state vector.
-    """
-    assert not any(site.startswith("policies/lerobot_async/") for site in _inferred_ordering_fallbacks())
-
-
 # --- behavioural: both providers read one observation the same way -------
 
 

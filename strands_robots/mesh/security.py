@@ -409,8 +409,6 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         # LerobotLocalPolicy
         "lerobot_local",
         "lerobot",
-        # LerobotAsyncPolicy
-        "lerobot_async",
         # Cosmos3Policy
         "cosmos3",
         "c3",

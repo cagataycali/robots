@@ -394,7 +394,7 @@ def test_wbc_extra_huggingface_hub_floor_ships_the_bucket_cli() -> None:
 #     drifting back. ---
 
 # every extra a `lerobot_local` user could install to reach `trainer.train(...)`
-_LEROBOT_PATH_EXTRAS = ("lerobot", "lerobot-async", "molmoact2", "all")
+_LEROBOT_PATH_EXTRAS = ("lerobot", "molmoact2", "all")
 
 
 def _extras_declaring_accelerate() -> set[str]:
@@ -410,7 +410,7 @@ def test_no_lerobot_path_extra_declares_accelerate() -> None:
 
     If a ``strands-robots`` extra on this path ever *does* vendor ``accelerate``
     -- the deferred ``training`` extra that would layer ``lerobot[training]`` the
-    way ``lerobot-async`` layers ``lerobot[async]`` -- then the instruction is
+    way ``molmoact2`` layers ``lerobot[molmoact2]`` -- then the instruction is
     obsolete and the docs must be re-cut to name that extra instead. Failing here
     is the signal to do that, not to loosen the assertion.
     """

@@ -9,7 +9,7 @@ injected on every call and no declared default for it was ever reachable.
 
 Every provider that accepts a ``host`` and declares a default for it was
 affected.  ``moveit2`` declares ``127.0.0.1`` in ``policies.json``;
-``lerobot_async`` and ``remote`` declare it as their constructor default.  All
+``remote`` declares it as its constructor default.  All
 were handed ``localhost`` -- a value none of them declares anywhere -- while this
 function's own docstring promised "A default only ever fills a key the caller
 left unset", and the sibling ``resolve_policy`` already left ``host`` unset
@@ -57,8 +57,8 @@ class TestTheCasesAreStillReal:
     def test_some_providers_declare_a_registry_host_default(self):
         assert len(DECLARED) >= 2, f"only {DECLARED_IDS} declare a host default"
 
-    def test_some_providers_leave_the_host_default_to_their_constructor(self):
-        assert len(UNDECLARED) >= 2, f"only {UNDECLARED} omit a registry host default"
+    def test_a_provider_leaves_the_host_default_to_its_constructor(self):
+        assert UNDECLARED, "no provider accepts host without declaring a registry default"
 
     def test_the_two_groups_do_not_overlap(self):
         assert not set(DECLARED_IDS) & set(UNDECLARED)
@@ -130,20 +130,6 @@ class TestEveryGenericParameterCanMeanUnset:
         """Non-vacuity: a signature that resolved elsewhere would report clean."""
         names = set(self._signature().parameters)
         assert {"provider", "policy_port", "policy_host", "extra"} <= names
-
-
-class TestTheDerivedServerAddressNeverCarriesTheSentinel:
-    """Scope control on the fix itself: ``None`` must not be interpolated."""
-
-    def test_a_port_alone_does_not_produce_a_none_host_address(self):
-        """``f"{policy_host}:{port}"`` would read ``"None:9000"``."""
-        for provider in _accepts_host():
-            address = build_policy_kwargs(provider, policy_port=9000).get("server_address")
-            assert address is None or "None" not in address, f"{provider}: server_address={address!r}"
-
-    def test_an_explicit_host_still_derives_the_address(self):
-        kwargs = build_policy_kwargs("lerobot_async", policy_host="gpu-box", policy_port=9000)
-        assert kwargs["server_address"] == "gpu-box:9000"
 
 
 class TestAnExplicitHostStillWins:

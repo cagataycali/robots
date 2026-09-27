@@ -84,7 +84,6 @@ nav:
   - Microduck (Pollen 14-DOF biped): policies/microduck.md
   - LeRobot Local: policies/lerobot-local.md
   - LeRobot Local observations: policies/lerobot-local-observations.md
-  - LeRobot Async (gRPC inference): policies/lerobot-async.md
   - MolmoAct2 (SO-100/101): policies/molmoact2.md
   - RL Checkpoint (trained actor): policies/rl.md
   - Persistent Worker (long-lived inference): policies/persistent-worker.md

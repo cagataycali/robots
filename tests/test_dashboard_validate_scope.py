@@ -70,7 +70,7 @@ def test_remote_provider_verdict_stops_at_this_machine() -> None:
 
 def test_identity_key_wins_over_a_remote_address() -> None:
     spec = {
-        "name": "lerobot_async",
+        "name": "lerobot_local",
         "wire_fields": [
             {"key": "pretrained_name_or_path"},
             {"key": "server_address"},

@@ -1311,7 +1311,7 @@ def tcp_port_error(value: Any, param: str, context: str) -> str | None:
     reach a service over TCP (``use_rosbridge``'s WebSocket,
     ``gr00t_inference``'s inference service), the mesh bridges that construct
     one, the policy providers that dial one (``groot``, ``moveit2``,
-    ``cosmos3``, ``lerobot_async``), the Device Connect drivers
+    ``cosmos3``), the Device Connect drivers
     that address a device daemon
     (:class:`~strands_robots.device_connect.reachy_mini_driver.ReachyMiniDriver`'s
     ``api_port``), and the simulation backends that bind one
@@ -2015,10 +2015,9 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     lives here rather than beside any one of them.
 
     On the ``robot_state_keys`` path the duplicate case is the dict collapse
-    above, reached twice over: the emitted action dict is keyed by these names,
-    so a three-entry list with one repeat emits two commands, and the
-    ``lerobot_async`` hardware-feature map declares fewer columns than the
-    action aligner is handed. Note that the provider resolving these names by
+    above: the emitted action dict is keyed by these names, so a three-entry
+    list with one repeat emits two commands rather than three.
+    Note that the provider resolving these names by
     membership rather than by position (WBC) deliberately tolerates a repeat -
     it resolves to its first occurrence - so it is not a caller of this
     function.

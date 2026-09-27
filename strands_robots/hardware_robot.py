@@ -1434,9 +1434,9 @@ class Robot(TeleopMixin, AgentTool):
         from .policies import create_policy
 
         # Per-provider port requirement: the registry's "requires"
-        # field is the source of truth - groot/lerobot_async dial a server
-        # and need a port, while mock/lerobot_local build in-process and
-        # need none. Hardcoding the port demand here made every port-less
+        # field is the source of truth - groot dials a server and needs
+        # a port, while mock/lerobot_local build in-process and need
+        # none. Hardcoding the port demand here made every port-less
         # provider unrunnable on hardware through the mesh execute path.
         requires: tuple[str, ...] = ()
         try:
@@ -2417,8 +2417,8 @@ class Robot(TeleopMixin, AgentTool):
         This surface's envelope around
         :func:`~strands_robots.registry.policies.policy_requires_error`, which owns the
         domain and states why. :meth:`_policy_port_error` judges the ``port``
-        entry; this judges the rest - the checkpoint a ``lerobot_local`` /
-        ``lerobot_async`` policy is built from. Here the harm is that
+        entry; this judges the rest - the checkpoint a ``lerobot_local``
+        policy is built from. Here the harm is that
         :meth:`_connect_robot` energizes the arm before the first
         ``get_actions`` fails on the executor thread with nobody left to tell;
         the quickstart's real-arm step did exactly this.
@@ -2466,9 +2466,9 @@ class Robot(TeleopMixin, AgentTool):
         - no port and the provider declares no ``port`` keyword (``mock``,
           ``lerobot_local``, ``rl``, ...): it is built in this process and
           dials nothing;
-        - no port and the provider does dial one (``cosmos3``,
-          ``lerobot_async``, ``remote`` default their port rather than requiring
-          it): there is a server, at a port this call did not choose. Calling
+        - no port and the provider does dial one (``cosmos3`` and
+          ``remote`` default their port rather than requiring it): there is
+          a server, at a port this call did not choose. Calling
           that "no server" would be a new false statement, not a fix.
 
         A provider the registry does not know is described by name only. It
@@ -2607,8 +2607,8 @@ class Robot(TeleopMixin, AgentTool):
         value is checked against
         :func:`~strands_robots.utils.tcp_port_error`, the shared domain whose
         docstring already names "the policy providers that dial one (``groot``,
-        ``moveit2``, ``cosmos3``, ``lerobot_async``)" - the very
-        providers this path forwards to - so the same port cannot be accepted by
+        ``moveit2``, ``cosmos3``)" - the very providers this path
+        forwards to - so the same port cannot be accepted by
         the arm's task entry points and refused by the provider they hand it to.
 
         That domain also names the value the caller supplied. A supplied-but-
@@ -3642,7 +3642,7 @@ class Robot(TeleopMixin, AgentTool):
                             "type": "string",
                             "description": (
                                 "Which policy backend runs: one of cosmos3, curobo, groot, kimodo, "
-                                "lerobot_async, lerobot_local, microduck, mock, moveit2, protomotions, "
+                                "lerobot_local, microduck, mock, moveit2, protomotions, "
                                 "remote, rl, wbc, wbc_gait. "
                                 "groot (default, needs policy_port) and moveit2 dial a server; "
                                 "lerobot_local runs a local checkpoint in process and needs "
