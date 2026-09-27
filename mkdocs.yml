@@ -75,6 +75,7 @@ hooks:
   - docs/hooks/env_vars.py
   - docs/hooks/refusals.py
   - docs/hooks/module_map.py
+  - docs/hooks/drivers.py
 
 plugins:
   - search
@@ -451,7 +452,32 @@ nav:
           - learn/training/index.md
           - LeRobot: learn/training/lerobot.md
           - RL: learn/training/rl.md
-      # D4 sections (data, hardware, mesh, dashboard, ros2, security) are appended when the lane lands.
+      - Data:
+          - Record: learn/data/record.md
+          - Verify: learn/data/verify.md
+          - Label and judge: learn/data/label-and-judge.md
+          - Stream and sync: learn/data/stream-and-sync.md
+      - Hardware:
+          - Drivers: learn/hardware/drivers.md
+          - Teleoperation: learn/hardware/teleoperation.md
+          - Cameras: learn/hardware/cameras.md
+          - Calibration: learn/hardware/calibration.md
+          - Feetech arms: learn/hardware/feetech-arms.md
+          - Unitree G1 and Go2: learn/hardware/unitree.md
+          - Franka: learn/hardware/franka.md
+          - Universal Robots: learn/hardware/ur.md
+          - Reachy Mini: learn/hardware/reachy-mini.md
+          - Microduck: learn/hardware/microduck.md
+          - Booster T1: learn/hardware/booster-t1.md
+      - Mesh:
+          - learn/mesh/index.md
+          - Fleet: learn/mesh/fleet.md
+          - Safety and e-stop: learn/mesh/safety-and-estop.md
+          - Topics: learn/mesh/topics.md
+          - Bridges: learn/mesh/bridges.md
+      - Dashboard: learn/dashboard.md
+      - ROS 2: learn/ros2.md
+      - Security: learn/security.md
   - Reference:
       - reference/index.md
       - Tools: reference/tools.md
