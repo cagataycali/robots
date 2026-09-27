@@ -18,7 +18,7 @@ Requires the ``inference`` extra::
 
     pip install 'strands-robots[inference]'
 
-See ``docs/inference/remote.md`` for the two-machine setup.
+See ``docs/reference/inference/remote.md`` for the two-machine setup.
 """
 
 from strands_robots.inference.client import RemotePolicy

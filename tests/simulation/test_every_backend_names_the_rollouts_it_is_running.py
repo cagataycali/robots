@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regression tests: ``list_policies_running`` answers on every backend.
 
-``docs/simulation/rollouts.md`` lists ``list_policies_running`` in the action
+``docs/reference/simulation/rollouts.md`` lists ``list_policies_running`` in the action
 action table beside ``run_policy`` / ``start_policy`` / ``stop_policy``, with no
 backend qualifier, and documents ``stop_policy`` -- a base contract since a
 robot's stop was promoted to the ABC -- as deriving its verdict from "the same
 in-flight population ``list_policies_running`` reads", so "the two never report
 opposite facts about the same robot at the same instant".
-``docs/device-connect.md`` makes the same promise for the Device Connect stop,
+``docs/reference/device-connect.md`` makes the same promise for the Device Connect stop,
 whose sim driver runs on any backend.
 
 Only one of that documented pair existed off MuJoCo. Measured on a real Newton

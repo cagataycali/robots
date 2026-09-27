@@ -224,7 +224,7 @@ hatch run format            # ruff check --fix, ruff format
     surfaces changes nothing at all. Spell blocklist entries bare - matching is
     on the final path segment, so one `/manual_drive` entry covers every
     namespaced instance - and state the posture where an operator sizes a
-    pre-approval (`docs/ros2-integration.md`, `docs/security.md`, the example),
+    pre-approval (`docs/reference/ros2-integration.md`, `docs/reference/security.md`, the example),
     because `STRANDS_ROS2_COMMAND_ALLOW` is what makes a headless run work and
     it cannot be discovered from a refusal that has not happened yet. Pinned by
     tests/mesh/test_ackermann_command_gate.py, whose inventory of bridges owing
@@ -246,8 +246,8 @@ hatch run format            # ruff check --fix, ruff format
     name's *relative* order (Isaac's `mjcf_path`/`usd_path`, Newton's `source`,
     MuJoCo's `randomize_positions`); reordering one is what makes a positional
     call ambiguous. State the shared order where a reader will copy it - the
-    signature line in `docs/simulation/newton.md` and the call in
-    `docs/simulation/domain-randomization.md` are both graded against the
+    signature line in `docs/reference/simulation/newton.md` and the call in
+    `docs/reference/simulation/domain-randomization.md` are both graded against the
     signatures - and note that this rule is deliberately weaker than index
     parity, which a mid-signature insertion still breaks. Pinned by
     tests/simulation/test_backend_shared_parameter_order.py, whose backend

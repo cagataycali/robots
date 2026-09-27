@@ -2,10 +2,10 @@
 
 ``RLCheckpointPolicy`` binds ``actor_obs_keys`` by name and refuses an
 observation that omits one (``"observation omits actor_obs_keys the ppo
-checkpoint was trained on"``). ``docs/training/rl.md`` trains through a
+checkpoint was trained on"``). ``docs/reference/training/rl.md`` trains through a
 ``make_env`` that builds ``Robot("so100")``, whose joints are ``Elbow`` and
 friends; the SO-101's are ``1``..``6``. So the ``run_policy`` fence on that page
-and its twin on ``docs/policies/rl.md`` can only run on the robot ``make_env``
+and its twin on ``docs/reference/policies/rl.md`` can only run on the robot ``make_env``
 constructed - any other name is refused before the first action.
 
 This reads the robot ``make_env`` constructs off the training page and grades
@@ -23,8 +23,8 @@ import pytest
 import strands_robots
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
-_TRAINING_PAGE = _REPO_ROOT / "docs" / "training" / "rl.md"
-_DEPLOY_PAGES = (_TRAINING_PAGE, _REPO_ROOT / "docs" / "policies" / "rl.md")
+_TRAINING_PAGE = _REPO_ROOT / "docs" / "reference" / "training" / "rl.md"
+_DEPLOY_PAGES = (_TRAINING_PAGE, _REPO_ROOT / "docs" / "reference" / "policies" / "rl.md")
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
 
@@ -64,7 +64,7 @@ def _trained_robot() -> str:
                 for call in ast.walk(fn):
                     if isinstance(call, ast.Call) and _is_robot_call(call) and _robot_name(call):
                         return _robot_name(call)  # type: ignore[return-value]
-    raise AssertionError("docs/training/rl.md defines make_env building Robot('<name>')")
+    raise AssertionError("docs/reference/training/rl.md defines make_env building Robot('<name>')")
 
 
 def _rl_deploy_fences(page: Path) -> list[ast.Module]:

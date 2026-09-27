@@ -1,7 +1,7 @@
 """Isaac's ``randomize`` / ``set_obs_noise``: the two stubs with the most callers.
 
 Until this module's subject existed, both were the ``SimEngine`` raising stubs -
-while ``docs/simulation/domain-randomization.md`` and ~30 example call sites
+while ``docs/reference/simulation/domain-randomization.md`` and ~30 example call sites
 drive ``randomize()`` and ~10 drive ``set_obs_noise()`` through the
 backend-agnostic surface, so the identical script randomized on MuJoCo and
 Newton and raised ``NotImplementedError`` on Isaac.

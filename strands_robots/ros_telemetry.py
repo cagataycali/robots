@@ -59,7 +59,7 @@ _UNDERSCORE_RUN_RE = re.compile(r"_+")
 #: Remedy for a missing ``rclpy``, shared by every surface that refuses for want
 #: of it. ``rclpy`` is not published on PyPI: it arrives with a system ROS 2
 #: install, which is why the ``[ros2]`` extra declares only the pip-installable
-#: cyclonedds RMW binding (see ``pyproject.toml`` and ``docs/ros2-integration.md``).
+#: cyclonedds RMW binding (see ``pyproject.toml`` and ``docs/reference/ros2-integration.md``).
 #: An install hint naming a pip command for it is therefore a remedy the caller
 #: can follow to no effect - ``pip install 'strands-robots[ros2]'`` exits 0 with
 #: ``rclpy`` exactly as missing, and ``pip install rclpy`` fails outright - so

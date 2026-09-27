@@ -15,7 +15,7 @@ Only commands inside fenced code blocks are graded: prose may name
 ``uv pip install`` while explaining the rule, and that mention is not a step a
 reader runs.
 
-Feature pages (``docs/mesh.md``, ``docs/policies/*.md``, ...) are out of scope:
+Feature pages (``docs/reference/mesh.md``, ``docs/reference/policies/*.md``, ...) are out of scope:
 they layer one extra onto an environment the reader already has, and
 ``docs/getting-started/installation.md`` states the rule once for all of them.
 """
@@ -34,7 +34,7 @@ ENTRY_POINTS = (
     "docs/index.md",
     "docs/getting-started/installation.md",
     "docs/getting-started/quickstart.md",
-    "docs/contributing.md",
+    "docs/reference/contributing.md",
 )
 
 

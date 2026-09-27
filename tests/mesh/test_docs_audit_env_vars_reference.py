@@ -1,6 +1,6 @@
 """Grade the mesh audit log environment reference against the code's env surface.
 
-``docs/security/audit-log.md`` names the credentials operators must configure to secure a
+``docs/reference/security/audit-log.md`` names the credentials operators must configure to secure a
 fleet: the transport TLS material, the IoT credentials the AWS backend reads,
 and the mesh subscribe allow-list.  It does not, until this file's companion
 change, name the environment variables that configure the *audit log itself* -
@@ -42,7 +42,7 @@ import strands_robots
 from strands_robots import audit
 
 _AUDIT_MODULE = pathlib.Path(strands_robots.__file__).parent / "audit.py"
-_PAGE = pathlib.Path(strands_robots.__file__).parent.parent / "docs" / "security" / "audit-log.md"
+_PAGE = pathlib.Path(strands_robots.__file__).parent.parent / "docs" / "reference" / "security" / "audit-log.md"
 
 #: The prefix every audit-log env var shares.  Reading the module for the
 #: literal names lets a fifth variable added later fail this file on arrival.
@@ -88,7 +88,7 @@ def _documented_audit_vars() -> dict[str, str]:
 
     Returns:
         ``{"VAR": "heading text"}`` for every backticked ``STRANDS_MESH_AUDIT_*``
-        token that appears in ``docs/security/audit-log.md``, keyed to the nearest
+        token that appears in ``docs/reference/security/audit-log.md``, keyed to the nearest
         preceding ``## `` or ``### `` heading.  A variable named twice under
         different headings takes its first mention, because that is the entry
         the reader lands on when they follow the page top to bottom.
@@ -112,7 +112,7 @@ def test_every_audit_env_var_is_documented():
     """Every ``STRANDS_MESH_AUDIT_*`` var the module reads has a docs entry.
 
     This is the rule that fires when a knob lands in ``audit.py`` without
-    a corresponding mention in ``docs/security/audit-log.md``.  It reads the module's AST
+    a corresponding mention in ``docs/reference/security/audit-log.md``.  It reads the module's AST
     for the literal keys rather than trusting an authored list, so no future
     variable is silently omitted.
     """
@@ -120,7 +120,7 @@ def test_every_audit_env_var_is_documented():
     documented = _documented_audit_vars()
     missing = sorted(read - documented.keys())
     assert not missing, (
-        f"``audit.py`` reads {sorted(read)} but ``docs/security/audit-log.md`` "
+        f"``audit.py`` reads {sorted(read)} but ``docs/reference/security/audit-log.md`` "
         f"names {sorted(documented)}. Undocumented: {missing}. "
         f"Add a bullet under the ``{_AUDIT_HEADING}`` heading naming each."
     )
@@ -138,7 +138,7 @@ def test_audit_env_vars_are_documented_together():
     if not documented:
         pytest.fail(
             f"No ``STRANDS_MESH_AUDIT_*`` variables are documented in "
-            f"``docs/security/audit-log.md``. Expected an ``{_AUDIT_HEADING}`` section."
+            f"``docs/reference/security/audit-log.md``. Expected an ``{_AUDIT_HEADING}`` section."
         )
     headings = {heading for heading in documented.values() if heading}
     assert len(headings) == 1, (
@@ -188,7 +188,7 @@ def test_audit_variables_the_module_reads_include_the_four_known_names():
     missing = sorted(known - read)
     assert not missing, (
         f"``audit.py`` no longer reads {missing}. Update this test's "
-        f"``known`` set and the docstrings in ``docs/security/audit-log.md`` accordingly."
+        f"``known`` set and the docstrings in ``docs/reference/security/audit-log.md`` accordingly."
     )
 
 
@@ -213,8 +213,8 @@ def test_audit_variables_the_module_reads_include_the_four_known_names():
 #   for a writer whose contract is fail-soft.
 #
 # The posture rules are scoped to this one section deliberately: ``refuses to
-# start`` appears twice elsewhere in ``docs/security/audit-log.md`` and once in
-# ``docs/ros2/rtps-robot.md`` about ``HardwareRtpsBridge``, where it is
+# start`` appears twice elsewhere in ``docs/reference/security/audit-log.md`` and once in
+# ``docs/reference/ros2/rtps-robot.md`` about ``HardwareRtpsBridge``, where it is
 # accurate - that bridge really does refuse to construct without DDS Security
 # material.  A page-wide phrase rule would flag those true claims, so the
 # scope is the audit section and the derivation is the audit writer.
@@ -231,7 +231,7 @@ _REFUSAL_TO_START_PATTERNS = (
 
 
 def _audit_section() -> str:
-    """Return the text of the ``Audit log`` section of ``docs/security/audit-log.md``.
+    """Return the text of the ``Audit log`` section of ``docs/reference/security/audit-log.md``.
 
     Returns:
         Every line from the ``Audit log`` title up to the next heading of the

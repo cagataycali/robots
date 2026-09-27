@@ -11,7 +11,7 @@ Dependencies:
                                        # macOS / Windows / Linux x86_64. Linux
                                        # aarch64 (Jetson) has no wheel and builds
                                        # against a Cyclone DDS C install - see
-                                       # docs/rtps-integration.md#linux-aarch64-jetson
+                                       # docs/reference/rtps-integration.md#linux-aarch64-jetson
 
 A ROS 2 turtle on the same DDS domain (e.g. host networking):
   docker run -d --name turtle --net host ros:jazzy bash -lc \\

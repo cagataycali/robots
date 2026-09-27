@@ -3,9 +3,9 @@
 """One page documents every knob the ``remote`` provider accepts.
 
 ``strands_robots/registry/policies.json`` declares the ``config_keys`` a caller
-may pass through ``create_policy("remote", ...)``, and ``docs/inference/remote.md``
+may pass through ``create_policy("remote", ...)``, and ``docs/reference/inference/remote.md``
 is the page every other surface sends that caller to -- the provider matrix in
-``docs/policies/overview.md``, the ``strands_robots.inference`` package docstring
+``docs/reference/policies/overview.md``, the ``strands_robots.inference`` package docstring
 and the nav row all name it.
 
 Until this file's companion change ``connect_timeout`` and ``request_timeout``
@@ -29,7 +29,7 @@ import pytest
 from strands_robots.inference import RemotePolicy
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DOC = _REPO_ROOT / "docs" / "inference" / "remote.md"
+_DOC = _REPO_ROOT / "docs" / "reference" / "inference" / "remote.md"
 _REGISTRY = _REPO_ROOT / "strands_robots" / "registry" / "policies.json"
 
 #: A registry entry that had shrunk to a key or two would make every rule below
@@ -73,7 +73,7 @@ def test_every_config_key_is_named_on_the_page(key: str) -> None:
     (``host=``) and others as the config key itself (``connect_timeout``).
     """
     assert f"`{key}`" in _page() or f"`{key}=`" in _page(), (
-        f"docs/inference/remote.md does not name the `{key}` config key the remote "
+        f"docs/reference/inference/remote.md does not name the `{key}` config key the remote "
         "provider accepts - a reader sent to this page cannot look the knob up"
     )
 
@@ -82,6 +82,6 @@ def test_every_config_key_is_named_on_the_page(key: str) -> None:
 def test_the_documented_default_is_the_constructor_default(key: str, default: str) -> None:
     """The stated default is RemotePolicy's, so changing one side reds here."""
     assert default in _page(), (
-        f"RemotePolicy defaults {key} to {default}, which docs/inference/remote.md "
+        f"RemotePolicy defaults {key} to {default}, which docs/reference/inference/remote.md "
         "does not state - the page and the constructor have drifted"
     )

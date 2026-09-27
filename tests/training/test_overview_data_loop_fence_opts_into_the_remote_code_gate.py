@@ -4,7 +4,7 @@
 ``lerobot_local``, which ``_check_trust_remote_code`` refuses unless
 ``STRANDS_TRUST_REMOTE_CODE`` is set - a local, freshly trained directory
 included. ``examples/07_post_tune_any_policy.py`` sets the opt-in at that step;
-the ``docs/training/overview.md`` fence copied from it is what a reader runs, so
+the ``docs/reference/training/overview.md`` fence copied from it is what a reader runs, so
 it must carry the same line or step 4 raises ``UntrustedRemoteCodeError`` on a
 clean install.
 
@@ -24,7 +24,7 @@ import strands_robots
 from strands_robots.policies.factory import _check_trust_remote_code
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
-_PAGE = _REPO_ROOT / "docs" / "training" / "overview.md"
+_PAGE = _REPO_ROOT / "docs" / "reference" / "training" / "overview.md"
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
 

@@ -2,7 +2,7 @@
 
 The registry is the source of truth for what ``Robot("<name>")`` accepts, and
 several documents restate its size for humans: the README feature list, the hero
-and architecture SVGs, ``docs/architecture.md``, the quickstart "see also" and
+and architecture SVGs, ``docs/reference/architecture.md``, the quickstart "see also" and
 the ``docs/robots/`` index cards. Nothing tied those restated numbers to the
 registry, so they drifted independently - the tree simultaneously claimed "40+",
 "50+" and "68" robots for a registry holding 72.

@@ -7,7 +7,7 @@ mapping carrying one of the seeded names replaced the local reading, so a record
 published to ``strands/{peer_id}/...`` could name a different peer inside it and
 a hand record published under one hand's name could name another.
 
-The precedence is not a new rule. ``docs/mesh.md`` already states it for the
+The precedence is not a new rule. ``docs/reference/mesh.md`` already states it for the
 presence payload -- the locally decided keys "win a name collision" with what a
 peer reports, because "the ``peer_id`` a peer is filed under is the one its topic
 and certificate bind - not a field inside the payload" -- and

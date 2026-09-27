@@ -78,7 +78,7 @@ backend and default to 30/640/480 when unset - a vendor SDK the backend needs
 when the config is built.
 
 Cameras are attached by the **lerobot** driver. See
-[Native drivers](../hardware/native-drivers.md).
+[Native drivers](../reference/hardware/native-drivers.md).
 
 `control_frequency` (Hz) sets the control loop's per-action period,
 `1 / control_frequency` - the only throttle between two servo commands. It must be a
@@ -135,7 +135,7 @@ answer. An empty tuple is the driver gap: `sim_only` is every robot `mode="real"
 to go for, derived on each call rather than maintained by hand.
 
 What a native driver is, the contract one satisfies, and how a robot declares one are on
-[Native drivers](../hardware/native-drivers.md).
+[Native drivers](../reference/hardware/native-drivers.md).
 
 ## Mesh
 
@@ -161,6 +161,6 @@ Mesh failure is non-fatal; `.mesh = None` if Zenoh unavailable.
 ## See also
 
 - [Robot catalog](../robots/index.md) - 68 catalog names.
-- [Architecture](../architecture.md) - factory in the module map.
-- [Multi-robot mesh](../mesh.md) - mesh peer discovery.
-- [Native drivers](../hardware/native-drivers.md) - the `driver="strands"` contract.
+- [Architecture](../reference/architecture.md) - factory in the module map.
+- [Multi-robot mesh](../reference/mesh.md) - mesh peer discovery.
+- [Native drivers](../reference/hardware/native-drivers.md) - the `driver="strands"` contract.

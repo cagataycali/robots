@@ -3,7 +3,7 @@
 ``strands_robots.training.rl`` ships three trainers - ``ppo``, ``fast_sac`` and
 ``fast_td3`` - and ``create_trainer`` resolves all three. Two surfaces name the
 third one already (``docs/getting-started/installation.md`` advertises
-``FastTd3Trainer`` under the ``[rl]`` extra, and ``docs/policies/rl.md``
+``FastTd3Trainer`` under the ``[rl]`` extra, and ``docs/reference/policies/rl.md``
 describes "the three backends"), so a training page that documents two of them
 is drift, not scope: a reader who follows the install line has no page for the
 trainer it installed, and no domain for the four fields only that trainer reads
@@ -36,8 +36,8 @@ from strands_robots.training.rl import RLTrainSpec
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _RL_PACKAGE = _REPO_ROOT / "strands_robots" / "training" / "rl"
-_HUB = _REPO_ROOT / "docs" / "training" / "rl.md"
-_REFERENCE = _REPO_ROOT / "docs" / "training" / "rl-reference.md"
+_HUB = _REPO_ROOT / "docs" / "reference" / "training" / "rl.md"
+_REFERENCE = _REPO_ROOT / "docs" / "reference" / "training" / "rl-reference.md"
 
 #: Trainer name -> the class the hub page must name, and the backend module it
 #: lives in. Read back from ``create_trainer`` below, so a fourth trainer fails

@@ -30,4 +30,4 @@ Every robot in this family, generated from `robots.json` at build time. Renders 
 
 - [Arms](arms.md) - single-arm manipulators.
 - [Hands](hands.md) - dexterous end-effectors to mount on each arm.
-- [Multi-robot mesh](../mesh.md) - pair two single arms via the mesh as an alternative to a single bimanual rig.
+- [Multi-robot mesh](../reference/mesh.md) - pair two single arms via the mesh as an alternative to a single bimanual rig.

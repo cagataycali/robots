@@ -7,14 +7,14 @@ binding alone. It speaks RTPS - the DDS wire protocol every ROS 2 distro uses -
 so it interoperates with Humble, Jazzy, Rolling, ... uniformly, with nothing
 installed but a pip wheel - on macOS, Windows and Linux x86_64. Linux aarch64
 publishes no cyclonedds wheel and builds the binding against a Cyclone DDS C
-install instead (``docs/rtps-integration.md#linux-aarch64-jetson``).
+install instead (``docs/reference/rtps-integration.md#linux-aarch64-jetson``).
 
 The headline capability: an RTPS participant can **act as a robot**. It can
 advertise and publish a topic that a real ROS 2 node (rviz, nav2, a teleop
 joystick) will consume, and subscribe to command topics - with hardware's own
 payloads. A bare participant is not a ROS 2 *node*, though: it carries no node
 name and no type hash, so the graph shows it differently from an rclpy publisher
-(``docs/ros2/rtps-robot.md``).
+(``docs/reference/ros2/rtps-robot.md``).
 
 This module is the agent-facing envelope: the numeric-option domains an agent
 can get wrong, the operator gate, and the tool docstring a model reads. The

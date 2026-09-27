@@ -224,7 +224,7 @@ class TestTheSplitIsSizedAgainstTheLoadedSubset:
     reserved fewer episodes than asked - 2 of the 15 episodes an episode filter
     kept, for a caller who asked for 3 - and the run still logged an eval loss,
     so it looked correct. This is the documented ``filter_episodes`` recipe in
-    ``docs/data/episode-labels.md``.
+    ``docs/reference/data/episode-labels.md``.
     """
 
     @pytest.mark.parametrize(

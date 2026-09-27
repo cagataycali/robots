@@ -410,7 +410,7 @@ class TestARefusedResizeAppliesNothingFromItsOwnCall:
     """A resize refused after the spec write leaves no property from that call applied.
 
     ``set_geom_properties`` accepts ``color``, ``friction`` and ``size`` together -
-    the shape ``docs/simulation/domain-randomization.md`` shows for perturbing one
+    the shape ``docs/reference/simulation/domain-randomization.md`` shows for perturbing one
     manipuland - and records all three in the spec before it touches the model, so
     the reported values survive the next recompile. A resize is then refused on
     evidence that only exists once the new size is recorded: the body's inertial

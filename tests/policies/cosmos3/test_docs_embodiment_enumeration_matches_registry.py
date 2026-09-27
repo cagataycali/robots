@@ -1,4 +1,4 @@
-"""``docs/policies/cosmos3.md`` enumerates the embodiments the provider registers.
+"""``docs/reference/policies/cosmos3.md`` enumerates the embodiments the provider registers.
 
 The cosmos3 provider is the one policy whose behaviour is selected by a second
 name: ``create_policy("cosmos3", embodiment=...)``. That name picks the
@@ -67,12 +67,12 @@ from strands_robots.policies.cosmos3.embodiments import EMBODIMENTS, Cosmos3Embo
 from strands_robots.policies.cosmos3.policy import Cosmos3Policy
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_PAGE = _REPO_ROOT / "docs" / "policies" / "cosmos3.md"
+_PAGE = _REPO_ROOT / "docs" / "reference" / "policies" / "cosmos3.md"
 # The domain / raw-dim / bundled-stats table and the count sentence above it sit
 # on the in-process backend page, beside the decode_cosmos_chunk_to_targets call
 # whose stats= argument they tell a caller whether to supply.
-_STATS_PAGE = _REPO_ROOT / "docs" / "policies" / "cosmos3-diffusers.md"
-_PROVIDERS = _REPO_ROOT / "docs" / "policies" / "overview.md"  # provider matrix (was the README table)
+_STATS_PAGE = _REPO_ROOT / "docs" / "reference" / "policies" / "cosmos3-diffusers.md"
+_PROVIDERS = _REPO_ROOT / "docs" / "reference" / "policies" / "overview.md"  # provider matrix (was the README table)
 _STATS_DIR = _REPO_ROOT / "strands_robots" / "policies" / "cosmos3" / "stats"
 
 # The bundled-stats column states a property of the shipped package, not of the
@@ -402,7 +402,7 @@ class TestEveryRegisteredEmbodimentIsDocumented:
     def test_front_matter_description_names_every_embodiment(self) -> None:
         missing = _front_matter_gap(_page_text(), EMBODIMENTS)
         assert not missing, (
-            f"docs/policies/cosmos3.md front-matter omits {sorted(missing)}. It is the "
+            f"docs/reference/policies/cosmos3.md front-matter omits {sorted(missing)}. It is the "
             "page's search/summary line, so an embodiment absent there is one a reader "
             "browsing the docs never learns create_policy('cosmos3') accepts."
         )

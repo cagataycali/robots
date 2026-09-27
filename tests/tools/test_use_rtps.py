@@ -103,7 +103,7 @@ def test_invalid_type_rejected() -> None:
 def test_service_and_action_types_are_refused_before_the_backend_probe(
     kind_type: str, generated: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # docs/rtps-integration.md, Type coverage: a pkg/srv/Name or pkg/action/Name
+    # docs/reference/rtps-integration.md, Type coverage: a pkg/srv/Name or pkg/action/Name
     # type is refused with the types ROS 2 does generate quoted. The refusal is
     # the mangling's own (dds_type_name), so it reads the same with or without
     # cyclonedds and never reaches the install hint or the IDL bundle lookup.

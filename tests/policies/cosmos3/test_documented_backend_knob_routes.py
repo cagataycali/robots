@@ -42,8 +42,8 @@ from strands_robots.registry import build_policy_kwargs
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DOCS = (
-    _REPO_ROOT / "docs" / "policies" / "cosmos3.md",
-    _REPO_ROOT / "docs" / "policies" / "cosmos3-diffusers.md",
+    _REPO_ROOT / "docs" / "reference" / "policies" / "cosmos3.md",
+    _REPO_ROOT / "docs" / "reference" / "policies" / "cosmos3-diffusers.md",
 )
 _DOC_NAMES = " + ".join(p.name for p in _DOCS)
 

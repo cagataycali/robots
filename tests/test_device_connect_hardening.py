@@ -744,7 +744,7 @@ def test_init_device_connect_uses_secure_default(monkeypatch):
 # 3 s, then getStatus / execute(instruction="wave") / stop all returned
 # ``status: success`` and the simulator ran the policy. The INSECURE warning never
 # fired because allow_insecure had resolved to False, and the edge package
-# validates transport security only for NATS. docs/device-connect.md promised
+# validates transport security only for NATS. docs/reference/device-connect.md promised
 # "Secure by default" for exactly this path.
 
 _D074_VARS = ("MESSAGING_CREDENTIALS_FILE", "DEVICE_CONNECT_ALLOW_INSECURE", "DEVICE_CONNECT_RPC_ALLOW")

@@ -10,7 +10,7 @@ only mislabelled.
 
 The two library defaults were exactly such a pair (``fps=30`` against
 ``control_frequency=50.0``), which is what the documented record-then-rollout
-sequence in ``docs/recording.md`` used. Measured on a position-servo arm before
+sequence in ``docs/reference/recording.md`` used. Measured on a position-servo arm before
 the guard::
 
     fps=30 cf=50.0 -> captured 0.0200s/frame, timestamped 0.0333s/frame (1.667x)
@@ -343,7 +343,7 @@ class TestTheGuardHelperIsRobust:
 class TestTheRunnerLayerCarriesItsOwnGuarantee:
     """``PolicyRunner`` is driven directly, with the engine's guard off the path.
 
-    ``docs/policies/lerobot-local.md`` names ``PolicyRunner.run`` beside
+    ``docs/reference/policies/lerobot-local.md`` names ``PolicyRunner.run`` beside
     ``run_policy`` as a caller surface, and ``_control_substeps`` already raises
     for a bad ``control_substeps`` on the stated grounds that "the public entry
     points reject such a value ... this raise is the guarantee for callers

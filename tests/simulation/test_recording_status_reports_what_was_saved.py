@@ -8,9 +8,9 @@ has never recorded gives. It read ``state["trajectory"]``, the mirror
 ``_release_dataset_recorder`` had just cleared, so the count was structurally
 zero after every successful save.
 
-Two readers were pointed here. ``docs/simulation/overview.md`` advertises
+Two readers were pointed here. ``docs/reference/simulation/overview.md`` advertises
 "Episode, frame count, output dir" for this method, and
-``docs/troubleshooting.md`` sends an operator here to "check
+``docs/reference/troubleshooting.md`` sends an operator here to "check
 get_recording_status() frame count" when an MP4 is empty - so the zero was the
 false confirmation of the very diagnosis ("stopped before any frames") the
 operator was sent to rule out.

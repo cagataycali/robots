@@ -30,10 +30,10 @@ Both divergences contradicted a parity claim the code and docs already made.
 Newton's ``randomize`` docstring said "Keyword names and defaults mirror the
 MuJoCo backend so randomization code transfers across backends unchanged" - the
 premise (names and defaults) is narrower than the conclusion (code transfers),
-and the missing third term was the order. ``docs/simulation/newton.md`` states
+and the missing third term was the order. ``docs/reference/simulation/newton.md`` states
 the camera order as ``add_camera(name, position, target, fov=60, width, height,
 parent_body=None)`` and calls it "matching the MuJoCo signature", and
-``docs/simulation/domain-randomization.md`` lists the three ranges in MuJoCo's
+``docs/reference/simulation/domain-randomization.md`` lists the three ranges in MuJoCo's
 order. Those two documented orders are what this module grades the backends
 against, so the pages and the signatures cannot drift apart.
 
@@ -287,7 +287,7 @@ class TestTheDocumentedOrderIsEveryBackendsOrder:
 
     def test_the_camera_order_matches_the_newton_page(self) -> None:
         names = ("fov", "width", "height")
-        documented = _documented_signature_order("docs/simulation/newton.md", "`add_camera(name,", names)
+        documented = _documented_signature_order("docs/reference/simulation/newton.md", "`add_camera(name,", names)
         assert documented == ["fov", "width", "height"], documented
         engines = _engines()
         for backend, engine in engines.items():
@@ -296,7 +296,9 @@ class TestTheDocumentedOrderIsEveryBackendsOrder:
 
     def test_the_randomization_range_order_matches_the_randomization_page(self) -> None:
         names = ("color_range", "friction_range", "mass_range")
-        documented = _documented_call_order("docs/simulation/domain-randomization.md", "sim.randomize(", names)
+        documented = _documented_call_order(
+            "docs/reference/simulation/domain-randomization.md", "sim.randomize(", names
+        )
         assert documented == ["color_range", "friction_range", "mass_range"], documented
         engines = _engines()
         graded = 0

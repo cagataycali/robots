@@ -5,7 +5,7 @@
 ``create_policy("sonic")`` builds the same policy as
 ``create_policy("wbc")``. A caller who cannot enumerate those spellings has
 to already know them, which is the opposite of what a discovery surface is
-for -- and ``docs/policies/overview.md`` points readers at
+for -- and ``docs/reference/policies/overview.md`` points readers at
 ``list_providers()`` as the way to list what ``create_policy`` accepts.
 
 The headline guard asks the question a caller actually has -- is every
@@ -46,7 +46,7 @@ POLICIES_JSON = REPO_ROOT / "strands_robots" / "registry" / "policies.json"
 #: Docs that teach a caller how to enumerate accepted provider spellings.
 #: Graded as prose: a runnable snippet is a usage example, not a claim about
 #: which set is complete.
-_ENUMERATION_DOCS = ("docs/api-reference.md", "docs/policies/overview.md")
+_ENUMERATION_DOCS = ("docs/reference/api-reference.md", "docs/reference/policies/overview.md")
 
 #: Surfaces a caller can reach to discover provider spellings. Probed by name
 #: so this file collects (and the headline guard reports a real coverage gap)
@@ -303,7 +303,7 @@ def test_a_runtime_alias_shadows_a_json_alias_as_create_policy_does() -> None:
 def test_list_providers_does_not_absorb_the_registry_aliases() -> None:
     """Control: the canonical list stays canonical.
 
-    ``docs/policies/overview.md``'s provider table is pinned to exactly the
+    ``docs/reference/policies/overview.md``'s provider table is pinned to exactly the
     canonical set by ``tests/test_docs_policy_coverage.py``, so widening
     this list instead of adding the alias mapping would put alias rows in a
     table of providers. Passes before and after the alias surface exists.

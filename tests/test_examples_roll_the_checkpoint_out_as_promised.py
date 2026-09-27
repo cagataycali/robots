@@ -12,7 +12,7 @@ reported", and neither file contained a rollout call. ``main()`` stopped at::
 A reader who ran the file to watch the trained actor move got four metric lines
 and no trajectory, and ``mean_reward`` does not say where the joint ended up -
 the promise the docstring makes is the only readout that does. The deploy half
-the promise names is a real path (``docs/training/rl.md`` "Deploying the
+the promise names is a real path (``docs/reference/training/rl.md`` "Deploying the
 checkpoint"), so the fix was to perform the claim rather than delete it.
 
 The rule is the pair, both halves keyed on the file rather than on this module's
@@ -59,7 +59,7 @@ _PROMISE_MAKERS = (
 _PROMISE = "is rolled out"
 
 #: Calls that reach a trained checkpoint's actor: the rollout paths
-#: ``docs/training/rl.md`` documents for a ``TrainResult.checkpoint_dir``.
+#: ``docs/reference/training/rl.md`` documents for a ``TrainResult.checkpoint_dir``.
 _ROLLOUT_CALLS = frozenset({"run_policy", "eval_policy", "load_deployable_actor"})
 
 

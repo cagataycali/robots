@@ -15,7 +15,7 @@ wrapper which the native driver does not carry:
 
 * ``attach_teleop`` / ``teleoperate`` - :class:`~strands_robots.teleop_mixin.TeleopMixin`
   is mixed into the hardware wrapper and not into any native driver. README.md
-  and ``docs/hardware/teleoperation.md`` both document these two reads on
+  and ``docs/reference/hardware/teleoperation.md`` both document these two reads on
   exactly this construction, so a flip makes four documented lines raise
   ``AttributeError``. ``tests/test_docs_robot_attribute_reads_resolve.py``
   catches that half.
@@ -55,7 +55,7 @@ from strands_robots.registry import get_robot, resolve_name
 #: what ``keyboard_rover`` is documented as driving zero-config.
 _LEROBOT_ACTION_KEYS = ("linear_velocity", "angular_velocity")
 
-#: The two reads README.md and docs/hardware/teleoperation.md perform on
+#: The two reads README.md and docs/reference/hardware/teleoperation.md perform on
 #: ``Robot("earthrover_mini_plus", mode="real")``.
 _DOCUMENTED_TELEOP_READS = ("attach_teleop", "teleoperate")
 
@@ -74,7 +74,7 @@ class TestTheBareCallStaysLerobotBacked:
         assert "driver" not in hardware, (
             "earthrover must not declare hardware.driver: the native driver does not carry "
             f"{list(_DOCUMENTED_TELEOP_READS)} (documented in README.md and "
-            "docs/hardware/teleoperation.md) and refuses lerobot's action vocabulary "
+            "docs/reference/hardware/teleoperation.md) and refuses lerobot's action vocabulary "
             f"{list(_LEROBOT_ACTION_KEYS)} - see this module's docstring"
         )
 
@@ -155,7 +155,7 @@ class TestTheVocabulariesDoNotAgree:
     def test_a_lerobot_action_key_is_refused_before_the_wire(self, key: str) -> None:
         """What a flipped default would do to a documented ``keyboard_rover`` frame.
 
-        ``docs/hardware/teleoperation-loop.md`` records this pairing as
+        ``docs/reference/hardware/teleoperation-loop.md`` records this pairing as
         ``identity`` - zero-config - and it is, against lerobot's robot. Against
         the native driver the same frame is refused, and nothing is posted, so a
         flip would strand the documented recipe at its first tick rather than

@@ -65,7 +65,7 @@ house pattern from :mod:`strands_robots.tools.harness_memory`, so a crashed
 writer cannot leave a half-written sidecar. A ``schema_version`` this module
 does not know is refused on read rather than misread.
 
-See ``docs/data/episode-labels.md`` for the full schema documentation and
+See ``docs/reference/data/episode-labels.md`` for the full schema documentation and
 ``examples/17_judge_recorded_episodes.py`` for the end-to-end pipeline
 (record -> deterministic verdicts -> judge -> filter -> re-train).
 """

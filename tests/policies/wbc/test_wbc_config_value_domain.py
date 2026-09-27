@@ -106,7 +106,7 @@ class TestWhyTheActionScaleDomainIsWhatItIs:
 
     def test_a_zero_scale_would_have_produced_exactly_zero_torque(self) -> None:
         # The whole network output discarded: target_q == default_angles, so the
-        # PD law has no error to act on. docs/policies/wbc.md states WBC "never
+        # PD law has no error to act on. docs/reference/policies/wbc.md states WBC "never
         # falls back to silent zero torques" - this is that fallback.
         assert np.array_equal(self._torque(0.0), np.zeros(N))
 

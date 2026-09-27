@@ -89,7 +89,7 @@ CUROBO_SYSTEM_INSTALL_HINT = (
     "Install it from the upstream source checkout, then retry:\n"
     "  git clone https://github.com/NVlabs/curobo.git\n"
     "  pip install -e ./curobo\n"
-    "cuRobo needs a CUDA-enabled torch; docs/policies/curobo.md has the prerequisites."
+    "cuRobo needs a CUDA-enabled torch; docs/reference/policies/curobo.md has the prerequisites."
 )
 
 logger = logging.getLogger(__name__)

@@ -196,7 +196,7 @@ def _resolve_scene(name: str) -> str:
     places. All three scenes ship in the one asset directory the registry entry
     already downloads, so this resolves by name through
     :func:`~strands_robots.utils.get_search_paths` - the same route
-    ``docs/policies/microduck.md`` documents - rather than taking a path the
+    ``docs/reference/policies/microduck.md`` documents - rather than taking a path the
     caller has to spell out.
 
     Args:

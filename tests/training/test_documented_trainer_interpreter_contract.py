@@ -34,7 +34,7 @@ from strands_robots.training.factory import import_trainer_class, list_trainers
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DOCS = _REPO_ROOT / "docs"
-_TRAINING_OVERVIEW = _DOCS / "training" / "overview.md"
+_TRAINING_OVERVIEW = _DOCS / "reference" / "training" / "overview.md"
 
 # Providers the dependency table has to speak about. Their backends are third-party
 # checkouts, so *which interpreter imports them* is the operator-visible question.

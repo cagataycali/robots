@@ -27,7 +27,7 @@ robot         the deleted table                                               Mu
                                                                               ``finger_joint1/2``
 ============  ==============================================================  ===================
 
-So ``docs/simulation/isaac.md``'s promise that "the joint-name and observation
+So ``docs/reference/simulation/isaac.md``'s promise that "the joint-name and observation
 contract matches the MuJoCo backend, [so] policies and observation mappings
 transfer unchanged between backends" was false before any physics was involved.
 

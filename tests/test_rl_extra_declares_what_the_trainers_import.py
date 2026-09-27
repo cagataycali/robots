@@ -7,7 +7,7 @@
 their top - and ``GymSimEnv`` presents a ``SimEnv`` through gymnasium. Neither
 package was declared by an extra for this purpose: torch arrived only inside
 ``[kimodo]`` / ``[lerobot]`` / ``[cosmos3-diffusers]`` / ``[sim-gs]`` and
-gymnasium only inside ``lerobot``. ``docs/training/rl.md`` had no install line,
+gymnasium only inside ``lerobot``. ``docs/reference/training/rl.md`` had no install line,
 ``gym_env.py`` said "the ``[sim]`` extra pulls it in" (it does not: ``[sim]`` is
 ``robot_descriptions`` alone), and the three trainers' own
 ``require_optional("torch", ...)`` calls sat inside ``setup()``, behind a

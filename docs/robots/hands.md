@@ -58,5 +58,5 @@ The 2F-140 and Hand-E answer the same register map with a different stroke; pass
 ## See also
 
 - [Arms](arms.md) - pair a hand with an arm via `add_robot`.
-- [Custom policies](../policies/custom-policies.md) - high-DOF hand control needs careful action-space design.
+- [Custom policies](../reference/policies/custom-policies.md) - high-DOF hand control needs careful action-space design.
 - [Bimanual](bimanual.md) - two arms each with a hand.

@@ -11,7 +11,7 @@ never sees the peers of the other fleet cannot deduce the knob from the
 symptom.
 
 Until this file's companion change, ``STRANDS_MESH_NAMESPACE`` was named on
-neither the README environment-variable matrix nor ``docs/security.md``. The
+neither the README environment-variable matrix nor ``docs/reference/security.md``. The
 default value (``"strands"``) is a documented default an operator overriding
 fleet isolation needs to know before they change it, because a rolling change
 across a fleet leaves the two halves unable to see each other for the duration
@@ -60,7 +60,7 @@ from strands_robots.mesh import _zenoh_config
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "_zenoh_config.py"
-_PAGE = _ROOT / "docs" / "security" / "mesh.md"
+_PAGE = _ROOT / "docs" / "reference" / "security" / "mesh.md"
 _README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
 
 _HEADING = "### Fleet routing isolation (namespace)"
@@ -135,7 +135,7 @@ def test_every_namespace_variable_the_module_reads_is_named_on_the_security_page
     reads = _namespace_env_reads()
     page_text = _PAGE.read_text(encoding="utf-8")
     missing = sorted(name for name in reads if name not in page_text)
-    assert not missing, f"docs/security/mesh.md is missing names for: {missing}"
+    assert not missing, f"docs/reference/security/mesh.md is missing names for: {missing}"
 
 
 def test_the_security_page_names_the_default_namespace() -> None:
@@ -153,7 +153,7 @@ def test_the_security_page_names_the_default_namespace() -> None:
         page_text,
         re.DOTALL,
     )
-    assert section_match, f"heading '{_HEADING}' is missing from docs/security/mesh.md"
+    assert section_match, f"heading '{_HEADING}' is missing from docs/reference/security/mesh.md"
     section = section_match.group(1)
     assert _DEFAULT in section, (
         f"the namespace section names the variable but not its default {_DEFAULT!r}; "
@@ -178,7 +178,7 @@ def test_the_security_page_names_the_silent_mismatch_failure_mode() -> None:
         page_text,
         re.DOTALL,
     )
-    assert section_match, f"heading '{_HEADING}' is missing from docs/security/mesh.md"
+    assert section_match, f"heading '{_HEADING}' is missing from docs/reference/security/mesh.md"
     section = section_match.group(1).lower()
     # The section must name the fact that a mismatch is silent / absent /
     # not-loud. Any of these phrasings satisfies the rule; the point is
@@ -197,7 +197,7 @@ def test_the_security_page_names_the_silent_mismatch_failure_mode() -> None:
 def test_the_readme_row_names_the_default_and_the_silent_mismatch() -> None:
     """The README matrix row itself names the two facts that make the knob usable.
 
-    A caller who never opens docs/security.md and only reads the matrix must
+    A caller who never opens docs/reference/security.md and only reads the matrix must
     still learn (a) the default value, and (b) that a mismatch is silent --
     the two facts that make the variable actionable rather than a name.
     """

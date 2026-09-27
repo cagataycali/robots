@@ -20,7 +20,7 @@ frame = sim.get_observation("so100")["default"]   # uint8 HxWx3
 iio.imwrite("first_frame.png", frame)
 ```
 
-> Headless box? `export MUJOCO_GL=osmesa` before importing. See [simulation troubleshooting](../simulation/troubleshooting.md).
+> Headless box? `export MUJOCO_GL=osmesa` before importing. See [simulation troubleshooting](../reference/simulation/troubleshooting.md).
 
 ## Add an object and run a policy
 
@@ -109,11 +109,11 @@ sim = Simulation(ros2_bridge=True); sim.create_world(); sim.add_robot("so101")
 sim.step(100)
 ```
 
-1. Teleop + recording - [Teleoperation](../hardware/teleoperation.md), [Recording](../recording.md).
-2. Post-tuning - [Training](../training/overview.md).
-3. Sim and hardware rollout - [Policies](../policies/overview.md), [Robot control](../hardware/robot-control.md).
-4. Fleet coordination - [Mesh](../mesh.md).
-5. ROS 2 interop - [ROS 2](../ros2-integration.md).
+1. Teleop + recording - [Teleoperation](../reference/hardware/teleoperation.md), [Recording](../reference/recording.md).
+2. Post-tuning - [Training](../reference/training/overview.md).
+3. Sim and hardware rollout - [Policies](../reference/policies/overview.md), [Robot control](../reference/hardware/robot-control.md).
+4. Fleet coordination - [Mesh](../reference/mesh.md).
+5. ROS 2 interop - [ROS 2](../reference/ros2-integration.md).
 
 Steps 1 and 3-real need hardware; step 2 needs a GPU. Step 4 needs the `[mesh]`
 extra and a mesh posture - `eclipse-zenoh` is not in the `[sim-mujoco]` install
@@ -127,13 +127,13 @@ the install line at the top of this page.
 ## Next: the notebook series
 
 For a guided, click-and-run path, work through the
-[getting-started notebooks](../examples/overview.md), five notebooks that run
+[getting-started notebooks](../reference/examples/overview.md), five notebooks that run
 end-to-end in simulation with no hardware, no GPU, and no Hugging Face
 credentials. They take you from `Robot("so100")` through recording a dataset,
 training a policy, and the full streaming data loop, each building on the last.
 
 ## See also
 
-- [Policy providers](../policies/overview.md) - GR00T, LeRobot Local, Cosmos 3.
+- [Policy providers](../reference/policies/overview.md) - GR00T, LeRobot Local, Cosmos 3.
 - [Robot catalog](../robots/index.md) - all {{n:robots}} robots.
-- [Real hardware](../hardware/robot-control.md) - same code, `mode="real"`.
+- [Real hardware](../reference/hardware/robot-control.md) - same code, `mode="real"`.

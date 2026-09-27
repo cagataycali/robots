@@ -92,14 +92,14 @@ per registered robot: the lerobot robot type the registry declares, the native d
 package registers, both, or neither - and neither is simulation-only until one of the two
 arrives. Which of the two `driver="auto"` picks is
 [the factory's answer](../getting-started/robot-factory.md#choosing-a-driver); what a native
-driver must satisfy is on [Native drivers](../hardware/native-drivers.md).
+driver must satisfy is on [Native drivers](../reference/hardware/native-drivers.md).
 
 {{coverage_matrix}}
 
 ## Add a new robot
 
 Robots are JSON entries in `strands_robots/registry/robots.json`. No code change is
-needed for most additions - see [Architecture](../architecture.md)
+needed for most additions - see [Architecture](../reference/architecture.md)
 for the JSON schema and asset-fetch strategies.
 
 ## See also

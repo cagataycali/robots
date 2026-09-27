@@ -20,7 +20,7 @@ the published ``unitree-sdk2`` wheel ships no ``g1`` package and pins a
 CycloneDDS with no ``py>=3.12`` wheel, so the checkout above is the install and
 ``[ros2]`` is where this project declares the CycloneDDS range. That is the
 recipe the driver's own missing-SDK refusal names, and
-docs/hardware/unitree-g1.md carries the aarch64 variant. The SDK is
+docs/reference/hardware/unitree-g1.md carries the aarch64 variant. The SDK is
 lazy-imported by the driver, so ``strands_robots`` remains importable on a
 machine without it - that is what makes every headless test pass.
 

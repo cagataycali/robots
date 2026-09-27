@@ -230,8 +230,8 @@ def test_sub_pixel_camera_jitter_is_a_noop(sim):
 #: believes the reset clears the noise records noisy states while believing
 #: they are clean - nothing in the result says otherwise.
 _LIFETIME_SURFACES = (
-    "docs/simulation/domain-randomization.md",
-    "docs/simulation/newton-scenes.md",
+    "docs/reference/simulation/domain-randomization.md",
+    "docs/reference/simulation/newton-scenes.md",
     "examples/12_domain_randomization.py",
     "strands_robots/simulation/mujoco/randomization.py",
     "strands_robots/simulation/newton/randomization.py",

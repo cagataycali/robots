@@ -11,7 +11,7 @@ consumer still works, because nothing executes a docstring. ``target_velocity``
 was forgotten on it for exactly that reason: it is read by two independent
 provider families, carried by ``run_policy`` / ``eval_policy`` /
 ``run_benchmark``, admitted by the mesh wire and forwarded by the mesh
-dispatcher, and named by ``docs/policies/wbc.md`` as "one of the issue #300
+dispatcher, and named by ``docs/reference/policies/wbc.md`` as "one of the issue #300
 well-known goal keys" - and absent from the ABC that the package docstring
 explicitly points at for the list.
 

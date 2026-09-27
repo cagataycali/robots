@@ -1,7 +1,7 @@
 """Turn a safety refusal into something a human can answer.
 
 A refusal is recognised by its ``code`` and described by its ``subject`` -- the
-contract :mod:`strands_robots.refusal_codes` states and ``docs/security.md``
+contract :mod:`strands_robots.refusal_codes` states and ``docs/reference/security.md``
 documents. The message travels with the request for the operator to read; it
 decides nothing here, so the SDK may reword any refusal without this module
 noticing. The environment variable a grant writes is read from

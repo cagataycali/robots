@@ -1,6 +1,6 @@
 """Repo hygiene: the orientation page's counts are the code's counts.
 
-``docs/architecture.md`` is the map a contributor reads to size each subsystem,
+``docs/reference/architecture.md`` is the map a contributor reads to size each subsystem,
 and its "ABCs" paragraph is read as the contract a new implementation conforms
 to. Both restate the code in prose, and nothing tied most of that prose to the
 code, so it drifted: the module table claimed 4 policy providers for a package
@@ -47,7 +47,7 @@ from strands_robots.policies.base import Policy
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = REPO_ROOT / "strands_robots"
-ARCHITECTURE = REPO_ROOT / "docs" / "architecture.md"
+ARCHITECTURE = REPO_ROOT / "docs" / "reference" / "architecture.md"
 README = REPO_ROOT / "README.md"
 
 #: Documents that restate the Simulation action surface as a number.
@@ -66,7 +66,7 @@ def _policy_paragraph() -> str:
     for block in _architecture().split("\n\n"):
         if block.lstrip().startswith("**`Policy`**"):
             return " ".join(block.split())
-    raise AssertionError("docs/architecture.md has no '**`Policy`**' paragraph in its ABCs section")
+    raise AssertionError("docs/reference/architecture.md has no '**`Policy`**' paragraph in its ABCs section")
 
 
 def _module_table_row(module: str) -> str:
@@ -75,7 +75,7 @@ def _module_table_row(module: str) -> str:
     for line in _architecture().splitlines():
         if line.startswith(prefix):
             return line
-    raise AssertionError(f"docs/architecture.md has no Modules row for {module!r}")
+    raise AssertionError(f"docs/reference/architecture.md has no Modules row for {module!r}")
 
 
 def _tool_count() -> int:
@@ -170,7 +170,7 @@ def test_the_module_table_states_the_number_of_providers_that_ship() -> None:
     row = _module_table_row("strands_robots/policies/")
     stated = re.findall(r"\b(\d+)\s+providers\b", row)
     assert stated == [str(len(providers))], (
-        f"docs/architecture.md's policies row states {stated or 'no'} providers; "
+        f"docs/reference/architecture.md's policies row states {stated or 'no'} providers; "
         f"registry/policies.json ships {len(providers)}: {providers}"
     )
 
@@ -181,7 +181,7 @@ def test_the_module_table_states_the_number_of_tools_that_ship() -> None:
     row = _module_table_row("strands_robots/tools/")
     stated = re.findall(r"\b(\d+)\s+`@tool`", row)
     assert stated == [str(expected)], (
-        f"docs/architecture.md's tools row states {stated or 'no'} @tool helpers; "
+        f"docs/reference/architecture.md's tools row states {stated or 'no'} @tool helpers; "
         f"strands_robots/tools/ defines {expected}"
     )
 
@@ -207,7 +207,7 @@ def test_the_policy_paragraph_names_every_abstract_member() -> None:
     paragraph = _policy_paragraph()
     missing = sorted(m for m in Policy.__abstractmethods__ if not _names(paragraph, m))
     assert not missing, (
-        f"docs/architecture.md's Policy paragraph does not name {missing}, which "
+        f"docs/reference/architecture.md's Policy paragraph does not name {missing}, which "
         f"Policy declares abstract, so an implementer reading it learns an incomplete "
         f"must-implement set: {paragraph[:160]}..."
     )
@@ -221,7 +221,7 @@ def test_the_policy_paragraph_claims_nothing_abstract_that_is_not() -> None:
     intro = paragraph.split(":")[0] if ":" in paragraph else paragraph
     wrong = sorted(name for name in optional if _names(intro, name))
     assert not wrong, (
-        f"docs/architecture.md's Policy paragraph introduces {wrong} alongside the "
+        f"docs/reference/architecture.md's Policy paragraph introduces {wrong} alongside the "
         f"abstract members, but Policy supplies a default for each: "
         f"{sorted(Policy.__abstractmethods__)} are the abstract ones"
     )
@@ -239,7 +239,7 @@ def test_the_policy_paragraph_names_every_declaration_seam() -> None:
     paragraph = _policy_paragraph()
     missing = sorted(s for s in seams if not _names(paragraph, s))
     assert not missing, (
-        f"docs/architecture.md's Policy paragraph does not name {missing}; the base "
+        f"docs/reference/architecture.md's Policy paragraph does not name {missing}; the base "
         f"class marks {sorted(seams)} as the 'policy declares, runtime supplies' "
         f"family, and a policy that skips one is not told it exists"
     )
@@ -252,7 +252,7 @@ def test_the_policy_paragraph_states_the_number_of_implementations_that_ship() -
     stated = {int(n) for n in re.findall(r"\b(\d+)\s+implementations\b", paragraph)}
     wrong = sorted(n for n in stated if n != expected)
     assert not wrong, (
-        f"docs/architecture.md's Policy paragraph states {wrong} implementations; "
+        f"docs/reference/architecture.md's Policy paragraph states {wrong} implementations; "
         f"strands_robots/policies/ defines {expected}"
     )
 
@@ -269,7 +269,7 @@ def test_the_paragraph_does_not_enumerate_a_strict_subset_as_the_implementations
     named = {n for n in re.findall(r"`(\w+)`", paragraph) if n in implementations}
     total = len(implementations)
     assert not (0 < len(named) < total), (
-        f"docs/architecture.md's Policy paragraph names {sorted(named)} - "
+        f"docs/reference/architecture.md's Policy paragraph names {sorted(named)} - "
         f"{len(named)} of {total} implementations - which reads as the complete set. "
         f"State the count and point at the provider table instead."
     )

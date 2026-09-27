@@ -1,6 +1,6 @@
 """A recipe a page hands an agent-writer imports under that page's install, and builds what it says.
 
-``docs/agents.md`` teaches the two things a reader cannot get from the tool spec:
+``docs/reference/agents.md`` teaches the two things a reader cannot get from the tool spec:
 which tools to hand the ``Agent``, and how a plain-English dimension becomes an
 ``add_object`` call. Both of its recipes were satisfiable only on some other
 page's terms.
@@ -10,11 +10,11 @@ page's terms.
   ``lerobot[feetech]``), and the page's own install fence is
   ``strands-agents "strands-robots[sim-mujoco]"`` -- so following the page top to
   bottom ends in ``ImportError: cannot import name 'pose_tool'``.
-  ``docs/hardware/tools.md`` states the dependency; this page did not.
+  ``docs/reference/hardware/tools.md`` states the dependency; this page did not.
 * The "Common patterns" table mapped "Add a 5cm red cube" to ``size=[0.025]*3``.
   ``size`` is the FULL extent, so that builds a 2.5 cm cube -- half what the
   instruction asks for, and the half-extents MuJoCo stores for a 5 cm one.
-  ``add_object``'s own docstring and ``docs/simulation/objects.md`` spell 5 cm as
+  ``add_object``'s own docstring and ``docs/reference/simulation/objects.md`` spell 5 cm as
   ``[0.05, 0.05, 0.05]``, and ``add_object("default_box")`` compiles exactly
   those extents.
 
@@ -34,7 +34,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-AGENTS_PAGE = REPO_ROOT / "docs" / "agents.md"
+AGENTS_PAGE = REPO_ROOT / "docs" / "reference" / "agents.md"
 TOOLS_DIR = REPO_ROOT / "strands_robots" / "tools"
 
 

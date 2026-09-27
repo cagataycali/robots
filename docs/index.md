@@ -69,7 +69,7 @@ through the same actions.
 
     Give the robot to a Strands agent and ask for the task in plain English.
 
-    [:octicons-arrow-right-24: AI agents](agents.md)
+    [:octicons-arrow-right-24: AI agents](reference/agents.md)
 
 </div>
 
@@ -106,5 +106,5 @@ from strands_robots.drivers import list_driver_coverage
 list_driver_coverage()["so101"]     # ('lerobot', 'strands')
 ```
 
-Deeper: [Policy providers](policies/overview.md) · [Architecture](architecture.md) ·
-[API reference](api-reference.md) · [Tool reference](reference/tools.md)
+Deeper: [Policy providers](reference/policies/overview.md) · [Architecture](reference/architecture.md) ·
+[API reference](reference/api-reference.md) · [Tool reference](reference/tools.md)

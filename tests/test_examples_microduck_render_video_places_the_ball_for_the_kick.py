@@ -5,7 +5,7 @@ kick weights were trained with the ball 0.09 m ahead and 0.042 m to the side of
 the kicking foot, in the robot's yaw frame (Pollen's ``microduck_rl``
 ``scripts/infer_policy.py``: ``BALL_OFFSET_X``, ``BALL_OFFSET_ABS_Y``, and the
 ``_place_ball`` teleport its runtime performs before every kick).
-``docs/policies/microduck.md`` has said so since the ball-scene placement fix,
+``docs/reference/policies/microduck.md`` has said so since the ball-scene placement fix,
 and the example's own docstring recipe - ``--onnx ball_kick_left.onnx --scene
 scene_ball.xml`` - went on rendering four seconds of the duck kicking air.
 

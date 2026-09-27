@@ -9,7 +9,7 @@ from somewhere else and no traceback. Docs therefore point at a shipped script
 as the worked version - "X records a walking robot this way" - and that pointer
 is only worth following if the script really does it.
 
-Measured on ``82169fa4``, before this module: a draft of ``docs/policies/wbc.md``
+Measured on ``82169fa4``, before this module: a draft of ``docs/reference/policies/wbc.md``
 closed its new "Recording it" subsection with
 
     [`examples/locomotion/scripted_g1.py`](...) does the pelvis mount before its

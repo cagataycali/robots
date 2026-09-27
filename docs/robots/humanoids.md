@@ -26,17 +26,17 @@ Every humanoid here with a native driver has its bring-up on its own page - the
 port to pass, which joints a host may command, and which verbs the onboard
 controller keeps for itself:
 
-- [Booster T1 over the vendor SDK](../hardware/booster-t1.md)
-- [Unitree G1 over CycloneDDS](../hardware/unitree-g1.md), including
-  [installing the Unitree SDK](../hardware/unitree-g1.md#installing-the-unitree-sdk)
-- [Microduck over the robotd link](../hardware/microduck.md)
-- [Reachy Mini daemon link](../hardware/reachy-mini.md)
+- [Booster T1 over the vendor SDK](../reference/hardware/booster-t1.md)
+- [Unitree G1 over CycloneDDS](../reference/hardware/unitree-g1.md), including
+  [installing the Unitree SDK](../reference/hardware/unitree-g1.md#installing-the-unitree-sdk)
+- [Microduck over the robotd link](../reference/hardware/microduck.md)
+- [Reachy Mini daemon link](../reference/hardware/reachy-mini.md)
 
 ## Mounting a camera on a humanoid
 
 `add_camera(parent_body=...)` mounts a camera ON a body so it rides with the
 robot, and `position`/`target` are then in that body's LOCAL frame. The general
-recipe in [World building](../simulation/world-building.md) reads the mount from
+recipe in [World building](../reference/simulation/world-building.md) reads the mount from
 `list_bodies(robot_name=...)["gripper_body"]`, which is the right mount for an
 arm. A humanoid here reports `gripper_body: None`: that hint set (`gripper`,
 `hand`, `jaw`, `ee`, `tool`) is arm-shaped, and matching it on word boundaries is
@@ -64,4 +64,4 @@ the name passed to `Robot(...)`, so `Robot("g1")` would report `g1/torso_link`.
 
 - [Mobile](mobile.md) - quadrupeds and wheeled bases.
 - [Bimanual](bimanual.md) - two-arm rigs without the legs.
-- [GR00T](../policies/groot.md) - many GR00T data_configs target humanoids.
+- [GR00T](../reference/policies/groot.md) - many GR00T data_configs target humanoids.

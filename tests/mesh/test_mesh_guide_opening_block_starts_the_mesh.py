@@ -2,7 +2,7 @@
 
 ``Mesh.start`` refuses under the default posture - mTLS auth, the built-in
 permissive ACL, no acknowledgement - and logs ``PERMISSIVE_ACL_REFUSAL``, which
-names three environment variables as the ways out. ``docs/mesh.md`` opens with
+names three environment variables as the ways out. ``docs/reference/mesh.md`` opens with
 two processes calling ``Robot(..., mesh=True)``; on a fresh install that block
 must not end in ``Mesh did NOT start``. This test replays every ``export`` the
 page issues before its first ``mesh=True`` fence into a clean environment and
@@ -22,7 +22,7 @@ import pytest
 import strands_robots
 from strands_robots.mesh import core
 
-_GUIDE = Path(strands_robots.__file__).resolve().parent.parent / "docs" / "mesh.md"
+_GUIDE = Path(strands_robots.__file__).resolve().parent.parent / "docs" / "reference" / "mesh.md"
 _FENCE = re.compile(r"```(\w*)\n(.*?)```", re.S)
 _EXPORT = re.compile(r"^\s*export\s+([A-Z_][A-Z0-9_]*)=(\S+)", re.M)
 

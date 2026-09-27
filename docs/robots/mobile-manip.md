@@ -178,4 +178,4 @@ within a degree.
 
 - [Mobile](mobile.md) - bases without an arm.
 - [Arms](arms.md) - the arm on its own.
-- [ROS 2 integration](../ros2-integration.md) - the graph these drivers speak.
+- [ROS 2 integration](../reference/ros2-integration.md) - the graph these drivers speak.

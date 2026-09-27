@@ -117,8 +117,8 @@ def test_molmoact2_extra_is_pure_pypi_with_transformers_5_4_plus() -> None:
 # --- negative contract: stale pre-0.6 guidance must be gone from the docs ---
 
 _TRAIN_POLICY = _REPO_ROOT / "strands_robots" / "tools" / "train_policy.py"
-_TRAINING_OVERVIEW = _REPO_ROOT / "docs" / "training" / "overview.md"
-_LEROBOT_LOCAL = _REPO_ROOT / "docs" / "policies" / "lerobot-local.md"
+_TRAINING_OVERVIEW = _REPO_ROOT / "docs" / "reference" / "training" / "overview.md"
+_LEROBOT_LOCAL = _REPO_ROOT / "docs" / "reference" / "policies" / "lerobot-local.md"
 
 
 def test_train_policy_tool_has_no_stale_transformers_pin() -> None:
@@ -155,9 +155,9 @@ def test_lerobot_local_docs_do_not_claim_molmoact2_needs_source() -> None:
 #     narrative also lingered in the architecture / troubleshooting / molmoact2
 #     pages after the >=0.6 floor bump. These pin it out. ---
 
-_ARCHITECTURE = _REPO_ROOT / "docs" / "architecture.md"
-_TROUBLESHOOTING = _REPO_ROOT / "docs" / "troubleshooting.md"
-_MOLMOACT2 = _REPO_ROOT / "docs" / "policies" / "molmoact2.md"
+_ARCHITECTURE = _REPO_ROOT / "docs" / "reference" / "architecture.md"
+_TROUBLESHOOTING = _REPO_ROOT / "docs" / "reference" / "troubleshooting.md"
+_MOLMOACT2 = _REPO_ROOT / "docs" / "reference" / "policies" / "molmoact2.md"
 _INSTALLATION = _REPO_ROOT / "docs" / "getting-started" / "installation.md"
 
 
@@ -233,12 +233,12 @@ def test_molmoact2_doc_install_line_is_not_from_source() -> None:
 #     rename wave; the old module is removed, so ``python -m
 #     lerobot.scripts.train`` now raises ``ModuleNotFoundError``). The rest of the
 #     codebase already uses the current name (``strands_robots.training.lerobot``,
-#     ``strands_robots.tools.lerobot_train``, ``docs/training/overview.md``); these
+#     ``strands_robots.tools.lerobot_train``, ``docs/reference/training/overview.md``); these
 #     two user-facing "how to train" spots lagged. Pin the dead module out and
 #     require the current one. ---
 
 _STREAMING_DATASET = _REPO_ROOT / "strands_robots" / "streaming_dataset.py"
-_READING_BACK = _REPO_ROOT / "docs" / "data" / "reading-back.md"
+_READING_BACK = _REPO_ROOT / "docs" / "reference" / "data" / "reading-back.md"
 
 
 def test_no_userfacing_file_invokes_removed_lerobot_scripts_train() -> None:
@@ -269,8 +269,12 @@ def test_no_userfacing_file_invokes_removed_lerobot_scripts_train() -> None:
 #     * The shard-size claim understated lerobot's defaults: 100 MB is the
 #       data-parquet default; video MP4 shards default to 200 MB. ---
 
-_STREAMED_TRAINING = _REPO_ROOT / "docs" / "data" / "reading-back.md"  # the streamed-training page (was README)
-_BUCKET_GUIDANCE = _REPO_ROOT / "docs" / "data" / "dataset-recorder.md"  # the sync_to_bucket page (was README)
+_STREAMED_TRAINING = (
+    _REPO_ROOT / "docs" / "reference" / "data" / "reading-back.md"
+)  # the streamed-training page (was README)
+_BUCKET_GUIDANCE = (
+    _REPO_ROOT / "docs" / "reference" / "data" / "dataset-recorder.md"
+)  # the sync_to_bucket page (was README)
 _DATASET_RECORDER = _REPO_ROOT / "strands_robots" / "dataset_recorder.py"
 _DATASET_TRANSFER = _REPO_ROOT / "strands_robots" / "dataset_transfer.py"  # the bucket-sync source
 
@@ -381,7 +385,7 @@ def test_wbc_extra_huggingface_hub_floor_ships_the_bucket_cli() -> None:
 #     ``require_package("accelerate", extra="training")`` *before* it branches on
 #     device, so "no GPU" does not mean "no extra" -- and nothing on the
 #     ``lerobot_local`` path pulls ``accelerate`` in (the ``[lerobot]`` extra is
-#     exactly ``lerobot[feetech,dataset]``). ``docs/training/overview.md`` called
+#     exactly ``lerobot[feetech,dataset]``). ``docs/reference/training/overview.md`` called
 #     that row "works out of the box", which is false for the one thing the page
 #     is about: a reader following it gets ``'accelerate' is required but not
 #     installed`` on the first ``train()``, on CPU and GPU alike, and -- because
@@ -423,7 +427,7 @@ def test_no_lerobot_path_extra_declares_accelerate() -> None:
         assert name in available, f"[{name}] extra vanished from pyproject; update _LEROBOT_PATH_EXTRAS"
         assert name not in declaring, (
             f"[{name}] now declares accelerate, so `pip install 'strands-robots[{name}]'` can train "
-            "on its own; docs/training/overview.md and docs/troubleshooting.md must stop instructing "
+            "on its own; docs/reference/training/overview.md and docs/reference/troubleshooting.md must stop instructing "
             "`lerobot[training]` and name this extra instead"
         )
 
@@ -443,17 +447,17 @@ def test_training_overview_names_the_trainer_extra() -> None:
     text = _unwrapped(_TRAINING_OVERVIEW.read_text())
     # the false claim: [lerobot] alone cannot run train() on any device
     assert "works out of the box" not in text, (
-        "docs/training/overview.md calls the lerobot_local ACT/diffusion install "
+        "docs/reference/training/overview.md calls the lerobot_local ACT/diffusion install "
         "'works out of the box', but train() refuses without accelerate, which no "
         "extra on that path declares"
     )
     assert "extra is enough for **ACT / diffusion from" not in text, (
-        "docs/training/overview.md still claims the [lerobot] extra alone is enough to train from scratch"
+        "docs/reference/training/overview.md still claims the [lerobot] extra alone is enough to train from scratch"
     )
     # the remedy, and why it applies with no GPU in sight
-    assert "lerobot[training]" in text, "docs/training/overview.md lost the lerobot[training] requirement"
+    assert "lerobot[training]" in text, "docs/reference/training/overview.md lost the lerobot[training] requirement"
     assert 'require_package("accelerate", extra="training")' in text, (
-        "docs/training/overview.md should name the call that refuses, so the "
+        "docs/reference/training/overview.md should name the call that refuses, so the "
         "'CPU needs it too' claim is checkable rather than asserted"
     )
     assert "on CPU as well as GPU" in text
@@ -463,10 +467,10 @@ def test_troubleshooting_has_a_remedy_for_the_missing_trainer_extra() -> None:
     text = _unwrapped(_TROUBLESHOOTING.read_text())
     # the symptom a reader actually sees, verbatim from lerobot's require_package
     assert "'accelerate' is required but not installed" in text, (
-        "docs/troubleshooting.md has no row for the missing-accelerate training failure"
+        "docs/reference/troubleshooting.md has no row for the missing-accelerate training failure"
     )
     assert 'uv pip install "lerobot[training]"' in text, (
-        "docs/troubleshooting.md names the accelerate symptom without the lerobot[training] remedy"
+        "docs/reference/troubleshooting.md names the accelerate symptom without the lerobot[training] remedy"
     )
 
 

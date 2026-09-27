@@ -4,7 +4,7 @@
 tool's whole vocabulary is driven against a live ROS 2 graph, and four surfaces
 sell it as complete - the script's own docstring, the example README ("It
 exercises every action"), ``docker-compose.yml`` and
-``docs/ros2-integration.md`` ("drives a real ``turtlesim`` through every
+``docs/reference/ros2-integration.md`` ("drives a real ``turtlesim`` through every
 ``use_ros`` action"). Its captured ``sample_output.txt`` is then the evidence a
 reader trusts for what each verb returns.
 

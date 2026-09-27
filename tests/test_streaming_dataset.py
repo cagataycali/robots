@@ -109,7 +109,7 @@ def _two_frame_dataset_with_a_video_feature(root):
 
 
 def test_drop_videos_never_decodes_video_with_the_real_streaming_dataset(tmp_path):
-    """The claim under test is docs/data/reading-back.md's: drop_videos=True "skips video
+    """The claim under test is docs/reference/data/reading-back.md's: drop_videos=True "skips video
     decode entirely". lerobot's StreamingLeRobotDataset decodes every key in
     meta.video_keys whether or not it is in delta_timestamps, so stripping the
     camera deltas alone (the previous implementation) still decoded - and the
@@ -237,7 +237,7 @@ def _three_episode_proprio_dataset(root):
     ids=["all", "one", "two-of-three"],
 )
 def test_episodes_streams_and_counts_exactly_the_requested_subset(tmp_path, episodes, expected):
-    """The claim under test is docs/data/reading-back.md's ``episodes=[...]`` row: "a
+    """The claim under test is docs/reference/data/reading-back.md's ``episodes=[...]`` row: "a
     subset". lerobot's StreamingLeRobotDataset stores ``episodes`` and never reads it
     again (its materializing sibling LeRobotDataset does), so the reader streamed - and
     counted - every episode in the dataset: an episode-filtered training or eval set

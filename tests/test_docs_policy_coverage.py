@@ -1,6 +1,6 @@
 """Repo hygiene: the policy overview table lists exactly the registered providers.
 
-``docs/policies/overview.md`` is the entry point for choosing a
+``docs/reference/policies/overview.md`` is the entry point for choosing a
 ``policy_provider``. Its "Providers" table is the human-facing catalogue of what
 ``create_policy("<name>")`` accepts. If a provider is added to
 ``strands_robots/registry/policies.json`` but not to the table (or vice versa),
@@ -28,7 +28,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-OVERVIEW_MD = REPO_ROOT / "docs" / "policies" / "overview.md"
+OVERVIEW_MD = REPO_ROOT / "docs" / "reference" / "policies" / "overview.md"
 POLICIES_JSON = REPO_ROOT / "strands_robots" / "registry" / "policies.json"
 
 
@@ -83,7 +83,7 @@ def test_overview_table_matches_registered_providers() -> None:
     stale_in_docs = sorted(documented - registered)
 
     assert not missing_from_docs and not stale_in_docs, (
-        "docs/policies/overview.md Providers table is out of sync with "
+        "docs/reference/policies/overview.md Providers table is out of sync with "
         "strands_robots/registry/policies.json.\n"
         f"  Registered but missing from the table: {missing_from_docs}\n"
         f"  In the table but not registered:       {stale_in_docs}\n"

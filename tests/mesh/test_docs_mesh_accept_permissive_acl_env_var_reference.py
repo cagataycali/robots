@@ -21,7 +21,7 @@ three gates that call it, so setting it takes all three effects:
 the current environment would take, so it cannot print PASS for a spelling the
 gates refuse - it did, for ``on``, while it borrowed ``_zenoh_config._bool_env``.
 
-Until this file's companion change, ``docs/security.md`` named the variable only
+Until this file's companion change, ``docs/reference/security.md`` named the variable only
 as a silencer for that session warning and said nothing about the loader
 refusal; the first correction then over-rotated and asserted the token "does not
 silence" the warning, which reader 3 contradicts. Both framings understated the
@@ -99,7 +99,7 @@ from strands_robots.mesh import _acl_config
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PACKAGE = _ROOT / "strands_robots"
 _MODULE = _PACKAGE / "mesh" / "_acl_config.py"
-_PAGE = _ROOT / "docs" / "security" / "mesh.md"
+_PAGE = _ROOT / "docs" / "reference" / "security" / "mesh.md"
 _CONFIG_REFERENCE = _ROOT / "docs" / "reference" / "configuration.md"
 
 _HEADING = "### Blacklist ACL acknowledgement (`STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`)"
@@ -180,7 +180,7 @@ def _reader_sites() -> dict[str, str]:
 
 
 def _security_page_section() -> str:
-    """Return the acknowledgement subsection from ``docs/security/mesh.md``.
+    """Return the acknowledgement subsection from ``docs/reference/security/mesh.md``.
 
     Bounded by the section heading and the next ``### `` sibling.
     """
@@ -239,7 +239,7 @@ def test_every_acknowledgement_variable_the_module_reads_is_named_on_the_securit
     section = _security_page_section()
     missing = [name for name in _accept_env_reads() if name not in section]
     assert not missing, (
-        f"docs/security.md acknowledgement subsection is missing {missing}; add a bullet naming each one"
+        f"docs/reference/security.md acknowledgement subsection is missing {missing}; add a bullet naming each one"
     )
 
 

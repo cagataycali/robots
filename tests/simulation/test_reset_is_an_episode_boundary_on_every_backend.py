@@ -5,7 +5,7 @@
 :meth:`~strands_robots.simulation.recording.DatasetRecordingMixin.save_episode`
 states it as a fact about the class every engine inherits -- "``reset()`` is
 itself an episode boundary while recording: it flushes buffered frames before
-teleporting" -- and ``docs/recording.md`` repeats it without naming a backend.
+teleporting" -- and ``docs/reference/recording.md`` repeats it without naming a backend.
 Until this fix only MuJoCo did it. Measured on MuJoCo 3.10.0 with the flush
 removed, one ``start_recording`` then two ten-step ``run_policy`` rollouts with
 a ``reset()`` between them:

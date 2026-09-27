@@ -100,7 +100,7 @@ Configuration env vars
     ``PermissiveACLError``. The opt-in is intended for dev/lab postures
     where role separation is deliberately deferred. Production fleets
     must supply ``STRANDS_MESH_ACL_FILE`` with
-    ``default_permission: "deny"`` instead; see ``docs/security.md`` >
+    ``default_permission: "deny"`` instead; see ``docs/reference/security.md`` >
     Blacklist ACL acknowledgement.
 
 ``STRANDS_MESH_I_KNOW_THIS_IS_INSECURE``

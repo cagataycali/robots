@@ -3,7 +3,7 @@
 ``create_policy`` forwards one shared kwargs bag to every provider, so the
 constructor tolerates keys it does not own - the contract ``remote``
 already grades. Tolerating them silently is a different thing: ``rtc=True``
-(the spelling ``docs/policies/lerobot-local.md`` warns against, for
+(the spelling ``docs/reference/policies/lerobot-local.md`` warns against, for
 ``rtc_enabled=``) built a policy with RTC off and no line anywhere saying the
 request was never read.
 """

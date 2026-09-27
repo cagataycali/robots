@@ -1,6 +1,6 @@
 """The documented native-runtime adapter must apply the seed it is handed.
 
-``docs/policies/kimodo.md`` documents a ``KimodoMotionAgent`` that drives
+``docs/reference/policies/kimodo.md`` documents a ``KimodoMotionAgent`` that drives
 NVIDIA's own ``kimodo`` runtime, because that checkpoint is not published in
 diffusers pipeline layout and so cannot be loaded by the built-in agent. The
 documented adapter is the supported route to the real weights, which makes its
@@ -38,7 +38,7 @@ import pytest
 from strands_robots.policies.kimodo.policy import KimodoMotionAgent
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-_KIMODO_DOC = _REPO_ROOT / "docs" / "policies" / "kimodo.md"
+_KIMODO_DOC = _REPO_ROOT / "docs" / "reference" / "policies" / "kimodo.md"
 _ADAPTER_HEADING = "## Driving the NVIDIA checkpoint"
 _ADAPTER_CLASS = "class NativeKimodoAgent:"
 _FRAME_WIDTH = 7 + 29
@@ -133,7 +133,7 @@ def _install_runtime_stubs(monkeypatch: pytest.MonkeyPatch, stream: _GlobalNoise
 
 @pytest.fixture
 def documented_agent(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Build the adapter exactly as ``docs/policies/kimodo.md`` writes it."""
+    """Build the adapter exactly as ``docs/reference/policies/kimodo.md`` writes it."""
     _install_runtime_stubs(monkeypatch, _GlobalNoiseStream())
     namespace: dict[str, Any] = {}
     exec(compile(documented_adapter_source(), str(_KIMODO_DOC), "exec"), namespace)  # noqa: S102

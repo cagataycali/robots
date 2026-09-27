@@ -1,6 +1,6 @@
 """The WBC weights recipe fetches the two controllers, not the tree around them.
 
-The checkpoint step on ``docs/policies/wbc.md`` is the first command a WBC user
+The checkpoint step on ``docs/reference/policies/wbc.md`` is the first command a WBC user
 runs, and the two G1 controllers it needs are 1.8 MB each: obtaining them by
 cloning ``NVlabs/GR00T-WholeBodyControl`` downloads a 4.6 GB git-LFS tree for
 3.6 MB of ONNX. Pin the recipe as a per-artifact fetch, and pin the filenames it
@@ -22,7 +22,7 @@ from strands_robots.policies.wbc.policy import (
     _WALK_POLICY_FILENAME,
 )
 
-_PAGE = Path(__file__).resolve().parents[3] / "docs" / "policies" / "wbc.md"
+_PAGE = Path(__file__).resolve().parents[3] / "docs" / "reference" / "policies" / "wbc.md"
 _FENCE = re.compile(r"^```[a-z]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
 _ONNX = re.compile(r"[\w.-]+\.onnx")
 _CKPT_DIR = "grootwbc-g1"  # the page's placeholder checkpoint directory
