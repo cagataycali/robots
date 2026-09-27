@@ -26,12 +26,13 @@ interface Props {
   onDevices: () => void
   onTraining: () => void
   onRecord: () => void
+  onSim: () => void
   onHelp: () => void
 }
 
 export default function FleetBar({
   conn, peerCount, dashboardId, safetyFlash, mesh, online, installable,
-  activityCount, recordMock, absentChildren, quietChildren, onInstall, onSettings, onWireSecurity, onActivity, onDevices, onTraining, onRecord,
+  activityCount, recordMock, absentChildren, quietChildren, onInstall, onSettings, onWireSecurity, onActivity, onDevices, onTraining, onRecord, onSim,
   onHelp,
 }: Props) {
   // The mesh session and this browser's socket fail independently: the page can be LIVE while
@@ -100,6 +101,7 @@ export default function FleetBar({
           aria-label={rec.aria}
         >⏺ record{rec.suffix}</button>
         <button className="chip" onClick={onTraining} title="Train policies on recorded datasets">🎓 train</button>
+        <button className="chip" onClick={onSim} title="Simulated robots in this process: twin, camera, joint targets">🧊 sim</button>
         <button className="chip" onClick={onActivity} title="Command history">
           ☰ activity{activityCount > 0 ? ` (${activityCount})` : ''}
         </button>

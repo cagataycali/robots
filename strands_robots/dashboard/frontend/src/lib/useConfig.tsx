@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConfigDoc, PolicyProvider } from '../types'
-import { api, post } from './endpoints'
+import { fetchConfigDoc, saveConfigDoc } from './configDoc'
 
 export interface ApplyResult {
   /** setting names this backend does not know - dropped, never stored */
@@ -52,7 +52,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const reload = useCallback(async () => {
     setLoading(true)
     try {
-      setConfig(await api<ConfigDoc>('/api/config'))
+      setConfig(await fetchConfigDoc())
       setError(null)
     } catch (e: any) {
       setError(e?.message ?? String(e))
@@ -64,7 +64,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void reload() }, [reload])
 
   const save = useCallback(async (body: Record<string, any>) => {
-    const result = await post<ApplyResult>('/api/config', body)
+    const result = await saveConfigDoc(body)
     await reload()
     return result
   }, [reload])

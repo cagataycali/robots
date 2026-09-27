@@ -1918,3 +1918,39 @@ pre.startsnip {
    * has gone slow and they are looking for the reason. */
   .camtile .campaced { background: var(--panel2); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
+
+/* -- sim tab ------------------------------------------ */
+.sim-sheet { max-width: 960px; }
+.sim-new .train-row { align-items: flex-end; }
+.sim-actions { align-self: flex-end; margin-bottom: var(--s4); }
+.sim-lockout {
+  display: flex; align-items: center; gap: 10px; justify-content: space-between;
+  font-size: var(--fs-small); font-family: var(--mono); color: var(--dim);
+  border-left: 3px solid var(--border); padding: 4px 10px;
+}
+.sim-lockout.clear { border-color: var(--ok); color: var(--text-2); }
+.sim-lockout.locked { border-color: var(--danger); color: var(--danger); }
+.sim-lockout.unknown { border-color: var(--warn); }
+.sim-sessions { display: flex; flex-direction: column; gap: 14px; padding-bottom: 90px; }
+.sim-session {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.sim-session.frozen { border-color: color-mix(in srgb, var(--danger) 55%, transparent); }
+.sim-session.error, .sim-session.stale, .sim-session.refused { border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+.sim-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sim-head .viewsel { display: flex; gap: 4px; }
+.sim-view {
+  position: relative; aspect-ratio: 4 / 3; max-height: 420px; width: 100%;
+  background: #0b0e11; border-radius: 10px; overflow: hidden;
+}
+.sim-view canvas.twin, .sim-view img.cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+.sim-view canvas.twin[hidden] { display: none; }
+.sim-overlay { position: absolute; left: 10px; bottom: 8px; }
+.sim-joints { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 16px; }
+.sim-joint { display: grid; grid-template-columns: 110px 1fr 60px; align-items: center; gap: 8px; font-size: var(--fs-small); }
+.sim-joint .label { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-joint input[type="range"] { width: 100%; accent-color: var(--accent); }
+.sim-joint .val { text-align: right; color: var(--text-2); }
+.sim-foot { display: flex; align-items: center; gap: 10px; font-size: var(--fs-small); color: var(--dim); flex-wrap: wrap; }
+.sim-foot .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }

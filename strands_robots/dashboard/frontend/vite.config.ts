@@ -22,6 +22,16 @@ export default defineConfig({
     outDir: '../static',
     emptyOutDir: false,
     sourcemap: false,
+    // Fixed names, so a rebuild overwrites the previous bundle instead of
+    // leaving a hashed sibling behind in a directory the build does not empty.
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/index.js',
+        chunkFileNames: 'assets/[name].js',
+        assetFileNames: 'assets/[name][extname]',
+      },
+    },
+    chunkSizeWarningLimit: 600,
   },
   server: {
     proxy: {

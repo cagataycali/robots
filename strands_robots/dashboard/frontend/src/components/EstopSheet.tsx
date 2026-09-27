@@ -4,14 +4,32 @@ import type { EstopResult } from '../types'
 import { post, HttpError } from '../lib/endpoints'
 import { estopFailureVerdict, resumeFailureVerdict, type FailureVerdict } from '../lib/estopOutcome'
 
+/** The dashboard's own lockout (routes_sim.py: /api/safety). */
+export interface SimLockout { state: 'clear' | 'locked' | 'unknown' | string; reason?: string; by?: string; since?: number }
+
+/**
+ * Which rail a stop goes to. Two exist on the server: the mesh-backed signed rail at
+ * /api/mesh/safety/* (fleet-wide lockout, per-peer answers, override code to resume)
+ * and the sim-only lockout at /api/safety/* (this process's simulated robots). The
+ * fleet view says which one is live: with the mesh bridge up, the stop fires BOTH -
+ * a stop is never refused and never too wide - and the resume clears both.
+ */
+export function estopPaths(meshBacked: boolean): { estop: string[]; resume: string[] } {
+  return meshBacked
+    ? { estop: ['/api/mesh/safety/estop', '/api/safety/estop'], resume: ['/api/mesh/safety/resume', '/api/safety/resume'] }
+    : { estop: ['/api/safety/estop'], resume: ['/api/safety/resume'] }
+}
+
 /** Fleet-wide stop, with a per-peer answer. */
 export default function EstopSheet({
-  open, onClose, linkWarning,
+  open, onClose, linkWarning, meshBacked = false,
 }: {
   open: boolean
   onClose: () => void
   /** Set when this page cannot currently deliver the stop (lib/linkHealth). */
   linkWarning?: string | null
+  /** true when /ws/mesh reports the bridge online: the signed fleet rail is reachable. */
+  meshBacked?: boolean
 }) {
   const [firing, setFiring] = useState(false)
   const [result, setResult] = useState<EstopResult | null>(null)
@@ -21,14 +39,23 @@ export default function EstopSheet({
   const [code, setCode] = useState('')
   const [resuming, setResuming] = useState(false)
   const [resumeMsg, setResumeMsg] = useState<string | null>(null)
+  // The sim-only rail's answer, when that is the rail in use.
+  const [simLockout, setSimLockout] = useState<SimLockout | null>(null)
+  const paths = estopPaths(meshBacked)
 
   const resume = async () => {
-    if (!code.trim()) return
+    if (meshBacked && !code.trim()) return
     setResuming(true); setResumeMsg(null)
     try {
-      const r = await post<{ status?: string; error?: string }>('/api/safety/resume', { override_code: code })
-      if (r.status === 'ok') { setResumeMsg('✓ lockout cleared — fleet accepting commands again'); setCode('') }
-      else setResumeMsg(`✗ ${r.error ?? 'resume rejected'} (wrong code? brute-force cooldown?)`)
+      if (meshBacked) {
+        const r = await post<{ status?: string; error?: string }>(paths.resume[0], { override_code: code })
+        if (r.status === 'ok') { setResumeMsg('✓ lockout cleared - fleet accepting commands again'); setCode('') }
+        else setResumeMsg(`✗ ${r.error ?? 'resume rejected'} (wrong code? brute-force cooldown?)`)
+      }
+      // The sim rail: a resume leaves the lockout `unknown` until the next accepted command proves it clear.
+      const sim = await post<{ lockout: SimLockout }>('/api/safety/resume')
+      setSimLockout(sim.lockout)
+      if (!meshBacked) setResumeMsg(`✓ sim lockout lifted - ${sim.lockout.state}: ${sim.lockout.reason ?? ''}`)
     } catch (e: any) {
       // A resume whose answer never came back MAY have cleared the lockout;
       // reporting "still locked" would be a guess about the fleet's state.
@@ -44,7 +71,11 @@ export default function EstopSheet({
   const fire = async () => {
     setFiring(true); setError(null)
     try {
-      setResult(await post<EstopResult>('/api/safety/estop'))
+      // The sim rail first: it is local, never refused, and answers in microseconds.
+      const sim = await post<{ lockout: SimLockout }>('/api/safety/estop')
+      setSimLockout(sim.lockout)
+      if (meshBacked) setResult(await post<EstopResult>(paths.estop[0]))
+      else setResult(simOnlyResult(sim.lockout))
     } catch (e: any) {
       setError(estopFailureVerdict({
         status: e instanceof HttpError ? e.status : 0,
@@ -57,6 +88,7 @@ export default function EstopSheet({
 
   if (!open) return null
 
+  const simOnly = result?.targeted.length === 0 && !meshBacked
   const unconfirmed = result
     ? result.counts.not_stopped + result.counts.no_answer
     : 0
@@ -69,16 +101,17 @@ export default function EstopSheet({
         {!result && !error && (
           <>
             <p>
-              Sends <code>{'{action: "stop"}'}</code> to every peer with a live heartbeat and
-              reports what each one answered.
+              {meshBacked
+                ? <>Sends <code>{'{action: "stop"}'}</code> to every peer with a live heartbeat and reports what each one answered.</>
+                : <>Freezes every simulated robot this dashboard is running and latches its lockout; no mesh bridge is online, so no fleet peer is reached from here.</>}
             </p>
-            <p className="hint">
+            {meshBacked && <p className="hint">
               Fires BOTH rails: per-peer stop commands (answered individually below) and the
               signed <code>strands/safety/estop</code> envelope, which engages a fleet-wide
-              LOCKOUT — every listening peer refuses further commands until a resume with the
+              LOCKOUT - every listening peer refuses further commands until a resume with the
               operator override code. A peer that is wedged or fully off the mesh still needs
-              the hardware e-stop.
-            </p>
+              the hardware e-stop. The simulated robots of this dashboard are frozen too.
+            </p>}
             {linkWarning && (
               <p className="hint warn">
                 ⚠ {linkWarning} Pressing STOP ALL is still worth it — it is sent the moment the
@@ -113,7 +146,32 @@ export default function EstopSheet({
           </>
         )}
 
-        {result && (
+        {result && simOnly && (
+          <>
+            <div className={simLockout?.state === 'locked' ? 'result ok' : 'result bad'} role="status">
+              {simLockout?.state === 'locked'
+                ? `✓ sim lockout engaged${simLockout.by ? ` by ${simLockout.by}` : ''} - every simulated robot is frozen`
+                : `lockout ${simLockout?.state ?? 'unknown'}: ${simLockout?.reason ?? ''}`}
+            </div>
+            <p className="hint">
+              Nothing outside this process was reached: the mesh bridge is offline, so a real arm on the
+              desk still needs its power switch.
+            </p>
+            {simLockout?.state === 'locked' && (
+              <div className="resume-box">
+                <div className="resume-row">
+                  <button className="btn go" onClick={resume} disabled={resuming}>{resuming ? '…' : 'resume simulation'}</button>
+                </div>
+                {resumeMsg && <div className="hint">{resumeMsg}</div>}
+              </div>
+            )}
+            <div className="sheet-actions">
+              <button className="btn ghost" onClick={onClose}>close</button>
+            </div>
+          </>
+        )}
+
+        {result && !simOnly && (
           <>
             {/* the answer to "did every robot actually stop?" arrives asynchronously, and until now it arrived SILENTLY — nothing announced it. role=alert on the unconfirmed verdict, because "N peers NOT confirmed stopped" is the one sentence in this dashboard that must interrupt whatever a screen reader was saying; the all-clear is polite. */}
             <div className={result.all_stopped ? 'result ok' : 'result bad'}
@@ -202,4 +260,12 @@ export default function EstopSheet({
       </div>
     </div>
   )
+}
+
+/** The EstopResult shape for a stop that had no fleet to target: the sim rail alone answered. */
+function simOnlyResult(_lockout: SimLockout): EstopResult {
+  return {
+    targeted: [], stale_skipped: [], counts: { stopped: 0, not_stopped: 0, no_answer: 0 },
+    all_stopped: true, stopped: {}, lockout_engaged: false,
+  }
 }

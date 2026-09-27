@@ -28,15 +28,16 @@ import EstopButton from './components/EstopButton'
 import { hotkeyVerdict } from './lib/hotkeys'
 import ErrorBoundary from './components/ErrorBoundary'
 import TrainingTab from './components/TrainingTab'
+import SimTab from './components/SimTab'
 import RecordPanel from './components/RecordPanel'
 import AuthGate from './components/AuthGate'
 
-type Panel = 'settings' | 'activity' | 'devices' | 'estop' | 'training' | 'record' | 'help' | null
+type Panel = 'settings' | 'activity' | 'devices' | 'estop' | 'training' | 'record' | 'sim' | 'help' | null
 
 /** `?panel=…` is what the manifest shortcuts deep-link to. */
 function initialPanel(): Panel {
   const want = new URLSearchParams(location.search).get('panel')
-  return want === 'settings' || want === 'activity' || want === 'devices' || want === 'training' || want === 'record' ? want : null
+  return want === 'settings' || want === 'activity' || want === 'devices' || want === 'training' || want === 'record' || want === 'sim' ? want : null
 }
 
 function Dashboard() {
@@ -224,6 +225,7 @@ function Dashboard() {
         onDevices={() => setPanel('devices')}
         onTraining={() => { setTrainPrefill(undefined); setPanel('training') }}
         onRecord={() => setPanel('record')}
+        onSim={() => setPanel('sim')}
         onHelp={() => setPanel('help')}
       />
 
@@ -380,10 +382,16 @@ function Dashboard() {
       </ErrorBoundary>
       <HelpSheet open={panel === 'help'} onClose={() => setPanel(null)} />
       <EstopSheet open={panel === 'estop'} onClose={() => setPanel(null)}
-        linkWarning={link.commandsWork ? null : link.estopReason} />
+        linkWarning={link.commandsWork ? null : link.estopReason}
+        meshBacked={mesh.online === true} />
       {panel === 'training' && (
         <ErrorBoundary label="the training screen" onDismiss={() => setPanel(null)}>
           <TrainingTab onClose={() => setPanel(null)} prefill={trainPrefill} />
+        </ErrorBoundary>
+      )}
+      {panel === 'sim' && (
+        <ErrorBoundary label="the simulation screen" onDismiss={() => setPanel(null)}>
+          <SimTab onClose={() => setPanel(null)} />
         </ErrorBoundary>
       )}
       {panel === 'record' && (
