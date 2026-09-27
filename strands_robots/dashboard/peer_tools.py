@@ -311,9 +311,9 @@ def map_invocation(
 
 
 def _agent_tool_base() -> type:
-    from strands.types.tools import AgentTool  # local import: keep this module importable in tests
+    from strands.types.tools import AgentTool  # local import: keep this module importable without strands
 
-    return AgentTool
+    return cast("type", AgentTool)
 
 
 #: Verbs that are NEVER refused by the staleness gate. House law: a stale
