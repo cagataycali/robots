@@ -1,6 +1,6 @@
 """A posture a policy constructor stores is checked, not coerced with ``bool()``.
 
-``pad_short_actions`` (``lerobot_local``, ``lerobot_async``) and ``walk``
+``pad_short_actions`` (``lerobot_local``) and ``walk``
 (``wbc``) each select one of two postures rather than scaling a quantity, and
 each constructor stored the caller's value through ``bool(...)``;
 ``lerobot_local``'s ``strict_keys`` and ``cache_model`` and ``Gr00tPolicy``'s
@@ -46,19 +46,9 @@ from strands_robots.policies.groot.policy import (
     _auto_infer_action_mapping,
     _auto_infer_observation_mapping,
 )
-from strands_robots.policies.lerobot_async import LerobotAsyncPolicy
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 from strands_robots.policies.wbc.policy import WBCPolicy
 from strands_robots.utils import boolean_flag_error
-
-
-def _async(value: Any) -> LerobotAsyncPolicy:
-    return LerobotAsyncPolicy(
-        server_address="h:1",
-        policy_type="act",
-        pretrained_name_or_path="x/y",
-        pad_short_actions=value,
-    )
 
 
 def _local(value: Any) -> LerobotLocalPolicy:
@@ -89,7 +79,6 @@ def _wbc(value: Any) -> WBCPolicy:
 #: constructor stores. Derived from the ``bool()``-coercion sweep below, which
 #: keeps this table and the tree in step.
 SITES: list[tuple[str, str, Callable[[Any], Any], str]] = [
-    ("lerobot_async", "pad_short_actions", _async, "pad_short_actions"),
     ("lerobot_local", "pad_short_actions", _local, "pad_short_actions"),
     ("lerobot_local", "strict_keys", _local_strict, "strict_keys"),
     ("lerobot_local", "cache_model", _local_cache, "cache_model"),

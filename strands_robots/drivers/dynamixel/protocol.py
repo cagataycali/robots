@@ -70,7 +70,7 @@ broadcast."""
 class Instruction(enum.IntEnum):
     """The instruction bytes Protocol 2.0 defines.
 
-    Only the members :class:`DynamixelDriver` actually issues appear here; the
+    Only the members a bus reads and writes a servo with appear here; the
     remainder (``FACTORY_RESET`` etc.) will land as they are wired.
     """
 

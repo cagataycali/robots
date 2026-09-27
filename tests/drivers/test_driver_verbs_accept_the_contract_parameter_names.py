@@ -38,7 +38,6 @@ from strands_robots.drivers import (
     drifted_driver_parameters,
     missing_driver_members,
 )
-from strands_robots.drivers.dynamixel.driver import DynamixelDriver
 from strands_robots.drivers.feetech import FeetechDriver
 
 
@@ -76,14 +75,14 @@ class TestTheTwoServoDriversThatHadDrifted:
     documented names, so the day the loop lands no caller changes.
     """
 
-    @pytest.mark.parametrize("driver_cls", [FeetechDriver, DynamixelDriver], ids=["feetech", "dynamixel"])
+    @pytest.mark.parametrize("driver_cls", [FeetechDriver], ids=["feetech"])
     def test_run_policy_refuses_under_the_declared_name(self, driver_cls: type) -> None:
         driver: Any = driver_cls(tool_name="arm")
         result = driver.run_policy(policy_object=None)
         assert result["status"] == "error"
         assert "run_policy" in result["content"][0]["text"]
 
-    @pytest.mark.parametrize("driver_cls", [FeetechDriver, DynamixelDriver], ids=["feetech", "dynamixel"])
+    @pytest.mark.parametrize("driver_cls", [FeetechDriver], ids=["feetech"])
     def test_start_task_refuses_under_the_declared_name(self, driver_cls: type) -> None:
         driver: Any = driver_cls(tool_name="arm")
         result = driver.start_task(instruction="pick up the cube")

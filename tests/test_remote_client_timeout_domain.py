@@ -1,35 +1,32 @@
-"""One timeout domain for both remote-inference clients, and why ``inf`` is in it.
+"""One timeout domain for the remote-inference client, and why ``inf`` is in it.
 
-:class:`~strands_robots.inference.RemotePolicy` (WebSocket) and
-:class:`~strands_robots.policies.lerobot_async.LerobotAsyncPolicy` (gRPC) each
-take ``connect_timeout`` and ``request_timeout``, and each used to store what it
-was handed and pass it to the transport unexamined. Both constructors already
-refused their *other* numeric parameters - ``port`` via ``tcp_port_error``,
-``actions_per_chunk`` / ``actions_per_step`` via ``chunk_count_error`` - so the
-two timeouts were the knobs left behind on the same two constructors.
+:class:`~strands_robots.inference.RemotePolicy` (WebSocket) takes
+``connect_timeout`` and ``request_timeout``, and used to store what it was
+handed and pass it to the transport unexamined. The constructor already refused
+its *other* numeric parameters - ``port`` via ``tcp_port_error``,
+``actions_per_step`` via ``chunk_count_error`` - so the two timeouts were the
+knobs left behind on it.
 
-What made that worse than a late crash is where the failure surfaced. Both
-clients wrap the first transport failure in a ``ConnectionError`` that names the
+What made that worse than a late crash is where the failure surfaced. The
+client wraps the first transport failure in a ``ConnectionError`` that names the
 server and tells the operator to start one:
 
     RemotePolicy could not reach a PolicyServer at ws://127.0.0.1:8765.
     Start one first, e.g.: python -m strands_robots.inference.server ...
 
-Measured against a **live, reachable** server (``websockets`` 17.0.1 /
-``grpcio`` 1.83.0), the values that produce exactly that message are ``0``,
-``0.0``, ``-1`` and ``True`` - the transport times out at once, ``TimeoutError``
-/ ``RpcError`` is inside the clause that composes the message, and the operator
-is pointed at the one thing that was not wrong. ``nan``, ``inf`` and a numeric
-string instead escaped that clause as a ``ValueError`` / ``OverflowError`` /
-``TypeError`` raised from library internals, naming no parameter, and - because
-both clients connect lazily on first use - landing mid-rollout rather than at
-construction.
+Measured against a **live, reachable** server (``websockets`` 17.0.1), the
+values that produce exactly that message are ``0``, ``0.0``, ``-1`` and ``True``
+- the transport times out at once, ``TimeoutError`` is inside the clause that
+composes the message, and the operator is pointed at the one thing that was not
+wrong. ``nan``, ``inf`` and a numeric string instead escaped that clause as a
+``ValueError`` / ``OverflowError`` / ``TypeError`` raised from library
+internals, naming no parameter, and - because the client connects lazily on
+first use - landing mid-rollout rather than at construction.
 
 ``inf`` is the interesting one and is pinned separately below. It is the single
 value a caller would pass deliberately, meaning "no deadline, wait as long as it
-takes", and *neither* transport honours it: ``websockets`` raises
-``OverflowError`` computing the deadline, while gRPC reports
-``DEADLINE_EXCEEDED`` immediately, making ``inf`` indistinguishable from ``0``.
+takes", and the transport does *not* honour it: ``websockets`` raises
+``OverflowError`` computing the deadline.
 So an unbounded wait is not expressible through these knobs at all, and the
 finiteness clause of :func:`~strands_robots.utils.positive_finite_number_error`
 is load-bearing here rather than inherited.
@@ -51,18 +48,17 @@ import pytest
 
 from strands_robots.inference import PolicyServer, RemotePolicy
 from strands_robots.policies import MockPolicy
-from strands_robots.policies.lerobot_async import LerobotAsyncPolicy
 from strands_robots.utils import positive_finite_number_error
 
-#: Values that name no wait budget. Each is refused by all four knobs.
+#: Values that name no wait budget. Each is refused by both knobs.
 #:
 #: ``True`` / ``False`` matter because ``bool`` is an ``int`` subclass, so a bare
 #: ``> 0`` test admits ``True`` as a silent one-second budget - measured as a
-#: 1.0002 s ``recv`` timeout, not as an error. ``'10'`` matters because neither
-#: client applies ``float()``, so a numeric string reached the transport and blew
-#: up inside it (``unsupported operand type(s) for +: 'float' and 'str'``) rather
-#: than at the boundary. ``nan`` and ``inf`` are the two the transports reject
-#: themselves, in incompatible ways.
+#: 1.0002 s ``recv`` timeout, not as an error. ``'10'`` matters because the
+#: client applies no ``float()``, so a numeric string reached the transport and
+#: blew up inside it (``unsupported operand type(s) for +: 'float' and 'str'``)
+#: rather than at the boundary. ``nan`` and ``inf`` are the two the transport
+#: rejects itself, from inside its own deadline arithmetic.
 UNUSABLE_TIMEOUTS: list[Any] = [
     0,
     0.0,
@@ -78,12 +74,12 @@ UNUSABLE_TIMEOUTS: list[Any] = [
     [10],
 ]
 
-#: Accepted by both clients. ``np.float32`` is here because a timeout read out of
-#: a config array is a real spelling and the shared domain documents it as usable
-#: - neither client coerces, so this pins that no coercion is needed.
+#: Accepted. ``np.float32`` is here because a timeout read out of a config array
+#: is a real spelling and the shared domain documents it as usable - the client
+#: does not coerce, so this pins that no coercion is needed.
 USABLE_TIMEOUTS: list[Any] = [0.001, 1, 10.0, 60.0, np.float32(0.5)]
 
-#: The two knobs, on both clients.
+#: The two knobs.
 TIMEOUT_PARAMS = ["connect_timeout", "request_timeout"]
 
 
@@ -97,23 +93,11 @@ def _ws_client(**kwargs: Any) -> RemotePolicy:
     return RemotePolicy(**kwargs)
 
 
-def _grpc_client(**kwargs: Any) -> LerobotAsyncPolicy:
-    """Construct the gRPC client with the minimum viable required arguments.
-
-    ``policy_type`` / ``pretrained_name_or_path`` are mandatory and unrelated to
-    the timeouts, so they are supplied valid throughout; the one test that cares
-    about their ordering relative to the timeout guard omits them explicitly.
-    """
-    kwargs.setdefault("policy_type", "act")
-    kwargs.setdefault("pretrained_name_or_path", "org/model")
-    return LerobotAsyncPolicy(**kwargs)
+CLIENTS = [("RemotePolicy", _ws_client)]
 
 
-CLIENTS = [("RemotePolicy", _ws_client), ("LerobotAsyncPolicy", _grpc_client)]
-
-
-class TestNeitherClientAcceptsATimeoutThatNamesNoBudget:
-    """All four knobs refuse the same values, naming the class, param and domain."""
+class TestATimeoutThatNamesNoBudgetIsRefused:
+    """Both knobs refuse the same values, naming the class, param and domain."""
 
     @pytest.mark.parametrize("param", TIMEOUT_PARAMS)
     @pytest.mark.parametrize("value", UNUSABLE_TIMEOUTS)
@@ -156,8 +140,6 @@ class TestARunningServerIsNoLongerBlamedForTheCallersTimeout:
         """
         with pytest.raises(ValueError):
             _ws_client(connect_timeout=0)
-        with pytest.raises(ValueError):
-            _grpc_client(connect_timeout=0)
 
     def test_no_websocket_is_dialled_for_a_refused_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The guard precedes the transport, so the server is never asked.
@@ -203,15 +185,15 @@ class TestARunningServerIsNoLongerBlamedForTheCallersTimeout:
 
 
 class TestInfinityIsRefusedRatherThanReadAsNoDeadline:
-    """``inf`` is the one value a caller means, and neither transport honours it."""
+    """``inf`` is the one value a caller means, and the transport refuses it."""
 
     @pytest.mark.parametrize("param", TIMEOUT_PARAMS)
     @pytest.mark.parametrize(("name", "build"), CLIENTS)
-    def test_it_is_refused_on_both_clients(self, name: str, build: Any, param: str) -> None:
+    def test_it_is_refused_at_construction(self, name: str, build: Any, param: str) -> None:
         """Refused, deliberately - not admitted as an unbounded wait.
 
         A later change that reads ``inf`` as "wait forever" fails here first, and
-        should read the premise tests below before deciding this test is wrong.
+        should read the premise test below before deciding this test is wrong.
         """
         with pytest.raises(ValueError, match="must be > 0"):
             build(**{param: math.inf})
@@ -230,30 +212,18 @@ class TestInfinityIsRefusedRatherThanReadAsNoDeadline:
             # The deadline arithmetic ``connect``/``recv`` perform on the value.
             time.gmtime(time.monotonic() + math.inf)
 
-    def test_zero_and_infinity_are_indistinguishable_over_grpc(self) -> None:
-        """Premise: gRPC reports ``DEADLINE_EXCEEDED`` for ``inf``, as it does for ``0``.
 
-        Measured on ``grpcio`` 1.83.0 against a live in-process server: ``inf``
-        failed in 0.0001 s, i.e. the value that looks like an unbounded wait is
-        the fastest failure available. Asserted here as the documented reason
-        rather than re-measured, since exercising it needs a gRPC server and the
-        conclusion is about ``inf`` being unusable either way.
-        """
-        assert positive_finite_number_error(math.inf, "connect_timeout", "Ctx") is not None
-        assert positive_finite_number_error(0, "connect_timeout", "Ctx") is not None
-
-
-class TestTheTwoClientsShareOneDomain:
-    """Both defer to the shared domain, so the verdicts cannot drift apart."""
+class TestTheClientDefersToTheSharedDomain:
+    """The verdict is the shared one, so the two cannot drift apart."""
 
     @pytest.mark.parametrize("value", [*UNUSABLE_TIMEOUTS, *USABLE_TIMEOUTS])
     @pytest.mark.parametrize("param", TIMEOUT_PARAMS)
-    def test_both_clients_agree_with_the_shared_verdict(self, param: str, value: Any) -> None:
+    def test_the_client_agrees_with_the_shared_verdict(self, param: str, value: Any) -> None:
         """Refuse exactly when :func:`positive_finite_number_error` refuses.
 
         Pinned over the accepted values too, so a client that grows a private
         extra restriction - a minimum budget, say - fails here rather than
-        diverging silently from its sibling.
+        drifting silently from the shared rule.
         """
         shared_refuses = positive_finite_number_error(value, param, "Ctx") is not None
         for name, build in CLIENTS:
@@ -294,18 +264,6 @@ class TestTheGuardSitsWhereTheOtherTransportKnobsAre:
         """``port`` first: "this address cannot be dialled" is the narrower fact."""
         with pytest.raises(ValueError, match="invalid port"):
             _ws_client(port=-1, connect_timeout=0)
-        with pytest.raises(ValueError, match="invalid port"):
-            _grpc_client(port=-1, connect_timeout=0)
-
-    def test_the_timeout_is_reported_before_a_missing_policy_type(self) -> None:
-        """On the gRPC client, the transport knobs settle before the payload ones.
-
-        Both are caller errors; grouping the timeouts with ``port`` keeps every
-        connection parameter answered in one place, and keeps the guard ahead of
-        the code path that imports gRPC.
-        """
-        with pytest.raises(ValueError, match="connect_timeout"):
-            LerobotAsyncPolicy(connect_timeout=0)
 
     def test_an_explicit_endpoint_does_not_exempt_the_timeout(self) -> None:
         """``endpoint`` supersedes ``host``/``port``, never the wait budget.
@@ -316,4 +274,4 @@ class TestTheGuardSitsWhereTheOtherTransportKnobsAre:
         with pytest.raises(ValueError, match="connect_timeout"):
             _ws_client(endpoint="ws://gpu-box:8765", connect_timeout=0)
         with pytest.raises(ValueError, match="request_timeout"):
-            _grpc_client(server_address="gpu-box:8080", request_timeout=math.nan)
+            _ws_client(endpoint="ws://gpu-box:8765", request_timeout=math.nan)

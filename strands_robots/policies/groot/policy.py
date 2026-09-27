@@ -899,8 +899,8 @@ class Gr00tPolicy(Policy):
         # Nothing below reads the sink. It exists so a shared ``policy_config``
         # can carry another provider's keys, but a key that lands here was not
         # a parameter this policy has, so its value is never applied and the
-        # default stands. Naming the keys is what ``LerobotLocalPolicy`` and
-        # ``LerobotAsyncPolicy`` do at the same door; dropping them silently
+        # default stands. Naming the keys is what ``LerobotLocalPolicy``
+        # does at the same door; dropping them silently
         # built a policy on the defaults with no line saying the request was
         # never read.
         if ignored_kwargs:

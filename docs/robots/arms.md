@@ -30,8 +30,7 @@ Every robot in this family, generated from `robots.json` at build time. Renders 
   `hope_jr`, `koch`, `omx`, `openarm`, `rebot_b601`, `so100`, `so101`.
 - Real hardware through a native Strands driver, selected with `driver="strands"`
   ([the contract](../reference/hardware/native-drivers.md)):
-  `dynamixel_2r`, `fr3`, `fr3_v2`, `hope_jr`, `koch`, `panda`, `so100`, `so101`,
-  `ur10e`, `ur5e`, `vx300s`, `wx250s`.
+  `fr3`, `fr3_v2`, `hope_jr`, `panda`, `so100`, `so101`, `ur10e`, `ur5e`.
 - Every other arm is simulation-only: `Robot(name, mode="real")` refuses it and names
   the robots that do have a path, rather than falling back to sim.
 - The Franka arms (`panda`, `fr3`, `fr3_v2`) are driven over the Franka Control

@@ -711,19 +711,20 @@ def chunk_count_error(value: object, param: str, provider: str) -> str | None:
     """Error text when a per-inference chunk count is not one a policy can execute.
 
     Shared domain for the counts that describe one inference chunk - how many
-    actions a provider emits (``actions_per_chunk``), how many of them a
-    consumer executes before re-querying (``actions_per_step``), and the
-    Real-Time Chunking override of that re-query interval
+    actions of it a consumer executes before re-querying (``actions_per_step``),
+    the Real-Time Chunking override of that re-query interval
     (``rtc_execution_horizon``, which replaces ``actions_per_step`` whenever RTC
-    is active). All are consumed as slice bounds over the action chunk, so only
+    is active), and the planning horizon a motion planner emits
+    (``action_horizon``). All are consumed as slice bounds over the action chunk, so only
     a true positive ``int`` can be honored; :func:`~strands_robots.utils.positive_count_error`
     supplies that domain (and rejects ``bool``, which as an ``int`` subclass
     would otherwise pass as a silent count of one).
 
-    It lives here rather than beside one of its callers because the providers
+    It lives here rather than beside one of its callers because the surfaces
     that accept these counts sit in sibling packages
-    (:mod:`strands_robots.policies.lerobot_local` and
-    :mod:`strands_robots.policies.lerobot_async`) and the accepted domain must
+    (:mod:`strands_robots.policies.lerobot_local`,
+    :mod:`strands_robots.policies.curobo` and the ``ready`` handshake in
+    :mod:`strands_robots.inference.client`) and the accepted domain must
     not diverge between them: the same chunk count cannot be refused by a local
     checkpoint and accepted by the server serving it.
 

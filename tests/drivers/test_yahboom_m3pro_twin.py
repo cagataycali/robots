@@ -64,6 +64,7 @@ class _FakeEngine:
         }
         self.destroyed = False
         self.refuse: str | None = None
+        self.ranges: dict[str, tuple[float, float]] = {}
 
     def list_robots(self) -> list[str]:
         return ["yahboom_m3pro"]
@@ -77,6 +78,10 @@ class _FakeEngine:
 
     def physics_timestep(self) -> float:
         return _DT
+
+    def actuator_ranges(self, robot_name: str) -> dict[str, tuple[float, float]]:
+        assert robot_name == "yahboom_m3pro"
+        return dict(self.ranges)
 
     def get_observation(self, robot_name: str | None = None, *, skip_images: bool = False) -> dict[str, Any]:
         assert robot_name == "yahboom_m3pro" and skip_images
@@ -296,6 +301,28 @@ class TestTheBaseReachesTheModel:
         writes = _base_writes(engine)
         assert len(writes) == 2  # the frame and the zero; no watchdog hold of a zero
         assert all(all(v == 0.0 for v in a.values()) for a, _ in writes)
+
+    @pytest.mark.parametrize(
+        ("ranges", "note"),
+        [
+            ({}, None),
+            ({"base_x": (-1.0, 1.0)}, None),
+            ({"base_x": (-0.5, 0.5), "base_yaw": (-2.0, 2.0)}, "base_x 0.9 -> 0.5"),
+        ],
+    )
+    def test_a_command_past_the_engines_actuator_range_is_reported(
+        self, engine: _FakeEngine, ranges: dict[str, tuple[float, float]], note: str | None
+    ) -> None:
+        """The clamp note is read from ``SimEngine.actuator_ranges``, not from a backend's model."""
+        from strands_robots.drivers.yahboom_m3pro import CMD_VEL_TOPIC
+
+        engine.ranges = ranges
+        graph = M3ProTwinGraph(sim=engine)
+        assert graph.connect() is None
+        reply = graph("publish", topic=CMD_VEL_TOPIC, fields={"linear": {"x": 0.9}, "angular": {}}, count=1, rate=10.0)
+        text = reply["content"][0]["text"]
+        assert reply["status"] == "success", reply
+        assert ("clamped" in text) is (note is not None) and (note is None or note in text), text
 
     def test_odometry_and_imu_are_read_from_the_base_joints(
         self, twin: YahboomM3ProDriver, engine: _FakeEngine

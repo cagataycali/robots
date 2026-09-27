@@ -24,14 +24,12 @@ diagnostic then reports the consequence that is actually in effect.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import numpy as np
 import pytest
 import torch  # real or conftest mock - both work
 
-from strands_robots.policies import align_action_values, create_policy
-from strands_robots.policies.lerobot_async import LerobotAsyncPolicy
+from strands_robots.policies import align_action_values
 from strands_robots.policies.lerobot_local.embodiment import EmbodimentMap, diagnose_action_dim
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
@@ -183,67 +181,6 @@ class TestLocalPolicyShortAction:
             "b": 2.0,
             "c": 3.0,
         }
-
-
-# -- lerobot_async ------------------------------------------------------------
-
-
-class _TimedAction:
-    """Minimal stand-in for lerobot's ``TimedAction`` (only ``.action`` is read)."""
-
-    def __init__(self, values: list[float]) -> None:
-        self.action = np.asarray(values, dtype=np.float32)
-
-
-def _async_policy(**kwargs: Any) -> LerobotAsyncPolicy:
-    policy = create_policy(
-        "lerobot_async",
-        server_address="h:1",
-        policy_type="act",
-        pretrained_name_or_path="x/y",
-        **kwargs,
-    )
-    assert isinstance(policy, LerobotAsyncPolicy)
-    policy.set_robot_state_keys(SIX_KEYS)
-    return policy
-
-
-class TestAsyncPolicyShortChunk:
-    def test_short_server_chunk_omits_unmatched_actuators(self):
-        policy = _async_policy()
-        action = policy._chunk_to_action_dicts([_TimedAction([1.0, 2.0, 3.0])])[0]
-        assert list(action) == SIX_KEYS[:3]
-        assert "gripper.pos" not in action
-
-    def test_pad_short_actions_restores_the_zero_fill(self):
-        policy = _async_policy(pad_short_actions=True)
-        action = policy._chunk_to_action_dicts([_TimedAction([1.0, 2.0, 3.0])])[0]
-        assert list(action) == SIX_KEYS
-        assert action["gripper.pos"] == 0.0
-
-    def test_default_is_not_to_pad(self):
-        assert _async_policy().pad_short_actions is False
-
-    def test_pad_short_actions_is_a_declared_kwarg_not_an_ignored_one(self, caplog):
-        # The client warns about kwargs it drops; this one must be honored, so it
-        # must not show up in that warning.
-        with caplog.at_level(logging.WARNING):
-            policy = _async_policy(pad_short_actions=True)
-        assert policy.pad_short_actions is True
-        assert "pad_short_actions" not in caplog.text
-
-
-def test_both_providers_apply_the_same_rule():
-    """The shared helper exists so these two cannot drift apart again."""
-    values = [1.0, 2.0, 3.0, 4.0]
-    for pad in (False, True):
-        local = LerobotLocalPolicy(pad_short_actions=pad)
-        local.set_robot_state_keys(SIX_KEYS)
-        remote = _async_policy(pad_short_actions=pad)
-        assert (
-            local._tensor_to_action_dicts(torch.tensor(values))[0]
-            == remote._chunk_to_action_dicts([_TimedAction(values)])[0]
-        )
 
 
 # -- The diagnostic must describe what actually happens -----------------------

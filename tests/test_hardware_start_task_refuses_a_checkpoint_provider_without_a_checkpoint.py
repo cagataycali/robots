@@ -87,25 +87,6 @@ class TestStartTask:
         assert hw._task_claimed is False
         assert hw._task_state.status.name != "RUNNING"
 
-    def test_lerobot_async_names_both_missing_keywords(self):
-        hw = _hw()
-        result = hw.start_task("pick", policy_provider="lerobot_async", policy_port=8080, duration=1.0)
-        assert result["status"] == "error"
-        text = _text(result)
-        assert "builds its policy from policy_type and pretrained_name_or_path" in text
-        assert "policy_type=... (the checkpoint's policy type" in text
-        assert "pretrained_name_or_path=... (a Hub id" in text
-        assert "Without them the task would start" in text
-
-    def test_lerobot_async_with_only_one_names_the_other(self):
-        hw = _hw()
-        result = hw.start_task(
-            "pick", policy_provider="lerobot_async", policy_port=8080, duration=1.0, pretrained_name_or_path="me/ckpt"
-        )
-        text = _text(result)
-        assert "from policy_type, and none" in text
-        assert "pretrained_name_or_path=..." not in text
-
     def test_the_port_refusal_still_comes_first_for_a_dialing_provider(self):
         hw = _hw()
         result = hw.start_task("pick", policy_provider="groot", policy_port=None, duration=1.0)
