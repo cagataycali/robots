@@ -198,14 +198,23 @@ async def fleet(request: Request, mode: str = "all", _: dict = Depends(access.re
         getattr(app.state, "mesh_ingest_prev", None),
         stale_after=PEER_STALE_S,
     )
-    from strands_robots.dashboard.fleet import registry_robots
+    from strands_robots.dashboard.fleet import mesh_peers, registry_robots
     from strands_robots.registry.robots import LIST_ROBOTS_MODES
 
     if mode not in LIST_ROBOTS_MODES:
         raise HTTPException(400, f"mode must be one of {', '.join(LIST_ROBOTS_MODES)}")
     robots = registry_robots(mode)
+    # ``mesh.status`` is the contract the pre-SPA route published ("on" | "off",
+    # graded by tests/test_dashboard_sim_routes.py::TestFleet); the bridge's
+    # richer ``mesh_info()`` rides along under the same key.
+    posture = mesh_peers()
+    mesh_info = dict(snapshot.get("mesh") or {})
+    mesh_info["status"] = "on" if (mesh_info.get("online") or posture["status"] == "on") else "off"
+    if "reason" in posture and mesh_info["status"] == "off":
+        mesh_info["reason"] = posture["reason"]
     out: dict[str, Any] = {
         **snapshot,
+        "mesh": mesh_info,
         "robots": robots,
         "count": len(robots),
         "mesh_online": bool(getattr(app.state, "mesh_online", False)),
