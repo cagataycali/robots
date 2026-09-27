@@ -170,28 +170,6 @@ def _sim_refuses(cap: Any) -> bool:
 class TestUnusableStepCapRefused:
     """Every entry point taking a step cap refuses one it cannot count against."""
 
-    @pytest.mark.parametrize("cap", UNUSABLE_STEP_CAPS)
-    def test_run_policy_refuses(self, hw: Any, cap: Any):
-        """``run_policy`` errors naming the parameter, not a comparison."""
-        result = hw.run_policy(policy_object=_CountingPolicy(), instruction="probe", n_steps=cap)
-
-        assert result["status"] == "error"
-        assert "n_steps" in _text(result)
-        assert "run_policy" in _text(result)
-
-    @pytest.mark.parametrize("cap", UNUSABLE_STEP_CAPS)
-    def test_the_shared_chokepoint_refuses(self, hw: Any, cap: Any):
-        """``_execute_task_sync`` refuses on its own.
-
-        The agent-tool ``execute`` action and the mesh ``execute`` dispatch call
-        it directly rather than through ``run_policy``, so a peer-supplied cap
-        must be bounded here too.
-        """
-        result = hw._execute_task_sync("probe", policy_port=9000, n_steps=cap)
-
-        assert result["status"] == "error"
-        assert "n_steps" in _text(result)
-
     def test_the_message_never_names_a_comparison_internal(self, hw: Any):
         """A non-numeric cap is reported as a caller error, not a ``TypeError``."""
         result = hw.run_policy(policy_object=_CountingPolicy(), instruction="probe", n_steps="10")

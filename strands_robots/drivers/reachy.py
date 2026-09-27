@@ -69,7 +69,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from strands.tools.tools import AgentTool
 
-from strands_robots.drivers.base import undeclared_verb_error
+from strands_robots.drivers.base import refuse, undeclared_verb_error
 from strands_robots.drivers.reachy_doa import DoaLoop, DoaTurner
 from strands_robots.drivers.reachy_envelope import envelope_error
 from strands_robots.drivers.reachy_vocabulary import (
@@ -608,7 +608,7 @@ class ReachyDriver(AgentTool):
             envelope = self.stop_task()
         elif isinstance(action, str) and action in _ACTIONS:
             if action != "status" and not self._connected and (reason := self.connect_eagerly()) is not None:
-                envelope = _refuse(f"{action}: {reason}")
+                envelope = refuse(f"{action}: {reason}")
             elif inspect.iscoroutinefunction(_ACTIONS[action]):
                 envelope = await _ACTIONS[action](self, params)
             else:
@@ -1030,25 +1030,25 @@ class ReachyDriver(AgentTool):
             the first thing that refused.
         """
         if robot_name is not None and robot_name != self._tool_name:
-            return _refuse(f"send_action: this driver fronts {self._tool_name!r} only, not {robot_name!r}")
+            return refuse(f"send_action: this driver fronts {self._tool_name!r} only, not {robot_name!r}")
         if not self._connected:
-            return _refuse("not connected - call connect_eagerly() first")
+            return refuse("not connected - call connect_eagerly() first")
 
         if not isinstance(require_ack, bool):
-            return _refuse("send_action: require_ack must be a boolean")
+            return refuse("send_action: require_ack must be a boolean")
         for name, value in action.items():
             if (reason := finite_number_error(value, name, "send_action")) is not None:
-                return _refuse(reason)
+                return refuse(reason)
         commanded_head_yaw = _head_yaw_of(action)
         held_head_yaw = commanded_head_yaw if commanded_head_yaw is not None else self._read_head_yaw_target()
         if (reason := envelope_error(action, "send_action", head_yaw_target=held_head_yaw)) is not None:
-            return _refuse(reason)
+            return refuse(reason)
 
         commands = _wire_commands(action)
         if isinstance(commands, str):
-            return _refuse(f"send_action: {commands}")
+            return refuse(f"send_action: {commands}")
         if not commands:
-            return _refuse(
+            return refuse(
                 f"send_action: nothing to send - none of {sorted(action)} names a Reachy Mini axis; "
                 f"expected any of {sorted(_ACTION_KEYS)}"
             )
@@ -1056,7 +1056,7 @@ class ReachyDriver(AgentTool):
         # diagnoses one fault: an action naming no axis at all is told what to
         # send, and an action that mostly parsed is told which key was dropped.
         if unknown := sorted(set(action) - _ACTION_KEYS):
-            return _refuse(
+            return refuse(
                 f"send_action: {unknown} names no Reachy Mini axis; expected any of {sorted(_ACTION_KEYS)}. "
                 "A dropped head axis is commanded to zero rather than left alone, because the daemon's "
                 "head command is a whole pose"
@@ -1064,7 +1064,7 @@ class ReachyDriver(AgentTool):
 
         if require_ack:
             if set(action) != {"antenna_right", "antenna_left"}:
-                return _refuse("send_action: require_ack supports only an explicit antenna_right/antenna_left pair")
+                return refuse("send_action: require_ack supports only an explicit antenna_right/antenna_left pair")
             with self._cache_lock:
                 stamp = self._joints_received_at
             if (
@@ -1072,10 +1072,10 @@ class ReachyDriver(AgentTool):
                 or finite_number_error(stamp, "telemetry timestamp", "send_action")
                 or not 0 <= time.monotonic() - stamp <= 0.5
             ):
-                return _refuse("send_action: require_ack needs joint telemetry received within 0.5 seconds")
+                return refuse("send_action: require_ack needs joint telemetry received within 0.5 seconds")
             result = self._daemon_post(_PATH_SET_TARGET, {"target_antennas": commands[0]["antennas_joint_positions"]})
             if "error" in result or result.get("status") != "ok":
-                return _refuse(
+                return refuse(
                     f"send_action: target not acknowledged: {result!r}; delivery may be uncertain, no automatic retry"
                 )
             self._stopped = False
@@ -1095,7 +1095,7 @@ class ReachyDriver(AgentTool):
 
         for command in commands:
             if (error := self._send_cmd(command)) is not None:
-                return _refuse(f"send_action: {error}")
+                return refuse(f"send_action: {error}")
         if commanded_head_yaw is not None:
             self._remember_head_yaw_target(commanded_head_yaw)
         self._stopped = False
@@ -1137,7 +1137,7 @@ class ReachyDriver(AgentTool):
             An error envelope naming the recorded-move path instead.
         """
         del instruction, policy_port, policy_host, policy_provider, duration, policy_kwargs
-        return _refuse(
+        return refuse(
             "start_task: the Reachy Mini has no policy action space (no arms, no gait); "
             "play a recorded move through the reachy_* tools instead"
         )
@@ -1161,7 +1161,7 @@ class ReachyDriver(AgentTool):
             An error envelope naming the recorded-move path instead.
         """
         del policy_object, instruction, duration, n_steps
-        return _refuse(
+        return refuse(
             "run_policy: the Reachy Mini has no policy action space (no arms, no gait); "
             "play a recorded move through the reachy_* tools instead"
         )
@@ -1196,13 +1196,13 @@ class ReachyDriver(AgentTool):
         self._stop_doa()
         running = self._daemon_get_list(_PATH_MOVES_RUNNING)
         if isinstance(running, dict):
-            return _refuse(f"stop_task: could not list running moves: {running.get('error')}")
+            return refuse(f"stop_task: could not list running moves: {running.get('error')}")
         uuids = [entry.get("uuid") for entry in running if isinstance(entry, dict) and entry.get("uuid")]
         stopped: list[str] = []
         for uuid in uuids:
             result = self._daemon_post(_PATH_STOP, {"uuid": uuid})
             if (error := result.get("error")) is not None:
-                return _refuse(
+                return refuse(
                     f"stop_task: daemon refused the stop of move {uuid}: {error} "
                     f"(stopped before the refusal: {stopped or 'none'})"
                 )
@@ -1248,10 +1248,10 @@ class ReachyDriver(AgentTool):
             tracking holds the head at weight 1 the choreography is overridden.
         """
         if not self._connected:
-            return _refuse("play_move: not connected - call connect_eagerly() first")
+            return refuse("play_move: not connected - call connect_eagerly() first")
         dataset = _MOVE_LIBRARIES.get(library)
         if dataset is None:
-            return _refuse(f"play_move: unknown library {library!r}; expected one of {sorted(_MOVE_LIBRARIES)}")
+            return refuse(f"play_move: unknown library {library!r}; expected one of {sorted(_MOVE_LIBRARIES)}")
         # A plain word ("happy", "go away") becomes the library's own name
         # ("cheerful1", "go_away1") against the live catalogue; a catalogue
         # that cannot be read leaves the alias table to answer alone. The
@@ -1265,7 +1265,7 @@ class ReachyDriver(AgentTool):
         # second check.
         key = (move_name or "").strip().lower().replace("-", "_").replace(" ", "_")
         if not _MOVE_NAME_RE.fullmatch(key):
-            return _refuse(
+            return refuse(
                 f"play_move: invalid move_name {move_name!r}; expected 1-128 chars of [A-Za-z0-9._-] "
                 "starting with a letter or digit (one bare path segment, so no '.' or '..') - "
                 "list_moves() names the library's catalogue"
@@ -1275,14 +1275,14 @@ class ReachyDriver(AgentTool):
         resolved = resolve_move_name(key, names)
         if resolved is None and names:
             sample = ", ".join(sorted(str(n) for n in names)[:12])
-            return _refuse(
+            return refuse(
                 f"play_move: {move_name!r} names no move in the {library} library and matches no alias; "
                 f"list_moves() has the catalogue (starts: {sample} ...)"
             )
         chosen = resolved if resolved is not None else key
         result = self._daemon_post(_PATH_MOVE_PLAY.format(dataset=dataset, move=chosen))
         if (error := result.get("error")) is not None:
-            return _refuse(f"play_move: daemon refused {chosen!r}: {error}")
+            return refuse(f"play_move: daemon refused {chosen!r}: {error}")
         self._remember_head_yaw_target(None)
         self._stopped = False
         payload: dict[str, Any] = {"played": chosen, "library": library, "motion_verified": False}
@@ -1301,16 +1301,16 @@ class ReachyDriver(AgentTool):
             or an error envelope naming what refused.
         """
         if not self._connected:
-            return _refuse("list_moves: not connected - call connect_eagerly() first")
+            return refuse("list_moves: not connected - call connect_eagerly() first")
         dataset = _MOVE_LIBRARIES.get(library)
         if dataset is None:
-            return _refuse(f"list_moves: unknown library {library!r}; expected one of {sorted(_MOVE_LIBRARIES)}")
+            return refuse(f"list_moves: unknown library {library!r}; expected one of {sorted(_MOVE_LIBRARIES)}")
         result = self._daemon_get_list(_PATH_MOVE_LIST.format(dataset=dataset))
         # A catalogue read succeeds as a JSON array. The only dict this endpoint
         # can produce is the transport's {"error": ...} envelope, so a dict here
         # is a failure whatever key it carries.
         if isinstance(result, dict):
-            return _refuse(f"list_moves: daemon refused: {result.get('error', result)}")
+            return refuse(f"list_moves: daemon refused: {result.get('error', result)}")
         return {"status": "success", "content": [{"json": {"library": library, "moves": result}}]}
 
     def wake_up(self) -> dict[str, Any]:
@@ -1320,10 +1320,10 @@ class ReachyDriver(AgentTool):
             A success envelope, or an error envelope naming what refused.
         """
         if not self._connected:
-            return _refuse("wake_up: not connected - call connect_eagerly() first")
+            return refuse("wake_up: not connected - call connect_eagerly() first")
         result = self._daemon_post(_PATH_WAKE)
         if (error := result.get("error")) is not None:
-            return _refuse(f"wake_up: daemon refused: {error}")
+            return refuse(f"wake_up: daemon refused: {error}")
         self._remember_head_yaw_target(None)
         self._stopped = False
         return {"status": "success", "content": [{"text": "asked the daemon to play the wake-up move"}]}
@@ -1335,10 +1335,10 @@ class ReachyDriver(AgentTool):
             A success envelope, or an error envelope naming what refused.
         """
         if not self._connected:
-            return _refuse("goto_sleep: not connected - call connect_eagerly() first")
+            return refuse("goto_sleep: not connected - call connect_eagerly() first")
         result = self._daemon_post(_PATH_SLEEP)
         if (error := result.get("error")) is not None:
-            return _refuse(f"goto_sleep: daemon refused: {error}")
+            return refuse(f"goto_sleep: daemon refused: {error}")
         self._remember_head_yaw_target(None)
         self._stopped = False
         return {"status": "success", "content": [{"text": "asked the daemon to play the go-to-sleep move"}]}
@@ -1362,17 +1362,17 @@ class ReachyDriver(AgentTool):
             what refused.
         """
         if not self._connected:
-            return _refuse("set_motors: not connected - call connect_eagerly() first")
+            return refuse("set_motors: not connected - call connect_eagerly() first")
         if mode not in _MOTOR_MODES:
-            return _refuse(f"set_motors: unknown mode {mode!r}; expected one of {list(_MOTOR_MODES)}")
+            return refuse(f"set_motors: unknown mode {mode!r}; expected one of {list(_MOTOR_MODES)}")
         if mode == "gravity_compensation":
             result = self._daemon_post(_PATH_MOTORS_MODE.format(mode=mode))
             if (error := result.get("error")) is not None:
-                return _refuse(f"set_motors: daemon refused {mode!r}: {error}")
+                return refuse(f"set_motors: daemon refused {mode!r}: {error}")
         else:
             torque = mode == "enabled"
             if (error := self._send_cmd({"torque": torque, "ids": None})) is not None:
-                return _refuse(f"set_motors: {error}")
+                return refuse(f"set_motors: {error}")
         self._remember_head_yaw_target(None)
         return {"status": "success", "content": [{"json": {"motors": mode}}]}
 
@@ -1393,13 +1393,13 @@ class ReachyDriver(AgentTool):
             daemon body carrying no mode.
         """
         if not self._connected:
-            return _refuse("read_motors: not connected - call connect_eagerly() first")
+            return refuse("read_motors: not connected - call connect_eagerly() first")
         result = self._daemon_get(_PATH_STATE)
         if (error := result.get("error")) is not None:
-            return _refuse(f"read_motors: {error}")
+            return refuse(f"read_motors: {error}")
         mode = result.get("control_mode")
         if not isinstance(mode, str):
-            return _refuse(f"read_motors: daemon reported no control_mode (got {mode!r})")
+            return refuse(f"read_motors: daemon reported no control_mode (got {mode!r})")
         return {"status": "success", "content": [{"json": {"motors": mode, "holds_a_pose": mode == "enabled"}}]}
 
     # ------------------------------------------------------------------ #
@@ -1450,7 +1450,7 @@ class ReachyDriver(AgentTool):
             tracking holds the head (weight 1) the move is overridden.
         """
         if not self._connected:
-            return _refuse("goto: not connected - call connect_eagerly() first")
+            return refuse("goto: not connected - call connect_eagerly() first")
         values: dict[str, Any] = {}
         if head is not None:
             values.update(
@@ -1474,7 +1474,7 @@ class ReachyDriver(AgentTool):
                 head_yaw_target=None if "head_yaw" in values else self._read_head_yaw_target(),
             )
         ) is not None:
-            return _refuse(reason)
+            return refuse(reason)
         if (
             reason := goto_body_error(
                 head=head,
@@ -1485,13 +1485,13 @@ class ReachyDriver(AgentTool):
                 context="goto",
             )
         ) is not None:
-            return _refuse(reason)
+            return refuse(reason)
         body = goto_body(
             head=head, body_yaw=body_yaw, antennas=antennas, duration=duration, interpolation=interpolation
         )
         result = self._daemon_post(_PATH_GOTO, body)
         if (error := result.get("error")) is not None:
-            return _refuse(f"goto: daemon refused the move: {error}")
+            return refuse(f"goto: daemon refused the move: {error}")
         if head is not None:
             self._remember_head_yaw_target(float(values["head_yaw"]))
         self._stopped = False
@@ -1534,10 +1534,10 @@ class ReachyDriver(AgentTool):
             or a refusal.
         """
         if not self._connected:
-            return _refuse("get_volume: not connected - call connect_eagerly() first")
+            return refuse("get_volume: not connected - call connect_eagerly() first")
         result = self._daemon_get(_PATH_VOLUME_GET)
         if (error := result.get("error")) is not None:
-            return _refuse(f"get_volume: daemon refused: {error}")
+            return refuse(f"get_volume: daemon refused: {error}")
         return {"status": "success", "content": [{"json": {"volume": result.get("volume"), "daemon": result}}]}
 
     def set_volume(self, level: Any, *, allow_test_sound: bool = False) -> dict[str, Any]:
@@ -1565,9 +1565,9 @@ class ReachyDriver(AgentTool):
             the mixer level - not proof of anything heard.
         """
         if not self._connected:
-            return _refuse("set_volume: not connected - call connect_eagerly() first")
+            return refuse("set_volume: not connected - call connect_eagerly() first")
         if allow_test_sound is not True:
-            return _refuse(
+            return refuse(
                 "set_volume: the daemon plays a short test sound (impatient1.wav) whenever the level is set, and "
                 "with wobbling enabled that moves the head; pass allow_test_sound=True to accept that, or use "
                 "get_volume() to read without touching it"
@@ -1576,10 +1576,10 @@ class ReachyDriver(AgentTool):
         current = current_result.get("volume") if current_result.get("error") is None else None
         target = resolve_volume_level(level, current if isinstance(current, int) else None)
         if isinstance(target, str):
-            return _refuse(f"set_volume: {target}")
+            return refuse(f"set_volume: {target}")
         result = self._daemon_post(_PATH_VOLUME_SET, {"volume": target})
         if (error := result.get("error")) is not None:
-            return _refuse(f"set_volume: daemon refused {target}: {error}")
+            return refuse(f"set_volume: daemon refused {target}: {error}")
         return {
             "status": "success",
             "content": [
@@ -1617,18 +1617,18 @@ class ReachyDriver(AgentTool):
             A success envelope carrying the daemon's reply, or a refusal.
         """
         if not self._connected:
-            return _refuse("play_sound: not connected - call connect_eagerly() first")
+            return refuse("play_sound: not connected - call connect_eagerly() first")
         if not isinstance(sound_file, str) or not sound_file.strip():
-            return _refuse(
+            return refuse(
                 f"play_sound: sound_file must be a non-empty daemon-side path or asset name, got {sound_file!r}"
             )
         if not isinstance(wobble, bool):
-            return _refuse(f"play_sound: wobble must be a boolean, got {wobble!r}")
+            return refuse(f"play_sound: wobble must be a boolean, got {wobble!r}")
         if wobble and (reason := self.set_wobbling(True).get("status")) != "success":
-            return _refuse(f"play_sound: could not enable wobbling before playback ({reason})")
+            return refuse(f"play_sound: could not enable wobbling before playback ({reason})")
         result = self._daemon_post(_PATH_PLAY_SOUND, {"file": sound_file})
         if (error := result.get("error")) is not None:
-            return _refuse(f"play_sound: daemon refused {sound_file!r}: {error}")
+            return refuse(f"play_sound: daemon refused {sound_file!r}: {error}")
         return {
             "status": "success",
             "content": [
@@ -1654,12 +1654,12 @@ class ReachyDriver(AgentTool):
             A success envelope, or a refusal.
         """
         if not self._connected:
-            return _refuse("set_wobbling: not connected - call connect_eagerly() first")
+            return refuse("set_wobbling: not connected - call connect_eagerly() first")
         if not isinstance(enabled, bool):
-            return _refuse(f"set_wobbling: enabled must be a boolean, got {enabled!r}")
+            return refuse(f"set_wobbling: enabled must be a boolean, got {enabled!r}")
         result = self._daemon_post(_PATH_WOBBLE_ENABLE if enabled else _PATH_WOBBLE_DISABLE)
         if (error := result.get("error")) is not None:
-            return _refuse(f"set_wobbling: daemon refused: {error}")
+            return refuse(f"set_wobbling: daemon refused: {error}")
         return {"status": "success", "content": [{"json": {"wobbling": enabled}}]}
 
     def tts_url(self) -> str:
@@ -1703,24 +1703,24 @@ class ReachyDriver(AgentTool):
             ``False``: the daemon accepting a file is not sound in the room.
         """
         if not self._connected:
-            return _refuse("say: not connected - call connect_eagerly() first")
+            return refuse("say: not connected - call connect_eagerly() first")
         if not isinstance(text, str) or not text.strip():
-            return _refuse(f"say: text must be a non-empty string, got {text!r}")
+            return refuse(f"say: text must be a non-empty string, got {text!r}")
         text = text.strip()
         if len(text) > 500:
-            return _refuse(f"say: text is {len(text)} characters; the limit is 500 per call")
+            return refuse(f"say: text is {len(text)} characters; the limit is 500 per call")
         if not isinstance(wobble, bool):
-            return _refuse(f"say: wobble must be a boolean, got {wobble!r}")
+            return refuse(f"say: wobble must be a boolean, got {wobble!r}")
         url = self.tts_url()
         synth = _post_json(f"{url}/tts", {"text": text, "as": "path"}, timeout_s)
         if (error := synth.get("error")) is not None:
-            return _refuse(
+            return refuse(
                 f"say: no speech service at {url} ({error}). Speech is a sidecar (tiny-tts / Piper) on the robot, "
                 f"not part of the Reachy daemon; install it, or pass tts_url= / export {ENV_TTS_URL}"
             )
         path = synth.get("path")
         if not isinstance(path, str) or not path:
-            return _refuse(f"say: speech service answered without a wav path: {synth!r}")
+            return refuse(f"say: speech service answered without a wav path: {synth!r}")
         seconds = synth.get("seconds")
         seconds_f = float(seconds) if isinstance(seconds, int | float) and math.isfinite(seconds) else None
         played = self.play_sound(path, wobble=wobble)
@@ -1771,19 +1771,19 @@ class ReachyDriver(AgentTool):
             refusal.
         """
         if not self._connected:
-            return _refuse("set_tracking: not connected - call connect_eagerly() first")
+            return refuse("set_tracking: not connected - call connect_eagerly() first")
         if not isinstance(enabled, bool):
-            return _refuse(f"set_tracking: enabled must be a boolean, got {enabled!r}")
+            return refuse(f"set_tracking: enabled must be a boolean, got {enabled!r}")
         if (reason := finite_number_error(weight, "weight", "set_tracking")) is not None:
-            return _refuse(reason)
+            return refuse(reason)
         if not 0.0 <= float(weight) <= 1.0:
-            return _refuse(f"set_tracking: weight {weight:g} is outside [0, 1]")
+            return refuse(f"set_tracking: weight {weight:g} is outside [0, 1]")
         if enabled:
             result = self._daemon_post(_PATH_TRACKING_ENABLE, {"weight": float(weight)})
         else:
             result = self._daemon_post(_PATH_TRACKING_DISABLE)
         if (error := result.get("error")) is not None:
-            return _refuse(f"set_tracking: daemon refused: {error}")
+            return refuse(f"set_tracking: daemon refused: {error}")
         return {
             "status": "success",
             "content": [
@@ -1806,10 +1806,10 @@ class ReachyDriver(AgentTool):
             in [-1, 1], ``roll``, ``ts``), or a refusal.
         """
         if not self._connected:
-            return _refuse("tracked_face: not connected - call connect_eagerly() first")
+            return refuse("tracked_face: not connected - call connect_eagerly() first")
         result = self._daemon_get(_PATH_TRACKING_FACE)
         if (error := result.get("error")) is not None:
-            return _refuse(f"tracked_face: daemon refused: {error}")
+            return refuse(f"tracked_face: daemon refused: {error}")
         return {
             "status": "success",
             "content": [{"json": {"face_target": result.get("face_target"), "daemon": result}}],
@@ -1847,11 +1847,11 @@ class ReachyDriver(AgentTool):
             driver is disconnected or an argument is out of domain.
         """
         if not self._connected:
-            return _refuse("turn_to_sound: not connected - call connect_eagerly() first")
+            return refuse("turn_to_sound: not connected - call connect_eagerly() first")
         if not isinstance(enabled, bool):
-            return _refuse(f"turn_to_sound: enabled must be a boolean, not {enabled!r}")
+            return refuse(f"turn_to_sound: enabled must be a boolean, not {enabled!r}")
         if (reason := finite_number_error(sign, "sign", "turn_to_sound")) is not None:
-            return _refuse(reason)
+            return refuse(reason)
         if enabled:
             with self._doa_lock:
                 if self._doa is None or not self._doa.running:
@@ -1985,7 +1985,7 @@ class ReachyDriver(AgentTool):
         try:
             roll, pitch, yaw = _rpy_from_matrix(matrix)
         except (TypeError, ValueError, IndexError) as exc:
-            return _refuse(f"look_at: the plan's head pose is not a usable 4x4 matrix: {exc}")
+            return refuse(f"look_at: the plan's head pose is not a usable 4x4 matrix: {exc}")
         sent = self.goto(head={"pitch": pitch, "roll": roll, "yaw": yaw}, duration=duration)
         if sent.get("status") != "success":
             return sent
@@ -2008,7 +2008,7 @@ class ReachyDriver(AgentTool):
             would be indistinguishable from a robot reporting nothing).
         """
         if not self._connected:
-            return _refuse("state_snapshot: not connected - call connect_eagerly() first")
+            return refuse("state_snapshot: not connected - call connect_eagerly() first")
         return {
             "status": "success",
             "content": [
@@ -2237,14 +2237,14 @@ class ReachyDriver(AgentTool):
             A success envelope containing path, dimensions and source, or a refusal.
         """
         if not self._connected:
-            return _refuse("capture_frame: not connected - call connect_eagerly() first")
+            return refuse("capture_frame: not connected - call connect_eagerly() first")
         if not isinstance(save_path, str):
-            return _refuse("capture_frame: save_path must be a string")
+            return refuse("capture_frame: save_path must be a string")
         transport = _resolve_transport()
         if isinstance(transport, str):
-            return _refuse(f"capture_frame: {transport}")
+            return refuse(f"capture_frame: {transport}")
         if transport._daemon_auth_token() or transport._daemon_use_tls():
-            return _refuse(
+            return refuse(
                 "capture_frame: authenticated/TLS media signaling is not supported; daemon credentials were not forwarded"
             )
         transport._warn_unauthenticated_once("media signaling")
@@ -2253,7 +2253,7 @@ class ReachyDriver(AgentTool):
 
             result = _save_jpeg(_capture_jpeg(self._host, self._media_port), save_path)
         except Exception as exc:  # noqa: BLE001 - GI/plugins and image decoders expose vendor exception types
-            return _refuse(f"capture_frame: {exc}")
+            return refuse(f"capture_frame: {exc}")
         return {"status": "success", "content": [{"json": result}]}
 
     def record_audio(self, duration: float = 1.0, save_path: str = "") -> dict[str, Any]:
@@ -2276,18 +2276,18 @@ class ReachyDriver(AgentTool):
             Path and sample-derived recording metadata, or a refusal envelope.
         """
         if not self._connected:
-            return _refuse("record_audio: not connected - call connect_eagerly() first")
+            return refuse("record_audio: not connected - call connect_eagerly() first")
         if reason := finite_number_error(duration, "duration", "record_audio"):
-            return _refuse(reason)
+            return refuse(reason)
         if not 0.1 <= duration <= 5:
-            return _refuse("record_audio: duration must be between 0.1 and 5 seconds")
+            return refuse("record_audio: duration must be between 0.1 and 5 seconds")
         if not isinstance(save_path, str):
-            return _refuse("record_audio: save_path must be a string")
+            return refuse("record_audio: save_path must be a string")
         transport = _resolve_transport()
         if isinstance(transport, str):
-            return _refuse(f"record_audio: {transport}")
+            return refuse(f"record_audio: {transport}")
         if transport._daemon_auth_token() or transport._daemon_use_tls():
-            return _refuse(
+            return refuse(
                 "record_audio: authenticated/TLS media signaling is not supported; daemon credentials were not forwarded"
             )
         transport._warn_unauthenticated_once("media signaling")
@@ -2296,11 +2296,11 @@ class ReachyDriver(AgentTool):
 
             pcm, quality = _capture_pcm(self._host, self._media_port, duration)
             if len(pcm) != round(duration * 16000) * 2:
-                return _refuse("record_audio: received sample count does not match the requested duration")
+                return refuse("record_audio: received sample count does not match the requested duration")
             result = _save_wav(pcm, save_path)
             result["quality"] = quality
         except Exception as exc:  # noqa: BLE001 - GI/plugins expose vendor exception types
-            return _refuse(f"record_audio: {exc}")
+            return refuse(f"record_audio: {exc}")
         return {"status": "success", "content": [{"json": result}]}
 
     def _look_at_pose(self, u: int, v: int, frame_width: int, frame_height: int) -> dict[str, Any]:
@@ -2325,21 +2325,21 @@ class ReachyDriver(AgentTool):
             stop or media-ownership command.
         """
         if not self._connected:
-            return _refuse("look_at: not connected - call connect_eagerly() first")
+            return refuse("look_at: not connected - call connect_eagerly() first")
         from strands_robots.drivers.reachy_look_at import _coordinates_error, _pixel_plan
 
         if reason := _coordinates_error(u, v, frame_width, frame_height):
-            return _refuse(reason)
+            return refuse(reason)
         specs = self._daemon_get("/api/camera/specs")
         if "error" in specs:
-            return _refuse(f"look_at: {specs['error']}")
+            return refuse(f"look_at: {specs['error']}")
         pose = self._daemon_get("/api/state/present_head_pose?use_pose_matrix=true")
         if "error" in pose:
-            return _refuse(f"look_at: {pose['error']}")
+            return refuse(f"look_at: {pose['error']}")
         try:
             plan = _pixel_plan(specs, pose, u, v, frame_width, frame_height)
         except Exception as exc:  # noqa: BLE001 - geometry and OpenCV failures become explicit refusals
-            return _refuse(f"look_at: {exc}")
+            return refuse(f"look_at: {exc}")
         return {"status": "success", "content": [{"json": plan}]}
 
     def _send_cmd(self, command: dict[str, Any]) -> str | None:
@@ -2530,7 +2530,7 @@ def _act_stop(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
 def _act_look(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
     pair = _optional_pair(params, "antenna_right", "antenna_left", "look")
     if isinstance(pair, str):
-        return _refuse(pair)
+        return refuse(pair)
     head = {axis: params.get(axis, 0.0) for axis in ("pitch", "roll", "yaw", "x", "y", "z")}
     return driver.goto(
         head=head,
@@ -2544,9 +2544,9 @@ def _act_look(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
 def _act_antennas(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
     pair = _optional_pair(params, "antenna_right", "antenna_left", "antennas")
     if isinstance(pair, str):
-        return _refuse(pair)
+        return refuse(pair)
     if pair is None:
-        return _refuse("antennas: antenna_right and antenna_left (degrees) are required")
+        return refuse("antennas: antenna_right and antenna_left (degrees) are required")
     return driver.goto(
         antennas=pair, duration=params.get("duration", 0.5), interpolation=params.get("interpolation", "minjerk")
     )
@@ -2554,7 +2554,7 @@ def _act_antennas(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any
 
 def _act_body_turn(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
     if "body_yaw" not in params:
-        return _refuse("body_turn: body_yaw (degrees, +/-160) is required")
+        return refuse("body_turn: body_yaw (degrees, +/-160) is required")
     return driver.goto(
         body_yaw=params["body_yaw"],
         duration=params.get("duration", 1.0),
@@ -2579,17 +2579,17 @@ def _act_sleep(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
 def _act_express(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
     emotion = params.get("emotion")
     if not isinstance(emotion, str) or not emotion.strip():
-        return _refuse("express: emotion (a move name or a plain word such as happy, curious, yes, no) is required")
+        return refuse("express: emotion (a move name or a plain word such as happy, curious, yes, no) is required")
     library = params.get("library", "emotions")
     if not isinstance(library, str):
-        return _refuse(f"express: library must be a string, got {library!r}")
+        return refuse(f"express: library must be a string, got {library!r}")
     return driver.play_move(emotion, library)
 
 
 def _act_list_moves(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
     library = params.get("library", "emotions")
     if not isinstance(library, str):
-        return _refuse(f"list_moves: library must be a string, got {library!r}")
+        return refuse(f"list_moves: library must be a string, got {library!r}")
     return driver.list_moves(library)
 
 
@@ -2601,7 +2601,7 @@ def _act_motors(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
     if mode is None:
         return driver.read_motors()
     if not isinstance(mode, str):
-        return _refuse(f"motors: mode must be one of {list(_MOTOR_MODES)}, got {mode!r}")
+        return refuse(f"motors: mode must be one of {list(_MOTOR_MODES)}, got {mode!r}")
     return driver.set_motors(mode)
 
 
@@ -2620,7 +2620,7 @@ def _act_volume(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
 
 def _act_set_volume(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
     if "level" not in params:
-        return _refuse("set_volume: level (0-100, or silent/low/normal/loud/max/quieter/louder) is required")
+        return refuse("set_volume: level (0-100, or silent/low/normal/loud/max/quieter/louder) is required")
     return driver.set_volume(params["level"], allow_test_sound=params.get("allow_test_sound", False))
 
 
@@ -2878,15 +2878,3 @@ def _body_shape_error(method: str, path: str, expected: str, body: Any) -> dict[
     if len(preview) > _BODY_PREVIEW_CHARS:
         preview = preview[:_BODY_PREVIEW_CHARS] + "..."
     return {"error": f"{method} {path}: daemon answered a JSON {_json_kind(body)}, not {expected}: {preview}"}
-
-
-def _refuse(reason: str) -> dict[str, Any]:
-    """Return the driver's error envelope with ``reason`` inside.
-
-    Args:
-        reason: Text naming what refused.
-
-    Returns:
-        The error envelope, in the one shape every refusal path here renders.
-    """
-    return {"status": "error", "content": [{"text": reason}]}

@@ -75,10 +75,11 @@ def _run_events(coro_fn):  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.parametrize("action", ["execute", "start"])
-@pytest.mark.parametrize("provider", ["mock", "lerobot_local"])
-def test_a_port_less_provider_reaches_the_dispatcher_without_a_port(dispatched, action: str, provider: str) -> None:
+def test_a_port_less_provider_reaches_the_dispatcher_without_a_port(dispatched, action: str) -> None:
+    """``mock`` only: ``lerobot_local`` also needs a checkpoint the tool input
+    does not carry, so the shared preflight refuses it before the operator."""
     hw, calls = dispatched
-    result = _stream(hw, action=action, instruction="pick", policy_provider=provider)
+    result = _stream(hw, action=action, instruction="pick", policy_provider="mock")
 
     assert result["status"] == "success", result
     assert calls == [(action, None)]

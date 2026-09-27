@@ -342,13 +342,15 @@ def _shipped_surfaces() -> dict[str, tuple[bool, bool]]:
 class TestEveryPortTakingSurfaceIsAccountedFor:
     """A new task entry point cannot ship without deciding what it does with the port."""
 
-    # The two public/chokepoint entries that must judge the port themselves,
-    # and the pre-gate check the agent-tool stream runs before the operator is
-    # asked, so a port the dispatcher would refuse never costs an approval.
-    ENTRY_POINTS = frozenset({"_execute_task_sync", "start_task", "_pre_gate_error"})
-    # Relays that hand it on unchanged, plus the private builder that is the
-    # floor for a direct call.
-    RELAYS = frozenset({"_drive_claimed_task", "_run_control_loop", "_execute_task_async"})
+    # The one admission chain every task entry point and the agent tool's
+    # pre-approval check run, so the port is judged in exactly one place.
+    ENTRY_POINTS = frozenset({"_preflight"})
+    # Relays that hand it on unchanged (the public/chokepoint entries hand it to
+    # the preflight first), plus the private builder that is the floor for a
+    # direct call.
+    RELAYS = frozenset(
+        {"_execute_task_sync", "start_task", "_drive_claimed_task", "_run_control_loop", "_execute_task_async"}
+    )
     FLOOR = frozenset({"_get_policy"})
     # The rule itself, which takes the value in order to judge it.
     OWNER = frozenset({"_policy_port_error"})
