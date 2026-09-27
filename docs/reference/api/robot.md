@@ -23,10 +23,12 @@ Returned by `Robot(name, mode="real")`. Also usable directly when you already ho
 ::: strands_robots.hardware_robot.TaskStatus
     options:
       heading_level: 3
+      show_root_heading: true
 
 ::: strands_robots.hardware_robot.RobotTaskState
     options:
       heading_level: 3
+      show_root_heading: true
 
 ## Teleoperator
 
