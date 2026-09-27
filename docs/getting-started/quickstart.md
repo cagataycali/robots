@@ -124,16 +124,9 @@ Step 5 needs a sourced ROS 2 distro - `rclpy` is not on PyPI, and
 `source /opt/ros/<distro>/setup.bash` to run first. Step 3-twin runs in sim on
 the install line at the top of this page.
 
-## Next: the notebook series
-
-For a guided, click-and-run path, work through the
-[getting-started notebooks](../reference/examples/overview.md), five notebooks that run
-end-to-end in simulation with no hardware, no GPU, and no Hugging Face
-credentials. They take you from `Robot("so100")` through recording a dataset,
-training a policy, and the full streaming data loop, each building on the last.
-
 ## See also
 
+- [Getting-started notebooks](https://github.com/strands-labs/robots/tree/main/examples/notebooks) - the same path, click by click.
 - [Policy providers](../reference/policies/overview.md) - GR00T, LeRobot Local, Cosmos 3.
 - [Robot catalog](../robots/index.md) - all {{n:robots}} robots.
 - [Real hardware](../reference/hardware/robot-control.md) - same code, `mode="real"`.
