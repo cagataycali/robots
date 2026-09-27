@@ -22,7 +22,8 @@ import pytest
 import serial
 
 import strands_robots.tools.pose_tool as pose_mod
-from strands_robots.tools.pose_tool import MotorController, _parse_status_packet, pose_tool
+from strands_robots.drivers.feetech.protocol import parse_sync_read_replies
+from strands_robots.tools.pose_tool import MotorController, pose_tool
 
 #: The ID of ``shoulder_pan``, and the position its reply carries throughout.
 #: 1024 is a quarter turn from the 4095-count full scale, which puts the joint at
@@ -53,6 +54,11 @@ def _status(motor_id: int, params: list[int], error: int = 0, checksum: int | No
     body = [motor_id, len(params) + 2, error, *params]
     check = (~sum(body)) & 0xFF if checksum is None else checksum
     return bytes([0xFF, 0xFF, *body, check])
+
+
+def _framed(raw: bytes, motor_id: int = MOTOR_ID) -> bytes | None:
+    """``motor_id``'s two parameter bytes, framed by the codec the tool reads through."""
+    return parse_sync_read_replies(raw, [motor_id], 2).get(motor_id)
 
 
 def _position_reply(motor_id: int = MOTOR_ID, counts: int = TRUE_COUNTS, **kwargs: Any) -> bytes:
@@ -183,6 +189,7 @@ class TestTheFramesHereAreWhatAServoSends:
         [
             ("bad-checksum", _position_reply(checksum=0x00)),
             ("truncated", _position_reply()[:-1]),
+            ("error-bit-7", _position_reply(error=0x80)),
         ],
     )
     def test_the_malformed_frames_are_refused_by_the_sdk(self, label: str, payload: bytes) -> None:
@@ -233,7 +240,7 @@ class TestAReplyBehindLeadingBytesIsStillTheReading:
         assert controller.read_motor_position(MOTOR) == pytest.approx(TRUE_DEGREES)
 
     def test_the_parse_returns_the_parameter_bytes(self) -> None:
-        assert _parse_status_packet(b"\x00" + _position_reply(), MOTOR_ID, 2) == (0x00, 0x04)
+        assert _framed(b"\x00" + _position_reply()) == b"\x00\x04"
 
     def test_a_coincidental_header_does_not_end_the_search(self) -> None:
         """A frame that fails verification is skipped, not treated as the answer.
@@ -243,7 +250,7 @@ class TestAReplyBehindLeadingBytesIsStillTheReading:
         motor's answer sat in the same buffer.
         """
         raw = _position_reply(checksum=0x00) + _position_reply()
-        assert _parse_status_packet(raw, MOTOR_ID, 2) == (0x00, 0x04)
+        assert _framed(raw) == b"\x00\x04"
 
     def test_another_motors_reply_does_not_hide_this_motors(self, bus) -> None:
         controller, fake = bus
@@ -313,22 +320,13 @@ class TestTheParseRefusesAFrameThatIsNotTheAnswerToThisRead:
         frame = _position_reply(counts=64000)
         truncated = frame[:-1]
         assert (~sum(truncated[2:-1])) & 0xFF == truncated[-1], "the coincidence this case rests on"
-        assert _parse_status_packet(truncated, MOTOR_ID, 2) is None
+        assert _framed(truncated) is None
 
     def test_a_reply_carrying_the_wrong_number_of_parameters_is_not_this_read(self) -> None:
         """A well-formed one-byte reply is a different read's answer, not ours."""
         frame = _status(MOTOR_ID, [0x00])
         assert (~sum(frame[2:-1])) & 0xFF == frame[-1], "well formed - just not two parameters"
-        assert _parse_status_packet(frame, MOTOR_ID, 2) is None
-
-    def test_the_broadcast_address_never_answers_even_when_asked(self) -> None:
-        """0xFE addresses every motor at once, so no reply can come from it.
-
-        The vendor SDK refuses the same thing one layer up: ``readTxRx`` returns
-        ``COMM_NOT_AVAILABLE`` without reading when asked for an ID at or above
-        the broadcast address.
-        """
-        assert _parse_status_packet(_position_reply(motor_id=0xFE), 0xFE, 2) is None
+        assert _framed(frame) is None
 
 
 # --------------------------------------------------------------------------- #

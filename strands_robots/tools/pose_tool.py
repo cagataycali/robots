@@ -58,6 +58,7 @@ from strands_robots.drivers.feetech.protocol import (
     decode_sign_magnitude,
     decode_word,
     encode_word,
+    parse_sync_read_replies,
     read_packet,
     write_packet,
 )
@@ -683,88 +684,6 @@ def _stored_pose_target_error(pose: RobotPose, travel: Mapping[str, tuple[float,
     return None
 
 
-# --------------------------------------------------------------------------- #
-# Feetech status-packet framing
-# --------------------------------------------------------------------------- #
-# A servo answers a read with ``FF FF ID LEN ERR <params> CHK``. ``LEN`` counts
-# the error byte, the parameters and the checksum, so a whole frame is
-# ``LEN + 4`` bytes and its checksum is ``~sum(frame[2:-1]) & 0xFF`` -- the same
-# sum :func:`~strands_robots.drivers.feetech.protocol.build_packet` writes on the
-# way out, which is the builder every frame this tool sends comes from.
-#
-# The reply cannot be read at fixed offsets. The bus is half-duplex and shared by
-# every servo on the arm, so what comes back may carry a leading byte the host's
-# own transmission echoed, or the late answer to a read that already timed out,
-# sent by a different motor. Indexing straight into the buffer turns either of
-# those into a position that is wrong rather than missing: a single leading byte
-# shifts the two position bytes by one, which reports a joint ninety degrees from
-# where it is and offers nothing to say the number is not a measurement.
-#
-# So the frame is located and verified instead. The codec's
-# :func:`~strands_robots.drivers.feetech.protocol.parse_status_packet` is the
-# strict sibling of this scan: it refuses a frame that arrives with anything
-# behind it, because the bus module it serves frames the stream itself and a
-# trailing byte there belongs to the next reply. This scan mirrors the vendor SDK,
-# which is the authority for the wire format: ``scservo_sdk``'s ``rxPacket``
-# searches for the header, re-derives the frame length from ``LEN`` and verifies
-# the checksum, and its ``txRxPacket`` keeps reading until the responding ID
-# matches the one that was asked. Recovering the frame rather than refusing the
-# read is the deliberate half: bytes in front of the header do not make a reply
-# corrupt, they make it offset, and the position it carries is the real one.
-
-#: Both header bytes of a status packet.
-_STATUS_HEADER = b"\xff\xff"
-
-#: Shortest frame the format allows: ``FF FF ID LEN ERR CHK``.
-_STATUS_MIN_FRAME = 6
-
-#: Highest ID a *responding* servo can carry. 0xFE addresses every motor at once
-#: and 0xFF is a header byte, so neither can name the motor that answered.
-_STATUS_MAX_ID = 0xFD
-
-#: The error byte's top bit is unused, so anything above this is not an error
-#: byte and the header it followed was a coincidence in someone's payload.
-_STATUS_MAX_ERROR = 0x7F
-
-
-def _parse_status_packet(raw: bytes, motor_id: int, param_count: int) -> tuple[int, ...] | None:
-    """Extract the parameters of ``motor_id``'s reply from ``raw``, or ``None``.
-
-    Every candidate header in ``raw`` is tried, so a frame arriving behind
-    echoed or stale bytes is still found, and a pair of payload bytes that
-    merely looks like a header does not end the search.
-
-    Args:
-        raw: The bytes read from the bus, which may carry leading noise.
-        motor_id: The ID that was asked; only its answer counts.
-        param_count: How many parameter bytes the reply must carry.
-
-    Returns:
-        The reply's parameter bytes, or ``None`` when ``raw`` holds no verified
-        answer from ``motor_id``.
-    """
-    start = 0
-    while (index := raw.find(_STATUS_HEADER, start)) != -1:
-        start = index + 1
-        frame = raw[index:]
-        if len(frame) < _STATUS_MIN_FRAME:
-            # Every later header starts further right, so none can be longer.
-            break
-        responder, length, error = frame[2], frame[3], frame[4]
-        total = length + 4
-        if responder > _STATUS_MAX_ID or error > _STATUS_MAX_ERROR:
-            continue
-        if length != param_count + 2 or len(frame) < total:
-            continue
-        frame = frame[:total]
-        if (~sum(frame[2:-1])) & 0xFF != frame[-1]:
-            continue
-        if responder != motor_id:
-            continue
-        return tuple(frame[5:-1])
-    return None
-
-
 class MotorController:
     """Low-level motor control for fine movements."""
 
@@ -915,7 +834,9 @@ class MotorController:
             # the half-duplex bus puts in front of it, which the parse then skips.
             response = self.serial_conn.read(10)
 
-            reply = _parse_status_packet(response, motor_id, WORD_LENGTH)
+            # The codec's stream framer skips echoed bytes in front of the reply
+            # and a stale answer from another motor, and verifies what is left.
+            reply = parse_sync_read_replies(response, [motor_id], WORD_LENGTH).get(motor_id)
             if reply is None:
                 logger.warning(
                     "No verified reply from motor %s (id %d); discarding %s",
@@ -924,7 +845,7 @@ class MotorController:
                     response.hex(" ") if response else "an empty read",
                 )
                 return None
-            counts = decode_sign_magnitude(decode_word(bytes(reply)), SIGN_BIT[Register.PRESENT_POSITION])
+            counts = decode_sign_magnitude(decode_word(reply), SIGN_BIT[Register.PRESENT_POSITION])
             return self.units.to_value(motor_name, counts)
         except Exception as e:
             logger.error(f"Failed to read motor {motor_name}: {e}")
