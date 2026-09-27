@@ -406,8 +406,7 @@ class RecordWorker:
     def _loop(self) -> None:
         from strands_robots.mesh.pacing import Ticker
 
-        ticker = Ticker(1.0 / self.fps, self._stop_evt)
-        try:
+        with Ticker(1.0 / self.fps, self._stop_evt) as ticker:
             while not ticker.wait():
                 try:
                     self.tick()
@@ -415,8 +414,6 @@ class RecordWorker:
                     with self._lock:
                         self._last_error = f"control step failed: {exc}"
                     logger.warning("record tick failed: %r", exc)
-        finally:
-            ticker.close()
 
     def _motion_verdict_locked(self) -> dict[str, Any] | None:
         """Whether the follower is holding one pose. Caller holds ``self._lock``."""

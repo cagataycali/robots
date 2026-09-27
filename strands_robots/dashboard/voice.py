@@ -230,7 +230,10 @@ async def run_voice_session(ws: Any, *, bridge: Any = None) -> None:
         (getattr(_bidi_events, n) for n in ("BidiAudioInputEvent",) if hasattr(_bidi_events, n)), None
     )
     if audio_input_cls is None:
-        raise ImportError("strands.experimental.bidi has no audio input event this dashboard knows how to send")
+        raise ImportError(
+            "strands.experimental.bidi has no audio input event this dashboard knows how to send",
+            name="strands.experimental.bidi.types.events",
+        )
 
     def _event_type(event: Any) -> str:
         try:

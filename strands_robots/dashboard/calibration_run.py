@@ -42,7 +42,7 @@ __all__ = ["cli_args", "wizard_step", "CalibrationRun", "runs", "start", "get"]
 #: operator's hand.
 CONFIRM_KEY = "confirm"
 
-_SEGMENT = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+_SEGMENT = re.compile(r"^[A-Za-z0-9._:-]{1,64}\Z")
 
 
 def cli_args(role: str, model: str, device_id: str, port: str) -> list[str]:
@@ -100,7 +100,7 @@ def _calibrate_argv() -> list[str]:
 # ---------------------------------------------------------------------------
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\r")
-_TABLE_ROW = re.compile(r"^(\S[\w ]*?)\s*\|\s*(-?\d+)\s*\|\s*(-?\d+)\s*\|\s*(-?\d+)\s*$")
+_TABLE_ROW = re.compile(r"^(\S[\w ]*?)\s*\|\s*(-?\d+)\s*\|\s*(-?\d+)\s*\|\s*(-?\d+)\s*\Z")
 _SAVED = re.compile(r"Calibration saved to\s+(.+)")
 
 

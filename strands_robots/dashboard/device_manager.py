@@ -399,7 +399,7 @@ def scan_camera_names() -> list[dict[str, Any]]:
             if "AVFoundation audio devices" in line:
                 break
             if in_video:
-                m = re.search(r"\[(\d+)\]\s+(.+)$", line)
+                m = re.search(r"\[(\d+)\]\s+(.+)\Z", line)
                 if m:
                     names.append({"listing_index": int(m.group(1)), "name": m.group(2).strip()})
     elif sys.platform.startswith("linux"):
@@ -911,13 +911,19 @@ class AutoSpawnWatcher:
         )
 
     def run_forever(self, interval: float = AUTOSPAWN_POLL_S) -> None:
-        """Poll until :meth:`stop`. For a thread; the server uses asyncio."""
-        while not self._stop.is_set():
-            try:
-                self.poll()
-            except Exception as e:  # a watcher crash must not be silent
-                logger.warning("autospawn poll failed: %r", e)
-            self._stop.wait(interval)
+        """Poll until :meth:`stop`. For a thread; the server uses asyncio.
+
+        Paced by :class:`strands_robots.mesh.pacing.Ticker` so a slow
+        ``poll()`` does not stretch the period by its own duration.
+        """
+        from strands_robots.mesh.pacing import Ticker
+
+        with Ticker(interval, self._stop) as ticker:
+            while not ticker.wait():
+                try:
+                    self.poll()
+                except Exception as e:  # a watcher crash must not be silent
+                    logger.warning("autospawn poll failed: %r", e)
 
     def stop(self) -> None:
         """Ask :meth:`run_forever` to return after the current sleep."""
@@ -928,7 +934,7 @@ class AutoSpawnWatcher:
 SPAWNABLE_MODES = ("sim", "real")
 
 # : What a caller-chosen peer_id may look like.
-_PEER_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+_PEER_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}\Z")
 
 
 def validate_peer_id(peer_id: Any) -> str | None:
@@ -995,7 +1001,7 @@ def validate_replay(repo_id: Any, episode: Any, root: Any = None, speed: Any = 1
     if not isinstance(repo_id, str) or not repo_id.strip():
         return {"error": "repo_id required"}
     rid = repo_id.strip()
-    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9._-]+)?$", rid):
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9._-]+)?\Z", rid):
         return {"error": f"repo_id {rid!r} does not look like a dataset id (org/name) or a local dataset name"}
     if root is not None:
         if not isinstance(root, str) or not root.strip():
