@@ -1002,9 +1002,12 @@ def validate_replay(repo_id: Any, episode: Any, root: Any = None, speed: Any = 1
         # directory outside the dataset home learns nothing about whether it is there.
         from strands_robots.dataset_source import _lerobot_home
 
-        home = os.path.normpath(os.path.realpath(os.path.expanduser(str(_lerobot_home()))))
-        candidate = os.path.normpath(os.path.realpath(os.path.expanduser(root.strip())))
-        if candidate != home and not candidate.startswith(home + os.sep):
+        home = os.path.realpath(os.path.expanduser(str(_lerobot_home())))
+        candidate = os.path.normpath(os.path.join(home, os.path.expanduser(root.strip())))
+        if not candidate.startswith(home + os.sep):
+            return {"error": "root must live under the dataset home ($HF_LEROBOT_HOME)"}
+        # A link under the home that points outside it is outside it.
+        if not os.path.realpath(candidate).startswith(home + os.sep):
             return {"error": "root must live under the dataset home ($HF_LEROBOT_HOME)"}
         if not os.path.isdir(candidate):
             return {"error": "root does not exist under the dataset home - a replay from it can only fail"}
