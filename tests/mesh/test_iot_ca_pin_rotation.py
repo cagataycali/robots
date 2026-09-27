@@ -64,27 +64,21 @@ def test_verify_ca_bytes_accepts_either_pin_during_dual_pin_overlap(
 
 # --- The runbook itself (issue #250 acceptance criterion 1) --------------------
 #
-# The two artifacts above are half of what #250 shipped: the AGENTS.md learnings
-# entry and this file's dual-pin assertions. Both of them cite a *third* - a
-# rotation runbook published for operators - and a citation is not a document.
-# These tests grade the runbook against the code it describes, so a procedure
-# that exists only in a contributor file cannot pass for a published one.
+# The refusals cite a rotation runbook published for operators, and a citation
+# is not a document. These tests grade the runbook against the code it describes.
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _README = _REPO_ROOT / "docs" / "reference" / "configuration.md"  # the runbook page (moved out of README)
-_AGENTS = _REPO_ROOT / "AGENTS.md"
 
-# AGENTS.md > "Operational Runbooks for Security Pins" names where the runbook
-# lives. Reading the heading from the citation rather than restating it is what
-# makes these tests grade the citation: a heading renamed on one side and not the
-# other fails here instead of quietly becoming a dead pointer.
+# The heading is read from the refusals' own pointer, so a heading renamed on
+# one side and not the other fails here instead of becoming a dead pointer.
 _CITATION_RE = re.compile(r'docs/reference/configuration\.md > "([^"]+)"')
 
 
 def _cited_runbook_heading() -> str:
-    """Return the README heading AGENTS.md cites as the pin rotation runbook."""
-    found = _CITATION_RE.findall(_AGENTS.read_text(encoding="utf-8"))
-    assert found, "premise: AGENTS.md no longer cites a docs/reference/configuration.md heading for the pin runbook"
+    """Return the configuration.md heading the pin refusals cite as the runbook."""
+    found = _CITATION_RE.findall(provision._CA_ROTATION_RUNBOOK)
+    assert found, "premise: the pin refusals no longer cite a docs/reference/configuration.md heading"
     return found[0]
 
 
@@ -146,11 +140,11 @@ def _refuse_download(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) ->
 class TestTheCitedRunbookIsPublished:
     """The runbook the pin's other two artifacts depend on exists and is reachable."""
 
-    def test_the_readme_publishes_the_heading_agents_cites(self) -> None:
-        """AGENTS.md names a README heading; README has to carry it."""
+    def test_the_page_publishes_the_cited_heading(self) -> None:
+        """The refusals name a configuration.md heading; the page has to carry it."""
         heading = _cited_runbook_heading()
         assert _readme_section(heading), (
-            f"AGENTS.md cites docs/reference/configuration.md > {heading!r} as where the pin rotation runbook "
+            f"the pin refusals cite docs/reference/configuration.md > {heading!r} as where the rotation runbook "
             "lives, and configuration.md has no such heading - the rotation procedure is "
             "published nowhere an operator reads"
         )
@@ -177,7 +171,7 @@ class TestTheCitedRunbookIsPublished:
     def test_every_pin_refusal_names_the_runbook(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """On-call reads the failure, not AGENTS.md, so the failure names the procedure."""
+        """On-call reads the failure, so the failure names the procedure."""
         heading = _cited_runbook_heading()
         on_disk_error, on_disk_logs = _refuse_on_disk(tmp_path, caplog)
         download_error, _ = _refuse_download(tmp_path / "fresh", monkeypatch)
@@ -187,15 +181,6 @@ class TestTheCitedRunbookIsPublished:
             ("the download refusal", download_error),
         ):
             assert heading in text, f"{label} names no rotation procedure: {text}"
-
-    def test_the_refusals_and_the_citation_name_one_place(self) -> None:
-        """One owner for the pointer, so three refusals cannot drift to three places."""
-        from strands_robots.mesh.iot.provision import _CA_ROTATION_RUNBOOK
-
-        heading = _cited_runbook_heading()
-        assert heading in _CA_ROTATION_RUNBOOK, (
-            f"the refusals point at {_CA_ROTATION_RUNBOOK!r}, which is not the heading AGENTS.md cites ({heading!r})"
-        )
 
 
 class TestTheRunbookDoesNotWeakenTheRefusal:

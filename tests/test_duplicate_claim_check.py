@@ -21,14 +21,12 @@ Two pins carry design decisions rather than behaviour:
     accusation but a silent no-op: a check that reports clean because it could not
     see the other pull requests is worse than no check, because it looks like one.
 
-See .github/scripts/check_duplicate_claim.py, issue #2017, and the "PR Workflow" section
-of AGENTS.md.
+See .github/scripts/check_duplicate_claim.py and issue #2017.
 """
 
 from __future__ import annotations
 
 import importlib.util
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -37,7 +35,6 @@ import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
 _SCRIPT = _ROOT / ".github" / "scripts" / "check_duplicate_claim.py"
-_AGENTS = _ROOT / "AGENTS.md"
 
 
 def _load() -> Any:
@@ -63,110 +60,6 @@ _MEASURED_PAIRS: tuple[tuple[int, int, int, int], ...] = (
     (1994, 1995, 1996, 1996),
     (2007, 2015, 2016, 2015),
 )
-
-
-def _check_script_paths() -> list[Path]:
-    """Return every check script, from both directories that hold one.
-
-    The pull-request triage tools live in ``.github/scripts/`` beside the other
-    repository automation; the checks a workflow step runs live in ``scripts/``.
-    Reading both keeps the population derived from the tree rather than from
-    which directory a tool happens to sit in, so relocating one does not quietly
-    drop it from the requirement below.
-    """
-    return [
-        path for directory in ("scripts", ".github/scripts") for path in sorted((_ROOT / directory).glob("check_*.py"))
-    ]
-
-
-#: Check scripts that can infer their repository from the environment, derived
-#: rather than listed: a script that never reads ``$GITHUB_REPOSITORY`` (the local
-#: git ones) has nothing to infer and so nothing to be given.
-_INFERS_REPOSITORY: tuple[str, ...] = tuple(
-    sorted(
-        path.name for path in sorted(_check_script_paths()) if "GITHUB_REPOSITORY" in path.read_text(encoding="utf-8")
-    )
-)
-
-#: The flag that names the API repository, and the argv marker that makes naming it
-#: required, for each script that can infer one from ``GITHUB_REPOSITORY``.
-#:
-#: ``check_merge_base_overlap.py`` differs on both axes and is why this is a mapping
-#: rather than a blanket ``--repo`` test. Its own ``--repo`` is the local checkout
-#: path, so the API repository needs a distinct spelling; and only ``--all-open``
-#: reaches the API at all, its single-branch mode being local git with nothing to
-#: infer. Requiring the flag of that mode would be the same false rejection this
-#: scope exists to avoid.
-_NAMES_REPOSITORY: dict[str, tuple[str, str | None]] = {
-    "check_checkout_is_pr_head.py": ("--repo", None),
-    "check_closing_reference.py": ("--repo", None),
-    "check_duplicate_claim.py": ("--repo", None),
-    "check_last_push_approval.py": ("--repo", None),
-    "check_merge_base_overlap.py": ("--github-repo", "--all-open"),
-    "check_merge_blockers.py": ("--repo", None),
-    "check_pr_head_is_current.py": ("--repo", None),
-    # Both modes reach the API, so both owe the flag and there is no marker to
-    # scope it to: --pr resolves one pull request and --all-open sweeps them.
-    "check_thread_is_answered.py": ("--repo", None),
-}
-
-
-def _documented_intake_argv(issue: int) -> list[str]:
-    """Return the intake command step 1 prints, as an ``argv`` list.
-
-    Selected by ``--issue`` rather than by being the only invocation. Step 1
-    documents two commands since the added-path key landed, and the one this
-    helper's caller is about is the claim-keyed intake question; asserting
-    uniqueness would fail on the sibling command instead of on a shortened intake
-    one, which is the failure it exists to produce.
-    """
-    found = re.findall(
-        r"python3 (?:\.github/)?scripts/check_duplicate_claim\.py([^\n`]*)", _AGENTS.read_text(encoding="utf-8")
-    )
-    intake = [argv for argv in found if "--issue" in argv]
-    assert len(intake) == 1, found
-    return [part.replace("<N>", str(issue)) for part in intake[0].split()]
-
-
-def _check_invocations_in(text: str) -> list[tuple[str, str]]:
-    """Return ``(script, remaining argv)`` for every check invocation in *text*.
-
-    An invocation is a mention that names at least one option, with or without a
-    ``python3`` prefix. The prefix is typography rather than a property of the
-    command: a reader copies what is inside the backticks, so an inline mention
-    that names a mode is as runnable as a fenced one. Requiring it hid 2 of the
-    13 invocations this file grades, and both of the two were the defect the
-    grading exists to catch - step 1's overlap sweep among them, which run from a
-    scheduled agent reported a clean open set for a repository holding none of
-    the pull requests in question, and exited 0.
-
-    A mention naming *no* option is a cross-reference and not graded: there is no
-    command to copy, so requiring a flag of it would be the same false rejection
-    :data:`_NAMES_REPOSITORY`'s scope note exists to avoid.
-    """
-    mentions = re.findall(r"(?:\.github/)?scripts/(check_[a-z_]+\.py)([^\n`]*)", text)
-    return [(script, rest) for script, rest in mentions if "--" in rest]
-
-
-def _documented_check_invocations() -> list[tuple[str, str]]:
-    """Return ``(script, remaining argv)`` for every check AGENTS.md invokes."""
-    return _check_invocations_in(_AGENTS.read_text(encoding="utf-8"))
-
-
-def _leaving_the_repository_inferred(invocations: list[tuple[str, str]]) -> list[str]:
-    """Those of *invocations* that can infer a repository and do not name one.
-
-    The one rule, so the sweep over ``AGENTS.md`` and the constructed exemplars in
-    :class:`TestNoDocumentedInvocationLeavesTheRepositoryInferred` cannot disagree
-    about what counts as a finding.
-    """
-    return [
-        f"{script}{rest}"
-        for script, rest in invocations
-        if script in _NAMES_REPOSITORY
-        for flag, marker in (_NAMES_REPOSITORY[script],)
-        if (marker is None or marker in rest) and flag not in rest
-    ]
 
 
 def _pair_ids() -> list[str]:
@@ -574,49 +467,6 @@ class TestTheIntakeModeAsksAboutAnIssue:
             mod.main(argv)
 
 
-class TestTheGuidanceRecordsTheIntakeCheck:
-    """The CI half caps the cost; the intake half is what prevents it."""
-
-    @staticmethod
-    def _step_one() -> str:
-        """Return step 1 of the PR Workflow, whitespace-collapsed.
-
-        Bounded at step 2 so a qualifier reworded down into another step leaves
-        the slice and fails, and collapsed so a reflow cannot.
-        """
-        text = _AGENTS.read_text(encoding="utf-8")
-        start = text.index("1. Create the feature branch")
-        end = text.index("2. Make changes", start)
-        return " ".join(text[start:end].split())
-
-    def test_the_slice_is_step_one_and_nothing_else(self) -> None:
-        step_one = self._step_one()
-        assert len(step_one) > 1500, len(step_one)
-        assert "Make changes" not in step_one
-
-    @pytest.mark.parametrize(
-        "phrase",
-        [
-            "check that no open pull request already claims the issue",
-            "every one of those had",
-            "property of the *set* of open ones",
-            "closingIssuesReferences",
-            "check_duplicate_claim.py --repo strands-labs/robots --issue",
-            "where the command is *running*",
-            "refuses an inferred repository",
-            "prevents the authoring rather than capping it",
-        ],
-    )
-    def test_step_one_carries_the_intake_check(self, phrase: str) -> None:
-        assert phrase in self._step_one()
-
-    def test_the_guidance_names_the_escape_hatch(self) -> None:
-        """Two deliberate implementations are allowed -- one claim between them."""
-        step_one = self._step_one()
-        assert "exactly one should claim the close" in step_one
-        assert re.search(r"per #N|towards #N", step_one)
-
-
 class TestIntakeModeMustNameTheRepository:
     """``$GITHUB_REPOSITORY`` names where a command runs, not what an issue belongs to.
 
@@ -693,88 +543,3 @@ class TestIntakeModeMustNameTheRepository:
         assert "'someone/elsewhere'" in reason
         assert "where this command is running" in reason
         assert "reports no duplicate" in reason
-
-    def test_the_documented_command_is_accepted(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """The invocation step 1 prints must survive this script's own preconditions.
-
-        Pins guidance and code together from the guidance side: shortening the
-        documented command back to an inferred repository fails here, and so does
-        adding the refusal without updating the command it refuses.
-        """
-        monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
-        monkeypatch.setattr(mod, "resolve_open_claims", lambda *_a, **_k: {})
-        assert mod.main([*_documented_intake_argv(2029), "--token", "t"]) == 0
-        assert "| issue | strands-labs/robots#2029 |" in capsys.readouterr().out
-
-
-class TestNoDocumentedInvocationLeavesTheRepositoryInferred:
-    """The defect was a documented command, so the durable pin is on the guidance.
-
-    Measured over the check scripts AGENTS.md invokes, exactly one omitted ``--repo``.
-    ``check_last_push_approval.py`` names it in both of its invocations, and
-    ``check_closing_reference.py`` has no local invocation at all -- its workflow calls
-    it with no arguments, where the environment is correct by construction. Scoped to
-    the scripts that can *infer* a repository, since the local-git checks have nothing
-    to infer and requiring a flag of them would be a false rejection.
-
-    The scope is per *invocation*, not per script: :data:`_NAMES_REPOSITORY` carries
-    both the flag each script spells the repository with and the argv marker that makes
-    naming it required, because one script's ``--repo`` means a local checkout path and
-    one of its two modes never reaches the API.
-    """
-
-    def test_the_inferring_scripts_are_the_ones_measured(self) -> None:
-        """Non-vacuity: the scope is a real set, and this script is in it."""
-        assert "check_duplicate_claim.py" in _INFERS_REPOSITORY, _INFERS_REPOSITORY
-        assert set(_INFERS_REPOSITORY) == set(_NAMES_REPOSITORY), (
-            "a script that can infer the repository must declare how it names one",
-            _INFERS_REPOSITORY,
-            sorted(_NAMES_REPOSITORY),
-        )
-
-    def test_every_documented_invocation_names_the_repository(self) -> None:
-        invocations = _documented_check_invocations()
-        assert len(invocations) >= 3, invocations
-        inferring = [(script, rest) for script, rest in invocations if script in _NAMES_REPOSITORY]
-        assert inferring, invocations
-        missing = _leaving_the_repository_inferred(invocations)
-        assert not missing, missing
-
-    @pytest.mark.parametrize("prefix", ["python3 ", ""])
-    def test_an_invocation_is_graded_whichever_way_it_is_spelled(self, prefix: str) -> None:
-        """The ``python3`` prefix is typography, so it cannot decide what is graded.
-
-        Both of the two invocations it hid on the real document left the repository
-        inferred, and one of them is step 1's overlap sweep.
-        """
-        spelled = f"`{prefix}scripts/check_merge_base_overlap.py --github-repo o/n --all-open`"
-        assert _check_invocations_in(spelled) == [("check_merge_base_overlap.py", " --github-repo o/n --all-open")]
-
-    def test_an_inline_invocation_that_infers_the_repository_is_a_finding(self) -> None:
-        """The spelling this widening caught, and the report it produced."""
-        inline = "`scripts/check_merge_base_overlap.py --all-open` owns it"
-        assert _leaving_the_repository_inferred(_check_invocations_in(inline)) == [
-            "check_merge_base_overlap.py --all-open"
-        ]
-
-    def test_a_mention_naming_no_option_is_a_cross_reference(self) -> None:
-        """Not a command, so requiring a flag of it would be a false rejection."""
-        assert _check_invocations_in("see `scripts/check_duplicate_claim.py` for the account") == []
-
-    def test_the_single_branch_mode_is_not_required_to_name_the_api_repository(self) -> None:
-        """The mode marker is load-bearing: that mode reads a checkout and infers nothing.
-
-        Requiring the flag of it would be the false rejection
-        :data:`_NAMES_REPOSITORY`'s scope note names, so the marker is what keeps
-        this widening from reaching a mode that owes no repository.
-        """
-        single = "`scripts/check_merge_base_overlap.py --repo . --base-ref main --head HEAD`"
-        assert _check_invocations_in(single), "the single-branch spelling is still an invocation"
-        assert _leaving_the_repository_inferred(_check_invocations_in(single)) == []
-
-    def test_the_selector_separates_a_command_from_a_cross_reference(self) -> None:
-        """Non-vacuity: a selector answering one way would pass one case above."""
-        both = "`scripts/check_duplicate_claim.py` and `scripts/check_duplicate_claim.py --repo o/n --pr 1`"
-        assert [rest.strip() for _, rest in _check_invocations_in(both)] == ["--repo o/n --pr 1"]

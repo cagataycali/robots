@@ -17,16 +17,9 @@ once and is silent in the direction that matters:
   were inert. Nothing reported this, because an absent config is indistinguishable
   from a repository that has not configured Dependabot.
 
-The second half is why this is pinned rather than just fixed. ``AGENTS.md`` >
-"Action Pinning" delegates a supply-chain control to the ``github-actions``
-ecosystem entry:
-
-    **Dependabot keeps these fresh** via the ``github-actions`` ecosystem entry.
-    Do not manually bump tags; merge the Dependabot PR.
-    Especially ``pypa/gh-action-pypi-publish`` [...] This pin is non-negotiable.
-
-A documented non-negotiable control that no longer runs is worse than one that was
-never claimed, so the entry that implements it is asserted here by name.
+The second half is why this is pinned rather than just fixed: every ``uses:`` is
+pinned to a 40-char SHA and the ``github-actions`` ecosystem entry is what advances
+those pins, so the entry is asserted here by name.
 
 ``test_every_workflow_file_declares_the_two_keys_actions_requires`` is the guard
 for the *class* rather than for this file: it is what would have caught the
@@ -51,7 +44,6 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CONFIG_PATH = _REPO_ROOT / ".github" / "dependabot.yml"
 _WORKFLOWS_DIR = _REPO_ROOT / ".github" / "workflows"
-_AGENTS_PATH = _REPO_ROOT / "AGENTS.md"
 
 #: Matches a top-level ``on:`` key, including the quoted spellings. YAML 1.1
 #: reads a bare ``on`` as the boolean ``true``, so ``"on":`` and ``'on':`` are
@@ -60,8 +52,8 @@ _ON_KEY = re.compile(r"""^(?:on|"on"|'on'):""", re.MULTILINE)
 _JOBS_KEY = re.compile(r"^jobs:", re.MULTILINE)
 
 #: The ecosystems this repository depends on Dependabot covering. ``pip`` keeps
-#: the ML/sim dependency tree current; ``github-actions`` is the one AGENTS.md
-#: names as non-negotiable, because every ``uses:`` here is pinned to a 40-char
+#: the ML/sim dependency tree current; ``github-actions`` is required
+#: because every ``uses:`` here is pinned to a 40-char
 #: SHA and Dependabot is what advances those pins.
 _REQUIRED_ECOSYSTEMS = ("pip", "github-actions")
 
@@ -99,22 +91,8 @@ class TestTheConfigIsWhereDependabotReadsIt:
     def test_the_ecosystem_entries_the_repo_depends_on_are_present(self, ecosystem: str) -> None:
         pattern = rf"^\s*-\s*package-ecosystem:\s*[\"']?{re.escape(ecosystem)}[\"']?\s*$"
         assert re.search(pattern, _config_text(), re.MULTILINE), (
-            f"No 'package-ecosystem: {ecosystem}' entry. AGENTS.md > 'Action "
-            "Pinning' delegates SHA-pin freshness to the github-actions entry and "
-            "calls that pin non-negotiable, so removing an entry silently retires a "
-            "documented control."
-        )
-
-    def test_agents_md_still_delegates_pin_freshness_to_dependabot(self) -> None:
-        """The claim has two homes; the pin covers both.
-
-        If the delegation in AGENTS.md is ever dropped, the assertion above stops
-        describing a real obligation and becomes a rule with no stated reason.
-        """
-        text = _AGENTS_PATH.read_text(encoding="utf-8")
-        assert "github-actions` ecosystem entry" in text, (
-            "AGENTS.md no longer delegates action-pin freshness to the "
-            "github-actions ecosystem entry. Reconcile this module with it."
+            f"No 'package-ecosystem: {ecosystem}' entry. The github-actions entry is what "
+            "advances the SHA pins, so removing it silently retires that control."
         )
 
 

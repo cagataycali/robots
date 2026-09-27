@@ -29,7 +29,7 @@ Two tiers, because the rule lives in two kinds of place:
   never mentions approvals.
 
 See scripts/check_last_push_approval.py, .github/scripts/check_pr_head_is_current.py,
-issue #3190, and the "PR Workflow" section of AGENTS.md.
+and issue #3190.
 """
 
 from __future__ import annotations
@@ -150,29 +150,3 @@ class TestEveryPlaceThatStatesTheRuleNamesTheButton:
         remedy = _flat("\n".join(module.WHAT_CLEARS_THIS))
         assert STATES_THE_CONSEQUENCE not in remedy
         assert "check_checkout_is_pr_head" not in _remedy_modules()
-
-
-class TestTheWrittenRuleCoversTheButtonAndItsMetadata:
-    """AGENTS.md is where the rule is reasoned about rather than reported."""
-
-    @staticmethod
-    def _agents() -> str:
-        return _flat((_ROOT / "AGENTS.md").read_text(encoding="utf-8"))
-
-    def test_the_rule_names_the_button(self) -> None:
-        assert BUTTON in self._agents(), (
-            'AGENTS.md documents require_last_push_approval without naming the "Update '
-            'branch" button, so the rule as written does not reach the spelling that '
-            "spent #2907's approval twice"
-        )
-
-    def test_the_commit_metadata_guidance_covers_the_web_flow_shape(self) -> None:
-        """The table exists to stop this inference; it stopped two of three shapes.
-
-        A committer of ``web-flow`` is the most reassuring of the three and the
-        least likely to prompt a check, because it reads as GitHub having merged
-        rather than a person having pushed.
-        """
-        agents = self._agents()
-        assert "web-flow" in agents, "the commit-metadata guidance does not name the button's own shape"
-        assert "triggering_actor" in agents

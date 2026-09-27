@@ -28,7 +28,7 @@ around the memory, which a free-text store cannot provide:
   line stays a single bounded line of printable text; both are checked at
   write time AND re-validated at load time, because the store is a
   long-lived, user-editable directory whose content is later injected into
-  planner context (LLM-input-safety baseline, AGENTS.md / PR #92). A journal
+  planner context (the LLM-input-safety baseline). A journal
   entry read back into the prompt is an unvalidated injection channel.
 - **The re-grounding contract travels with the memory.** ``load_trace``
   prepends the "never replay literal coordinates - re-localize from the
@@ -70,7 +70,7 @@ from strands_robots.utils import get_base_dir, safe_join
 logger = logging.getLogger(__name__)
 
 # Task names become file names: strict allowlist, no path separators, no
-# metacharacters. LLM-provided strings are untrusted (see AGENTS.md, PR #92).
+# metacharacters. LLM-provided strings are untrusted.
 _TASK_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+\Z")
 _MAX_TASK_NAME_LEN = 128
 

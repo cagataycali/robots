@@ -248,19 +248,6 @@ class TestThePullRequestAllowanceIsFollowable:
         )
         assert [entry[1] for entry in found] == ["PR #85"]
 
-    def test_every_agents_md_citation_names_a_section_that_exists(
-        self, scan_inputs: tuple[frozenset[str], frozenset[str]]
-    ) -> None:
-        _, agents_pr_headings = scan_inputs
-        cited: set[str] = set()
-        for module in _shipped_modules():
-            for line in module.read_text(encoding="utf-8").splitlines():
-                if "AGENTS.md" in line:
-                    cited.update(_PR_REFERENCE.findall(line))
-        assert cited, "expected at least one AGENTS.md pull-request citation to verify"
-        dangling = sorted(cited - agents_pr_headings)
-        assert dangling == [], f"shipped source cites AGENTS.md sections that no longer exist: {dangling}"
-
     def test_a_citation_of_a_missing_section_is_refused(
         self, scan_inputs: tuple[frozenset[str], frozenset[str]]
     ) -> None:

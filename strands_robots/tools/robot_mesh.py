@@ -52,8 +52,7 @@ from strands_robots.mesh.core import _reports_failure_to_stop, mesh_disabled_by_
 from strands_robots.utils import finite_number_error, positive_count_error, positive_finite_number_error
 
 # Literal peer-id pattern for watch(target=...). Peer ids are an enumerable
-# surface (per AGENTS.md > Review Learnings (PR #92) > "Allowlist enumerable
-# values"); rejecting Zenoh wildcards (`*`, `**`) and path separators here
+# surface, so they are allowlisted; rejecting Zenoh wildcards (`*`, `**`) and path separators here
 # prevents the agent from defeating per-peer scoping by interpolating a
 # wildcard segment into ``strands/<target>/stream`` even when an operator has
 # extended ``STRANDS_MESH_SUBSCRIBE_ALLOW`` with a wildcard pattern such as
