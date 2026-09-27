@@ -284,6 +284,7 @@ def diagnose_camera_indices(indices: Sequence[int], timeout: float = 12.0) -> di
                 [sys.executable, "-c", _DIAGNOSE_SRC, str(index)],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=timeout,
             )
             out[index] = proc.stderr or ""
@@ -384,6 +385,7 @@ def scan_camera_names() -> list[dict[str, Any]]:
                 [ffmpeg, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=10,
             ).stderr
         except Exception as e:  # noqa: BLE001 - enumeration is decoration, never fatal
@@ -1201,7 +1203,7 @@ class DeviceManager:
         # cameras.probe_needed).
         self._camera_probe_lock = threading.Lock()
         self._camera_names_lock = threading.Lock()
-        self._camera_names_cache_t = 0.0
+        self._camera_names_cache_t = 0.0  # a time.monotonic() stamp: compared, never shown
         self._port_serial_cache: dict[str, str] = {}
         self._port_serial_cache_t = 0.0
         # One preview at a time: two concurrent opens of the same device
@@ -1450,7 +1452,7 @@ class DeviceManager:
         try:
             roster = self._camera_names_cache
             taken_at = float(self._camera_names_cache_t or 0.0)
-            if not roster or taken_at <= 0 or time.time() - taken_at > self.ROSTER_MAX_AGE_S:
+            if not roster or taken_at <= 0 or time.monotonic() - taken_at > self.ROSTER_MAX_AGE_S:
                 return []
             return list(roster)
         except Exception:  # noqa: BLE001 - a note is never worth breaking a spawn for
@@ -1459,7 +1461,7 @@ class DeviceManager:
 
     def _camera_names(self, refresh: bool = False) -> list[dict[str, Any]]:
         """Cached roster of camera names (see scan_camera_names on ordering)."""
-        requested_at = time.time()
+        requested_at = time.monotonic()
         if camera_facts.probe_needed(
             refresh=refresh,
             requested_at=requested_at,
@@ -1473,10 +1475,10 @@ class DeviceManager:
                     requested_at=requested_at,
                     cache_t=self._camera_names_cache_t,
                     ttl_s=self.CAMERA_CACHE_TTL_S,
-                    now=time.time(),
+                    now=time.monotonic(),
                 ):
                     self._camera_names_cache = scan_camera_names()
-                    self._camera_names_cache_t = time.time()
+                    self._camera_names_cache_t = time.monotonic()
         return self._camera_names_cache
 
     def preview_frame(
@@ -1599,6 +1601,7 @@ class DeviceManager:
                 [sys.executable, "-c", code, port, motor_model, ",".join(str(i) for i in ids)],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired:

@@ -269,8 +269,8 @@ class CalibrationRun:
                 os.killpg(self.proc.pid, signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
                 pass  # already gone, or not ours to signal: either way there is nothing left to stop
-            deadline = time.time() + 3
-            while self.alive() and time.time() < deadline:
+            deadline = time.monotonic() + 3
+            while self.alive() and time.monotonic() < deadline:
                 time.sleep(0.05)
             if self.alive():
                 try:

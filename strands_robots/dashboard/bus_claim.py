@@ -25,7 +25,7 @@ def bus_holders(port: str, *, _run: Any = None) -> list[int]:
     """Pids with this bus (or its sibling device) open, excluding ourselves. lsof is not on the agent
     shell's PATH on this Mac, hence the explicit /usr/sbin probe.
     """
-    run = _run or (lambda argv: subprocess.run(argv, capture_output=True, text=True, timeout=8))
+    run = _run or (lambda argv: subprocess.run(argv, capture_output=True, text=True, errors="replace", timeout=8))
     exe = shutil.which("lsof") or ("/usr/sbin/lsof" if os.path.exists("/usr/sbin/lsof") else None)
     if not exe:
         return []

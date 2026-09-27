@@ -340,7 +340,7 @@ class RecordController:
         try:
             roster = getattr(devices, "_camera_names_cache", None)
             taken_at = float(getattr(devices, "_camera_names_cache_t", 0.0) or 0.0)
-            if not roster or taken_at <= 0 or time.time() - taken_at > self.ROSTER_MAX_AGE_S:
+            if not roster or taken_at <= 0 or time.monotonic() - taken_at > self.ROSTER_MAX_AGE_S:
                 return ()
             return tuple(dict(r) for r in roster if isinstance(r, Mapping))
         except Exception:  # noqa: BLE001 - evidence gathering must never break a session
