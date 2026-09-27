@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.drivers.base import (
     halt_failure_detail,
+    refuse,
     telemetry_float,
     telemetry_float_list,
     undeclared_verb_error,
@@ -181,11 +182,6 @@ FALL_STATE_READY: str = "IS_READY"
 #: may ask for, so it is deliberately absent: :meth:`BoosterDriver.read_mode`
 #: passes the vendor's name through verbatim, this set bounds the write.
 ROBOT_MODES: tuple[str, ...] = ("kDamping", "kPrepare", "kWalking", "kCustom", "kSoccer")
-
-
-def _refuse(reason: str) -> dict[str, Any]:
-    """Wrap ``reason`` in the error envelope every driver verb returns."""
-    return {"status": "error", "content": [{"text": reason}]}
 
 
 #: Attributes a pybind11 enum carries that are not members of it. Excluded from
@@ -729,13 +725,13 @@ class BoosterDriver:
         """
         reason = boolean_flag_error(on, "on", "enable_upper_body")
         if reason is not None:
-            return _refuse(reason)
+            return refuse(reason)
         if self._client is None:
-            return _refuse("enable_upper_body: not connected - call connect_eagerly() first")
+            return refuse("enable_upper_body: not connected - call connect_eagerly() first")
         try:
             self._client.UpperBodyCustomControl(on)
         except (RuntimeError, OSError, TypeError) as exc:
-            return _refuse(f"enable_upper_body: the T1 refused UpperBodyCustomControl({on}): {exc}")
+            return refuse(f"enable_upper_body: the T1 refused UpperBodyCustomControl({on}): {exc}")
         self._upper_body_enabled = on
         return {
             "status": "success",
@@ -779,9 +775,9 @@ class BoosterDriver:
         """
         del robot_name  # driver fronts one T1
         if not self._connected or self._publisher is None:
-            return _refuse("send_action: not connected - call connect_eagerly() first")
+            return refuse("send_action: not connected - call connect_eagerly() first")
         if not self._upper_body_enabled:
-            return _refuse(
+            return refuse(
                 "send_action: the T1's onboard controller still owns the arms - "
                 "call enable_upper_body() first, which is the SDK's own precondition "
                 "(UpperBodyCustomControl); a frame sent without it is ignored and reported as sent"
@@ -790,13 +786,13 @@ class BoosterDriver:
             held_q = list((self._last_state or {}).get("joints") or [])
             fall_state = self._fall_state
         if fall_state is not None and fall_state != FALL_STATE_READY:
-            return _refuse(
+            return refuse(
                 f"send_action: the T1 reports {fall_state} - a held arm posture is noise while the "
                 f"robot is on its way to, on, or getting off the floor, and can obstruct the "
                 f"getting-up routine. Writes resume when it reports {FALL_STATE_READY}"
             )
         if not held_q:
-            return _refuse(
+            return refuse(
                 f"send_action: no LowState frame has arrived yet, so neither the frame width nor the "
                 f"hold position of an uncommanded arm joint is known. The subscriber is open on "
                 f"{self._state_field!r}; retry once the robot is publishing"
@@ -804,10 +800,10 @@ class BoosterDriver:
 
         targets = resolve_targets(action)
         if isinstance(targets, str):
-            return _refuse(targets)
+            return refuse(targets)
         outside = sorted(slot for slot in targets if slot >= len(held_q))
         if outside:
-            return _refuse(
+            return refuse(
                 f"send_action: slots {outside} are past the {len(held_q)}-motor frame this T1 reports; "
                 "the robot's own motor count bounds the frame"
             )
@@ -816,12 +812,12 @@ class BoosterDriver:
         try:
             import booster_robotics_sdk_python as sdk
         except ImportError as exc:  # pragma: no cover - connect_eagerly already needed it
-            return _refuse(f"booster_robotics_sdk_python is not installed: {exc}")
+            return refuse(f"booster_robotics_sdk_python is not installed: {exc}")
         cmd_type = resolve_vendor_member(
             sdk.LowCmdType, self._cmd_type.upper(), enum_name="LowCmdType", verb="send_action"
         )
         if isinstance(cmd_type, str):
-            return _refuse(cmd_type)
+            return refuse(cmd_type)
         cmd = sdk.LowCmd()
         cmd.cmd_type = cmd_type
         cmd.resize_motor_cmd(len(frame))
@@ -836,9 +832,9 @@ class BoosterDriver:
         try:
             accepted = self._publisher.Write(cmd)
         except (RuntimeError, OSError) as exc:
-            return _refuse(f"send_action: publishing the LowCmd failed: {exc}")
+            return refuse(f"send_action: publishing the LowCmd failed: {exc}")
         if not accepted:
-            return _refuse("send_action: the SDK publisher rejected the LowCmd")
+            return refuse("send_action: the SDK publisher rejected the LowCmd")
         return {
             "status": "success",
             "content": [
@@ -871,13 +867,13 @@ class BoosterDriver:
         for value, name in ((vx, "vx"), (vy, "vy"), (vyaw, "vyaw")):
             reason = finite_number_error(value, name, "move")
             if reason is not None:
-                return _refuse(reason)
+                return refuse(reason)
         if self._client is None:
-            return _refuse("move: not connected - call connect_eagerly() first")
+            return refuse("move: not connected - call connect_eagerly() first")
         try:
             self._client.MoveCommand(float(vx), float(vy), float(vyaw))
         except (RuntimeError, OSError) as exc:
-            return _refuse(f"move: the T1 refused the twist: {exc}")
+            return refuse(f"move: the T1 refused the twist: {exc}")
         return {"status": "success", "content": [{"json": {"vx": vx, "vy": vy, "vyaw": vyaw}}]}
 
     def rotate_head(self, pitch: float = 0.0, yaw: float = 0.0) -> dict[str, Any]:
@@ -897,13 +893,13 @@ class BoosterDriver:
         for value, name in ((pitch, "pitch"), (yaw, "yaw")):
             reason = finite_number_error(value, name, "rotate_head")
             if reason is not None:
-                return _refuse(reason)
+                return refuse(reason)
         if self._client is None:
-            return _refuse("rotate_head: not connected - call connect_eagerly() first")
+            return refuse("rotate_head: not connected - call connect_eagerly() first")
         try:
             self._client.RotateHead(float(pitch), float(yaw))
         except (RuntimeError, OSError) as exc:
-            return _refuse(f"rotate_head: the T1 refused the head angles: {exc}")
+            return refuse(f"rotate_head: the T1 refused the head angles: {exc}")
         return {"status": "success", "content": [{"json": {"pitch": pitch, "yaw": yaw}}]}
 
     def change_mode(self, mode: str) -> dict[str, Any]:
@@ -920,20 +916,20 @@ class BoosterDriver:
             A success envelope naming the requested mode, or a refusal.
         """
         if mode not in ROBOT_MODES:
-            return _refuse(f"change_mode: mode must be one of {', '.join(ROBOT_MODES)}, got {mode!r}")
+            return refuse(f"change_mode: mode must be one of {', '.join(ROBOT_MODES)}, got {mode!r}")
         if self._client is None:
-            return _refuse("change_mode: not connected - call connect_eagerly() first")
+            return refuse("change_mode: not connected - call connect_eagerly() first")
         try:
             import booster_robotics_sdk_python as sdk
         except ImportError as exc:  # pragma: no cover - connect_eagerly already needed it
-            return _refuse(f"booster_robotics_sdk_python is not installed: {exc}")
+            return refuse(f"booster_robotics_sdk_python is not installed: {exc}")
         member = resolve_vendor_member(sdk.RobotMode, mode, enum_name="RobotMode", verb="change_mode")
         if isinstance(member, str):
-            return _refuse(member)
+            return refuse(member)
         try:
             self._client.ChangeMode(member)
         except (RuntimeError, OSError) as exc:
-            return _refuse(f"change_mode: the T1 refused {mode}: {exc}")
+            return refuse(f"change_mode: the T1 refused {mode}: {exc}")
         return {"status": "success", "content": [{"json": {"mode": mode}}]}
 
     # ------------------------------------------------------------------ #
@@ -951,7 +947,7 @@ class BoosterDriver:
     ) -> dict[str, Any]:
         """Refuse: no provider registry is plumbed to this driver yet."""
         del instruction, policy_port, policy_host, policy_provider, duration, policy_kwargs
-        return _refuse(
+        return refuse(
             "start_task: no policy provider is wired to the T1 yet. A caller with a built policy "
             "drives the upper body by calling send_action on their own timer"
         )
@@ -965,7 +961,7 @@ class BoosterDriver:
     ) -> dict[str, Any]:
         """Refuse a host-driven rollout; this driver ships the transport only."""
         del policy_object, instruction, duration, n_steps
-        return _refuse(
+        return refuse(
             "run_policy: this driver publishes one frame per call and owns no control loop. "
             "Call send_action on your own timer (the vendor's reference client runs 100 Hz), "
             'or use mode="sim" for a host-driven rollout'
@@ -986,7 +982,7 @@ class BoosterDriver:
         each half rather than asserting the pair succeeded.
         """
         if self._client is None:
-            return _refuse("stop_task: not connected")
+            return refuse("stop_task: not connected")
         halted = self.move(0.0, 0.0, 0.0)
         released = self.enable_upper_body(False) if self._upper_body_enabled else None
         outcome = {

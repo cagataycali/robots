@@ -168,11 +168,11 @@ def _method_ast(cls: type, name: str) -> ast.AST:
 def _stop_task_can_refuse(node: ast.AST) -> bool:
     """Does this ``stop_task`` body have a path that reports a non-success?
 
-    A refusal is spelled either through the module's ``_refuse`` helper or as a
+    A refusal is spelled either through ``strands_robots.drivers.base.refuse`` or as a
     literal ``"error"`` status, so both are read.
     """
     for inner in ast.walk(node):
-        if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id == "_refuse":
+        if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id == "refuse":
             return True
         if isinstance(inner, ast.Constant) and inner.value == "error":
             return True
@@ -468,6 +468,6 @@ class TestTheRuleIsNotVacuous:
 
     def test_a_stop_task_without_a_refusal_is_recognised(self) -> None:
         no_verdict = 'def stop_task(self):\n    return {"status": "success", "content": []}\n'
-        with_verdict = 'def stop_task(self):\n    if not self._alive:\n        return _refuse("nope")\n    return {}\n'
+        with_verdict = 'def stop_task(self):\n    if not self._alive:\n        return refuse("nope")\n    return {}\n'
         assert _stop_task_can_refuse(ast.parse(no_verdict).body[0]) is False
         assert _stop_task_can_refuse(ast.parse(with_verdict).body[0]) is True

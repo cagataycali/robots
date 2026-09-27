@@ -47,7 +47,7 @@ import logging
 from collections.abc import AsyncGenerator, Sequence
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.drivers.base import undeclared_verb_error
+from strands_robots.drivers.base import refuse, undeclared_verb_error
 from strands_robots.utils import positive_count_error
 
 if TYPE_CHECKING:
@@ -227,7 +227,7 @@ class DynamixelDriver:
         signature and shape do not change; only the refusal is lifted.
         """
         del action, robot_name
-        return _refuse(f"send_action: {_NOT_WIRED}")
+        return refuse(f"send_action: {_NOT_WIRED}")
 
     def start_task(
         self,
@@ -244,7 +244,7 @@ class DynamixelDriver:
         instead of a :class:`TypeError`.
         """
         del instruction, robot_name, policy_object, kwargs
-        return _refuse(f"start_task: {_NOT_WIRED}")
+        return refuse(f"start_task: {_NOT_WIRED}")
 
     def run_policy(
         self,
@@ -259,7 +259,7 @@ class DynamixelDriver:
         see :meth:`start_task` for why the refusal honours it.
         """
         del policy_object, robot_name, kwargs
-        return _refuse(f"run_policy: {_NOT_WIRED}")
+        return refuse(f"run_policy: {_NOT_WIRED}")
 
     def get_task_status(self) -> dict[str, Any]:
         """Return an empty-but-well-formed envelope.
@@ -335,13 +335,3 @@ class DynamixelDriver:
     async def stop(self) -> None:
         """Refuse further writes. A no-op today; the shape lands with the bus."""
         return None
-
-
-# ---------------------------------------------------------------------------
-# Envelope helpers. Kept private and one-liner-ish rather than reaching for a
-# shared library, because the shape is small and the tests grade against the
-# literal envelope.
-# ---------------------------------------------------------------------------
-def _refuse(message: str) -> dict[str, Any]:
-    """Return an error envelope with ``message``, matching the "not wired" contract."""
-    return {"status": "error", "content": [{"text": message}]}

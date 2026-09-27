@@ -76,6 +76,7 @@ from typing import TYPE_CHECKING, Any, cast
 from strands_robots.drivers.base import (
     decode_motor_state,
     policy_step,
+    refuse,
     telemetry_float,
     telemetry_float_list,
     telemetry_int,
@@ -195,15 +196,6 @@ GO2_JOINT_INDEX: dict[str, int] = {
     "RL_thigh_joint": 10,
     "RL_calf_joint": 11,
 }
-
-
-def _refuse(reason: str) -> dict[str, Any]:
-    """Return the driver's error envelope with ``reason`` inside.
-
-    A free function so every refusal path renders the same shape and a test can
-    grep for the reason without unpacking the envelope by hand.
-    """
-    return {"status": "error", "content": [{"text": reason}]}
 
 
 def _resolve_message_class(cls_path: tuple[str, str]) -> Any:
@@ -924,10 +916,10 @@ class Go2Driver:
             after the last release reported, not what was seen before it.
         """
         if err := positive_count_error(attempts, "attempts", "release_sport_mode"):
-            return _refuse(err)
+            return refuse(err)
         client = self._open_motion_switcher_client()
         if client is None:
-            return _refuse(self._sport_mode_client_error or "MotionSwitcherClient is unavailable")
+            return refuse(self._sport_mode_client_error or "MotionSwitcherClient is unavailable")
         previous: str | None = None
         # A round is a release followed by the read that verifies it, so N rounds
         # take N + 1 reads: one to see what holds the robot, then one after every
@@ -940,7 +932,7 @@ class Go2Driver:
         for round_index in range(last_round + 1):
             mode_name, refusal = self._read_mode_name(client)
             if refusal is not None:
-                return _refuse(refusal)
+                return refuse(refusal)
             if mode_name == "":
                 self._sport_mode_released = True
                 self._sport_mode_refusal = None
@@ -964,10 +956,10 @@ class Go2Driver:
             except Exception as exc:  # noqa: BLE001 - any transport failure is one reason
                 reason = f"ReleaseMode() failed while releasing {mode_name!r}: {exc}"
                 self._sport_mode_refusal = reason
-                return _refuse(reason)
+                return refuse(reason)
         reason = f"sport mode {previous!r} still active after {int(attempts)} release attempts"
         self._sport_mode_refusal = reason
-        return _refuse(reason)
+        return refuse(reason)
 
     def _read_mode_name(self, client: Any) -> tuple[str | None, str | None]:
         """Read and decode the active motion mode, recording what was seen.
@@ -1023,7 +1015,7 @@ class Go2Driver:
             An error envelope, or ``None`` when the write may proceed.
         """
         if not self._sport_mode_released:
-            return _refuse(
+            return refuse(
                 f"{scope} refused: sport mode is not released"
                 + (f" (active mode {self._sport_mode_name!r})" if self._sport_mode_name else "")
                 + (f"; {self._sport_mode_refusal}" if self._sport_mode_refusal else "")
@@ -1032,7 +1024,7 @@ class Go2Driver:
             )
         battery_pct = (self._battery or {}).get("pct")
         if battery_pct is not None and battery_pct < self._battery_floor_pct:
-            return _refuse(f"{scope} refused: battery {battery_pct:.1f}% is under floor {self._battery_floor_pct:.1f}%")
+            return refuse(f"{scope} refused: battery {battery_pct:.1f}% is under floor {self._battery_floor_pct:.1f}%")
         return None
 
     # ------------------------------------------------------------------ #
@@ -1071,17 +1063,17 @@ class Go2Driver:
         if refusal is not None:
             return refusal
         if self._pubs is None:
-            return _refuse("publisher not initialised - call connect_eagerly() first")
+            return refuse("publisher not initialised - call connect_eagerly() first")
         cmd, err = build_lowcmd_from_action(action)
         if err is not None:
-            return _refuse(err)
+            return refuse(err)
         try:
             from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_
         except ImportError as exc:  # pragma: no cover - exercised on hardware
-            return _refuse(sdk_missing(exc))
+            return refuse(sdk_missing(exc))
         pub_err = self._pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
         if pub_err is not None:
-            return _refuse(pub_err)
+            return refuse(pub_err)
         return {
             "status": "success",
             "content": [
@@ -1139,7 +1131,7 @@ class Go2Driver:
         refusal = self._check_motion_gates("start_task")
         if refusal is not None:
             return refusal
-        return _refuse(
+        return refuse(
             "start_task: provider registry not wired for the Go2 yet; "
             "use run_policy(policy_object=...) to drive the control loop today"
         )
@@ -1188,18 +1180,18 @@ class Go2Driver:
             envelope naming the gate or the argument that refused it.
         """
         if err := positive_finite_number_error(duration, "duration", "run_policy"):
-            return _refuse(err)
+            return refuse(err)
         if n_steps is not None and (err := positive_count_error(n_steps, "n_steps", "run_policy")):
-            return _refuse(err)
+            return refuse(err)
         if policy_object is None:
-            return _refuse("run_policy: policy_object is required")
+            return refuse("run_policy: policy_object is required")
         if policy_step(policy_object, instruction) is None:
-            return _refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
+            return refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
         refusal = self._check_motion_gates("run_policy")
         if refusal is not None:
             return refusal
         if self._pubs is None:
-            return _refuse("publisher not initialised - call connect_eagerly() first")
+            return refuse("publisher not initialised - call connect_eagerly() first")
         loop = _ControlLoop(
             driver=self,
             policy=policy_object,
@@ -1212,7 +1204,7 @@ class Go2Driver:
         # before either assigns ``self._loop`` - two rollouts on one wire.
         with self._task_admission:
             if self._loop is not None and self._loop.is_running:
-                return _refuse("run_policy: a task is already running; call stop_task first")
+                return refuse("run_policy: a task is already running; call stop_task first")
             # Clear any stashed terminal snapshot so a poller between here and
             # the first published frame sees this loop, not the previous one's
             # exit reason.

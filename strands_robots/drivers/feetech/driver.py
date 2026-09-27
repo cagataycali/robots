@@ -60,7 +60,7 @@ if TYPE_CHECKING:
     from strands_robots.policies import Policy
 
 from strands_robots.bus_access import bus_lock, read_joints
-from strands_robots.drivers.base import halt_failure_detail, policy_step, undeclared_verb_error
+from strands_robots.drivers.base import halt_failure_detail, policy_step, refuse, undeclared_verb_error
 from strands_robots.drivers.feetech.bus import (
     DEFAULT_TIMEOUT_S,
     SO_ARM_MOTORS,
@@ -388,7 +388,7 @@ class FeetechDriver:
             # `bool()` below narrows the accepted value for the type checker;
             # it runs only after the check has already ruled the value in.
             if text := boolean_flag_error(enabled, "enabled", "set_torque"):
-                envelope = _refuse(text)
+                envelope = refuse(text)
             else:
                 envelope = self._set_torque_envelope(bool(enabled))
         elif action == "stop":
@@ -426,16 +426,16 @@ class FeetechDriver:
         """
         del robot_name
         if not isinstance(action, dict) or not action:
-            return _refuse("send_action: pass a non-empty mapping of joint targets")
+            return refuse("send_action: pass a non-empty mapping of joint targets")
         targets, doubled = _motor_targets(action)
         if doubled is not None:
-            return _refuse(doubled)
+            return refuse(doubled)
         try:
             with bus_lock(self):
                 self._connect_if_needed()
                 self._bus.write_goal_positions(targets)
         except (ValueError, TypeError, RuntimeError, OSError) as e:
-            return _refuse(f"send_action: {e}")
+            return refuse(f"send_action: {e}")
         body: dict[str, Any] = {"commanded": targets, "unit": "degrees (gripper: percent open)"}
         # The twin reports a target the model's travel clamped (design: "the
         # model's limits are reported"); the serial bus never sets this, so a
@@ -485,7 +485,7 @@ class FeetechDriver:
             lambda: read_joints(self),
         )
         if reason is not None:
-            return _refuse(reason)
+            return refuse(reason)
         return self.run_policy(policy, instruction=instruction, duration=duration)
 
     def run_policy(
@@ -533,20 +533,20 @@ class FeetechDriver:
             raises.
         """
         if err := positive_finite_number_error(duration, "duration", "run_policy"):
-            return _refuse(err)
+            return refuse(err)
         if err := positive_finite_number_error(control_frequency, "control_frequency", "run_policy"):
-            return _refuse(err)
+            return refuse(err)
         if n_steps is not None and (err := positive_count_error(n_steps, "n_steps", "run_policy")):
-            return _refuse(err)
+            return refuse(err)
         if policy_object is None:
-            return _refuse("run_policy: policy_object is required")
+            return refuse("run_policy: policy_object is required")
         if policy_step(policy_object, instruction) is None:
-            return _refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
+            return refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
         # The bus opens here rather than on the worker thread, so a port that
         # cannot be opened is this verb's refusal instead of a rollout that
         # reports "started" and ends at step 0 with the same reason.
         if reason := self.connect_eagerly():
-            return _refuse(f"run_policy: {reason}")
+            return refuse(f"run_policy: {reason}")
 
         rollout = PolicyRollout(
             name=f"feetech-rollout-{self._tool_name}",
@@ -560,7 +560,7 @@ class FeetechDriver:
         )
         with self._task_admission:
             if self._rollout is not None and self._rollout.is_running:
-                return _refuse("run_policy: a task is already running; call stop_task first")
+                return refuse("run_policy: a task is already running; call stop_task first")
             self._rollout = rollout
             rollout.start()
         return {
@@ -709,7 +709,7 @@ class FeetechDriver:
                 self._connect_if_needed()
                 joints = self._bus.sync_read()
         except (ValueError, TypeError, RuntimeError, OSError) as e:
-            return _refuse(f"sensors: {e}")
+            return refuse(f"sensors: {e}")
         return {
             "status": "success",
             "content": [{"json": {"joint_state": joints, "unit": "degrees (gripper: percent open)"}}],
@@ -722,11 +722,11 @@ class FeetechDriver:
                 self._connect_if_needed()
                 failed = self._bus.set_torque(enabled)
         except (ValueError, TypeError, RuntimeError, OSError) as e:
-            return _refuse(f"set_torque: {e}")
+            return refuse(f"set_torque: {e}")
         if failed:
             # A partial release is a safety fact, not a success: say which
             # joints are still driven rather than reporting the arm released.
-            return _refuse(f"set_torque({enabled}): these motors did not answer and may still be driven: {failed}")
+            return refuse(f"set_torque({enabled}): these motors did not answer and may still be driven: {failed}")
         return {"status": "success", "content": [{"json": {"torque_enabled": enabled}}]}
 
     def connect_eagerly(self) -> str | None:
@@ -846,11 +846,6 @@ def _twin_robot(tool_name: str, sim: Any | None, context: str) -> str:
             "declares none; the SO arms (so100, so101) do"
         )
     return canonical
-
-
-def _refuse(message: str) -> dict[str, Any]:
-    """Return an error envelope with ``message``, matching the "not wired" contract."""
-    return {"status": "error", "content": [{"text": message}]}
 
 
 def _motor_targets(action: dict[str, Any]) -> tuple[dict[str, Any], str | None]:

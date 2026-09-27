@@ -69,7 +69,7 @@ import threading
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import policy_step, undeclared_verb_error
+from strands_robots.drivers.base import policy_step, refuse, undeclared_verb_error
 from strands_robots.drivers.rollout import PolicyRollout, policy_from_provider
 from strands_robots.registry import resolve_name
 from strands_robots.utils import (
@@ -202,11 +202,6 @@ def _mode_name(table: dict[int, str], value: int | None) -> str | None:
     if value is None:
         return None
     return table.get(value, str(value))
-
-
-def _refuse(reason: str) -> dict[str, Any]:
-    """The driver's error envelope, one shape for every refusal path."""
-    return {"status": "error", "content": [{"text": reason}]}
 
 
 def _axis_count_refusal(values: list[float], quantity: str) -> str | None:
@@ -820,11 +815,11 @@ class URDriver:
             refusal naming the gate that stopped it.
         """
         if robot_name is not None and robot_name != self._tool_name:
-            return _refuse(f"send_action: this driver fronts {self._tool_name!r} only, not {robot_name!r}")
+            return refuse(f"send_action: this driver fronts {self._tool_name!r} only, not {robot_name!r}")
         with self._lock:
             control, receive, halted_at = self._control, self._receive, self._halt_epoch
         if control is None or receive is None:
-            return _refuse("send_action: not connected - call connect_eagerly() first")
+            return refuse("send_action: not connected - call connect_eagerly() first")
         if (reason := self._mode_refusal(receive)) is not None:
             # The stream ends here when the halt is the controller's own, and
             # that is the halt after which the arm has most likely been moved:
@@ -833,16 +828,16 @@ class URDriver:
             # do, or the next setpoint the mode gate re-admits is sized from a
             # pose the arm no longer holds. See :meth:`_drop_anchor`.
             self._drop_anchor()
-            return _refuse(f"send_action: {reason}")
+            return refuse(f"send_action: {reason}")
 
         reference, read_reason = self._reference_pose(receive)
         if read_reason is not None:
-            return _refuse(f"send_action: {read_reason}")
+            return refuse(f"send_action: {read_reason}")
 
         period = 1.0 / self._control_frequency
         targets, reason = targets_from_action(action, reference, model=self._model, control_period=period)
         if reason is not None:
-            return _refuse(f"send_action: {reason}")
+            return refuse(f"send_action: {reason}")
 
         # The last gate, and deliberately the last statement before the write:
         # every gate above costs an RTDE round trip, so a halt issued while they
@@ -851,7 +846,7 @@ class URDriver:
         with self._lock:
             superseded = self._halt_epoch != halted_at
         if superseded:
-            return _refuse(
+            return refuse(
                 "send_action: the stream was halted while this setpoint was being prepared, so the "
                 "setpoint was not written - the arm is under that halt, not under this setpoint"
             )
@@ -865,13 +860,13 @@ class URDriver:
                 SERVOJ_GAIN,
             )
         except (OSError, RuntimeError) as exc:
-            return _refuse(f"send_action: servoJ failed: {exc}")
+            return refuse(f"send_action: servoJ failed: {exc}")
         if accepted is False:
             # ur_rtde returns False when the controller declines the setpoint.
             # Reporting success here is the failure mode the mode gate above
             # cannot cover on its own: the arm can pass the gate and still
             # decline a particular write.
-            return _refuse(
+            return refuse(
                 f"send_action: the controller declined the servoJ setpoint {targets}. "
                 "The arm is running but not tracking; check the teach pendant for an active program."
             )
@@ -912,10 +907,10 @@ class URDriver:
         with self._lock:
             receive = self._receive
         if receive is None:
-            return _refuse("state: not connected - call connect_eagerly() first")
+            return refuse("state: not connected - call connect_eagerly() first")
         joints, reason = self._read_joints(receive)
         if reason is not None:
-            return _refuse(f"state: {reason}")
+            return refuse(f"state: {reason}")
         try:
             velocities = [float(value) for value in receive.getActualQd()]
             tcp_pose = [float(value) for value in receive.getActualTCPPose()]
@@ -924,9 +919,9 @@ class URDriver:
             robot_mode = int(receive.getRobotMode())
             safety_mode = int(receive.getSafetyMode())
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            return _refuse(f"state: the controller's RTDE read failed: {exc}")
+            return refuse(f"state: the controller's RTDE read failed: {exc}")
         if (reason := _axis_count_refusal(velocities, "joint velocities")) is not None:
-            return _refuse(f"state: {reason}")
+            return refuse(f"state: {reason}")
 
         named = dict(zip(JOINT_NAMES, joints, strict=True))
         with self._lock:
@@ -1132,7 +1127,7 @@ class URDriver:
             self.get_observation,
         )
         if reason is not None:
-            return _refuse(reason)
+            return refuse(reason)
         return self.run_policy(policy, instruction=instruction, duration=duration)
 
     def run_policy(
@@ -1168,15 +1163,15 @@ class URDriver:
             refusal.
         """
         if err := positive_finite_number_error(duration, "duration", "run_policy"):
-            return _refuse(err)
+            return refuse(err)
         if n_steps is not None and (err := positive_count_error(n_steps, "n_steps", "run_policy")):
-            return _refuse(err)
+            return refuse(err)
         if policy_object is None:
-            return _refuse("run_policy: policy_object is required")
+            return refuse("run_policy: policy_object is required")
         if not policy_step(policy_object, instruction):
-            return _refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
+            return refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
         if not self.is_connected:
-            return _refuse("run_policy: not connected - call connect_eagerly() first")
+            return refuse("run_policy: not connected - call connect_eagerly() first")
 
         rollout = PolicyRollout(
             name=f"ur-rollout-{self._tool_name}",
@@ -1195,7 +1190,7 @@ class URDriver:
         # controller.
         with self._task_admission:
             if self._rollout is not None and self._rollout.is_running:
-                return _refuse("run_policy: a task is already running; call stop_task first")
+                return refuse("run_policy: a task is already running; call stop_task first")
             self._rollout = rollout
             rollout.start()
         return {
@@ -1243,11 +1238,11 @@ class URDriver:
         with self._lock:
             control = self._control
         if control is None:
-            return _refuse("stop_task: not connected")
+            return refuse("stop_task: not connected")
         try:
             control.servoStop()
         except (OSError, RuntimeError) as exc:
-            return _refuse(f"stop_task: the controller refused servoStop: {exc}")
+            return refuse(f"stop_task: the controller refused servoStop: {exc}")
         self._drop_anchor()
         if unjoined is not None:
             # The thread is still in the loop. It will not write another
