@@ -2,14 +2,21 @@
 
 At the end of this page every episode in a dataset carries a verdict the simulator's own predicates decided, a quality grade and failure-mode tag a judge agent added on top, and a filter that picks the episodes worth training on. The judge can annotate a verdict; it can never overturn one.
 
-This runs without lerobot, against the toy dataset from [verify](verify.md) (three episodes at `/tmp/toy_dataset`):
+This runs without lerobot, against the three-episode toy dataset from [verify](verify.md):
 
 ```python
+import json, pathlib
+import pyarrow as pa, pyarrow.parquet as pq
 from strands_robots.episode_labels import (
     annotate_episode, filter_episodes, labels_path, record_deterministic_verdicts,
 )
 
-root = "/tmp/toy_dataset"
+root = pathlib.Path("/tmp/toy_dataset")                 # the dataset the verify page builds
+(root / "meta" / "episodes" / "chunk-000").mkdir(parents=True, exist_ok=True)
+pq.write_table(pa.table({"episode_index": [0, 1, 2], "length": [90, 90, 90]}),
+               root / "meta/episodes/chunk-000/file-000.parquet")
+(root / "meta/info.json").write_text(json.dumps({"total_episodes": 3, "total_frames": 270, "fps": 30, "features": {}}))
+(root / "episode_labels.json").unlink(missing_ok=True)
 verdicts = [   # the per-episode list evaluate_benchmark returns
     {"episode": 0, "success": True,  "failure": False, "steps": 90, "cumulative_reward": 1.0, "seed": 0},
     {"episode": 1, "success": True,  "failure": False, "steps": 90, "cumulative_reward": 1.0, "seed": 1},
