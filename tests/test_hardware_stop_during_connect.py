@@ -246,7 +246,7 @@ class TestTheRequestIsLatched:
         def spy() -> bool:
             verdict = real()
             verdicts.append(verdict)
-            if len(verdicts) == 2:
+            if len(verdicts) == 3:
                 rig.robot._stop_requested.set()
             return verdict
 
@@ -254,9 +254,24 @@ class TestTheRequestIsLatched:
         thread = rig.start()
         rig.finish(thread)
 
-        assert verdicts == [False, False], "both stage checks should have passed"
+        assert verdicts == [False, False, False], "every stage check should have passed"
         assert rig.arm.sent_actions == []
         assert rig.robot._task_state.status == TaskStatus.STOPPED
+
+    def test_a_stop_between_the_claim_and_the_rollout_refuses_the_task(self, rig):
+        # The window ``start_task`` opens: the bus is claimed and "Task started"
+        # returned, but the executor has not picked the job up yet.
+        rig.open_all_gates()
+        assert rig.robot._claim_task("pick the cube") is None
+
+        result = rig.robot.stop_task()
+        rig.robot._drive_claimed_task("pick the cube", policy_object=_OneStepPolicy(), duration=5.0, n_steps=3)
+
+        assert "Task stopped (during connect)" in result["content"][0]["text"]
+        assert rig.arm.sent_actions == []
+        assert rig.policy_initialized == []
+        assert rig.robot._task_state.status == TaskStatus.STOPPED
+        rig.robot._executor.shutdown(wait=False)
 
 
 class TestTheLatchDoesNotLeakForward:

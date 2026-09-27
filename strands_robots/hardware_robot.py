@@ -2034,12 +2034,13 @@ class Robot(TeleopMixin, AgentTool):
         from .policies.base import resolve_chunk_length
 
         try:
-            # Update task state. The stop latch is cleared here so a stop
-            # pressed while the robot was idle does not pre-empt the next task,
-            # and ``duration`` is reset with it: a task stopped during bring-up
-            # never reaches the terminal block that writes it, and reporting the
-            # PREVIOUS task's elapsed time would misdescribe this one.
-            self._stop_requested.clear()
+            # Update task state. ``duration`` is reset here: a task stopped
+            # during bring-up never reaches the terminal block that writes it,
+            # and reporting the PREVIOUS task's elapsed time would misdescribe
+            # this one. The stop latch is NOT cleared here - ``_claim_task``
+            # clears it under the admission lock, so a stop that lands between
+            # the claim and this line (the executor queue on ``start_task``) is
+            # still latched when the check below reads it.
             self._task_state.status = TaskStatus.CONNECTING
             self._task_state.instruction = instruction
             self._task_state.start_mono = time.monotonic()
@@ -2047,6 +2048,8 @@ class Robot(TeleopMixin, AgentTool):
             self._task_state.step_count = 0
             self._task_state.error_message = ""
             self._task_state.policy = None
+            if self._honor_stop_request():
+                return
 
             # Connect to robot. Remember whether THIS call did the connecting:
             # lerobot's ``connect()`` ends in ``configure()``, whose
@@ -2788,7 +2791,17 @@ class Robot(TeleopMixin, AgentTool):
                     ],
                 }
             self._task_claimed = True
+            # The claim starts the task: a stop pressed while the robot was
+            # idle is dropped here so it does not pre-empt this rollout, and a
+            # stop pressed from now on is recorded against it. Clearing in the
+            # rollout instead erased a stop that landed before the executor
+            # picked the job up, and the task then ran to completion.
+            self._stop_requested.clear()
             self._task_state.instruction = instruction
+            self._task_state.status = TaskStatus.CONNECTING
+            self._task_state.start_mono = time.monotonic()
+            self._task_state.duration = 0.0
+            self._task_state.step_count = 0
         return None
 
     def _release_task(self) -> None:
@@ -3086,6 +3099,7 @@ class Robot(TeleopMixin, AgentTool):
                 duration,
             )
         except BaseException:
+            self._task_state.status = TaskStatus.ERROR
             self._release_task()
             raise
 
