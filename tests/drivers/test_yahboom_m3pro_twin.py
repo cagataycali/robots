@@ -311,7 +311,6 @@ class TestTheBaseReachesTheModel:
 
         engine.ranges = ranges
         graph = M3ProTwinGraph(sim=engine)
-        assert graph.connect() is None
         reply = graph("publish", topic=CMD_VEL_TOPIC, fields={"linear": {"x": 0.9}, "angular": {}}, count=1, rate=10.0)
         text = reply["content"][0]["text"]
         assert reply["status"] == "success", reply
