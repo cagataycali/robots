@@ -3509,23 +3509,25 @@ class MuJoCoSimEngine(
         physics it corrects is a property of the WBC policy driving the joints,
         not of the type of object handed to ``run_policy``.
 
-        Returns ``None`` (no-op) in five cases, in the order they are checked:
-        ``[wbc]`` is not installed; no ``WBCPolicy`` appears in ``policy``'s
-        tree; the sim has no compiled world; a controller is already registered
-        (a manual install always wins); or
+        Without ``[wbc]``, or with no ``WBCPolicy`` in ``policy``'s tree, the
+        base hook answers, refusing any policy that declares a controller.
+        Otherwise returns ``None`` (no-op) when: the sim has no compiled world;
+        a controller is already registered (a manual install always wins); or
         :func:`~strands_robots.policies.wbc.wbc_uses_position_servo` finds no
         position-servo actuator, meaning the driven actuators are already torque
         motors or none of the WBC joints resolve in this scene.
         """
+        from strands_robots.policies.base import iter_policy_tree
+
         try:
-            from strands_robots.policies.base import iter_policy_tree
             from strands_robots.policies.wbc import (
                 WBCPolicy,
                 install_wbc_torque_control,
                 wbc_uses_position_servo,
             )
         except ImportError:
-            return None
+            # Without [wbc] no shim can be installed, so a declaring policy is refused.
+            return super()._maybe_install_action_controller(policy, robot_name)
 
         # The shim is keyed on the WBC policy actually driving the joints, which
         # may sit inside a wrapper (composite / persistent) that is not itself a

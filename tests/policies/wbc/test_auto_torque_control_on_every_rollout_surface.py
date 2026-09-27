@@ -291,9 +291,9 @@ class TestAutoInstallHook:
         assert sim._maybe_install_action_controller(MockPolicy(), "unitree_g1") is None
         assert "action_controller" not in sim._world._backend_state
 
-    def test_skips_when_the_wbc_extra_is_absent(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-        # A minimal install has no [wbc] extra, so the hook's import fails and
-        # run_policy must carry on unchanged rather than raise out of binding.
+    def test_refuses_when_the_wbc_extra_is_absent(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        # A minimal install has no [wbc] extra, so no shim can be installed and
+        # a policy declaring one is refused rather than rolled out without it.
         premise = _mujoco_sim_with_world(*_build_g1_model())
         assert callable(premise._maybe_install_action_controller(_g1_policy(), "unitree_g1")), (
             "premise: this pair installs the shim while [wbc] is importable"
@@ -302,7 +302,8 @@ class TestAutoInstallHook:
         sim = _mujoco_sim_with_world(*_build_g1_model())
         policy = _g1_policy()  # built while the extra is still importable
         monkeypatch.setitem(sys.modules, "strands_robots.policies.wbc", None)
-        assert sim._maybe_install_action_controller(policy, "unitree_g1") is None
+        reason = sim._maybe_install_action_controller(policy, "unitree_g1")
+        assert isinstance(reason, str) and "cannot install the action controller" in reason
         assert "action_controller" not in sim._world._backend_state
 
     def test_skips_without_a_world(self) -> None:
