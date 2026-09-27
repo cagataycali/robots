@@ -38,7 +38,8 @@ Three transports answer that graph, chosen by ``transport=``:
   (:class:`~strands_robots.drivers.yahboom_m3pro_twin.M3ProTwinGraph`). The
   same tool, verbs and units an agent uses on the robot, over the simulation:
   what an agent learns to say to the twin it says to the hardware. ``sim=``
-  hands in a built engine; otherwise one is built at the ``home`` keyframe.
+  hands in the built engine; ``Robot(..., transport="twin")`` builds it at the
+  ``home`` keyframe.
 
 The first two forward through the transports this package already owns
 (:func:`strands_robots.rosbridge.rosbridge_action` /
@@ -248,6 +249,9 @@ class YahboomM3ProDriver:
     registration pins the contract.
     """
 
+    #: The keyframe ``Robot(..., transport="twin")`` spawns the twin's engine at.
+    twin_keyframe = "home"
+
     def __init__(
         self,
         tool_name: str = "yahboom_m3pro",
@@ -279,8 +283,8 @@ class YahboomM3ProDriver:
             move_time_ms: The ``time`` field written when a caller does not
                 say - how long the servos take to reach an arm target.
             sim: ``twin`` only - a built sim engine carrying ``yahboom_m3pro``
-                (what ``Robot("yahboom_m3pro", mode="sim")`` returns). ``None``
-                builds one on :meth:`connect_eagerly`, at the ``home`` keyframe.
+                (what ``Robot("yahboom_m3pro", mode="sim")`` returns); required
+                there, and never destroyed by the driver.
             realtime: ``twin`` only - step the world at wall-clock speed so a
                 viewer sees the motion as the robot would make it. Default
                 ``False``: as fast as the physics allows.
@@ -307,6 +311,11 @@ class YahboomM3ProDriver:
             raise ValueError(reason)
         if sim is not None and transport != "twin":
             raise ValueError(f"{context}: sim= is the twin transport's engine; pass transport='twin' with it")
+        if sim is None and transport == "twin":
+            raise ValueError(
+                f"{context}: transport='twin' steps an engine it is handed; use "
+                "Robot('yahboom_m3pro', mode='real', transport='twin'), which builds it, or pass sim="
+            )
 
         self._twin: Any | None = None
         if transport == "twin":
@@ -696,8 +705,6 @@ class YahboomM3ProDriver:
                 detail,
             )
         self._connected = False
-        if self._twin is not None:
-            self._twin.close()
 
     # ------------------------------------------------------------------ #
     # Write path.                                                        #

@@ -317,6 +317,28 @@ def _reject_hardware_kwargs_in_sim(kwargs: Mapping[str, Any], canonical: str, re
     )
 
 
+def _build_twin_engine(canonical: str, keyframe: str | None) -> Simulation:
+    """Build the MuJoCo engine a ``transport="twin"`` driver steps, carrying ``canonical``.
+
+    Raises:
+        ValueError: The registry entry declares no simulation asset.
+        OSError: The world or the robot could not be built; the engine is destroyed.
+    """
+    if not has_sim(canonical):
+        raise ValueError(
+            f"transport='twin' steps {canonical!r}'s simulation model, and its registry entry declares none"
+        )
+    from strands_robots.simulation import create_simulation  # MuJoCo is optional; imported on use
+
+    sim = cast("Simulation", create_simulation("mujoco", tool_name=f"{canonical}_twin"))
+    for step in (sim.create_world(), sim.add_robot(name=canonical, keyframe=keyframe)):
+        if step.get("status") == "error":
+            sim.destroy()
+            detail = (step.get("content") or [{}])[0].get("text", str(step))
+            raise OSError(f"could not build the {canonical} twin: {detail}")
+    return sim
+
+
 def _build_native_driver(
     canonical: str,
     cameras: dict[str, dict[str, Any]] | None,
@@ -399,6 +421,11 @@ def _build_native_driver(
             f"Unknown kwarg(s) for {canonical!r} on driver='strands': {unknown}. "
             f"{driver_cls.__name__} accepts: {list(accepted)}. (If this is a typo, fix it.)"
         )
+
+    # The twin transport steps an engine that is built here, one layer above the
+    # driver, so no driver imports the simulation package.
+    if kwargs.get("transport") == "twin" and kwargs.get("sim") is None and "sim" in accepted:
+        kwargs = {**kwargs, "sim": _build_twin_engine(canonical, getattr(driver_cls, "twin_keyframe", None))}
 
     # The constructor contract documented on strands_robots.drivers.base: the
     # three keywords every driver takes, and the keywords it declares itself.

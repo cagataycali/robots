@@ -21,8 +21,8 @@ What the twin does with each member the driver reads off the bus:
   through the registry's ``joint_labels`` (the SO-101 asset names its joints
   by servo id ``1``..``6``, the SO-100's by CAD term ``Rotation``..``Jaw``,
   the bus speaks ``shoulder_pan``..``gripper``) and to the actuator driving
-  that joint, refusing by name when a label or an actuator is missing. Builds
-  the engine when none was handed in.
+  that joint, refusing by name when a label or an actuator is missing. The
+  engine is handed in, already carrying the arm: ``Robot()`` builds it.
 * ``write_goal_positions`` - degrees go through the bus's **own**
   :meth:`~strands_robots.drivers.feetech.bus.FeetechBus.to_counts` against
   this arm's calibration records, exactly as on the wire; the twin then maps
@@ -182,7 +182,7 @@ class FeetechTwinBus(FeetechBus):
             :func:`~strands_robots.drivers.feetech.bus.load_calibration`;
             ``None`` spans the servo's full travel, as the bus does.
         sim: A built sim engine carrying ``robot`` (what ``Robot(robot,
-            mode="sim")`` returns). ``None`` builds one on :meth:`connect`.
+            mode="sim")`` returns). The caller owns it; the bus never destroys it.
         realtime: Sleep each read period out so a move takes the wall time it
             would on the arm. Default ``False``: as fast as the physics allows.
 
@@ -198,7 +198,7 @@ class FeetechTwinBus(FeetechBus):
         timeout: float = DEFAULT_TIMEOUT_S,
         calibration: dict[str, MotorCalibration] | None = None,
         *,
-        sim: Any | None = None,
+        sim: Any,
         realtime: bool = False,
     ) -> None:
         if reason := boolean_flag_error(realtime, "realtime", type(self).__name__):
@@ -206,7 +206,6 @@ class FeetechTwinBus(FeetechBus):
         super().__init__(port=twin_endpoint(robot), motors=motors, timeout=timeout, calibration=calibration)
         self.robot = robot
         self._sim = sim
-        self._owns_sim = sim is None
         self._realtime = bool(realtime)
         self._robot_name: str | None = None
         self._bindings: dict[str, _Binding] = {}
@@ -221,15 +220,15 @@ class FeetechTwinBus(FeetechBus):
     # ------------------------------------------------------------------ #
 
     @property
-    def sim(self) -> Any | None:
-        """The engine behind the twin, or ``None`` before :meth:`connect` built it."""
+    def sim(self) -> Any:
+        """The engine behind the twin."""
         return self._sim
 
     @property
     def robot_name(self) -> str:
         """The robot's name inside the engine - the first it lists, else ``robot``."""
         if self._robot_name is None:
-            names = list(self._sim.list_robots()) if self._sim is not None else []
+            names = list(self._sim.list_robots())
             self._robot_name = str(names[0]) if names else self.robot
         return self._robot_name
 
@@ -240,17 +239,13 @@ class FeetechTwinBus(FeetechBus):
 
     @property
     def is_connected(self) -> bool:
-        """Whether the engine is built and every motor is bound to a joint."""
-        return self._sim is not None and bool(self._bindings)
+        """Whether every motor is bound to a joint of the model."""
+        return bool(self._bindings)
 
     def connect(self) -> None:
-        """Build the engine when none was given, then bind every motor to the model.
+        """Bind every motor to the model.
 
         Raises:
-            OSError: The engine could not be built - MuJoCo or the asset is
-                missing, or the registry does not know ``robot``. The same
-                class the serial bus raises when its port will not open, so
-                the driver's ``connect_eagerly`` reports it the same way.
             ValueError: A motor has no ``joint_labels`` entry for this robot,
                 its joint is not in the model, no actuator drives that joint,
                 or the joint declares neither a ``ctrlrange`` nor a ``range``
@@ -258,32 +253,6 @@ class FeetechTwinBus(FeetechBus):
         """
         if self.is_connected:
             return
-        if self._sim is None:
-            # Built through the simulation package - ``create_simulation`` and
-            # ``add_robot``, the two calls ``Robot(robot, mode="sim")`` makes -
-            # rather than through the factory. The factory imports the driver
-            # registry, and the registry imports this bus's driver, so a twin
-            # that imported the factory would close a cycle around one arm.
-            try:
-                from strands_robots.simulation import (
-                    create_simulation,  # noqa: PLC0415 - MuJoCo is optional; imported on use
-                )
-
-                sim = create_simulation("mujoco", tool_name=f"{self.robot}_twin")
-                for step in (sim.create_world(), sim.add_robot(name=self.robot)):
-                    if step.get("status") == "error":
-                        sim.destroy()
-                        detail = (step.get("content") or [{}])[0].get("text", str(step))
-                        raise OSError(f"FeetechTwinBus: could not build the {self.robot} twin: {detail}")
-            except OSError:
-                self._sim = None
-                raise
-            except Exception as exc:  # noqa: BLE001 - the reason is reported, not raised, like every connect here
-                self._sim = None
-                raise OSError(
-                    f"FeetechTwinBus: could not build the {self.robot} twin ({type(exc).__name__}: {exc})"
-                ) from exc
-            self._sim = sim
         try:
             self._bindings = self._bind_motors()
         except ValueError:
@@ -292,17 +261,9 @@ class FeetechTwinBus(FeetechBus):
         self._torque_enabled = True
 
     def disconnect(self) -> None:
-        """Unbind the motors; destroy an engine this bus built and keep a caller-supplied one. Safe to repeat."""
+        """Unbind the motors, leaving the caller's engine alive. Safe to repeat."""
         self._bindings = {}
         self._robot_name = None
-        if not self._owns_sim:
-            return
-        sim, self._sim = self._sim, None
-        if sim is not None:
-            try:
-                sim.destroy()
-            except Exception:  # noqa: BLE001 - teardown must not raise
-                logger.debug("twin: destroy() raised during disconnect", exc_info=True)
 
     # ------------------------------------------------------------------ #
     # The map: motors <-> the model.                                      #
@@ -467,13 +428,13 @@ class FeetechTwinBus(FeetechBus):
     # ------------------------------------------------------------------ #
 
     def _engine(self) -> Any:
-        if self._sim is None or not self._bindings:
+        if not self._bindings:
             raise RuntimeError(f"FeetechBus: the twin needs an open bus; call connect() first (port={self.port!r})")
         return self._sim
 
     def _substeps(self, seconds: float) -> int:
         """Physics steps that cover ``seconds``, at least one."""
-        dt = self._sim.physics_timestep() if self._sim is not None else None
+        dt = self._sim.physics_timestep()
         if not dt or dt <= 0:
             return 1
         return max(1, int(round(seconds / dt)))

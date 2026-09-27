@@ -65,6 +65,10 @@ columns. So the factory refuses a non-empty ``cameras=`` unless the class
 declares ``reads_cameras = True``. Declaring it is the whole opt-in; the driver
 then receives the dict verbatim and owns opening, reading and closing the
 devices in it.
+
+``sim`` is the twin transport's engine. A driver that declares it is handed one
+by the factory on ``transport="twin"`` - built at the class's ``twin_keyframe``
+when it declares one - so no driver imports the simulation package upward.
 """
 
 from __future__ import annotations
