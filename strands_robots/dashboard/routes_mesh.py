@@ -120,7 +120,13 @@ def attach(app: FastAPI) -> None:
 
     async def _start() -> None:
         loop = asyncio.get_running_loop()
-        app.state.mesh_online = await asyncio.to_thread(app.state.bridge.start, loop)
+        try:
+            app.state.mesh_online = await asyncio.to_thread(app.state.bridge.start, loop)
+            app.state.mesh_error = None
+        except Exception as exc:  # noqa: BLE001 - the dashboard stays up; the page says why the mesh is not
+            app.state.mesh_online = False
+            app.state.mesh_error = f"{type(exc).__name__}: {exc}"
+            logger.warning("mesh session not started: %s", app.state.mesh_error)
 
     async def _stop() -> None:
         await asyncio.to_thread(app.state.bridge.stop)
@@ -203,6 +209,7 @@ async def fleet(request: Request, mode: str = "all", _: dict = Depends(access.re
         "robots": robots,
         "count": len(robots),
         "mesh_online": bool(getattr(app.state, "mesh_online", False)),
+        "mesh_error": getattr(app.state, "mesh_error", None),
         "dashboard_peer_id": bridge.peer_id,
         "peer_count": len(snapshot.get("peers") or {}),
         "mesh_coalesce": coalesce,
