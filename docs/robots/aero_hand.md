@@ -25,6 +25,6 @@ Aliases `Robot()` accepts: `tetheria_aero_hand`, `aero_hand_open`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Model: [google-deepmind/mujoco_menagerie/tetheria_aero_hand_open](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/tetheria_aero_hand_open), scene `scene_left.xml`.
+Model: [google-deepmind/mujoco_menagerie/tetheria_aero_hand_open](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/tetheria_aero_hand_open), scene `scene_right.xml`.
 
 Back to [Hands and grippers](hand/index.md) or the [catalog](index.md).

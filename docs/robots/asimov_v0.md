@@ -25,6 +25,6 @@ Aliases `Robot()` accepts: `asimov`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Model: [asimovinc/asimov-v0/sim-model](https://github.com/asimovinc/asimov-v0/tree/main/sim-model), scene `xmls/asimov.xml`.
+Model: [menloresearch/asimov-v0/sim-model](https://github.com/menloresearch/asimov-v0/tree/759204f531b071e65540e8b31d89736a3d09e0dd/sim-model), scene `xmls/asimov.xml`.
 
 Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

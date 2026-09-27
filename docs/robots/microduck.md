@@ -47,6 +47,6 @@ What the driver checks before it writes:
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). Providers written for this body: `microduck`.
 
-Model: [pollen-robotics/microduck_rl/src/mjlab_microduck/robot/microduck](https://github.com/pollen-robotics/microduck_rl/tree/main/src/mjlab_microduck/robot/microduck), scene `scene.xml`.
+Model: [pollen-robotics/microduck_rl/src/mjlab_microduck/robot/microduck](https://github.com/pollen-robotics/microduck_rl/tree/cb70b792312d559a4da09064d92009079671815f/src/mjlab_microduck/robot/microduck), scene `scene.xml`.
 
 Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

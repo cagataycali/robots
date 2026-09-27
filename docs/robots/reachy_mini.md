@@ -47,6 +47,6 @@ What the driver checks before it writes:
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Model: [pollen-robotics/reachy_mini/src/reachy_mini/descriptions/reachy_mini](https://github.com/pollen-robotics/reachy_mini/tree/main/src/reachy_mini/descriptions/reachy_mini), scene `mjcf/scene.xml`.
+Model: [pollen-robotics/reachy_mini/src/reachy_mini/descriptions/reachy_mini](https://github.com/pollen-robotics/reachy_mini/tree/292b2434cadbb3ff932863bd9b476741bb6ef2fd/src/reachy_mini/descriptions/reachy_mini), scene `mjcf/scene.xml`.
 
 Back to [Expressive](expressive/index.md) or the [catalog](index.md).

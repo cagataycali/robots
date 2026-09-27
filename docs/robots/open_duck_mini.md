@@ -49,6 +49,6 @@ What the driver checks before it writes:
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Model: [apirrone/Open_Duck_Mini/mini_bdx/robots/open_duck_mini_v2](https://github.com/apirrone/Open_Duck_Mini/tree/main/mini_bdx/robots/open_duck_mini_v2), scene `scene.xml`.
+Model: [apirrone/Open_Duck_Mini/mini_bdx/robots/open_duck_mini_v2](https://github.com/apirrone/Open_Duck_Mini/tree/b23317a485b3cec7d8417f352478778b3475173c/mini_bdx/robots/open_duck_mini_v2), scene `scene.xml`.
 
 Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

@@ -28,7 +28,29 @@ _CDN = "https://cdn.jsdelivr.net/gh"
 
 #: Refs for the robots whose models live outside the menagerie. ``main`` is a
 #: moving target on jsDelivr (cached up to 12 h); pin when the upstream tags.
-_GITHUB_REFS: dict[str, str] = {}
+_GITHUB_REFS: dict[str, str] = {
+    # default-branch heads read 2026-09-27; jsDelivr cannot resolve a branch literally
+    # named "v2" (Open_Duck_Mini), so every github-source robot is pinned by commit.
+    "microduck": "cb70b792312d559a4da09064d92009079671815f",
+    "reachy_mini": "292b2434cadbb3ff932863bd9b476741bb6ef2fd",
+    "lekiwi": "32cf6a69eb320cc22620cdaa529e35f20fc12b1f",
+    "yahboom_m3pro": "bdac682e57a8eeaf7b18eece44bfbfc54de98e8a",
+    "open_duck_mini": "b23317a485b3cec7d8417f352478778b3475173c",
+    "asimov_v0": "759204f531b071e65540e8b31d89736a3d09e0dd",
+}
+
+#: Repositories that moved since the registry was written (GitHub redirects the API,
+#: jsDelivr does not).
+_REPO_MOVES: dict[str, str] = {"asimovinc/asimov-v0": "menloresearch/asimov-v0"}
+
+#: Registry scene files that do not exist upstream; the viewer loads the file that does.
+#: aero_hand: the registry says scene_left.xml, the menagerie ships scene_right.xml.
+_SCENE_OVERRIDES: dict[str, str] = {"aero_hand": "scene_right.xml"}
+
+#: Models the browser build cannot compile, with the reason the viewer shows.
+_VIEWER_UNSUPPORTED: dict[str, str] = {
+    "rby1": "its MJCF includes the same file twice with merge=true, which the WebAssembly build refuses",
+}
 
 #: Robots whose registry entry names a ``robot_descriptions`` module instead of a
 #: menagerie directory. robot_descriptions pins each repository to a commit; these
@@ -57,9 +79,10 @@ def _lfs_url(name: str, asset: dict) -> str | None:
     if source.get("type") == "menagerie":
         return f"https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/{MENAGERIE_REF}/{asset['dir']}/"
     if source.get("type") == "github" and source.get("repo"):
+        repo = _REPO_MOVES.get(source["repo"], source["repo"])
         ref = _GITHUB_REFS.get(name, source.get("ref") or "main")
         subdir = source.get("subdir", "").strip("/")
-        return f"https://media.githubusercontent.com/media/{source['repo']}/{ref}/{subdir}/" if subdir else f"https://media.githubusercontent.com/media/{source['repo']}/{ref}/"
+        return f"https://media.githubusercontent.com/media/{repo}/{ref}/{subdir}/" if subdir else f"https://media.githubusercontent.com/media/{repo}/{ref}/"
     return None
 
 
@@ -72,10 +95,21 @@ def _base_url(name: str, asset: dict) -> str | None:
     if source.get("type") == "menagerie":
         return f"{_CDN}/google-deepmind/mujoco_menagerie@{MENAGERIE_REF}/{asset['dir']}/"
     if source.get("type") == "github" and source.get("repo"):
+        repo = _REPO_MOVES.get(source["repo"], source["repo"])
         ref = _GITHUB_REFS.get(name, source.get("ref") or "main")
         subdir = source.get("subdir", "").strip("/")
-        return f"{_CDN}/{source['repo']}@{ref}/{subdir}/" if subdir else f"{_CDN}/{source['repo']}@{ref}/"
+        return f"{_CDN}/{repo}@{ref}/{subdir}/" if subdir else f"{_CDN}/{repo}@{ref}/"
     return None
+
+
+def _raw_url(base: str | None) -> str | None:
+    """raw.githubusercontent.com mirror of a jsDelivr gh base (no 20 MB per-file limit)."""
+    if not base:
+        return None
+    rest = base[len(_CDN) + 1 :]  # owner/repo@ref/subdir/
+    repo, _, tail = rest.partition("@")
+    ref, _, subdir = tail.partition("/")
+    return f"https://raw.githubusercontent.com/{repo}/{ref}/{subdir}"
 
 
 def build_manifest() -> dict:
@@ -93,12 +127,14 @@ def build_manifest() -> dict:
             "joints": spec.get("joints"),
             "aliases": list(spec.get("aliases", ())),
             "sim": bool(asset),
-            "viewer": bool(base),
+            "viewer": bool(base) and name not in _VIEWER_UNSUPPORTED,
+            "viewer_note": _VIEWER_UNSUPPORTED.get(name),
             "real": bool(spec.get("hardware")),
             "driver": (spec.get("hardware") or {}).get("driver"),
             "base_url": base,
             "lfs_url": _lfs_url(name, asset) if base else None,
-            "scene": asset.get("scene_xml") if base else None,
+            "raw_url": _raw_url(base),
+            "scene": _SCENE_OVERRIDES.get(name, asset.get("scene_xml")) if base else None,
             "model": asset.get("model_xml") if base else None,
             "thumbnail": f"assets/img/robots/{name}.webp" if thumb.exists() else None,
         }

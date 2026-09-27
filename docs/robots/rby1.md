@@ -11,7 +11,7 @@ description: "Rainbow Robotics RB-Y1A Mobile Manipulator (31-DOF)"
 
 You have `rby1` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
-<robot-viewer name="rby1"></robot-viewer>
+The model has no public source to stream, so this page has no 3D view; the thumbnail is a local render.
 
 ```python
 from strands_robots import Robot

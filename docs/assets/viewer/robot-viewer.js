@@ -49,23 +49,38 @@ function loadManifest() {
 }
 
 const fmtMB = (n) => `${(n / 1e6).toFixed(1)} MB`;
+// A valid 1x1 white RGB PNG (69 bytes, Pillow), used in place of every texture file.
+const PNG_1X1 = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP4//8/AAX+Av4zEpUUAAAAAElFTkSuQmCC"), (c) => c.charCodeAt(0));
 
-/** Parse MJCF text for includes and asset files. Regex is enough: attribute order varies, tags do not. */
+/** Parse one MJCF file for what it references. Regex is enough: attribute order varies, tags do not. */
 function scanXml(xml) {
   const attr = (tag, name) => {
-    const m = xml.match(new RegExp(`<${tag}[^>]*\\b${name}="([^"]*)"`));
+    const m = xml.match(new RegExp(`<${tag}\\b[^>]*\\b${name}="([^"]*)"`));
     return m ? m[1] : null;
   };
   const includes = [...xml.matchAll(/<include\s+[^>]*file="([^"]+)"/g)].map((m) => m[1]);
-  const meshdir = attr("compiler", "meshdir") ?? attr("compiler", "assetdir") ?? "";
-  const texturedir = attr("compiler", "texturedir") ?? attr("compiler", "assetdir") ?? "";
-  const join = (dir, f) => (dir && !f.startsWith("/") ? `${dir.replace(/\/?$/, "/")}${f}` : f);
+  const models = [...xml.matchAll(/<model\b[^>]*\bfile="([^"]+)"/g)].map((m) => m[1]);
+  const assetdir = attr("compiler", "assetdir");
+  const meshdir = attr("compiler", "meshdir") ?? assetdir;
+  const texturedir = attr("compiler", "texturedir") ?? assetdir;
   const files = [];
-  for (const m of xml.matchAll(/<(mesh|hfield|skin)\b[^>]*\bfile="([^"]+)"/g)) files.push(join(meshdir, m[2]));
-  for (const m of xml.matchAll(/<texture\b[^>]*\bfile="([^"]+)"/g)) files.push(join(texturedir, m[1]));
-  for (const m of xml.matchAll(/<texture\b[^>]*\bfile(?:right|left|up|down|front|back)="([^"]+)"/g)) files.push(join(texturedir, m[1]));
-  return { includes, files };
+  const textures = [];
+  for (const m of xml.matchAll(/<(mesh|hfield|skin)\b[^>]*\bfile="([^"]+)"/g)) files.push(m[2]);
+  for (const m of xml.matchAll(/<texture\b[^>]*\bfile="([^"]+)"/g)) textures.push(m[1]);
+  for (const m of xml.matchAll(/<texture\b[^>]*\bfile(?:right|left|up|down|front|back)="([^"]+)"/g)) textures.push(m[1]);
+  return { includes, models, files, textures, meshdir, texturedir };
 }
+
+/** Join path segments the way MuJoCo does and collapse "." and "..". */
+function joinPath(...parts) {
+  const out = [];
+  for (const seg of parts.filter(Boolean).join("/").split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop(); else out.push(seg);
+  }
+  return out.join("/");
+}
+const dirOf = (p) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 
 const TEMPLATE = `
 <style>
@@ -171,7 +186,7 @@ class RobotViewer extends HTMLElement {
     if (this._state !== "idle") return;
     if (!e) return this._fail(`No robot named "${this.getAttribute("name")}" in the registry.`);
     if (!e.sim) return this._fail(`${e.description} has no simulation model, so there is nothing to render.`);
-    if (!e.viewer) return this._fail(`${e.description} simulates locally, but its model has no public source to stream from.`);
+    if (!e.viewer) return this._fail(e.viewer_note ? `${e.description} simulates locally, but ${e.viewer_note}.` : `${e.description} simulates locally, but its model has no public source to stream from.`);
     const thumb = e.thumbnail ? `<img alt="" src="${new URL("../../" + e.thumbnail, import.meta.url)}">` : "";
     p.innerHTML = `${thumb}<div class="card"><h4>${e.description}</h4><p>${e.joints ?? "?"} joints. Runs MuJoCo in your browser. Meshes stream from ${this._sourceLabel()}.</p><button data-act="load">Load 3D</button></div>`;
     p.hidden = false;
@@ -272,12 +287,25 @@ class RobotViewer extends HTMLElement {
     const progress = (label) => this._status("Streaming meshes", `${label} ${fmtMB(bytes)}, ${done}/${total} files`, done / total);
     const LFS = new Uint8Array([118, 101, 114, 115, 105, 111, 110, 32, 104, 116, 116, 112, 115, 58, 47, 47, 103, 105, 116, 45, 108, 102, 115]); // "version https://git-lfs"
     const isLfsPointer = (b) => b.length < 400 && LFS.every((c, i) => b[i] === c);
+    const tryFetch = async (url) => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const r = await fetch(url);
+          if (r.ok) return r;
+          if (r.status === 404 || r.status === 403) return r;
+        } catch { /* network hiccup: retry */ }
+        await new Promise((res) => setTimeout(res, 300 * (attempt + 1)));
+      }
+      return null;
+    };
     const get = async (path) => {
-      let r = await fetch(new URL(path, base).href);
-      if (!r.ok) throw new Error(`${path} ${r.status}`);
+      // jsDelivr first (fast, cached), raw.githubusercontent.com when jsDelivr refuses
+      // (files over 20 MB), GitHub's LFS media host when the blob is an LFS pointer.
+      let r = await tryFetch(new URL(path, base).href);
+      if ((!r || !r.ok) && e.raw_url) r = await tryFetch(new URL(path, e.raw_url).href);
+      if (!r || !r.ok) throw new Error(`${path} ${r ? r.status : "unreachable"}`);
       let buf = new Uint8Array(await r.arrayBuffer());
       if (isLfsPointer(buf) && e.lfs_url) {
-        // jsDelivr serves the Git LFS pointer; the blob itself lives on GitHub's media host.
         r = await fetch(new URL(path, e.lfs_url).href);
         if (!r.ok) throw new Error(`${path} (lfs) ${r.status}`);
         buf = new Uint8Array(await r.arrayBuffer());
@@ -285,42 +313,63 @@ class RobotViewer extends HTMLElement {
       bytes += buf.length; done += 1; progress(path.split("/").pop());
       return buf;
     };
-    // The scene, its includes (recursively), then every asset those name.
-    const xmlQueue = [e.scene];
+    // MJCF path rules, as MuJoCo applies them: a file named by an <include> or a
+    // <model> is relative to the directory of the file that names it; a mesh or
+    // texture is relative to its own file's directory plus that file's compiler
+    // meshdir/texturedir, and an included file inherits the includer's compiler
+    // dirs when it declares none. VFS keys are the paths MuJoCo will compute,
+    // relative to the main model file's directory.
+    const sceneDir = dirOf(e.scene);
+    const queue = [{ file: joinPath(e.scene.slice(sceneDir ? sceneDir.length + 1 : 0)), meshdir: null, texturedir: null }];
     const assets = new Set();
     const seen = new Set();
     let sceneXml = null;
-    while (xmlQueue.length) {
-      const f = xmlQueue.shift();
-      if (seen.has(f)) continue;
-      seen.add(f);
+    while (queue.length) {
+      const { file, meshdir: pm, texturedir: pt } = queue.shift();
+      if (seen.has(file)) continue;
+      seen.add(file);
       total += 1;
-      const buf = await get(f);
+      const buf = await get(joinPath(sceneDir, file));
       const text = dec.decode(buf);
-      if (sceneXml === null) sceneXml = text;
-      fetched.set(f, buf);
-      const dir = f.includes("/") ? f.slice(0, f.lastIndexOf("/") + 1) : "";
-      const { includes, files } = scanXml(text);
-      for (const inc of includes) xmlQueue.push(dir + inc);
-      for (const a of files) assets.add(dir + a);
+      // The main file is handed to from_xml_string, which registers it in the VFS
+      // itself; adding it here too fails on a scene literally named model.xml (rby1).
+      if (sceneXml === null) sceneXml = text; else fetched.set(file, buf);
+      const dir = dirOf(file);
+      const s = scanXml(text);
+      const meshdir = s.meshdir ?? pm, texturedir = s.texturedir ?? pt;
+      for (const inc of s.includes) queue.push({ file: joinPath(dir, inc), meshdir, texturedir });
+      for (const mdl of s.models) queue.push({ file: joinPath(dir, mdl), meshdir: null, texturedir: null });
+      for (const f of s.files) assets.add(joinPath(dir, meshdir, f));
+      // Textures are not sampled by this viewer, so a 1x1 PNG stands in and the
+      // (often multi-megabyte) images are never downloaded.
+      for (const tx of s.textures) { const k = joinPath(dir, texturedir, tx); if (!fetched.has(k)) fetched.set(k, PNG_1X1); }
     }
     total = seen.size + assets.size;
     progress("");
-    await Promise.all([...assets].map(async (a) => fetched.set(a, await get(a))));
-    return { sceneName: e.scene, sceneXml, fetched, bytes, count: fetched.size };
+    // At most 8 downloads in flight: hundreds of parallel requests trip CDN limits.
+    const pending = [...assets];
+    await Promise.all(Array.from({ length: 8 }, async () => {
+      while (pending.length) { const a = pending.shift(); fetched.set(a, await get(joinPath(sceneDir, a))); }
+    }));
+    return { sceneXml, fetched, bytes, count: fetched.size };
   }
 
-  _compile({ sceneName, sceneXml, fetched }) {
+  _compile({ sceneXml, fetched }) {
     const mj = this._mujoco;
     const vfs = new mj.MjVFS();
     this._handles.push(vfs);
-    // MJCF resolves paths relative to the scene file's own directory.
-    const sceneDir = sceneName.includes("/") ? sceneName.slice(0, sceneName.lastIndexOf("/") + 1) : "";
-    for (const [path, buf] of fetched) {
-      const rel = sceneDir && path.startsWith(sceneDir) ? path.slice(sceneDir.length) : path;
-      vfs.addBuffer(rel, buf);
+    for (const [path, buf] of fetched) vfs.addBuffer(path, buf);
+    let model;
+    try {
+      model = mj.MjModel.from_xml_string(sceneXml, vfs);
+    } catch (err) {
+      if (!/plugin/i.test(String(err?.message || err))) throw err;
+      // The browser build ships no engine plugins (mujoco.pid, elasticity...). Drop the
+      // <extension> block and plugin-driven actuators; the kinematics still render.
+      const stripped = this._stripPlugins(sceneXml, fetched, vfs);
+      model = mj.MjModel.from_xml_string(stripped, vfs);
+      this._pluginsStripped = true;
     }
-    const model = mj.MjModel.from_xml_string(sceneXml, vfs);
     if (!model) throw new Error("MuJoCo returned no model");
     const data = new mj.MjData(model);
     this._handles.push(model, data);
@@ -328,6 +377,22 @@ class RobotViewer extends HTMLElement {
     this._model = model;
     this._data = data;
     this._qpos0 = Float64Array.from(data.qpos);
+  }
+
+  _stripPlugins(sceneXml, fetched, vfs) {
+    const clean = (xml) => xml
+      .replace(/<extension>[\s\S]*?<\/extension>/g, "")
+      .replace(/<plugin\b[^>]*\/>/g, "")
+      .replace(/<plugin\b[^>]*>[\s\S]*?<\/plugin>/g, "")
+      .replace(/<(general|actuator|motor|position|velocity|intvelocity|damper|cylinder|muscle|adhesion)\b[^>]*\bplugin="[^"]*"[^>]*\/>/g, "")
+      .replace(/<(general|actuator|motor|position|velocity|intvelocity|damper|cylinder|muscle|adhesion)\b[^>]*\bplugin="[^"]*"[^>]*>[\s\S]*?<\/\1>/g, "");
+    const enc = new TextEncoder(), dec = new TextDecoder();
+    for (const [path, buf] of fetched) {
+      if (!path.endsWith(".xml")) continue;
+      vfs.deleteFile(path);
+      vfs.addBuffer(path, enc.encode(clean(dec.decode(buf))));
+    }
+    return clean(sceneXml);
   }
 
   _buildScene({ THREE, OrbitControls }) {

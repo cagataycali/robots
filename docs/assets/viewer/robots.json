@@ -13,11 +13,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/psyonicinc/ability-hand-api/89407424edfc22faceaedcd7c3ea2b7947cbbb2c/python/ah_simulators/mujoco_xml/",
    "model": "scene.xml",
    "name": "ability_hand",
+   "raw_url": "https://raw.githubusercontent.com/psyonicinc/ability-hand-api/89407424edfc22faceaedcd7c3ea2b7947cbbb2c/python/ah_simulators/mujoco_xml/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/ability_hand.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "adam_lite": {
    "aliases": [
@@ -31,11 +33,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/pndbotics_adam_lite/",
    "model": "adam_lite.xml",
    "name": "adam_lite",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/pndbotics_adam_lite/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/adam_lite.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "aero_hand": {
    "aliases": [
@@ -50,11 +54,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/tetheria_aero_hand_open/",
    "model": "left_hand.xml",
    "name": "aero_hand",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/tetheria_aero_hand_open/",
    "real": false,
-   "scene": "scene_left.xml",
+   "scene": "scene_right.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/aero_hand.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "aliengo": {
    "aliases": [
@@ -68,11 +74,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/unitreerobotics/unitree_mujoco/f3300ff1bf0ab9efbea0162717353480d9b05d73/data/aliengo/",
    "model": "xml/aliengo.xml",
    "name": "aliengo",
+   "raw_url": "https://raw.githubusercontent.com/unitreerobotics/unitree_mujoco/f3300ff1bf0ab9efbea0162717353480d9b05d73/data/aliengo/",
    "real": false,
    "scene": "xml/aliengo.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/aliengo.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "allegro_hand": {
    "aliases": [
@@ -86,11 +94,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/wonik_allegro/",
    "model": "left_hand.xml",
    "name": "allegro_hand",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/wonik_allegro/",
    "real": false,
    "scene": "scene_left.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/allegro_hand.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "aloha": {
    "aliases": [
@@ -109,11 +119,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/aloha/",
    "model": "aloha.xml",
    "name": "aloha",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/aloha/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/aloha.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "anymal_b": {
    "aliases": [
@@ -127,11 +139,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/anybotics_anymal_b/",
    "model": "anymal_b.xml",
    "name": "anymal_b",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/anybotics_anymal_b/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/anymal_b.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "anymal_c": {
    "aliases": [
@@ -145,11 +159,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/anybotics_anymal_c/",
    "model": "anymal_c.xml",
    "name": "anymal_c",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/anybotics_anymal_c/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/anymal_c.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "apollo": {
    "aliases": [
@@ -163,11 +179,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/apptronik_apollo/",
    "model": "apptronik_apollo.xml",
    "name": "apollo",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/apptronik_apollo/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/apollo.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "arx_l5": {
    "aliases": [],
@@ -179,29 +197,33 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/arx_l5/",
    "model": "arx_l5.xml",
    "name": "arx_l5",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/arx_l5/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/arx_l5.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "asimov_v0": {
    "aliases": [
     "asimov"
    ],
-   "base_url": "https://cdn.jsdelivr.net/gh/asimovinc/asimov-v0@main/sim-model/",
+   "base_url": "https://cdn.jsdelivr.net/gh/menloresearch/asimov-v0@759204f531b071e65540e8b31d89736a3d09e0dd/sim-model/",
    "category": "humanoid",
    "description": "Asimov V0 Bipedal Legs (12-DOF + 2 passive toes)",
    "driver": null,
    "joints": 15,
-   "lfs_url": "https://media.githubusercontent.com/media/asimovinc/asimov-v0/main/sim-model/",
+   "lfs_url": "https://media.githubusercontent.com/media/menloresearch/asimov-v0/759204f531b071e65540e8b31d89736a3d09e0dd/sim-model/",
    "model": "xmls/asimov.xml",
    "name": "asimov_v0",
+   "raw_url": "https://raw.githubusercontent.com/menloresearch/asimov-v0/759204f531b071e65540e8b31d89736a3d09e0dd/sim-model/",
    "real": false,
    "scene": "xmls/asimov.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/asimov_v0.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "bi_openarm": {
    "aliases": [
@@ -217,11 +239,13 @@
    "lfs_url": null,
    "model": null,
    "name": "bi_openarm",
+   "raw_url": null,
    "real": true,
    "scene": null,
    "sim": false,
    "thumbnail": null,
-   "viewer": false
+   "viewer": false,
+   "viewer_note": null
   },
   "bi_rebot_b601": {
    "aliases": [
@@ -236,11 +260,13 @@
    "lfs_url": null,
    "model": null,
    "name": "bi_rebot_b601",
+   "raw_url": null,
    "real": true,
    "scene": null,
    "sim": false,
    "thumbnail": null,
-   "viewer": false
+   "viewer": false,
+   "viewer_note": null
   },
   "bi_so_follower": {
    "aliases": [
@@ -255,11 +281,13 @@
    "lfs_url": null,
    "model": null,
    "name": "bi_so_follower",
+   "raw_url": null,
    "real": true,
    "scene": null,
    "sim": false,
    "thumbnail": null,
-   "viewer": false
+   "viewer": false,
+   "viewer_note": null
   },
   "booster_t1": {
    "aliases": [],
@@ -271,11 +299,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/booster_t1/",
    "model": "t1.xml",
    "name": "booster_t1",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/booster_t1/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/booster_t1.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "cassie": {
    "aliases": [
@@ -289,11 +319,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/agility_cassie/",
    "model": "cassie.xml",
    "name": "cassie",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/agility_cassie/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/cassie.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "crazyflie": {
    "aliases": [
@@ -308,11 +340,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/bitcraze_crazyflie_2/",
    "model": "cf2.xml",
    "name": "crazyflie",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/bitcraze_crazyflie_2/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/crazyflie.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "dynamixel_2r": {
    "aliases": [],
@@ -324,11 +358,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/dynamixel_2r/",
    "model": "dynamixel_2r.xml",
    "name": "dynamixel_2r",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/dynamixel_2r/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/dynamixel_2r.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "earthrover": {
    "aliases": [
@@ -344,11 +380,13 @@
    "lfs_url": null,
    "model": null,
    "name": "earthrover",
+   "raw_url": null,
    "real": true,
    "scene": null,
    "sim": false,
    "thumbnail": null,
-   "viewer": false
+   "viewer": false,
+   "viewer_note": null
   },
   "elf2": {
    "aliases": [
@@ -362,11 +400,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/bxirobotics/robot_models/eabe24ce937f8e633077a163b883e92e8996c36e/elf2_dof25/xml/",
    "model": "elf2_dof25.xml",
    "name": "elf2",
+   "raw_url": "https://raw.githubusercontent.com/bxirobotics/robot_models/eabe24ce937f8e633077a163b883e92e8996c36e/elf2_dof25/xml/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/elf2.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "fourier_n1": {
    "aliases": [
@@ -384,11 +424,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/fourier_n1/",
    "model": "n1.xml",
    "name": "fourier_n1",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/fourier_n1/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/fourier_n1.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "fr3": {
    "aliases": [
@@ -402,11 +444,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/franka_fr3/",
    "model": "fr3.xml",
    "name": "fr3",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/franka_fr3/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/fr3.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "fr3_v2": {
    "aliases": [
@@ -420,11 +464,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/franka_fr3_v2/",
    "model": "fr3v2.xml",
    "name": "fr3_v2",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/franka_fr3_v2/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/fr3_v2.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "go1": {
    "aliases": [
@@ -438,11 +484,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_go1/",
    "model": "go1.xml",
    "name": "go1",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_go1/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/go1.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "google_robot": {
    "aliases": [
@@ -456,11 +504,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/google_robot/",
    "model": "robot.xml",
    "name": "google_robot",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/google_robot/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/google_robot.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "hope_jr": {
    "aliases": [],
@@ -472,11 +522,13 @@
    "lfs_url": null,
    "model": null,
    "name": "hope_jr",
+   "raw_url": null,
    "real": true,
    "scene": null,
    "sim": false,
    "thumbnail": null,
-   "viewer": false
+   "viewer": false,
+   "viewer_note": null
   },
   "hope_jr_hand": {
    "aliases": [
@@ -491,11 +543,13 @@
    "lfs_url": null,
    "model": null,
    "name": "hope_jr_hand",
+   "raw_url": null,
    "real": true,
    "scene": null,
    "sim": false,
    "thumbnail": null,
-   "viewer": false
+   "viewer": false,
+   "viewer_note": null
   },
   "jvrc": {
    "aliases": [
@@ -509,11 +563,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/isri-aist/jvrc_mj_description/0f0ce7daefdd66c54e0909a6bf2c22154844f5f3/",
    "model": "xml/jvrc1.xml",
    "name": "jvrc",
+   "raw_url": "https://raw.githubusercontent.com/isri-aist/jvrc_mj_description/0f0ce7daefdd66c54e0909a6bf2c22154844f5f3/",
    "real": false,
    "scene": "xml/jvrc1.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/jvrc.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "kinova_gen3": {
    "aliases": [],
@@ -525,11 +581,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/kinova_gen3/",
    "model": "gen3.xml",
    "name": "kinova_gen3",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/kinova_gen3/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/kinova_gen3.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "koch": {
    "aliases": [
@@ -545,11 +603,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/low_cost_robot_arm/",
    "model": "low_cost_robot_arm.xml",
    "name": "koch",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/low_cost_robot_arm/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/koch.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "kuka_iiwa": {
    "aliases": [
@@ -563,11 +623,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/kuka_iiwa_14/",
    "model": "iiwa14.xml",
    "name": "kuka_iiwa",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/kuka_iiwa_14/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/kuka_iiwa.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "leap_hand": {
    "aliases": [],
@@ -579,27 +641,31 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/leap_hand/",
    "model": "left_hand.xml",
    "name": "leap_hand",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/leap_hand/",
    "real": false,
    "scene": "scene_left.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/leap_hand.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "lekiwi": {
    "aliases": [],
-   "base_url": "https://cdn.jsdelivr.net/gh/Ekumen-OS/lekiwi@main/packages/lekiwi_sim/lekiwi_sim/assets/",
+   "base_url": "https://cdn.jsdelivr.net/gh/Ekumen-OS/lekiwi@32cf6a69eb320cc22620cdaa529e35f20fc12b1f/packages/lekiwi_sim/lekiwi_sim/assets/",
    "category": "mobile",
    "description": "LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuators)",
    "driver": null,
    "joints": 9,
-   "lfs_url": "https://media.githubusercontent.com/media/Ekumen-OS/lekiwi/main/packages/lekiwi_sim/lekiwi_sim/assets/",
+   "lfs_url": "https://media.githubusercontent.com/media/Ekumen-OS/lekiwi/32cf6a69eb320cc22620cdaa529e35f20fc12b1f/packages/lekiwi_sim/lekiwi_sim/assets/",
    "model": "lekiwi/lekiwi.xml",
    "name": "lekiwi",
+   "raw_url": "https://raw.githubusercontent.com/Ekumen-OS/lekiwi/32cf6a69eb320cc22620cdaa529e35f20fc12b1f/packages/lekiwi_sim/lekiwi_sim/assets/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/lekiwi.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "lekiwi_client": {
    "aliases": [
@@ -614,30 +680,34 @@
    "lfs_url": null,
    "model": null,
    "name": "lekiwi_client",
+   "raw_url": null,
    "real": true,
    "scene": null,
    "sim": false,
    "thumbnail": null,
-   "viewer": false
+   "viewer": false,
+   "viewer_note": null
   },
   "microduck": {
    "aliases": [
     "micro_duck",
     "pollen_microduck"
    ],
-   "base_url": "https://cdn.jsdelivr.net/gh/pollen-robotics/microduck_rl@main/src/mjlab_microduck/robot/microduck/",
+   "base_url": "https://cdn.jsdelivr.net/gh/pollen-robotics/microduck_rl@cb70b792312d559a4da09064d92009079671815f/src/mjlab_microduck/robot/microduck/",
    "category": "humanoid",
    "description": "Pollen Microduck (14-DOF open-source biped, Dynamixel XL330)",
    "driver": "strands",
    "joints": 15,
-   "lfs_url": "https://media.githubusercontent.com/media/pollen-robotics/microduck_rl/main/src/mjlab_microduck/robot/microduck/",
+   "lfs_url": "https://media.githubusercontent.com/media/pollen-robotics/microduck_rl/cb70b792312d559a4da09064d92009079671815f/src/mjlab_microduck/robot/microduck/",
    "model": "robot_allcollisions.xml",
    "name": "microduck",
+   "raw_url": "https://raw.githubusercontent.com/pollen-robotics/microduck_rl/cb70b792312d559a4da09064d92009079671815f/src/mjlab_microduck/robot/microduck/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/microduck.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "omx": {
    "aliases": [
@@ -653,11 +723,13 @@
    "lfs_url": null,
    "model": null,
    "name": "omx",
+   "raw_url": null,
    "real": true,
    "scene": null,
    "sim": false,
    "thumbnail": null,
-   "viewer": false
+   "viewer": false,
+   "viewer_note": null
   },
   "op3": {
    "aliases": [
@@ -671,11 +743,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/robotis_op3/",
    "model": "op3.xml",
    "name": "op3",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/robotis_op3/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/op3.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "open_duck_mini": {
    "aliases": [
@@ -685,19 +759,21 @@
     "open_duck_mini_v2",
     "open_duck_v2"
    ],
-   "base_url": "https://cdn.jsdelivr.net/gh/apirrone/Open_Duck_Mini@main/mini_bdx/robots/open_duck_mini_v2/",
+   "base_url": "https://cdn.jsdelivr.net/gh/apirrone/Open_Duck_Mini@b23317a485b3cec7d8417f352478778b3475173c/mini_bdx/robots/open_duck_mini_v2/",
    "category": "humanoid",
    "description": "Open Duck Mini V2 (16-DOF expressive biped, Feetech servos)",
    "driver": null,
    "joints": 16,
-   "lfs_url": "https://media.githubusercontent.com/media/apirrone/Open_Duck_Mini/main/mini_bdx/robots/open_duck_mini_v2/",
+   "lfs_url": "https://media.githubusercontent.com/media/apirrone/Open_Duck_Mini/b23317a485b3cec7d8417f352478778b3475173c/mini_bdx/robots/open_duck_mini_v2/",
    "model": "open_duck_mini_v2.xml",
    "name": "open_duck_mini",
+   "raw_url": "https://raw.githubusercontent.com/apirrone/Open_Duck_Mini/b23317a485b3cec7d8417f352478778b3475173c/mini_bdx/robots/open_duck_mini_v2/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/open_duck_mini.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "openarm": {
    "aliases": [
@@ -713,11 +789,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/enactic/openarm_mujoco/cd30dd4c0a97832d1c063bf759514ed18fbe04a5/v1/",
    "model": "openarm.xml",
    "name": "openarm",
+   "raw_url": "https://raw.githubusercontent.com/enactic/openarm_mujoco/cd30dd4c0a97832d1c063bf759514ed18fbe04a5/v1/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/openarm.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "panda": {
    "aliases": [
@@ -740,11 +818,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/franka_emika_panda/",
    "model": "panda.xml",
    "name": "panda",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/franka_emika_panda/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/panda.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "piper": {
    "aliases": [
@@ -758,11 +838,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/agilex_piper/",
    "model": "piper.xml",
    "name": "piper",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/agilex_piper/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/piper.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "rby1": {
    "aliases": [
@@ -777,11 +859,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/uynitsuj/rby1_description/e4c07203aa0a0d1b6b3b39da105cb00a77e2bc72/models/rby1a/mujoco/",
    "model": "model.xml",
    "name": "rby1",
+   "raw_url": "https://raw.githubusercontent.com/uynitsuj/rby1_description/e4c07203aa0a0d1b6b3b39da105cb00a77e2bc72/models/rby1a/mujoco/",
    "real": false,
    "scene": "model.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/rby1.webp",
-   "viewer": true
+   "viewer": false,
+   "viewer_note": "its MJCF includes the same file twice with merge=true, which the WebAssembly build refuses"
   },
   "reachy2": {
    "aliases": [],
@@ -793,11 +877,13 @@
    "lfs_url": null,
    "model": null,
    "name": "reachy2",
+   "raw_url": null,
    "real": true,
    "scene": null,
    "sim": false,
    "thumbnail": null,
-   "viewer": false
+   "viewer": false,
+   "viewer_note": null
   },
   "reachy_mini": {
    "aliases": [
@@ -806,19 +892,21 @@
     "reachy-mini",
     "reachymini"
    ],
-   "base_url": "https://cdn.jsdelivr.net/gh/pollen-robotics/reachy_mini@main/src/reachy_mini/descriptions/reachy_mini/",
+   "base_url": "https://cdn.jsdelivr.net/gh/pollen-robotics/reachy_mini@292b2434cadbb3ff932863bd9b476741bb6ef2fd/src/reachy_mini/descriptions/reachy_mini/",
    "category": "expressive",
    "description": "Pollen Reachy Mini (6-DOF Stewart head + antennas, 9 actuators)",
    "driver": "strands",
    "joints": 21,
-   "lfs_url": "https://media.githubusercontent.com/media/pollen-robotics/reachy_mini/main/src/reachy_mini/descriptions/reachy_mini/",
+   "lfs_url": "https://media.githubusercontent.com/media/pollen-robotics/reachy_mini/292b2434cadbb3ff932863bd9b476741bb6ef2fd/src/reachy_mini/descriptions/reachy_mini/",
    "model": "mjcf/reachy_mini.xml",
    "name": "reachy_mini",
+   "raw_url": "https://raw.githubusercontent.com/pollen-robotics/reachy_mini/292b2434cadbb3ff932863bd9b476741bb6ef2fd/src/reachy_mini/descriptions/reachy_mini/",
    "real": true,
    "scene": "mjcf/scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/reachy_mini.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "rebot_b601": {
    "aliases": [
@@ -834,11 +922,13 @@
    "lfs_url": null,
    "model": null,
    "name": "rebot_b601",
+   "raw_url": null,
    "real": true,
    "scene": null,
    "sim": false,
    "thumbnail": null,
-   "viewer": false
+   "viewer": false,
+   "viewer_note": null
   },
   "robot_soccer_kit": {
    "aliases": [
@@ -852,11 +942,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/robot_soccer_kit/",
    "model": "robot_soccer_kit.xml",
    "name": "robot_soccer_kit",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/robot_soccer_kit/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/robot_soccer_kit.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "robotiq_2f85": {
    "aliases": [
@@ -870,11 +962,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/robotiq_2f85/",
    "model": "2f85.xml",
    "name": "robotiq_2f85",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/robotiq_2f85/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/robotiq_2f85.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "robotiq_2f85_v4": {
    "aliases": [],
@@ -886,11 +980,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/robotiq_2f85_v4/",
    "model": "2f85.xml",
    "name": "robotiq_2f85_v4",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/robotiq_2f85_v4/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/robotiq_2f85_v4.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "sawyer": {
    "aliases": [
@@ -904,11 +1000,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/rethink_robotics_sawyer/",
    "model": "sawyer.xml",
    "name": "sawyer",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/rethink_robotics_sawyer/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/sawyer.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "shadow_dexee": {
    "aliases": [],
@@ -920,11 +1018,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/shadow_dexee/",
    "model": "shadow_dexee.xml",
    "name": "shadow_dexee",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/shadow_dexee/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/shadow_dexee.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "shadow_hand": {
    "aliases": [],
@@ -936,11 +1036,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/shadow_hand/",
    "model": "left_hand.xml",
    "name": "shadow_hand",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/shadow_hand/",
    "real": false,
    "scene": "scene_left.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/shadow_hand.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "skydio_x2": {
    "aliases": [],
@@ -952,11 +1054,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/skydio_x2/",
    "model": "x2.xml",
    "name": "skydio_x2",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/skydio_x2/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/skydio_x2.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "so100": {
    "aliases": [
@@ -974,11 +1078,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/trs_so_arm100/",
    "model": "so_arm100.xml",
    "name": "so100",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/trs_so_arm100/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/so100.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "so101": {
    "aliases": [
@@ -995,11 +1101,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/robotstudio_so101/",
    "model": "so101_new_calib.xml",
    "name": "so101",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/robotstudio_so101/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/so101.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "spot": {
    "aliases": [
@@ -1013,11 +1121,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/boston_dynamics_spot/",
    "model": "spot_arm.xml",
    "name": "spot",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/boston_dynamics_spot/",
    "real": false,
    "scene": "scene_arm.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/spot.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "stretch": {
    "aliases": [
@@ -1031,11 +1141,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/hello_robot_stretch/",
    "model": "stretch.xml",
    "name": "stretch",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/hello_robot_stretch/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/stretch.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "stretch3": {
    "aliases": [
@@ -1050,11 +1162,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/hello_robot_stretch_3/",
    "model": "stretch.xml",
    "name": "stretch3",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/hello_robot_stretch_3/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/stretch3.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "talos": {
    "aliases": [
@@ -1068,11 +1182,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/pal_talos/",
    "model": "talos_position.xml",
    "name": "talos",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/pal_talos/",
    "real": false,
    "scene": "scene_position.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/talos.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "tiago_dual": {
    "aliases": [
@@ -1087,11 +1203,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/pal_tiago_dual/",
    "model": "tiago_dual.xml",
    "name": "tiago_dual",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/pal_tiago_dual/",
    "real": false,
    "scene": "scene_position.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/tiago_dual.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "toddlerbot_2xc": {
    "aliases": [],
@@ -1103,11 +1221,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/toddlerbot_2xc/",
    "model": "toddlerbot_2xc.xml",
    "name": "toddlerbot_2xc",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/toddlerbot_2xc/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/toddlerbot_2xc.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "toddlerbot_2xm": {
    "aliases": [],
@@ -1119,11 +1239,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/toddlerbot_2xm/",
    "model": "toddlerbot_2xm.xml",
    "name": "toddlerbot_2xm",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/toddlerbot_2xm/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/toddlerbot_2xm.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "trossen_wxai": {
    "aliases": [
@@ -1137,11 +1259,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/trossen_wxai/",
    "model": "trossen_ai_bimanual.xml",
    "name": "trossen_wxai",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/trossen_wxai/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/trossen_wxai.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "unitree_a1": {
    "aliases": [
@@ -1155,11 +1279,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/unitreerobotics/unitree_mujoco/f3300ff1bf0ab9efbea0162717353480d9b05d73/data/a1/",
    "model": "xml/a1.xml",
    "name": "unitree_a1",
+   "raw_url": "https://raw.githubusercontent.com/unitreerobotics/unitree_mujoco/f3300ff1bf0ab9efbea0162717353480d9b05d73/data/a1/",
    "real": false,
    "scene": "xml/a1.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/unitree_a1.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "unitree_g1": {
    "aliases": [
@@ -1180,11 +1306,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_g1/",
    "model": "g1.xml",
    "name": "unitree_g1",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_g1/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/unitree_g1.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "unitree_go2": {
    "aliases": [
@@ -1198,11 +1326,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_go2/",
    "model": "go2.xml",
    "name": "unitree_go2",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_go2/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/unitree_go2.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "unitree_h1": {
    "aliases": [
@@ -1216,11 +1346,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_h1/",
    "model": "h1.xml",
    "name": "unitree_h1",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_h1/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/unitree_h1.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "unitree_h1_2": {
    "aliases": [
@@ -1234,11 +1366,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/unitreerobotics/unitree_ros/267182b8521c8d6a631bab1fe63836873237a525/robots/h1_2_description/",
    "model": "h1_2.xml",
    "name": "unitree_h1_2",
+   "raw_url": "https://raw.githubusercontent.com/unitreerobotics/unitree_ros/267182b8521c8d6a631bab1fe63836873237a525/robots/h1_2_description/",
    "real": false,
    "scene": "h1_2.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/unitree_h1_2.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "ur10e": {
    "aliases": [],
@@ -1250,11 +1384,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/universal_robots_ur10e/",
    "model": "ur10e.xml",
    "name": "ur10e",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/universal_robots_ur10e/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/ur10e.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "ur5e": {
    "aliases": [],
@@ -1266,11 +1402,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/universal_robots_ur5e/",
    "model": "ur5e.xml",
    "name": "ur5e",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/universal_robots_ur5e/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/ur5e.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "vx300s": {
    "aliases": [
@@ -1286,11 +1424,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/trossen_vx300s/",
    "model": "vx300s.xml",
    "name": "vx300s",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/trossen_vx300s/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/vx300s.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "wx250s": {
    "aliases": [
@@ -1305,11 +1445,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/trossen_wx250s/",
    "model": "wx250s.xml",
    "name": "wx250s",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/trossen_wx250s/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/wx250s.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "xarm7": {
    "aliases": [
@@ -1323,11 +1465,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/ufactory_xarm7/",
    "model": "xarm7.xml",
    "name": "xarm7",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/ufactory_xarm7/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/xarm7.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "yahboom_m3pro": {
    "aliases": [
@@ -1338,19 +1482,21 @@
     "yahboom_m3_pro",
     "yahboom_rosmaster_m3_pro"
    ],
-   "base_url": "https://cdn.jsdelivr.net/gh/dimwael/yahboom_m3pro_description@main/mjcf/",
+   "base_url": "https://cdn.jsdelivr.net/gh/dimwael/yahboom_m3pro_description@bdac682e57a8eeaf7b18eece44bfbfc54de98e8a/mjcf/",
    "category": "mobile_manip",
    "description": "Yahboom ROSMASTER M3 Pro (mecanum base + DOFBOT-Pro 6-DOF arm: 5 servos + gripper, 9 actuators)",
    "driver": "strands",
    "joints": 10,
-   "lfs_url": "https://media.githubusercontent.com/media/dimwael/yahboom_m3pro_description/main/mjcf/",
+   "lfs_url": "https://media.githubusercontent.com/media/dimwael/yahboom_m3pro_description/bdac682e57a8eeaf7b18eece44bfbfc54de98e8a/mjcf/",
    "model": "m3pro/m3pro.xml",
    "name": "yahboom_m3pro",
+   "raw_url": "https://raw.githubusercontent.com/dimwael/yahboom_m3pro_description/bdac682e57a8eeaf7b18eece44bfbfc54de98e8a/mjcf/",
    "real": true,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/yahboom_m3pro.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "yam": {
    "aliases": [
@@ -1364,11 +1510,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/i2rt_yam/",
    "model": "yam.xml",
    "name": "yam",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/i2rt_yam/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/yam.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   },
   "z1": {
    "aliases": [
@@ -1382,11 +1530,13 @@
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_z1/",
    "model": "z1_gripper.xml",
    "name": "z1",
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_z1/",
    "real": false,
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/z1.webp",
-   "viewer": true
+   "viewer": true,
+   "viewer_note": null
   }
  }
 }

@@ -50,6 +50,6 @@ What the driver checks before it writes:
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Model: [dimwael/yahboom_m3pro_description/mjcf](https://github.com/dimwael/yahboom_m3pro_description/tree/main/mjcf), scene `scene.xml`.
+Model: [dimwael/yahboom_m3pro_description/mjcf](https://github.com/dimwael/yahboom_m3pro_description/tree/bdac682e57a8eeaf7b18eece44bfbfc54de98e8a/mjcf), scene `scene.xml`.
 
 Back to [Mobile manipulators](mobile_manip/index.md) or the [catalog](index.md).
