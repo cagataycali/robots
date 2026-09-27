@@ -45,6 +45,10 @@ def classify_probe_stderr(text: str) -> tuple[str, str, str | None]:
             "lists it afterwards). A dashboard started by a background daemon can "
             "never be granted: macOS refuses to even show the prompt",
         )
+    if "out device of bound" in low or "out of bound" in low:
+        # AVFoundation's own wording for an index past the last camera it knows: nothing is
+        # there, whatever else OpenCV grumbles about the failed open afterwards.
+        return ("absent", "no camera answered at this index", None)
     if "device or resource busy" in low or "busy" in low or "in use" in low:
         return (
             "in_use",

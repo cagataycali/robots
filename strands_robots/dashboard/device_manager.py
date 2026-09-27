@@ -1641,7 +1641,7 @@ class DeviceManager:
         """Ask OpenCV why, in a child process, and answer in the operator's terms."""
         stderr = diagnose_camera_indices([index]).get(index, "")
         state, reason, remedy = camera_facts.classify_probe_stderr(stderr)
-        if state == "absent":
+        if state == "absent" and not stderr.strip():
             reason = "it would not open, and OpenCV gave no reason"
             remedy = "check the cable, then rescan"
         return camera_facts.CameraUnavailable(index, state, reason, remedy)
