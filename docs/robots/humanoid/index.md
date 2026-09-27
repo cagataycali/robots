@@ -12,4 +12,4 @@ Bipeds with arms, from 14-servo ducks to 29-joint adults. Every `humanoid` robot
 
 {{robot_family_table:humanoid}}
 
-Back to the [catalog](index.md).
+Back to the [catalog](../index.md).

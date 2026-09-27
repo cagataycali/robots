@@ -49,4 +49,4 @@ Pick a provider from the [policy matrix](../learn/policies/index.md). No provide
 
 Model: [pollen-robotics/reachy_mini/src/reachy_mini/descriptions/reachy_mini](https://github.com/pollen-robotics/reachy_mini/tree/main/src/reachy_mini/descriptions/reachy_mini), scene `mjcf/scene.xml`.
 
-Back to [Expressive](expressive.md) or the [catalog](index.md).
+Back to [Expressive](expressive/index.md) or the [catalog](index.md).

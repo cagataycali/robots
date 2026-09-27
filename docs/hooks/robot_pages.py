@@ -3,7 +3,7 @@
 Two jobs, both filesystem only (no ``strands_robots`` import):
 
 1. ``on_pre_build`` writes ``docs/robots/<name>.md`` for every robot in
-   ``strands_robots/registry/robots.json`` and ``docs/robots/<family>.md`` for
+   ``strands_robots/registry/robots.json`` and ``docs/robots/<family>/index.md`` for
    every category. A file is rewritten only when its content changes, so
    ``mkdocs serve`` does not loop on its own output and ``git status`` is quiet
    when the registry is unchanged. The output is committed: the nav names the
@@ -413,7 +413,7 @@ def robot_page(name: str) -> str:
     model = _model_link(entry.get("base_url"))
     if model:
         lines += [f"Model: {model}, scene `{entry.get('scene')}`.", ""]
-    lines += [f"Back to [{_label(spec['category'])}]({spec['category']}.md) or the [catalog](index.md).", ""]
+    lines += [f"Back to [{_label(spec['category'])}]({spec['category']}/index.md) or the [catalog](index.md).", ""]
     return "\n".join(lines)
 
 
@@ -437,7 +437,7 @@ def family_page(category: str) -> str:
         "",
         f"{{{{robot_family_table:{category}}}}}",
         "",
-        "Back to the [catalog](index.md).",
+        "Back to the [catalog](../index.md).",
         "",
     ]
     if not names:
@@ -458,7 +458,8 @@ def generate() -> tuple[list[Path], int]:
     written: list[Path] = []
     changed = 0
     for category in _families_in_order():
-        path = _OUT / f"{category}.md"
+        path = _OUT / category / "index.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
         changed += _write_if_changed(path, family_page(category))
         written.append(path)
     for name in registry():
@@ -508,7 +509,7 @@ def cards(category: str | None, prefix: str) -> str:
     return '<div class="sr-robots" markdown="0">\n' + "\n".join(card(n, prefix) for n in names) + "\n</div>\n"
 
 
-def family_table(category: str) -> str:
+def family_table(category: str, link_prefix: str = "") -> str:
     cov = _load_coverage()
     lines = ["| Robot | Description | Joints | Sim | Real | Drivers |", "|---|---|---:|:---:|:---:|---|"]
     for name, spec in registry().items():
@@ -518,15 +519,15 @@ def family_table(category: str) -> str:
         entry = manifest().get(name, {})
         joints = spec.get("joints")
         lines.append(
-            f"| [`{name}`]({name}.md) | {spec.get('description', '')} | {joints if isinstance(joints, int) else '-'} | "
+            f"| [`{name}`]({link_prefix}{name}.md) | {spec.get('description', '')} | {joints if isinstance(joints, int) else '-'} | "
             f"{'yes' if entry.get('sim') else '-'} | {'yes' if r.real else '-'} | {', '.join(f'`{d}`' for d in r.drivers) or '-'} |"
         )
     return "\n".join(lines) + "\n"
 
 
-def substitute(markdown: str, prefix: str) -> str:
+def substitute(markdown: str, prefix: str, link_prefix: str = "") -> str:
     markdown = _TOKEN_CARDS.sub(lambda m: cards(m.group(1), prefix), markdown)
-    return _TOKEN_TABLE.sub(lambda m: family_table(m.group(1)), markdown)
+    return _TOKEN_TABLE.sub(lambda m: family_table(m.group(1), link_prefix), markdown)
 
 
 def _site_prefix(page, config) -> str:  # noqa: ANN001
@@ -546,7 +547,9 @@ def on_pre_build(config) -> None:  # noqa: ANN001 - mkdocs signature
 def on_page_markdown(markdown: str, page, config, files) -> str:  # noqa: ANN001 - mkdocs signature
     if "{{" not in markdown:
         return markdown
-    return substitute(markdown, _site_prefix(page, config))
+    src = page.file.src_path.replace("\\", "/")
+    link_prefix = "../" if re.fullmatch(r"robots/[a-z_]+/index\.md", src) else ""
+    return substitute(markdown, _site_prefix(page, config), link_prefix)
 
 
 if __name__ == "__main__":

@@ -12,4 +12,4 @@ Fixed-base manipulators, from desk servos to industrial cells. Every `arm` robot
 
 {{robot_family_table:arm}}
 
-Back to the [catalog](index.md).
+Back to the [catalog](../index.md).

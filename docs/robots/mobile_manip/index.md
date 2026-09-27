@@ -12,4 +12,4 @@ A base that carries an arm. Every `mobile_manip` robot in the registry is below,
 
 {{robot_family_table:mobile_manip}}
 
-Back to the [catalog](index.md).
+Back to the [catalog](../index.md).

@@ -27,4 +27,4 @@ Aliases `Robot()` accepts: `hopejr_hand`, `hope_junior_hand`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Back to [Hands and grippers](hand.md) or the [catalog](index.md).
+Back to [Hands and grippers](hand/index.md) or the [catalog](index.md).

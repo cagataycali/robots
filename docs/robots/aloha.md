@@ -27,4 +27,4 @@ Pick a provider from the [policy matrix](../learn/policies/index.md). No provide
 
 Model: [google-deepmind/mujoco_menagerie/aloha](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/aloha), scene `scene.xml`.
 
-Back to [Bimanual](bimanual.md) or the [catalog](index.md).
+Back to [Bimanual](bimanual/index.md) or the [catalog](index.md).

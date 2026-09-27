@@ -27,4 +27,4 @@ Aliases `Robot()` accepts: `lekiwi_remote`, `lekiwi_net`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Back to [Mobile manipulators](mobile_manip.md) or the [catalog](index.md).
+Back to [Mobile manipulators](mobile_manip/index.md) or the [catalog](index.md).

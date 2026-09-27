@@ -25,4 +25,4 @@ Pick a provider from the [policy matrix](../learn/policies/index.md). No provide
 
 Model: [google-deepmind/mujoco_menagerie/skydio_x2](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/skydio_x2), scene `scene.xml`.
 
-Back to [Aerial](aerial.md) or the [catalog](index.md).
+Back to [Aerial](aerial/index.md) or the [catalog](index.md).

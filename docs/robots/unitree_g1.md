@@ -53,4 +53,4 @@ Pick a provider from the [policy matrix](../learn/policies/index.md). Providers 
 
 Model: [google-deepmind/mujoco_menagerie/unitree_g1](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_g1), scene `scene.xml`.
 
-Back to [Humanoids](humanoid.md) or the [catalog](index.md).
+Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

@@ -28,4 +28,4 @@ Aliases `Robot()` accepts: `rebot_b601_follower`, `seeed_rebot_b601`, `b601_dm`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Back to [Arms](arm.md) or the [catalog](index.md).
+Back to [Arms](arm/index.md) or the [catalog](index.md).

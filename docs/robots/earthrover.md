@@ -42,4 +42,4 @@ What the driver checks before it writes:
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Back to [Mobile bases](mobile.md) or the [catalog](index.md).
+Back to [Mobile bases](mobile/index.md) or the [catalog](index.md).

@@ -12,4 +12,4 @@ Two arms on one frame, one action dict. Every `bimanual` robot in the registry i
 
 {{robot_family_table:bimanual}}
 
-Back to the [catalog](index.md).
+Back to the [catalog](../index.md).

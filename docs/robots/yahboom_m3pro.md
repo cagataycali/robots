@@ -52,4 +52,4 @@ Pick a provider from the [policy matrix](../learn/policies/index.md). No provide
 
 Model: [dimwael/yahboom_m3pro_description/mjcf](https://github.com/dimwael/yahboom_m3pro_description/tree/main/mjcf), scene `scene.xml`.
 
-Back to [Mobile manipulators](mobile_manip.md) or the [catalog](index.md).
+Back to [Mobile manipulators](mobile_manip/index.md) or the [catalog](index.md).

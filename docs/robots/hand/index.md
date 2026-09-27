@@ -12,4 +12,4 @@ End effectors: dexterous hands and parallel grippers. Every `hand` robot in the 
 
 {{robot_family_table:hand}}
 
-Back to the [catalog](index.md).
+Back to the [catalog](../index.md).

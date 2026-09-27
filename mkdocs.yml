@@ -38,7 +38,6 @@ theme:
   features:
     - navigation.tabs
     - navigation.tabs.sticky
-    - navigation.sections
     - navigation.indexes
     - navigation.top
     - navigation.footer
@@ -67,7 +66,10 @@ extra:
 
 hooks:
   - docs/hooks/numbers.py
+  - docs/hooks/extras.py
   - docs/hooks/manifest.py
+  - docs/hooks/coverage.py
+  - docs/hooks/robot_pages.py
 
 plugins:
   - search
@@ -228,10 +230,10 @@ plugins:
         reference/training/rl.md: learn/training/rl.md
         reference/training/vla_workflow.md: learn/training/lerobot.md
         reference/troubleshooting.md: start/doctor.md
-        robots/arms.md: robots/arm.md
-        robots/hands.md: robots/hand.md
-        robots/humanoids.md: robots/humanoid.md
-        robots/mobile-manip.md: robots/mobile_manip.md
+        robots/arms.md: robots/arm/index.md
+        robots/hands.md: robots/hand/index.md
+        robots/humanoids.md: robots/humanoid/index.md
+        robots/mobile-manip.md: robots/mobile_manip/index.md
         ros2-integration.md: learn/ros2.md
         ros2/ackermann.md: learn/ros2.md
         ros2/hardware-bridge.md: learn/ros2.md
@@ -298,8 +300,104 @@ nav:
   - Home: index.md
   - Start:
       - start/index.md
+      - start/install.md
+      - start/first-robot.md
+      - start/first-real-arm.md
+      - start/first-agent.md
+      - start/doctor.md
   - Robots:
       - robots/index.md
+      - Arms:
+          - robots/arm/index.md
+          - robots/arx_l5.md
+          - robots/dynamixel_2r.md
+          - robots/fr3.md
+          - robots/fr3_v2.md
+          - robots/hope_jr.md
+          - robots/kinova_gen3.md
+          - robots/koch.md
+          - robots/kuka_iiwa.md
+          - robots/omx.md
+          - robots/rebot_b601.md
+          - robots/openarm.md
+          - robots/panda.md
+          - robots/piper.md
+          - robots/sawyer.md
+          - robots/so100.md
+          - robots/so101.md
+          - robots/ur10e.md
+          - robots/ur5e.md
+          - robots/vx300s.md
+          - robots/wx250s.md
+          - robots/xarm7.md
+          - robots/yam.md
+          - robots/z1.md
+      - Bimanual:
+          - robots/bimanual/index.md
+          - robots/aloha.md
+          - robots/bi_openarm.md
+          - robots/bi_rebot_b601.md
+          - robots/bi_so_follower.md
+          - robots/trossen_wxai.md
+      - Hands and grippers:
+          - robots/hand/index.md
+          - robots/ability_hand.md
+          - robots/aero_hand.md
+          - robots/allegro_hand.md
+          - robots/leap_hand.md
+          - robots/robotiq_2f85.md
+          - robots/robotiq_2f85_v4.md
+          - robots/shadow_dexee.md
+          - robots/shadow_hand.md
+          - robots/hope_jr_hand.md
+      - Humanoids:
+          - robots/humanoid/index.md
+          - robots/adam_lite.md
+          - robots/apollo.md
+          - robots/asimov_v0.md
+          - robots/booster_t1.md
+          - robots/cassie.md
+          - robots/elf2.md
+          - robots/fourier_n1.md
+          - robots/jvrc.md
+          - robots/microduck.md
+          - robots/op3.md
+          - robots/open_duck_mini.md
+          - robots/rby1.md
+          - robots/reachy2.md
+          - robots/talos.md
+          - robots/toddlerbot_2xc.md
+          - robots/toddlerbot_2xm.md
+          - robots/unitree_g1.md
+          - robots/unitree_h1.md
+          - robots/unitree_h1_2.md
+      - Mobile bases:
+          - robots/mobile/index.md
+          - robots/aliengo.md
+          - robots/anymal_b.md
+          - robots/anymal_c.md
+          - robots/earthrover.md
+          - robots/go1.md
+          - robots/lekiwi.md
+          - robots/robot_soccer_kit.md
+          - robots/spot.md
+          - robots/unitree_a1.md
+          - robots/unitree_go2.md
+      - Mobile manipulators:
+          - robots/mobile_manip/index.md
+          - robots/yahboom_m3pro.md
+          - robots/stretch.md
+          - robots/stretch3.md
+          - robots/tiago_dual.md
+          - robots/google_robot.md
+          - robots/lekiwi_client.md
+      - Aerial:
+          - robots/aerial/index.md
+          - robots/crazyflie.md
+          - robots/skydio_x2.md
+      - Expressive:
+          - robots/expressive/index.md
+          - robots/reachy_mini.md
   - Learn:
       - learn/index.md
   - Reference:

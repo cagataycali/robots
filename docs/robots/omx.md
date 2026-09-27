@@ -27,4 +27,4 @@ Aliases `Robot()` accepts: `omx_follower`, `omx_robot`, `robotis_omx`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Back to [Arms](arm.md) or the [catalog](index.md).
+Back to [Arms](arm/index.md) or the [catalog](index.md).

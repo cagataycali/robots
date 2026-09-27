@@ -12,4 +12,4 @@ Desk robots whose output is posture and attention, not a grasp. Every `expressiv
 
 {{robot_family_table:expressive}}
 
-Back to the [catalog](index.md).
+Back to the [catalog](../index.md).

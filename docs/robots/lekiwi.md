@@ -52,4 +52,4 @@ Pick a provider from the [policy matrix](../learn/policies/index.md). No provide
 
 Model: [Ekumen-OS/lekiwi/packages/lekiwi_sim/lekiwi_sim/assets](https://github.com/Ekumen-OS/lekiwi/tree/main/packages/lekiwi_sim/lekiwi_sim/assets), scene `scene.xml`.
 
-Back to [Mobile bases](mobile.md) or the [catalog](index.md).
+Back to [Mobile bases](mobile/index.md) or the [catalog](index.md).

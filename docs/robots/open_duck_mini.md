@@ -51,4 +51,4 @@ Pick a provider from the [policy matrix](../learn/policies/index.md). No provide
 
 Model: [apirrone/Open_Duck_Mini/mini_bdx/robots/open_duck_mini_v2](https://github.com/apirrone/Open_Duck_Mini/tree/main/mini_bdx/robots/open_duck_mini_v2), scene `scene.xml`.
 
-Back to [Humanoids](humanoid.md) or the [catalog](index.md).
+Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

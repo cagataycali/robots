@@ -12,4 +12,4 @@ Wheeled and legged platforms that move through a room. Every `mobile` robot in t
 
 {{robot_family_table:mobile}}
 
-Back to the [catalog](index.md).
+Back to the [catalog](../index.md).

@@ -27,4 +27,4 @@ Pick a provider from the [policy matrix](../learn/policies/index.md). No provide
 
 Model: [google-deepmind/mujoco_menagerie/pndbotics_adam_lite](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/pndbotics_adam_lite), scene `scene.xml`.
 
-Back to [Humanoids](humanoid.md) or the [catalog](index.md).
+Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

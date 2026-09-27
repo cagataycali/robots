@@ -49,4 +49,4 @@ Pick a provider from the [policy matrix](../learn/policies/index.md). Providers 
 
 Model: [pollen-robotics/microduck_rl/src/mjlab_microduck/robot/microduck](https://github.com/pollen-robotics/microduck_rl/tree/main/src/mjlab_microduck/robot/microduck), scene `scene.xml`.
 
-Back to [Humanoids](humanoid.md) or the [catalog](index.md).
+Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

@@ -28,4 +28,4 @@ Aliases `Robot()` accepts: `bi_rebot_b601_follower`, `dual_rebot_b601`.
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Back to [Bimanual](bimanual.md) or the [catalog](index.md).
+Back to [Bimanual](bimanual/index.md) or the [catalog](index.md).

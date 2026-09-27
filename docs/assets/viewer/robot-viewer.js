@@ -419,7 +419,7 @@ class RobotViewer extends HTMLElement {
     const center = bbox.getCenter(new THREE.Vector3());
     const radius = Math.max(bbox.getSize(new THREE.Vector3()).length() / 2, 0.15);
     controls.target.copy(center);
-    camera.position.set(center.x + radius * 1.9, center.y - radius * 2.1, center.z + radius * 1.1);
+    camera.position.set(center.x + radius * 1.6, center.y - radius * 1.8, center.z + radius * 0.9);
     camera.near = radius / 100; camera.far = radius * 100; camera.updateProjectionMatrix();
     key.shadow.camera.left = key.shadow.camera.bottom = -radius * 1.6;
     key.shadow.camera.right = key.shadow.camera.top = radius * 1.6;
@@ -596,7 +596,7 @@ if (!customElements.get("robot-viewer")) customElements.define("robot-viewer", R
 
 // Catalog filter chips (robots/index.md): .sr-filter button[data-family] toggles .sr-robot[data-family].
 document.addEventListener("click", (e) => {
-  const b = e.target.closest(".sr-filter button[data-family]");
+  const b = e.target.closest(".sr-filter button[data-family], .sr-filter-btn[data-family]");
   if (!b) return;
   const fam = b.dataset.family;
   for (const x of b.parentElement.querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));

@@ -27,4 +27,4 @@ Pick a provider from the [policy matrix](../learn/policies/index.md). No provide
 
 Model: [asimovinc/asimov-v0/sim-model](https://github.com/asimovinc/asimov-v0/tree/main/sim-model), scene `xmls/asimov.xml`.
 
-Back to [Humanoids](humanoid.md) or the [catalog](index.md).
+Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

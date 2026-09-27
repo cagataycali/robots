@@ -27,4 +27,4 @@ Pick a provider from the [policy matrix](../learn/policies/index.md). No provide
 
 Model: [google-deepmind/mujoco_menagerie/boston_dynamics_spot](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/boston_dynamics_spot), scene `scene_arm.xml`.
 
-Back to [Mobile bases](mobile.md) or the [catalog](index.md).
+Back to [Mobile bases](mobile/index.md) or the [catalog](index.md).

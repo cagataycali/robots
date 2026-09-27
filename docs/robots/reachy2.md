@@ -25,4 +25,4 @@ robot = Robot("reachy2", mode="real", port="/dev/ttyACM0")  # lerobot reachy2
 
 Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
 
-Back to [Humanoids](humanoid.md) or the [catalog](index.md).
+Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).

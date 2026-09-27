@@ -27,4 +27,4 @@ Pick a provider from the [policy matrix](../learn/policies/index.md). No provide
 
 Model: [google-deepmind/mujoco_menagerie/pal_tiago_dual](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/pal_tiago_dual), scene `scene_position.xml`.
 
-Back to [Mobile manipulators](mobile_manip.md) or the [catalog](index.md).
+Back to [Mobile manipulators](mobile_manip/index.md) or the [catalog](index.md).

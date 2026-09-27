@@ -12,4 +12,4 @@ Quadrotors, commanded as a setpoint stream. Every `aerial` robot in the registry
 
 {{robot_family_table:aerial}}
 
-Back to the [catalog](index.md).
+Back to the [catalog](../index.md).
