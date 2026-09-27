@@ -3439,6 +3439,25 @@ class MuJoCoSimEngine(
             return []
         return self._get_valid_action_keys(robot_name)
 
+    def actuator_ranges(self, robot_name: str) -> dict[str, tuple[float, float]]:
+        """The ``ctrlrange`` of each ``ctrllimited`` actuator, keyed like :meth:`robot_action_keys`.
+
+        Overrides :meth:`SimEngine.actuator_ranges`. ``ctrlrange="0 0"`` reads
+        ``ctrllimited`` false in MuJoCo and is therefore absent, not zero-width.
+        """
+        if self._world is None or self._world._model is None or not registered(self._world.robots, robot_name):
+            return {}
+        model = self._world._model
+        pfx = self._world.robots[robot_name].namespace or ""
+        ranges: dict[str, tuple[float, float]] = {}
+        for act_id in self._world.robots[robot_name].actuator_ids:
+            raw = model.actuator(act_id).name
+            if raw and model.actuator_ctrllimited[act_id]:
+                key = raw[len(pfx) :] if pfx and raw.startswith(pfx) else raw
+                low, high = model.actuator_ctrlrange[act_id]
+                ranges[key] = (float(low), float(high))
+        return ranges
+
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Hand the compiled MjModel + robot namespace to policies that opt in.
 
