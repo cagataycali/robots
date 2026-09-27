@@ -3,7 +3,7 @@
 ``get_observation`` skips every camera frame when MuJoCo offscreen rendering is
 unavailable (headless Linux without EGL/OSMesa). The dataset schema used to be
 declared from ``model.ncam`` regardless, so the opening block of
-``docs/recording.md`` reported ``success ... 1 cameras`` and the rollout's first
+``docs/reference/recording.md`` reported ``success ... 1 cameras`` and the rollout's first
 ``add_frame`` then failed with ``Missing features: {'observation.images.default'}``.
 The refusal now lands in ``start_recording`` itself, before any dataset is
 created, and names ``cameras=[]`` as the state-only path that does record.

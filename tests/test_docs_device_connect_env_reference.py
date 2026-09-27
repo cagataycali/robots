@@ -1,6 +1,6 @@
 """Grade the Device Connect environment reference against the code's env surface.
 
-``docs/device-connect.md`` is where an operator configures Device Connect, and
+``docs/reference/device-connect.md`` is where an operator configures Device Connect, and
 its ``Reference`` section is the list they read. Two properties are graded here,
 both derived from the package rather than from a list kept alongside it, so a
 variable added later is graded on arrival:
@@ -34,7 +34,7 @@ import pytest
 import strands_robots
 
 _PACKAGE = pathlib.Path(strands_robots.__file__).parent / "device_connect"
-_PAGE = pathlib.Path(strands_robots.__file__).parent.parent / "docs" / "device-connect.md"
+_PAGE = pathlib.Path(strands_robots.__file__).parent.parent / "docs" / "reference" / "device-connect.md"
 
 #: The module that owns the Reachy Mini daemon link. Its variables configure one
 #: channel, so the reference documents them together.
@@ -141,7 +141,7 @@ class TestTheReferenceCoversTheSurface:
         """A variable the surface reads but the page omits is unreachable config."""
         missing = _undocumented(page)
         assert not missing, (
-            "docs/device-connect.md documents no row for environment variables the "
+            "docs/reference/device-connect.md documents no row for environment variables the "
             f"Device Connect surface reads: {missing}. A variable the code honours "
             "and the reference omits cannot be found by the operator who needs it."
         )

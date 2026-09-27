@@ -1542,7 +1542,7 @@ def _atexit_cleanup() -> None:
 # any peer still holds the session: the interpreter waits on the callback
 # threads, which wait on the close. ``threading._register_atexit`` is the hook
 # ``concurrent.futures`` uses for exactly this - it runs before the join - and
-# it is what lets the ``docs/mesh.md`` example (a ``Robot(..., mesh=True)``
+# it is what lets the ``docs/reference/mesh.md`` example (a ``Robot(..., mesh=True)``
 # whose child SimRobot peer is never stopped) exit instead of hanging.
 _register_shutdown_hook = getattr(threading, "_register_atexit", atexit.register)
 _register_shutdown_hook(_atexit_cleanup)

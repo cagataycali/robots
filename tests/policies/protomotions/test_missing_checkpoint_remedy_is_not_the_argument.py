@@ -37,8 +37,8 @@ from strands_robots.policies.protomotions.policy import ProtoMotionsPolicy
 
 _ROOT = Path(__file__).resolve().parents[3]
 _PACKAGE = _ROOT / "strands_robots" / "policies" / "protomotions"
-_DOC = _ROOT / "docs" / "policies" / "protomotions.md"
-_CACHE_DOC = _ROOT / "docs" / "policies" / "protomotions-motion-cache.md"
+_DOC = _ROOT / "docs" / "reference" / "policies" / "protomotions.md"
+_CACHE_DOC = _ROOT / "docs" / "reference" / "policies" / "protomotions-motion-cache.md"
 
 #: Stated locally so these cells are an independent oracle rather than a
 #: restatement of the module constants they grade.

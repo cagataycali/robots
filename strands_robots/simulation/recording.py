@@ -1757,7 +1757,7 @@ class DatasetRecordingMixin:
         (``reset()`` is itself an episode boundary while recording: it flushes
         buffered frames before teleporting, so the explicit ``save_episode``
         above is what makes the boundary unconditional rather than what creates
-        it - see ``docs/recording.md``.)
+        it - see ``docs/reference/recording.md``.)
 
         Per-episode stats (LeRobot computes ``stats.json`` per episode, then
         aggregates) stay correct because each rollout's frames are isolated to
@@ -1843,7 +1843,7 @@ class DatasetRecordingMixin:
         A reset is the start of a new rollout, so the frames buffered since the
         last episode boundary belong to the rollout that just ended. Flushing
         them here is what makes :meth:`save_episode`'s "``reset()`` is itself an
-        episode boundary while recording" true, and ``docs/recording.md`` states
+        episode boundary while recording" true, and ``docs/reference/recording.md`` states
         the same rule without naming a backend. Without it a
         ``run_policy`` + ``reset`` collection loop appends every rollout to the
         same buffer, and ``stop_recording`` flushes the lot as a single
@@ -2076,7 +2076,7 @@ class DatasetRecordingMixin:
         recorder, so reading it here answered "last episode: 0 steps" for a
         37-frame save - byte-identical to the answer a sim that never recorded
         gives, and the false confirmation of the "stopped before any frames"
-        diagnosis ``docs/troubleshooting.md`` sends an operator here to check.
+        diagnosis ``docs/reference/troubleshooting.md`` sends an operator here to check.
         The recipe it names carries ``root=`` so it is runnable whatever this
         sim recorded afterwards.
         """

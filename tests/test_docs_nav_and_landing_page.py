@@ -7,10 +7,12 @@ most of the pages it indexes, with three ROS variants and single pages such as
 ``Dashboard`` and ``Configuration`` sitting at the same level as ``Robots``.
 MkDocs has nothing to say about that: a nav of any width builds clean under
 ``--strict``, and a page left out of the nav is an ``INFO`` line, so *shrinking*
-the sidebar by dropping pages would build clean too. Both halves are pinned
-here - at most eight top-level entries, nothing nested more than one level below
-them, and every page under ``docs/`` reachable from the nav - because either one
-alone can be satisfied by breaking the other.
+the sidebar by dropping pages would build clean too. Both halves are pinned - the
+width here (at most five top-level entries, nothing nested more than one level
+below them) and the coverage in
+``tests/test_docs_two_lane_architecture.py`` (every page reachable from the nav
+or from the generated reference index) - because either one alone can be
+satisfied by breaking the other.
 
 **The landing example.** ``docs/index.md`` carries the first call a reader
 copies. ``tests/test_docs_python_examples_are_callable.py`` grades keyword sets
@@ -50,9 +52,10 @@ MKDOCS_YML = REPO_ROOT / "mkdocs.yml"
 DOCS_DIR = REPO_ROOT / "docs"
 LANDING_PAGE = DOCS_DIR / "index.md"
 
-#: A sidebar a reader can take in at a glance. Sections group the pages; the
-#: pages themselves are one level down, and nothing goes deeper.
-MAX_TOP_LEVEL_ENTRIES = 8
+#: A sidebar a reader can take in at a glance: the sections a newcomer reads
+#: plus one pointer at the reference lane. Sections group the pages; the pages
+#: themselves are one level down, and nothing goes deeper.
+MAX_TOP_LEVEL_ENTRIES = 5
 MAX_DEPTH = 1
 
 #: The landing page's budget. It is a page that shows the product, not a
@@ -100,9 +103,9 @@ def _nav_items() -> list[tuple[int, str]]:
 
 
 class TestTheNavStaysBrowsable:
-    """A sidebar of grouped sections, covering every page, and no deeper."""
+    """A sidebar of a few grouped sections, and nothing deeper."""
 
-    def test_the_nav_lists_at_most_eight_top_level_entries(self) -> None:
+    def test_the_nav_lists_at_most_five_top_level_entries(self) -> None:
         tops = [target for depth, target in _nav_items() if depth == 0]
         assert len(tops) <= MAX_TOP_LEVEL_ENTRIES, (
             f"mkdocs.yml nav has {len(tops)} top-level entries; at most "
@@ -120,21 +123,6 @@ class TestTheNavStaysBrowsable:
     def test_every_nav_entry_points_at_a_page_on_disk(self) -> None:
         missing = sorted(target for _, target in _nav_items() if target and not (DOCS_DIR / target).is_file())
         assert not missing, f"mkdocs.yml nav points at pages that do not exist: {missing}"
-
-    def test_every_page_under_docs_is_reachable_from_the_nav(self) -> None:
-        """A narrow nav must not be bought by orphaning pages.
-
-        MkDocs reports a page missing from the nav as ``INFO``, which
-        ``--strict`` does not fail on, so an unreferenced page ships and is
-        reachable only by search or a direct link from another page.
-        """
-        navigated = {target for _, target in _nav_items() if target}
-        on_disk = {str(p.relative_to(DOCS_DIR)) for p in DOCS_DIR.rglob("*.md")}
-        orphans = sorted(on_disk - navigated)
-        assert not orphans, (
-            f"pages under docs/ that no nav entry reaches: {orphans}. Add each to "
-            f"the nav or delete it; an unnavigated page is found only by search."
-        )
 
 
 class TestTheLandingPageShowsTheProduct:

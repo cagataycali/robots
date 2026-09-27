@@ -27,7 +27,7 @@ measures correctly.
 So ``size=[2, 3, 4]`` scales the asset on one backend and is ignored on the
 other, and **both calls report success** - which is what makes the divergence
 expensive to discover. The Newton mesh section - now
-``docs/simulation/newton-scenes.md`` - asserted the opposite in as many words
+``docs/reference/simulation/newton-scenes.md`` - asserted the opposite in as many words
 ("at parity with the MuJoCo backend"), so a reader porting a scene between the
 two had the one paragraph that would have warned them telling them not to look.
 
@@ -69,7 +69,7 @@ from strands_robots.simulation.mujoco.spec_builder import _SIZE_LAYOUT, _validat
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from tests.simulation.test_pose_vector_domain_across_backends import _newton_stub
 
-_DOCS = pathlib.Path(__file__).parents[2] / "docs" / "simulation"
+_DOCS = pathlib.Path(__file__).parents[2] / "docs" / "reference" / "simulation"
 
 #: The two pages that document a mesh ``add_object``: the Newton scenes page and
 #: the backend-agnostic meshes guide, whose ``size`` contract is MuJoCo's.

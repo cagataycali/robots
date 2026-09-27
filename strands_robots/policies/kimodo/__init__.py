@@ -29,7 +29,7 @@ Requires the ``[kimodo]`` extra:
   ``huggingface_hub``, ``accelerate``, ``scipy``.
 
 Model weights are fetched on demand from HuggingFace; no checkpoints bundled.
-See :doc:`docs/policies/kimodo`.
+See :doc:`docs/reference/policies/kimodo`.
 """
 
 from strands_robots.policies.kimodo.config import KimodoConfig

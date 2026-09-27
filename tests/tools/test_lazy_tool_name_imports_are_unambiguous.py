@@ -280,7 +280,7 @@ class TestNoAmbiguousReadShipsInTheDocs:
 
     def test_the_docs_scan_reaches_the_tools_page(self) -> None:
         """A fence that constructs a tool and calls it is parsed, not skipped."""
-        page = _REPO_ROOT / "docs" / "hardware" / "tools.md"
+        page = _REPO_ROOT / "docs" / "reference" / "hardware" / "tools.md"
         bodies = [match.group(1) for match in _PYTHON_FENCE.finditer(page.read_text(encoding="utf-8"))]
 
         assert any("serial_tool(action=" in body for body in bodies), "premise: tools.md calls a tool in a fence"

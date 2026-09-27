@@ -32,8 +32,8 @@ drives.
 The same divergence had a documentation half, pinned at the bottom: the base
 ``start_policy`` summary line promised "a background thread (non-blocking)" and
 its next line said "synchronous passthrough to ``run_policy``", while
-``docs/api-reference.md`` called it an async rollout unconditionally and
-``docs/troubleshooting.md`` prescribed it as the fix for a hanging agent. On the
+``docs/reference/api-reference.md`` called it an async rollout unconditionally and
+``docs/reference/troubleshooting.md`` prescribed it as the fix for a hanging agent. On the
 two backends shipped on that default it blocks for the whole ``duration``, so
 the prescribed remedy was the hang.
 """
@@ -527,7 +527,7 @@ class TestTheDocumentedActionsResolve:
     @pytest.mark.parametrize("action", _selected_actions())
     def test_every_documented_action_is_on_the_base_engine(self, action: str) -> None:
         assert hasattr(SimEngine, action), (
-            f"docs/api-reference.md lists {action!r} as a SimEngine action, but it does not resolve "
+            f"docs/reference/api-reference.md lists {action!r} as a SimEngine action, but it does not resolve "
             "there - a caller following the table gets AttributeError on every backend that does "
             "not happen to override it"
         )

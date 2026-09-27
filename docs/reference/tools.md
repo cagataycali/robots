@@ -8,7 +8,7 @@ Generated from `strands_robots/tools/` by `docs/hooks/tool_reference.py` at buil
 
 Every tool returns the same envelope, `{"status": ..., "content": [{"text": "..."}]}`, read through
 `result["content"][0]["text"]` and never through invented keys - see the
-[tool result contract](../contracts.md). A tool marked as taking the agent's tool context can stop
+[tool result contract](contracts.md). A tool marked as taking the agent's tool context can stop
 and ask an operator before it acts.
 
 {{tool_reference}}

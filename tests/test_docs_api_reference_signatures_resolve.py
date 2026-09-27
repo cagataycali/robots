@@ -1,6 +1,6 @@
 """The API reference's parameter names are names the callables accept.
 
-``docs/api-reference.md`` is the table a caller reads before their first call,
+``docs/reference/api-reference.md`` is the table a caller reads before their first call,
 and every row leads with a signature-shaped code span. A parameter name in that
 span the callable does not accept is not a typo a reader routes around: it is a
 ``TypeError`` at the call site. Worse, when the wrong name is a real concept
@@ -29,7 +29,7 @@ from typing import Any
 
 import pytest
 
-DOC = Path(__file__).resolve().parents[1] / "docs" / "api-reference.md"
+DOC = Path(__file__).resolve().parents[1] / "docs" / "reference" / "api-reference.md"
 
 _HEADING = re.compile(r"^#+ `([A-Za-z_][\w.]*)`\s*$")
 _ROW_SPANS = re.compile(r"`([^`]+)`")
@@ -129,7 +129,7 @@ def test_every_documented_parameter_is_a_name_its_callable_accepts() -> None:
             continue
         if absent := [p for p in params if p not in accepted]:
             drifted.append(f"{module_name}: `{span}` names {absent}, accepted: {sorted(accepted)}")
-    assert not drifted, "docs/api-reference.md documents parameters that do not exist:\n" + "\n".join(drifted)
+    assert not drifted, "docs/reference/api-reference.md documents parameters that do not exist:\n" + "\n".join(drifted)
 
 
 def test_the_reference_grades_the_rows_it_is_written_for() -> None:

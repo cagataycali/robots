@@ -280,8 +280,8 @@ class TestTheRecoveryKnobsAreDocumented:
         )
 
     def test_the_recovery_procedure_is_documented_beside_the_estop_call(self) -> None:
-        """``docs/mesh.md`` shows ``emergency_stop()``; it must show the way back."""
-        mesh_doc = (_REPO_ROOT / "docs" / "mesh.md").read_text(encoding="utf-8")
+        """``docs/reference/mesh.md`` shows ``emergency_stop()``; it must show the way back."""
+        mesh_doc = (_REPO_ROOT / "docs" / "reference" / "mesh.md").read_text(encoding="utf-8")
         assert "emergency_stop()" in mesh_doc, "premise: mesh.md documents emergency_stop"
         assert '"action": "resume"' in mesh_doc, "mesh.md documents how to stop a fleet but not how to resume it"
         for knob in ("STRANDS_MESH_OVERRIDE_CODE", "STRANDS_MESH_RESUME_FORWARD_SKEW_S"):

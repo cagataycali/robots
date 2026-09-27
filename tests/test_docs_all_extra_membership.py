@@ -11,7 +11,7 @@ prose - so it is derivable, and it drifted.
 while the bundle had grown to nineteen. The enumeration was a strict subset, so
 a reader deciding whether ``[all]`` covered the policy they wanted was told it
 did not for fourteen extras it does install - and the code block five lines
-below the table called the same bundle "everything". ``docs/architecture.md``
+below the table called the same bundle "everything". ``docs/reference/architecture.md``
 called it a "union", which it is not.
 
 The cells now state the count and name the extras ``[all]`` leaves out, because
@@ -40,7 +40,7 @@ import pytest
 _ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _ROOT / "pyproject.toml"
 _INSTALL_PAGE = _ROOT / "docs" / "getting-started" / "installation.md"
-_ARCHITECTURE_PAGE = _ROOT / "docs" / "architecture.md"
+_ARCHITECTURE_PAGE = _ROOT / "docs" / "reference" / "architecture.md"
 _INDEX_PAGE = _ROOT / "docs" / "index.md"
 
 # The bundle is a developer convenience, so its tooling extra is not a

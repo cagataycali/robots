@@ -14,7 +14,7 @@ Requires the ``[sim-mujoco]`` extra plus ``torch``. The same recipe generalizes
 to locomotion / whole-body control by swapping the robot, the reward terms and
 ``SimEnv(action_scale=...)`` - the action is the actuator command, so the default
 scale of ``1.0`` reaches 3.5% of a go2 motor's torque range (see
-``docs/training/rl.md``).
+``docs/reference/training/rl.md``).
 """
 
 from __future__ import annotations

@@ -16,7 +16,7 @@ their episode index.
 The rest of the package already documents the three-step form: the
 ``run_policy(n_episodes=...)`` docstring and its implementation comment both
 describe the manual loop it replaces as ``run_policy(); save_episode();
-reset()``, ``docs/recording.md`` resets at the top of its loop and explains
+reset()``, ``docs/reference/recording.md`` resets at the top of its loop and explains
 ``reset()``'s own episode-boundary behaviour, and
 :mod:`strands_robots.policies.persistent` shows the same three calls. This guard
 holds the remaining publication sites to that form.
@@ -103,7 +103,7 @@ def _save_episode_docstring_recipe() -> str:
 
 def _newton_doc_recipe() -> str:
     """The collection block in the Newton scenes guide."""
-    text = (_REPO_ROOT / "docs" / "simulation" / "newton-scenes.md").read_text(encoding="utf-8")
+    text = (_REPO_ROOT / "docs" / "reference" / "simulation" / "newton-scenes.md").read_text(encoding="utf-8")
     blocks = [
         block
         for block in re.findall(r"```python\n(.*?)```", text, re.S)
@@ -111,7 +111,7 @@ def _newton_doc_recipe() -> str:
     ]
     assert len(blocks) == 1, (
         "premise: expected exactly one collection block in "
-        f"docs/simulation/newton-scenes.md, found {len(blocks)}. A guard that matches "
+        f"docs/reference/simulation/newton-scenes.md, found {len(blocks)}. A guard that matches "
         "no block, or the wrong one, would pass without grading the recipe."
     )
     return blocks[0]
@@ -119,7 +119,7 @@ def _newton_doc_recipe() -> str:
 
 _RECIPES = {
     "save_episode docstring": _save_episode_docstring_recipe,
-    "docs/simulation/newton-scenes.md": _newton_doc_recipe,
+    "docs/reference/simulation/newton-scenes.md": _newton_doc_recipe,
 }
 
 
@@ -232,7 +232,7 @@ class TestTheSitesThatAlreadyPublishTheResetKeepIt:
         [
             "strands_robots/simulation/base.py",
             "strands_robots/policies/persistent.py",
-            "docs/recording.md",
+            "docs/reference/recording.md",
         ],
     )
     def test_the_manual_loop_is_named_with_its_reset(self, relative_path: str) -> None:

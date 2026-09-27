@@ -51,7 +51,7 @@ mj = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.simulation import _PUBLISHED_ACTIONS, Simulation  # noqa: E402
 
-_DOCS = pathlib.Path(__file__).resolve().parents[3] / "docs" / "simulation" / "domain-randomization.md"
+_DOCS = pathlib.Path(__file__).resolve().parents[3] / "docs" / "reference" / "simulation" / "domain-randomization.md"
 
 #: Model arrays each axis writes, grouped by the axis that owns them. A
 #: targeted setter (``set_geom_properties`` / ``set_body_properties``) moves the
@@ -408,7 +408,7 @@ def _promised_but_unsampled(text: str) -> frozenset[str]:
 @pytest.mark.parametrize(
     "surface",
     [
-        "docs/simulation/domain-randomization.md",
+        "docs/reference/simulation/domain-randomization.md",
         "examples/12_domain_randomization.py",
         "strands_robots/simulation/mujoco/randomization.py",
         "strands_robots/simulation/newton/randomization.py",

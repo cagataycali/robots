@@ -37,7 +37,7 @@ _DOC = _REPO_ROOT / "docs" / "getting-started" / "robot-factory.md"
 #: The ``driver="strands"`` contract, including the refusal transcript the last
 #: class here grades. The factory page states the choice; this one states the
 #: contract.
-_NATIVE_DRIVERS_DOC = _REPO_ROOT / "docs" / "hardware" / "native-drivers.md"
+_NATIVE_DRIVERS_DOC = _REPO_ROOT / "docs" / "reference" / "hardware" / "native-drivers.md"
 
 _VARIADIC = (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
 
@@ -277,7 +277,7 @@ class TestTheMeshSectionNamesTheSpellingThatEnablesMesh:
 class TestTheNativeDriverRefusalExampleIsStillTrue:
     """The ``driver="strands"`` refusal example must name a robot that has no driver.
 
-    The example lives on ``docs/hardware/native-drivers.md``, beside the rest of
+    The example lives on ``docs/reference/hardware/native-drivers.md``, beside the rest of
     the native-driver contract. That page shows the refusal verbatim, as a ``>>>`` transcript, so it reads as
     something the reader could paste. That makes it the one block on the page
     whose *premise* can rot without a word of it changing: a robot named here

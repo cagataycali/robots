@@ -61,7 +61,7 @@ def _next_step_after_train(provider: str, res: Any) -> str:
     Interpolating that value into a load instruction prints the ``None``
     sentinel and sends the caller to ``create_policy('None')``, which raises
     ``Unknown policy provider: 'None'`` - the dead end
-    ``docs/training/overview.md`` warns about when it notes that an unchecked
+    ``docs/reference/training/overview.md`` warns about when it notes that an unchecked
     call "hands whatever consumes ``checkpoint_dir`` a ``None`` instead". So the
     load instruction is named only when there is an artifact to load; a run that
     has not finished gets the step that does apply, which is polling it through
@@ -220,7 +220,7 @@ def train_policy(
           config/recipe resolution.
         - torchcodec's ``.so`` must match the installed torch build exactly; a
           torch nightly load-fails a stable torchcodec (``undefined symbol``)
-          and lerobot silently yields zero frames. See docs/training/overview.md.
+          and lerobot silently yields zero frames. See docs/reference/training/overview.md.
     """
     try:
         # Graded first: an action this tool does not know is a mistake in the

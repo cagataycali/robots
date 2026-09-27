@@ -1,7 +1,7 @@
 """The Microduck render example can reach the scene a skill was trained in.
 
 A shipped Pollen weight and the scene it was trained in are one pair.
-``docs/policies/microduck.md`` carries the skill-to-scene table: five of the nine
+``docs/reference/policies/microduck.md`` carries the skill-to-scene table: five of the nine
 weights run on the scene the registry entry declares, and four do not - ``roller``
 and ``roller_crouch`` need the four passive ankle wheels only ``scene_rollers.xml``
 carries, and ``ball_kick_left`` / ``ball_kick_right`` need the prop only
@@ -56,7 +56,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLE = _REPO_ROOT / "examples" / "microduck" / "render_video.py"
-_DOCS_PAGE = _REPO_ROOT / "docs" / "policies" / "microduck.md"
+_DOCS_PAGE = _REPO_ROOT / "docs" / "reference" / "policies" / "microduck.md"
 
 # The scene the registry entry declares. Every other scene the page names is a
 # variant a weight needs, and is what --scene exists to reach.
@@ -73,7 +73,7 @@ def _load_example() -> ModuleType:
 
 
 def _documented_variant_scenes() -> set[str]:
-    """The variant scenes ``docs/policies/microduck.md`` names, derived from the page.
+    """The variant scenes ``docs/reference/policies/microduck.md`` names, derived from the page.
 
     Read from the page rather than restated here, so a tenth weight that needs a
     new scene fails this guard until the flag's help names it too.

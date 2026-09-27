@@ -25,7 +25,7 @@ and every segment is recorded from it.
 Usage::
 
     pip install "strands-robots[wbc,sim-mujoco]"
-    # checkpoint dir with policy.onnx (+ walk_policy.onnx); see docs/policies/wbc.md
+    # checkpoint dir with policy.onnx (+ walk_policy.onnx); see docs/reference/policies/wbc.md
     MUJOCO_GL=egl python examples/locomotion/scripted_g1.py \
         --checkpoint /path/to/grootwbc-g1 --mp4 /tmp/g1_locomotion.mp4
 """

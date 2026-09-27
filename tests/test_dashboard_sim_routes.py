@@ -659,7 +659,7 @@ class TestEstop:
         If the fold and the thaw are not one step, an e-stop can land between
         them: it freezes and latches, and then the resume's thaw runs anyway.
         The lockout then reads ``locked`` while every session steps in realtime,
-        the inversion of the invariant ``docs/dashboard.md`` promises. This cell
+        the inversion of the invariant ``docs/reference/dashboard.md`` promises. This cell
         parks the thaw, fires the e-stop, and checks the invariant afterwards
         for both interleavings: the e-stop must wait for the whole resume, or
         run whole before it.

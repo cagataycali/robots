@@ -204,7 +204,7 @@ kimodo = [
     # weights for its own runtime instead, so that checkpoint is driven through
     # a `motion_agent=` sampler rather than by this extra alone. Weights are
     # fetched on demand; nothing bundled.
-    # See strands_robots/policies/kimodo/ and docs/policies/kimodo.md.
+    # See strands_robots/policies/kimodo/ and docs/reference/policies/kimodo.md.
     "torch>=2.0.0",
     "diffusers>=0.30.0",
     "transformers>=4.40.0",
@@ -223,7 +223,7 @@ protomotions = [
     # the exported graph, pyyaml reads the `unified_pipeline.yaml` sidecar next
     # to it, and huggingface_hub fetches the checkpoint from a model id. Weights
     # are NOT bundled. See strands_robots/policies/protomotions/ and
-    # docs/policies/protomotions.md.
+    # docs/reference/policies/protomotions.md.
     "onnxruntime>=1.17.0,<2.0.0",
     "pyyaml>=5.1,<7.0.0",
     # Same >=1.5 floor and MAJOR-only cap as [wbc]: the documented bucket-sync
@@ -239,7 +239,7 @@ microduck = [
     # them on the Hub at pollen-robotics/microduck-policies (the policies/
     # directory of their git repo is gone), and huggingface_hub fetches a bare
     # weight name from there. A MuJoCo rollout uses the separate [sim-mujoco]
-    # extra. See strands_robots/policies/microduck/ and docs/policies/microduck.md.
+    # extra. See strands_robots/policies/microduck/ and docs/reference/policies/microduck.md.
     "onnxruntime>=1.17.0,<2.0.0",
     # Floor 1.5 for the same reason as [wbc]: hf_hub_download is old, but every
     # other extra that reads the Hub already pins this window, so one resolver
@@ -510,7 +510,7 @@ sim-newton = [
 # Kit application provisioned separately - via the runtime's own pip wheels
 # (`pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url
 # https://pypi.nvidia.com`, viable on Python 3.12; the `extscache` extra is
-# required, and see docs/simulation/isaac.md for the coverage-downgrade /
+# required, and see docs/reference/simulation/isaac.md for the coverage-downgrade /
 # EULA / torch-bump caveats, #1803), the NVIDIA Omniverse Launcher,
 # Isaac Lab (`./isaaclab.sh -i`), or the NGC docker image
 # (`nvcr.io/nvidia/isaac-sim:6.0`; see
@@ -609,7 +609,7 @@ device-connect = [
 # extra exists to deliver. That wheel exists for macOS, Windows and Linux x86_64
 # only: no cyclonedds release publishes a linux aarch64 wheel, so on a Jetson /
 # onboard PC the extra resolves to the sdist and needs a Cyclone DDS C install
-# (CYCLONEDDS_HOME) - docs/rtps-integration.md#linux-aarch64-jetson.
+# (CYCLONEDDS_HOME) - docs/reference/rtps-integration.md#linux-aarch64-jetson.
 # `tests/test_lockfile_parity_gate.py` pins that the locked artifact is a wheel,
 # since a resolution inside the declared bounds is what `uv lock --check` grades.
 ros2 = [
@@ -626,7 +626,7 @@ ollama = [
 # CPU/edge robot host to a remote GPU PolicyServer and receive action chunks
 # back over a portable WS-JSON WebSocket protocol. Pulls only `websockets`
 # (numpy-version agnostic, so it composes with lerobot's numpy>=2). See
-# strands_robots/inference/ and docs/inference/remote.md.
+# strands_robots/inference/ and docs/reference/inference/remote.md.
 inference = [
     # See [cosmos3-service]: >=17.0 is where `Server.shutdown()` starts closing
     # the connections it accepted, which is what makes `PolicyServer.stop()`
@@ -636,7 +636,7 @@ inference = [
 # rosbridge WebSocket transport: drive ROS1 (or remote ROS 2) robots from a host
 # with no ROS install at all. Pure-pip `roslibpy` speaks the rosbridge JSON
 # protocol over a WebSocket. See strands_robots/tools/use_rosbridge.py and
-# docs/rosbridge-integration.md.
+# docs/reference/rosbridge-integration.md.
 rosbridge = [
     "roslibpy>=1.7.0,<2.0.0",
 ]

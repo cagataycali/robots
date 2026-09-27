@@ -22,7 +22,7 @@ from strands_robots.rtps.idl import _INSTALL_HINT
 from tests._blocked_module import blocked
 
 _DOCS = Path(__file__).resolve().parents[2] / "docs"
-_ANCHOR = "docs/rtps-integration.md#linux-aarch64-jetson"
+_ANCHOR = "docs/reference/rtps-integration.md#linux-aarch64-jetson"
 _HEADING = "### Linux aarch64 (Jetson)"
 
 

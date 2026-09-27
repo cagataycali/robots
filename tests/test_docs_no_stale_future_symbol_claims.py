@@ -4,7 +4,7 @@ A page written while a symbol was still a plan keeps that sentence after the
 symbol lands. The reader who stops at the sentence walks away believing a
 capability is unavailable, and nothing in the toolchain notices: ruff, mypy and
 the xref guards all check symbols the docs *name*, never claims about whether a
-named symbol exists yet. ``docs/policies/wbc.md`` said layering an upper body on
+named symbol exists yet. ``docs/reference/policies/wbc.md`` said layering an upper body on
 WBC locomotion "is the job of a future ``CompositePolicy``, out of scope for this
 provider" for two months after ``CompositePolicy`` landed - and the same page
 documented it, with a runnable example and a rollout artifact, 260 lines further
@@ -18,10 +18,10 @@ behind an optional extra is still resolved.
 Two deliberate narrowings, each measured against the current tree:
 
 * ``is planned`` is not a marker. "The full collision-free trajectory is planned
-  and cached on the first call" (``docs/policies/curobo.md``) is the domain verb,
+  and cached on the first call" (``docs/reference/policies/curobo.md``) is the domain verb,
   not a roadmap claim.
 * ``future`` must not open a hyphenated compound. "the lookahead offsets for the
-  future-reference window" (``docs/policies/protomotions.md``) describes a
+  future-reference window" (``docs/reference/policies/protomotions.md``) describes a
   window, not a plan.
 
 A claim about a name the package does not define is left alone: it is either

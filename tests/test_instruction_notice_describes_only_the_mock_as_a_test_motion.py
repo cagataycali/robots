@@ -4,7 +4,7 @@
 for a policy with ``reads_instruction = False``. It used to spell "Its actions -
 a test motion on every joint -" for every such class, which is what
 ``MockPolicy`` does and what a custom non-reader written from
-``docs/policies/custom-policies.md`` does not. The clause now comes from the
+``docs/reference/policies/custom-policies.md`` does not. The clause now comes from the
 class's own ``instruction_free_actions``; a class declaring none gets no clause.
 """
 

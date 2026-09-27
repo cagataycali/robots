@@ -48,7 +48,7 @@ def test_the_curobo_remedy_says_why_the_extra_is_not_the_answer() -> None:
     """The text explains the no-op, so a reader who knows the extra exists does not reach for it."""
     assert "[curobo] extra is empty" in CUROBO_SYSTEM_INSTALL_HINT
     assert "squatter" in CUROBO_SYSTEM_INSTALL_HINT
-    assert "docs/policies/curobo.md" in CUROBO_SYSTEM_INSTALL_HINT
+    assert "docs/reference/policies/curobo.md" in CUROBO_SYSTEM_INSTALL_HINT
 
 
 def test_a_raw_pt_motion_without_torch_names_torch_and_no_other_stack(tmp_path) -> None:

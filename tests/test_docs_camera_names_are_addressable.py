@@ -10,7 +10,7 @@ cameras on the reader's behalf, and each has to stay inside that alphabet:
 * **The examples.** A fence showing ``add_camera(name="wrist cam")`` does not fail
   at the line the reader copied - it returns ``status="error"``, and every line
   below it runs against a scene missing the camera the example is about.
-* **The camera-naming table.** ``docs/policies/camera-naming.md`` tells the reader
+* **The camera-naming table.** ``docs/reference/policies/camera-naming.md`` tells the reader
   to name their sim cameras after a policy's expected source key, so a key in that
   column that ``add_camera`` refuses is advice that cannot be followed.
 * **The embodiments.** Those source keys come from ``obs_rename`` in
@@ -35,7 +35,7 @@ from strands_robots.utils import scoped_camera_name_error
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _EMBODIMENTS = _REPO_ROOT / "strands_robots" / "policies" / "lerobot_local" / "embodiments.json"
-_CAMERA_NAMING_DOC = _REPO_ROOT / "docs" / "policies" / "camera-naming.md"
+_CAMERA_NAMING_DOC = _REPO_ROOT / "docs" / "reference" / "policies" / "camera-naming.md"
 
 #: A literal name claimed at an ``add_camera`` call, keyword or positional. Read
 #: with a pattern rather than through :mod:`ast`, because the documented fences
@@ -119,16 +119,16 @@ def test_every_embodiment_expects_a_camera_name_that_can_exist() -> None:
 
 
 def test_the_documented_alphabet_agrees_with_the_live_rule() -> None:
-    """The prose in ``docs/recording.md`` and the door agree on both lists.
+    """The prose in ``docs/reference/recording.md`` and the door agree on both lists.
 
     Accepted shapes and refused ones, so the paragraph cannot drift into
     describing a rule the door does not apply.
     """
-    text = (_REPO_ROOT / "docs" / "recording.md").read_text(encoding="utf-8")
+    text = (_REPO_ROOT / "docs" / "reference" / "recording.md").read_text(encoding="utf-8")
     accepted = ("wrist", "front_cam", "cam-2", "arm0/wrist_cam")
     refused = ("a b", "wrist.rgb", "*", "..", "sub/../etc", "a//b")
     for name in accepted + refused:
-        assert f"`{name}`" in text, f"docs/recording.md no longer shows {name!r}"
+        assert f"`{name}`" in text, f"docs/reference/recording.md no longer shows {name!r}"
     assert [n for n in accepted if _refused(n)] == []
     assert [n for n in refused if not _refused(n)] == []
 

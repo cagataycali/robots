@@ -88,7 +88,7 @@ def show_g1() -> int:
     print("\n  Drive it for real over CycloneDDS:")
     print("    g1 = Robot('g1', mode='real', port='192.168.123.164')")
     print("    # network_interface='eth0' by default; motion is FSM-gated, see")
-    print("    # docs/hardware/unitree-g1.md.")
+    print("    # docs/reference/hardware/unitree-g1.md.")
     return 0
 
 

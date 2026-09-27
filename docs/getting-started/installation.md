@@ -98,7 +98,7 @@ uv pip install "strands-robots[sim-mujoco,lerobot]"
 
 MolmoAct2 checkpoints (e.g. `allenai/MolmoAct2-SO100_101`) resolve straight from
 PyPI now that lerobot >= 0.6 ships `MolmoAct2Policy` (it was added after lerobot
-0.5.1). See [LeRobot Local: MolmoAct2](../policies/lerobot-local.md#molmoact2)
+0.5.1). See [LeRobot Local: MolmoAct2](../reference/policies/lerobot-local.md#molmoact2)
 for full instructions. Quick path:
 
 ```bash
@@ -162,4 +162,4 @@ Assets cache under `~/.strands_robots/assets/`.
 
 - [Quickstart](quickstart.md) - five minutes after install.
 - [Robot factory](robot-factory.md) - every kwarg `Robot()` accepts.
-- [Troubleshooting](../troubleshooting.md) - install gotchas.
+- [Troubleshooting](../reference/troubleshooting.md) - install gotchas.

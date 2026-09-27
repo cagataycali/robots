@@ -81,7 +81,7 @@ _GATE_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "test-lint.yml"
 #: Extras whose documented contract is a *wheel*: installable with a plain
 #: ``pip install`` and no toolchain.  ``[ros2]`` declares only the cyclonedds RMW
 #: binding precisely because it is the pip-installable half of ROS 2 -- the manifest
-#: comment, ``docs/rtps-integration.md`` ("cyclonedds - a self-contained wheel"),
+#: comment, ``docs/reference/rtps-integration.md`` ("cyclonedds - a self-contained wheel"),
 #: :mod:`strands_robots.hardware_rtps_bridge` ("a single self-contained pip wheel")
 #: and the install hint in :mod:`strands_robots.rtps.idl` all promise it, and the
 #: whole reason the RTPS bridge exists beside the rclpy one is that it needs no
@@ -296,7 +296,7 @@ def test_a_wheel_only_extra_locks_a_wheel() -> None:
     cp310-cp313 from 11.0.1, so no version that ceiling admitted had a wheel for
     any interpreter this project supports, and the lock recorded the 0.10.5
     **sdist** alone.  ``pip install 'strands-robots[ros2]'`` - the line
-    ``docs/rtps-integration.md`` annotates "cyclonedds - a self-contained wheel" -
+    ``docs/reference/rtps-integration.md`` annotates "cyclonedds - a self-contained wheel" -
     therefore ended in a source build on every supported Python::
 
         Failed to build `cyclonedds==0.10.5`

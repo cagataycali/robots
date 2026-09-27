@@ -23,7 +23,7 @@ Why this exists alongside ``HardwareRosBridge``: ``rclpy`` needs a *sourced ROS 
 distro* (apt / RoboStack / docker), which is heavy and version-pinned (Humble vs
 Jazzy vs Rolling). ``cyclonedds`` is a single self-contained pip wheel (macOS,
 Windows, Linux x86_64; Linux aarch64 builds it from source against a Cyclone DDS
-C install - ``docs/rtps-integration.md#linux-aarch64-jetson``) that speaks the
+C install - ``docs/reference/rtps-integration.md#linux-aarch64-jetson``) that speaks the
 RTPS wire protocol every ROS 2 distro shares, so this bridge runs on a bare dev
 laptop or a minimal robot image with ``pip install 'strands-robots[ros2]'`` and
 nothing else. The trade-off is type coverage: RTPS publishing needs a *local*
@@ -35,7 +35,7 @@ the ROS 2 *graph*: a bare DDS participant has no node name and no type hash, so
 ``ros2 node list`` does not list this bridge and ``ros2 topic info -v`` reports
 its publisher as ``_CREATED_BY_BARE_DDS_APP_`` with an ``INVALID`` type hash -
 the payload a subscriber decodes is identical either way
-(``docs/ros2/rtps-robot.md``).
+(``docs/reference/ros2/rtps-robot.md``).
 
 Selection is the hardware ``Robot``'s job (``ros2_transport="rclpy"|"rtps"``);
 this module only implements the RTPS path. Both bridges present an identical

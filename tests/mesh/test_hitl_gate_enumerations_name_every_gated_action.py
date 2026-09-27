@@ -74,13 +74,13 @@ def _enumerations() -> tuple[_Enumeration, ...]:
         ),
         _Enumeration(
             "the security guide's default-gate bullet",
-            _REPO_ROOT / "docs" / "security" / "commands.md",
+            _REPO_ROOT / "docs" / "reference" / "security" / "commands.md",
             "The default gate is broader than just fleet-wide actions.",
             default,
         ),
         _Enumeration(
             "the security guide's audit-trail bullet",
-            _REPO_ROOT / "docs" / "security" / "commands.md",
+            _REPO_ROOT / "docs" / "reference" / "security" / "commands.md",
             "**Audit trail.**",
             default,
         ),
@@ -214,7 +214,7 @@ def test_the_device_connect_guides_already_name_every_gated_action() -> None:
     graded stops that asymmetry reappearing from the other side.
     """
     for path, anchor in (
-        (_REPO_ROOT / "docs" / "device-connect.md", "The actuation actions"),
+        (_REPO_ROOT / "docs" / "reference" / "device-connect.md", "The actuation actions"),
         (_REPO_ROOT / "strands_robots" / "device_connect" / "GUIDE.md", "is gated"),
     ):
         text = _anchored_paragraph(path, anchor)

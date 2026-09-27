@@ -9,7 +9,7 @@ key the registry files the peer under, ``type`` and ``hostname`` are what
 ``reachable`` is the verdict derived from the local heartbeat reading, and
 ``age`` is this process's own reading of when it last heard a heartbeat --
 described on ``last_seen_mono`` as "a local observation, never a stamp the peer
-sent", and named in ``docs/mesh.md`` among the things the mesh decides from a
+sent", and named in ``docs/reference/mesh.md`` among the things the mesh decides from a
 duration on ``time.monotonic()`` that no clock correction can move.
 
 Spread last, ``caps`` overrode all five. This pins that the local reading wins a

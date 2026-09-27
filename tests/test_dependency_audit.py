@@ -1504,7 +1504,7 @@ def test_the_lockfile_pins_a_diffusers_that_ships_the_omni_pipeline() -> None:
 # changed nothing. `pip install rclpy` fails outright ("No matching distribution
 # found for rclpy"). So the operator who asked for `ros2_bridge=True` was handed
 # two instructions and no way forward, while pyproject.toml, the `[ros2]` block
-# in docs/ros2-integration.md, the `ros_telemetry` module docstring and the
+# in docs/reference/ros2-integration.md, the `ros_telemetry` module docstring and the
 # `use_ros` tool's own hint all already stated the remedy that works: source a
 # system ROS 2 distro.
 #

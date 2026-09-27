@@ -6,7 +6,7 @@ any of the other paths on which ``get_session`` yields nothing -- it returns a
 ``Mesh`` whose ``alive`` is ``False``.  That peer publishes no presence and
 discovers none, so it is not a slow peer: every wait below it can only expire.
 
-``mesh.alive`` is the documented observable for that state (docs/troubleshooting.md),
+``mesh.alive`` is the documented observable for that state (docs/reference/troubleshooting.md),
 and ``examples/fleet/dashboard.py`` already refuses on it with the remedy named.
 The four live-fleet builders checked only ``is None``, so a dead peer passed the
 guard.  Measured with ``import zenoh`` failing, before this branch:

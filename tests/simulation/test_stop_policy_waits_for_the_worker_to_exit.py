@@ -134,13 +134,13 @@ def test_the_api_reference_row_names_the_fields_the_envelope_carries(arm):
     keys = set(_json(arm.stop_policy("so101")))
     assert keys == {"robot", "was_running", "exited"}, keys
 
-    doc = (Path(__file__).resolve().parents[2] / "docs" / "api-reference.md").read_text(encoding="utf-8")
+    doc = (Path(__file__).resolve().parents[2] / "docs" / "reference" / "api-reference.md").read_text(encoding="utf-8")
     rows = [line for line in doc.splitlines() if _ROW.match(line)]
     assert len(rows) == 1, rows  # a broken parse would make the rule below vacuous
     row = rows[0]
     for key in keys - {"robot"}:
         assert f"`{key}`" in row, (
-            f"docs/api-reference.md documents stop_policy without naming {key!r}, a key its json "
+            f"docs/reference/api-reference.md documents stop_policy without naming {key!r}, a key its json "
             f"block really returns: {row}"
         )
     assert f"{type(arm)._POLICY_STOP_JOIN_TIMEOUT:g} s" in row, (

@@ -9,7 +9,7 @@ dropped by the agent runtime and never surface in ``agent.messages``, so any
 data placed there is invisible to the agent and to downstream consumers
 (mesh, dashboards, evals).
 
-See ``docs/contracts.md`` for the canonical shape and rationale.
+See ``docs/reference/contracts.md`` for the canonical shape and rationale.
 """
 
 from __future__ import annotations

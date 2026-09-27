@@ -40,7 +40,7 @@ beside the ``_MAX_TRAJECTORY_WAYPOINTS`` guard, rather than when a chunk of it i
 served: the offending waypoint can sit in the second or the tenth chunk, and
 refusing at serve time would refuse after the arm had already run the first.
 :meth:`MoveIt2Policy._unpack_trajectory` refuses a positionless waypoint for the
-same reason, and ``docs/policies/moveit2.md`` states the rule the two planner
+same reason, and ``docs/reference/policies/moveit2.md`` states the rule the two planner
 policies now share - a plan that commands nothing is a planning failure, not a
 successful no-op plan.
 

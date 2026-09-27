@@ -10,9 +10,9 @@ documentation so a new provider cannot ship without a docs page wired into the
 ``mock`` is exempt: it is a built-in testing stub documented inline in the
 policy overview, not a standalone provider page.
 
-The page does not have to sit under ``docs/policies/``. ``remote`` is
+The page does not have to sit under ``docs/reference/policies/``. ``remote`` is
 documented with the client/server split it is half of
-(``docs/inference/remote.md``), and the overview's provider matrix links there,
+(``docs/reference/inference/remote.md``), and the overview's provider matrix links there,
 so what this rule needs is that *some* page in the nav is named for the
 provider - not that a second page is kept beside the first to satisfy a path.
 """

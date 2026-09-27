@@ -46,7 +46,7 @@ render raw HTML embedded in a Markdown file, and this tree uses it where
 Markdown has no equivalent - a ``<figure>``/``<figcaption>`` pair, an
 ``<img>`` carrying a width. Those targets are links to a reader, and reading
 only Markdown syntax left them graded by nothing: the sweep reported a clean
-tree while ``docs/policies/wbc.md`` carried two ``<a href>`` MP4 links with one
+tree while ``docs/reference/policies/wbc.md`` carried two ``<a href>`` MP4 links with one
 ``../`` too many, five lines below a Markdown image whose target was correct and
 graded.
 
@@ -76,7 +76,7 @@ Deliberately out of scope for the same reason it is in scope elsewhere:
 * ``<video>``, ``<source>``, ``<figure>`` and ``<figcaption>``. GitHub's
   sanitizer drops them, so a target inside one reaches no reader of the source
   file and the site is its only consumer - where the site-relative spelling this
-  tree uses is correct. ``docs/device-connect.md`` ships one such
+  tree uses is correct. ``docs/reference/device-connect.md`` ships one such
   ``<source src>``, and grading it against the source tree would report a
   working embed as broken.
 """
@@ -424,7 +424,7 @@ class TestTheRuleSeesTheLinksItMustSee:
         """``<a href>`` is a link a reader clicks, graded like a Markdown one.
 
         This is the shape the sweep was blind to: the two MP4 links in
-        ``docs/policies/wbc.md`` were written this way, carried one ``../`` too
+        ``docs/reference/policies/wbc.md`` were written this way, carried one ``../`` too
         many, and were reported by nothing.
         """
         root, page = self._tree(tmp_path)
@@ -460,7 +460,7 @@ class TestTheRuleSeesTheLinksItMustSee:
         ``<video>``, ``<source>`` and ``<iframe>`` never reach a reader of the
         source file, so the published site is their only consumer and the
         site-relative spelling this tree uses for them is correct.
-        ``docs/device-connect.md`` ships one such ``<source src>``; reading it
+        ``docs/reference/device-connect.md`` ships one such ``<source src>``; reading it
         against the source tree would report a working embed as broken.
         """
         root, page = self._tree(tmp_path)

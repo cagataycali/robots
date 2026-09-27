@@ -1,6 +1,6 @@
 """The documented ABC contract names every public member of ``Policy``.
 
-``docs/policies/custom-policies.md`` carries an "ABC contract" table which is
+``docs/reference/policies/custom-policies.md`` carries an "ABC contract" table which is
 the surface a subclass author reads before writing a provider. A member absent
 from it is not merely undocumented - it is invisible on the page whose job is
 to enumerate the contract, so an author cannot know to override it. That had
@@ -23,7 +23,7 @@ import re
 
 from strands_robots.policies.base import Policy
 
-_DOC = pathlib.Path(inspect.getfile(Policy)).parents[2] / "docs" / "policies" / "custom-policies.md"
+_DOC = pathlib.Path(inspect.getfile(Policy)).parents[2] / "docs" / "reference" / "policies" / "custom-policies.md"
 _HEADING = "## ABC contract"
 
 

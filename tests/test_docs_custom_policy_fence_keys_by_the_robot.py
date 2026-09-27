@@ -3,7 +3,7 @@
 ``SimEngine.run_policy`` calls ``policy.set_robot_state_keys(robot_action_keys)``
 before the rollout, and ``PolicyRunner`` refuses a policy whose first three
 actions resolve to no actuator on the robot (``"the robot has not moved"``). The
-``docs/policies/custom-policies.md`` opening fence is the reader's first policy
+``docs/reference/policies/custom-policies.md`` opening fence is the reader's first policy
 and is run on ``Robot("so100")`` two fences later, so the action it returns must
 be keyed by the names ``set_robot_state_keys`` received, not by literals no arm
 carries.
@@ -21,7 +21,7 @@ from pathlib import Path
 import strands_robots
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
-_PAGE = _REPO_ROOT / "docs" / "policies" / "custom-policies.md"
+_PAGE = _REPO_ROOT / "docs" / "reference" / "policies" / "custom-policies.md"
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 _SO100_KEYS = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
 

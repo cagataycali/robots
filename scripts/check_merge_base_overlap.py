@@ -252,7 +252,7 @@ One prose surface is graded, and there both halves of that argument fail.
 ``docs/**/*.md`` page against :data:`DOCS_WORD_BUDGET`, so two additions to one
 page near the budget compose to a count neither branch has, and a text-clean
 merge is the normal case for two paragraphs added in different sections. #3907
-and #3940 both edited ``docs/policies/moveit2.md`` (base 1479 words): 1493 and
+and #3940 both edited ``docs/reference/policies/moveit2.md`` (base 1479 words): 1493 and
 1497 words at their heads, both passing, and 1511 composed over the shared base
 against a budget of 1500. The sweep listed the pair as prose-only, and whichever
 squashed second would have turned ``main`` red on the required check with

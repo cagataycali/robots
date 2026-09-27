@@ -29,7 +29,7 @@ Every robot in this family, generated from `robots.json` at build time. Renders 
 - Real hardware through LeRobot, where the registry entry names a `lerobot_type`:
   `hope_jr`, `koch`, `omx`, `openarm`, `rebot_b601`, `so100`, `so101`.
 - Real hardware through a native Strands driver, selected with `driver="strands"`
-  ([the contract](../hardware/native-drivers.md)):
+  ([the contract](../reference/hardware/native-drivers.md)):
   `dynamixel_2r`, `fr3`, `fr3_v2`, `hope_jr`, `koch`, `panda`, `so100`, `so101`,
   `ur10e`, `ur5e`, `vx300s`, `wx250s`.
 - Every other arm is simulation-only: `Robot(name, mode="real")` refuses it and names
@@ -72,9 +72,9 @@ Every robot in this family, generated from `robots.json` at build time. Renders 
 
 ## See also
 
-- [SO arms over the Feetech bus](../hardware/so-arms.md) - reading, calibrating and
+- [SO arms over the Feetech bus](../reference/hardware/so-arms.md) - reading, calibrating and
   rolling a policy out on an SO-100/SO-101, and the same verbs against its twin.
-- [Universal Robots over RTDE](../hardware/universal-robots.md) - UR5e and UR10e
+- [Universal Robots over RTDE](../reference/hardware/universal-robots.md) - UR5e and UR10e
   bring-up, the gates in front of a write, and `stop_task()`.
 - [Robot factory](../getting-started/robot-factory.md) - how `Robot("name")` resolves
   these names.

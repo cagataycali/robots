@@ -22,7 +22,7 @@ from pathlib import Path
 
 import strands_robots
 
-_PAGE = Path(strands_robots.__file__).resolve().parent.parent / "docs" / "policies" / "moveit2.md"
+_PAGE = Path(strands_robots.__file__).resolve().parent.parent / "docs" / "reference" / "policies" / "moveit2.md"
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 # moveit_resources_panda_moveit_config: panda_arm is panda_joint1..panda_joint7.
 _PANDA_ARM_JOINTS = 7

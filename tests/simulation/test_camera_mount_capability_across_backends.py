@@ -17,7 +17,7 @@ world-fixed camera which Isaac does support. It also arrives as a ``TypeError``
 out of a method whose whole contract is the ``{"status", "content"}`` envelope.
 
 The call above is not hypothetical - it is the *documented remedy*.
-``docs/policies/camera-naming.md`` prescribes it, backend-agnostically, as the
+``docs/reference/policies/camera-naming.md`` prescribes it, backend-agnostically, as the
 first of "Two ways to satisfy the check" for a VLA whose model card declares an
 ``observation.images.wrist_image`` feature, and ``README.md`` states the rule
 ("Wrist cameras mount on a body"). So the guidance a caller follows to make a
@@ -279,7 +279,7 @@ class TestEveryBackendDeclaresTheMount:
 class TestTheDocumentedRemedySaysWhichBackendsMount:
     """The backend-agnostic guidance that prescribes the mount carries the caveat.
 
-    ``docs/policies/camera-naming.md`` is a *policy* document - it applies to any
+    ``docs/reference/policies/camera-naming.md`` is a *policy* document - it applies to any
     simulation backend - and its first remedy is a ``parent_body`` call. Without a
     caveat it reads as universally available, which is how a reader arrives at the
     refusal above.
@@ -288,7 +288,7 @@ class TestTheDocumentedRemedySaysWhichBackendsMount:
     @staticmethod
     def _doc() -> str:
         root = pathlib.Path(inspect.getfile(IsaacSimulation)).parents[3]
-        return (root / "docs" / "policies" / "camera-naming.md").read_text(encoding="utf-8")
+        return (root / "docs" / "reference" / "policies" / "camera-naming.md").read_text(encoding="utf-8")
 
     def test_the_doc_still_prescribes_the_mount(self) -> None:
         """Non-vacuity: the caveat is about a remedy the doc really gives."""

@@ -37,7 +37,7 @@ go2.send_action({"FL_calf_joint": -1.5})
 
 The driver talks CycloneDDS through `unitree_sdk2py`, a vendor SDK that is not
 an extra of this project; the install recipe per platform is in
-[Installing the Unitree SDK](../hardware/unitree-g1.md#installing-the-unitree-sdk), and a
+[Installing the Unitree SDK](../reference/hardware/unitree-g1.md#installing-the-unitree-sdk), and a
 missing SDK is refused with that recipe rather than only its module name.
 
 **Sport mode must be released first.** The Go2 ships with an onboard sport-mode
@@ -179,5 +179,5 @@ rather than raising.
 - [Mobile manipulators](mobile-manip.md) - the same bases carrying an arm.
 - [Aerial](aerial.md) - quadcopters.
 - [Humanoids](humanoids.md) - bipedal alternatives.
-- [Multi-robot mesh](../mesh.md) - coordinate a fleet via the mesh.
-- [Domain randomization](../simulation/domain-randomization.md) - terrain randomisation for legged robots.
+- [Multi-robot mesh](../reference/mesh.md) - coordinate a fleet via the mesh.
+- [Domain randomization](../reference/simulation/domain-randomization.md) - terrain randomisation for legged robots.

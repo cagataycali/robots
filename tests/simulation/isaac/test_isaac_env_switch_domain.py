@@ -1,7 +1,7 @@
 """The two ``IsaacConfig`` boolean environment switches are held to one vocabulary.
 
 ``STRANDS_ISAAC_HEADLESS`` and ``STRANDS_ISAAC_RTX_PATHTRACING`` are both
-documented as two-sided switches -- ``docs/simulation/isaac.md`` and the README
+documented as two-sided switches -- ``docs/reference/simulation/isaac.md`` and the README
 each said, until the change this module tests rewrote them to enumerate the four
 pairs below, "Truthy (``1``/``true``/``yes``) forces headless; falsy forces a
 window" -- but only the truthy side was enumerated. Everything else fell through
@@ -262,7 +262,7 @@ class TestNeighbouringSurfacesStayOutOfScope:
 
     def test_the_environment_still_outranks_the_field(self, monkeypatch):
         """Precedence is untouched here. The documentation no longer contradicts
-        itself about it -- ``docs/simulation/isaac.md`` and both README tables
+        itself about it -- ``docs/reference/simulation/isaac.md`` and both README tables
         now state it per variable and link #2062 -- but *which* direction the two
         switches should have is still the open contract decision there, so this
         is pinned rather than resolved."""

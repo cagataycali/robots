@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_DOC = _REPO_ROOT / "docs" / "data" / "annotation.md"
+_DOC = _REPO_ROOT / "docs" / "reference" / "data" / "annotation.md"
 
 
 def _doc_text() -> str:
@@ -77,7 +77,7 @@ class TestTheGuideNamesTheStreamSelector:
         field = _vlm_config_camera_field()
         text = _doc_text()
         assert f"--vlm.{field}" in text, (
-            f"docs/data/annotation.md never mentions --vlm.{field}, so a reader "
+            f"docs/reference/data/annotation.md never mentions --vlm.{field}, so a reader "
             "cannot tell that the plan/interjections modules read only the first "
             "video key, nor how to point them somewhere else."
         )
@@ -85,7 +85,7 @@ class TestTheGuideNamesTheStreamSelector:
     def test_guide_warns_about_a_gripper_mounted_first_camera(self) -> None:
         text = _doc_text().lower()
         assert "parent_body" in text, (
-            "docs/data/annotation.md does not mention parent_body, so it never "
+            "docs/reference/data/annotation.md does not mention parent_body, so it never "
             "warns that a gripper-mounted camera is the wrong stream to derive "
             "scene-level motion labels from."
         )
@@ -93,7 +93,7 @@ class TestTheGuideNamesTheStreamSelector:
     def test_guide_explains_the_recording_order_lever(self) -> None:
         text = _doc_text()
         assert "cameras=" in text, (
-            "docs/data/annotation.md does not mention the cameras= recording "
+            "docs/reference/data/annotation.md does not mention the cameras= recording "
             "argument, which is what decides the first video key."
         )
 

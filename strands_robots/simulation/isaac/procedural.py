@@ -19,7 +19,7 @@ those robots and nothing ever turned it into a robot:
 * the joint names it reported disagreed with the MuJoCo backend's for the same
   robot name: ``so100`` as ``shoulder_pan``/``shoulder_lift``/... against
   MuJoCo's ``Rotation``/``Pitch``/..., and ``panda`` as 7 joints against
-  MuJoCo's 9. So it broke the joint-name parity ``docs/simulation/isaac.md``
+  MuJoCo's 9. So it broke the joint-name parity ``docs/reference/simulation/isaac.md``
   promises even as pure metadata.
 * the data could not have been authored into a working articulation anyway.
   ``JointDef`` carries no joint anchor frame, which is what a USD revolute joint

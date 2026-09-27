@@ -15,13 +15,13 @@ the refusal message names this variable as the recourse.
 
 Until this file's companion change, ``STRANDS_MESH_POLICY_TYPE_ALLOW`` was
 named on neither the README environment-variable matrix (which carried 35+
-other ``STRANDS_MESH_*`` rows) nor ``docs/security.md``. The variable is
+other ``STRANDS_MESH_*`` rows) nor ``docs/reference/security.md``. The variable is
 referenced 10 times inside ``mesh/security.py`` itself -- one refusal code, one
 regex-charset comment, two class docstrings on the built-in list, one loader,
 one cache key and two ``ValidationError`` messages that name it as the
 recourse -- so an operator who reads the module source finds it, but an
 operator who reads the two documentation surfaces the module points them at
-(the README matrix and ``docs/security.md``) does not. The refusal message
+(the README matrix and ``docs/reference/security.md``) does not. The refusal message
 names a variable the two operator-facing pages do not, which is the drift.
 
 The rules below read the module's own ``os.getenv`` / ``os.environ`` literals
@@ -77,7 +77,7 @@ from strands_robots.mesh import security as _security
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "security.py"
-_PAGE = _ROOT / "docs" / "security" / "commands.md"
+_PAGE = _ROOT / "docs" / "reference" / "security" / "commands.md"
 _README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
 
 _HEADING = "### Policy vocabulary allowlist (policy_type / policy_provider)"
@@ -156,7 +156,7 @@ def test_every_policy_type_allow_variable_the_module_reads_has_a_readme_matrix_r
 
 
 def test_every_policy_type_allow_variable_the_module_reads_is_named_on_the_security_page() -> None:
-    """Every ``STRANDS_MESH_POLICY_TYPE_ALLOW*`` env-var read is on ``docs/security/commands.md``.
+    """Every ``STRANDS_MESH_POLICY_TYPE_ALLOW*`` env-var read is on ``docs/reference/security/commands.md``.
 
     The security page describes the posture and this variable's whole point is
     a security posture (it is the extension knob for the ``validate_command``
@@ -167,7 +167,7 @@ def test_every_policy_type_allow_variable_the_module_reads_is_named_on_the_secur
     reads = _policy_type_allow_env_reads()
     missing = [name for name in sorted(reads) if f"`{name}`" not in text]
     assert not missing, (
-        f"docs/security/commands.md does not name {missing!r} even though "
+        f"docs/reference/security/commands.md does not name {missing!r} even though "
         f"mesh/security.py reads it. Add it under the '{_HEADING}' section."
     )
 
@@ -184,13 +184,13 @@ def test_the_security_page_names_the_shared_allowlist_invariant() -> None:
     text = _PAGE.read_text(encoding="utf-8")
     section = _extract_section(text, _HEADING)
     assert "policy_provider" in section and "policy_type" in section, (
-        f"The '{_HEADING}' section on docs/security.md does not name both "
+        f"The '{_HEADING}' section on docs/reference/security.md does not name both "
         "`policy_type` and `policy_provider` in the same block. The two share "
         "one allowlist; an operator widening the variable needs to know they "
         "are widening both vocabularies at once."
     )
     assert re.search(r"share\s+one\s+allowlist", section, re.IGNORECASE), (
-        f"The '{_HEADING}' section on docs/security.md does not state that "
+        f"The '{_HEADING}' section on docs/reference/security.md does not state that "
         "`policy_type` and `policy_provider` share one allowlist. That is the "
         "surprising invariant the variable makes visible; without it the "
         "variable name reads as narrower than the gate it widens."
@@ -209,7 +209,7 @@ def test_the_security_page_names_the_charset_rule() -> None:
     text = _PAGE.read_text(encoding="utf-8")
     section = _extract_section(text, _HEADING)
     assert re.search(r"\[a-z\]\[a-z0-9_\]\*|lowercase[- ]identifier", section, re.IGNORECASE), (
-        f"The '{_HEADING}' section on docs/security.md does not name the "
+        f"The '{_HEADING}' section on docs/reference/security.md does not name the "
         "`^[a-z][a-z0-9_]*$` charset rule the loader validates each entry "
         "against. Without it, an operator whose malformed entry drops has no "
         "signal from the documentation that the drop was the loader's charset "
@@ -231,7 +231,7 @@ def test_the_security_page_warns_against_routing_around_a_registry_omission() ->
     text = _PAGE.read_text(encoding="utf-8")
     section = _extract_section(text, _HEADING)
     assert "registry" in section.lower(), (
-        f"The '{_HEADING}' section on docs/security.md does not mention the "
+        f"The '{_HEADING}' section on docs/reference/security.md does not mention the "
         "registry. Widening this variable to admit a spelling that belongs in "
         "`_REGISTRY_POLICY_PROVIDERS` / `registry/policies.json` is the "
         "anti-pattern the sync-guard exists to catch; the section has to "

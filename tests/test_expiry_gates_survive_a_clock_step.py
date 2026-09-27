@@ -34,7 +34,7 @@ rollout and RTC members of the same family.
 Two wall-clock comparisons in ``mesh/core.py`` are correct and must stay: the
 estop and resume freshness windows measure ``now - envelope_t`` against a
 timestamp a *peer* put on the wire, which is the one place a stamp crosses a
-machine boundary (``docs/mesh.md``). They are not reported here because the read
+machine boundary (``docs/reference/mesh.md``). They are not reported here because the read
 is hoisted, but a future widening of this scan must keep clearing them.
 """
 

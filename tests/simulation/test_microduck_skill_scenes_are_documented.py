@@ -1,6 +1,6 @@
 """Every Microduck skill the page advertises names the scene it needs.
 
-``docs/policies/microduck.md`` opens by listing the nine shipped Pollen weights
+``docs/reference/policies/microduck.md`` opens by listing the nine shipped Pollen weights
 :class:`~strands_robots.policies.microduck.MicroduckPolicy` wraps and says they
 drive the biped "through the standard ``Robot(...).run_policy`` seam - in MuJoCo
 or on hardware". Five of those nine run on the scene the registry entry declares.
@@ -56,7 +56,7 @@ import pytest
 from strands_robots.policies.microduck import MICRODUCK_DEFAULT_POSE, MICRODUCK_JOINT_NAMES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-PAGE = REPO_ROOT / "docs" / "policies" / "microduck.md"
+PAGE = REPO_ROOT / "docs" / "reference" / "policies" / "microduck.md"
 
 #: The directory the ``microduck`` entry downloads into, and the scene it names.
 ASSET_DIR = "microduck"

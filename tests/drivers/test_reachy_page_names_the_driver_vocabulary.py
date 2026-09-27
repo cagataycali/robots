@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The Reachy Mini's page states the vocabulary its driver actually dispatches.
 
-The Mini has no lerobot robot type, so ``docs/hardware/reachy-mini.md`` is the
+The Mini has no lerobot robot type, so ``docs/reference/hardware/reachy-mini.md`` is the
 only written account of what an agent can ask it for. That page said the native
 tool "exposes only ``sensors``, ``status``, and ``stop``" and that camera
 capture, audio playback, volume and pixel-directed look "are not implemented",
@@ -26,7 +26,7 @@ import pytest
 import strands_robots
 from strands_robots.drivers.reachy import ReachyDriver
 
-_PAGE = Path(strands_robots.__file__).resolve().parent.parent / "docs" / "hardware" / "reachy-mini.md"
+_PAGE = Path(strands_robots.__file__).resolve().parent.parent / "docs" / "reference" / "hardware" / "reachy-mini.md"
 
 #: Text inside backticks - the page's spelling for a verb, a parameter or a path.
 _CODE_SPAN = re.compile(r"`([^`\n]+)`")

@@ -19,7 +19,7 @@ a composition. ``CompositePolicy`` merges two policies over DISJOINT joint group
 whole-body generator plus a whole-body controller gives both children the same
 joints and discards one child's output entirely. ``WBCPolicy`` in particular is
 not a reference tracker at all - its only command input is a target base velocity
-and it has no reference-pose input. See ``docs/policies/kimodo.md``.
+and it has no reference-pose input. See ``docs/reference/policies/kimodo.md``.
 
 Run:
   STRANDS_TRUST_REMOTE_CODE=1 python examples/kimodo/kimodo_g1_walking.py \

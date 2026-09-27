@@ -24,110 +24,108 @@ nav:
   - Mobile: robots/mobile.md
   - Mobile manip: robots/mobile-manip.md
   - Aerial: robots/aerial.md
-- Simulate:
-  - simulation/overview.md
-  - Physics and Actions: simulation/physics.md
-  - Policy Rollouts: simulation/rollouts.md
-  - Rollout Results and Async-RTC: simulation/rollout-results.md
-  - Rollout Observers: simulation/observers.md
-  - Predicates: simulation/predicates.md
-  - World Building: simulation/world-building.md
-  - Spawn Pose and Physics Options: simulation/spawning.md
-  - Rough Terrain: simulation/terrain.md
-  - Objects: simulation/objects.md
-  - Meshes and Materials: simulation/meshes-and-materials.md
-  - Editing and Exporting a Scene: simulation/scene-editing.md
-  - Domain Randomization: simulation/domain-randomization.md
-  - Newton Backend (GPU): simulation/newton.md
-  - Newton Scenes and Recording: simulation/newton-scenes.md
-  - Isaac Sim Backend (GPU): simulation/isaac.md
-  - Isaac Parity and Fleet Replication: simulation/isaac-parity.md
-  - Simulation Troubleshooting: simulation/troubleshooting.md
-- Real Hardware:
-  - Robot Control: hardware/robot-control.md
-  - Native Drivers: hardware/native-drivers.md
-  - Booster T1 over the Vendor SDK: hardware/booster-t1.md
-  - Microduck over the robotd Link: hardware/microduck.md
-  - Reachy Mini Daemon Link: hardware/reachy-mini.md
-  - Unitree G1 over CycloneDDS: hardware/unitree-g1.md
-  - SO Arms over the Feetech Bus: hardware/so-arms.md
-  - Universal Robots over RTDE: hardware/universal-robots.md
-  - Teleoperation: hardware/teleoperation.md
-  - Teleoperation Loop: hardware/teleoperation-loop.md
-  - Tools: hardware/tools.md
-  - Twin Transport: hardware/twin-transport.md
-  - ROS 2 Integration: ros2-integration.md
-  - ROS 2 Safety and Command Gate: ros2/safety.md
-  - Ackermann Robots (AWS DeepRacer): ros2/ackermann.md
-  - ROS 2 Sim Bridge: ros2/sim-bridge.md
-  - ROS 2 Hardware Bridge: ros2/hardware-bridge.md
-  - ROS 2 Mesh Bridge: ros2/mesh-bridge.md
-  - rosbridge Integration: rosbridge-integration.md
-  - rosbridge Robot: ros2/rosbridge-robot.md
-  - Pure-RTPS ROS 2: rtps-integration.md
-  - Pure-RTPS ROS 2 Robot: ros2/rtps-robot.md
-  - Device Connect: device-connect.md
-- Policies:
-  - policies/overview.md
-  - GR00T: policies/groot.md
-  - Cosmos 3: policies/cosmos3.md
-  - Cosmos 3 in process (diffusers, action modes, sim IK): policies/cosmos3-diffusers.md
-  - cuRobo: policies/curobo.md
-  - MoveIt2: policies/moveit2.md
-  - WBC (Whole-Body-Control): policies/wbc.md
-  - WBC Rollouts (Torque Control, Recording, Composite): policies/wbc-rollouts.md
-  - WBC Gait-Clock Variant: policies/wbc_gait.md
-  - Kimodo (G1 text-to-motion diffusion): policies/kimodo.md
-  - Kimodo Sampling and Chaining: policies/kimodo-sampling.md
-  - ProtoMotions (G1 motion tracker): policies/protomotions.md
-  - ProtoMotions Motion Cache (qpos bridge): policies/protomotions-motion-cache.md
-  - Microduck (Pollen 14-DOF biped): policies/microduck.md
-  - LeRobot Local: policies/lerobot-local.md
-  - LeRobot Local observations: policies/lerobot-local-observations.md
-  - LeRobot Async (gRPC inference): policies/lerobot-async.md
-  - MolmoAct2 (SO-100/101): policies/molmoact2.md
-  - RL Checkpoint (trained actor): policies/rl.md
-  - Persistent Worker (long-lived inference): policies/persistent-worker.md
-  - Camera Naming: policies/camera-naming.md
-  - Custom Policies: policies/custom-policies.md
-- Agents & Dashboard:
-  - AI Agents: agents.md
-  - Dashboard: dashboard.md
-  - Multi-robot Mesh: mesh.md
-  - Mesh Topics & Peer State: mesh-topics.md
-  - Tool Result Contract: contracts.md
-- Data & Training:
-  - Recording: recording.md
-  - DatasetRecorder API: data/dataset-recorder.md
-  - Verify a Dataset: data/verifying-datasets.md
-  - Read Back & Replay: data/reading-back.md
-  - Steerable Annotation: data/annotation.md
-  - Episode Labels (VLM judge): data/episode-labels.md
-  - The Episode Judge: data/episode-judge.md
-  - Training: training/overview.md
-  - Training Provider Knobs: training/provider-knobs.md
-  - VLA-on-G1 Workflow: training/vla_workflow.md
-  - Reinforcement Learning: training/rl.md
-  - RL API Reference: training/rl-reference.md
-  - Remote Inference: inference/remote.md
-  - Examples: examples/overview.md
-- Reference:
-  - Architecture: architecture.md
-  - API Reference: api-reference.md
-  - Tool Reference: reference/tools.md
-  - Configuration: reference/configuration.md
-  - Security: security.md
-  - Mesh Authentication: security/mesh.md
-  - Audit Log: security/audit-log.md
-  - Command Approval: security/commands.md
-  - Hardware and Host Access: security/hardware.md
-  - Remote Policy Code: security/policy-code.md
-  - Troubleshooting: troubleshooting.md
-  - Contributing: contributing.md
+- Reference: reference/index.md
+plugins:
+- search
+- redirects:
+    redirect_maps:
+      agents.md: reference/agents.md
+      api-reference.md: reference/api-reference.md
+      architecture.md: reference/architecture.md
+      contracts.md: reference/contracts.md
+      contributing.md: reference/contributing.md
+      dashboard.md: reference/dashboard.md
+      data/annotation.md: reference/data/annotation.md
+      data/dataset-recorder.md: reference/data/dataset-recorder.md
+      data/episode-judge.md: reference/data/episode-judge.md
+      data/episode-labels.md: reference/data/episode-labels.md
+      data/reading-back.md: reference/data/reading-back.md
+      data/verifying-datasets.md: reference/data/verifying-datasets.md
+      device-connect.md: reference/device-connect.md
+      examples/overview.md: reference/examples/overview.md
+      hardware/booster-t1.md: reference/hardware/booster-t1.md
+      hardware/microduck.md: reference/hardware/microduck.md
+      hardware/native-drivers.md: reference/hardware/native-drivers.md
+      hardware/reachy-mini.md: reference/hardware/reachy-mini.md
+      hardware/robot-control.md: reference/hardware/robot-control.md
+      hardware/so-arms.md: reference/hardware/so-arms.md
+      hardware/teleoperation-loop.md: reference/hardware/teleoperation-loop.md
+      hardware/teleoperation.md: reference/hardware/teleoperation.md
+      hardware/tools.md: reference/hardware/tools.md
+      hardware/twin-transport.md: reference/hardware/twin-transport.md
+      hardware/unitree-g1.md: reference/hardware/unitree-g1.md
+      hardware/universal-robots.md: reference/hardware/universal-robots.md
+      inference/remote.md: reference/inference/remote.md
+      mesh-topics.md: reference/mesh-topics.md
+      mesh.md: reference/mesh.md
+      policies/camera-naming.md: reference/policies/camera-naming.md
+      policies/cosmos3-diffusers.md: reference/policies/cosmos3-diffusers.md
+      policies/cosmos3.md: reference/policies/cosmos3.md
+      policies/curobo.md: reference/policies/curobo.md
+      policies/custom-policies.md: reference/policies/custom-policies.md
+      policies/groot.md: reference/policies/groot.md
+      policies/kimodo-sampling.md: reference/policies/kimodo-sampling.md
+      policies/kimodo.md: reference/policies/kimodo.md
+      policies/lerobot-async.md: reference/policies/lerobot-async.md
+      policies/lerobot-local-observations.md: reference/policies/lerobot-local-observations.md
+      policies/lerobot-local.md: reference/policies/lerobot-local.md
+      policies/microduck.md: reference/policies/microduck.md
+      policies/molmoact2.md: reference/policies/molmoact2.md
+      policies/moveit2.md: reference/policies/moveit2.md
+      policies/overview.md: reference/policies/overview.md
+      policies/persistent-worker.md: reference/policies/persistent-worker.md
+      policies/protomotions-motion-cache.md: reference/policies/protomotions-motion-cache.md
+      policies/protomotions.md: reference/policies/protomotions.md
+      policies/rl.md: reference/policies/rl.md
+      policies/wbc-rollouts.md: reference/policies/wbc-rollouts.md
+      policies/wbc.md: reference/policies/wbc.md
+      policies/wbc_gait.md: reference/policies/wbc_gait.md
+      recording.md: reference/recording.md
+      ros2-integration.md: reference/ros2-integration.md
+      ros2/ackermann.md: reference/ros2/ackermann.md
+      ros2/hardware-bridge.md: reference/ros2/hardware-bridge.md
+      ros2/mesh-bridge.md: reference/ros2/mesh-bridge.md
+      ros2/rosbridge-robot.md: reference/ros2/rosbridge-robot.md
+      ros2/rtps-robot.md: reference/ros2/rtps-robot.md
+      ros2/safety.md: reference/ros2/safety.md
+      ros2/sim-bridge.md: reference/ros2/sim-bridge.md
+      rosbridge-integration.md: reference/rosbridge-integration.md
+      rtps-integration.md: reference/rtps-integration.md
+      security.md: reference/security.md
+      security/audit-log.md: reference/security/audit-log.md
+      security/commands.md: reference/security/commands.md
+      security/hardware.md: reference/security/hardware.md
+      security/mesh.md: reference/security/mesh.md
+      security/policy-code.md: reference/security/policy-code.md
+      simulation/domain-randomization.md: reference/simulation/domain-randomization.md
+      simulation/isaac-parity.md: reference/simulation/isaac-parity.md
+      simulation/isaac.md: reference/simulation/isaac.md
+      simulation/meshes-and-materials.md: reference/simulation/meshes-and-materials.md
+      simulation/newton-scenes.md: reference/simulation/newton-scenes.md
+      simulation/newton.md: reference/simulation/newton.md
+      simulation/objects.md: reference/simulation/objects.md
+      simulation/observers.md: reference/simulation/observers.md
+      simulation/overview.md: reference/simulation/overview.md
+      simulation/physics.md: reference/simulation/physics.md
+      simulation/predicates.md: reference/simulation/predicates.md
+      simulation/rollout-results.md: reference/simulation/rollout-results.md
+      simulation/rollouts.md: reference/simulation/rollouts.md
+      simulation/scene-editing.md: reference/simulation/scene-editing.md
+      simulation/spawning.md: reference/simulation/spawning.md
+      simulation/terrain.md: reference/simulation/terrain.md
+      simulation/troubleshooting.md: reference/simulation/troubleshooting.md
+      simulation/world-building.md: reference/simulation/world-building.md
+      training/overview.md: reference/training/overview.md
+      training/provider-knobs.md: reference/training/provider-knobs.md
+      training/rl-reference.md: reference/training/rl-reference.md
+      training/rl.md: reference/training/rl.md
+      training/vla_workflow.md: reference/training/vla_workflow.md
+      troubleshooting.md: reference/troubleshooting.md
 hooks:
   - docs/hooks/coverage_matrix.py
   - docs/hooks/media.py
   - docs/hooks/numbers.py
+  - docs/hooks/reference_index.py
   - docs/hooks/robot_cards.py
   - docs/hooks/tool_reference.py
 validation:

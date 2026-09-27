@@ -27,7 +27,7 @@ import pytest
 _ROOT = Path(__file__).resolve().parents[2]
 
 #: Where the four axes are written up; every qualification points here.
-_PAGE = _ROOT / "docs" / "ros2" / "rtps-robot.md"
+_PAGE = _ROOT / "docs" / "reference" / "ros2" / "rtps-robot.md"
 _SECTION = "## What a ROS 2 node can still tell apart"
 _ANCHOR = "what-a-ros-2-node-can-still-tell-apart"
 
@@ -112,7 +112,7 @@ def test_no_shipped_surface_claims_a_ros2_observer_cannot_tell_the_rtps_path_apa
         (
             "qualified by the anchor",
             "The two transports emit byte-identical topics; a real ROS 2 node reads either,\n"
-            "though the graph differs: docs/ros2/rtps-robot.md#what-a-ros-2-node-can-still-tell-apart.",
+            "though the graph differs: docs/reference/ros2/rtps-robot.md#what-a-ros-2-node-can-still-tell-apart.",
             False,
         ),
         (

@@ -107,7 +107,7 @@ def repo(tmp_path: Path) -> Path:
     _git(root, "config", "user.name", "Merge Base Overlap Tests")
     _git(root, "config", "commit.gpgsign", "false")
     _write(root, _SHARED, _SHARED_BODY)
-    _write(root, "docs/simulation/world-building.md", "# World building\n\nOriginal prose.\n")
+    _write(root, "docs/reference/simulation/world-building.md", "# World building\n\nOriginal prose.\n")
     _commit(root, "initial commit")
     return root
 
@@ -208,7 +208,7 @@ def test_disjoint_edits_do_not_overlap(repo: Path, capsys: pytest.CaptureFixture
 
 def test_a_prose_only_overlap_is_reported_but_does_not_block(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Documentation cannot change what the suite does, so it does not gate."""
-    doc = "docs/simulation/world-building.md"
+    doc = "docs/reference/simulation/world-building.md"
     _git(repo, "checkout", "-q", "-b", "pr")
     _write(repo, doc, "# World building\n\nOriginal prose.\n\nAdded by the pull request.\n")
     _commit(repo, "docs from the pull request")
@@ -1107,10 +1107,10 @@ def test_the_sweep_and_the_single_branch_mode_share_one_prose_rule(
 # ``docs/**/*.md`` page against a budget. Two additions to one page compose to a
 # count neither head has, and a text-clean merge is the normal case, so both
 # halves of the prose-only argument fail there (#3961). The numbers below are the
-# incident's: #3907 and #3940 on ``docs/policies/moveit2.md``, base 1479, heads
+# incident's: #3907 and #3940 on ``docs/reference/policies/moveit2.md``, base 1479, heads
 # 1493 and 1497, composed 1511 against 1500.
 
-_PAGE = "docs/policies/moveit2.md"
+_PAGE = "docs/reference/policies/moveit2.md"
 _GRADER_PATH = _REPO_ROOT / "tests" / "test_docs_pages_are_within_the_word_budget.py"
 
 
@@ -1297,7 +1297,7 @@ def test_the_sweep_budget_is_the_graders_budget() -> None:
 @pytest.mark.parametrize(
     ("path", "graded"),
     [
-        ("docs/policies/moveit2.md", True),
+        ("docs/reference/policies/moveit2.md", True),
         ("docs/index.md", True),
         ("docs/README.rst", False),
         ("CHANGELOG.md", False),

@@ -83,4 +83,4 @@ Crazyflie has no ranger deck, so no lidar topic is published.
 
 - [Mobile](mobile.md) - quadrupeds and wheeled bases.
 - [Mobile manipulators](mobile-manip.md) - mobile bases carrying an arm.
-- [Robot control (real hardware)](../hardware/robot-control.md) - the shared `mode="real"` surface.
+- [Robot control (real hardware)](../reference/hardware/robot-control.md) - the shared `mode="real"` surface.

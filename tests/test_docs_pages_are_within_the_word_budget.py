@@ -4,7 +4,7 @@
 
 A page that grows past a reading's worth of text stops being read: the reference
 material a caller needs is buried under prose the code already states, and the
-next writer appends rather than replaces. ``docs/recording.md`` reached 9,924
+next writer appends rather than replaces. ``docs/reference/recording.md`` reached 9,924
 words across 58 headings - record, verify and replay in one scroll - before it
 was split.
 
@@ -48,7 +48,7 @@ _BUDGET = 1500
 #: (a page whose body is a hook token) belongs here permanently.
 _OVER_BUDGET = frozenset(
     {
-        "device-connect.md",
+        "reference/device-connect.md",
         "reference/configuration.md",
     }
 )

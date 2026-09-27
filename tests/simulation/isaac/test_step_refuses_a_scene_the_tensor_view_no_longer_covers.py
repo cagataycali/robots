@@ -379,7 +379,7 @@ class TestOnlyADynamicBodyMarksTheScene:
     ``is_static=True``, it never calls ``reset()``, and its six step sites all
     discard the envelope), the same in
     ``tests_integ/simulation/test_isaac_body_state_gpu``, and it made
-    ``docs/simulation/isaac.md``'s own usage example refuse. The original evidence
+    ``docs/reference/simulation/isaac.md``'s own usage example refuse. The original evidence
     for the mark was a single DynamicCuboid measurement, generalised one step too far.
     """
 

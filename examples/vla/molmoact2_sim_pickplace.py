@@ -84,7 +84,7 @@ def main():
     # (shoulder_pan.pos, ...) that match the lerobot SOFollower driver, whereas
     # the MuJoCo SO-101 model exposes bare-numeric joint names "1".."6". Using
     # "so_real" here leaves observation.state empty and MolmoAct2 raises
-    # "requires observation.state". See docs/policies/molmoact2.md.
+    # "requires observation.state". See docs/reference/policies/molmoact2.md.
     policy = create_policy(REPO, embodiment="so101", device=args.device)
     policy.reset()
 

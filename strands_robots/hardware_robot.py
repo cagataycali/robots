@@ -129,7 +129,7 @@ _RCLPY_TRANSPORT_INSTALL_HINT = (
     "  Robot(..., ros2_bridge=True, ros2_transport='rtps')\n"
     "On Linux aarch64 (Jetson) that extra has no wheel: install Cyclone DDS C "
     "first and set CYCLONEDDS_HOME, see "
-    "docs/rtps-integration.md#linux-aarch64-jetson."
+    "docs/reference/rtps-integration.md#linux-aarch64-jetson."
 )
 
 
@@ -587,7 +587,7 @@ class Robot(TeleopMixin, AgentTool):
                 same topics with byte-identical payloads; only the rclpy bridge
                 appears on the ROS 2 graph as a node, since a bare DDS
                 participant carries no node name and no type hash (see
-                ``docs/ros2/rtps-robot.md``). Ignored unless ``ros2_bridge=True``.
+                ``docs/reference/ros2/rtps-robot.md``). Ignored unless ``ros2_bridge=True``.
             joint_limits: Optional ``{"<motor>.pos": (min, max)}`` clamp ranges
                 threaded into the ROS 2 bridge, keyed by the joint name as it
                 arrives on the wire (the same ``<motor>.pos`` names the bridge
