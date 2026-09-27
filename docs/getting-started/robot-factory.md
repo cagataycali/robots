@@ -120,14 +120,14 @@ can build it, and an empty tuple where neither can.
 from strands_robots.drivers import list_driver_coverage
 
 coverage = list_driver_coverage()
-coverage["so101"], coverage["vx300s"], coverage["sawyer"]
+coverage["so101"], coverage["panda"], coverage["sawyer"]
 # (('lerobot', 'strands'), ('strands',), ())
 
 sim_only = [name for name, drivers in coverage.items() if not drivers]
 ```
 
 `so101` is reported as both and `resolve_driver("so101")` returns `"lerobot"` - coverage is
-what *can* build a robot, resolution is what *does*. `vx300s` has no lerobot robot type and no
+what *can* build a robot, resolution is what *does*. `panda` has no lerobot robot type and no
 `hardware` block at all, so its native driver is the only one that can build it and the two
 declaration readers - `list_robots(mode="real")` and the `Real` column of
 `format_robot_table()` - leave it out. This join reads what is registered, and is the wider

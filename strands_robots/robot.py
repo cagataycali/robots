@@ -352,11 +352,16 @@ def _build_native_driver(
     driver_cls = get_native_driver_class(canonical)
     if driver_cls is None:
         available = ", ".join(list_native_drivers()) or "none"
+        # driver='lerobot' is only a way out for a robot lerobot can build.
+        lerobot_path = (
+            "Either use driver='lerobot' (today's default, which builds it through lerobot) or "
+            if get_hardware_type(canonical) is not None
+            else "lerobot has no robot type for it either, so no shipped driver can move it; "
+        )
         raise ValueError(
             f"No native driver is registered for {canonical!r}, so driver='strands' cannot "
-            f"build it. Robots with a native driver: {available}. Either use driver='lerobot' "
-            "(today's default, which builds it through lerobot) or register one with "
-            "strands_robots.drivers.register_native_driver()."
+            f"build it. Robots with a native driver: {available}. {lerobot_path}"
+            "register one with strands_robots.drivers.register_native_driver()."
         )
 
     # A camera dict the driver will not open is refused rather than forwarded
