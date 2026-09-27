@@ -48,7 +48,6 @@ from typing import Any
 import pytest
 
 import strands_robots
-from strands_robots.drivers.dynamixel.driver import DynamixelDriver
 from strands_robots.drivers.feetech.bus import FeetechBus
 from strands_robots.drivers.feetech.driver import FeetechDriver
 from strands_robots.tools.pose_tool import MotorController
@@ -60,7 +59,6 @@ _PORT = "/dev/ttyTEST-never-opened"
 # attribute the accepted speed lands in, and the parameter a refusal must name.
 _SURFACES: tuple[tuple[str, Callable[[Any], Any], str, str], ...] = (
     ("FeetechDriver", lambda v: FeetechDriver(tool_name="so101", baud_rate=v), "_baud_rate", "baud_rate"),
-    ("DynamixelDriver", lambda v: DynamixelDriver(tool_name="koch", baud_rate=v), "_baud_rate", "baud_rate"),
     ("FeetechBus", lambda v: FeetechBus(port=_PORT, baud_rate=v), "baud_rate", "baud_rate"),
     ("MotorController", lambda v: MotorController(_PORT, v), "baudrate", "baudrate"),
 )
@@ -255,7 +253,6 @@ class TestEverySurfaceThatOpensAPortIsRostered:
         """The roster cannot fall behind the surfaces it claims to grade."""
         assert {name for name, _, _, _ in _SURFACES} == {
             "FeetechDriver",
-            "DynamixelDriver",
             "FeetechBus",
             "MotorController",
         }

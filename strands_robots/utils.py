@@ -1261,7 +1261,6 @@ def positive_count_error(value: Any, param: str, context: str) -> str | None:
     * The speed a serial bus is opened at - the ``baudrate`` of
       :mod:`~strands_robots.tools.serial_tool` and the ``baud_rate`` of every
       surface that opens one: :class:`~strands_robots.drivers.feetech.driver.FeetechDriver`,
-      :class:`~strands_robots.drivers.dynamixel.driver.DynamixelDriver`,
       :class:`~strands_robots.drivers.feetech.bus.FeetechBus` and
       ``pose_tool``'s motor controller. They all reach one ``serial.Serial``,
       which takes the speed through its own ``int()`` and refuses only a

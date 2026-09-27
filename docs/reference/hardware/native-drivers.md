@@ -54,7 +54,7 @@ URL - because only the driver knows how to read it.
 ## Domains a driver does not widen
 
 `baud_rate=` does not stay polymorphic. Every surface that opens a serial bus - the Feetech
-and Dynamixel drivers, `FeetechBus`, and the `baudrate` of `serial_tool` and `pose_tool` -
+driver, `FeetechBus`, and the `baudrate` of `serial_tool` and `pose_tool` -
 holds it to a positive integer and refuses anything else by name at construction. pyserial
 takes the speed through its own `int()` and refuses only a negative, so an ungraded value is
 *applied*: `2.7` opens the port at 2 baud, and `0` opens it at a speed no servo answers,
@@ -126,11 +126,11 @@ a driver that is not there is refused, never quietly substituted:
 ```python
 >>> Robot("xarm7", mode="real", driver="strands")
 ValueError: No native driver is registered for 'xarm7', so driver='strands' cannot build
-it. Robots with a native driver: aloha, dynamixel_2r, fr3, fr3_v2, hope_jr, koch, lekiwi,
-microduck, open_duck_mini, panda, reachy_mini, robotiq_2f85, robotiq_2f85_v4, so100,
-so101, trossen_wxai, unitree_g1, unitree_go2, ur10e, ur5e, vx300s, wx250s. Either use
-driver='lerobot' (today's default, which builds it through lerobot) or
-register one with strands_robots.drivers.register_native_driver().
+it. Robots with a native driver: booster_t1, crazyflie, earthrover, fr3, fr3_v2, hope_jr,
+lekiwi, microduck, open_duck_mini, panda, reachy_mini, robotiq_2f85, robotiq_2f85_v4, so100,
+so101, unitree_g1, unitree_go2, ur10e, ur5e, yahboom_m3pro. lerobot has no robot type for it
+either, so no shipped driver can move it; register one with
+strands_robots.drivers.register_native_driver().
 ```
 
 A robot may also declare its driver in the registry, so a caller needs no `driver=` at all:
