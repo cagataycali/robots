@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{ page.title if page.title else config.site_name }} | Strands Robots">
+  <meta property="og:description" content="{{ config.site_description }}">
+  <meta property="og:image" content="{{ config.site_url }}assets/img/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+      "@mujoco/mujoco": "https://cdn.jsdelivr.net/npm/@mujoco/mujoco@3.14.0/mujoco.js"
+    }
+  }
+  </script>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+{% endblock %}
+
+{% block content %}
+  {% if page.meta and page.meta.template_class %}
+    <div class="{{ page.meta.template_class }}">{{ super() }}</div>
+  {% else %}
+    {{ super() }}
+  {% endif %}
+{% endblock %}
