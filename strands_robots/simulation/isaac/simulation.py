@@ -1559,6 +1559,13 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         dict
             Status dict with world info.
         """
+        # ``ground_plane`` selects a posture (add the plane or not), so it is
+        # checked against the shared boolean domain rather than read by
+        # truthiness: otherwise ``"false"``/``"no"``/``"off"`` (all truthy
+        # strings) would ADD the plane while spelling the refusal of it, and
+        # ``0``/``None`` would skip it without ever being a declared spelling.
+        if text := boolean_flag_error(ground_plane, "ground_plane", "create_world"):
+            return {"status": "error", "content": [{"text": text}]}
         if terrain is not None:
             return {
                 "status": "error",
@@ -9216,6 +9223,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         pose exactly. Restored to dynamic on release. Toggles
         ``UsdPhysics.RigidBodyAPI.kinematicEnabled`` on the prim; best-effort.
         """
+        # ``kinematic`` selects a posture (KINEMATIC vs dynamic); check it
+        # against the shared boolean domain before the write, so ``"false"``
+        # cannot pin the body kinematic while spelling its refusal.
+        if text := boolean_flag_error(kinematic, "kinematic", "set_object_kinematic"):
+            return {"status": "error", "content": [{"text": text}]}
         obj = registry_entry(self._objects, name)
         if obj is None:
             return {"status": "error", "content": [{"text": f"Object {name!r} not found."}]}
@@ -9263,6 +9275,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         collider lets the gripper close cleanly around it; re-enabled
         on release.
         """
+        # ``enabled`` selects a posture (collider on vs off); check it against
+        # the shared boolean domain before the write, so ``"false"`` cannot
+        # leave the collider on while spelling its refusal.
+        if text := boolean_flag_error(enabled, "enabled", "set_object_collision"):
+            return {"status": "error", "content": [{"text": text}]}
         obj = registry_entry(self._objects, name)
         if obj is None:
             return {"status": "error", "content": [{"text": f"Object {name!r} not found."}]}
