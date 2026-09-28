@@ -262,16 +262,13 @@ class TestResumeCarriesTheSourceKeys:
 
 class TestEveryBackendPassesTheSourcesOnResume:
     """Derived from the source, because the defect is a call site that omits an
-    argument - which no behavioural test of one backend can see on the others.
-
-    All three pass ``extra_state_specs`` to ``create`` and all three call
-    ``resume``, so all three owed this.
+    argument. The one ``start_recording`` every backend inherits owns the call.
     """
 
-    @pytest.mark.parametrize("backend", ["isaac", "mujoco", "newton"])
-    def test_the_resume_call_carries_the_specs(self, backend: str) -> None:
+    def test_the_resume_call_carries_the_specs(self) -> None:
+        backend = "the shared start_recording"
         source = (
-            pathlib.Path(__file__).resolve().parents[1] / "strands_robots" / "simulation" / backend / "recording.py"
+            pathlib.Path(__file__).resolve().parents[1] / "strands_robots" / "simulation" / "recording.py"
         ).read_text(encoding="utf-8")
 
         assert "extra_state_specs" in source, f"{backend} declares no base columns at all"

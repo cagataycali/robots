@@ -6059,7 +6059,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         held across a marshal hop; each hop takes ``self._lock`` itself.
 
         **Recording**: when a dataset recording session is active
-        (:meth:`~strands_robots.simulation.isaac.recording.IsaacRecordingMixin.start_recording`),
+        (:meth:`~strands_robots.simulation.recording.DatasetRecordingMixin.start_recording`),
         each loop iteration records exactly ONE merged frame containing every
         driven robot's prefixed state/action columns (``alice__shoulder_pan``
         ...) plus all camera images - mirroring the MuJoCo merged-frame
