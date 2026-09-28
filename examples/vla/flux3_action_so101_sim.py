@@ -6,7 +6,7 @@ Labs' ``black-forest-labs/flux-3-action-so101`` checkpoint runs in-process
 (no policy server) and drives ``Robot("so101", mode="sim")`` at 30 Hz through
 the same ``run_policy`` path the agent tool uses. With ``--episodes N`` the
 rollouts are recorded through ``start_recording`` (LeRobot v3: parquet + one
-MP4 per camera) and optionally pushed to a PRIVATE Hugging Face dataset.
+MP4 per camera), ready for a PRIVATE Hugging Face dataset upload.
 
 Prerequisites
 -------------
@@ -24,7 +24,11 @@ Run
 ---
     MUJOCO_GL=egl python examples/vla/flux3_action_so101_sim.py --seconds 8
     MUJOCO_GL=egl python examples/vla/flux3_action_so101_sim.py --episodes 10 \
-        --repo-id you/f3a-so101-mujoco --push
+        --repo-id you/f3a-so101-mujoco --root ./f3a-so101-mujoco
+    hf upload --private --repo-type dataset you/f3a-so101-mujoco ./f3a-so101-mujoco
+
+``stop_recording(push_to_hub=True)`` publishes with your namespace's default
+visibility, so a PRIVATE dataset is uploaded from the finished folder instead.
 
 Verified on a Jetson AGX Thor (sm_110, torch 2.11+cu130): 450/450 actions per
 15 s episode, tick p50 33 ms; each replan (every 32 ticks) costs ~5 s because
@@ -114,7 +118,6 @@ def main() -> int:
     parser.add_argument("--repo-id", default="local/f3a-so101-mujoco", help="LeRobot dataset id when recording.")
     parser.add_argument("--root", default=None, help="On-disk dataset directory (default: $HF_LEROBOT_HOME/<repo-id>).")
     parser.add_argument("--record", action="store_true", help="Record even a single episode.")
-    parser.add_argument("--push", action="store_true", help="Push the finished dataset to the Hub as PRIVATE.")
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
     os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
@@ -161,15 +164,6 @@ def main() -> int:
         if recording:
             stopped = robot.stop_recording()
             print("stop_recording:", stopped["status"], *(c.get("text", "") for c in stopped["content"]))
-            if args.push and stopped["status"] == "success":
-                # stop_recording finalizes and releases the recorder; publish the
-                # finished on-disk dataset itself so the repo can be PRIVATE.
-                from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-                saved = robot._world._backend_state["last_save"]
-                dataset = LeRobotDataset(saved["repo_id"], root=saved["root"])
-                dataset.push_to_hub(private=True, tags=["strands-robots", "sim", "flux3-action", "so101"])
-                print(f"pushed PRIVATE https://huggingface.co/datasets/{saved['repo_id']}")
     finally:
         robot.destroy()
     return 0 if ran["status"] == "success" else 1
