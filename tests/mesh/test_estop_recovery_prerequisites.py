@@ -23,12 +23,21 @@ The clock precondition has no startup warning, so documentation is the only plac
 an operator can learn it before it matters. These tests pin the behaviour and pin
 that the knobs it depends on are documented, so the numbers in the docs cannot
 drift away from the numbers the receiver enforces.
+
+Two docs surfaces carry the claims. ``docs/reference/configuration.md`` is the
+generated env-var table (its ``{{env_vars}}`` token is expanded here through
+``docs/hooks/env_vars.py``, the way mkdocs does it), and it must list every knob.
+``docs/learn/mesh/safety-and-estop.md`` is the page that shows ``emergency_stop()``
+and the resume envelope; it is where the operator-facing prose lives, so the
+sentence on it that names each skew bound is where the clock direction is read.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -40,6 +49,9 @@ import strands_robots
 from strands_robots.mesh import core
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
+_CONFIGURATION = _REPO_ROOT / "docs" / "reference" / "configuration.md"
+_ENV_VARS_HOOK = _REPO_ROOT / "docs" / "hooks" / "env_vars.py"
+_SAFETY_PAGE = _REPO_ROOT / "docs" / "learn" / "mesh" / "safety-and-estop.md"
 
 #: Long enough to be a realistic operator secret rather than a crackable PIN.
 _CODE = "operator-code-1234567890abcdef"
@@ -184,7 +196,7 @@ class TestTheFreshnessBoundGovernsAReceiverAheadOfTheOperator:
             recovered = _deliver(_mint_resume(issuer_clock_offset_s=trail))
         assert recovered is False, (
             "widening the freshness window recovered a trailing receiver; if "
-            "that ever becomes true the README remedy for each direction changes"
+            "that ever becomes true the documented remedy for each direction changes"
         )
         assert any("in future" in r.message for r in caplog.records), (
             "a trailing receiver must still be refused by the forward-skew "
@@ -192,16 +204,94 @@ class TestTheFreshnessBoundGovernsAReceiverAheadOfTheOperator:
         )
 
 
+def _rendered_configuration() -> str:
+    """``configuration.md`` with ``{{env_vars}}`` expanded by the shipped hook.
+
+    The hook writes names as ``<code>NAME</code>``; the tags are folded to
+    backticks so the same name regex reads the generated table and hand prose.
+    """
+    source = _CONFIGURATION.read_text(encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _ENV_VARS_HOOK)
+    assert spec is not None and spec.loader is not None, _ENV_VARS_HOOK
+    module = sys.modules.get(spec.name)
+    if module is None:
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    rendered = module.on_page_markdown(source, page=None, config=None, files=None)
+    assert rendered != source, "docs/reference/configuration.md carries no {{env_vars}} token for the hook to expand"
+    return re.sub(r"</?code>", "`", rendered)
+
+
 def _env_table_rows() -> list[tuple[str, str]]:
-    """Return ``(name_cell, description_cell)`` for every env-var README row."""
-    readme = (_REPO_ROOT / "docs" / "reference" / "configuration.md").read_text(
-        encoding="utf-8"
-    )  # env-var matrix (moved out of README)
+    """Return ``(name_cell, meaning_cell)`` for every env-var row of the generated table.
+
+    The table the hook renders is ``| variable | read in | default | meaning |``;
+    the meaning cell is the one that may cite another variable.
+    """
     rows = []
-    for name_cell, desc_cell, _default in re.findall(r"^\|\s*(.+?)\s*\|(.*)\|(.*)\|\s*$", readme, re.M):
+    for line in _rendered_configuration().splitlines():
+        cells = [c.strip() for c in line.strip().split("|")[1:-1]]
+        if len(cells) != 4:
+            continue
+        name_cell, _read_in, _default, meaning = cells
         if re.search(r"`(?:STRANDS|ZENOH)_[A-Z0-9_]+`", name_cell):
-            rows.append((name_cell, desc_cell))
+            rows.append((name_cell, meaning))
     return rows
+
+
+def _safety_page_sentences(knob: str) -> list[str]:
+    """Return every sentence on the safety page that names *knob*.
+
+    ``docs/learn/mesh/safety-and-estop.md`` is where the resume gate is explained
+    to an operator, so it is where each bound's clock direction must be stated.
+    Sentences are split on a full stop followed by whitespace, with whitespace
+    collapsed first so a re-wrap cannot move the claim out of reach.
+    """
+    text = " ".join(_SAFETY_PAGE.read_text(encoding="utf-8").split())
+    sentences = [s for s in re.split(r"(?<=\.)\s+", text) if f"`{knob}`" in s]
+    assert sentences, f"premise: no sentence on docs/learn/mesh/safety-and-estop.md names `{knob}`"
+    return sentences
+
+
+_DIRECTION = re.compile(r"\*?(ahead of|behind)\*? the operator")
+_KNOB_MENTION = re.compile(r"`(STRANDS_MESH_[A-Z0-9_]+)`")
+
+
+def _own_clause(sentence: str, knob: str) -> str:
+    """The part of *sentence* that speaks about *knob*.
+
+    From the knob's mention to the next mention of another ``STRANDS_MESH_``
+    variable, or the end of the sentence. A sentence that names both bounds
+    (``... older than \`A\` ..., and more than \`B\` ahead ...``) is thereby
+    read once per bound, and a cross-reference to the sibling bound is not
+    mistaken for a claim about this one.
+    """
+    mentions = list(_KNOB_MENTION.finditer(sentence))
+    starts = [m.end() for m in mentions if m.group(1) == knob]
+    if not starts:
+        return ""
+    start = starts[0]
+    following = [m.start() for m in mentions if m.start() > start and m.group(1) != knob]
+    return sentence[start : following[0] if following else len(sentence)]
+
+
+def _documented_direction(knob: str) -> str:
+    """The one clock direction the safety page attributes to *knob*.
+
+    Every clause about the knob that states a direction must state the same
+    one; a page saying both would leave the operator to guess.
+    """
+    sentences = _safety_page_sentences(knob)
+    directions = {
+        m.group(1).removesuffix(" of") for s in sentences for m in _DIRECTION.finditer(_own_clause(s, knob))
+    }
+    assert directions, (
+        f"the safety page names {knob} but never says whether it catches a receiver 'ahead of' or "
+        f"'behind' the operator, so the direction it claims cannot be read: {sentences}"
+    )
+    assert len(directions) == 1, f"the safety page attributes both directions to {knob}: {sentences}"
+    return directions.pop()
 
 
 class TestTheRecoveryKnobsAreDocumented:
@@ -257,35 +347,25 @@ class TestTheRecoveryKnobsAreDocumented:
         otherwise ties that to the prose an operator actually reads, so a row
         can invert while the suite stays green.
         """
-        rows = dict(_env_table_rows())
-        assert rows, "found no env-var rows in docs/reference/configuration.md; the scan is broken"
-
-        def _row_for(name: str) -> str:
-            matches = [desc for name_cell, desc in rows.items() if f"`{name}`" in name_cell]
-            assert matches, f"premise: configuration.md has a row for {name}"
-            return matches[0]
-
-        freshness = _row_for("STRANDS_MESH_RESUME_FRESHNESS_S")
-        lockout_claim = freshness.split("stays locked out")[0]
-        assert "ahead of* the operator" in lockout_claim, (
-            "the freshness row must attribute the stale-envelope lockout to a "
+        assert _documented_direction("STRANDS_MESH_RESUME_FRESHNESS_S") == "ahead", (
+            "the safety page's freshness sentence must attribute the stale-envelope lockout to a "
             "receiver whose clock is AHEAD of the operator -- that is the "
-            f"direction `now - envelope_t > freshness_window_s` trips on: {freshness!r}"
+            "direction `now - envelope_t > freshness_window_s` trips on"
         )
-
-        skew = _row_for("STRANDS_MESH_RESUME_FORWARD_SKEW_S")
-        assert "*behind* the operator" in skew, (
-            "the forward-skew row must attribute its lockout to a receiver "
-            f"whose clock is BEHIND the operator: {skew!r}"
+        assert _documented_direction("STRANDS_MESH_RESUME_FORWARD_SKEW_S") == "behind", (
+            "the safety page's forward-skew sentence must attribute its lockout to a receiver "
+            "whose clock is BEHIND the operator"
         )
 
     def test_the_recovery_procedure_is_documented_beside_the_estop_call(self) -> None:
-        """``docs/reference/mesh.md`` shows ``emergency_stop()``; it must show the way back."""
-        mesh_doc = (_REPO_ROOT / "docs" / "reference" / "mesh.md").read_text(encoding="utf-8")
-        assert "emergency_stop()" in mesh_doc, "premise: mesh.md documents emergency_stop"
-        assert '"action": "resume"' in mesh_doc, "mesh.md documents how to stop a fleet but not how to resume it"
+        """``docs/learn/mesh/safety-and-estop.md`` shows ``emergency_stop()``; it must show the way back."""
+        mesh_doc = _SAFETY_PAGE.read_text(encoding="utf-8")
+        assert "emergency_stop()" in mesh_doc, "premise: safety-and-estop.md documents emergency_stop"
+        assert '"action": "resume"' in mesh_doc, (
+            "safety-and-estop.md documents how to stop a fleet but not how to resume it"
+        )
         for knob in ("STRANDS_MESH_OVERRIDE_CODE", "STRANDS_MESH_RESUME_FORWARD_SKEW_S"):
-            assert knob in mesh_doc, f"mesh.md's recovery guidance omits {knob}"
+            assert knob in mesh_doc, f"safety-and-estop.md's recovery guidance omits {knob}"
 
 
 #: Skew directions a receiver's clock can carry relative to the operator's, and
@@ -331,22 +411,8 @@ def _bound_governing(direction: str, monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 def _own_direction_claim(knob: str) -> str:
-    """The skew direction *knob*'s own README row says *it* governs.
-
-    Anchored on ``more than this <direction>``, where ``this`` is the row's own
-    bound. Each row also names its sibling for the opposite direction; reading
-    only the ``this`` clause keeps that cross-reference from being mistaken for a
-    claim about this bound.
-    """
-    rows = [desc for name_cell, desc in _env_table_rows() if f"`{knob}`" in name_cell]
-    assert len(rows) == 1, f"premise: expected exactly one README row for {knob}, got {len(rows)}"
-    match = re.search(r"more than this \*(ahead of|behind)\*", rows[0])
-    assert match, (
-        f"premise: {knob}'s README row no longer says what a clock 'more than this "
-        f"<ahead of|behind> the operator' does, so the direction it claims can no "
-        f"longer be read: {rows[0].strip()!r}"
-    )
-    return match.group(1).removesuffix(" of")
+    """The skew direction the safety page says *knob* governs; see :func:`_documented_direction`."""
+    return _documented_direction(knob)
 
 
 class TestTheDocumentedDirectionIsGradedAgainstTheReceiver:
@@ -372,7 +438,7 @@ class TestTheDocumentedDirectionIsGradedAgainstTheReceiver:
         documented = _own_direction_claim(knob)
         enforced = _bound_governing(documented, monkeypatch)
         assert enforced == knob, (
-            f"{knob}'s README row says it governs a receiver {documented} the operator, but a "
+            f"{knob}'s safety page sentence says it governs a receiver {documented} the operator, but a "
             f"receiver {documented} the operator is refused until {enforced} is widened - widening "
             f"{knob} leaves it locked out. Name the direction this bound catches."
         )
@@ -390,7 +456,7 @@ class TestTheDocumentedDirectionIsGradedAgainstTheReceiver:
         """
         documented = _own_direction_claim(knob)
         assert _recovers_when_widened(knob, documented, monkeypatch) is True, (
-            f"{knob}'s README row prescribes widening it for a receiver {documented} the "
+            f"{knob}'s safety page sentence prescribes widening it for a receiver {documented} the "
             f"operator, but doing exactly that left the receiver locked out. A remedy that "
             "does not clear the refusal it names is worse than none - the fleet is already stopped."
         )
