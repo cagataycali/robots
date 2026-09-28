@@ -139,6 +139,9 @@ def generate(
     t0 = time.time()
     try:
         for i, task in enumerate(plan):
+            set_task = getattr(actor, "set_task", None)
+            if set_task is not None:
+                set_task(task)
             res = run_episode(scene, task, actor=actor, max_ticks=max_ticks, keep_images=True)
             stats["attempted"] += 1
             stats["n"][task] += 1
@@ -161,6 +164,38 @@ def generate(
         robot.destroy()
     stats["seconds"] = time.time() - t0
     return stats
+
+
+def dagger_actor(
+    checkpoint: str, *, beta: float = 0.0, seed: int = 0, device: str = "cuda"
+) -> Callable[..., Primitive]:
+    """The learner drives, the expert labels: ``(observation, privileged, expert) -> primitive``.
+
+    With probability ``beta`` per tick the expert's primitive is executed instead
+    (classic DAgger mixing); ``beta=0`` is pure learner roll-outs. The task is read
+    from the privileged state so one actor serves both tasks.
+    """
+    from .expert import state_vector
+    from .policy import S1VBrain
+
+    brain = S1VBrain(checkpoint, device=device, cuda_graph=str(device).startswith("cuda"))
+    rng = np.random.default_rng(seed + 7)
+
+    class _Actor:
+        task = "reach"
+
+        def set_task(self, task: str) -> None:
+            self.task = task
+            brain.decisions.clear()
+            brain.tick_ms.clear()
+
+        def __call__(self, obs: dict[str, Any], priv: Any, expert: Primitive) -> Primitive:
+            if beta > 0.0 and rng.random() < beta:
+                return expert
+            prim, _ = brain.decide(obs["scene"], obs["wrist"], state_vector(priv.qpos), self.task)
+            return prim
+
+    return _Actor()
 
 
 def load_backbone(device: str = "cuda"):
@@ -240,18 +275,34 @@ def main(argv: list[str] | None = None) -> None:
     g.add_argument("--seed", type=int, default=0)
     g.add_argument("--worker", default="w0")
     g.add_argument("--keep-failures", action="store_true")
+    g.add_argument("--round", type=int, default=0, help="DAgger round id written into the shard names")
+    g.add_argument(
+        "--actor", default=None, help="DAgger: checkpoint dir or HF repo of the learner that drives; the expert labels"
+    )
+    g.add_argument(
+        "--beta", type=float, default=0.0, help="DAgger mixing: probability per tick that the expert drives instead"
+    )
+    g.add_argument("--device", default="cuda")
     f = sub.add_parser("featurize")
     f.add_argument("root", type=Path)
     f.add_argument("--device", default="cuda")
     f.add_argument("--grid", type=int, default=GRID)
     args = ap.parse_args(argv)
     if args.cmd == "generate":
+        actor = None
+        actor_name = "expert"
+        if args.actor is not None:
+            actor = dagger_actor(args.actor, beta=args.beta, seed=args.seed, device=args.device)
+            actor_name = f"dagger:{Path(args.actor).name}:beta={args.beta}"
         stats = generate(
             args.root,
             n_reach=args.reach,
             n_pick=args.pick,
             seed=args.seed,
             worker=args.worker,
+            round_id=args.round,
+            actor_name=actor_name,
+            actor=actor,
             keep_failures=args.keep_failures,
         )
         print(json.dumps(stats))
