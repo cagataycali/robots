@@ -315,6 +315,40 @@
         "microduck_walk",
         "microduck_stand"
       ]
+    },
+    "laya": {
+      "module": "strands_robots.policies.laya",
+      "class": "LayaPolicy",
+      "description": "Laya (convaiinnovations) text-only System 1 typed-decision model: joint state + instruction serialized to JSON -> which joint / direction / step size in one calibrated non-autoregressive pass -> ONE discrete joint step per tick; no vision, no continuous head; confidence_gate holds below a probability (research provider)",
+      "requires": [],
+      "config_keys": [
+        "model",
+        "max_len",
+        "step_deg",
+        "gripper_step_pct",
+        "confidence_gate",
+        "questions_profile",
+        "privileged",
+        "joint_labels",
+        "gripper_range",
+        "device"
+      ],
+      "defaults": {
+        "model": "english",
+        "questions_profile": "joint_direction_size",
+        "privileged": true
+      },
+      "shorthands": [
+        "laya",
+        "system1"
+      ],
+      "hf_orgs": [
+        "convaiinnovations"
+      ],
+      "model_id_overrides": [
+        "convaiinnovations/laya"
+      ],
+      "extra": "laya"
     }
   }
 }

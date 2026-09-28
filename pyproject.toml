@@ -183,6 +183,13 @@ moveit2 = [
 # silently-broken install of the squatter package. Tracked in the
 # follow-up issue linked from PR #306.
 curobo = []
+# Laya System 1 typed-decision policy (convaiinnovations/laya): a text-only
+# ModernBERT-class decision model, torch + transformers via the `laya` runtime.
+# Research provider; weights fetched from the Hub on first use (Apache-2.0).
+# See policies/laya/. `laya` is <1.0, so the minor is capped (convention 2).
+laya = [
+    "laya>=0.3.20,<0.4.0",
+]
 # GR00T Whole-Body-Control (SONIC) locomotion policy. Runs the ONNX
 # controllers in-process via onnxruntime (no torch, no sidecar) - a light
 # extra, like the client side of moveit2. Model weights are NOT bundled;

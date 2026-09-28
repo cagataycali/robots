@@ -48,6 +48,7 @@ _PROVIDER_POLICIES = {
     "kimodo/policy.py": "KimodoPolicy",
     "protomotions/policy.py": "ProtoMotionsPolicy",
     "microduck/policy.py": "MicroduckPolicy",
+    "laya/policy.py": "LayaPolicy",
     "rl.py": "RLCheckpointPolicy",
 }
 
