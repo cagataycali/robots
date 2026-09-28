@@ -1,7 +1,9 @@
 """Grade the Device Connect environment reference against the code's env surface.
 
-``docs/reference/device-connect.md`` is where an operator configures Device Connect, and
-its ``Reference`` section is the list they read. Two properties are graded here,
+``docs/reference/configuration.md`` is where an operator configures Device Connect: the
+``{{env_vars}}`` token on it renders, through ``docs/hooks/env_vars.py``, one table per
+prefix of every variable the package reads. The page is graded as the reader sees it,
+with the token expanded by the hook. Two properties are graded here,
 both derived from the package rather than from a list kept alongside it, so a
 variable added later is graded on arrival:
 
@@ -26,26 +28,45 @@ both sides of this change - it is the reason the omission mattered.
 """
 
 import ast
+import importlib.util
 import pathlib
 import re
+import sys
 
 import pytest
 
 import strands_robots
 
-_PACKAGE = pathlib.Path(strands_robots.__file__).parent / "device_connect"
-_PAGE = pathlib.Path(strands_robots.__file__).parent.parent / "docs" / "reference" / "device-connect.md"
+_REPO = pathlib.Path(strands_robots.__file__).parent.parent
+_PACKAGE = _REPO / "strands_robots" / "device_connect"
+_PAGE = _REPO / "docs" / "reference" / "configuration.md"
+_HOOK = _REPO / "docs" / "hooks" / "env_vars.py"
 
 #: The module that owns the Reachy Mini daemon link. Its variables configure one
 #: channel, so the reference documents them together.
 _DAEMON_LINK_MODULE = "reachy_transport"
 
-#: A documented row's first cell: exactly one backticked env-var-shaped token.
-_ROW_VAR = re.compile(r"^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|")
+#: A documented row's first cell: exactly one env-var-shaped token, in the
+#: backticks a hand-written row uses or the ``<code>`` the hook emits.
+_ROW_VAR = re.compile(r"^\|\s*(?:`|<code>)([A-Z][A-Z0-9_]*)(?:`|</code>)\s*\|")
 
-#: The leading ``/``-separated run of backticked spellings in a row's description,
-#: which is how every row on the page states the values it accepts.
-_LEADING_SPELLINGS = re.compile(r"^((?:`[A-Za-z0-9]+`/)*`[A-Za-z0-9]+`)")
+#: The page states the accepted boolean spellings once, for every boolean row:
+#: "A boolean variable accepts `1`, `true`, `yes` (case-insensitive) ...".
+_BOOLEAN_RULE = re.compile(r"boolean variable accepts ((?:`[A-Za-z0-9]+`,\s*)*`[A-Za-z0-9]+`)")
+
+
+def _rendered_page() -> str:
+    """The configuration page with ``{{env_vars}}`` expanded by the shipped hook."""
+    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _HOOK)
+    assert spec is not None and spec.loader is not None
+    module = sys.modules.get(spec.name) or importlib.util.module_from_spec(spec)
+    if spec.name not in sys.modules:
+        sys.modules[spec.name] = module  # dataclasses in the hook resolve their module here
+        spec.loader.exec_module(module)
+    source = _PAGE.read_text(encoding="utf-8")
+    rendered = module.on_page_markdown(source, page=None, config=None, files=None)
+    assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"
+    return rendered
 
 
 def _env_reads() -> dict[str, set[str]]:
@@ -120,18 +141,23 @@ def _row_for(page: str, var: str) -> str:
 
 
 def _documented_spellings(page: str, var: str) -> list[str]:
-    """Return the accepted spellings *var*'s row advertises."""
-    cells = [cell.strip() for cell in _row_for(page, var).strip("|").split("|")]
-    if len(cells) < 3:
+    """Return the accepted spellings the page advertises for the boolean *var*.
+
+    The generated table does not repeat the vocabulary per row; the page states
+    it once in its boolean rule, and the row has to describe the variable as a
+    truthy switch for that rule to apply to it.
+    """
+    row = _row_for(page, var)
+    if "truthy" not in row:
         return []
-    run = _LEADING_SPELLINGS.match(cells[2])
-    return re.findall(r"`([A-Za-z0-9]+)`", run.group(1)) if run else []
+    rule = _BOOLEAN_RULE.search(page)
+    return re.findall(r"`([A-Za-z0-9]+)`", rule.group(1)) if rule else []
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def page() -> str:
-    """The shipped Device Connect reference."""
-    return _PAGE.read_text(encoding="utf-8")
+    """The shipped configuration reference, as rendered."""
+    return _rendered_page()
 
 
 class TestTheReferenceCoversTheSurface:
@@ -141,7 +167,7 @@ class TestTheReferenceCoversTheSurface:
         """A variable the surface reads but the page omits is unreachable config."""
         missing = _undocumented(page)
         assert not missing, (
-            "docs/reference/device-connect.md documents no row for environment variables the "
+            "docs/reference/configuration.md documents no row for environment variables the "
             f"Device Connect surface reads: {missing}. A variable the code honours "
             "and the reference omits cannot be found by the operator who needs it."
         )
@@ -215,7 +241,7 @@ class TestTheRulesAreScopedAndLoadBearing:
         """A scan that stopped finding variables would report a clean page."""
         reads = _env_reads()
         assert len(reads) >= 5, f"expected the package to read several variables, found {reads}"
-        daemon = _daemon_link_sections(_PAGE.read_text(encoding="utf-8"))
+        daemon = _daemon_link_sections(_rendered_page())
         assert len(daemon) >= 3, f"expected the daemon link to carry several variables, found {daemon}"
 
     def test_the_messaging_variables_are_not_required_in_the_daemon_link_table(self, page: str) -> None:
@@ -235,7 +261,9 @@ class TestTheRulesAreScopedAndLoadBearing:
     def test_a_planted_page_missing_a_variable_is_reported(self, page: str) -> None:
         """Dropping a documented row must be reported, not tolerated."""
         var = sorted(_env_reads())[0]
-        stripped = "\n".join(line for line in page.splitlines() if not _ROW_VAR.match(line) or f"`{var}`" not in line)
+        stripped = "\n".join(
+            line for line in page.splitlines() if (m := _ROW_VAR.match(line)) is None or m.group(1) != var
+        )
         assert var in _undocumented(stripped)
 
     def test_a_page_splitting_the_daemon_link_is_reported(self) -> None:
@@ -244,7 +272,7 @@ class TestTheRulesAreScopedAndLoadBearing:
         Built here rather than by mutating the shipped page, so the plant states
         the rule on its own and does not depend on what the page happens to say.
         """
-        daemon = sorted(_daemon_link_sections(_PAGE.read_text(encoding="utf-8")))
+        daemon = sorted(_daemon_link_sections(_rendered_page()))
         assert len(daemon) >= 2, f"expected several daemon-link variables, found {daemon}"
         header = "| Variable | Default | What it does |\n|---|---|---|\n"
         rest = "".join(f"| `{var}` | unset | what it does |\n" for var in daemon[1:])
