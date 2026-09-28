@@ -128,7 +128,6 @@ def _engine(
     engine._objects = {}
     engine._cameras = {}
     engine._prim_registry = []
-    engine._cam_out_size = {}
     engine._camera_warmup_steps = 0
     engine._sim_time = 0.0
     engine._step_count = 0
