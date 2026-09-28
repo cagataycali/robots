@@ -76,6 +76,7 @@ class _World:
     def __init__(self) -> None:
         self.physics_sim_view = object()
         self.step_calls = 0
+        self.render_calls = 0
         self.scene = _Scene()
 
     def reset(self) -> None:
@@ -83,6 +84,9 @@ class _World:
 
     def step(self, render: bool = False) -> None:
         self.step_calls += 1
+
+    def render(self) -> None:
+        self.render_calls += 1
 
     def play(self) -> None:
         return None
@@ -180,7 +184,8 @@ class TestConvergeRenderDropsThePoseHoldAndKeepsRendering:
 
         engine._converge_render(3)
 
-        assert engine._world.step_calls == 3
+        assert engine._world.render_calls == 3
+        assert engine._world.step_calls == 0
 
     def test_a_live_view_still_holds_the_pose(self) -> None:
         """Control: the DLSS-convergence behaviour is unchanged when the view is
@@ -193,7 +198,8 @@ class TestConvergeRenderDropsThePoseHoldAndKeepsRendering:
         assert art.reads == 2
         assert len(art.position_writes) == 2
         assert art.velocity_writes == 2
-        assert engine._world.step_calls == 2
+        assert engine._world.render_calls == 2
+        assert engine._world.step_calls == 0
 
     def test_the_flag_is_re_read_every_iteration(self) -> None:
         """A worker's dynamic remove lands BETWEEN iterations - the loop holds no
@@ -203,25 +209,25 @@ class TestConvergeRenderDropsThePoseHoldAndKeepsRendering:
         """
         engine = _engine(stale=False)
         art = engine._robots["arm"].articulation
-        original = engine._world.step
+        original = engine._world.render
 
-        def _go_stale_after_first(render: bool = False) -> None:
-            original(render=render)
+        def _go_stale_after_first() -> None:
+            original()
             engine._physics_view_stale = True
 
-        engine._world.step = _go_stale_after_first  # type: ignore[method-assign]
+        engine._world.render = _go_stale_after_first  # type: ignore[method-assign]
 
         engine._converge_render(4)
 
         assert art.reads == 1, f"kept reading after the view went stale: {art.reads} reads"
-        assert engine._world.step_calls == 4, "the render stopped instead of continuing"
+        assert engine._world.render_calls == 4, "the render stopped instead of continuing"
 
     def test_the_backend_refusal_does_not_escape(self) -> None:
         engine = _engine(stale=True, raises=True)
 
         engine._converge_render(2)  # must not raise
 
-        assert engine._world.step_calls == 2
+        assert engine._world.render_calls == 2
 
 
 class TestSetJointPositionsRefusesAStaleView:

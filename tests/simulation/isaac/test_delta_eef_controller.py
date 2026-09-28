@@ -246,14 +246,24 @@ class _FakeWorld:
 def fake_isaacsim_types(monkeypatch):
     """Inject a fake ``isaacsim.core.utils.types`` exposing ArticulationAction."""
     mods = {}
-    for name in ("isaacsim", "isaacsim.core", "isaacsim.core.utils", "isaacsim.core.utils.types"):
+    for name in (
+        "isaacsim",
+        "isaacsim.core",
+        "isaacsim.core.utils",
+        "isaacsim.core.utils.types",
+        "isaacsim.core.utils.prims",
+    ):
         mod = types.ModuleType(name)
         monkeypatch.setitem(sys.modules, name, mod)
         mods[name] = mod
     mods["isaacsim.core.utils.types"].ArticulationAction = _FakeArticulationAction
+    # ``remove_robot`` deletes the robot's prim via this leaf; stand it in so a
+    # removal reaches its success body rather than the ImportError envelope.
+    mods["isaacsim.core.utils.prims"].delete_prim = lambda prim_path: None
     mods["isaacsim"].core = mods["isaacsim.core"]
     mods["isaacsim.core"].utils = mods["isaacsim.core.utils"]
     mods["isaacsim.core.utils"].types = mods["isaacsim.core.utils.types"]
+    mods["isaacsim.core.utils"].prims = mods["isaacsim.core.utils.prims"]
     return mods
 
 
