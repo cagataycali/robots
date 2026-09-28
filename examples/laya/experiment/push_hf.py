@@ -47,7 +47,14 @@ primitive vocabulary.** 200 ticks per episode, 20 episodes per arm x task.
 
 ## Tasks
 * `reach`: end effector within 3 cm of the cube.
-* `pick`: cube lifted above 3 cm (gripper closed on it).
+* `pick`: cube centre lifted >= 5 cm above the table with finger contact.
+
+## Headline (H1, 20 episodes per cell, same seeds)
+scripted reach 20/20 (median 45 ticks); random 0/20 (min distance 0.081 m); every zero-shot Laya arm 0/20 on both
+tasks and none beats random on min distance (0.102-0.116 m = rest pose). Each Laya checkpoint emits one primitive per
+(checkpoint, task text): english `none` 100 %, multilingual `gripper` 100 % (reach) / `shoulder_lift` 88 % (pick),
+typed-decisions `elbow_flex` 84 % (reach) / `shoulder_lift` 99 % (pick). Nobody lifts the cube, the scripted grasp
+closes on one finger only (pick rows are reach-and-descend references). Details and H2/H3 in `REPORT.md`.
 
 ## Layout
 * `arms/<arm>_<task>/` LeRobot v3 datasets (`observation.images.scene`, `observation.images.wrist`,

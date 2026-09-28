@@ -65,7 +65,12 @@ def judge_summary() -> str:
         held = [yi for pi, yi in zip(p, y) if pi < 0.5]
         rp = statistics.mean(passed) if passed else float("nan")
         rh = statistics.mean(held) if held else float("nan")
-        complete = "yes" if n >= 12855 else f"partial {n}/12855"
+        if n >= 12855:
+            complete = "yes (all 12,855 ticks)"
+        elif n >= 12855 // 3:
+            complete = f"stride-3 subsample ({n} of 12,855)"
+        else:
+            complete = f"partial {n}/12855"
         rows.append(
             f"| {model} | {n} | {pos / n:.1%} | {auroc:.3f} | {brier:.3f} | {ece:.3f} | {abstain:.0%} | {rp:.1%} | {rh:.1%} | {complete} |"
         )
