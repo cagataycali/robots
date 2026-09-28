@@ -17,12 +17,12 @@ template_class: sr-home
 </div>
 <div class="sr-hero__stage" markdown>
 <robot-viewer name="so101" autoload></robot-viewer>
-<label class="sr-pick">Try another robot <select data-robot-pick aria-label="Choose the robot shown in the viewer"><option value="so101">so101</option></select></label>
+<label class="sr-pick">Try another robot <select data-robot-pick><option value="so101">so101</option></select></label>
 </div>
 </div>
 
 <div class="sr-proof" markdown>
-<div><strong>{{n:robots}}</strong><span>robots in the registry, arms, hands, humanoids, quadrupeds, mobile bases</span></div>
+<div><strong>{{n:robots}}</strong><span>robots in the registry</span></div>
 <div><strong>{{n:policy_providers}}</strong><span>policy providers behind one <code>run_policy</code> call</span></div>
 <div><strong>{{n:native_drivers}}</strong><span>native hardware drivers that need no lerobot install</span></div>
 </div>
@@ -46,7 +46,7 @@ MuJoCo on the CPU by default, Newton and Isaac on a GPU. Worlds, objects, camera
 </div>
 <div class="sr-card" markdown>
 ### [Hardware](learn/hardware/drivers.md)
-Native drivers and lerobot drivers, teleoperation, cameras, calibration.
+Native and lerobot drivers, teleoperation, cameras, calibration.
 </div>
 <div class="sr-card" markdown>
 ### [Mesh](learn/mesh/fleet.md)
@@ -78,4 +78,4 @@ robot.cleanup()
 
 </div>
 
-The left fence runs on a laptop. The right one needs an SO-101 on USB, and the arm is the same tool with the same verbs. The sim addresses joints by the model's names in radians; the native driver addresses servos by name in degrees. [Start here](start/index.md).
+The left fence runs on a laptop. The right one needs an SO-101 on USB; same tool, same verbs. The sim addresses joints by the model's names in radians; the native driver addresses servos by name in degrees. [Start here](start/index.md).
