@@ -6,6 +6,7 @@ Usage: python build_report.py   (writes ../REPORT.md; sections whose inputs are 
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import statistics
 import subprocess
@@ -16,6 +17,11 @@ LANE = HERE.parent
 PY = sys.executable
 
 NARRATIVE = LANE / "REPORT_NARRATIVE.md"
+# judge.py was run with JUDGE_STRIDE="multilingual=3,typed-decisions=3" (english judged every tick)
+STRIDES = {
+    part.split("=")[0]: int(part.split("=")[1])
+    for part in filter(None, os.environ.get("JUDGE_STRIDE", "multilingual=3,typed-decisions=3").split(","))
+}
 
 
 def tables() -> str:
@@ -65,12 +71,13 @@ def judge_summary() -> str:
         held = [yi for pi, yi in zip(p, y) if pi < 0.5]
         rp = statistics.mean(passed) if passed else float("nan")
         rh = statistics.mean(held) if held else float("nan")
+        k = STRIDES.get(model, 1)
         if n >= 12855:
             complete = "yes (all 12,855 ticks)"
-        elif n >= 12855 // 3:
-            complete = f"stride-3 subsample ({n} of 12,855)"
+        elif k > 1 and n >= 12855 // k:
+            complete = f"stride-{k} uniform subsample ({n} of 12,855)"
         else:
-            complete = f"partial {n}/12855"
+            complete = f"partial {n}/12855 (still running)"
         rows.append(
             f"| {model} | {n} | {pos / n:.1%} | {auroc:.3f} | {brier:.3f} | {ece:.3f} | {abstain:.0%} | {rp:.1%} | {rh:.1%} | {complete} |"
         )
