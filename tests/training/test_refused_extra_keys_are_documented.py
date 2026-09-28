@@ -10,9 +10,11 @@ refuse them with a message that spells the key, e.g.::
     'progress_path', 'type'] (the fields of lerobot's SampleWeightingConfig)
 
 A caller who reads that message needs somewhere to look up what the accepted
-fields mean, and the Training pages are where: the overview carries the spec
-and the installs, ``docs/reference/training/provider-knobs.md`` the per-backend
-vocabulary. They are read here as one document, because the rule is that a
+fields mean, and the Training pages are where: ``docs/learn/training/index.md``
+carries the spec and the installs, ``docs/learn/training/lerobot.md`` the
+per-backend vocabulary (the old overview and provider-knobs pages both redirect
+there) and ``docs/learn/training/rl.md`` the reward-driven fields. They are read
+here as one document, because the rule is that a
 reader of the message finds the key - not which page carries it. A refusal
 naming a key the docs never mention is a dead end: the message proves the knob
 exists and the documentation denies it.
@@ -34,8 +36,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TRAINING_DIR = _REPO_ROOT / "strands_robots" / "training"
 #: The pages a reader of a refusal message is sent to, read as one document.
 _DOCS: tuple[Path, ...] = (
-    _REPO_ROOT / "docs" / "reference" / "training" / "overview.md",
-    _REPO_ROOT / "docs" / "reference" / "training" / "provider-knobs.md",
+    _REPO_ROOT / "docs" / "learn" / "training" / "index.md",
+    _REPO_ROOT / "docs" / "learn" / "training" / "lerobot.md",
+    _REPO_ROOT / "docs" / "learn" / "training" / "rl.md",
 )
 
 # ``extra['key']`` / ``extra["key"]`` inside a message, dotted keys included.
