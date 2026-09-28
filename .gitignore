@@ -11,3 +11,6 @@ MUJOCO_LOG.TXT
 .coverage.*
 AGENTS.local.md
 site/
+
+# macOS Finder metadata
+.DS_Store
