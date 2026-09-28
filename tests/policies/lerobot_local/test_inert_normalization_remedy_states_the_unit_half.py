@@ -23,8 +23,11 @@ a unit-converting embodiment whose stats are inert.
 from __future__ import annotations
 
 import dataclasses
+import importlib.util
 import logging
 import pathlib
+import re
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -48,7 +51,34 @@ SO101_RANGE_RAD = [
     (-0.1745, 1.7453),
 ]
 
-_DOC = pathlib.Path(__file__).resolve().parents[3] / "docs" / "reference" / "policies" / "lerobot-local-observations.md"
+#: The provider page; the old reference/policies/lerobot-local-observations.md redirects
+#: here. Its constructor table is a ``{{providers:kwargs:lerobot_local}}`` token rendered
+#: by docs/hooks/providers.py, so the page is read with the token expanded.
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+_DOC = _REPO_ROOT / "docs" / "learn" / "policies" / "lerobot-local.md"
+_PROVIDERS_HOOK = _REPO_ROOT / "docs" / "hooks" / "providers.py"
+
+
+def _rendered_doc() -> str:
+    """The lerobot_local page as the reader sees it, tokens expanded by the shipped hook."""
+    spec = importlib.util.spec_from_file_location("docs_hooks_providers", _PROVIDERS_HOOK)
+    assert spec is not None and spec.loader is not None
+    module = sys.modules.get(spec.name)
+    if module is None:
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    return module.substitute(_DOC.read_text(encoding="utf-8"), "learn/policies/lerobot-local.md")
+
+
+def _section_handing_out(knob: str) -> str:
+    """The first ``## `` section of the rendered page that names *knob*."""
+    text = _rendered_doc()
+    sections = re.split(r"\n(?=## )", text)
+    for section in sections:
+        if knob in section:
+            return section
+    raise AssertionError(f"{_DOC.name} no longer hands out {knob}")
 
 
 def _sigma_span(state_units: str) -> list[float]:
@@ -111,9 +141,7 @@ def test_the_inert_normalization_warning_states_the_unit_half(caplog):
 
 def test_the_docs_remedy_shows_the_unit_half_beside_the_stats_half():
     """The page that hands out processor_overrides also hands out the unit knob."""
-    text = _DOC.read_text(encoding="utf-8")
-    start = text.index("## Processor bridge and normalization")
-    section = text[start : text.index("\n## ", start + 1)]
+    section = _section_handing_out("processor_overrides")
 
     assert "processor_overrides" in section
     assert "state_units" in section, "the stats remedy is documented without its unit half"
