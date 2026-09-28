@@ -4,7 +4,7 @@ description: Build a scene on any backend: objects and their size conventions, c
 
 # Worlds and objects
 
-By the end of this page you can build a scene with primitives, a checker-textured shelf, an articulated carton the predicates read, a wrist camera riding the arm, a body added by an MJCF patch, and stairs under all of it, with the same calls on every backend.
+By the end of this page you can build a scene from primitives, an articulated carton the predicates read, a wrist camera riding the arm, an MJCF patch and stairs under it all, with the same calls on every backend.
 
 ```python
 from strands_robots.simulation import create_simulation
@@ -63,13 +63,13 @@ Ground height at (1.0000, 0.0000) = 0.0240m
 | `plane` | visual half-widths; infinite for collision, forced static |
 | `mesh` | ignored; the file's units define the extent, `mesh_path` required |
 
-A short vector is refused, not padded: a padded size compiles a different object and reports success. `color` is RGB or RGBA; an RGB triple gets an opaque alpha. `is_static` is tri-state: `None` lets the backend decide (a plane is always static), `True` welds, `False` is a free body; a non-boolean is refused. `material` accepts `builtin` (`checker`, `gradient`, `flat`), `rgb1`, `rgb2`, `texrepeat`, `texdim`, `texture`, `reflectance`, `shininess`, `specular`; anything else is refused with the accepted list. Newton consumes half-extents and radii directly; Isaac pads trailing components from a documented default.
+A short vector is refused, not padded: padding would compile a different object and report success. `color` is RGB or RGBA; an RGB triple gets an opaque alpha. `is_static` is tri-state: `None` lets the backend decide (a plane is always static), `True` welds, `False` is a free body; a non-boolean is refused. `material` accepts `builtin` (`checker`, `gradient`, `flat`), `rgb1`, `rgb2`, `texrepeat`, `texdim`, `texture`, `reflectance`, `shininess`, `specular`; anything else is refused with the accepted list. Newton consumes half-extents and radii directly; Isaac pads trailing components from a documented default.
 
-`move_object(name, position, orientation)` places a dynamic object at rest at the new pose or rebuilds a static one. `remove_object(name)`, `list_objects()`, `get_body_state(body)` complete the set. `attach_bodies(parent, child, mode="weld")` and `detach_bodies(parent, child)` glue two bodies at their current relative pose.
+`move_object(name, position, orientation)` places a dynamic object at rest or rebuilds a static one. `remove_object`, `list_objects` and `get_body_state` complete the set. `attach_bodies(parent, child, mode="weld")` and `detach_bodies(parent, child)` glue two bodies at their current pose.
 
 ## Cameras
 
-`add_camera(name, position, target, fov=60, width, height, parent_body=None)`. World-frame by default. With `parent_body` the camera rides a body and `position` and `target` are in that body's frame; both are required then, because the world-frame defaults would put a wrist camera 1.7 m away looking back at the arm. `mujoco` and `newton` support it; `isaac` refuses `parent_body` and names the world-frame alternative. A name is a bare token (`wrist`, `front_cam`, `cam-2`), optionally scoped to one robot (`arm0/wrist_cam`); a space (`a b`), a dot (`wrist.rgb`) or `..` is refused with `status="error"` and the scene continues without the camera, so read the status. Every camera appears in `get_observation` as an `(H, W, 3)` array under its name; the policy pages explain [which names a model expects](../policies/lerobot-local.md).
+`add_camera(name, position, target, fov=60, width, height, parent_body=None)`. World-frame by default. With `parent_body` the camera rides a body and `position` and `target` are in that body's frame; both are required then, since the world-frame defaults would put a wrist camera 1.7 m away. `mujoco` and `newton` support it; `isaac` refuses `parent_body` and names the world-frame alternative. A name is a bare token (`wrist`, `front_cam`, `cam-2`), optionally scoped to one robot (`arm0/wrist_cam`); a space (`a b`), a dot (`wrist.rgb`) or `..` is refused with `status="error"` and the scene continues without the camera, so read the status. Every camera appears in `get_observation` as an `(H, W, 3)` array under its name; the policy pages explain [which names a model expects](../policies/lerobot-local.md).
 
 ## Task objects
 
@@ -81,7 +81,7 @@ Three MJCF assets ship in `strands_robots/simulation/task_objects/`: `hinged_car
 
 ## Meshes and materials
 
-`add_object(shape="mesh", mesh_path="part.stl", mass=0.2)` registers the file as a MuJoCo mesh asset (`spec.add_mesh`), so any format MuJoCo's compiler reads works; a mesh `size` is a per-axis scale on Newton only, MuJoCo and Isaac ignore it and report success (#2300); the file's own units set the extent. Robot meshes come from `robot_descriptions` and the bundled menagerie tree through `strands_robots.simulation.model_registry` (`resolve_model`, `register_urdf`, `list_available_models`). Isaac converts MJCF and meshes into USD (`isaac/mjcf_assets.py`, `isaac/mesh_assets.py`).
+`add_object(shape="mesh", mesh_path="part.stl", mass=0.2)` registers the file as a MuJoCo mesh asset (`spec.add_mesh`), so any format MuJoCo's compiler reads works; a mesh `size` is a per-axis scale on Newton only; MuJoCo and Isaac ignore it and report success (#2300); the file's own units set the extent. Robot meshes come from `robot_descriptions` and the bundled menagerie tree through `strands_robots.simulation.model_registry` (`resolve_model`, `register_urdf`, `list_available_models`). Isaac converts MJCF and meshes into USD (`isaac/mjcf_assets.py`, `isaac/mesh_assets.py`).
 
 ## Terrain
 

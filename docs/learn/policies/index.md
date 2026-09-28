@@ -4,7 +4,7 @@ description: The Policy contract, the provider matrix generated from the registr
 
 # Policies
 
-By the end of this page you can name every provider the package ships, build one with `create_policy`, write your own in twenty lines, and swap providers by changing one string. A policy turns an observation into joint targets; the robot never knows which provider produced them.
+By the end of this page you can name every provider the package ships, build one with `create_policy`, write your own in twenty lines, and swap providers by changing one string. A policy turns an observation into joint targets.
 
 ## The contract
 
@@ -42,19 +42,19 @@ class Policy(ABC):
     def provider_name(self) -> str: ...
 ```
 
-The fence is abridged; the rest of the contract (`execution_horizon`, `instruction_free_actions`, `is_chunk_emitting`, `set_control_frequency`, `set_rtc_observed_delay`) is rendered on the [API reference](../../reference/api/policies.md).
+The fence is abridged; `execution_horizon`, `instruction_free_actions`, `is_chunk_emitting`, `set_control_frequency` and `set_rtc_observed_delay` are on the [API reference](../../reference/api/policies.md).
 
-`get_actions` returns one action dict per control tick: joint name to a python `float` (or `list[float]` for a grouped actuator), never an array. The list is the action chunk; the runtime plays it at `control_frequency` and asks again.
+`get_actions` returns one action dict per control tick, joint name to a python `float` (or `list[float]` for a grouped actuator), never an array; the list is the chunk the runtime plays at `control_frequency` before asking again.
 
-Non-VLA providers read their goal from well-known keywords instead of the instruction: `target_pose` (`[x, y, z, qw, qx, qy, qz]`), `target_joints` (`{name: radians}`), `target_velocity` (`[vx, vy, omega]`), and `world_update` for collision-aware planners. Every provider ignores keywords it does not know, so one `policy_kwargs` dict travels across providers.
+Non-VLA providers read their goal from keywords instead of the instruction: `target_pose` (`[x, y, z, qw, qx, qy, qz]`), `target_joints` (`{name: radians}`), `target_velocity` (`[vx, vy, omega]`), and `world_update` for collision-aware planners. Providers ignore keywords they do not know, so one `policy_kwargs` dict travels.
 
 ## Providers
 
-Generated from `strands_robots/registry/policies.json` and `pyproject.toml` at build time. "Also spelled" lists the shorthands `create_policy` accepts.
+Generated from `strands_robots/registry/policies.json` and `pyproject.toml` at build time; "Also spelled" lists the shorthands `create_policy` accepts.
 
 {{providers:table}}
 
-`composite` and `persistent` are not in the registry but resolve by module name: `CompositePolicy` merges two policies over disjoint joint groups (legs from `wbc`, arms from a manipulation policy); `PersistentPolicy` keeps a provider warm in a worker.
+`composite` and `persistent` resolve by module name, not the registry: `CompositePolicy` merges two policies over disjoint joint groups (legs from `wbc`, arms from another); `PersistentPolicy` keeps a provider warm in a worker.
 
 ## Build one
 
@@ -75,11 +75,11 @@ You should see:
 8 {'shoulder_pan': 0.0, 'elbow_flex': 0.4330127018922193}
 ```
 
-`create_policy` also takes smart strings: a HuggingFace model id resolves to `lerobot_local` (or `groot` / `cosmos3` for the `nvidia` org), `zmq://host:port` to `groot`, `ws://host:port` to [`remote`](remote.md). A misspelled keyword is a `TypeError` before anything downloads. `lerobot_local` and `kimodo` load models with `trust_remote_code=True` and refuse to build until `STRANDS_TRUST_REMOTE_CODE=1` is set (refusal code `TRUST_REMOTE_CODE_REQUIRED`).
+`create_policy` also takes smart strings: a HuggingFace model id resolves to `lerobot_local` (or `groot` / `cosmos3` for the `nvidia` org), `zmq://host:port` to `groot`, `ws://host:port` to [`remote`](remote.md). A misspelled keyword is a `TypeError` before any download. `lerobot_local` and `kimodo` load with `trust_remote_code=True` and refuse to build until `STRANDS_TRUST_REMOTE_CODE=1` is set (`TRUST_REMOTE_CODE_REQUIRED`).
 
 ## Run one in the simulator
 
-`run_policy` builds the policy from the provider name, runs `preflight` against the observation keys before any weights download, then drives the loop.
+`run_policy` builds the policy from the provider name, runs `preflight` against the observation keys before any download, then drives the loop.
 
 ```python
 from strands_robots.simulation import create_simulation
@@ -103,11 +103,11 @@ MockPolicy | wave
 Note: MockPolicy does not read the instruction. Its actions - a test motion on every joint - were commanded to the robot whatever the task says; nothing above means the task was performed.
 ```
 
-The last line comes from `reads_instruction = False`: a policy that never reads the words says so in every task report, so an agent cannot relay a test motion as a done task.
+The last line comes from `reads_instruction = False`: a policy that never reads the words says so in every report, so an agent cannot relay a test motion as done.
 
 ## Swap the policy, keep the robot
 
-Nothing in the robot or scene changes between providers. Register your class once; it is one more string.
+Nothing in the robot or scene changes between providers; a registered class is one more string.
 
 ```python
 from typing import Any
@@ -159,7 +159,7 @@ mock success 0.493
 freeze success 0.501
 ```
 
-The same swap works on hardware: `Robot("so101", mode="real").start_task(instruction, policy_provider=...)` takes the same provider string, and `run_policy(create_policy(...))` a built object. See [Agents](../agents.md) for the approval gate a real robot adds.
+The same swap works on hardware: `Robot("so101", mode="real").start_task(instruction, policy_provider=...)` takes the provider string, `run_policy(create_policy(...))` a built object; [Agents](../agents.md) covers the approval gate a real robot adds.
 
 ## Pick a provider
 
