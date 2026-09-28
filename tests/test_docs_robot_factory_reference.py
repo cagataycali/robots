@@ -1,29 +1,30 @@
 """The factory reference page must not state a contract the factory does not implement.
 
-``docs/getting-started/robot-factory.md`` is the reference a caller reads before
-writing ``Robot(...)``: a front-matter ``description`` that states the signature
-as a whole, a parameter table with a Default column, and a Mesh section with a
-copy-paste snippet. All three are hand-written, so any of them can outlive the
-code.
+``docs/reference/api/robot.md`` is the reference a caller reads before writing
+``Robot(...)``. It renders :func:`strands_robots.robot.Robot` with mkdocstrings,
+so the signature and the parameter list the reader sees are the docstring's
+``Args:`` section at build time. That moves the drift from a hand-written table
+to the docstring: a parameter with no entry renders as one that does not exist,
+an entry for a renamed parameter renders as one that does, and a ``(default)``
+spelled in prose can name a value the caller never gets.
 
-A wrong Default is worse than a missing one. It names a state the caller is
-never in, and it hides the knob that would reach the state the page describes -
-the reader's only documented lever turns off something that was never on. A
-documented refusal that does not happen fails the same way in reverse: the
+A wrong default is worse than a missing one. It names a state the caller is
+never in, and it hides the knob that would reach the state the page describes.
+A documented refusal that does not happen fails the same way in reverse: the
 caller believes a typo is caught at construction and ships the typo.
 
-These tests grade the page against :func:`strands_robots.robot.Robot` itself -
-its signature, its docstring and its observed behaviour - rather than against a
+These tests grade the page against :func:`strands_robots.robot.Robot` itself,
+its signature, its docstring and its observed behaviour, rather than against a
 hand-copied expectation, so changing a default cannot silently invalidate them.
-``tests/mesh/test_mesh_env_opt_in_documented_default.py`` grades the same
-opt-in contract where a table's first cell is the environment variable; this
-page states it as a constructor default instead, which that guard does not read.
+``docs/learn/mesh/index.md`` states the mesh opt-in and
+``docs/learn/hardware/drivers.md`` states the ``driver="strands"`` refusal; both
+claims are graded here by reaching the state they describe.
 """
 
 from __future__ import annotations
 
 import ast
-import builtins
+import importlib.util
 import inspect
 import re
 from pathlib import Path
@@ -33,17 +34,21 @@ import pytest
 from strands_robots.robot import Robot, _mesh_env_opt_in
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_DOC = _REPO_ROOT / "docs" / "getting-started" / "robot-factory.md"
-#: The ``driver="strands"`` contract, including the refusal transcript the last
-#: class here grades. The factory page states the choice; this one states the
-#: contract.
-_NATIVE_DRIVERS_DOC = _REPO_ROOT / "docs" / "reference" / "hardware" / "native-drivers.md"
+_DOC = _REPO_ROOT / "docs" / "reference" / "api" / "robot.md"
+#: The page whose fence turns mesh on and whose table spells ``STRANDS_MESH``.
+_MESH_DOC = _REPO_ROOT / "docs" / "learn" / "mesh" / "index.md"
+#: The ``driver="strands"`` contract, including the refusal-by-name claim the
+#: last class here grades. The factory docstring states the choice; this page
+#: states the contract and names the robots that take the native path.
+_NATIVE_DRIVERS_DOC = _REPO_ROOT / "docs" / "learn" / "hardware" / "drivers.md"
+_DRIVERS_HOOK = _REPO_ROOT / "docs" / "hooks" / "drivers.py"
 
 _VARIADIC = (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+_DIRECTIVE = "::: strands_robots.robot.Robot"
 
-# The guard is only meaningful while it still reaches the table. If a reformat
-# or a rename drops the rows, fail loudly instead of reporting clean.
-_MINIMUM_GRADED_ROWS = 8
+# The guard is only meaningful while it still reaches the Args section. If a
+# docstring rewrite drops the entries, fail loudly instead of reporting clean.
+_MINIMUM_GRADED_ENTRIES = 8
 
 _PROBE_MJCF = """<mujoco model="probe">
   <worldbody>
@@ -58,214 +63,206 @@ _PROBE_MJCF = """<mujoco model="probe">
 </mujoco>"""
 
 
-def _rows() -> list[tuple[int, str, str, str]]:
-    """Return the parameter table's rows.
+def _args_entries() -> dict[str, str]:
+    """Return the docstring's ``Args:`` entries, the text mkdocstrings renders as rows.
 
     Returns:
-        A list of ``(line_number, parameter_name, default_cell, description_cell)``
-        tuples for every row whose first cell is a single backticked identifier
-        (``**kwargs`` included, its leading asterisks stripped).
+        ``{parameter_name: entry_text}`` for every ``name: ...`` entry in the
+        ``Args:`` section (``**kwargs`` keeps its name, asterisks stripped).
     """
-    found: list[tuple[int, str, str, str]] = []
-    for lineno, line in enumerate(_DOC.read_text(encoding="utf-8").splitlines(), 1):
-        stripped = line.strip()
-        if not stripped.startswith("|") or not stripped.endswith("|"):
-            continue
-        # A Type cell may legitimately spell a union as ``bool \\| None``, so split
-        # on unescaped pipes only - a naive split would drop the row and report
-        # the parameter as undocumented.
-        cells = [cell.strip() for cell in re.split(r"(?<!\\)\|", stripped.strip("|"))]
-        if len(cells) != 4:
-            continue
-        match = re.fullmatch(r"`\*{0,2}([A-Za-z_][A-Za-z0-9_]*)`", cells[0])
-        if match:
-            found.append((lineno, match.group(1), cells[2], cells[3]))
-    return found
+    doc = inspect.getdoc(Robot) or ""
+    match = re.search(r"^Args:\n(.*?)(?=^\S)", doc, re.M | re.S)
+    if match is None:
+        return {}
+    entries: dict[str, str] = {}
+    current: str | None = None
+    for line in match.group(1).splitlines():
+        head = re.match(r"^ {0,4}(\*{0,2}[A-Za-z_][A-Za-z0-9_]*):(?=\s|$)", line)
+        if head is not None:
+            current = head.group(1).lstrip("*")
+            entries[current] = line[head.end() :].strip()
+        elif current is not None:
+            entries[current] += "\n" + line.strip()
+    return entries
 
 
-def _front_matter_signature() -> list[str]:
-    """Return the parameter names the front-matter ``description`` spells.
+def _stated_defaults() -> list[tuple[str, str]]:
+    """Return ``(name, literal)`` for every entry that marks a value as the default.
 
     Returns:
-        The names inside the ``Robot(...)`` call the field states, in the order
-        it states them and spelled as a signature line spells them (``**kwargs``
-        keeps its asterisks). Empty when the field states no call at all, which
-        the premise test grades rather than passing vacuously.
+        The literal immediately before a ``(default`` marker, for entries whose
+        prose spells one (``"sim" (default - safe)``, ````None`` (default)``).
+        Entries that only describe a derived default in words are not returned.
     """
-    field = re.search(r"^description:\s*(.*)$", _DOC.read_text(encoding="utf-8"), re.M)
-    if field is None:
-        return []
-    call = re.search(r"Robot\(([^)]*)\)", field.group(1))
-    if call is None:
-        return []
-    return [name.strip() for name in call.group(1).split(",") if name.strip()]
-
-
-def _signature_display() -> list[str]:
-    """Return ``Robot``'s parameters as a signature line spells them."""
-    return [
-        ("**" if param.kind is inspect.Parameter.VAR_KEYWORD else "") + name
-        for name, param in inspect.signature(Robot).parameters.items()
-    ]
-
-
-def _mesh_section() -> str:
-    """Return the page's ``## Mesh`` section, up to the next heading."""
-    text = _DOC.read_text(encoding="utf-8")
-    start = text.index("\n## Mesh")
-    rest = text[start + 1 :]
-    end = rest.find("\n## ", 1)
-    return rest if end == -1 else rest[:end]
-
-
-def _graded() -> list[tuple[int, str, str, inspect.Parameter]]:
-    """Return the rows that name a real, non-variadic parameter."""
-    out = []
-    for lineno, name, default_cell, _ in _rows():
-        param = inspect.signature(Robot).parameters.get(name)
-        if param is not None and param.kind not in _VARIADIC:
-            out.append((lineno, name, default_cell, param))
+    literal = r"(?:``)?(\"[^\"`]*\"|'[^'`]*'|None|True|False|-?\d+(?:\.\d+)?)(?:``)?"
+    out: list[tuple[str, str]] = []
+    for name, text in _args_entries().items():
+        for match in re.finditer(literal + r"\s*\([^()]*?\bdefault\b", text):
+            out.append((name, match.group(1)))
     return out
 
 
-class TestTheTableReachesTheSignature:
+def _graded() -> list[tuple[str, inspect.Parameter]]:
+    """Return the entries that name a real, non-variadic parameter."""
+    out = []
+    for name in _args_entries():
+        param = inspect.signature(Robot).parameters.get(name)
+        if param is not None and param.kind not in _VARIADIC:
+            out.append((name, param))
+    return out
+
+
+def _mesh_env_row() -> str:
+    """Return the table row of the mesh page whose first cell is ``STRANDS_MESH``."""
+    for line in _MESH_DOC.read_text(encoding="utf-8").splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if cells and cells[0] == "`STRANDS_MESH`":
+            return line
+    return ""
+
+
+class TestThePageRendersTheSignatureFromTheSource:
     """Premises. A clean result must mean the page was read, not skipped."""
 
     def test_the_page_ships(self) -> None:
         assert _DOC.is_file(), f"premise: {_DOC.relative_to(_REPO_ROOT)} is the page under test"
 
-    def test_enough_rows_are_graded(self) -> None:
+    def test_the_page_renders_the_factory_with_mkdocstrings(self) -> None:
+        text = _DOC.read_text(encoding="utf-8")
+        assert _DIRECTIVE in text, (
+            f"premise: the page renders `{_DIRECTIVE}`; the signature the reader sees is the "
+            "source's, and the guards below grade that source"
+        )
+
+    def test_the_page_says_it_is_the_factory(self) -> None:
+        text = _DOC.read_text(encoding="utf-8")
+        assert "factory" in text and 'mode="real"' in text, (
+            "the page must say Robot(...) is a factory and name the mode that reaches hardware"
+        )
+
+    def test_enough_entries_are_graded(self) -> None:
         graded = _graded()
-        assert len(graded) >= _MINIMUM_GRADED_ROWS, (
-            f"premise: only {len(graded)} row(s) of the parameter table resolved to a "
-            f"Robot() parameter, below the {_MINIMUM_GRADED_ROWS} this guard expects. "
-            "A clean run would prove nothing."
+        assert len(graded) >= _MINIMUM_GRADED_ENTRIES, (
+            f"premise: only {len(graded)} Args entr(ies) resolved to a Robot() parameter, below "
+            f"the {_MINIMUM_GRADED_ENTRIES} this guard expects. A clean run would prove nothing."
         )
 
 
 class TestEveryDocumentedDefaultIsTheRealDefault:
-    """A Default cell states the value the caller gets by omitting the parameter."""
+    """A stated default is the value the caller gets by omitting the parameter."""
 
-    def test_no_row_states_a_default_the_signature_contradicts(self) -> None:
+    def test_some_entry_states_a_default(self) -> None:
+        assert _stated_defaults(), "premise: the Args section marks at least one value as the default"
+
+    def test_no_entry_states_a_default_the_signature_contradicts(self) -> None:
         wrong: list[str] = []
-        for lineno, name, cell, param in _graded():
-            shown = cell.strip("`")
+        params = inspect.signature(Robot).parameters
+        for name, shown in _stated_defaults():
+            param = params.get(name)
+            if param is None or param.kind in _VARIADIC:
+                continue
             if param.default is inspect.Parameter.empty:
-                if shown.lower() != "required":
-                    wrong.append(f"line {lineno}: `{name}` documents {cell} but has no default")
+                wrong.append(f"`{name}` documents {shown} as the default but has no default")
                 continue
             try:
                 parsed = ast.literal_eval(shown)
             except (SyntaxError, ValueError):
-                wrong.append(f"line {lineno}: `{name}` documents {cell}, which is not a literal value")
+                wrong.append(f"`{name}` documents {shown}, which is not a literal value")
                 continue
             if parsed != param.default or type(parsed) is not type(param.default):
-                wrong.append(f"line {lineno}: `{name}` documents {cell} but omitting it yields {param.default!r}")
+                wrong.append(f"`{name}` documents {shown} but omitting it yields {param.default!r}")
         assert not wrong, (
-            "The Default column names a value the caller never gets, so the row describes "
-            "a state a bare Robot() is not in:\n  " + "\n  ".join(wrong)
+            "The rendered parameter list names a default the caller never gets, so the entry "
+            "describes a state a bare Robot() is not in:\n  " + "\n  ".join(wrong)
         )
 
-    def test_every_parameter_has_a_row(self) -> None:
-        documented = {name for _, name, _, _ in _rows()}
+    def test_every_parameter_has_an_entry(self) -> None:
+        documented = set(_args_entries())
         missing = [
             name
             for name, param in inspect.signature(Robot).parameters.items()
             if param.kind not in _VARIADIC and name not in documented
         ]
-        assert not missing, f"Robot() accepts {missing}, which the parameter table never lists"
+        assert not missing, f"Robot() accepts {missing}, which the rendered parameter list never shows"
 
+    def test_every_entry_names_a_parameter(self) -> None:
+        real = set(inspect.signature(Robot).parameters)
+        stale = [name for name in _args_entries() if name not in real]
+        assert not stale, f"the Args section documents {stale}, which Robot() does not accept"
 
-class TestTheFrontMatterStatesTheWholeSignature:
-    """The ``description`` field promises "the full signature", so it is graded as one.
-
-    It is the only place on the page that states the signature as a whole rather
-    than one row at a time, and it is what a search result and the generated
-    page metadata show - a reader can meet it before they ever reach the table.
-    No table guard reads a YAML field, and the omission is silent in both
-    directions: a parameter missing from it reads as a parameter that does not
-    exist, and a name left in it after a rename reads as one that does.
-    """
-
-    def test_the_description_states_a_signature(self) -> None:
-        assert _front_matter_signature(), (
-            "premise: the description field states a Robot(...) call for the guard "
-            "below to grade. A clean run would otherwise prove nothing."
-        )
-
-    def test_the_description_names_every_parameter_in_order(self) -> None:
-        listed = _front_matter_signature()
-        real = _signature_display()
-        assert listed == real, (
-            "The description promises the full signature but does not match Robot():\n"
-            f"  missing: {[name for name in real if name not in listed]}\n"
-            f"  not a parameter: {[name for name in listed if name not in real]}\n"
-            f"  write: Robot({', '.join(real)})"
-        )
+    def test_the_variadic_parameter_has_an_entry(self) -> None:
+        entries = _args_entries()
+        variadic = [name for name, p in inspect.signature(Robot).parameters.items() if p.kind in _VARIADIC]
+        assert variadic, "premise: Robot() forwards **kwargs"
+        for name in variadic:
+            assert name in entries, f"Robot() forwards `**{name}` but the Args section never says where"
 
 
 class TestADocumentedRefusalReallyRefuses:
-    """A row that promises an exception is graded by raising it, not by wording."""
+    """A claim that promises an exception is graded by raising it, not by wording."""
 
-    def test_a_promised_unknown_kwarg_refusal_happens(self, tmp_path: pytest.TempPathFactory) -> None:
-        rows = {name: description for _, name, _, description in _rows()}
-        description = rows.get("kwargs", "")
-        promised = re.search(r"raises?\s+`([A-Za-z_][A-Za-z0-9_]*)`", description)
-        if promised is None:
-            return  # The row promises no refusal, so there is nothing to verify.
-        pytest.importorskip("mujoco")
-        exc = getattr(builtins, promised.group(1), None)
-        assert isinstance(exc, type) and issubclass(exc, BaseException), (
-            f"the `**kwargs` row promises `{promised.group(1)}`, which is not a builtin exception"
+    def test_an_unknown_native_driver_kwarg_is_refused(self, tmp_path: Path) -> None:
+        text = _NATIVE_DRIVERS_DOC.read_text(encoding="utf-8")
+        assert "does not declare is refused" in text, (
+            "premise: the drivers page promises that a keyword the driver does not declare is refused"
         )
-        # The row scopes the refusal to ``mode="real"`` and says a sim keyword is
-        # still ignored, so both halves are graded. The real-mode refusal is the
-        # factory's, raised before a driver is constructed, so it reaches no
-        # hardware.
-        with pytest.raises(exc):
+        pytest.importorskip("mujoco")
+        # The refusal is the factory's, raised before a driver is constructed, so
+        # it reaches no hardware. It must name the offending keyword.
+        with pytest.raises(ValueError, match="definitely_not_a_forwardable_kwarg"):
             Robot("so101", mode="real", driver="strands", definitely_not_a_forwardable_kwarg=1)
-        mjcf = Path(str(tmp_path)) / "probe.xml"
+        # The docstring scopes ``**kwargs`` to the backend constructor, so a sim
+        # keyword the backend does not recognize is forwarded, not refused here.
+        mjcf = tmp_path / "probe.xml"
         mjcf.write_text(_PROBE_MJCF, encoding="utf-8")
         sim = None
         try:
-            sim = Robot(
-                "so100",
-                mode="sim",
-                urdf_path=str(mjcf),
-                definitely_not_a_forwardable_kwarg=1,
-            )
-            assert sim is not None, "the row says a sim keyword the backend does not recognize is ignored"
+            sim = Robot("so100", mode="sim", urdf_path=str(mjcf), definitely_not_a_forwardable_kwarg=1)
+            assert sim is not None
         finally:
             if sim is not None:
                 sim.destroy()
 
+    def test_the_raises_section_names_the_native_driver_refusal(self) -> None:
+        doc = inspect.getdoc(Robot) or ""
+        raises = re.search(r"^Raises:\n(.*?)(?=^\S)", doc, re.M | re.S)
+        assert raises is not None, "premise: the docstring has a Raises section the page renders"
+        assert "ValueError" in raises.group(1) and 'driver="strands"' in raises.group(1), (
+            "the rendered Raises section must promise the ValueError for a driver='strands' robot with no native driver"
+        )
 
-class TestTheMeshSectionNamesTheSpellingThatEnablesMesh:
-    """The Mesh section must reach the state its snippet prints."""
 
-    def test_the_section_names_an_enabling_spelling(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        section = _mesh_section()
-        candidates = {
-            *(m.group(1) for m in re.finditer(r"STRANDS_MESH\s*=\s*([A-Za-z01]+)", section)),
-        }
-        enabling = []
-        for raw in candidates:
+class TestTheMeshPageNamesTheSpellingThatEnablesMesh:
+    """The mesh page must reach the state its fence prints."""
+
+    def test_the_fence_opts_in_by_argument(self) -> None:
+        text = _MESH_DOC.read_text(encoding="utf-8")
+        assert re.search(r"Robot\([^)]*mesh\s*=\s*True", text) is not None, (
+            "The mesh page reads .mesh attributes but never passes mesh=True in a Robot(...) call. "
+            "Copied as written it raises AttributeError on None."
+        )
+
+    def test_the_env_row_spellings_do_what_the_row_says(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        row = _mesh_env_row()
+        assert row, f"premise: {_MESH_DOC.relative_to(_REPO_ROOT)} has a table row for `STRANDS_MESH`"
+        spellings = [s for s in re.findall(r"`([A-Za-z01]+)`", row) if s != "STRANDS_MESH"]
+        assert spellings, f"the STRANDS_MESH row names no value: {row}"
+        enabling: list[str] = []
+        for raw in spellings:
             monkeypatch.setenv("STRANDS_MESH", raw)
             if _mesh_env_opt_in():
                 enabling.append(raw)
-        opts_in_by_argument = re.search(r"mesh\s*=\s*True", section) is not None
-        assert enabling or opts_in_by_argument, (
-            "The Mesh section reads .mesh attributes but names no way to turn mesh on: "
-            f"the STRANDS_MESH spellings it shows are {sorted(candidates)}, none of which "
-            "opts in, and it never passes mesh=True. Copied as written it raises "
-            "AttributeError on None."
-        )
+        assert enabling, f"none of the STRANDS_MESH spellings the row shows ({spellings}) opts in"
+        # The row calls ``false`` a hard kill switch, so it must not opt in.
+        if "false" in spellings:
+            monkeypatch.setenv("STRANDS_MESH", "false")
+            assert not _mesh_env_opt_in(), "the row calls STRANDS_MESH=false a kill switch, but it opts in"
 
-    def test_a_bare_robot_leaves_mesh_off(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-        """The reality the page has to describe."""
+    def test_a_bare_robot_leaves_mesh_off(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The reality the page has to describe: the docstring says None keeps mesh off."""
         pytest.importorskip("mujoco")
         monkeypatch.delenv("STRANDS_MESH", raising=False)
-        mjcf = Path(str(tmp_path)) / "probe.xml"
+        mjcf = tmp_path / "probe.xml"
         mjcf.write_text(_PROBE_MJCF, encoding="utf-8")
         sim = Robot("so100", mode="sim", urdf_path=str(mjcf))
         try:
@@ -274,120 +271,89 @@ class TestTheMeshSectionNamesTheSpellingThatEnablesMesh:
             sim.destroy()
 
 
-class TestTheNativeDriverRefusalExampleIsStillTrue:
-    """The ``driver="strands"`` refusal example must name a robot that has no driver.
+class TestTheNativeDriverRefusalClaimIsStillTrue:
+    """The ``driver="strands"`` page names robots by path, and the names are graded.
 
-    The example lives on ``docs/reference/hardware/native-drivers.md``, beside the rest of
-    the native-driver contract. That page shows the refusal verbatim, as a ``>>>`` transcript, so it reads as
-    something the reader could paste. That makes it the one block on the page
-    whose *premise* can rot without a word of it changing: a robot named here
-    because it had no native driver acquires one the day a driver package
-    registers it, and the transcript then shows an error that no longer happens
-    for a robot that now builds fine.
+    ``docs/learn/hardware/drivers.md`` says a ``driver="strands"`` request for a
+    robot with no native driver is refused by name, never served the lerobot
+    path quietly, and it lists the robots whose registry entry makes the native
+    driver the default. Those names can rot without a word changing: a robot
+    named as native loses its driver, or a robot named as lerobot-only gains
+    one. So the names are graded, not the wording, and the refusal is graded by
+    raising it.
 
-    It did rot. The example named ``so101``, and ``FeetechDriver`` came to serve
-    it - so the block asserted "no native driver is registered for 'so101'"
-    while ``Robot("so101", mode="real", driver="strands")`` returned a driver.
-    The enumerated list rotted with it, naming two robots when fourteen were
-    registered, which is worse than saying nothing: a reader looking up whether
-    their robot is natively driven found a list that omitted it and concluded no
-    driver existed.
-
-    So the names are graded, not the wording. Every robot the transcript claims
-    is natively driven must be, the robot it refuses must have no driver at all,
-    and the refusal must still be the one the code raises - checked by raising
-    it.
-
-    Correctness is graded, deliberately not completeness. A transcript is a
-    capture, and a fifteenth driver leaves it merely older rather than wrong, so
-    requiring the list to be exhaustive would fail this page on every driver that
-    lands - and the page names ``list_native_drivers()`` as the live answer for
-    that reason. A name that is *listed and has no driver* is the failure worth
-    catching, because that is the one that sends a reader looking for a driver
-    that does not exist.
+    Correctness is graded, deliberately not completeness. The shipped table is
+    generated from the source by ``docs/hooks/drivers.py``, and the page names
+    ``list_native_drivers()`` as the live answer, so the prose list only has to
+    be right about every robot it names.
     """
 
     @staticmethod
-    def _transcript() -> str:
-        """Return the fenced block holding the ``driver="strands"`` refusal.
-
-        Returns:
-            The block's text.
-
-        Raises:
-            AssertionError: If the page ships no such block - the guard would
-                otherwise report clean having read nothing.
-        """
+    def _registry_default_native_names() -> list[str]:
+        """Return the robots the page says declare ``hardware.driver = "strands"``."""
         text = _NATIVE_DRIVERS_DOC.read_text(encoding="utf-8")
-        blocks = [
-            block
-            for block in re.findall(r"```[a-z]*\n(.*?)```", text, re.DOTALL)
-            if 'driver="strands"' in block and "No native driver is registered" in block
-        ]
-        assert len(blocks) == 1, (
-            f"expected exactly one transcript of the driver='strands' refusal, found {len(blocks)}. "
-            "This guard grades that block; without it a clean run proves nothing."
-        )
-        return blocks[0]
-
-    def test_the_refused_robot_really_has_no_native_driver(self) -> None:
-        """The premise the transcript rests on, and the one that rotted before."""
-        from strands_robots.drivers import get_native_driver_class
-
-        transcript = self._transcript()
-        match = re.search(r">>>\s*Robot\(\s*[\"']([^\"']+)[\"']", transcript)
-        assert match is not None, f"the transcript shows no Robot(...) call:\n{transcript}"
-        name = match.group(1)
-        driver_cls = get_native_driver_class(name)
-        assert driver_cls is None, (
-            f"The page refuses driver='strands' for {name!r} to show what happens when no native "
-            f"driver is registered, but {driver_cls.__name__} now serves it: "
-            f"Robot({name!r}, mode='real', driver='strands') builds a driver. "
-            "Name a robot that still has none, or drop the example."
-        )
-
-    def test_the_transcript_is_the_refusal_the_code_raises(self) -> None:
-        """Graded by raising it, so a reworded refusal cannot leave the page stale."""
-        from strands_robots import Robot
-
-        transcript = self._transcript()
-        match = re.search(r">>>\s*Robot\(\s*[\"']([^\"']+)[\"']", transcript)
-        assert match is not None
-        with pytest.raises(ValueError) as excinfo:
-            Robot(match.group(1), mode="real", driver="strands")
-        raised = str(excinfo.value)
-        for sentence in (
-            "No native driver is registered for",
-            "so driver='strands' cannot build",
-            "Robots with a native driver:",
-            "strands_robots.drivers.register_native_driver()",
-        ):
-            assert sentence in raised, f"the code no longer says {sentence!r}; the page still shows it"
-            assert sentence in transcript, f"the page dropped {sentence!r}, which the refusal still says"
+        match = re.search(r"Robots lerobot has no type for \((.*?)\) declare", text, re.S)
+        assert match is not None, "premise: the page lists the robots whose registry entry picks the native driver"
+        return re.findall(r"`([A-Za-z0-9_]+)`", match.group(1))
 
     def test_every_robot_the_page_calls_natively_driven_really_is(self) -> None:
         """A name in the list must have a driver, or it sends a reader to a dead end."""
-        from strands_robots.drivers import get_native_driver_class, list_native_drivers
+        from strands_robots.drivers import get_native_driver_class
 
-        transcript = self._transcript()
-        listed = re.search(r"Robots with a native driver:\s*(.*?)\.\s", transcript, re.DOTALL)
-        assert listed is not None, f"the transcript shows no list of natively driven robots:\n{transcript}"
-        names = [
-            candidate
-            for candidate in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", listed.group(1))
-            # The elision marker and any prose in the tail are not robot names.
-            if candidate in set(list_native_drivers()) or get_native_driver_class(candidate) is None
-        ]
-        assert names, f"no robot name was read out of {listed.group(1)!r}; the guard would prove nothing"
+        names = self._registry_default_native_names()
+        assert names, "no robot name was read out of the page; the guard would prove nothing"
         wrong = [name for name in names if get_native_driver_class(name) is None]
-        assert not wrong, (
-            f"The page lists {wrong} among robots with a native driver, but none is registered for them. "
-            "A reader checking whether their robot is natively driven is told yes and finds nothing."
+        assert not wrong, f"The page lists {wrong} among natively driven robots, but none is registered for them."
+
+    def test_every_robot_the_page_says_defaults_to_native_really_does(self) -> None:
+        """The page promises a bare ``Robot(name, mode="real")`` builds the native driver."""
+        from strands_robots.drivers import resolve_driver
+
+        names = self._registry_default_native_names()
+        not_default = [name for name in names if resolve_driver(name, None) != "strands"]
+        assert not not_default, (
+            f"The page says {not_default} declare hardware.driver = 'strands', so a bare "
+            "Robot(name, mode='real') builds the native driver; the registry declares nothing "
+            f"for them and resolve_driver() routes them to lerobot."
         )
 
+    def test_the_generated_table_names_only_robots_with_a_driver(self) -> None:
+        """The hook reads source text; the classes it names must be the registered ones."""
+        from strands_robots.drivers import get_native_driver_class
+
+        spec = importlib.util.spec_from_file_location("drivers_hook", _DRIVERS_HOOK)
+        assert spec is not None and spec.loader is not None
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        rows = hook.rows()
+        assert rows, "the drivers table is empty; the guard would prove nothing"
+        wrong = []
+        for robot, cls, *_ in rows:
+            registered = get_native_driver_class(robot)
+            if registered is None or registered.__name__ != cls:
+                wrong.append(f"{robot}: table says {cls}, registry has {getattr(registered, '__name__', None)}")
+        assert not wrong, "the shipped table disagrees with the registry:\n  " + "\n  ".join(wrong)
+
+    def test_the_refusal_names_the_robot_and_does_not_fall_back(self) -> None:
+        """Graded by raising it, so a reworded refusal cannot leave the page stale."""
+        from strands_robots.drivers import get_native_driver_class
+        from strands_robots.registry import list_robots
+
+        text = _NATIVE_DRIVERS_DOC.read_text(encoding="utf-8")
+        assert "refused by name" in text, "premise: the page promises a refusal by name"
+        candidates = [row["name"] for row in list_robots() if get_native_driver_class(row["name"]) is None]
+        assert candidates, "every registered robot has a native driver; the claim has nothing to refuse"
+        name = candidates[0]
+        with pytest.raises(ValueError) as excinfo:
+            Robot(name, mode="real", driver="strands")
+        raised = str(excinfo.value)
+        assert repr(name) in raised, f"the refusal does not name the robot: {raised}"
+        assert "driver='strands'" in raised, f"the refusal does not name the choice that failed: {raised}"
+        assert "register_native_driver" in raised, f"the refusal does not say how to add a driver: {raised}"
+
     def test_the_page_names_the_live_listing_helper(self) -> None:
-        """A captured list is only honest if the page says where the live one is."""
+        """A prose list is only honest if the page says where the live one is."""
         assert "list_native_drivers()" in _NATIVE_DRIVERS_DOC.read_text(encoding="utf-8"), (
-            "The transcript's list of natively driven robots is a capture, so the page must name "
+            "The page's list of natively driven robots is a capture, so the page must name "
             "list_native_drivers() as the way to get the current one."
         )
