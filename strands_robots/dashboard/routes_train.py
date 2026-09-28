@@ -93,6 +93,14 @@ async def training_datasets(
         rows = await asyncio.to_thread(training.local_datasets, q)
         return {"datasets": mark_live_recording(rows, active, episodes_so_far=captured)}
     found = await asyncio.to_thread(training.search_datasets, q, checkpoints.clamp_limit(limit, 12, 50))
+    try:
+        found["hf_auth"] = await asyncio.to_thread(checkpoints.hf_auth_state)
+    except Exception as exc:  # noqa: BLE001 - never let an auth probe break search
+        found["hf_auth"] = {
+            "authenticated": False,
+            "user": None,
+            "detail": f"auth state unavailable ({type(exc).__name__})",
+        }
     return {**found, "datasets": mark_live_recording(found.get("datasets", []), active, episodes_so_far=captured)}
 
 

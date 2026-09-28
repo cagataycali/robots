@@ -31,7 +31,7 @@ import time
 import uuid
 from typing import Any
 
-__all__ = ["cli_args", "wizard_step", "CalibrationRun", "runs", "start", "get"]
+__all__ = ["CONFIRM_KEY", "cli_args", "wizard_step", "CalibrationRun", "runs", "start", "get"]
 
 # ---------------------------------------------------------------------------
 # the command (same facts as frontend/src/lib/calibrateCommand.ts, draccus shape)

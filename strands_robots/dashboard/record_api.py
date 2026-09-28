@@ -21,7 +21,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from strands_robots.dashboard import access, record_crash, record_joints
-from strands_robots.dashboard.dataset_check import _as_int, record_target_verdict
+from strands_robots.dashboard.dataset_check import (
+    OUTSIDE_DATASET_HOME,
+    _as_int,
+    dataset_id_error,
+    dataset_id_is_a_path,
+    record_target_verdict,
+)
 from strands_robots.dashboard.record_worker import RecordWorker, hardware_backend
 from strands_robots.utils import refusal_str, require_optional
 
@@ -45,6 +51,24 @@ EMPTY_SESSION: dict[str, Any] = {
     "episodes": [],
     "error": None,
 }
+
+
+def _under_dataset_home(dataset: str) -> bool:
+    """Whether the directory this id resolves to sits under ``$HF_LEROBOT_HOME``.
+
+    The id has already passed :func:`dataset_id_error`, so this is the second lock on the same
+    door: whatever ``resolve_dataset_dir`` makes of the name, the result is checked after
+    ``resolve()`` (symlinks followed, ``..`` folded) against the home.
+    """
+    from strands_robots.dataset_recorder import resolve_dataset_dir
+    from strands_robots.dataset_source import _lerobot_home
+
+    try:
+        home = Path(_lerobot_home()).expanduser().resolve()
+        target = Path(resolve_dataset_dir(dataset)).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return target == home or target.is_relative_to(home)
 
 
 def _target_facts(dataset: str) -> dict[str, Any]:
@@ -227,6 +251,13 @@ class RecordController:
             leader_id = str(body.get("leader", "")).strip()
             follower_id = str(body.get("follower", "")).strip()
 
+            # Shape, then containment, then what is on disk - in that order, so a name that is a
+            # path never reaches the existence check and the refusal never says whether it exists.
+            if dataset_id_is_a_path(dataset) or (dataset and not _under_dataset_home(dataset)):
+                raise HTTPException(400, OUTSIDE_DATASET_HOME)
+            bad_id = dataset_id_error(dataset)
+            if bad_id:
+                raise HTTPException(422, bad_id)
             bad = record_target_verdict(dataset, **_target_facts(dataset))
             if bad:
                 raise HTTPException(409 if dataset.strip() else 422, bad)

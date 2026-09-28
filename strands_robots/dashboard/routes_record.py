@@ -23,16 +23,11 @@ from typing import Any, cast
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 
 from strands_robots.dashboard import access, record_api
+from strands_robots.dashboard.dataset_check import OUTSIDE_DATASET_HOME
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["record"], dependencies=[Depends(access.require_session)])
-
-#: One body for every refused path: the same whether the target exists or not.
-OUTSIDE_DATASET_HOME = {
-    "error": "path_outside_dataset_home",
-    "detail": "paths this dashboard reads or writes must live under the dataset home ($HF_LEROBOT_HOME)",
-}
 
 
 def dataset_home() -> Path:

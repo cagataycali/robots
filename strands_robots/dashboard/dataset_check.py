@@ -2,14 +2,61 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
-__all__ = ["dataset_verdict", "MIN_EPISODES"]
+__all__ = [
+    "OUTSIDE_DATASET_HOME",
+    "MIN_EPISODES",
+    "dataset_id_error",
+    "dataset_id_is_a_path",
+    "dataset_verdict",
+    "record_target_verdict",
+]
 
 #: One episode is a real dataset (a single demonstration you can replay or overfit on). Zero is
 #: not "small", it is "nothing was ever recorded".
 MIN_EPISODES = 1
+
+#: One body for every refused path: the same whether the target exists or not.
+OUTSIDE_DATASET_HOME = {
+    "error": "path_outside_dataset_home",
+    "detail": "paths this dashboard reads or writes must live under the dataset home ($HF_LEROBOT_HOME)",
+}
+
+#: A recording target is an ``owner/name`` id and nothing else. ``dataset_source.local_dataset_dir``
+#: reads an absolute, ``./``-prefixed or slash-less id as a literal directory, so those shapes would
+#: turn a dataset name into a write path; each segment starts with an alphanumeric, which also rules
+#: out ``.`` and ``..``.
+_DATASET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def dataset_id_is_a_path(dataset: str) -> bool:
+    """Whether ``dataset_source.local_dataset_dir`` would read this id as a directory, not a Hub id.
+
+    Absolute, ``./``-prefixed and slash-less ids are literal directories there; a ``..`` segment
+    walks out of the home even in an ``owner/name`` shape. Each of those is a write path in
+    disguise and gets the one fixed refusal every contained path gets.
+    """
+    name = (dataset or "").strip()
+    if not name:
+        return False
+    parts = name.replace("\\", "/").split("/")
+    return name.startswith(("/", "./", "~")) or len(parts) < 2 or any(seg in ("", ".", "..") for seg in parts)
+
+
+def dataset_id_error(dataset: str) -> str | None:
+    """Why *dataset* cannot be the repo_id of a new recording, or None when it can."""
+    name = (dataset or "").strip()
+    if not name:
+        return None  # record_target_verdict owns the empty-name sentence
+    if _DATASET_ID.fullmatch(name) is None:
+        return (
+            "dataset must be an 'owner/name' id (letters, digits, '.', '_', '-'; each part starting with "
+            "a letter or digit) - a path, an absolute or './' name, or a bare name is not a dataset id"
+        )
+    return None
 
 
 def _as_int(value: Any) -> int | None:

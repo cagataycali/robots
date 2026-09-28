@@ -113,11 +113,23 @@ def looks_like_path(value: str) -> bool:
     return v.startswith(("/", "~", ".")) or "\\" in v or v.count("/") > 1
 
 
+def hf_cache_root() -> Path:
+    """Where downloaded model snapshots live, honouring the env the CLI honours.
+
+    ``HF_HUB_CACHE`` points at the hub dir itself; ``HF_HOME`` contains it.
+    """
+    explicit = os.environ.get("HF_HUB_CACHE")
+    if explicit:
+        return Path(explicit).expanduser()
+    home = os.environ.get("HF_HOME")
+    if home:
+        return Path(home).expanduser() / "hub"
+    return Path.home() / ".cache" / "huggingface" / "hub"
+
+
 def contain_checkpoint_path(path: str) -> Path:
     """A checkpoint path the client named: a training output or a lerobot cache snapshot."""
-    from strands_robots.dashboard.checkpoints import _hf_cache_root
-
-    return contain(path, [output_home(), _hf_cache_root().resolve()], label="checkpoint path")
+    return contain(path, [output_home(), hf_cache_root().resolve()], label="checkpoint path")
 
 
 JOBS_FILE = Path(
@@ -579,18 +591,7 @@ def search_datasets(query: str = "", limit: int = 12) -> dict[str, Any]:
         "problem": problem,
         "hub_count": len([r for r in rows if not r.get("local")]),
         "local_count": len([r for r in rows if r.get("local")]),
-        "hf_auth": _hf_auth_state(),
     }
-
-
-def _hf_auth_state() -> dict[str, Any]:
-    """Who the Hub thinks we are - reused from checkpoints, not re-implemented."""
-    try:
-        from strands_robots.dashboard import checkpoints
-
-        return checkpoints.hf_auth_state()
-    except Exception as exc:  # noqa: BLE001 - never let an auth probe break search
-        return {"authenticated": False, "user": None, "detail": f"auth state unavailable ({type(exc).__name__})"}
 
 
 def output_dir_verdict(path: str) -> dict[str, Any]:

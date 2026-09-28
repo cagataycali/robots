@@ -95,18 +95,10 @@ def _guess_policy_type(repo_id: str, tags: list[str]) -> str | None:
 
 
 def _hf_cache_root() -> Path:
-    """Where downloaded model snapshots live, honouring the env the CLI honours. HF_HUB_CACHE points at
-    the hub dir itself; HF_HOME contains it.
-    """
-    import os
+    """The Hub cache root; :func:`training.hf_cache_root` owns the rule, this module reads it."""
+    from strands_robots.dashboard.training import hf_cache_root
 
-    explicit = os.environ.get("HF_HUB_CACHE")
-    if explicit:
-        return Path(explicit).expanduser()
-    home = os.environ.get("HF_HOME")
-    if home:
-        return Path(home).expanduser() / "hub"
-    return Path.home() / ".cache" / "huggingface" / "hub"
+    return hf_cache_root()
 
 
 def local_checkpoints(query: str = "") -> list[dict[str, Any]]:

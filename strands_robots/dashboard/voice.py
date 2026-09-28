@@ -209,9 +209,15 @@ def build_voice_agent(provider: str | None = None, voice: str | None = None, *, 
     confirm gate the moment one voice session was opened. Voice safety instead
     rests on the fleet tool's own backstop (agent_motion_allowed fail-closes
     physical tasks - voice has no confirm rail, so no grant can ever appear).
-    """
-    os.environ.setdefault("BYPASS_TOOL_CONSENT", "true")
 
+    For the same reason this function writes NOTHING to ``os.environ``. In
+    particular it never sets ``BYPASS_TOOL_CONSENT``: ``_command_gate`` reads
+    that name at call time as a full consent bypass for every gated hardware
+    surface in the process (hardware_robot, serial_tool, pose_tool, use_unitree,
+    the ROS gate), and a robot child spawned afterwards would inherit it. The
+    fleet tool here holds no strands_tools tool that prompts, so it needs no
+    bypass to run.
+    """
     from strands.experimental.bidi import BidiAgent
     from strands.experimental.bidi.tools import stop_conversation
 
