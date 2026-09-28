@@ -30,20 +30,7 @@ Aliases `Robot()` accepts: `koch_follower`, `koch_v1.1`, `low_cost_robot_arm`.
 
 **lerobot.** `Robot("koch", mode="real")` builds lerobot's `koch_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
-**`DynamixelDriver`** (selected with `driver="strands"`) speaks Dynamixel Protocol 2.0 serial bus. Source: `strands_robots/drivers/dynamixel/driver.py`.
-
-| | |
-|---|---|
-| `port=` | serial device of the U2D2 or bus adapter, for example `"/dev/ttyUSB0"` |
-| SDK | `pyserial` (`pip install pyserial`); calibration file from `lerobot-calibrate` (`koch_follower`) |
-| Other kwargs | `baud_rate=1_000_000`, `calibration=<path or records>`, `motor_ids=()`, `timeout=1.0` |
-| Action keys | degrees per joint, `gripper` in percent open; keys `shoulder_pan` or `shoulder_pan.pos` |
-
-Checks before it writes:
-
-- the arm keeps the operating modes `lerobot-calibrate` wrote; the driver does not rewrite EEPROM
-- a reply whose error byte carries an error number is dropped; the hardware-alert bit alone is not
-- `stop` releases torque on every motor and names any that stayed driven
+**`DynamixelDriver`** (selected with `driver="strands"`) speaks Dynamixel Protocol 2.0 serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#dynamixeldriver).
 
 Model: [google-deepmind/mujoco_menagerie/low_cost_robot_arm](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/low_cost_robot_arm), scene `scene.xml`.
 

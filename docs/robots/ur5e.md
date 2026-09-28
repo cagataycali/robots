@@ -25,20 +25,7 @@ robot = Robot("ur5e", mode="real", driver="strands", port="192.168.1.10")  # URD
 
 ## Hardware
 
-**`URDriver`** (selected with `driver="strands"`) speaks RTDE through `ur_rtde`. Source: `strands_robots/drivers/ur.py`.
-
-| | |
-|---|---|
-| `port=` | controller IP or hostname, optionally with `":30004"` |
-| SDK | `pip install 'strands-robots[ur]'` (`rtde_control`, `rtde_receive`) |
-| Other kwargs | `model=None`, `control_frequency=125.0`, `rtde_frequency=None` |
-| Action keys | radians, `shoulder_pan_joint .. wrist_3_joint`, the order the MuJoCo assets and the RTDE wire share |
-
-Checks before it writes:
-
-- the receive interface opens first: a controller in `PROTECTIVE_STOP` accepts a connection and performs no motion
-- `send_action` maps onto `servoJ`, gated on the controller mode and on the size of the step
-- off hardware every read returns its cache and every write refuses `not connected`
+**`URDriver`** (selected with `driver="strands"`) speaks RTDE through `ur_rtde`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#urdriver).
 
 Model: [google-deepmind/mujoco_menagerie/universal_robots_ur5e](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/universal_robots_ur5e), scene `scene.xml`.
 

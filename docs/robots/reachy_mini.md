@@ -27,19 +27,7 @@ Aliases `Robot()` accepts: `pollen_reachy_mini`, `reachy`, `reachy-mini`, `reach
 
 ## Hardware
 
-**`ReachyDriver`** (the default for this robot) speaks Reachy daemon REST API plus its real-time link. Source: `strands_robots/drivers/reachy.py`.
-
-| | |
-|---|---|
-| `port=` | daemon host, optionally with a port: `"reachy-a.local"` or `"reachy-a.local:8000"` |
-| SDK | none; `REACHY_HOST`/`REACHY_PORT` are read when `port` is omitted, then `localhost` and `reachy-mini.local` are probed |
-| Other kwargs | `api_port=8000`, `media_port=8443`, `tts_url=None` |
-| Action keys | head pose and antennas inside the shared envelope; a write outside it is refused naming the limit |
-
-Checks before it writes:
-
-- `connect_eagerly` probes `GET /api/daemon/status`, which also reports Lite or Wireless hardware
-- `_imu`, `_pose` and `_battery` are cached from the daemon link and published by the mesh when present
+**`ReachyDriver`** (the default for this robot) speaks Reachy daemon REST API plus its real-time link: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#reachydriver).
 
 Model: [pollen-robotics/reachy_mini/src/reachy_mini/descriptions/reachy_mini](https://github.com/pollen-robotics/reachy_mini/tree/292b2434cadbb3ff932863bd9b476741bb6ef2fd/src/reachy_mini/descriptions/reachy_mini), scene `mjcf/scene.xml`.
 

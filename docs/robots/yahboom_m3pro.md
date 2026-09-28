@@ -29,20 +29,7 @@ Gripper actuator `gripper`: closed at the low end of travel, open at the high en
 
 ## Hardware
 
-**`YahboomM3ProDriver`** (the default for this robot) speaks the robot's ROS 2 graph, over rosbridge or in-process `rclpy`. Source: `strands_robots/drivers/yahboom_m3pro.py`.
-
-| | |
-|---|---|
-| `port=` | `"host[:port]"` of `rosbridge_server`, default `"localhost:9090"`; ignored by `transport="ros2"` |
-| SDK | `pip install 'strands-robots[rosbridge]'` from any host, or `rclpy` on the robot (`ROS_DOMAIN_ID=30` on the shipped image) |
-| Other kwargs | `transport="rosbridge"`, `"ros2"` or `"twin"`; `timeout_s=5.0`, `joint_signs=(1.0,)*5`, `move_time_ms=1500` |
-| Action keys | `arm1.pos .. arm5.pos` and `gripper.pos` in radians (the model's vocabulary), converted to servo degrees at the wire; base twists in SI |
-
-Checks before it writes:
-
-- every `/cmd_vel` write passes the operator gate: approved by the agent's operator or pre-approved with `STRANDS_ROS2_COMMAND_ALLOW=/cmd_vel`
-- the firmware zeroes the base after 200 to 500 ms without a message, so a held move is a 10 Hz stream and an explicit zero
-- `get_observation` returns `{}` on the robot: the board publishes no arm joint-state topic
+**`YahboomM3ProDriver`** (the default for this robot) speaks the robot's ROS 2 graph, over rosbridge or in-process `rclpy`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#yahboomm3prodriver).
 
 Model: [dimwael/yahboom_m3pro_description/mjcf](https://github.com/dimwael/yahboom_m3pro_description/tree/bdac682e57a8eeaf7b18eece44bfbfc54de98e8a/mjcf), scene `scene.xml`.
 

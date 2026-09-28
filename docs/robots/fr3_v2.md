@@ -27,20 +27,7 @@ Aliases `Robot()` accepts: `franka_fr3_v2`.
 
 ## Hardware
 
-**`FrankaDriver`** (selected with `driver="strands"`) speaks Franka Control Interface (FCI) through `panda-py`. Source: `strands_robots/drivers/franka/driver.py`.
-
-| | |
-|---|---|
-| `port=` | IP address of the arm's control box |
-| SDK | `panda-py` (`pip install panda-py`); resolved on connect, never at import |
-| Other kwargs | `speed_factor=0.2`, `stream_rate_hz=30.0` |
-| Action keys | radians; Panda joints `joint1..joint7`, FR3 `fr3_joint1..`, FR3 v2 `fr3v2_joint1..`, the names the arm's own MuJoCo asset uses |
-
-Checks before it writes:
-
-- a motion command is refused unless the driver is connected, every joint named belongs to this arm, every value is finite, and all seven joints are given
-- no 1 kHz torque loop: joint motion goes through `panda-py`'s guarded motion generator, which owns the realtime context
-- state is sourced at 1000 Hz and downsampled to `stream_rate_hz`; the stride is reported
+**`FrankaDriver`** (selected with `driver="strands"`) speaks Franka Control Interface (FCI) through `panda-py`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#frankadriver).
 
 Model: [google-deepmind/mujoco_menagerie/franka_fr3_v2](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/franka_fr3_v2), scene `scene.xml`.
 

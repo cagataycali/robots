@@ -30,20 +30,7 @@ Aliases `Robot()` accepts: `g1`, `g1_wbc`, `real_g1_relative_eef_relative_joints
 
 **lerobot.** `Robot("unitree_g1", mode="real")` builds lerobot's `unitree_g1` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict.
 
-**`G1Driver`** (the default for this robot) speaks CycloneDDS through `unitree_sdk2py`. Source: `strands_robots/drivers/g1.py`.
-
-| | |
-|---|---|
-| `port=` | the robot's IP, recorded for logging; DDS binds to `network_interface` |
-| SDK | `pip install 'strands-robots[ros2]'` then `git clone https://github.com/unitreerobotics/unitree_sdk2_python` and `pip install --no-deps -e ./unitree_sdk2_python` |
-| Other kwargs | `network_interface="eth0"`, `battery_floor_pct=15.0` |
-| Action keys | radians, keyed by the 29 joint names of the `unitree_g1` model |
-
-Checks before it writes:
-
-- `send_action` refuses unless the high-level FSM id is one of `500`, `501`, `801` (`HANDSHAKE_FSMS`)
-- `send_action` refuses under the battery floor, as a separate refusal
-- `run_policy` rolls a built policy on a 500 Hz thread with a per-step re-gate and a zero-torque frame on exit; `start_task` refuses by name
+**`G1Driver`** (the default for this robot) speaks CycloneDDS through `unitree_sdk2py`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#g1driver).
 
 ## Policies
 

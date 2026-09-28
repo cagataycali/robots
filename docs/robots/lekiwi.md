@@ -28,21 +28,7 @@ robot = Robot("lekiwi", mode="real", driver="strands", port="/dev/ttyACM0")  # F
 
 **lerobot.** `Robot("lekiwi", mode="real")` builds lerobot's `lekiwi` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
-**`FeetechDriver`** (selected with `driver="strands"`) speaks Feetech STS/SMS serial bus. Source: `strands_robots/drivers/feetech/driver.py`.
-
-| | |
-|---|---|
-| `port=` | serial device of the SCS bus, for example `"/dev/ttyACM0"` or `"/dev/tty.usbserial-*"` |
-| SDK | `pyserial` (`pip install pyserial`); calibration file from `lerobot-calibrate` |
-| Other kwargs | `baud_rate=1_000_000`, `calibration=<path or records>`, `motor_ids=()`, `timeout=1.0`, `transport="serial"` or `"twin"` |
-| Action keys | degrees per joint, `gripper` in percent open; keys `shoulder_pan` or `shoulder_pan.pos` |
-
-Checks before it writes:
-
-- the bus opens the port and discovers the servo ids on connect
-- without `calibration=` the driver reads and commands the servo's full travel, not the arm's measured travel; `get_status` reports `calibration_source`
-- `stop` releases torque on every motor and names any that stayed driven
-- `transport="twin"` answers the same verbs from the arm's MuJoCo model
+**`FeetechDriver`** (selected with `driver="strands"`) speaks Feetech STS/SMS serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#feetechdriver).
 
 Model: [Ekumen-OS/lekiwi/packages/lekiwi_sim/lekiwi_sim/assets](https://github.com/Ekumen-OS/lekiwi/tree/32cf6a69eb320cc22620cdaa529e35f20fc12b1f/packages/lekiwi_sim/lekiwi_sim/assets), scene `scene.xml`.
 

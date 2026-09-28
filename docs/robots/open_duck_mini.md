@@ -27,21 +27,7 @@ Aliases `Robot()` accepts: `bdx`, `mini_bdx`, `open_duck`, `open_duck_mini_v2`, 
 
 ## Hardware
 
-**`FeetechDriver`** (selected with `driver="strands"`) speaks Feetech STS/SMS serial bus. Source: `strands_robots/drivers/feetech/driver.py`.
-
-| | |
-|---|---|
-| `port=` | serial device of the SCS bus, for example `"/dev/ttyACM0"` or `"/dev/tty.usbserial-*"` |
-| SDK | `pyserial` (`pip install pyserial`); calibration file from `lerobot-calibrate` |
-| Other kwargs | `baud_rate=1_000_000`, `calibration=<path or records>`, `motor_ids=()`, `timeout=1.0`, `transport="serial"` or `"twin"` |
-| Action keys | degrees per joint, `gripper` in percent open; keys `shoulder_pan` or `shoulder_pan.pos` |
-
-Checks before it writes:
-
-- the bus opens the port and discovers the servo ids on connect
-- without `calibration=` the driver reads and commands the servo's full travel, not the arm's measured travel; `get_status` reports `calibration_source`
-- `stop` releases torque on every motor and names any that stayed driven
-- `transport="twin"` answers the same verbs from the arm's MuJoCo model
+**`FeetechDriver`** (selected with `driver="strands"`) speaks Feetech STS/SMS serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#feetechdriver).
 
 Model: [apirrone/Open_Duck_Mini/mini_bdx/robots/open_duck_mini_v2](https://github.com/apirrone/Open_Duck_Mini/tree/b23317a485b3cec7d8417f352478778b3475173c/mini_bdx/robots/open_duck_mini_v2), scene `scene.xml`.
 

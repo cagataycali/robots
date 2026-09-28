@@ -27,20 +27,7 @@ Aliases `Robot()` accepts: `robotiq`.
 
 ## Hardware
 
-**`RobotiqDriver`** (the default for this robot) speaks Modbus TCP. Source: `strands_robots/drivers/robotiq/driver.py`.
-
-| | |
-|---|---|
-| `port=` | the gripper's IP address or hostname |
-| SDK | none; the codec is `strands_robots.drivers.robotiq.protocol` |
-| Other kwargs | `tcp_port=502`, `unit_id=9` (often `0` behind a UR controller), `stroke_mm=85.0`, `speed=1.0`, `force=1.0` |
-| Action keys | `gripper` or `gripper.pos` as a closed fraction 0.0 to 1.0, or `position`/`aperture_mm` in millimetres |
-
-Checks before it writes:
-
-- `connect_eagerly` activates the gripper and waits for `gSTA == ACTIVE`; a 2F-85 ignores every position command until then
-- `send_action` refuses while the gripper is not activated
-- `start_task` and `run_policy` refuse: a 1-DOF end effector is commanded as one dimension of the arm's action
+**`RobotiqDriver`** (the default for this robot) speaks Modbus TCP: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#robotiqdriver).
 
 Model: [google-deepmind/mujoco_menagerie/robotiq_2f85](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/robotiq_2f85), scene `scene.xml`.
 

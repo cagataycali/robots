@@ -27,20 +27,7 @@ Aliases `Robot()` accepts: `cf2`, `bitcraze_crazyflie`.
 
 ## Hardware
 
-**`CrazyflieDriver`** (the default for this robot) speaks CRTP over a Crazyradio through `cflib`. Source: `strands_robots/drivers/crazyflie.py`.
-
-| | |
-|---|---|
-| `port=` | `"radio://<dongle>/<channel>/<rate>/<address>"` or `"usb://0"` |
-| SDK | `pip install 'strands-robots[crazyflie]'` |
-| Other kwargs | `setpoint_hz=20` |
-| Action keys | twists in SI (`wz` in rad/s, converted to the wire's degrees per second in one place) |
-
-Checks before it writes:
-
-- a setpoint is a subscription: the driver re-sends the last accepted setpoint at `setpoint_hz` because the firmware cuts thrust when the stream goes quiet
-- `send_action` returns once the setpoint is latched, not when motion ends
-- stopping and landing are different verbs
+**`CrazyflieDriver`** (the default for this robot) speaks CRTP over a Crazyradio through `cflib`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#crazyfliedriver).
 
 Model: [google-deepmind/mujoco_menagerie/bitcraze_crazyflie_2](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/bitcraze_crazyflie_2), scene `scene.xml`.
 

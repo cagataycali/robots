@@ -27,20 +27,7 @@ Aliases `Robot()` accepts: `go2`.
 
 ## Hardware
 
-**`Go2Driver`** (the default for this robot) speaks CycloneDDS through `unitree_sdk2py`. Source: `strands_robots/drivers/go2.py`.
-
-| | |
-|---|---|
-| `port=` | the robot's IP, recorded for logging; DDS binds to `network_interface` |
-| SDK | `pip install 'strands-robots[ros2]'` then `git clone https://github.com/unitreerobotics/unitree_sdk2_python` and `pip install --no-deps -e ./unitree_sdk2_python` |
-| Other kwargs | `network_interface="eth0"`, `battery_floor_pct=15.0` |
-| Action keys | radians, keyed by joint name (`GO2_JOINT_INDEX`); an index is never accepted, because the SDK's leg order differs from the model's |
-
-Checks before it writes:
-
-- `send_action` refuses until `release_sport_mode()` has confirmed the onboard sport service is released
-- `send_action` refuses under the battery floor
-- `rt/lowcmd` frames are `unitree_go` structs; a `unitree_hg` frame fails CRC and is dropped by the robot
+**`Go2Driver`** (the default for this robot) speaks CycloneDDS through `unitree_sdk2py`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#go2driver).
 
 Model: [google-deepmind/mujoco_menagerie/unitree_go2](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_go2), scene `scene.xml`.
 

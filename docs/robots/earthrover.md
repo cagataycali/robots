@@ -24,18 +24,6 @@ Aliases `Robot()` accepts: `earth_rover`, `earthrover_mini_plus`, `frodobots`.
 
 **lerobot.** `Robot("earthrover", mode="real")` builds lerobot's `earthrover_mini_plus` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
-**`EarthRoverDriver`** (selected with `driver="strands"`) speaks HTTP to the vendor `earth-rovers-sdk`. Source: `strands_robots/drivers/earthrover.py`.
-
-| | |
-|---|---|
-| `port=` | `"http://host:8000"` or a bare `"host:port"` |
-| SDK | `pip install 'strands-robots[earthrover]'` plus the SDK process on the host |
-| Other kwargs | `timeout_s=10.0`, `turn_sign=1.0` |
-| Action keys | `linear`, `angular`, `lamp`, each normalised to `[-1, 1]` |
-
-Checks before it writes:
-
-- `POST /control` carries one twist frame; `GET /data` is the telemetry snapshot; `GET /v2/front` and `/v2/rear` are the cameras
-- `turn_sign=-1.0` corrects a rover observed turning the wrong way, at the call site
+**`EarthRoverDriver`** (selected with `driver="strands"`) speaks HTTP to the vendor `earth-rovers-sdk`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#earthroverdriver).
 
 Back to [Mobile bases](mobile/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

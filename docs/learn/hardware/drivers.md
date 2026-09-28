@@ -29,6 +29,8 @@ Generated from `_SHIPPED_DRIVERS` and each module's `SUPPORTED_ROBOTS`:
 
 {{drivers_table}}
 
+{{driver_facts}}
+
 Every native driver imports its SDK inside `connect_eagerly()`, never at module import, so the package imports on a machine without the SDK and a missing SDK is a named refusal with the install line in it.
 
 ## The contract

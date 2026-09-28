@@ -27,19 +27,7 @@ Aliases `Robot()` accepts: `micro_duck`, `pollen_microduck`.
 
 ## Hardware
 
-**`MicroduckDriver`** (the default for this robot) speaks `robotd` JSON-RPC over a unix socket. Source: `strands_robots/drivers/microduck.py`.
-
-| | |
-|---|---|
-| `port=` | a unix socket path, or `"ssh://[user@]host"` to have the driver forward the duck's socket |
-| SDK | none; `MICRODUCK_SOCKET`, then `MICRODUCK_HOST`, then `/run/robotd.sock` are tried when `port` is omitted |
-| Other kwargs | `api_version=31`, `timeout=5.0`, `subscribe_hz=None` |
-| Action keys | intents: `robot.move` (twist), `robot.head`, `robot.pose`, `robot.do` (skills), `robot.enable`/`robot.relax` |
-
-Checks before it writes:
-
-- `robotd` exposes no per-joint write, so `run_policy` and `start_task` refuse and name the intent path; the on-robot policy is the same `alpha_walking.onnx` the sim runs
-- continuous intents go as JSON-RPC notifications; discrete ones wait for a reply
+**`MicroduckDriver`** (the default for this robot) speaks `robotd` JSON-RPC over a unix socket: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#microduckdriver).
 
 ## Policies
 

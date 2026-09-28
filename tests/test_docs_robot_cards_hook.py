@@ -83,3 +83,18 @@ def test_cards_reference_only_thumbnails_that_exist() -> None:
     assert sources, "no card carries a thumbnail; the guard would prove nothing"
     for src in sources:
         assert (_REPO / "docs" / src).is_file(), src
+
+
+def test_each_native_driver_is_described_once_and_every_robot_page_links_there() -> None:
+    """The drivers page renders every ``DRIVERS`` entry once; a robot page links to it instead of restating it."""
+    hook = _hook()
+    drivers_page = _REPO / "docs" / "learn" / "hardware" / "drivers.md"
+    assert hook._TOKEN_FACTS.search(drivers_page.read_text(encoding="utf-8")), "drivers.md lost {{driver_facts}}"
+    rendered = hook.driver_facts()
+    assert re.findall(r"^### (\w+)$", rendered, re.M) == list(hook.DRIVERS)
+    for name in hook.registry():
+        text = (_ROBOTS / f"{name}.md").read_text(encoding="utf-8")
+        cls = hook._load_coverage().row(name).native_driver
+        assert "| Other kwargs |" not in text, f"{name}.md restates its driver's facts"
+        if cls:
+            assert f"](../learn/hardware/drivers.md#{cls.lower()})" in text, f"{name}.md does not link {cls}"
