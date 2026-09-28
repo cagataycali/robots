@@ -88,6 +88,42 @@ logger = logging.getLogger(__name__)
 _MIN_RENDER_PX = 640
 
 
+def _vertical_fov_lens_mm(
+    fov_deg: float, width: int, height: int, horizontal_aperture_mm: float
+) -> tuple[float, float]:
+    """Map a VERTICAL field of view (fovy) to USD lens parameters.
+
+    ``add_camera(fov=)`` is the vertical field of view in degrees on every
+    backend -- MuJoCo and Newton pass it straight to MuJoCo's ``fovy``, and the
+    :meth:`get_camera_params` intrinsics fallback derives ``fy`` from it. Isaac
+    has one focal length shared by both axes, so the vertical meaning is set by
+    the aperture: the vertical aperture is derived from the horizontal one and
+    the image aspect ratio (which keeps pixels square, ``fx == fy``), and the
+    focal length maps ``fovy`` onto the vertical axis via the pinhole relation
+
+        focal_length = vertical_aperture / (2 * tan(fovy / 2)).
+
+    Fed through USD's own intrinsics (``fx = width * f / h_ap``,
+    ``fy = height * f / v_ap``) this yields ``fx == fy == height /
+    (2 * tan(fovy / 2))`` -- exactly the square, vertical-FOV intrinsics MuJoCo
+    reports for the same call -- independent of the aperture's absolute value.
+
+    Args:
+        fov_deg: vertical field of view in degrees, in ``(0, 180)``.
+        width: image width in pixels (positive).
+        height: image height in pixels (positive).
+        horizontal_aperture_mm: the camera's horizontal aperture in mm.
+
+    Returns:
+        ``(vertical_aperture_mm, focal_length_mm)``.
+    """
+    import math
+
+    vertical_aperture_mm = horizontal_aperture_mm * float(height) / float(width)
+    focal_length_mm = vertical_aperture_mm / (2.0 * math.tan(math.radians(fov_deg) / 2.0))
+    return vertical_aperture_mm, focal_length_mm
+
+
 def _world_to_body_frame(quat_wxyz: Any, vec: Any) -> list[float]:
     """Express a WORLD-frame 3-vector in the body frame given a (w,x,y,z) quaternion.
 
@@ -553,8 +589,8 @@ def _rgb_png_block(rgb: np.ndarray) -> dict[str, Any] | None:
 
     Returns ``None`` if PIL is unavailable or encoding fails, so
     ``render()`` degrades to the legacy rgb-only envelope rather than
-    raising -- same lazy-PIL discipline as ``_resize_rgb`` (PIL stays out
-    of module import; Isaac's bundled python may lack it).
+    raising -- PIL stays out of module import (Isaac's bundled python
+    may lack it).
     """
     try:
         import io
@@ -645,8 +681,10 @@ def _physics_view_stale_error(engine: Any, verb: str) -> dict[str, Any] | None:
                     "robot's get_observation() comes back empty. Call reset() first, "
                     f"then {verb}(). Note reset() returns robots to their default pose. "
                     "Only a dynamic body does this: a static add_object or "
-                    "remove_object, add_camera, move_object, add_robot and "
-                    "remove_robot all leave the view intact."
+                    "remove_object, add_camera, remove_camera, move_object and "
+                    "add_robot all leave the view intact. remove_robot deletes an "
+                    "articulation, so it invalidates the view like a dynamic "
+                    "remove_object and needs the same reset()."
                 )
             }
         ],
@@ -1302,8 +1340,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         #
         # ``reset()`` repairs all three. Which mutations invalidate the view was
         # measured rather than assumed: ``add_camera``, ``remove_camera``,
-        # ``move_object``, ``add_robot`` and ``remove_robot`` each left that arm
-        # reporting both its keys, so they do NOT set this flag.
+        # ``move_object`` and ``add_robot`` each left that arm reporting both its
+        # keys, so they do NOT set this flag. ``remove_robot`` DOES set it: it
+        # deletes the robot's articulation prim, and PhysX holds an articulation
+        # in the tensor view exactly as it holds a dynamic object's shape, so the
+        # delete invalidates the view the same way a dynamic ``remove_object`` does.
         #
         # Note when re-measuring: the three PROCEDURAL builders (``so100``,
         # ``panda``, ``unitree_g1``) leave ``_RobotState.articulation`` as
@@ -1343,10 +1384,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # the prior scene's prims (idempotent reload) without disturbing
         # objects added manually via add_object.
         self._scene_objects: set[str] = set()
-        # Per-camera output size (RTX cameras render at >= _MIN_RENDER_PX
-        # wide so DLSS doesn't ghost a moving arm; captured frames are
-        # downscaled to the size the caller asked for before return).
-        self._cam_out_size: dict[str, tuple[int, int]] = {}
         # Synchronous rollout-video recorder state (set by
         # start_cameras_recording, cleared by stop_cameras_recording).
         self._cams_rec_state: dict[str, Any] | None = None
@@ -1376,10 +1413,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         self._main_tid = threading.get_ident()
         self._action_q: queue.Queue = queue.Queue()
         self._main_jobs: queue.Queue = queue.Queue()
-        self._frame_cache: dict[str, Any] = {}
-        self._joint_cache: dict[str, dict[str, float]] = {}
         self._pump_running = False  # True while run_pump_forever owns the renderer
-        self._pump_cameras = True
         # DLSS-convergence tick counts. Holding the kinematic arm still
         # for a few RTX render ticks lets the temporal upscaler settle
         # on the new pose; both knobs are env-tunable for headroom on
@@ -1554,6 +1588,13 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         dict
             Status dict with world info.
         """
+        # ``ground_plane`` selects a posture (add the plane or not), so it is
+        # checked against the shared boolean domain rather than read by
+        # truthiness: otherwise ``"false"``/``"no"``/``"off"`` (all truthy
+        # strings) would ADD the plane while spelling the refusal of it, and
+        # ``0``/``None`` would skip it without ever being a declared spelling.
+        if text := boolean_flag_error(ground_plane, "ground_plane", "create_world"):
+            return {"status": "error", "content": [{"text": text}]}
         if terrain is not None:
             return {
                 "status": "error",
@@ -2042,14 +2083,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             #                      to stop scaling compounding. Retained, it anchors
             #                      the next world's randomization to a pose from a
             #                      world that no longer exists.
-            #  _frame_cache        a full RTX frame and a joint snapshot from the
-            #  _joint_cache        old stage, readable as if current.
             #
             # getattr guards because 24 test modules build a skeleton engine with
             # __new__ and seed only what they exercise; destroy() runs from
             # __del__, so a missing attribute here would raise during GC and mask
             # whatever the test was actually about.
-            for _registry in ("_applied_wrenches", "_obs_noise", "_dr_base", "_frame_cache", "_joint_cache"):
+            for _registry in ("_applied_wrenches", "_obs_noise", "_dr_base"):
                 _held = getattr(self, _registry, None)
                 if _held is not None:
                     _held.clear()
@@ -2354,8 +2393,10 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                         # registry reads as what it is - no latched wrenches.
                         if getattr(self, "_applied_wrenches", None):
                             self._reapply_wrenches()
-                        self._world.step(render=render)
-                        self._sim_time += self._config.physics_dt
+                        self._world.step(render=False)
+                        if render:
+                            self._render_world()
+                        self._sim_time = self._world_clock()
                         self._step_count += 1
                 remaining -= batch
 
@@ -2405,6 +2446,44 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         self._sim_time = 0.0
         self._step_count = 0
         self._contact_epoch += 1
+
+    def _world_clock(self) -> float:
+        """The simulated time the World has integrated to, in seconds.
+
+        Read off ``World.current_time`` - Isaac's own physics clock - rather than
+        accumulated from a constant, so ``_sim_time`` cannot drift from the physics
+        it drives. A rendering ``World.step(render=True)`` runs Kit's ``app.update()``
+        and integrates a whole ``rendering_dt`` (four ``physics_dt`` substeps at the
+        defaults), and a ``create_world(timestep=)`` override changes the advance too;
+        crediting a fixed ``config.physics_dt`` per tick under-reported the first case
+        and over-reported the second. Falls back to a constant-``physics_dt``
+        accumulation when the runtime does not expose the clock (the stubbed worlds
+        the unit tests build), where every tick advances exactly one ``physics_dt``.
+        """
+        current = getattr(self._world, "current_time", None)
+        if current is not None:
+            try:
+                return float(current)
+            except (TypeError, ValueError):
+                pass
+        return self._sim_time + float(self._config.physics_dt)
+
+    def _render_world(self) -> None:
+        """Refresh the renderer for one frame WITHOUT advancing physics.
+
+        A rendering ``World.step(render=True)`` steps physics by a whole
+        ``rendering_dt`` (Kit's ``app.update()`` substeps ``physics_dt`` inside it),
+        so folding the frame into the physics tick made one ``step()`` advance four
+        physics steps while ``_sim_time`` and ``physics_timestep()`` still counted
+        one. Stepping physics ONCE (``render=False``) and refreshing the frame here
+        keeps one ``step()`` equal to one ``physics_dt`` in every render mode, which
+        is the invariant ``PolicyRunner`` sizes its substeps against. ``World.render``
+        is absent on the stubbed worlds unit tests build; there is nothing to refresh
+        then, so the call is skipped.
+        """
+        render = getattr(self._world, "render", None)
+        if callable(render):
+            render()
 
     def get_state(self) -> dict[str, Any]:
         """Get full simulation state summary.
@@ -4454,16 +4533,29 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
     def remove_robot(self, name: str) -> dict[str, Any]:
         """Remove a robot from the simulation.
 
-        Drops the robot's bookkeeping entry and prunes any prims rooted at
-        the robot's prim path from ``self._prim_registry``. The actual USD
-        prim deletion is delegated to :meth:`destroy` / world teardown in
-        Phase 1; only the in-Python registry is updated here.
+        Deletes the robot's USD prim from the stage via
+        ``omni.isaac.core.utils.prims.delete_prim`` -- both ``prim_path`` and
+        the ``actual_prim_path`` the importer relocated it to, when the two
+        differ -- then prunes the in-Python registries (``_robots``,
+        ``_action_controllers``, and any prims rooted at the robot's path in
+        ``_prim_registry``). Before this deleted the prim it left the
+        articulation on the stage: :meth:`add_robot` refuses only a name still
+        in ``_robots``, so a re-add under the removed name stacked a second
+        reference onto the leftover prim, and :meth:`destroy` was the only
+        thing that ever released it -- unlike :meth:`remove_camera` (which
+        deletes its prim) and :meth:`remove_object` (which removes through the
+        scene).
 
         "Rooted at" is judged at the USD path boundary, so a robot whose name
         merely *extends* this one keeps its prim. Prim paths are interpolated
         from the name (``{stage_path}/Robots/{name}``), so with ``arm`` and
         ``arm_left`` both live the two paths share a prefix without one
         containing the other.
+
+        A robot is an articulation -- a dynamic body PhysX holds in its tensor
+        view -- so deleting it invalidates the view the same way removing a
+        dynamic object does. This marks ``_physics_view_stale`` so ``step`` and
+        ``send_action`` refuse until a ``reset()`` rebuilds the view.
 
         Parameters
         ----------
@@ -4474,7 +4566,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         -------
         dict
             Status dict in the standard ``{"status", "content": [{"text"}]}``
-            shape used by mutating methods on this class.
+            shape used by mutating methods on this class. Returns ``error`` if
+            the robot is unknown, or if deleting its prim raised (bookkeeping is
+            left intact for retry, mirroring :meth:`remove_camera`).
         """
         with self._lock:
             if not registered(self._robots, name):
@@ -4483,6 +4577,39 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     "content": [{"text": f"Robot '{name}' not found."}],
                 }
             prim_path = self._robots[name].prim_path
+            # The URDF importer can land the robot at a path other than the one
+            # requested (see ``_RobotState.actual_prim_path``); delete both so a
+            # relocated robot's prim does not survive the removal. ``prim_path``
+            # first, and de-duplicated, so the common case where the two are
+            # equal deletes once.
+            actual_prim_path = self._robots[name].actual_prim_path
+
+            # Delete the USD prim(s) from the stage. Same import shape and
+            # cleanup clause as :meth:`remove_camera`: a transient stage error
+            # returns the structured envelope and leaves bookkeeping intact for
+            # retry. Robots are not added via ``world.scene.add`` here, so the
+            # removal goes through the stage utility rather than
+            # ``world.scene.remove_object``.
+            try:
+                if self._world is not None:
+                    try:
+                        from isaacsim.core.utils.prims import (  # type: ignore[import-not-found]
+                            delete_prim,
+                        )
+                    except ImportError:
+                        from omni.isaac.core.utils.prims import (  # type: ignore[import-not-found]
+                            delete_prim,
+                        )
+
+                    for path in dict.fromkeys((prim_path, actual_prim_path)):
+                        delete_prim(path)
+            except (RuntimeError, ValueError, OSError, AttributeError, TypeError, ImportError) as e:
+                logger.error("Failed to remove robot '%s' (prim=%s): %s", name, prim_path, e)
+                return {
+                    "status": "error",
+                    "content": [{"text": f"Failed to remove robot '{name}': {e}"}],
+                }
+
             # ``/`` is USD's path separator, so it is what separates a
             # descendant prim from a sibling that merely shares a prefix. A bare
             # ``startswith`` test made every robot whose NAME extends this one a
@@ -4502,6 +4629,13 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # A controller closed over this robot's articulation is stale
             # the moment the robot is gone; drop it with the robot.
             self._action_controllers.pop(name, None)
+            # A robot is an articulation, a dynamic body held in PhysX's tensor
+            # view, so deleting its prim invalidates the view outright -- the
+            # same failure ``remove_object`` marks for a dynamic prim (a robot
+            # is never static, so there is no asymmetry to weigh here). Mark the
+            # scene stale so ``step`` / ``send_action`` refuse until ``reset()``
+            # rebuilds the view.
+            self._physics_view_stale = True
             logger.info("Removed robot '%s' (prim=%s)", name, prim_path)
             return {
                 "status": "success",
@@ -5222,13 +5356,23 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
     def physics_timestep(self) -> float | None:
         """Return the fixed physics integration timestep in seconds.
 
-        Isaac's ``World`` steps at :attr:`IsaacConfig.physics_dt`.
+        Reads the dt the ``World`` is actually integrating (via
+        :func:`_resolved_physics_dt`) rather than echoing :attr:`IsaacConfig.physics_dt`,
+        so a ``create_world(timestep=)`` override - honoured by ``World`` but never
+        written back to the config - is reported here too. Falls back to the config
+        value when there is no world yet or the runtime does not expose the reader.
         Reporting it lets :class:`PolicyRunner` derive the physics substeps
         per control step (``round(1 / control_frequency / physics_dt)``) so
         a PD position-servo arm tracks each action's target for the full
         control period -- without this override the base class returned
         ``None`` and every applied action got a single ~8 ms step (#1812).
+        A rendering ``step()`` advances exactly one of these (physics is stepped
+        once with the frame refreshed separately by :meth:`_render_world`), so the
+        substep count stays correct in every render mode.
         """
+        resolved = _resolved_physics_dt(getattr(self, "_world", None))
+        if resolved is not None:
+            return resolved
         return float(self._config.physics_dt)
 
     def install_action_controller(self, robot_name: str, controller: Any) -> dict[str, Any]:
@@ -5476,6 +5620,13 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             callers can self-correct -- mirroring the MuJoCo backend.
             ``status`` is ``"error"`` when ``n_substeps`` is outside its domain,
             and no joint target is applied when it is.
+
+        Concurrency: main-thread affine, like :meth:`step`. ``apply_action`` and
+        ``world.step`` drive Isaac's kit runtime, which only pumps updates on the
+        thread that created ``SimulationApp``. Off that thread the write-and-step
+        is marshalled via :meth:`run_on_main` when :meth:`run_pump_forever` is
+        engaged, and raises ``RuntimeError`` (rather than blocking forever) when
+        no pump runs. See :meth:`_marshal_main_thread_affine`.
         """
         # Guarded before the lock is taken and before any target is applied,
         # mirroring this backend's ``step``: a refusal arriving after the write
@@ -5588,74 +5739,109 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             )
             joint_indices: np.ndarray = np.array(named, dtype=np.int32)
 
-            # Apply to articulation. Isaac Sim 6.0's articulation
-            # (``isaacsim.core.prims.SingleArticulation``) drives PD position
-            # targets via ``apply_action(ArticulationAction(joint_positions=...))``
-            # -- the pre-6.0 ``set_joint_position_targets`` method does not exist
-            # on the 6.0 class (the #101 ``omni.isaac.* -> isaacsim.*`` migration
-            # renamed imports but missed this articulation method). See
-            # ``set_joint_positions`` below for the teleport (non-PD) counterpart.
-            if robot.articulation is not None and action_array.size > 0:
-                try:
-                    from isaacsim.core.utils.types import (  # type: ignore[import-not-found]
-                        ArticulationAction,
-                    )
+        # Nested (not a separate method) so the write-and-step runs on the
+        # ``SimulationApp``-owning thread and the lock is released every
+        # ``_STEPS_PER_BATCH`` ticks - the same shape ``step`` uses, and enforced
+        # by the same source scan for ``_STEPS_PER_BATCH`` / ``step_aborted_msg``.
+        # Pre-fix the write and every substep ran under one ``self._lock`` hold on
+        # whatever thread called ``send_action``: off the owning thread that hold
+        # blocked forever inside PhysX's ``world.step`` (#4082), and on it a
+        # concurrent ``get_state`` stalled for the whole run. ``apply_action`` and
+        # ``world.step`` both drive Kit, so both live here rather than at entry.
+        def _send_impl() -> dict[str, Any]:
+            with self._lock:
+                if not self._world_created or self._world is None:
+                    return {"status": "error", "content": [{"text": "No world created."}]}
+                if stale := _physics_view_stale_error(self, "send_action"):
+                    return stale
 
-                    robot.articulation.apply_action(
-                        ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
-                    )
-                except (RuntimeError, ValueError, AttributeError, ImportError) as e:
-                    # apply_action raises RuntimeError on a torn-down
-                    # articulation, ValueError on shape mismatch, AttributeError
-                    # on omni surface drift, ImportError if the isaacsim runtime
-                    # isn't importable. Programming bugs (NameError, KeyError)
-                    # propagate.
-                    logger.debug("Failed to set joint targets: %s", e)
-                    return {
-                        "status": "error",
-                        "content": [{"text": f"Failed to set joint targets on '{robot_name}': {e}"}],
-                    }
-
-            # Step physics. Render on the LAST substep when not headless so the
-            # RTX camera render products refresh -> ``get_rgba`` returns a fresh
-            # frame for this step (otherwise every recorded frame is identical,
-            # i.e. a static video). Intermediate substeps skip render for speed.
-            render_on = self._config.render_mode != "headless"
-            for i in range(n_substeps):
-                last = i == n_substeps - 1
-                # Replay the latched wrench, as ``step`` does. PhysX's
-                # ``apply_force_at_pos`` acts for ONE tick, and ``apply_force``
-                # stores the latch without touching PhysX at all - so a tick that
-                # does not re-push it is a tick the force is absent from. Every
-                # tick that advances ``_sim_time`` replays; a render-only pump
-                # (``_converge_render``, ``_refresh_all_render_products``) does
-                # not, because it advances no time.
-                if getattr(self, "_applied_wrenches", None):
-                    self._reapply_wrenches()
-                self._world.step(render=bool(render_on and last))
-                self._sim_time += self._config.physics_dt
-                self._step_count += 1
-
-        if unresolved:
-            applied = [k for k in action_map if k not in unresolved]
-            return {
-                "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"Action partially applied: keys {unresolved} could not be "
-                            f"resolved to joints on '{robot_name}'. Applied: {applied}. "
-                            f"Valid keys: {robot.joint_names}"
+                # Apply to articulation. Isaac Sim 6.0's articulation
+                # (``isaacsim.core.prims.SingleArticulation``) drives PD position
+                # targets via ``apply_action(ArticulationAction(joint_positions=...))``
+                # -- the pre-6.0 ``set_joint_position_targets`` method does not
+                # exist on the 6.0 class (the #101 ``omni.isaac.* -> isaacsim.*``
+                # migration renamed imports but missed this articulation method).
+                # See ``set_joint_positions`` for the teleport (non-PD) counterpart.
+                if robot.articulation is not None and action_array.size > 0:
+                    try:
+                        from isaacsim.core.utils.types import (  # type: ignore[import-not-found]
+                            ArticulationAction,
                         )
-                    },
-                    {"json": {"unresolved_keys": unresolved, "applied": applied}},
-                ],
+
+                        robot.articulation.apply_action(
+                            ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
+                        )
+                    except (RuntimeError, ValueError, AttributeError, ImportError) as e:
+                        # apply_action raises RuntimeError on a torn-down
+                        # articulation, ValueError on shape mismatch, AttributeError
+                        # on omni surface drift, ImportError if the isaacsim runtime
+                        # isn't importable. Programming bugs (NameError, KeyError)
+                        # propagate.
+                        logger.debug("Failed to set joint targets: %s", e)
+                        return {
+                            "status": "error",
+                            "content": [{"text": f"Failed to set joint targets on '{robot_name}': {e}"}],
+                        }
+
+            # Step physics, batched under ``_STEPS_PER_BATCH`` so the lock is
+            # released between batches and a concurrent ``get_state`` / ``destroy``
+            # can interleave, and re-checked per batch the way ``step`` re-checks:
+            # a worker's ``add_object(is_static=False)`` can invalidate the view
+            # mid-run. Render on the LAST substep when not headless so the RTX
+            # camera products refresh (otherwise every recorded frame is
+            # identical); intermediate substeps skip render for speed.
+            render_on = self._config.render_mode != "headless"
+            stepped = 0
+            while stepped < n_substeps:
+                batch = min(n_substeps - stepped, self._STEPS_PER_BATCH)
+                with self._lock:
+                    if not self._world_created or self._world is None:
+                        return {
+                            "status": "error",
+                            "content": [{"text": step_aborted_msg(stepped, n_substeps, context="send_action")}],
+                        }
+                    if stale := _physics_view_stale_error(self, "send_action"):
+                        return stale
+                    for _ in range(batch):
+                        last = stepped == n_substeps - 1
+                        # Replay the latched wrench, as ``step`` does: PhysX's
+                        # ``apply_force_at_pos`` acts for ONE tick, so a tick that
+                        # does not re-push it is a tick the force is absent from.
+                        if getattr(self, "_applied_wrenches", None):
+                            self._reapply_wrenches()
+                        self._world.step(render=False)
+                        if render_on and last:
+                            self._render_world()
+                        self._sim_time = self._world_clock()
+                        self._step_count += 1
+                        stepped += 1
+
+            if unresolved:
+                applied = [k for k in action_map if k not in unresolved]
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"Action partially applied: keys {unresolved} could not be "
+                                f"resolved to joints on '{robot_name}'. Applied: {applied}. "
+                                f"Valid keys: {robot.joint_names}"
+                            )
+                        },
+                        {"json": {"unresolved_keys": unresolved, "applied": applied}},
+                    ],
+                }
+
+            return {
+                "status": "success",
+                "content": [{"text": f"Action applied to '{robot_name}', {n_substeps} substeps."}],
             }
 
-        return {
-            "status": "success",
-            "content": [{"text": f"Action applied to '{robot_name}', {n_substeps} substeps."}],
-        }
+        # Route through the same main-thread marshal as ``step``/``reset``: run
+        # inline on the owning thread, hop onto the pump when ``run_pump_forever``
+        # is engaged from a worker, and raise (rather than block forever) when a
+        # worker calls with no pump. See :meth:`_marshal_main_thread_affine`.
+        return self._marshal_main_thread_affine("send_action", _send_impl)
 
     # --- SimEngine: Synchronized multi-robot rollout -------------------------
 
@@ -6099,7 +6285,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # to that, so constructing a bare ``Ticker(...)`` here is a suite failure
         # rather than one leaked descriptor pair per rollout.
         try:
-            from strands_robots.mesh.pacing import Ticker
+            from strands_robots._pacing import Ticker
 
             with Ticker(1.0 / control_frequency) as ticker:
                 while step_count < total_steps:
@@ -6919,12 +7105,15 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             If ``None``, the camera keeps its constructed orientation
             (identity).
         fov : float
-            Horizontal field of view in degrees. Default 60.0. Declared in the
-            same position as on the MuJoCo and Newton backends, so a positional
-            call is read the same way on all three. Mapped onto
-            ``Camera.set_focal_length`` using the standard pinhole relation
-            ``focal_length = horizontal_aperture / (2 * tan(fov/2))`` with the
-            USD-default 24 mm horizontal aperture.
+            Vertical field of view (fovy) in degrees. Default 60.0. This is the
+            one meaning shared with the MuJoCo and Newton backends (which pass
+            it to MuJoCo's ``fovy``) and with the ``get_camera_params``
+            intrinsics fallback, so a positional call is read the same way on
+            all three. Mapped onto ``Camera.set_focal_length`` on the vertical
+            axis (see :func:`_vertical_fov_lens_mm`): the vertical aperture is
+            derived from the horizontal one and the image aspect ratio so pixels
+            stay square (``fx == fy``), giving ``fx == fy == height /
+            (2*tan(fovy/2))`` -- the same intrinsics MuJoCo reports.
         width : int, optional
             Image width in pixels; a positive integer. ``None`` (omitted)
             takes ``IsaacConfig.camera_width``.
@@ -7062,7 +7251,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     ],
                 }
             # An fov outside (0, 180) is not merely mis-framed here: the pinhole
-            # relation ``focal_length = horizontal_aperture / (2 * tan(fov / 2))``
+            # relation ``focal_length = vertical_aperture / (2 * tan(fov / 2))``
             # in :meth:`_create_camera_prim` raises ``ZeroDivisionError`` for
             # ``0`` - which is NOT in the except tuple below, so it propagates
             # out of this method - and yields a ``nan`` focal length for a
@@ -7100,11 +7289,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # RTX cameras: render at a higher NATIVE resolution if the
             # caller's requested output is small, so the DLSS upscaler
             # stays above its temporal-ghost threshold; preserve the
-            # requested aspect ratio. Captured frames are downscaled
-            # back to ``(w, h)`` before return. See ``_MIN_RENDER_PX``
-            # docstring for the why; gated by config.render_mode so
-            # the headless CI path skips the cost.
-            out_w, out_h = w, h
+            # requested aspect ratio. See ``_MIN_RENDER_PX`` docstring for
+            # the why; gated by config.render_mode so the headless CI path
+            # skips the cost.
             if self._config.render_mode != "headless" and w < _MIN_RENDER_PX:
                 scale = _MIN_RENDER_PX / float(w)
                 w = _MIN_RENDER_PX
@@ -7137,9 +7324,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             cam_state = _CameraState(name=name, prim_path=prim_path, width=w, height=h)
             cam_state.handle = handle
             self._cameras[name] = cam_state
-            # Track requested OUTPUT size (may differ from native render
-            # size when DLSS upscaling required a larger native frame).
-            self._cam_out_size[name] = (out_w, out_h)
 
             # Warm up the RTX render product: Isaac does not accumulate a
             # frame until the world is stepped with rendering enabled, so
@@ -7611,8 +7795,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         ``omni.isaac.sensor``. Try modern first, fall back so 4.x
         installs keep working.
         """
-        import math
-
         try:
             from isaacsim.sensors.camera import Camera  # type: ignore[import-not-found]
         except ImportError:
@@ -7631,24 +7813,35 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # than silently on the first render attempt.
         camera.initialize()
 
-        # Map FOV (deg, horizontal) to focal length (mm) using the
-        # standard pinhole lens relation:
+        # ``fov_deg`` is the VERTICAL field of view (fovy) -- the one meaning
+        # shared with the MuJoCo and Newton backends and with the
+        # :meth:`get_camera_params` intrinsics fallback. Isaac has a single
+        # focal length shared by both axes, so the vertical meaning is set
+        # through the aperture: derive the vertical aperture from the
+        # horizontal one and the image aspect ratio (keeping pixels square,
+        # fx == fy) and map fovy onto the focal length on the vertical axis
+        # (see :func:`_vertical_fov_lens_mm`), giving
+        # fx == fy == height / (2*tan(fovy/2)) exactly.
         #
-        #     focal_length = horizontal_aperture / (2 * tan(fov / 2))
-        #
-        # The horizontal aperture MUST be the camera's actual aperture,
-        # read back from the prim -- assuming a nominal 24 mm is wrong on
-        # Isaac's Camera (its default aperture + unit convention yield
-        # fx~=6348 px at 640 px, i.e. a ~6 deg telephoto, instead of the
-        # intended 60 deg / fx~=554). Deriving the focal length from the
-        # read-back aperture makes the resulting pixel intrinsics
-        # fx = width / (2*tan(fov/2)) exactly, independent of the
+        # The horizontal aperture MUST be the camera's actual aperture, read
+        # back from the prim -- assuming a nominal 24 mm is wrong on Isaac's
+        # Camera (its default aperture + unit convention yield a telephoto fx
+        # instead of the intended fovy). Deriving both apertures from the
+        # read-back value makes the pixel intrinsics independent of the
         # aperture's absolute value or units.
         try:
             horizontal_aperture_mm = float(camera.get_horizontal_aperture())
         except (AttributeError, RuntimeError, TypeError, ValueError):
             horizontal_aperture_mm = 24.0
-        focal_length_mm = horizontal_aperture_mm / (2.0 * math.tan(math.radians(fov_deg) / 2.0))
+        vertical_aperture_mm, focal_length_mm = _vertical_fov_lens_mm(fov_deg, width, height, horizontal_aperture_mm)
+        # Pin the vertical aperture so USD's intrinsics read fy off the value
+        # we derived rather than a conform-policy guess; best-effort because
+        # some Camera builds recompute it from the render aspect (to the same
+        # value) and expose no setter.
+        try:
+            camera.set_vertical_aperture(vertical_aperture_mm)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
         camera.set_focal_length(focal_length_mm)
 
         # Enable the depth annotator on the RTX render product. Isaac
@@ -8393,7 +8586,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
     #    toggling the cube collider while it's carried gives a stable
     #    multi-episode grasp.
     #
-    # 3. **DLSS ghost mitigation** (``_converge_render``, ``_resize_rgb``,
+    # 3. **DLSS ghost mitigation** (``_converge_render``,
     #    ``set_joint_positions``, plus the ``add_camera``
     #    native-resolution upscale) -- RTX cameras at small (<300 px)
     #    internal resolution smear a moving arm into a translucent
@@ -8417,17 +8610,21 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
     # --- main-thread pump --------------------------------------------------
 
     def pump(self, render: bool = True) -> None:
-        """Drain queued actions, step once, refresh caches. MAIN THREAD ONLY.
+        """Drain queued main-thread jobs and render the idle preview. MAIN THREAD ONLY.
 
-        A web UI calls ``get_observation``/``send_action`` from worker
-        threads where Isaac's renderer / physics deadlock. Those calls
-        instead enqueue actions and read cached frames; this pump (run
-        on the owning main thread) is the single place that actually
-        advances the sim and renders the cameras.
+        Isaac's kit runtime only pumps updates on the thread that created
+        ``SimulationApp``. A worker thread therefore cannot step the world or
+        write the articulation itself: :meth:`step`, :meth:`reset` and
+        :meth:`send_action` marshal onto this thread through
+        :meth:`_marshal_main_thread_affine`, and :meth:`set_joint_positions`
+        queues its write onto ``_action_q``. This pump, run on the owning thread
+        by :meth:`run_pump_forever`, is the single place that drains that queue
+        and advances / renders the sim. A worker's ``get_observation`` reads the
+        live handles directly and does not go through here.
         """
         if not self._world_created or self._world is None:
             return
-        # 1. Apply any actions queued by worker threads, counting them.
+        # 1. Apply any jobs queued by worker threads, counting them.
         n_actions = 0
         while not self._action_q.empty():
             try:
@@ -8438,103 +8635,21 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 fn()
                 n_actions += 1
             except (RuntimeError, ValueError, AttributeError, TypeError, KeyError, IndexError):
-                # Queued worker actions are best-effort. Narrow to the
-                # exceptions Isaac's articulation / object handles
-                # plausibly raise (RuntimeError, ValueError, AttributeError,
-                # TypeError) plus indexing surface (KeyError, IndexError);
-                # programming bugs (NameError, ImportError) propagate so
-                # they're caught early in development rather than
-                # swallowed silently.
+                # Queued worker jobs are best-effort. Narrow to the exceptions
+                # Isaac's articulation / object handles plausibly raise
+                # (RuntimeError, ValueError, AttributeError, TypeError) plus
+                # indexing surface (KeyError, IndexError); programming bugs
+                # (NameError, ImportError) propagate so they are caught early in
+                # development rather than swallowed silently.
                 logger.debug("queued action failed", exc_info=True)
-        # 2. When worker actions ran this tick (n_actions > 0) they include
-        # the recording capture, which does its OWN _converge_render + grab.
-        # Doing a second idle converge here just doubles the render load and
-        # serializes behind the capture. So only render here when the sim is
-        # IDLE (no queued work): that keeps the live preview fresh between
-        # episodes without competing with the recorder mid-episode.
+        # 2. When worker jobs ran this tick (n_actions > 0) they include the
+        # recording capture, which does its OWN _converge_render + grab. Doing a
+        # second idle converge here just doubles the render load and serializes
+        # behind the capture. So only render here when the sim is IDLE (no queued
+        # work): that keeps the live preview fresh between episodes without
+        # competing with the recorder mid-episode.
         if n_actions == 0 and render:
             self._converge_render(self._idle_converge)
-        # 3. Refresh joint-state cache for every robot.
-        #
-        # Snapshotted under the lock, then iterated outside it. Concurrent
-        # mutation is this method's DESIGNED usage, not an edge case: the
-        # docstring above describes worker threads calling in while the owning
-        # main thread pumps, and add_robot / remove_robot / add_camera /
-        # destroy all mutate these registries under self._lock. Iterating the
-        # live dict therefore raised "dictionary changed size during iteration"
-        # (6/6 trials with a worker adding robots mid-pump), and the per-item
-        # ``except RuntimeError`` below cannot catch it - the exception comes
-        # from the ``for`` statement's own call to the iterator, which is
-        # outside the try. So it escaped pump() on the MAIN thread, taking the
-        # whole app down rather than degrading one tick.
-        #
-        # The lock is held only for the list copy, deliberately not across the
-        # body: the joint read and the frame grab below both reach into Kit,
-        # and holding the lock across them would serialize the pump against
-        # every tool call for the length of a render.
-        with self._lock:
-            robots_snapshot = list(self._robots.items())
-        # Skipped entirely while the view is stale, keeping the cache at its last
-        # good values rather than reading. The handler below is the SAME narrow
-        # tuple ``get_observation`` documents as unable to catch what this read
-        # raises against an invalidated view - a bare ``Exception`` ("Failed to get
-        # DOF positions from backend") - and widening it is what AGENTS.md forbids.
-        # Here that escape is worse than elsewhere: ``pump`` runs on the MAIN
-        # thread and ``run_pump_forever`` wraps it in ``try/finally`` with no
-        # ``except``, so one escape ends the loop and takes the app down - the same
-        # whole-app failure the snapshot above was added to prevent. The other
-        # measured outcome is worse still and no handler helps: ``remove_object``
-        # recorded the post-delete joint read HANGING until a 2-minute timeout,
-        # which on this thread wedges a live UI session.
-        #
-        # The trigger is ordinary shipped usage, not a contrived race: a worker
-        # thread's ``remove_object`` - or ``load_scene``'s per-episode reload -
-        # invalidates the view, and the very next pump tick performs this read.
-        # Degrades to a render-only tick until the caller's ``reset()`` rebuilds
-        # the view, which is what the sibling surfaces do.
-        stale_view = self._physics_view_stale
-        if stale_view:
-            # Latched, not logged per tick: ``run_pump_forever`` calls this every
-            # ~50 ms, so an unlatched WARNING writes thousands of identical lines
-            # while the view stays stale and buries the one that mattered. Reset
-            # in the else-branch rather than at the four sites that clear the flag,
-            # so the latch cannot outlive the staleness it describes.
-            if not self._pump_stale_warned:
-                logger.warning(
-                    "pump(): joint-state cache not refreshed - a dynamic body was added or removed "
-                    "since the last reset(), so PhysX's tensor view no longer covers the scene and "
-                    "the read would hang or raise. Rendering continues; call reset() to rebuild it."
-                )
-                self._pump_stale_warned = True
-        else:
-            self._pump_stale_warned = False
-            for rname, r in robots_snapshot:
-                if r.articulation is None:
-                    continue
-                try:
-                    q = r.articulation.get_joint_positions()
-                    if q is not None:
-                        arr = q.cpu().numpy() if hasattr(q, "cpu") else np.asarray(q)
-                        self._joint_cache[rname] = {jn: float(v) for jn, v in zip(r.joint_names, list(arr))}
-                except (RuntimeError, ValueError, AttributeError, TypeError):
-                    pass
-        # 4. Refresh camera frame cache for the live preview -- only when we
-        # actually rendered this tick (idle path). When actions ran, the
-        # capture already published its frames to the cache; re-grabbing
-        # here would be a wasted readback per camera every recorded frame.
-        if render and n_actions == 0 and self._pump_cameras:
-            # Snapshotted for the same reason as the robot registry above.
-            with self._lock:
-                cameras_snapshot = list(self._cameras.items())
-            for cname, cam in cameras_snapshot:
-                if cam.handle is None:
-                    continue
-                try:
-                    img = self._grab_frame(cname, cam.handle)
-                    if img is not None:
-                        self._frame_cache[cname] = img
-                except (RuntimeError, ValueError, AttributeError, TypeError):
-                    logger.debug("pump frame grab failed for %s", cname, exc_info=True)
 
     def run_pump_forever(self, stop_event: Any = None) -> None:
         """Block on the MAIN THREAD running ``pump()`` in a loop.
@@ -9104,6 +9219,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         pose exactly. Restored to dynamic on release. Toggles
         ``UsdPhysics.RigidBodyAPI.kinematicEnabled`` on the prim; best-effort.
         """
+        # ``kinematic`` selects a posture (KINEMATIC vs dynamic); check it
+        # against the shared boolean domain before the write, so ``"false"``
+        # cannot pin the body kinematic while spelling its refusal.
+        if text := boolean_flag_error(kinematic, "kinematic", "set_object_kinematic"):
+            return {"status": "error", "content": [{"text": text}]}
         obj = registry_entry(self._objects, name)
         if obj is None:
             return {"status": "error", "content": [{"text": f"Object {name!r} not found."}]}
@@ -9151,6 +9271,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         collider lets the gripper close cleanly around it; re-enabled
         on release.
         """
+        # ``enabled`` selects a posture (collider on vs off); check it against
+        # the shared boolean domain before the write, so ``"false"`` cannot
+        # leave the collider on while spelling its refusal.
+        if text := boolean_flag_error(enabled, "enabled", "set_object_collision"):
+            return {"status": "error", "content": [{"text": text}]}
         obj = registry_entry(self._objects, name)
         if obj is None:
             return {"status": "error", "content": [{"text": f"Object {name!r} not found."}]}
@@ -9556,14 +9681,18 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 self._world.step(render=True)
 
     def _converge_render(self, n: int = 8) -> None:
-        """Render ``n`` ticks while HOLDING the robots at their current pose.
+        """Render ``n`` ticks WITHOUT advancing physics, holding each robot's pose.
 
-        ``world.step(render=True)`` advances physics every tick, so a
-        kinematic arm keeps drifting (gravity / settling) while we try
-        to converge the DLSS temporal upscaler -> the moving target
-        leaves a faint ghost. Re-asserting each robot's joint positions
-        (and zeroing velocities) before every render freezes the pose
-        so DLSS converges on a single, static image.
+        This is the idle pump path (``run_pump_forever`` -> ``pump`` step 2), whose
+        job is to let the DLSS temporal upscaler converge on a still scene between
+        episodes - not to advance the world. It used to call ``world.step(render=True)``,
+        which integrates a whole ``rendering_dt`` of physics per tick, so the idle
+        preview silently ran the simulation forward (and, keying its cache on the
+        step count that never moved, ``get_contacts`` could serve a pre-tick answer
+        after it). Refreshing the frame with :meth:`_render_world` advances no
+        physics, so nothing drifts; re-asserting each robot's joint positions (and
+        zeroing velocities) is kept as a cheap guard that a mid-render dynamic add
+        cannot leave a robot mispose.
         """
         if not self._world_created or self._world is None:
             return
@@ -9613,54 +9742,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                                 pass
                     except (RuntimeError, ValueError, AttributeError, TypeError):
                         pass
-            self._world.step(render=True)
-
-    def _grab_frame(self, cname: str, cam: Any) -> Any:
-        """Capture ``cam`` as an RGB uint8 array at the camera's requested output size.
-
-        The RTX camera renders at a higher native resolution (to keep
-        DLSS out of its temporal-ghost regime); this downscales the
-        result back to the size the caller asked for. Returns ``None``
-        if no frame is available yet.
-        """
-        frame = cam.get_rgba()
-        if frame is None or not getattr(frame, "size", 0):
-            return None
-        img = np.asarray(frame)[:, :, :3].astype("uint8")
-        out = registry_entry(self._cam_out_size, cname)
-        if out is not None:
-            ow, oh = out
-            if img.shape[1] != ow or img.shape[0] != oh:
-                img = self._resize_rgb(img, ow, oh)
-        return img
-
-    @staticmethod
-    def _resize_rgb(img: Any, out_w: int, out_h: int) -> Any:
-        """Downscale an HxWx3 uint8 array to ``(out_h, out_w)``.
-
-        Uses cv2 / PIL if present, else a fast NumPy area-average /
-        nearest fallback (no new deps).
-        """
-        try:
-            import cv2  # type: ignore[import-not-found]
-
-            return cv2.resize(img, (out_w, out_h), interpolation=cv2.INTER_AREA)
-        except ImportError:
-            pass
-        try:
-            from PIL import Image  # type: ignore[import-not-found]
-
-            resample = getattr(Image, "Resampling", Image).BILINEAR
-            return np.asarray(Image.fromarray(img).resize((out_w, out_h), resample))
-        except ImportError:
-            pass
-        h, w = img.shape[:2]
-        if w % out_w == 0 and h % out_h == 0:
-            fx, fy = w // out_w, h // out_h
-            return img.reshape(out_h, fy, out_w, fx, 3).mean(axis=(1, 3)).astype("uint8")
-        ys = (np.arange(out_h) * (h / out_h)).astype(int).clip(0, h - 1)
-        xs = (np.arange(out_w) * (w / out_w)).astype(int).clip(0, w - 1)
-        return img[ys][:, xs]
+            self._render_world()
 
     def describe(self) -> dict[str, Any]:
         """Return the Isaac engine's live discovery surface.

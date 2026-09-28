@@ -132,7 +132,7 @@ def _connected_driver(monkeypatch: pytest.MonkeyPatch) -> tuple[ReachyDriver, _S
     """
     link = _StubLink()
     monkeypatch.setattr(
-        "strands_robots.device_connect.reachy_transport.api",
+        "strands_robots.drivers.reachy_transport.api",
         lambda *a, **k: dict(_LITE_STATUS),
     )
     monkeypatch.setattr(ReachyDriver, "_build_link", lambda self, *, is_lite: link)
@@ -153,7 +153,7 @@ class TestTheExtraIsAPackagingAccident:
 
     def test_the_transport_module_never_mentions_the_extras_dependency(self) -> None:
         """The transport source carries no reference to the extra's dependency."""
-        package = Path(reachy_mod.__file__).parent.parent / "device_connect"
+        package = Path(reachy_mod.__file__).parent
         assert _EXTRA_DEP not in (package / "reachy_transport.py").read_text(encoding="utf-8")
 
     def test_the_package_init_does_not_pull_the_extra_in_at_runtime(self) -> None:
@@ -287,7 +287,7 @@ class TestTheReasonPrescribesNothingItCannotEstablish:
         question of whether an install remedy is establishable reopens. Deriving it
         means that shows up here rather than in a reason nobody re-read.
         """
-        package = Path(reachy_mod.__file__).parent.parent / "device_connect"
+        package = Path(reachy_mod.__file__).parent
         module = ast.parse((package / "reachy_transport.py").read_text(encoding="utf-8"))
         imported: set[str] = set()
         pending: list[ast.AST] = [

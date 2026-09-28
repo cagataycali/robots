@@ -32,7 +32,9 @@ annotation is not a dependency at any point in the run.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import re
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -353,6 +355,44 @@ class TestTheContract:
             for edge in mod.upward_edges(graph)
             if mod.layer_of(edge[0]) == drivers_mesh and mod.layer_of(edge[1]) == sim_policies
         ]
+        assert offenders == []
+
+    def test_no_driver_imports_the_mesh(self, graph: Any) -> None:
+        """Drivers and the mesh are siblings: a driver loads no mesh module.
+
+        Loop pacing was the one shared need, and reaching it through
+        ``strands_robots.mesh`` ran the mesh package's ``__init__`` - a dozen
+        session, security and ROS-bridge modules - for every driver import.
+        Graded across all three import kinds, since a deferred import is the
+        same dependency on first call.
+        """
+        offenders = sorted(
+            (importer, target)
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            if mod.member_of(importer) == "drivers"
+            for target in targets
+            if mod.member_of(target) == "mesh"
+        )
+        assert offenders == []
+
+    def test_no_driver_names_a_sibling_package_by_string(self) -> None:
+        """A module path handed to ``importlib`` is an import the graph cannot see.
+
+        The Reachy driver resolved its daemon link as
+        ``"strands_robots.device_connect.reachy_transport"``, so a driver depended
+        on the package 0.7 removes while every edge above read clean. Any string
+        constant that is exactly a dotted path into a sibling package counts;
+        prose that merely cites one does not, because it is never the whole
+        constant.
+        """
+        sibling = re.compile(r"strands_robots\.(?:mesh|device_connect)(?:\.\w+)*")
+        offenders = sorted(
+            (path.relative_to(_PACKAGE_ROOT).as_posix(), node.value)
+            for path in (_PACKAGE_ROOT / "drivers").rglob("*.py")
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and sibling.fullmatch(node.value)
+        )
         assert offenders == []
 
     def test_no_unitree_driver_reaches_into_the_g1_verb_package(self, graph: Any) -> None:

@@ -100,8 +100,6 @@ def _observe(quat: list[float], ang_world: list[float]) -> dict[str, Any]:
     engine._obs_noise = {}
     engine._obs_noise_rng = None
     engine._recording_state_dict = {}
-    engine._joint_cache = {}
-    engine._frame_cache = {}
     engine._applied_wrenches = {}
     engine._pump_running = False
     engine._main_tid = threading.get_ident()
@@ -258,8 +256,6 @@ class TestAFixedBaseStillReportsNothing:
         engine._obs_noise = {}
         engine._obs_noise_rng = None
         engine._recording_state_dict = {}
-        engine._joint_cache = {}
-        engine._frame_cache = {}
         engine._applied_wrenches = {}
         engine._pump_running = False
         engine._main_tid = threading.get_ident()

@@ -22,7 +22,7 @@ so a non-numeric value raised a ``ValueError`` straight through the structured
 ``{"status": "error"}`` tool-result contract every ``AgentTool`` handler owes its
 caller, and ``nan``/``inf``/``0``/``>= 180`` registered a camera the RTX pipeline
 cannot use: ``_create_camera_prim`` derives
-``focal_length = horizontal_aperture / (2 * tan(radians(fov) / 2))``, which
+``focal_length = vertical_aperture / (2 * tan(radians(fov) / 2))``, which
 raises ``ZeroDivisionError`` for ``0`` - a type absent from that try block's
 except tuple, so it escapes ``add_camera`` - and yields ``nan`` (for ``nan``) or
 7.3e-16 mm (for ``180``), both of which ``set_focal_length`` accepts.
@@ -90,7 +90,6 @@ def _engine() -> IsaacSimulation:
     engine._objects = {}
     engine._cameras = {}
     engine._prim_registry = []
-    engine._cam_out_size = {}
     engine._camera_warmup_steps = 0
     engine._sim_time = 0.0
     engine._step_count = 0
@@ -129,7 +128,6 @@ def _assert_refused(engine: IsaacSimulation, result: dict, needle: str = "") -> 
     assert needle in result["content"][0]["text"], result
     assert engine._cameras == {}
     assert engine._prim_registry == []
-    assert engine._cam_out_size == {}
     # The stage was never touched: validation runs ahead of the one call that
     # would create the USD prim.
     assert engine.prim_calls == []  # type: ignore[attr-defined]

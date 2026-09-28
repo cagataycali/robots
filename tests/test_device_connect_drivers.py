@@ -630,7 +630,7 @@ class TestSimulationDriverLifecycleAndPublish(unittest.TestCase):
 class TestReachyMiniDriver(unittest.TestCase):
     def setUp(self):
         # Mock reachy_transport module but keep real ZenohLink/WebSocketLink
-        from strands_robots.device_connect.reachy_transport import WebSocketLink, ZenohLink
+        from strands_robots.drivers.reachy_transport import WebSocketLink, ZenohLink
 
         self.mock_transport_mod = MagicMock()
         self.mock_transport_mod.api.return_value = {"status": "ok"}
@@ -647,7 +647,7 @@ class TestReachyMiniDriver(unittest.TestCase):
         self.transport_patcher = patch.dict(
             sys.modules,
             {
-                "strands_robots.device_connect.reachy_transport": self.mock_transport_mod,
+                "strands_robots.drivers.reachy_transport": self.mock_transport_mod,
             },
         )
         self.transport_patcher.start()
@@ -1097,7 +1097,7 @@ class TestReachyTransport(unittest.TestCase):
     """Test the extracted transport helpers."""
 
     def test_rpy_to_pose_identity(self):
-        from strands_robots.device_connect.reachy_transport import rpy_to_pose
+        from strands_robots.drivers.reachy_transport import rpy_to_pose
 
         pose = rpy_to_pose(0, 0, 0)
         # Should be close to identity rotation
@@ -1107,7 +1107,7 @@ class TestReachyTransport(unittest.TestCase):
         self.assertAlmostEqual(pose[3][3], 1.0, places=5)
 
     def test_rpy_to_pose_translation(self):
-        from strands_robots.device_connect.reachy_transport import rpy_to_pose
+        from strands_robots.drivers.reachy_transport import rpy_to_pose
 
         pose = rpy_to_pose(0, 0, 0, x_mm=100, y_mm=200, z_mm=300)
         self.assertAlmostEqual(pose[0][3], 0.1, places=5)  # 100mm = 0.1m
@@ -1115,13 +1115,13 @@ class TestReachyTransport(unittest.TestCase):
         self.assertAlmostEqual(pose[2][3], 0.3, places=5)
 
     def test_identity_pose(self):
-        from strands_robots.device_connect.reachy_transport import identity_pose
+        from strands_robots.drivers.reachy_transport import identity_pose
 
         pose = identity_pose()
         self.assertEqual(pose, [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
 
     def test_resolve_host_ip(self):
-        from strands_robots.device_connect.reachy_transport import resolve_host
+        from strands_robots.drivers.reachy_transport import resolve_host
 
         # IP should pass through unchanged
         result = resolve_host("192.168.1.1")

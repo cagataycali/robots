@@ -1406,23 +1406,15 @@ class SimEngine(ABC):
         """
         return None
 
-    def _maybe_install_wbc_torque_control(self, policy: Any, robot_name: str) -> Callable[[], None] | str | None:
-        """Hook: auto-install an action controller a policy needs to run correctly.
+    def _maybe_install_action_controller(self, policy: Any, robot_name: str) -> Callable[[], None] | str | None:
+        """Hook: install the action controller a policy declares it needs.
 
-        The MuJoCo engine overrides this so a
-        :class:`~strands_robots.policies.wbc.WBCPolicy` driven through
-        :meth:`run_policy` on a position-servo scene gets the torque shim
-        (:func:`~strands_robots.policies.wbc.install_wbc_torque_control`) wired
-        up automatically - otherwise WBC's position targets fight the stiff
-        servo gain and the documented quickstart silently falls over.
-
-        No other engine can install that shim: it is written against a compiled
-        ``MjModel`` / ``MjData`` pair. This default therefore *reports* the
-        requirement instead of rolling out without it. On the Newton backend the
-        stock G1 drove its position servos directly and the pelvis sank from
-        0.793 m to 0.074 m within a second while ``run_policy`` reported
-        ``status="success"``: the fall was the only evidence the shim was
-        missing. An engine that can install a controller overrides this hook.
+        A policy states the need on
+        :attr:`~strands_robots.policies.base.Policy.requires_action_controller`;
+        an engine that can install that controller overrides this hook. This
+        default installs nothing, so it *reports* the declaration instead of
+        rolling out without the controller - a rollout that runs anyway can fall
+        over while ``run_policy`` reports ``status="success"``.
 
         Returns:
             ``None`` when nothing has to be installed; a zero-arg cleanup
@@ -1434,32 +1426,26 @@ class SimEngine(ABC):
             names no surface: :meth:`_install_action_controller` prefixes the one
             the caller used, since all three rollout surfaces install through it.
         """
-        try:
-            from strands_robots.policies.base import iter_policy_tree
-            from strands_robots.policies.wbc import WBCPolicy
-        except ImportError:
-            return None  # no [wbc] extra: nothing here can need the shim
-        # Keyed on the WBC policy actually driving the joints, which may sit
-        # inside a composite / persistent wrapper, exactly as the MuJoCo
-        # override resolves it.
-        if not any(isinstance(p, WBCPolicy) for p in iter_policy_tree(policy)):
-            return None
-        return (
-            f"{robot_name!r} is driven by a WBCPolicy, which emits joint-position "
-            f"targets the scene's position servos override, and the {type(self).__name__} backend "
-            "cannot install the torque shim that corrects them (WBCTorqueController applies "
-            "SONIC's per-joint PD law to a compiled MjModel). No rollout was started, because "
-            "without the shim the robot falls within a fraction of a second while the rollout "
-            'reports success. Run this policy on the MuJoCo backend (backend="mujoco"), or pass '
-            "wbc_install_torque_control=False to drive a torque-actuated scene directly."
-        )
+        from strands_robots.policies.base import iter_policy_tree
+
+        # Keyed on the policy actually driving the joints, which may sit inside
+        # a composite / persistent wrapper.
+        for member in iter_policy_tree(policy):
+            requirement = getattr(type(member), "requires_action_controller", None)
+            if requirement:
+                return (
+                    f"{robot_name!r} is driven by a {type(member).__name__}, and the "
+                    f"{type(self).__name__} backend cannot install the action controller "
+                    f"it needs: {requirement} No rollout was started."
+                )
+        return None
 
     def _install_action_controller(
         self, policy: Any, robot_name: str, enabled: bool, surface: str
     ) -> tuple[Callable[[], None] | None, str | None]:
         """Install the action controller *policy* needs here, or say why not.
 
-        One reader of :meth:`_maybe_install_wbc_torque_control` for every
+        One reader of :meth:`_maybe_install_action_controller` for every
         surface that rolls a policy out - :meth:`run_policy`,
         :meth:`eval_policy` and :meth:`evaluate_benchmark`. The hook lived on
         ``run_policy`` alone, so the same WBC checkpoint that walks the G1 past
@@ -1490,7 +1476,7 @@ class SimEngine(ABC):
         """
         if not enabled:
             return None, None
-        outcome = self._maybe_install_wbc_torque_control(policy, robot_name)
+        outcome = self._maybe_install_action_controller(policy, robot_name)
         if isinstance(outcome, str):
             return None, f"{surface}: {outcome}"
         return outcome, None

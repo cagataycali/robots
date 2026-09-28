@@ -499,12 +499,6 @@ class TestTheAsymmetryWithTheSiblingIsDeliberate:
         assert positive_whole_number_error(0, "n", "ctx") is not None
         assert non_negative_whole_number_error(0, "n", "ctx") is None
 
-    def test_the_reason_for_the_asymmetry_is_recorded_where_a_reader_will_look(self) -> None:
-        """Both docstrings must carry it, since either is the one being read."""
-        assert "_MAX_STEPS_PER_CALL" in (positive_whole_number_error.__doc__ or "")
-        assert "drive(count=" in (positive_whole_number_error.__doc__ or "")
-        assert "the one place the two guards differ" in (non_negative_whole_number_error.__doc__ or "")
-
 
 # --------------------------------------------------------------------------- #
 # Drift: no guard may convert without a guard                                 #

@@ -18,7 +18,7 @@ one difference cost the envelope two properties:
   the surface that built it decided.
 
 * **A daemon that was never reached answered ``success``.**
-  :func:`~strands_robots.device_connect.reachy_transport.api` reports every
+  :func:`~strands_robots.drivers.reachy_transport.api` reports every
   HTTP and connection failure as ``{"error": ...}`` rather than raising -- the
   driver states this in two places already
   (:meth:`ReachyMiniDriver.__init__`'s port comment and
@@ -373,7 +373,7 @@ class TestWhyTheEnvelopeOwnsTheVerdict:
 
     def test_api_reports_an_unreachable_daemon_as_a_result_rather_than_raising(self) -> None:
         """The real transport, against a port nothing is listening on."""
-        from strands_robots.device_connect.reachy_transport import api
+        from strands_robots.drivers.reachy_transport import api
 
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))

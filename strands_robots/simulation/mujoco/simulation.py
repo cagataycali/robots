@@ -3480,10 +3480,10 @@ class MuJoCoSimEngine(
         except Exception as exc:  # noqa: BLE001 - non-fatal (mirrors set_robot_state_keys)
             logger.debug("bind_policy_sim_context(%s) failed: %s", robot_name, exc)
 
-    def _maybe_install_wbc_torque_control(self, policy: Any, robot_name: str) -> Callable[[], None] | None:
+    def _maybe_install_action_controller(self, policy: Any, robot_name: str) -> Callable[[], None] | str | None:
         """Auto-install the WBC torque shim when a WBCPolicy drives a servo scene.
 
-        Overrides :meth:`SimEngine._maybe_install_wbc_torque_control`. WBC emits
+        Overrides :meth:`SimEngine._maybe_install_action_controller`. WBC emits
         joint-position targets; on the stock position-servo Unitree G1 those
         targets fight the uniform ``kp=500`` servo gain and override SONIC's
         tuned per-joint PD, so ``sim.run_policy(policy_provider="wbc")`` would
@@ -3509,30 +3509,33 @@ class MuJoCoSimEngine(
         physics it corrects is a property of the WBC policy driving the joints,
         not of the type of object handed to ``run_policy``.
 
-        Returns ``None`` (no-op) in five cases, in the order they are checked:
-        ``[wbc]`` is not installed; no ``WBCPolicy`` appears in ``policy``'s
-        tree; the sim has no compiled world; a controller is already registered
-        (a manual install always wins); or
+        Without ``[wbc]``, or with no ``WBCPolicy`` in ``policy``'s tree, the
+        base hook answers, refusing any policy that declares a controller.
+        Otherwise returns ``None`` (no-op) when: the sim has no compiled world;
+        a controller is already registered (a manual install always wins); or
         :func:`~strands_robots.policies.wbc.wbc_uses_position_servo` finds no
         position-servo actuator, meaning the driven actuators are already torque
         motors or none of the WBC joints resolve in this scene.
         """
+        from strands_robots.policies.base import iter_policy_tree
+
         try:
-            from strands_robots.policies.base import iter_policy_tree
             from strands_robots.policies.wbc import (
                 WBCPolicy,
                 install_wbc_torque_control,
                 wbc_uses_position_servo,
             )
         except ImportError:
-            return None
+            # Without [wbc] no shim can be installed, so a declaring policy is refused.
+            return super()._maybe_install_action_controller(policy, robot_name)
 
         # The shim is keyed on the WBC policy actually driving the joints, which
         # may sit inside a wrapper (composite / persistent) that is not itself a
         # WBCPolicy. Walk the declared tree instead of type-testing the argument.
         wbc_policy = next((p for p in iter_policy_tree(policy) if isinstance(p, WBCPolicy)), None)
         if wbc_policy is None:
-            return None
+            # Any other declared controller is one this engine cannot install.
+            return super()._maybe_install_action_controller(policy, robot_name)
         world = self._world
         if world is None or world._model is None:
             return None
@@ -7463,11 +7466,9 @@ class MuJoCoSimEngine(
         # socketpair, so releasing it is the language's job rather than this
         # loop's to remember. Every paced loop in the package is held to that, so
         # constructing a bare ``Ticker(...)`` here is a suite failure rather than
-        # one leaked descriptor pair per rollout. Local import: the mesh
-        # package __init__ pulls the fleet stack, the same reason ``init_mesh``
-        # is imported at its point of use in this module.
+        # one leaked descriptor pair per rollout.
         try:
-            from strands_robots.mesh.pacing import Ticker
+            from strands_robots._pacing import Ticker
 
             with Ticker(1.0 / control_frequency) as ticker:
                 while step_count < total_steps:

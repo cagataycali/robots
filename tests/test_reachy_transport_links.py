@@ -1,7 +1,7 @@
 """Behavior tests for the Reachy Mini hardware-link transports.
 
 Exercises the real-time I/O abstractions in
-``strands_robots.device_connect.reachy_transport``:
+``strands_robots.drivers.reachy_transport``:
 
 - ``ZenohLink`` -- wireless variant that bridges Device Connect's Zenoh
   pub/sub to the driver's joint/IMU callbacks.
@@ -33,8 +33,8 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from strands_robots.device_connect import reachy_transport
-from strands_robots.device_connect.reachy_transport import (
+from strands_robots.drivers import reachy_transport
+from strands_robots.drivers.reachy_transport import (
     WebSocketLink,
     ZenohLink,
     api,

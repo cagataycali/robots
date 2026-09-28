@@ -326,7 +326,7 @@ class WBCTorqueController:
         ``world._backend_state["action_controller"]``, the seam
         ``_apply_sim_action`` dispatches through. Restoring only the gains leaves
         the registration behind, and that leftover is not inert: it is the value
-        ``MuJoCoSimEngine._maybe_install_wbc_torque_control`` reads to decide a
+        ``MuJoCoSimEngine._maybe_install_action_controller`` reads to decide a
         controller is already present, where a present controller is treated as
         a manual install that wins. The next rollout on the same world therefore
         skips the install and dispatches every action through this finished

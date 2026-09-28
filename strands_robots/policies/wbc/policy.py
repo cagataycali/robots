@@ -58,7 +58,7 @@ import logging
 import math
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -224,6 +224,15 @@ class WBCPolicy(Policy):
         ValueError: If ``walk`` or ``allow_missing_models`` is not a boolean,
             or the resolved config dimensions are inconsistent.
     """
+
+    requires_action_controller: ClassVar[str | None] = (
+        "it emits joint-position targets the scene's position servos override, and "
+        "the torque shim that corrects them (WBCTorqueController applies SONIC's "
+        "per-joint PD law to a compiled MjModel) is installed by the MuJoCo engine "
+        "only. Without the shim the robot falls within a fraction of a second while "
+        'the rollout reports success. Run this policy on the MuJoCo backend (backend="mujoco"), '
+        "or pass wbc_install_torque_control=False to drive a torque-actuated scene directly."
+    )
 
     def __init__(
         self,

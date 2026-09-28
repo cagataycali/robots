@@ -340,7 +340,6 @@ def _isaac_engine() -> Any:
     # not stand in the way of the name resolution under test.
     engine._world = None
     engine._action_controllers = {}
-    engine._cam_out_size = {}
     engine._cams_rec_state = None
     engine._main_tid = threading.get_ident()
     return engine
@@ -467,7 +466,6 @@ _REGISTRY_ATTRS = frozenset(
         "_cameras",
         "_policy_threads",
         "_action_controllers",
-        "_cam_out_size",
     }
 )
 
@@ -480,7 +478,7 @@ _CREATION_FUNCTIONS = frozenset({"add_robot", "add_object", "add_camera"})
 
 # Two WBC helpers read the robot registry directly, and neither is reachable
 # with a name a caller supplied: both are internal, and the only route into
-# them is ``MuJoCoSimEngine._maybe_install_wbc_torque_control``, which
+# them is ``MuJoCoSimEngine._maybe_install_action_controller``, which
 # ``run_policy`` / ``eval_policy`` / ``start_policy`` reach only after refusing
 # a ``robot_name`` that is not in ``list_robots()`` - a *list* membership test,
 # total for any type. That refusal is the whole reason this exemption is safe,
@@ -690,7 +688,7 @@ class TestTheExemptionsStillDescribeRealCode:
 class TestTheRefusalTheUpstreamExemptionRestsOn:
     """The exempt WBC lookups are total only because their one route refuses first.
 
-    ``_maybe_install_wbc_torque_control`` is not wrapped by the guarded binding
+    ``_maybe_install_action_controller`` is not wrapped by the guarded binding
     above it, so a name it is handed reaches ``wbc_uses_position_servo`` and the
     partial ``world.robots.get(...)`` inside it. What keeps that unreachable is
     the entry point resolving ``robot_name`` first. Asserting the ordering here
@@ -700,13 +698,13 @@ class TestTheRefusalTheUpstreamExemptionRestsOn:
     @pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
     def test_the_policy_hook_is_never_reached_for_a_refused_name(self, sim, label, name):
         calls: list[Any] = []
-        original = sim._maybe_install_wbc_torque_control
+        original = sim._maybe_install_action_controller
 
         def spy(policy: Any, robot_name: Any) -> Any:
             calls.append(robot_name)
             return original(policy, robot_name)
 
-        sim._maybe_install_wbc_torque_control = spy  # type: ignore[method-assign]
+        sim._maybe_install_action_controller = spy  # type: ignore[method-assign]
         try:
             for method, call in (
                 ("run_policy", lambda n: sim.run_policy(robot_name=n, n_steps=2)),
@@ -718,22 +716,22 @@ class TestTheRefusalTheUpstreamExemptionRestsOn:
                 )
             assert not calls, f"a {label} robot_name reached the WBC hook via {calls!r}"
         finally:
-            del sim._maybe_install_wbc_torque_control
+            del sim._maybe_install_action_controller
 
     def test_the_hook_runs_for_a_name_the_entry_point_resolves(self, sim):
         """The premise: the hook is on the rollout path, so skipping it is a real skip."""
         calls: list[Any] = []
-        original = sim._maybe_install_wbc_torque_control
+        original = sim._maybe_install_action_controller
 
         def spy(policy: Any, robot_name: Any) -> Any:
             calls.append(robot_name)
             return original(policy, robot_name)
 
-        sim._maybe_install_wbc_torque_control = spy  # type: ignore[method-assign]
+        sim._maybe_install_action_controller = spy  # type: ignore[method-assign]
         try:
             rollout = sim.run_policy(robot_name="arm", n_steps=2)
         finally:
-            del sim._maybe_install_wbc_torque_control
+            del sim._maybe_install_action_controller
         assert rollout["status"] == "success", f"the premise rollout did not run: {rollout!r}"
         assert calls == ["arm"], f"the hook did not run for a resolvable robot: {calls!r}"
 
