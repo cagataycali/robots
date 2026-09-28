@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useMesh } from './lib/useMesh'
 import { usePwa } from './lib/usePwa'
 import { linkHealth, estopPosture } from './lib/linkHealth'
@@ -34,16 +34,49 @@ import AuthGate from './components/AuthGate'
 
 type Panel = 'settings' | 'activity' | 'devices' | 'estop' | 'training' | 'record' | 'sim' | 'help' | null
 
-/** `?panel=…` is what the manifest shortcuts deep-link to. */
+const PANELS: readonly Exclude<Panel, null>[] = ['settings', 'activity', 'devices', 'estop', 'training', 'record', 'sim', 'help']
+
+/** The panel a fragment names: `#devices` -> 'devices', `#fleet` / empty -> null (the fleet is the page). */
+function panelFromHash(hash: string): Panel {
+  const want = hash.replace(/^#/, '')
+  return (PANELS as readonly string[]).includes(want) ? (want as Panel) : null
+}
+
+/** `?panel=…` is what the manifest shortcuts deep-link to; the fragment wins when both are present. */
 function initialPanel(): Panel {
+  const fromHash = panelFromHash(location.hash)
+  if (fromHash) return fromHash
   const want = new URLSearchParams(location.search).get('panel')
-  return want === 'settings' || want === 'activity' || want === 'devices' || want === 'training' || want === 'record' || want === 'sim' ? want : null
+  return (PANELS as readonly string[]).includes(want ?? '') ? (want as Panel) : null
 }
 
 function Dashboard() {
   const { conn, dashboardId, peers, safetyFlash, mesh, activity, absentChildren, quietChildren, loaded, lastEventAt, everOpen } = useMesh()
   const pwa = usePwa()
   const [panel, setPanel] = useState<Panel>(initialPanel)
+
+  // One router. The three ways into a view - a click, the loaded URL's fragment, a
+  // fragment change (bookmark, link, Back, Forward) - all call route(), and route() is the
+  // only writer of the panel state, so the address bar and the screen cannot disagree.
+  // The fragment is written on every change; a hashchange that names the view already
+  // shown (route()'s own write coming back) is skipped.
+  function route(next: Panel) {
+    setPanel(next)
+    const want = next ?? 'fleet'
+    if (location.hash.replace(/^#/, '') !== want) location.hash = want
+  }
+  const shownPanel = useRef<Panel>(panel)
+  shownPanel.current = panel
+  useEffect(() => {
+    route(initialPanel())
+    const onHash = () => {
+      const next = panelFromHash(location.hash)
+      if (shownPanel.current !== next) route(next)
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // the record screen's parting gift: the dataset it just finished, seeded into training
   const [trainPrefill, setTrainPrefill] = useState<{ dataset_root?: string } | undefined>(undefined)
   /** The verdict of copying the first-run snippet. */
@@ -147,11 +180,11 @@ function Dashboard() {
         targetTag: el?.tagName, editable: el?.isContentEditable, repeat: e.repeat,
       })
       if (!verdict) return
-      if (verdict === 'close') { setPanel(null); return }
+      if (verdict === 'close') { route(null); return }
       // The chord must not also reach the browser (Cmd+. is "stop loading" in
       // some builds) or insert anything into the field it was pressed in.
       if (e.metaKey || e.ctrlKey) e.preventDefault()
-      setPanel(verdict === 'estop' ? 'estop' : 'help')
+      route(verdict === 'estop' ? 'estop' : 'help')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -204,7 +237,7 @@ function Dashboard() {
   return (
     <div className="stage">
       {/* FIRST IN THE DOM, therefore the FIRST TAB STOP on every screen (JOURNEYS #12: measured 14 to 30+ tab stops to reach it, and on the training screen it was unreachable inside 30). */}
-      <EstopButton onClick={() => setPanel('estop')} posture={estopPosture(link)} />
+      <EstopButton onClick={() => route('estop')} posture={estopPosture(link)} />
 
       <FleetBar
         conn={conn}
@@ -219,14 +252,14 @@ function Dashboard() {
         quietChildren={quietChildren}
         recordMock={recordMock}
         onInstall={() => void pwa.install()}
-        onSettings={() => { setSettingsTab(undefined); setPanel('settings') }}
-        onWireSecurity={() => { setSettingsTab('mesh'); setPanel('settings') }}
-        onActivity={() => setPanel('activity')}
-        onDevices={() => setPanel('devices')}
-        onTraining={() => { setTrainPrefill(undefined); setPanel('training') }}
-        onRecord={() => setPanel('record')}
-        onSim={() => setPanel('sim')}
-        onHelp={() => setPanel('help')}
+        onSettings={() => { setSettingsTab(undefined); route('settings') }}
+        onWireSecurity={() => { setSettingsTab('mesh'); route('settings') }}
+        onActivity={() => route('activity')}
+        onDevices={() => route('devices')}
+        onTraining={() => { setTrainPrefill(undefined); route('training') }}
+        onRecord={() => route('record')}
+        onSim={() => route('sim')}
+        onHelp={() => route('help')}
       />
 
       {pwa.needRefresh && (
@@ -297,14 +330,14 @@ function Dashboard() {
               <p className="hint">
                 If the API runs elsewhere, point this browser at it in Settings → Connection.
               </p>
-              <button className="btn ghost" onClick={() => setPanel('settings')}>open settings</button>
+              <button className="btn ghost" onClick={() => route('settings')}>open settings</button>
             </>
           ) : mesh.online === false ? (
             <>
               <h2>The dashboard's mesh session is down</h2>
               <p>The API is up, but it is not on the robot mesh — so no peer can be seen or commanded.</p>
               <p className="hint">Check the mesh endpoints, then restart the session.</p>
-              <button className="btn ghost" onClick={() => setPanel('settings')}>mesh settings</button>
+              <button className="btn ghost" onClick={() => route('settings')}>mesh settings</button>
             </>
           ) : (
             <>
@@ -331,7 +364,7 @@ function Dashboard() {
               <p className="hint">
                 Set <code>STRANDS_MESH_LOCAL_DEV=1</code> + <code>STRANDS_MESH_MULTICAST=true</code> for local dev.
               </p>
-              <button className="btn ghost" onClick={() => setPanel('devices')}>spawn one here</button>
+              <button className="btn ghost" onClick={() => route('devices')}>spawn one here</button>
             </>
           )}
         </div>
@@ -371,40 +404,40 @@ function Dashboard() {
         </ErrorBoundary>
       )}
 
-      <ErrorBoundary label="settings" onDismiss={() => setPanel(null)}>
-        <SettingsDrawer open={panel === 'settings'} onClose={() => setPanel(null)} mesh={mesh} initialTab={settingsTab} />
+      <ErrorBoundary label="settings" onDismiss={() => route(null)}>
+        <SettingsDrawer open={panel === 'settings'} onClose={() => route(null)} mesh={mesh} initialTab={settingsTab} />
       </ErrorBoundary>
-      <ErrorBoundary label="the activity log" onDismiss={() => setPanel(null)}>
-        <ActivityLog open={panel === 'activity'} onClose={() => setPanel(null)} live={activity} />
+      <ErrorBoundary label="the activity log" onDismiss={() => route(null)}>
+        <ActivityLog open={panel === 'activity'} onClose={() => route(null)} live={activity} />
       </ErrorBoundary>
-      <ErrorBoundary label="the devices screen" onDismiss={() => setPanel(null)}>
-        <DevicePanel open={panel === 'devices'} onClose={() => setPanel(null)} />
+      <ErrorBoundary label="the devices screen" onDismiss={() => route(null)}>
+        <DevicePanel open={panel === 'devices'} onClose={() => route(null)} />
       </ErrorBoundary>
-      <HelpSheet open={panel === 'help'} onClose={() => setPanel(null)} />
-      <EstopSheet open={panel === 'estop'} onClose={() => setPanel(null)}
+      <HelpSheet open={panel === 'help'} onClose={() => route(null)} />
+      <EstopSheet open={panel === 'estop'} onClose={() => route(null)}
         linkWarning={link.commandsWork ? null : link.estopReason}
         meshBacked={mesh.online === true} />
       {panel === 'training' && (
-        <ErrorBoundary label="the training screen" onDismiss={() => setPanel(null)}>
-          <TrainingTab onClose={() => setPanel(null)} prefill={trainPrefill} />
+        <ErrorBoundary label="the training screen" onDismiss={() => route(null)}>
+          <TrainingTab onClose={() => route(null)} prefill={trainPrefill} />
         </ErrorBoundary>
       )}
       {panel === 'sim' && (
-        <ErrorBoundary label="the simulation screen" onDismiss={() => setPanel(null)}>
-          <SimTab onClose={() => setPanel(null)} />
+        <ErrorBoundary label="the simulation screen" onDismiss={() => route(null)}>
+          <SimTab onClose={() => route(null)} />
         </ErrorBoundary>
       )}
       {panel === 'record' && (
-        <ErrorBoundary label="the record screen" onDismiss={() => setPanel(null)}>
-          <RecordPanel peers={list.filter(p => !p.stale)} onClose={() => setPanel(null)}
-            onDevices={() => setPanel('devices')}
-            onTrain={prefill => { setTrainPrefill(prefill); setPanel('training') }} />
+        <ErrorBoundary label="the record screen" onDismiss={() => route(null)}>
+          <RecordPanel peers={list.filter(p => !p.stale)} onClose={() => route(null)}
+            onDevices={() => route('devices')}
+            onTrain={prefill => { setTrainPrefill(prefill); route('training') }} />
         </ErrorBoundary>
       )}
 
       <ErrorBoundary label="the chat dock">
         <AgentDock
-        onSettings={() => setPanel('settings')}
+        onSettings={() => route('settings')}
         startOpen={new URLSearchParams(location.search).get('panel') === 'chat'}
         exampleRobot={list.find(p => !p.stale && p.presence?.robot_type === 'robot')?.peer_id}
         />

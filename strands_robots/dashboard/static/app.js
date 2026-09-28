@@ -13364,15 +13364,38 @@ function AuthGate({ children }) {
     ] })
   ] }) });
 }
+const PANELS = ["settings", "activity", "devices", "estop", "training", "record", "sim", "help"];
+function panelFromHash(hash) {
+  const want = hash.replace(/^#/, "");
+  return PANELS.includes(want) ? want : null;
+}
 function initialPanel() {
+  const fromHash = panelFromHash(location.hash);
+  if (fromHash) return fromHash;
   const want = new URLSearchParams(location.search).get("panel");
-  return want === "settings" || want === "activity" || want === "devices" || want === "training" || want === "record" || want === "sim" ? want : null;
+  return PANELS.includes(want ?? "") ? want : null;
 }
 function Dashboard() {
   var _a, _b, _c;
   const { conn, dashboardId, peers, safetyFlash, mesh, activity, absentChildren, quietChildren, loaded, lastEventAt, everOpen } = useMesh();
   const pwa = usePwa();
   const [panel, setPanel] = reactExports.useState(initialPanel);
+  function route(next) {
+    setPanel(next);
+    const want = next ?? "fleet";
+    if (location.hash.replace(/^#/, "") !== want) location.hash = want;
+  }
+  const shownPanel = reactExports.useRef(panel);
+  shownPanel.current = panel;
+  reactExports.useEffect(() => {
+    route(initialPanel());
+    const onHash = () => {
+      const next = panelFromHash(location.hash);
+      if (shownPanel.current !== next) route(next);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const [trainPrefill, setTrainPrefill] = reactExports.useState(void 0);
   const [snipCopied, setSnipCopied] = reactExports.useState(null);
   const [boards, setBoards] = reactExports.useState(void 0);
@@ -13479,11 +13502,11 @@ function Dashboard() {
       });
       if (!verdict2) return;
       if (verdict2 === "close") {
-        setPanel(null);
+        route(null);
         return;
       }
       if (e.metaKey || e.ctrlKey) e.preventDefault();
-      setPanel(verdict2 === "estop" ? "estop" : "help");
+      route(verdict2 === "estop" ? "estop" : "help");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -13532,7 +13555,7 @@ function Dashboard() {
   const notice = serverNotice(refused);
   const stale = reactExports.useMemo(() => staleServerNotice(health, fleetFieldGaps(peers)), [health, peers]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stage", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(EstopButton, { onClick: () => setPanel("estop"), posture: estopPosture(link) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(EstopButton, { onClick: () => route("estop"), posture: estopPosture(link) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       FleetBar,
       {
@@ -13550,21 +13573,21 @@ function Dashboard() {
         onInstall: () => void pwa.install(),
         onSettings: () => {
           setSettingsTab(void 0);
-          setPanel("settings");
+          route("settings");
         },
         onWireSecurity: () => {
           setSettingsTab("mesh");
-          setPanel("settings");
+          route("settings");
         },
-        onActivity: () => setPanel("activity"),
-        onDevices: () => setPanel("devices"),
+        onActivity: () => route("activity"),
+        onDevices: () => route("devices"),
         onTraining: () => {
           setTrainPrefill(void 0);
-          setPanel("training");
+          route("training");
         },
-        onRecord: () => setPanel("record"),
-        onSim: () => setPanel("sim"),
-        onHelp: () => setPanel("help")
+        onRecord: () => route("record"),
+        onSim: () => route("sim"),
+        onHelp: () => route("help")
       }
     ),
     pwa.needRefresh && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "toast", children: [
@@ -13625,12 +13648,12 @@ function Dashboard() {
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: conn === "connecting" ? "Opening the mesh socket…" : "The dashboard API is unreachable." }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "If the API runs elsewhere, point this browser at it in Settings → Connection." }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: () => setPanel("settings"), children: "open settings" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: () => route("settings"), children: "open settings" })
       ] }) : mesh.online === false ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "The dashboard's mesh session is down" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "The API is up, but it is not on the robot mesh — so no peer can be seen or commanded." }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "Check the mesh endpoints, then restart the session." }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: () => setPanel("settings"), children: "mesh settings" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: () => route("settings"), children: "mesh settings" })
       ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: loaded ? "No robots on the mesh yet" : "Loading the fleet…" }),
         loaded && homeRoute && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", role: "status", children: homeRoute }),
@@ -13656,7 +13679,7 @@ function Dashboard() {
           /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "STRANDS_MESH_MULTICAST=true" }),
           " for local dev."
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: () => setPanel("devices"), children: "spawn one here" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: () => route("devices"), children: "spawn one here" })
       ] })
     ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "grid", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(LanHint, {}),
@@ -13693,37 +13716,37 @@ function Dashboard() {
         onClose: () => setDetail(null)
       }
     ) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "settings", onDismiss: () => setPanel(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsDrawer, { open: panel === "settings", onClose: () => setPanel(null), mesh, initialTab: settingsTab }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the activity log", onDismiss: () => setPanel(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(ActivityLog, { open: panel === "activity", onClose: () => setPanel(null), live: activity }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the devices screen", onDismiss: () => setPanel(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(DevicePanel, { open: panel === "devices", onClose: () => setPanel(null) }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(HelpSheet, { open: panel === "help", onClose: () => setPanel(null) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "settings", onDismiss: () => route(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsDrawer, { open: panel === "settings", onClose: () => route(null), mesh, initialTab: settingsTab }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the activity log", onDismiss: () => route(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(ActivityLog, { open: panel === "activity", onClose: () => route(null), live: activity }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the devices screen", onDismiss: () => route(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(DevicePanel, { open: panel === "devices", onClose: () => route(null) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(HelpSheet, { open: panel === "help", onClose: () => route(null) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       EstopSheet,
       {
         open: panel === "estop",
-        onClose: () => setPanel(null),
+        onClose: () => route(null),
         linkWarning: link.commandsWork ? null : link.estopReason,
         meshBacked: mesh.online === true
       }
     ),
-    panel === "training" && /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the training screen", onDismiss: () => setPanel(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(TrainingTab, { onClose: () => setPanel(null), prefill: trainPrefill }) }),
-    panel === "sim" && /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the simulation screen", onDismiss: () => setPanel(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(SimTab, { onClose: () => setPanel(null) }) }),
-    panel === "record" && /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the record screen", onDismiss: () => setPanel(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+    panel === "training" && /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the training screen", onDismiss: () => route(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(TrainingTab, { onClose: () => route(null), prefill: trainPrefill }) }),
+    panel === "sim" && /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the simulation screen", onDismiss: () => route(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(SimTab, { onClose: () => route(null) }) }),
+    panel === "record" && /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the record screen", onDismiss: () => route(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       RecordPanel,
       {
         peers: list.filter((p) => !p.stale),
-        onClose: () => setPanel(null),
-        onDevices: () => setPanel("devices"),
+        onClose: () => route(null),
+        onDevices: () => route("devices"),
         onTrain: (prefill) => {
           setTrainPrefill(prefill);
-          setPanel("training");
+          route("training");
         }
       }
     ) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the chat dock", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       AgentDock,
       {
-        onSettings: () => setPanel("settings"),
+        onSettings: () => route("settings"),
         startOpen: new URLSearchParams(location.search).get("panel") === "chat",
         exampleRobot: (_c = list.find((p) => {
           var _a2;
