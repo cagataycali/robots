@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot.datasets.lerobot_dataset")
