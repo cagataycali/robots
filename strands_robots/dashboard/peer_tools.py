@@ -217,7 +217,13 @@ def peer_tool_spec(peer_id: str, kind: str, tool_name: str) -> dict[str, Any] | 
                         },
                         "policy_provider": {
                             "type": "string",
-                            "description": "Policy provider (groot, openai, ...)",
+                            "description": (
+                                "Which policy backend the peer runs: one of cosmos3, curobo, groot, kimodo, "
+                                "lerobot_local, microduck, mock, moveit2, protomotions, remote, rl, wbc, wbc_gait. "
+                                "groot (default, needs policy_port) dials a server; lerobot_local runs a local "
+                                "checkpoint on the peer. An unknown name is refused by the peer listing its registry."
+                            ),
+                            "default": "groot",
                         },
                         "duration": {
                             "type": "number",
