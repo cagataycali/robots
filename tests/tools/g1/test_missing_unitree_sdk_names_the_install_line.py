@@ -65,7 +65,9 @@ _REQUIRED = (
     "--no-deps",
     "cyclonedds",
     "CYCLONEDDS_HOME",
-    "unitree-g1.md",
+    # The page the refusal sends a reader to, as ``UNITREE_SDK_DOCS`` names it;
+    # ``test_the_named_page_carries_the_named_section`` checks that page exists.
+    Path(UNITREE_SDK_DOCS.partition(" (")[0]).name,
 )
 
 

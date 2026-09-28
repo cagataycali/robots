@@ -40,9 +40,7 @@ from strands_robots import dataset_transfer
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
-_BUCKET_GUIDANCE = (
-    _REPO_ROOT / "docs" / "reference" / "data" / "dataset-recorder.md"
-)  # where sync_to_bucket is documented
+_BUCKET_GUIDANCE = _REPO_ROOT / "docs" / "learn" / "data" / "stream-and-sync.md"  # where sync_to_bucket is documented
 _TRANSFER_SRC = Path(dataset_transfer.__file__)
 
 _FLOOR = Version(".".join(str(part) for part in dataset_transfer._HF_BUCKET_CLI_MIN_VERSION))
