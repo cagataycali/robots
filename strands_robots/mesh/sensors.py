@@ -23,10 +23,7 @@ import os
 import threading
 import time
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 from strands_robots._pacing import Ticker
 from strands_robots.audit import log_safety_event
@@ -41,10 +38,14 @@ from strands_robots.mesh.session import (
     ODOM_HZ,
     POSE_HZ,
     hz_from_env,
-    put,  # noqa: F401  # re-exported so test fixtures can patch.object(sensors, "put")
+    put,
 )
 
 logger = logging.getLogger(__name__)
+
+#: ``put`` is re-exported (not called here) so test fixtures can
+#: ``patch.object(sensors, "put")`` alongside ``core`` and ``session``.
+__all__ = ["SensorLoopsMixin", "put"]
 
 
 # A sensor payload is a plain record on the wire, so the values in it have to be
@@ -446,7 +447,7 @@ class SensorLoopsMixin:
             health["cpu_load"] = round(load[0], 2)
             has_data = True
         except (OSError, AttributeError):
-            pass
+            pass  # best effort: getloadavg is absent on some platforms; the field is simply omitted
 
         try:
             import shutil
@@ -470,14 +471,14 @@ class SensorLoopsMixin:
                 health["mem_pct"] = round(100.0 * (1.0 - mem_avail / mem_total), 1)
                 has_data = True
         except (OSError, ValueError):
-            pass
+            pass  # best effort: /proc/meminfo is Linux-only; the field is simply omitted
 
         try:
             with open("/proc/uptime", encoding="utf-8") as f:
                 health["uptime_s"] = round(float(f.read().split()[0]), 0)
                 has_data = True
         except (OSError, ValueError):
-            pass
+            pass  # best effort: /proc/uptime is Linux-only; the field is simply omitted
 
         _coerce_record(health)
         return health if has_data else None

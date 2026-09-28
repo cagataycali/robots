@@ -54,3 +54,15 @@ query-filters:
 # swallowed exception genuinely hides bugs, the instances are not one
 # mechanical idiom, and they need reading one at a time. #1810 names keeping it
 # as an explicit non-goal; the pin test asserts it stays absent from this file.
+
+# Scope: the package, not the test suites. 69 of the 197 alerts open on 2026-09-28
+# sat under tests/ and tests_integ/ - unused imports in fixtures, an `except: pass`
+# around a teardown, a duplicate import in a parametrized module. None is reachable
+# by a user of the wheel, and the suites are graded by 58k tests and ruff on every
+# pull request, where a note here is a merge gate with no bug class behind it.
+# The `[test]` classification CodeQL already attaches to these files says the same
+# thing; this makes the scan agree with it. The 69 were dismissed as won't-fix with
+# this paragraph as the reason.
+paths-ignore:
+  - tests
+  - tests_integ

@@ -648,7 +648,11 @@ async def safety_resume(request: Request, _: dict = Depends(access.require_sessi
     if not code:
         raise HTTPException(422, "override_code required")
     bridge = _bridge(request)
+    sent_at = time.time()
     result = await asyncio.to_thread(bridge.signed_resume, code)
+    if result.get("status") == "ok":
+        # The resume is a request; the peers that answer a read afterwards are the proof it landed.
+        result["confirmed_clear"] = await asyncio.to_thread(bridge.confirm_resume, sent_at)
     bridge.record_activity(
         "resume",
         "safety_resume",

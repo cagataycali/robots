@@ -628,3 +628,42 @@ class TestLerobotVersion:
         import importlib.metadata as md
 
         assert issubclass(md.PackageNotFoundError, ImportError)
+
+
+class TestLogSafe:
+    """``log_safe`` renders a caller-supplied value as exactly one log line."""
+
+    def test_a_line_break_cannot_forge_a_second_entry(self):
+        from strands_robots.utils import log_safe
+
+        assert log_safe("owner/name\nINFO forged entry") == "owner/name\\nINFO forged entry"
+        assert log_safe("a\r\nb") == "a\\r\\nb"
+
+    def test_other_control_characters_become_escapes(self):
+        from strands_robots.utils import log_safe
+
+        assert log_safe("a\x00b\x1bc\x7f") == "a\\x00b\\x1bc\\x7f"
+
+    def test_a_plain_value_is_unchanged(self):
+        from strands_robots.utils import log_safe
+
+        assert log_safe("lerobot/pusht") == "lerobot/pusht"
+        assert log_safe(Path("/tmp/x")) == "/tmp/x"
+        assert log_safe(42) == "42"
+
+    def test_a_long_value_is_cut(self):
+        from strands_robots.utils import log_safe
+
+        out = log_safe("x" * 500, limit=20)
+        assert len(out) == 20
+        assert out.endswith("...")
+
+    def test_a_value_whose_str_raises_is_described(self):
+        from strands_robots.utils import log_safe
+
+        class _Bad:
+            def __str__(self) -> str:
+                raise RuntimeError("no")
+
+        text = log_safe(_Bad())
+        assert "\n" not in text and text
