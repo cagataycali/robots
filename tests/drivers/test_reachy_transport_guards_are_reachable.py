@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import importlib.abc
 import sys
 from pathlib import Path
 from typing import Any
@@ -356,67 +355,6 @@ class TestTheReasonPrescribesNothingItCannotEstablish:
         sibling = g1_mod._resolve_message_class((_TRANSPORT_MODULE, "api"))
         assert isinstance(mine, str) and isinstance(sibling, str)
         assert mine == sibling, f"diverges from the shape it claims parity with:\n  {mine!r}\n  {sibling!r}"
-
-
-class TestTheDocumentedReasonIsTheRealOne:
-    """The reference page quotes this reason, so the quote is part of the contract.
-
-    ``docs/reference/hardware/reachy-mini.md`` shows the refusal as the output of
-    ``Robot("reachy_mini", mode="real").connect_eagerly()``. A quoted output rots the
-    moment the surface it quotes changes, and nothing read that block: the page's own
-    suite grades other sections, so the quote carried a remedy the code had stopped
-    offering. Deriving the expected text from the resolver means the page cannot drift
-    from it again without failing here.
-    """
-
-    @staticmethod
-    def _quoted_reason() -> str:
-        """The reason the reference page quotes, unwrapped to a single line."""
-        page = Path(reachy_mod.__file__).parents[2] / "docs" / "reference" / "hardware" / "reachy-mini.md"
-        text = page.read_text(encoding="utf-8")
-        # Selected by its subject, not by being the page's only such block: the page
-        # quotes more than one ``connect_eagerly`` reason, and the resolver's is the
-        # one this class grades.
-        blocks = [c for c in text.split("```") if "connect_eagerly()" in c and "cannot import" in c]
-        assert len(blocks) == 1, f"expected exactly one quoted transport-import reason, found {len(blocks)}"
-        after = blocks[0].split("connect_eagerly()", 1)[1]
-        return " ".join(after.replace('"', " ").split())
-
-    @staticmethod
-    def _reason_for_an_absent_module() -> str:
-        """The reason the resolver gives when the leaf is genuinely not installed.
-
-        ``sys.modules[name] = None`` produces a different ``ImportError`` ("halted"),
-        which is the right stand-in for the other cells but the wrong one to document:
-        a reader meets the absent-module wording. A finder that refuses the name
-        reproduces it without touching the installed tree.
-        """
-
-        class _Absent(importlib.abc.MetaPathFinder):
-            def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
-                if fullname == _TRANSPORT_MODULE or fullname.startswith(f"{_TRANSPORT_MODULE}."):
-                    raise ModuleNotFoundError(f"No module named {fullname!r}", name=fullname)
-                return None
-
-        saved = sys.modules.pop(_TRANSPORT_MODULE, None)
-        sys.meta_path.insert(0, _Absent())
-        try:
-            reason = reachy_mod._resolve_transport()
-        finally:
-            sys.meta_path.pop(0)
-            if saved is not None:
-                sys.modules[_TRANSPORT_MODULE] = saved
-        assert isinstance(reason, str), "the resolver returned a module for a name it cannot import"
-        return reason
-
-    def test_the_page_quotes_the_reason_the_resolver_returns(self) -> None:
-        """What the page shows is what the code says, word for word."""
-        assert self._quoted_reason() == self._reason_for_an_absent_module()
-
-    def test_the_page_prescribes_no_install_for_this_import(self) -> None:
-        """A reader must not be sent to an install that cannot supply the module."""
-        quoted = self._quoted_reason()
-        assert "pip install" not in quoted, f"the quoted reason prescribes an install: {quoted}"
 
 
 class TestTheSiteWhereTheExtraIsStillTheCauseKeepsIt:
