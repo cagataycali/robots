@@ -5,7 +5,7 @@ That is a delay where a rate needs a deadline: the time ``_read_state`` spends o
 the bus was added to the period instead of subtracted from it, so the loop ran at
 ``1 / (period + read)`` and every counter reported that as the rate the robot
 managed. On a host that also inflates ``Event.wait`` (see
-:mod:`strands_robots.mesh.pacing`) the two costs stack.
+:mod:`strands_robots._pacing`) the two costs stack.
 
 This test measures the loop's ACHIEVED rate through the real ``Mesh._state_loop``
 with the transport mocked, and calibrates its floor against the machine it is
@@ -30,8 +30,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from strands_robots._pacing import sleep_penalty_s
 from strands_robots.mesh.core import Mesh
-from strands_robots.mesh.pacing import sleep_penalty_s
 from strands_robots.mesh.session import STATE_HZ
 
 
@@ -108,7 +108,7 @@ class TestTheCameraLoopHitsItsNominalRate:
         achieved = len(frames) / elapsed
         assert achieved > 21.0, (
             f"camera loop achieved {achieved:.1f}fps asking for 30 "
-            f"(sleep penalty here {sleep_penalty_s() * 1000:.0f}ms) - see mesh.pacing"
+            f"(sleep penalty here {sleep_penalty_s() * 1000:.0f}ms) - see strands_robots._pacing"
         )
 
     def test_a_dropped_deadline_does_not_publish_a_burst_of_near_identical_frames(self) -> None:
@@ -156,7 +156,7 @@ class TestTheStateLoopHitsItsNominalRate:
         assert achieved >= floor, (
             f"state loop achieved {achieved:.1f}Hz against STATE_HZ={STATE_HZ} "
             f"(sleep penalty on this machine: {penalty * 1000:.0f}ms). Below {floor:.1f}Hz means the loop is "
-            "paced by an inflated blocking wait again - see mesh.pacing."
+            "paced by an inflated blocking wait again - see strands_robots._pacing."
         )
 
         if penalty >= 0.01:
@@ -307,7 +307,7 @@ def test_the_converted_loop_no_longer_paces_on_the_stop_event(attr: str) -> None
     assert not waits, (
         f"Mesh.{attr} is pacing on _stop_event.wait again (line {waits[0]} of its definition) - that "
         "wait adds the tick's work to the period, and is inflated further in a daemon-descended tree; "
-        "use mesh.pacing.Ticker"
+        "use strands_robots._pacing.Ticker"
     )
     assert _calls_named(source, "Ticker"), f"Mesh.{attr} should pace on a Ticker"
 
@@ -484,7 +484,7 @@ def test_every_sensor_loop_paces_through_the_shared_ticker_generator(loop: str) 
     source = inspect.getsource(getattr(mesh_sensors.SensorLoopsMixin, loop))
     assert _calls_named(source, "_paced"), f"{loop} does not pace through SensorLoopsMixin._paced"
     waits = _pacing_waits(source)
-    assert not waits, f"{loop} paces on the inflated Event.wait again (line {waits[0]}) - see mesh.pacing"
+    assert not waits, f"{loop} paces on the inflated Event.wait again (line {waits[0]}) - see strands_robots._pacing"
 
 
 def test_only_the_shared_generator_owns_a_ticker_in_the_sensors_module() -> None:
@@ -552,5 +552,5 @@ def test_no_publish_loop_in_the_mesh_still_paces_on_an_inflated_wait() -> None:
             offenders.append(f"{rel}:{lineno}: {line.strip()}")
     assert not offenders, (
         "these waits pace a loop, so the tick's work is added to its period; "
-        f"pace them with mesh.pacing.Ticker or add them to `allowed` with a reason: {offenders}"
+        f"pace them with strands_robots._pacing.Ticker or add them to `allowed` with a reason: {offenders}"
     )

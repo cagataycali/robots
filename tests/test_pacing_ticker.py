@@ -1,4 +1,4 @@
-"""``mesh.pacing.Ticker`` must be accurate, stoppable, and honest about both.
+"""``strands_robots._pacing.Ticker`` must be accurate, stoppable, and honest about both.
 
 These tests assert the two properties the publish loops depend on:
 the achieved rate is the requested rate even in a process tree where
@@ -8,7 +8,7 @@ rather than within a period.
 Every timing assertion here is written to hold on BOTH kinds of machine -- a
 terminal-started shell where sleeps are accurate, and a daemon-descended tree
 where they are not -- by calibrating against
-:func:`strands_robots.mesh.pacing.sleep_penalty_s` instead of picking a number
+:func:`strands_robots._pacing.sleep_penalty_s` instead of picking a number
 that happens to pass where it was written. A test that only passes in one of the
 two environments is exactly the failure mode that hides this bug.
 """
@@ -28,8 +28,8 @@ import numpy as np
 import pytest
 
 import strands_robots
-from strands_robots.mesh import pacing
-from strands_robots.mesh.pacing import Ticker, sleep_penalty_s
+from strands_robots import _pacing as pacing
+from strands_robots._pacing import Ticker, sleep_penalty_s
 from strands_robots.simulation.policy_runner import PolicyRunner
 from strands_robots.utils import positive_finite_number_error
 
@@ -328,17 +328,17 @@ def _ticker_names(tree: ast.AST) -> tuple[set[str], set[str]]:
     controls below name it with no import statement to resolve.
     """
     names = {"Ticker"}
-    modules = {"pacing"}
+    modules = {"_pacing", "pacing"}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 if alias.name == "Ticker":
                     names.add(alias.asname or alias.name)
-                elif alias.name == "pacing":
+                elif alias.name in ("_pacing", "pacing"):
                     modules.add(alias.asname or alias.name)
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.endswith(".pacing") and alias.asname:
+                if alias.name.endswith(("._pacing", ".pacing")) and alias.asname:
                     modules.add(alias.asname)
     return names, modules
 
@@ -393,7 +393,7 @@ def _ticker_constructions(source: str) -> list[tuple[int, bool]]:
         target = ast.unparse(node.func)
         module, _, attribute = target.rpartition(".")
         reaches_ticker = target in names or (
-            attribute == "Ticker" and (module in modules or module.endswith(".pacing"))
+            attribute == "Ticker" and (module in modules or module.endswith(("._pacing", ".pacing")))
         )
         if reaches_ticker:
             found.append((node.lineno, id(node) in released))
@@ -469,10 +469,10 @@ class TestEveryPacedLoopAcquiresItsTickerWithWith:
     @pytest.mark.parametrize(
         ("spelling", "construction"),
         [
-            ("an alias", "from strands_robots.mesh.pacing import Ticker as _Ticker\n_Ticker(0.02)\n"),
-            ("its module", "from strands_robots.mesh import pacing\npacing.Ticker(0.02)\n"),
-            ("a module alias", "from strands_robots.mesh import pacing as _p\n_p.Ticker(0.02)\n"),
-            ("a dotted module", "import strands_robots.mesh.pacing\nstrands_robots.mesh.pacing.Ticker(0.02)\n"),
+            ("an alias", "from strands_robots._pacing import Ticker as _Ticker\n_Ticker(0.02)\n"),
+            ("its module", "from strands_robots import _pacing\n_pacing.Ticker(0.02)\n"),
+            ("a module alias", "from strands_robots import _pacing as _p\n_p.Ticker(0.02)\n"),
+            ("a dotted module", "import strands_robots._pacing\nstrands_robots._pacing.Ticker(0.02)\n"),
         ],
     )
     def test_a_ticker_named_any_other_way_is_still_swept(self, spelling: str, construction: str) -> None:
@@ -483,7 +483,7 @@ class TestEveryPacedLoopAcquiresItsTickerWithWith:
     def test_a_name_that_does_not_reach_a_ticker_is_left_alone(self) -> None:
         """The widening resolves bindings, so it must not sweep by resemblance."""
         planted = (
-            "from strands_robots.mesh.pacing import sleep_penalty_s as _p\n"
+            "from strands_robots._pacing import sleep_penalty_s as _p\n"
             "from somewhere.unrelated import metronome as pacer\n"
             "_p()\n"
             "pacer.Ticker(0.02)\n"

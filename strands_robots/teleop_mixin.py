@@ -994,14 +994,12 @@ class TeleopMixin:
         # bound is that key set, not a time window.
         _LOCAL_VALUE_ABS = math.inf
 
-        # Paced by mesh.pacing.Ticker. Like InputPublisher._publish_loop this loop
+        # Paced by strands_robots._pacing.Ticker. Like InputPublisher._publish_loop this loop
         # already subtracted its own body from the period with perf_counter, so the
         # arithmetic was not what was wrong with it -- the wait that arithmetic fed
         # was. The subtraction now has one owner instead of a copy per loop, and on a
-        # host that inflates Event.wait (see mesh.pacing) this loop no longer pays it.
-        # Imported here rather than at module scope: this module is imported by
-        # hardware paths that must not pull in the mesh package on import.
-        from strands_robots.mesh.pacing import Ticker
+        # host that inflates Event.wait (see strands_robots._pacing) this loop no longer pays it.
+        from strands_robots._pacing import Ticker
 
         with Ticker(period, self._teleop_stop_event) as ticker:
             while self._teleop_running and not self._teleop_stop_event.is_set():

@@ -24,7 +24,7 @@ Sim time was exact throughout (2.0 s of integration in every row), so nothing
 about the physics or the recorded timebase was wrong - only the wall clock the
 caller was promised, and the rate anything watching the rollout saw.
 
-:mod:`strands_robots.mesh.pacing` already owned this argument and the fix: its
+:mod:`strands_robots._pacing` already owned this argument and the fix: its
 ``Ticker`` is a deadline, and it DROPS missed deadlines rather than chasing them,
 so an overrunning step is followed by a gap rather than by a burst of
 back-to-back actions at the arm. The mesh's publish loops were converted for the
@@ -69,7 +69,7 @@ def _busy_wait(seconds: float) -> None:
 
     A ``time.sleep`` would let the pacer's own wait overlap the work on some
     platforms, and is itself inflated on a host that taxes blocking waits (the
-    cost :func:`strands_robots.mesh.pacing.sleep_penalty_s` measures), so the
+    cost :func:`strands_robots._pacing.sleep_penalty_s` measures), so the
     step's cost is spent on the CPU exactly as inference spends it.
     """
     deadline = time.perf_counter() + seconds
@@ -130,7 +130,7 @@ class TestARolloutTakesTheWallClockItWasAskedFor:
         assert median_gap < period * 1.5, (
             f"median step gap {median_gap * 1000:.1f}ms against a {period * 1000:.0f}ms period with "
             f"{work_s * 1000:.0f}ms of work per step - the work is being added to the period instead "
-            "of subtracted from it, so the loop runs at 1 / (period + work). Use mesh.pacing.Ticker."
+            "of subtracted from it, so the loop runs at 1 / (period + work). Use strands_robots._pacing.Ticker."
         )
 
     def test_an_observers_own_cost_comes_out_of_the_period_too(self) -> None:
@@ -170,7 +170,7 @@ class TestARolloutTakesTheWallClockItWasAskedFor:
         assert median_gap < period * 1.5, (
             f"median step gap {median_gap * 1000:.1f}ms against a {period * 1000:.0f}ms period with "
             f"{work_s * 1000:.0f}ms spent in the observer - a read-only consumer is extending the "
-            "control period by its own cost instead of being absorbed by it. Use mesh.pacing.Ticker."
+            "control period by its own cost instead of being absorbed by it. Use strands_robots._pacing.Ticker."
         )
 
     def test_a_free_step_still_takes_the_period(self) -> None:
@@ -277,10 +277,10 @@ def test_every_rollout_loop_paces_through_the_shared_ticker(rel_path: str, quali
     that is late looks like the backend that is genuinely slower.
     """
     source = _function_source(rel_path, qualified)
-    assert "Ticker(" in source, f"{qualified} does not pace on mesh.pacing.Ticker"
+    assert "Ticker(" in source, f"{qualified} does not pace on strands_robots._pacing.Ticker"
     assert "time.sleep(" not in source, (
         f"{qualified} sleeps a period again - that delay adds the step's work to the period, "
-        "so the loop runs at 1 / (period + work). Use mesh.pacing.Ticker."
+        "so the loop runs at 1 / (period + work). Use strands_robots._pacing.Ticker."
     )
 
 
@@ -338,5 +338,5 @@ def test_no_loop_in_the_simulation_package_paces_on_a_rate_derived_sleep() -> No
                     )
     assert not offenders, (
         "these sleeps pace a loop, so the body's work is added to the period and the loop runs at "
-        f"1 / (period + work); pace them on mesh.pacing.Ticker: {sorted(offenders.values())}"
+        f"1 / (period + work); pace them on strands_robots._pacing.Ticker: {sorted(offenders.values())}"
     )

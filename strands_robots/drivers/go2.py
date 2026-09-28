@@ -73,6 +73,7 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots._pacing import Ticker
 from strands_robots.drivers.base import (
     decode_motor_state,
     policy_step,
@@ -85,7 +86,6 @@ from strands_robots.drivers.base import (
 )
 from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK, sdk_missing
 from strands_robots.drivers.unitree._dds_engine import DDSPublisher, DDSSubscriberSet
-from strands_robots.mesh.pacing import Ticker
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
