@@ -31,11 +31,14 @@ drives.
 
 The same divergence had a documentation half, pinned at the bottom: the base
 ``start_policy`` summary line promised "a background thread (non-blocking)" and
-its next line said "synchronous passthrough to ``run_policy``", while
-``docs/reference/api-reference.md`` called it an async rollout unconditionally and
-``docs/reference/troubleshooting.md`` prescribed it as the fix for a hanging agent. On the
-two backends shipped on that default it blocks for the whole ``duration``, so
-the prescribed remedy was the hang.
+its next line said "synchronous passthrough to ``run_policy``", while the old
+API reference called it an async rollout unconditionally and the old
+troubleshooting table prescribed it as the fix for a hanging agent. On the two
+backends shipped on that default it blocks for the whole ``duration``, so the
+prescribed remedy was the hang. In the new tree the API reference is rendered by
+mkdocstrings from the class itself, so the hand-written enumeration of the
+``SimEngine`` contract lives in ``docs/learn/simulation/index.md`` and every
+markdown page under ``docs/`` is scanned for the claim.
 """
 
 from __future__ import annotations
@@ -500,25 +503,32 @@ class TestDescribeSaysWhichStartPolicyYouHold:
 # --------------------------------------------------------------------------- #
 # The documented surfaces say the same thing the code does                     #
 # --------------------------------------------------------------------------- #
+_CONTRACT_PAGE = _DOCS / "learn" / "simulation" / "index.md"
+
+
 def _selected_actions() -> list[str]:
-    """Action names from the SimEngine "Selected actions" table in api-reference."""
-    lines = (_DOCS / "reference" / "api-reference.md").read_text(encoding="utf-8").splitlines()
-    start = next(i for i, line in enumerate(lines) if line.strip() == "Selected actions:")
+    """Method names from the hand-written ``SimEngine`` contract sentence.
+
+    ``docs/learn/simulation/index.md`` enumerates the abstract contract in one
+    paragraph that opens with a backticked ``SimEngine``; every backticked
+    identifier in it that is not a module path is a method the page promises on
+    every backend. The API reference itself is rendered by mkdocstrings from the
+    class, so this paragraph is the only place a name can be typed by hand.
+    """
     names: list[str] = []
-    for line in lines[start:]:
-        if line.startswith("## "):
-            break
-        if not line.startswith("|"):
+    for line in _CONTRACT_PAGE.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("`SimEngine`"):
             continue
-        cell = line.split("|")[1]
-        names.extend(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)\(", cell))
+        for name in re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", line):
+            if name != "SimEngine":
+                names.append(name)
     return names
 
 
 class TestTheDocumentedActionsResolve:
-    """A row in the SimEngine action table names a method callers really have."""
+    """A name in the SimEngine contract paragraph is a method callers really have."""
 
-    def test_the_table_is_still_being_read(self) -> None:
+    def test_the_paragraph_is_still_being_read(self) -> None:
         """A broken parse would make the rule below vacuously green."""
         actions = _selected_actions()
         assert len(actions) >= 8, actions
@@ -527,8 +537,8 @@ class TestTheDocumentedActionsResolve:
     @pytest.mark.parametrize("action", _selected_actions())
     def test_every_documented_action_is_on_the_base_engine(self, action: str) -> None:
         assert hasattr(SimEngine, action), (
-            f"docs/reference/api-reference.md lists {action!r} as a SimEngine action, but it does not resolve "
-            "there - a caller following the table gets AttributeError on every backend that does "
+            f"docs/learn/simulation/index.md lists {action!r} in the SimEngine contract, but it does not "
+            "resolve there - a caller following the page gets AttributeError on every backend that does "
             "not happen to override it"
         )
 
@@ -550,7 +560,9 @@ def _start_policy_claims() -> list[tuple[str, str]]:
     background thread (non-blocking)." followed by "Default implementation:
     synchronous passthrough". Grading the whole docstring would have read the
     qualification three paragraphs down as if the summary carried it. The rest of
-    the body is graded too, plus every markdown line naming ``start_policy``.
+    the body is graded too, plus every markdown line under ``docs/`` naming
+    ``start_policy`` (the old API reference and troubleshooting pages are gone;
+    the claim can now appear on any page, so every page is read).
     """
     doc = SimEngine.start_policy.__doc__ or ""
     summary, _, body = doc.strip().partition("\n")
@@ -558,8 +570,9 @@ def _start_policy_claims() -> list[tuple[str, str]]:
         ("SimEngine.start_policy docstring summary line", summary),
         ("SimEngine.start_policy docstring body", body),
     ]
-    for name in ("reference/api-reference.md", "reference/troubleshooting.md"):
-        for number, line in enumerate((_DOCS / name).read_text(encoding="utf-8").splitlines(), start=1):
+    for path in sorted(_DOCS.rglob("*.md")):
+        name = path.relative_to(_DOCS).as_posix()
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if "start_policy" in line:
                 claims.append((f"docs/{name}:{number}", line))
     return claims
@@ -570,8 +583,8 @@ class TestNoSurfacePromisesABackgroundThreadUnconditionally:
 
     def test_the_surfaces_are_still_being_found(self) -> None:
         surfaces = [name for name, _ in _start_policy_claims()]
-        assert len(surfaces) >= 4, surfaces
-        assert any("api-reference" in name for name in surfaces)
+        assert len(surfaces) >= 3, surfaces
+        assert any(name.startswith("docs/learn/simulation/index.md:") for name in surfaces), surfaces
         assert any("summary line" in name for name in surfaces)
 
     @pytest.mark.parametrize("surface,text", _start_policy_claims())
