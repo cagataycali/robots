@@ -170,7 +170,7 @@ first `add_robot` fails with `CUDA error: an illegal memory access was
 encountered` and the poisoned context takes the next `add_object` with it. The GPU
 pipeline needs Isaac Lab's build-then-reset-once pattern, which the incremental
 contract here (`create_world`, then `add_robot`, one tool call at a time) does not
-have. For physics throughput on a scene known up front, MuJoCo is faster; use this
+have. On a known scene MuJoCo is faster; use this
 backend for RTX observations and USD scenes.
 
 ### Adding a dynamic body needs a `reset()` before the next `step()`
@@ -191,7 +191,8 @@ sim.step(60)     # runs
 `reset()` also returns robots to their default pose, so build the scene and reset
 **before** posing anything. A static body needs none of this: `is_static=True`
 adds and removes leave the view intact (9 joint keys -> 9), as do `add_camera`,
-`move_object`, `add_robot` and `remove_robot`.
+`move_object` and `add_robot`. `remove_robot` deletes an articulation, so it
+invalidates the view like a dynamic `remove_object`.
 
 ## Parity with the other backends
 

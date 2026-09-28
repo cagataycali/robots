@@ -681,8 +681,10 @@ def _physics_view_stale_error(engine: Any, verb: str) -> dict[str, Any] | None:
                     "robot's get_observation() comes back empty. Call reset() first, "
                     f"then {verb}(). Note reset() returns robots to their default pose. "
                     "Only a dynamic body does this: a static add_object or "
-                    "remove_object, add_camera, move_object, add_robot and "
-                    "remove_robot all leave the view intact."
+                    "remove_object, add_camera, remove_camera, move_object and "
+                    "add_robot all leave the view intact. remove_robot deletes an "
+                    "articulation, so it invalidates the view like a dynamic "
+                    "remove_object and needs the same reset()."
                 )
             }
         ],
@@ -1338,8 +1340,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         #
         # ``reset()`` repairs all three. Which mutations invalidate the view was
         # measured rather than assumed: ``add_camera``, ``remove_camera``,
-        # ``move_object``, ``add_robot`` and ``remove_robot`` each left that arm
-        # reporting both its keys, so they do NOT set this flag.
+        # ``move_object`` and ``add_robot`` each left that arm reporting both its
+        # keys, so they do NOT set this flag. ``remove_robot`` DOES set it: it
+        # deletes the robot's articulation prim, and PhysX holds an articulation
+        # in the tensor view exactly as it holds a dynamic object's shape, so the
+        # delete invalidates the view the same way a dynamic ``remove_object`` does.
         #
         # Note when re-measuring: the three PROCEDURAL builders (``so100``,
         # ``panda``, ``unitree_g1``) leave ``_RobotState.articulation`` as
@@ -2390,8 +2395,10 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                         # registry reads as what it is - no latched wrenches.
                         if getattr(self, "_applied_wrenches", None):
                             self._reapply_wrenches()
-                        self._world.step(render=render)
-                        self._sim_time += self._config.physics_dt
+                        self._world.step(render=False)
+                        if render:
+                            self._render_world()
+                        self._sim_time = self._world_clock()
                         self._step_count += 1
                 remaining -= batch
 
@@ -2441,6 +2448,44 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         self._sim_time = 0.0
         self._step_count = 0
         self._contact_epoch += 1
+
+    def _world_clock(self) -> float:
+        """The simulated time the World has integrated to, in seconds.
+
+        Read off ``World.current_time`` - Isaac's own physics clock - rather than
+        accumulated from a constant, so ``_sim_time`` cannot drift from the physics
+        it drives. A rendering ``World.step(render=True)`` runs Kit's ``app.update()``
+        and integrates a whole ``rendering_dt`` (four ``physics_dt`` substeps at the
+        defaults), and a ``create_world(timestep=)`` override changes the advance too;
+        crediting a fixed ``config.physics_dt`` per tick under-reported the first case
+        and over-reported the second. Falls back to a constant-``physics_dt``
+        accumulation when the runtime does not expose the clock (the stubbed worlds
+        the unit tests build), where every tick advances exactly one ``physics_dt``.
+        """
+        current = getattr(self._world, "current_time", None)
+        if current is not None:
+            try:
+                return float(current)
+            except (TypeError, ValueError):
+                pass
+        return self._sim_time + float(self._config.physics_dt)
+
+    def _render_world(self) -> None:
+        """Refresh the renderer for one frame WITHOUT advancing physics.
+
+        A rendering ``World.step(render=True)`` steps physics by a whole
+        ``rendering_dt`` (Kit's ``app.update()`` substeps ``physics_dt`` inside it),
+        so folding the frame into the physics tick made one ``step()`` advance four
+        physics steps while ``_sim_time`` and ``physics_timestep()`` still counted
+        one. Stepping physics ONCE (``render=False``) and refreshing the frame here
+        keeps one ``step()`` equal to one ``physics_dt`` in every render mode, which
+        is the invariant ``PolicyRunner`` sizes its substeps against. ``World.render``
+        is absent on the stubbed worlds unit tests build; there is nothing to refresh
+        then, so the call is skipped.
+        """
+        render = getattr(self._world, "render", None)
+        if callable(render):
+            render()
 
     def get_state(self) -> dict[str, Any]:
         """Get full simulation state summary.
@@ -4490,16 +4535,29 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
     def remove_robot(self, name: str) -> dict[str, Any]:
         """Remove a robot from the simulation.
 
-        Drops the robot's bookkeeping entry and prunes any prims rooted at
-        the robot's prim path from ``self._prim_registry``. The actual USD
-        prim deletion is delegated to :meth:`destroy` / world teardown in
-        Phase 1; only the in-Python registry is updated here.
+        Deletes the robot's USD prim from the stage via
+        ``omni.isaac.core.utils.prims.delete_prim`` -- both ``prim_path`` and
+        the ``actual_prim_path`` the importer relocated it to, when the two
+        differ -- then prunes the in-Python registries (``_robots``,
+        ``_action_controllers``, and any prims rooted at the robot's path in
+        ``_prim_registry``). Before this deleted the prim it left the
+        articulation on the stage: :meth:`add_robot` refuses only a name still
+        in ``_robots``, so a re-add under the removed name stacked a second
+        reference onto the leftover prim, and :meth:`destroy` was the only
+        thing that ever released it -- unlike :meth:`remove_camera` (which
+        deletes its prim) and :meth:`remove_object` (which removes through the
+        scene).
 
         "Rooted at" is judged at the USD path boundary, so a robot whose name
         merely *extends* this one keeps its prim. Prim paths are interpolated
         from the name (``{stage_path}/Robots/{name}``), so with ``arm`` and
         ``arm_left`` both live the two paths share a prefix without one
         containing the other.
+
+        A robot is an articulation -- a dynamic body PhysX holds in its tensor
+        view -- so deleting it invalidates the view the same way removing a
+        dynamic object does. This marks ``_physics_view_stale`` so ``step`` and
+        ``send_action`` refuse until a ``reset()`` rebuilds the view.
 
         Parameters
         ----------
@@ -4510,7 +4568,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         -------
         dict
             Status dict in the standard ``{"status", "content": [{"text"}]}``
-            shape used by mutating methods on this class.
+            shape used by mutating methods on this class. Returns ``error`` if
+            the robot is unknown, or if deleting its prim raised (bookkeeping is
+            left intact for retry, mirroring :meth:`remove_camera`).
         """
         with self._lock:
             if not registered(self._robots, name):
@@ -4519,6 +4579,39 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     "content": [{"text": f"Robot '{name}' not found."}],
                 }
             prim_path = self._robots[name].prim_path
+            # The URDF importer can land the robot at a path other than the one
+            # requested (see ``_RobotState.actual_prim_path``); delete both so a
+            # relocated robot's prim does not survive the removal. ``prim_path``
+            # first, and de-duplicated, so the common case where the two are
+            # equal deletes once.
+            actual_prim_path = self._robots[name].actual_prim_path
+
+            # Delete the USD prim(s) from the stage. Same import shape and
+            # cleanup clause as :meth:`remove_camera`: a transient stage error
+            # returns the structured envelope and leaves bookkeeping intact for
+            # retry. Robots are not added via ``world.scene.add`` here, so the
+            # removal goes through the stage utility rather than
+            # ``world.scene.remove_object``.
+            try:
+                if self._world is not None:
+                    try:
+                        from isaacsim.core.utils.prims import (  # type: ignore[import-not-found]
+                            delete_prim,
+                        )
+                    except ImportError:
+                        from omni.isaac.core.utils.prims import (  # type: ignore[import-not-found]
+                            delete_prim,
+                        )
+
+                    for path in dict.fromkeys((prim_path, actual_prim_path)):
+                        delete_prim(path)
+            except (RuntimeError, ValueError, OSError, AttributeError, TypeError, ImportError) as e:
+                logger.error("Failed to remove robot '%s' (prim=%s): %s", name, prim_path, e)
+                return {
+                    "status": "error",
+                    "content": [{"text": f"Failed to remove robot '{name}': {e}"}],
+                }
+
             # ``/`` is USD's path separator, so it is what separates a
             # descendant prim from a sibling that merely shares a prefix. A bare
             # ``startswith`` test made every robot whose NAME extends this one a
@@ -4538,6 +4631,13 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # A controller closed over this robot's articulation is stale
             # the moment the robot is gone; drop it with the robot.
             self._action_controllers.pop(name, None)
+            # A robot is an articulation, a dynamic body held in PhysX's tensor
+            # view, so deleting its prim invalidates the view outright -- the
+            # same failure ``remove_object`` marks for a dynamic prim (a robot
+            # is never static, so there is no asymmetry to weigh here). Mark the
+            # scene stale so ``step`` / ``send_action`` refuse until ``reset()``
+            # rebuilds the view.
+            self._physics_view_stale = True
             logger.info("Removed robot '%s' (prim=%s)", name, prim_path)
             return {
                 "status": "success",
@@ -5258,13 +5358,23 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
     def physics_timestep(self) -> float | None:
         """Return the fixed physics integration timestep in seconds.
 
-        Isaac's ``World`` steps at :attr:`IsaacConfig.physics_dt`.
+        Reads the dt the ``World`` is actually integrating (via
+        :func:`_resolved_physics_dt`) rather than echoing :attr:`IsaacConfig.physics_dt`,
+        so a ``create_world(timestep=)`` override - honoured by ``World`` but never
+        written back to the config - is reported here too. Falls back to the config
+        value when there is no world yet or the runtime does not expose the reader.
         Reporting it lets :class:`PolicyRunner` derive the physics substeps
         per control step (``round(1 / control_frequency / physics_dt)``) so
         a PD position-servo arm tracks each action's target for the full
         control period -- without this override the base class returned
         ``None`` and every applied action got a single ~8 ms step (#1812).
+        A rendering ``step()`` advances exactly one of these (physics is stepped
+        once with the frame refreshed separately by :meth:`_render_world`), so the
+        substep count stays correct in every render mode.
         """
+        resolved = _resolved_physics_dt(getattr(self, "_world", None))
+        if resolved is not None:
+            return resolved
         return float(self._config.physics_dt)
 
     def install_action_controller(self, robot_name: str, controller: Any) -> dict[str, Any]:
@@ -5668,8 +5778,10 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 # not, because it advances no time.
                 if getattr(self, "_applied_wrenches", None):
                     self._reapply_wrenches()
-                self._world.step(render=bool(render_on and last))
-                self._sim_time += self._config.physics_dt
+                self._world.step(render=False)
+                if render_on and last:
+                    self._render_world()
+                self._sim_time = self._world_clock()
                 self._step_count += 1
 
         if unresolved:
@@ -9604,14 +9716,18 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 self._world.step(render=True)
 
     def _converge_render(self, n: int = 8) -> None:
-        """Render ``n`` ticks while HOLDING the robots at their current pose.
+        """Render ``n`` ticks WITHOUT advancing physics, holding each robot's pose.
 
-        ``world.step(render=True)`` advances physics every tick, so a
-        kinematic arm keeps drifting (gravity / settling) while we try
-        to converge the DLSS temporal upscaler -> the moving target
-        leaves a faint ghost. Re-asserting each robot's joint positions
-        (and zeroing velocities) before every render freezes the pose
-        so DLSS converges on a single, static image.
+        This is the idle pump path (``run_pump_forever`` -> ``pump`` step 2), whose
+        job is to let the DLSS temporal upscaler converge on a still scene between
+        episodes - not to advance the world. It used to call ``world.step(render=True)``,
+        which integrates a whole ``rendering_dt`` of physics per tick, so the idle
+        preview silently ran the simulation forward (and, keying its cache on the
+        step count that never moved, ``get_contacts`` could serve a pre-tick answer
+        after it). Refreshing the frame with :meth:`_render_world` advances no
+        physics, so nothing drifts; re-asserting each robot's joint positions (and
+        zeroing velocities) is kept as a cheap guard that a mid-render dynamic add
+        cannot leave a robot mispose.
         """
         if not self._world_created or self._world is None:
             return
@@ -9661,7 +9777,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                                 pass
                     except (RuntimeError, ValueError, AttributeError, TypeError):
                         pass
-            self._world.step(render=True)
+            self._render_world()
 
     def _grab_frame(self, cname: str, cam: Any) -> Any:
         """Capture ``cam`` as an RGB uint8 array at the camera's requested output size.
