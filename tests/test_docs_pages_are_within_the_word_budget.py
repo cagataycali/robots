@@ -55,9 +55,10 @@ _BUDGET: int = _hook().LIMIT
 #: Banked at 53,300 when the rewrite's second grader round restored the content
 #: the retargeted graders demand (runbooks, scene tables, allowlist reach), and
 #: lowered to 51,184 when the robot-page template stopped restating its fences and
-#: to 48,896 when the per-driver facts moved to one section on the drivers page; the
+#: to 48,896 when the per-driver facts moved to one section on the drivers page, and
+#: to 47,845 when the robot pages dropped the back-link footer the nav already gives; the
 #: old site was 112,416.
-_SITE_BUDGET = 48_896
+_SITE_BUDGET = 47_845
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
