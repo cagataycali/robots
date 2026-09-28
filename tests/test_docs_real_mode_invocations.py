@@ -59,7 +59,9 @@ from strands_robots.drivers import (
 from strands_robots.registry import get_hardware_type, get_robot, resolve_name
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
-_PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+#: A python fence, with or without a title (``python title="sketch"`` marks
+#: the calls that need hardware on the wire; they are graded all the same).
+_PYTHON_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
 
 #: A fence that grades nothing is indistinguishable from a clean sweep, so the
 #: corpus size is asserted. The floor sits well below the current count; it only
@@ -302,10 +304,18 @@ class TestTheCorpusIsReached:
         )
 
     def test_the_bimanual_recipe_is_among_them(self) -> None:
-        """The multi-arm shape is graded, not just the single-``port`` majority."""
+        """The multi-arm shape is graded, not just the single-``port`` majority.
+
+        A bimanual lerobot config (``bi_so_follower``) declares no ``port``; it
+        takes ``left_arm_config`` and ``right_arm_config``. The generated
+        ``docs/robots/bi_*.md`` pages are where a reader meets that call.
+        """
         calls = _documented_real_mode_calls()
         bimanual = [c for c in calls if "left_arm_config" in c.keywords]
-        assert bimanual, "no documented mode='real' call passes a per-arm config"
+        assert bimanual, (
+            "no documented mode='real' call passes a per-arm config; the bimanual robot pages "
+            "show the single-port shape, which is the call the old text raised on"
+        )
 
     def test_a_native_driver_call_is_among_them(self) -> None:
         """The ``driver="strands"`` shape is graded, against the driver's own roster."""
