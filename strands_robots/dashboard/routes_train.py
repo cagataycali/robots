@@ -36,7 +36,7 @@ __all__ = ["router", "attach"]
 
 def _refuse_path(exc: PathOutside) -> HTTPException:
     """The 400 for a path outside its home: names the home, never the path's existence."""
-    return HTTPException(400, {"error": str(exc), "field": exc.label, "homes": [str(h) for h in exc.homes]})
+    return HTTPException(400, exc.refusal())
 
 
 def _record_activity(request: Request, *args: Any, **kwargs: Any) -> None:
@@ -208,11 +208,10 @@ async def checkpoints_search(q: str = "", limit: int = 15, _: dict = Depends(acc
 @router.get("/checkpoints/features")
 async def checkpoint_features(repo_id: str = "", _: dict = Depends(access.require_session)) -> dict[str, Any]:
     """The features a checkpoint declares, by repo id or by a contained local path."""
-    if training.looks_like_path(repo_id):
-        try:
-            repo_id = str(training.contain_checkpoint_path(repo_id))
-        except PathOutside as exc:
-            raise _refuse_path(exc) from exc
+    try:
+        repo_id = training.contain_checkpoint_ref(repo_id)
+    except PathOutside as exc:
+        raise _refuse_path(exc) from exc
     return await asyncio.to_thread(checkpoints.declared_features, repo_id)
 
 

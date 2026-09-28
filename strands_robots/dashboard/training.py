@@ -48,6 +48,10 @@ class PathOutside(ValueError):
         where = ", ".join(str(h) for h in homes)
         super().__init__(f"{label} must be inside {where}")
 
+    def refusal(self) -> dict[str, Any]:
+        """The 400 body every route answers with: names the home, never the path's existence."""
+        return {"error": str(self), "field": self.label, "homes": [str(h) for h in self.homes]}
+
 
 def output_home() -> Path:
     """Where training runs may write: ``STRANDS_TRAIN_OUTPUT_DIR`` or ``<base dir>/training``."""
@@ -130,6 +134,21 @@ def hf_cache_root() -> Path:
 def contain_checkpoint_path(path: str) -> Path:
     """A checkpoint path the client named: a training output or a lerobot cache snapshot."""
     return contain(path, [output_home(), hf_cache_root().resolve()], label="checkpoint path")
+
+
+def contain_checkpoint_ref(repo_id: str) -> str:
+    """A client-named checkpoint reference, safe to hand to :mod:`checkpoints`.
+
+    A Hub repo id (``org/name``) passes through unchanged. Anything that
+    :func:`looks_like_path` is contained with :func:`contain_checkpoint_path`
+    first, so no route can read policy declarations from a directory outside
+    the training output or the lerobot cache. Raises :class:`PathOutside`;
+    the route turns that into its 400 with :meth:`PathOutside.refusal`. Every
+    route that accepts a ``repo_id`` goes through here, so the rule is spelled once.
+    """
+    if looks_like_path(repo_id):
+        return str(contain_checkpoint_path(repo_id))
+    return repo_id
 
 
 JOBS_FILE = Path(

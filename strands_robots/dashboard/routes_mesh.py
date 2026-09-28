@@ -559,6 +559,14 @@ async def policy_fit_route(
     require_peer(request, peer_id)
     from strands_robots.dashboard.checkpoints import declared_features
     from strands_robots.dashboard.policy_fit import policy_fit
+    from strands_robots.dashboard.training import PathOutside, contain_checkpoint_ref
+
+    # the same gate /api/checkpoints/features applies: a path-shaped repo_id must
+    # sit under the training output or the lerobot cache before anything reads it
+    try:
+        repo_id = contain_checkpoint_ref(repo_id)
+    except PathOutside as exc:
+        raise HTTPException(400, exc.refusal()) from exc
 
     peer = _bridge(request).peers.get(peer_id) or {}
     joints = list((peer.get("state") or {}).get("joints") or {})
