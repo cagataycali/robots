@@ -21,10 +21,9 @@ the one that cannot say it failed.
 ``stop_task()``'s envelope from that branch for this reason.  These two are the
 same shape, and the fleet relation below is what makes the next driver graded on
 arrival: **a driver whose ``stop_task`` can refuse must report that verdict from
-the agent verb.**  ``DynamixelDriver`` and ``FeetechDriver`` are exempt and the
-exemption is *derived* rather than listed - their ``stop_task`` has no refusal
-path at all, because their serial bus is not wired, so there is no verdict to
-report.
+the agent verb.**  A driver whose ``stop_task`` has no refusal path at all is
+exempt, and the exemption is *derived* rather than listed; no shipped driver is
+exempt today.
 
 Why nothing caught it: the Mini's own suite already argues the principle.
 ``test_a_daemon_that_refuses_the_stop_does_not_report_it_as_halted`` carries the
@@ -168,11 +167,11 @@ def _method_ast(cls: type, name: str) -> ast.AST:
 def _stop_task_can_refuse(node: ast.AST) -> bool:
     """Does this ``stop_task`` body have a path that reports a non-success?
 
-    A refusal is spelled either through the module's ``_refuse`` helper or as a
+    A refusal is spelled either through ``strands_robots.drivers.base.refuse`` or as a
     literal ``"error"`` status, so both are read.
     """
     for inner in ast.walk(node):
-        if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id == "_refuse":
+        if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id == "refuse":
             return True
         if isinstance(inner, ast.Constant) and inner.value == "error":
             return True
@@ -406,14 +405,13 @@ class TestTheVerdictIsSingleSourced:
         )
 
     def test_the_exemption_is_derived_from_the_absence_of_a_verdict(self) -> None:
-        # Not a hand-listed allowlist: the Dynamixel driver is exempt because
-        # its stop_task has no refusal path, its serial bus being unwired. The
-        # roster shrinks as a driver gains a halt it can refuse - the Feetech
-        # arm left it when its rollout loop landed.
+        # Not a hand-listed allowlist: a driver is exempt only when its
+        # stop_task has no refusal path. Every shipped driver can refuse a halt
+        # today - the Feetech arm left the roster when its rollout loop landed.
         exempt = sorted(
             name for name, cls in _driver_classes().items() if not _stop_task_can_refuse(_method_ast(cls, "stop_task"))
         )
-        assert exempt == ["DynamixelDriver"], exempt
+        assert exempt == [], exempt
 
     @pytest.mark.parametrize("name", ["MicroduckDriver", "ReachyDriver", "G1Driver"])
     def test_the_branch_does_not_restate_a_verdict(self, name: str) -> None:
@@ -468,6 +466,6 @@ class TestTheRuleIsNotVacuous:
 
     def test_a_stop_task_without_a_refusal_is_recognised(self) -> None:
         no_verdict = 'def stop_task(self):\n    return {"status": "success", "content": []}\n'
-        with_verdict = 'def stop_task(self):\n    if not self._alive:\n        return _refuse("nope")\n    return {}\n'
+        with_verdict = 'def stop_task(self):\n    if not self._alive:\n        return refuse("nope")\n    return {}\n'
         assert _stop_task_can_refuse(ast.parse(no_verdict).body[0]) is False
         assert _stop_task_can_refuse(ast.parse(with_verdict).body[0]) is True

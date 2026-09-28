@@ -46,7 +46,7 @@ _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 # the floor through ``strands-robots[lerobot]`` but ALSO declares
 # ``lerobot[molmoact2]>=...`` directly, so a bump that skips it would leave a
 # resolvable install of the older lerobot through that extra.
-_LEROBOT_BEARING_EXTRAS = ("lerobot", "lerobot-async", "molmoact2")
+_LEROBOT_BEARING_EXTRAS = ("lerobot", "molmoact2")
 
 
 def _extras() -> dict[str, list[str]]:

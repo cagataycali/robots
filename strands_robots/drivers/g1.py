@@ -48,9 +48,11 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots._pacing import Ticker
 from strands_robots.drivers.base import (
     decode_motor_state,
     policy_step,
+    refuse,
     telemetry_float,
     telemetry_float_list,
     telemetry_int,
@@ -66,7 +68,6 @@ from strands_robots.drivers.unitree._common import (
 )
 from strands_robots.drivers.unitree._dds_engine import DDSPublisher, DDSSubscriberSet
 from strands_robots.drivers.unitree._motion_switcher import FSMReading, read_fsm_id
-from strands_robots.mesh.pacing import Ticker
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
@@ -1084,9 +1085,9 @@ class G1Driver:
                 that cache is older than :data:`_FSM_STALE_AFTER_S`.
         """
         if not self._connected:
-            return _refuse("not connected - call connect_eagerly() first")
+            return refuse("not connected - call connect_eagerly() first")
         if self._mode_machine is None:
-            return _refuse("mode_machine unknown - lowstate has not delivered yet")
+            return refuse("mode_machine unknown - lowstate has not delivered yet")
         # Refresh the FSM id from the motion-switcher API before consulting
         # it.  The refresh is idempotent: no client → no reading, refused
         # reading → previous value kept, OK reading → new value.  See
@@ -1109,7 +1110,7 @@ class G1Driver:
             # host {500, 501, 801}.  Refuse honestly rather than let a real
             # frame silently reach a gate whose intersection with the echo's
             # value range is empty.
-            return _refuse(
+            return refuse(
                 "FSM id unknown - motion-switcher source has not been wired; see issue #2765 for the wire-side decision"
             )
         if scope == "arm":
@@ -1120,7 +1121,7 @@ class G1Driver:
             allowed = HANDSHAKE_FSMS | WALK_FSMS
             kind = "motion writes"
         if self._fsm_id not in allowed:
-            return _refuse(f"FSM {self._fsm_id} refuses {kind}; needs one of {sorted(allowed)}")
+            return refuse(f"FSM {self._fsm_id} refuses {kind}; needs one of {sorted(allowed)}")
         # The staleness bound is asked on every path, not just the loop's
         # per-step re-gate.  ``_refresh_fsm_id``'s refused-reading branch
         # deliberately keeps ``_fsm_id`` and deliberately does not stamp
@@ -1142,21 +1143,21 @@ class G1Driver:
         read_at = self._fsm_read_at
         age = None if read_at is None else time.monotonic() - read_at
         if not refresh and (age is None or age > _FSM_STALE_AFTER_S):
-            return _refuse(
+            return refuse(
                 f"FSM {self._fsm_id} last confirmed "
                 f"{'never' if age is None else format(age, '.3f') + 's ago'}, over the "
                 f"{_FSM_STALE_AFTER_S:.3f}s staleness bound "
                 f"({_FSM_STALE_AFTER_READS} missed reads at {_FSM_REFRESH_HZ:.0f} Hz)"
             )
         if refresh and age is not None and age > _FSM_STALE_AFTER_S:
-            return _refuse(
+            return refuse(
                 f"FSM {self._fsm_id} last confirmed {age:.3f}s ago, over the "
                 f"{_FSM_STALE_AFTER_S:.3f}s staleness bound "
                 f"({_FSM_STALE_AFTER_READS} missed reads at {_FSM_REFRESH_HZ:.0f} Hz)"
             )
         battery_pct = (self._battery or {}).get("pct")
         if battery_pct is not None and battery_pct < self._battery_floor_pct:
-            return _refuse(f"battery {battery_pct:.1f}% is under floor {self._battery_floor_pct:.1f}%")
+            return refuse(f"battery {battery_pct:.1f}% is under floor {self._battery_floor_pct:.1f}%")
         return None
 
     def send_action(
@@ -1203,19 +1204,19 @@ class G1Driver:
         if refusal is not None:
             return refusal
         if self._pubs is None:
-            return _refuse("publisher not initialised - call connect_eagerly() first")
+            return refuse("publisher not initialised - call connect_eagerly() first")
         cmd, err = _build_lowcmd_from_action(action, mode_machine=self._mode_machine)
         if err is not None:
-            return _refuse(err)
+            return refuse(err)
         # Lazy import.  A missing SDK on the write path is the same failure
         # mode the subscriber set already covers; publisher returns a string.
         try:
             from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_
         except ImportError as exc:  # pragma: no cover - exercised on hardware
-            return _refuse(sdk_missing(exc))
+            return refuse(sdk_missing(exc))
         pub_err = self._pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
         if pub_err is not None:
-            return _refuse(pub_err)
+            return refuse(pub_err)
         return {
             "status": "success",
             "content": [
@@ -1271,7 +1272,7 @@ class G1Driver:
         refusal = self._check_motion_gates("motion")
         if refusal is not None:
             return refusal
-        return _refuse(
+        return refuse(
             "start_task: provider registry not wired yet; "
             "use run_policy(policy_object=...) to drive the control loop today"
         )
@@ -1331,16 +1332,16 @@ class G1Driver:
         # commanded nothing (see HardwareRobot._n_steps_error for the
         # incident that made positive_count_error load-bearing).
         if err := positive_finite_number_error(duration, "duration", "run_policy"):
-            return _refuse(err)
+            return refuse(err)
         if n_steps is not None and (err := positive_count_error(n_steps, "n_steps", "run_policy")):
-            return _refuse(err)
+            return refuse(err)
         refusal = self._check_motion_gates("motion")
         if refusal is not None:
             return refusal
         if policy_object is None:
-            return _refuse("run_policy: policy_object is required")
+            return refuse("run_policy: policy_object is required")
         if policy_step(policy_object, instruction) is None:
-            return _refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
+            return refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
         # Admission held across the ``is_running`` check, the reference
         # assignment and ``start()`` so a second thread cannot pass the check
         # before either assigns ``self._loop`` (two rollouts on one wire),
@@ -1355,7 +1356,7 @@ class G1Driver:
         )
         with self._task_admission:
             if self._loop is not None and self._loop.is_running:
-                return _refuse("run_policy: a task is already running; call stop_task first")
+                return refuse("run_policy: a task is already running; call stop_task first")
             # Clear any stashed terminal snapshot from a previous rollout so
             # a poller between ``run_policy`` and the first published frame
             # sees the new loop's snapshot rather than the last one's exit
@@ -1769,18 +1770,6 @@ class G1Driver:
             if value is None:
                 return None
             return dict(value)
-
-
-def _refuse(reason: str) -> dict[str, Any]:
-    """Return the driver's error envelope with ``reason`` inside.
-
-    Kept as a free function so every refusal path renders the same shape and
-    a test can grep for the reason without unpacking the envelope by hand.
-    """
-    return {
-        "status": "error",
-        "content": [{"text": reason}],
-    }
 
 
 def _resolve_message_class(cls_path: tuple[str, str]) -> Any:
@@ -2419,7 +2408,7 @@ class _ControlLoop:
 
 
 def _refusal_text(refusal: dict[str, Any]) -> str:
-    """Extract the text reason from a ``_refuse()`` envelope."""
+    """Extract the text reason from a ``refuse()`` envelope."""
     for entry in refusal.get("content", []):
         text = entry.get("text")
         if isinstance(text, str):

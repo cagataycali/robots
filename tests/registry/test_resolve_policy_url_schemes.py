@@ -3,10 +3,12 @@
 ``strands_robots.registry.policies.resolve_policy`` documents a five-step
 resolution order (URL patterns -> shorthands -> HF model IDs -> registered
 provider name -> lerobot_local fallback). The shipped ``policies.json`` declares
-four URL patterns - ``^zmq://``, ``^grpc://``, ``^cosmos3://`` and
-``^wss?://`` - so only the generic scheme-less ``host:port`` branch, part of the
-public resolution contract and reachable by a provider that declares a
-scheme-less pattern, has no exercising input from the shipped registry.
+three URL patterns - ``^zmq://``, ``^cosmos3://`` and ``^wss?://`` - so only the
+generic scheme-less ``host:port`` branch, part of the public resolution contract
+and reachable by a provider that declares a scheme-less pattern, has no
+exercising input from the shipped registry. A ``scheme://`` outside the declared
+set is refused rather than resolved, which is pinned at the bottom of this
+module.
 
 These tests inject a synthetic provider registry (via ``monkeypatch``) so the
 generic parser branches run, plus cover the HF-org routing, canonical-name
@@ -55,13 +57,6 @@ class TestUrlSchemeParsing:
         assert kwargs["host"] == "gpu-box"
         assert kwargs["port"] == 1234
 
-    def test_grpc_url_strips_scheme_into_server_address(self, monkeypatch):
-        """grpc:// should drop the scheme and keep the bare address."""
-        _inject_registry(monkeypatch, {"grpcprov": {"url_patterns": ["^grpc://"]}})
-        provider, kwargs = resolve_policy("grpc://10.0.0.5:50051")
-        assert provider == "grpcprov"
-        assert kwargs["server_address"] == "10.0.0.5:50051"
-
     def test_bare_host_port_address_becomes_server_address(self, monkeypatch):
         """A bare host:port (no scheme, no slash) maps to server_address."""
         _inject_registry(monkeypatch, {"hostport": {"url_patterns": [r"^[^/]+:[0-9]+$"]}})
@@ -71,8 +66,8 @@ class TestUrlSchemeParsing:
 
     def test_url_scheme_match_forwards_extra_kwargs(self, monkeypatch):
         """Extra kwargs must survive URL-pattern resolution."""
-        _inject_registry(monkeypatch, {"grpcprov": {"url_patterns": ["^grpc://"]}})
-        _, kwargs = resolve_policy("grpc://host:1", timeout=5)
+        _inject_registry(monkeypatch, {"wsprov": {"url_patterns": ["^wss?://"]}})
+        _, kwargs = resolve_policy("ws://host:1", timeout=5)
         assert kwargs["timeout"] == 5
 
 
@@ -172,7 +167,6 @@ _SCHEME_URLS = (
     "ws://gpu-box:8765",
     "wss://gpu-box:8765",
     "cosmos3://prod-server:9000",
-    "grpc://10.0.0.5:50051",
 )
 
 
@@ -209,18 +203,6 @@ class TestSchemeCaseDoesNotChangeResolution:
             assert resolve_policy(variant) == expected, (
                 f"{variant!r} resolved to {resolve_policy(variant)!r}, but {url!r} resolves to {expected!r}"
             )
-
-    def test_a_dialable_address_never_keeps_the_scheme(self):
-        """``server_address`` is dialed as ``host:port``, so no scheme may survive.
-
-        The grpc branch stripped the scheme with ``str.replace("grpc://", "")``,
-        which no regex flag reaches: making the pattern match case-insensitively
-        routes ``GRPC://`` to the right provider but then hands it the whole URL
-        as the gRPC target, moving the dead end instead of closing it.
-        """
-        for variant in ("grpc://h:50051", *_case_variants("grpc://h:50051")):
-            _, kwargs = resolve_policy(variant)
-            assert kwargs["server_address"] == "h:50051", f"{variant!r} produced {kwargs['server_address']!r}"
 
     def test_the_emitted_websocket_endpoint_keeps_ws_and_wss_apart(self):
         """Folding the scheme must not collapse the plain/secure distinction."""
@@ -270,3 +252,62 @@ class TestEveryDeclaredSchemeHasASample:
         assert declared, "premise: the shipped registry declares url_patterns"
         uncovered = {p for p in declared if not any(re.match(p, u) for u in _SCHEME_URLS)}
         assert not uncovered, f"url_patterns with no sample in _SCHEME_URLS: {sorted(uncovered)}"
+
+
+class TestASchemeNoProviderDeclaresIsRefused:
+    """Stage 1 is the whole transport vocabulary, so an address outside it stops there.
+
+    Every later stage reads the string as a *name* - a shorthand, a repo id, a
+    provider - so an address that reaches them is forwarded to ``lerobot_local``
+    as a checkpoint id. Measured pre-fix on ``grpc://gpu-box:8080``, the scheme
+    the retired ``lerobot_async`` provider declared:
+    ``("lerobot_local", {"pretrained_name_or_path": "grpc://gpu-box:8080"})``
+    under a warning, so the caller's next report was a HuggingFace lookup
+    failure for a repo id nobody wrote, nowhere near the server they named.
+    """
+
+    @pytest.mark.parametrize(
+        "url",
+        ["grpc://gpu-box:8080", "http://gpu-box:8000", "https://gpu-box", "tcp://10.0.0.5:5555", "zzz://h:1"],
+    )
+    def test_it_is_refused_naming_the_schemes_that_do_resolve(self, url):
+        """The refusal carries the scheme, the caller's string, and the alternatives."""
+        with pytest.raises(ValueError) as exc:
+            resolve_policy(url)
+        text = str(exc.value)
+        assert f"'{url.split('://', 1)[0]}://'" in text, text
+        assert url in text, text
+        for scheme in policies_mod._declared_url_schemes():
+            assert f"{scheme}://" in text, text
+
+    def test_the_refusal_folds_the_scheme_like_the_match_does(self):
+        """``GRPC://`` is the same request as ``grpc://``, so it is refused too."""
+        with pytest.raises(ValueError, match=re.escape("'grpc://'")):
+            resolve_policy("GRPC://gpu-box:8080")
+
+    @pytest.mark.parametrize("scheme", policies_mod._declared_url_schemes())
+    def test_every_declared_scheme_still_resolves(self, scheme):
+        """Non-vacuity, and the scope control: only undeclared schemes are refused."""
+        provider, _ = resolve_policy(f"{scheme}://gpu-box:8080")
+        declared = policies_mod._load("policies")["providers"][provider].get("url_patterns", [])
+        assert any(re.match(pattern, f"{scheme}://gpu-box:8080") for pattern in declared), (
+            f"{scheme}:// resolved to {provider}, which declares {declared}"
+        )
+
+    def test_the_advertised_set_is_exactly_what_the_patterns_match(self):
+        """A spelling the expansion invents but no pattern matches must not be named."""
+        schemes = policies_mod._declared_url_schemes()
+        assert schemes == sorted(set(schemes)), schemes
+        patterns = [
+            pattern
+            for info in policies_mod._load("policies")["providers"].values()
+            for pattern in info.get("url_patterns", []) or ()
+        ]
+        for scheme in schemes:
+            assert any(re.match(pattern, f"{scheme}://h:1") for pattern in patterns), scheme
+
+    @pytest.mark.parametrize("policy", ["mock", "lerobot/act_aloha_sim", "gpu-box:8080", "a/B://c"])
+    def test_a_string_that_is_not_an_address_is_not_read_as_one(self, policy):
+        """The guard reads a *leading* scheme only, so a name still resolves."""
+        provider, _ = resolve_policy(policy)
+        assert provider in policies_mod._load("policies")["providers"]

@@ -98,8 +98,8 @@ import threading
 from collections.abc import AsyncGenerator, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import halt_failure_detail, undeclared_verb_error
-from strands_robots.mesh.pacing import Ticker
+from strands_robots._pacing import Ticker
+from strands_robots.drivers.base import halt_failure_detail, refuse, undeclared_verb_error
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
@@ -238,11 +238,6 @@ VELOCITY_SETPOINT = "send_velocity_world_setpoint"
 #: is ``None`` once the link closed); ``OSError`` and ``RuntimeError`` are what
 #: the radio and the CRTP stack raise for a link that no longer answers.
 LINK_WRITE_ERRORS: tuple[type[BaseException], ...] = (AttributeError, OSError, RuntimeError)
-
-
-def _refuse(reason: str) -> dict[str, Any]:
-    """The driver's error envelope, one shape for every refusal path."""
-    return {"status": "error", "content": [{"text": reason}]}
 
 
 def _ok(payload: dict[str, Any]) -> dict[str, Any]:
@@ -731,17 +726,17 @@ class CrazyflieDriver:
         """
         del robot_name
         if not self.is_connected:
-            return _refuse(f"send_action: {self._tool_name} is not connected ({self._connect_error or 'no link'})")
+            return refuse(f"send_action: {self._tool_name} is not connected ({self._connect_error or 'no link'})")
         translated = action_to_setpoint(action)
         if isinstance(translated, str):
-            return _refuse(translated)
+            return refuse(translated)
         if not self._armed:
-            return _refuse(
+            return refuse(
                 f"send_action: {self._tool_name} is not armed; the firmware refuses to spin the "
                 "motors until arming succeeds. Reconnect to retry the arming request."
             )
         if (reason := self._latch(translated)) is not None:
-            return _refuse(reason)
+            return refuse(reason)
         method, args = translated
         return _ok({"commanded": method, "args": list(args), "setpoint_hz": self._setpoint_hz})
 
@@ -796,25 +791,25 @@ class CrazyflieDriver:
             envelope naming the refusal.
         """
         if (reason := twist_error(0.0, 0.0, 0.0, 0.0, height, context="takeoff")) is not None:
-            return _refuse(reason)
+            return refuse(reason)
         if (reason := positive_finite_number_error(duration, "duration", "takeoff")) is not None:
-            return _refuse(reason)
+            return refuse(reason)
         if not self.is_connected:
-            return _refuse(f"takeoff: {self._tool_name} is not connected ({self._connect_error or 'no link'})")
+            return refuse(f"takeoff: {self._tool_name} is not connected ({self._connect_error or 'no link'})")
         if not self._armed:
-            return _refuse(f"takeoff: {self._tool_name} is not armed; reconnect to retry the arming request.")
+            return refuse(f"takeoff: {self._tool_name} is not armed; reconnect to retry the arming request.")
         self._halt_repeater()
         try:
             self._commander().send_notify_setpoint_stop()
         except LINK_WRITE_ERRORS as exc:
-            return _refuse(
+            return refuse(
                 f"takeoff: the link refused the setpoint-priority handover, so the climb was not "
                 f"commanded - the high-level commander would have ignored it: {exc}"
             )
         try:
             self._high_level().takeoff(float(height), float(duration))
         except LINK_WRITE_ERRORS as exc:
-            return _refuse(f"takeoff: the link refused the climb: {exc}")
+            return refuse(f"takeoff: the link refused the climb: {exc}")
         return _ok({"commanded": "takeoff", "height": float(height), "duration": float(duration)})
 
     def land(self, duration: float = 2.0) -> dict[str, Any]:
@@ -839,21 +834,21 @@ class CrazyflieDriver:
             A success envelope, or an error envelope naming the refusal.
         """
         if (reason := positive_finite_number_error(duration, "duration", "land")) is not None:
-            return _refuse(reason)
+            return refuse(reason)
         if not self.is_connected:
-            return _refuse(f"land: {self._tool_name} is not connected ({self._connect_error or 'no link'})")
+            return refuse(f"land: {self._tool_name} is not connected ({self._connect_error or 'no link'})")
         self._halt_repeater()
         try:
             self._commander().send_notify_setpoint_stop()
         except LINK_WRITE_ERRORS as exc:
-            return _refuse(
+            return refuse(
                 f"land: the link refused the setpoint-priority handover, so the descent was not "
                 f"commanded - the high-level commander would have ignored it: {exc}"
             )
         try:
             self._high_level().land(0.0, float(duration))
         except LINK_WRITE_ERRORS as exc:
-            return _refuse(f"land: the link refused the descent: {exc}")
+            return refuse(f"land: the link refused the descent: {exc}")
         return _ok({"commanded": "land", "duration": float(duration)})
 
     def emergency_stop(self) -> dict[str, Any]:
@@ -869,12 +864,12 @@ class CrazyflieDriver:
             A success envelope, or an error envelope naming the refusal.
         """
         if not self.is_connected:
-            return _refuse(f"emergency_stop: {self._tool_name} is not connected")
+            return refuse(f"emergency_stop: {self._tool_name} is not connected")
         self._halt_repeater()
         try:
             self._commander().send_stop_setpoint()
         except LINK_WRITE_ERRORS as exc:
-            return _refuse(
+            return refuse(
                 f"emergency_stop: the link refused the motor cut, so the motors were NOT cut. The "
                 f"setpoint stream has already been stopped, so the firmware supervisor decides what "
                 f"happens next - use a hardware cutoff: {exc}"
@@ -902,7 +897,7 @@ class CrazyflieDriver:
         useful than a rollout loop that sends a gripper command to a quadcopter.
         """
         del instruction, policy_port, policy_host, policy_provider, duration, policy_kwargs
-        return _refuse(
+        return refuse(
             "start_task: the Crazyflie has no policy action space in this package (no joints, four "
             "propellers, and no aerial policy provider). Fly it with send_action / set_twist / "
             "takeoff / land."
@@ -917,7 +912,7 @@ class CrazyflieDriver:
     ) -> dict[str, Any]:
         """Refuse a rollout, for the same reason as :meth:`start_task`."""
         del policy_object, instruction, duration, n_steps
-        return _refuse(
+        return refuse(
             "run_policy: the Crazyflie has no policy action space in this package. "
             "Fly it with send_action / set_twist / takeoff / land."
         )
@@ -956,7 +951,7 @@ class CrazyflieDriver:
         was_streaming = self._setpoint is not None
         envelope = self.land()
         if envelope["status"] != "success":
-            return _refuse(f"stop_task: the descent was refused - {envelope['content'][0]['text']}")
+            return refuse(f"stop_task: the descent was refused - {envelope['content'][0]['text']}")
         return _ok({"stopped": "setpoint_stream" if was_streaming else None, "commanded": "land"})
 
     # ------------------------------------------------------------------ #
@@ -1240,7 +1235,7 @@ class CrazyflieDriver:
         stream goes quiet, so this loop is what turns a single ``send_action``
         into sustained motion.
 
-        Paced by :class:`~strands_robots.mesh.pacing.Ticker` rather than by
+        Paced by :class:`~strands_robots._pacing.Ticker` rather than by
         ``self._repeater_stop.wait(period)``, for the reason that module records:
         a ``wait(period)`` is a delay where a rate needs a deadline, so the time
         the radio spends on a CRTP write is *added* to the period instead of

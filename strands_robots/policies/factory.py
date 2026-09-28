@@ -555,8 +555,8 @@ def policy_kwargs_error(provider: str, PolicyClass: type, kwargs: Mapping[str, A
     One rule for every provider, applied before construction. Pre-fix each
     provider had its own: a constructor with ``**kwargs`` dropped
     ``create_policy("groot", hots="x")`` silently (the client dialled the
-    default host under ``status="success"``), ``remote`` and ``lerobot_async``
-    logged "ignoring unexpected constructor kwarg(s)" where no agent reads it,
+    default host under ``status="success"``), ``remote`` logged
+    "ignoring unexpected constructor kwarg(s)" where no agent reads it,
     and a constructor without a sink raised CPython's
     ``__init__() got an unexpected keyword argument 'acton_space'`` - which
     names neither the provider nor the parameter meant.

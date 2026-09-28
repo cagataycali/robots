@@ -4,7 +4,7 @@ Both hardware bridges run a background thread that services inbound commands,
 and both let the caller name its cadence: ``HardwareRosBridge``'s ``spin_period``
 and ``HardwareRtpsBridge``'s ``poll_period``. The value is a wait budget - handed
 to :meth:`threading.Event.wait` on the rclpy bridge and to a
-:class:`~strands_robots.mesh.pacing.Ticker` on the RTPS one - so unlike a domain
+:class:`~strands_robots._pacing.Ticker` on the RTPS one - so unlike a domain
 id it is not a value the transport ever gets to reject; the loop simply runs at
 whatever cadence the argument implies.
 

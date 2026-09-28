@@ -449,11 +449,14 @@ class TestOnlyADynamicBodyMarksTheScene:
 class TestOnlyABodyMutationMarksTheScene:
     """Which mutations invalidate the view was measured, not inferred.
 
-    On the live runtime ``add_camera``, ``remove_camera``, ``move_object``,
-    ``add_robot`` and ``remove_robot`` each left an already-working robot
-    reporting all 9 of its observation keys, so marking the scene for any of
-    them would refuse ``step`` over a view that is perfectly live - and a gate
-    that fires when nothing is wrong is one a caller learns to route around.
+    On the live runtime ``add_camera``, ``remove_camera``, ``move_object`` and
+    ``add_robot`` each left an already-working robot reporting all 9 of its
+    observation keys, so marking the scene for any of them would refuse ``step``
+    over a view that is perfectly live - and a gate that fires when nothing is
+    wrong is one a caller learns to route around. ``remove_robot`` is the
+    exception among those: it deletes the robot's articulation prim, which PhysX
+    holds in its tensor view exactly as it holds a dynamic object's shape, so the
+    delete invalidates the view the same way a dynamic ``remove_object`` does.
 
     Derived from the module's AST rather than driven per method, for two
     reasons. It grades a *method added later* on arrival, which a fixed list of
@@ -463,8 +466,9 @@ class TestOnlyABodyMutationMarksTheScene:
     heavy enough that its own breakage would read as this gate failing.
     """
 
-    #: The only two methods entitled to mark the scene.
-    _MARKERS = {"add_object", "remove_object"}
+    #: The methods entitled to mark the scene: the two body mutations plus
+    #: ``remove_robot``, which deletes an articulation the tensor view holds.
+    _MARKERS = {"add_object", "remove_object", "remove_robot"}
 
     def _assignments(self) -> dict[str, list[bool]]:
         """Every ``self._physics_view_stale = <bool>`` in the module, by the

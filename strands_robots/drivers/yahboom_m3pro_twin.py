@@ -131,8 +131,8 @@ class M3ProTwinGraph:
 
     Args:
         sim: A built sim engine carrying the ``yahboom_m3pro`` robot (what
-            ``Robot("yahboom_m3pro", mode="sim")`` returns). ``None`` builds one
-            lazily on :meth:`connect`, at the ``home`` keyframe.
+            ``Robot("yahboom_m3pro", mode="sim")`` returns). The caller owns it;
+            the graph never destroys it.
         robot_name: The robot's name inside ``sim``; ``None`` takes the first.
         watchdog_s: How long the base keeps the last twist after a burst before
             the twin zeroes it - the firmware's behaviour, emulated. A positive
@@ -147,7 +147,7 @@ class M3ProTwinGraph:
 
     def __init__(
         self,
-        sim: Any | None = None,
+        sim: Any,
         robot_name: str | None = None,
         *,
         watchdog_s: float = CMD_VEL_WATCHDOG_S,
@@ -159,88 +159,39 @@ class M3ProTwinGraph:
         self._robot_name = robot_name
         self._watchdog_s = float(watchdog_s)
         self._realtime = bool(realtime)
-        self._owns_sim = sim is None
-        self._build_error: str | None = None
 
     # ------------------------------------------------------------------ #
     # The engine.                                                        #
     # ------------------------------------------------------------------ #
 
     @property
-    def sim(self) -> Any | None:
-        """The engine behind the twin, or ``None`` before :meth:`connect` built it."""
+    def sim(self) -> Any:
+        """The engine behind the twin."""
         return self._sim
 
     @property
     def robot_name(self) -> str:
         """The robot's name inside the engine."""
         if self._robot_name is None:
-            names = list(self._sim.list_robots()) if self._sim is not None else []
+            names = list(self._sim.list_robots())
             self._robot_name = names[0] if names else "yahboom_m3pro"
         return self._robot_name
 
-    def connect(self) -> str | None:
-        """Build the engine when none was given. Returns a reason on failure, else ``None``.
-
-        Built through :func:`strands_robots.simulation.create_simulation` and
-        :meth:`~strands_robots.simulation.base.SimEngine.add_robot` - the same
-        two calls ``Robot("yahboom_m3pro", mode="sim", keyframe="home")`` makes -
-        rather than through the factory itself. The factory imports the driver
-        registry, and the driver registry imports this robot's driver, so a twin
-        that imported the factory would close a cycle around what is one table
-        of facts about the robot. The simulation package imports no driver.
-        """
-        if self._sim is not None:
-            return None
-        try:
-            from strands_robots.simulation import (
-                create_simulation,  # noqa: PLC0415 - MuJoCo is optional; imported on use
-            )
-
-            sim = create_simulation("mujoco", tool_name="yahboom_m3pro_twin")
-            for step in (sim.create_world(), sim.add_robot(name="yahboom_m3pro", keyframe="home")):
-                if step.get("status") == "error":
-                    sim.destroy()
-                    detail = (step.get("content") or [{}])[0].get("text", str(step))
-                    self._build_error = f"could not build the yahboom_m3pro twin: {detail}"
-                    return self._build_error
-        except Exception as exc:  # noqa: BLE001 - the reason is reported, not raised, like every connect here
-            self._build_error = f"could not build the yahboom_m3pro twin ({type(exc).__name__}: {exc})"
-            return self._build_error
-        self._sim = sim
-        self._build_error = None
-        return None
-
-    def close(self) -> None:
-        """Destroy an engine this graph built; leave a caller-supplied one alone."""
-        if self._sim is not None and self._owns_sim:
-            try:
-                self._sim.destroy()
-            except Exception:  # noqa: BLE001 - teardown must not raise
-                logger.debug("twin: destroy() raised during close", exc_info=True)
-        self._sim = None
-
     def _substeps(self, seconds: float) -> int:
         """Physics steps that cover ``seconds``, at least one."""
-        dt = self._sim.physics_timestep() if self._sim is not None else None
+        dt = self._sim.physics_timestep()
         if not dt or dt <= 0:
             return 1
         return max(1, int(round(seconds / dt)))
 
-    def _engine(self) -> Any:
-        """The engine, for the verbs that run only after ``__call__`` proved it built."""
-        if self._sim is None:
-            raise RuntimeError("twin: the engine is not built - call connect() (or the status verb) first")
-        return self._sim
-
     def _observation(self) -> dict[str, float]:
         """The model's scalar observation - joints and their ``.vel`` siblings."""
-        obs = self._engine().get_observation(robot_name=self.robot_name, skip_images=True)
+        obs = self._sim.get_observation(robot_name=self.robot_name, skip_images=True)
         return {key: float(value) for key, value in obs.items() if isinstance(value, int | float)}
 
     def _advance(self, action: dict[str, float], seconds: float) -> str | None:
         """Write ``action`` and step ``seconds``; return the engine's refusal text or ``None``."""
-        result = self._engine().send_action(action, robot_name=self.robot_name, n_substeps=self._substeps(seconds))
+        result = self._sim.send_action(action, robot_name=self.robot_name, n_substeps=self._substeps(seconds))
         if result.get("status") != "success":
             return str((result.get("content") or [{}])[0].get("text", "send_action failed"))
         if self._realtime:
@@ -285,11 +236,7 @@ class M3ProTwinGraph:
         """
         del gate, type, timeout
         if action == "status":
-            if self._sim is None and (reason := self.connect()) is not None:
-                return _ok(f"backend: mujoco twin; not connected - {reason}")
             return _ok(f"backend: mujoco twin; connected to {TWIN_ENDPOINT}")
-        if self._sim is None:
-            return _err(self._build_error or "not connected - call status first")
         if action == "list_topics":
             return _ok("\n".join(f"{name} [{kind}]" for name, kind in sorted(TWIN_GRAPH)))
         if action == "echo":
@@ -419,27 +366,21 @@ class M3ProTwinGraph:
         return _ok(f"published {count} message(s) to {CMD_VEL_TOPIC}{note}")
 
     def _clamp_note(self, magnitudes: dict[str, float]) -> str:
-        """Name the base actuators whose ``ctrlrange`` is narrower than what was asked.
+        """Name the base actuators whose control range is narrower than what was asked.
 
         The driver's envelope is the *robot's* (the vendor teleop ceilings); the
-        model's velocity actuators declare their own ``ctrlrange`` and MuJoCo
-        clamps a target past it silently. A twin that drove at half the speed
+        model's velocity actuators declare their own range
+        (:meth:`~strands_robots.simulation.base.SimEngine.actuator_ranges`) and
+        the engine clamps a target past it silently. A twin that drove at half the speed
         the agent asked for and said nothing would teach the agent the wrong
         robot, so the clamp is reported on the reply and logged.
         """
-        model = getattr(self._sim, "mj_model", None)
-        if model is None:
-            return ""
-        clamped: list[str] = []
-        for actuator, magnitude in magnitudes.items():
-            try:
-                index = model.actuator(f"{self.robot_name}/{actuator}").id
-            except (KeyError, ValueError, AttributeError):
-                continue
-            if model.actuator_ctrllimited[index]:
-                ceiling = float(model.actuator_ctrlrange[index][1])
-                if magnitude > ceiling + 1e-9:
-                    clamped.append(f"{actuator} {magnitude:g} -> {ceiling:g}")
+        ranges = self._sim.actuator_ranges(self.robot_name) if self._sim is not None else {}
+        clamped = [
+            f"{actuator} {magnitude:g} -> {ranges[actuator][1]:g}"
+            for actuator, magnitude in magnitudes.items()
+            if actuator in ranges and magnitude > ranges[actuator][1] + 1e-9
+        ]
         if not clamped:
             return ""
         logger.warning("twin: the model's ctrlrange clamped the base command: %s", "; ".join(clamped))

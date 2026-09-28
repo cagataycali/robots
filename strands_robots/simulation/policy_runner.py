@@ -79,7 +79,7 @@ from strands_robots.utils import (
 )
 
 if TYPE_CHECKING:
-    from strands_robots.mesh.pacing import Ticker
+    from strands_robots._pacing import Ticker
     from strands_robots.policies.base import Policy
     from strands_robots.simulation.base import SimEngine
     from strands_robots.simulation.benchmark import BenchmarkProtocol
@@ -2644,15 +2644,8 @@ class PolicyRunner:
                 # real-time pacing, so both claims were false by the cost of a step.
                 # Ticker also DROPS missed deadlines rather than chasing them, so one
                 # slow step does not fire a burst of back-to-back actions at the arm.
-                #
-                # Imported here rather than at module scope: importing any
-                # ``strands_robots.mesh`` submodule executes the mesh package
-                # ``__init__``, which pulls the fleet stack (measured: 14 mesh
-                # modules plus boto3) - a cost a local rollout must not pay for a
-                # pure-timing helper. Same reason as the local imports in the MuJoCo
-                # backend and ``TeleopMixin._teleop_apply_loop``.
                 if not fast_mode:
-                    from strands_robots.mesh.pacing import Ticker as _Ticker
+                    from strands_robots._pacing import Ticker as _Ticker
 
                     ticker = pacing_resources.enter_context(_Ticker(1.0 / control_frequency))
 

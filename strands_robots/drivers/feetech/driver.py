@@ -60,7 +60,7 @@ if TYPE_CHECKING:
     from strands_robots.policies import Policy
 
 from strands_robots.bus_access import bus_lock, read_joints
-from strands_robots.drivers.base import halt_failure_detail, policy_step, undeclared_verb_error
+from strands_robots.drivers.base import halt_failure_detail, policy_step, refuse, undeclared_verb_error
 from strands_robots.drivers.feetech.bus import (
     DEFAULT_TIMEOUT_S,
     SO_ARM_MOTORS,
@@ -82,9 +82,7 @@ logger = logging.getLogger(__name__)
 # registering for a robot we cannot verify is a promise this driver does not
 # yet keep.
 #
-# Mirrors :data:`~strands_robots.drivers.dynamixel.driver.SUPPORTED_ROBOTS`
-# in shape and spirit: canonical names, deliberately excluding any robot the
-# scope note does not name.
+# Canonical names, deliberately excluding any robot the scope note does not name.
 # ---------------------------------------------------------------------------
 # ``hope_jr`` and ``open_duck_mini`` share the SCS bus but NOT the six-servo
 # SO-arm layout, and no joint map for either is established in this package. A
@@ -162,9 +160,9 @@ class FeetechDriver:
       a robot in :data:`SUPPORTED_ROBOTS` with a simulation asset - refused by
       name otherwise (``hope_jr`` has no asset) - unless ``sim=`` hands in an
       engine already carrying the arm, whose robot then names the entry.
-    * ``sim`` - ``twin`` only: a built sim engine (what ``Robot("so101",
-      mode="sim")`` returns). ``None`` builds one on first connect; the driver
-      destroys an engine it built and leaves a caller's alone.
+    * ``sim`` - ``twin`` only, and required there: a built sim engine carrying
+      the arm (what ``Robot("so101", mode="sim")`` returns). ``Robot(...,
+      transport="twin")`` builds it; the driver never destroys it.
     * ``realtime`` - ``twin`` only: step the model at wall-clock speed so a
       viewer sees the motion as the arm would make it. Default ``False``.
     """
@@ -262,6 +260,12 @@ class FeetechDriver:
             raise ValueError(f"{context}: transport must be one of {list(TRANSPORTS)}, got {transport!r}")
         if sim is not None and transport != "twin":
             raise ValueError(f"{context}: sim= is the twin transport's engine; pass transport='twin' with it")
+        if sim is None and transport == "twin":
+            raise ValueError(
+                f"{context}: transport='twin' steps an engine it is handed; use "
+                f"Robot({tool_name!r}, mode='real', driver='strands', transport='twin'), which builds it, "
+                "or pass sim= an engine carrying the arm"
+            )
         if (reason := boolean_flag_error(realtime, "realtime", context)) is not None:
             raise ValueError(reason)
         self._transport: str = transport
@@ -352,9 +356,8 @@ class FeetechDriver:
     ) -> AsyncGenerator[Any, None]:
         """Handle one agent invocation and yield exactly one tool result.
 
-        Follows the shape :class:`DynamixelDriver` uses for its own deferred
-        motion path so a caller writes the same error-checking code either
-        way.
+        Follows the shape :class:`~strands_robots.drivers.g1.G1Driver` uses so
+        a caller writes the same error-checking code either way.
         """
         del kwargs  # forward-compat only
         del invocation_state
@@ -388,7 +391,7 @@ class FeetechDriver:
             # `bool()` below narrows the accepted value for the type checker;
             # it runs only after the check has already ruled the value in.
             if text := boolean_flag_error(enabled, "enabled", "set_torque"):
-                envelope = _refuse(text)
+                envelope = refuse(text)
             else:
                 envelope = self._set_torque_envelope(bool(enabled))
         elif action == "stop":
@@ -426,16 +429,16 @@ class FeetechDriver:
         """
         del robot_name
         if not isinstance(action, dict) or not action:
-            return _refuse("send_action: pass a non-empty mapping of joint targets")
+            return refuse("send_action: pass a non-empty mapping of joint targets")
         targets, doubled = _motor_targets(action)
         if doubled is not None:
-            return _refuse(doubled)
+            return refuse(doubled)
         try:
             with bus_lock(self):
                 self._connect_if_needed()
                 self._bus.write_goal_positions(targets)
         except (ValueError, TypeError, RuntimeError, OSError) as e:
-            return _refuse(f"send_action: {e}")
+            return refuse(f"send_action: {e}")
         body: dict[str, Any] = {"commanded": targets, "unit": "degrees (gripper: percent open)"}
         # The twin reports a target the model's travel clamped (design: "the
         # model's limits are reported"); the serial bus never sets this, so a
@@ -485,7 +488,7 @@ class FeetechDriver:
             lambda: read_joints(self),
         )
         if reason is not None:
-            return _refuse(reason)
+            return refuse(reason)
         return self.run_policy(policy, instruction=instruction, duration=duration)
 
     def run_policy(
@@ -533,20 +536,20 @@ class FeetechDriver:
             raises.
         """
         if err := positive_finite_number_error(duration, "duration", "run_policy"):
-            return _refuse(err)
+            return refuse(err)
         if err := positive_finite_number_error(control_frequency, "control_frequency", "run_policy"):
-            return _refuse(err)
+            return refuse(err)
         if n_steps is not None and (err := positive_count_error(n_steps, "n_steps", "run_policy")):
-            return _refuse(err)
+            return refuse(err)
         if policy_object is None:
-            return _refuse("run_policy: policy_object is required")
+            return refuse("run_policy: policy_object is required")
         if policy_step(policy_object, instruction) is None:
-            return _refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
+            return refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
         # The bus opens here rather than on the worker thread, so a port that
         # cannot be opened is this verb's refusal instead of a rollout that
         # reports "started" and ends at step 0 with the same reason.
         if reason := self.connect_eagerly():
-            return _refuse(f"run_policy: {reason}")
+            return refuse(f"run_policy: {reason}")
 
         rollout = PolicyRollout(
             name=f"feetech-rollout-{self._tool_name}",
@@ -560,7 +563,7 @@ class FeetechDriver:
         )
         with self._task_admission:
             if self._rollout is not None and self._rollout.is_running:
-                return _refuse("run_policy: a task is already running; call stop_task first")
+                return refuse("run_policy: a task is already running; call stop_task first")
             self._rollout = rollout
             rollout.start()
         return {
@@ -709,7 +712,7 @@ class FeetechDriver:
                 self._connect_if_needed()
                 joints = self._bus.sync_read()
         except (ValueError, TypeError, RuntimeError, OSError) as e:
-            return _refuse(f"sensors: {e}")
+            return refuse(f"sensors: {e}")
         return {
             "status": "success",
             "content": [{"json": {"joint_state": joints, "unit": "degrees (gripper: percent open)"}}],
@@ -722,11 +725,11 @@ class FeetechDriver:
                 self._connect_if_needed()
                 failed = self._bus.set_torque(enabled)
         except (ValueError, TypeError, RuntimeError, OSError) as e:
-            return _refuse(f"set_torque: {e}")
+            return refuse(f"set_torque: {e}")
         if failed:
             # A partial release is a safety fact, not a success: say which
             # joints are still driven rather than reporting the arm released.
-            return _refuse(f"set_torque({enabled}): these motors did not answer and may still be driven: {failed}")
+            return refuse(f"set_torque({enabled}): these motors did not answer and may still be driven: {failed}")
         return {"status": "success", "content": [{"json": {"torque_enabled": enabled}}]}
 
     def connect_eagerly(self) -> str | None:
@@ -751,8 +754,8 @@ class FeetechDriver:
     async def get_status(self) -> dict[str, Any]:
         """Report the driver's construction and configuration.
 
-        Shape matches :meth:`DynamixelDriver.get_status` so both peers publish
-        identically; fields absent on a Feetech bus (an FSM, a battery
+        Shape matches :meth:`~strands_robots.drivers.g1.G1Driver.get_status` so
+        both peers publish identically; fields absent on a Feetech bus (an FSM, a battery
         percentage) are simply not in the payload.
         """
         return {
@@ -801,23 +804,19 @@ class FeetechDriver:
 # ---------------------------------------------------------------------------
 # Envelope helpers. Kept private and one-liner-ish rather than reaching for a
 # shared library, because the shape is small and the tests grade against the
-# literal envelope. Duplicated with :mod:`strands_robots.drivers.dynamixel.driver`
-# on purpose: two drivers with two two-line helpers is smaller than one driver
-# and one shared module that binds their evolution together.
+# literal envelope.
 # ---------------------------------------------------------------------------
-def _twin_robot(tool_name: str, sim: Any | None, context: str) -> str:
+def _twin_robot(tool_name: str, sim: Any, context: str) -> str:
     """Name the registry robot the twin models, or refuse.
 
-    The factory builds a driver as ``driver_cls(tool_name=<canonical>, ...)``
-    and forwards nothing else that names the robot, so the honest source is
-    ``tool_name`` resolved through the registry - unless ``sim`` already
-    carries a robot, in which case that robot is the model and its name is the
-    entry. A ``tool_name`` a caller chose (``"left_arm"``) resolves to nothing
-    and is refused with the fix.
+    The robot ``sim`` carries is the model and its name is the entry; an
+    engine carrying none falls back to ``tool_name`` resolved through the
+    registry, and a ``tool_name`` a caller chose (``"left_arm"``) resolves to
+    nothing and is refused with the fix.
 
     Args:
         tool_name: The driver's tool name.
-        sim: The caller's engine, or ``None``.
+        sim: The caller's engine.
         context: The constructor's context for the refusal.
 
     Returns:
@@ -828,11 +827,8 @@ def _twin_robot(tool_name: str, sim: Any | None, context: str) -> str:
     """
     from strands_robots.registry import has_sim, resolve_name  # noqa: PLC0415 - the registry is not a driver import
 
-    candidate = tool_name
-    if sim is not None:
-        names = [str(name) for name in (sim.list_robots() or [])] if hasattr(sim, "list_robots") else []
-        if names:
-            candidate = names[0]
+    names = [str(name) for name in (sim.list_robots() or [])] if hasattr(sim, "list_robots") else []
+    candidate = names[0] if names else tool_name
     canonical = resolve_name(candidate)
     if canonical not in SUPPORTED_ROBOTS:
         raise ValueError(
@@ -846,11 +842,6 @@ def _twin_robot(tool_name: str, sim: Any | None, context: str) -> str:
             "declares none; the SO arms (so100, so101) do"
         )
     return canonical
-
-
-def _refuse(message: str) -> dict[str, Any]:
-    """Return an error envelope with ``message``, matching the "not wired" contract."""
-    return {"status": "error", "content": [{"text": message}]}
 
 
 def _motor_targets(action: dict[str, Any]) -> tuple[dict[str, Any], str | None]:

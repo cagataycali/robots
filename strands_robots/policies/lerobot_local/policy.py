@@ -840,8 +840,8 @@ class LerobotLocalPolicy(Policy):
         self._zero_action_monitor = ZeroActionMonitor()
         self._action_dim_warned = False
 
-        # Same contract as LerobotAsyncPolicy: create_policy forwards one shared
-        # kwargs bag to every provider, so a key this provider does not own is
+        # Same contract as every provider: create_policy forwards one shared
+        # kwargs bag to all of them, so a key this provider does not own is
         # tolerated - but named. Dropped silently, a misspelt option (``rtc=``
         # for ``rtc_enabled=``) built a policy with the feature off and no line
         # anywhere saying the request was never read.

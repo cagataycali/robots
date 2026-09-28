@@ -317,6 +317,28 @@ def _reject_hardware_kwargs_in_sim(kwargs: Mapping[str, Any], canonical: str, re
     )
 
 
+def _build_twin_engine(canonical: str, keyframe: str | None) -> Simulation:
+    """Build the MuJoCo engine a ``transport="twin"`` driver steps, carrying ``canonical``.
+
+    Raises:
+        ValueError: The registry entry declares no simulation asset.
+        OSError: The world or the robot could not be built; the engine is destroyed.
+    """
+    if not has_sim(canonical):
+        raise ValueError(
+            f"transport='twin' steps {canonical!r}'s simulation model, and its registry entry declares none"
+        )
+    from strands_robots.simulation import create_simulation  # MuJoCo is optional; imported on use
+
+    sim = cast("Simulation", create_simulation("mujoco", tool_name=f"{canonical}_twin"))
+    for step in (sim.create_world(), sim.add_robot(name=canonical, keyframe=keyframe)):
+        if step.get("status") == "error":
+            sim.destroy()
+            detail = (step.get("content") or [{}])[0].get("text", str(step))
+            raise OSError(f"could not build the {canonical} twin: {detail}")
+    return sim
+
+
 def _build_native_driver(
     canonical: str,
     cameras: dict[str, dict[str, Any]] | None,
@@ -352,11 +374,16 @@ def _build_native_driver(
     driver_cls = get_native_driver_class(canonical)
     if driver_cls is None:
         available = ", ".join(list_native_drivers()) or "none"
+        # driver='lerobot' is only a way out for a robot lerobot can build.
+        lerobot_path = (
+            "Either use driver='lerobot' (today's default, which builds it through lerobot) or "
+            if get_hardware_type(canonical) is not None
+            else "lerobot has no robot type for it either, so no shipped driver can move it; "
+        )
         raise ValueError(
             f"No native driver is registered for {canonical!r}, so driver='strands' cannot "
-            f"build it. Robots with a native driver: {available}. Either use driver='lerobot' "
-            "(today's default, which builds it through lerobot) or register one with "
-            "strands_robots.drivers.register_native_driver()."
+            f"build it. Robots with a native driver: {available}. {lerobot_path}"
+            "register one with strands_robots.drivers.register_native_driver()."
         )
 
     # A camera dict the driver will not open is refused rather than forwarded
@@ -400,14 +427,28 @@ def _build_native_driver(
             f"{driver_cls.__name__} accepts: {list(accepted)}. (If this is a typo, fix it.)"
         )
 
+    # The twin transport steps an engine that is built here, one layer above the
+    # driver, so no driver imports the simulation package.
+    # An engine built here is destroyed if the constructor then refuses, since
+    # the caller never receives a handle to it.
+    engine: Simulation | None = None
+    if kwargs.get("transport") == "twin" and kwargs.get("sim") is None and "sim" in accepted:
+        engine = _build_twin_engine(canonical, getattr(driver_cls, "twin_keyframe", None))
+        kwargs = {**kwargs, "sim": engine}
+
     # The constructor contract documented on strands_robots.drivers.base: the
     # three keywords every driver takes, and the keywords it declares itself.
     # ``robot=`` is deliberately NOT forwarded - it carries the lerobot type
     # name, which means nothing to a driver that does not go through lerobot.
-    return cast(
-        "HardwareDriver",
-        driver_cls(tool_name=tool_name or canonical, cameras=cameras, data_config=data_config, **kwargs),
-    )
+    try:
+        return cast(
+            "HardwareDriver",
+            driver_cls(tool_name=tool_name or canonical, cameras=cameras, data_config=data_config, **kwargs),
+        )
+    except BaseException:
+        if engine is not None:
+            engine.destroy()
+        raise
 
 
 @overload

@@ -40,7 +40,6 @@ _REGISTRY = Path(policies_pkg.__file__).parents[1] / "registry" / "policies.json
 _PROVIDER_POLICIES = {
     "groot/policy.py": "Gr00tPolicy",
     "lerobot_local/policy.py": "LerobotLocalPolicy",
-    "lerobot_async/policy.py": "LerobotAsyncPolicy",
     "cosmos3/policy.py": "Cosmos3Policy",
     "moveit2/policy.py": "MoveIt2Policy",
     "curobo/policy.py": "CuroboPolicy",

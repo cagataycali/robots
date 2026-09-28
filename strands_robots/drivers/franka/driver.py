@@ -74,7 +74,7 @@ import threading
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import undeclared_verb_error
+from strands_robots.drivers.base import refuse, undeclared_verb_error
 from strands_robots.registry import resolve_name
 from strands_robots.utils import finite_number_error, positive_finite_number_error
 
@@ -361,18 +361,6 @@ def _resolve_panda_py() -> Any:
         )
 
 
-def _refuse(reason: str) -> dict[str, Any]:
-    """Return the driver's error envelope with ``reason`` inside.
-
-    Args:
-        reason: Text naming what refused.
-
-    Returns:
-        The error envelope, in the one shape every refusal path here renders.
-    """
-    return {"status": "error", "content": [{"text": reason}]}
-
-
 class FrankaDriver:
     """Native FCI driver for the arms in :data:`SUPPORTED_ROBOTS`.
 
@@ -533,7 +521,7 @@ class FrankaDriver:
         if action == "sensors":
             snapshot = self.read_state()
             if isinstance(snapshot, str):
-                envelope = _refuse(f"sensors: {snapshot}")
+                envelope = refuse(f"sensors: {snapshot}")
             else:
                 envelope = {
                     "status": "success",
@@ -664,22 +652,22 @@ class FrankaDriver:
             naming which gate refused and why.
         """
         if robot_name is not None and robot_name != self._tool_name:
-            return _refuse(f"send_action: this driver fronts {self._tool_name!r} only, not {robot_name!r}")
+            return refuse(f"send_action: this driver fronts {self._tool_name!r} only, not {robot_name!r}")
         if not self.is_connected:
-            return _refuse(f"send_action: not connected to {self._hostname or 'any FCI host'}")
+            return refuse(f"send_action: not connected to {self._hostname or 'any FCI host'}")
         targets = action_to_targets(action, self._joint_names)
         if isinstance(targets, str):
-            return _refuse(f"send_action: {targets}")
+            return refuse(f"send_action: {targets}")
         joint_target, gripper_width = targets
         if gripper_width is not None and self._gripper is None:
-            return _refuse(
+            return refuse(
                 f"send_action: {GRIPPER_KEY} was commanded but no Franka Hand answered at "
                 f"{self._hostname!r} - connect_eagerly() reports which devices are live"
             )
 
         panda, gripper = self._live_handles()
         if panda is None:
-            return _refuse(f"send_action: not connected to {self._hostname or 'any FCI host'}")
+            return refuse(f"send_action: not connected to {self._hostname or 'any FCI host'}")
 
         commanded: dict[str, Any] = {}
         try:
@@ -700,7 +688,7 @@ class FrankaDriver:
                         # away from the goal. Compared against False rather than
                         # falsiness so a binding that returns nothing is not read
                         # as a failure it did not report.
-                        return _refuse(
+                        return refuse(
                             f"send_action: the arm moved but did not reach the commanded configuration "
                             f"{named} - libfranka's motion generator reports the goal was not met, so "
                             "the arm is somewhere between where it was and where it was asked to be"
@@ -711,7 +699,7 @@ class FrankaDriver:
                     # arm's: it reports False for a width it did not reach, which
                     # is what a grasp that closed on an object looks like.
                     if gripper.move(gripper_width, self._gripper_speed()) is False:
-                        return _refuse(
+                        return refuse(
                             f"send_action: the Hand did not reach {gripper_width} m - it reports the "
                             "commanded width was not met, which is what it reports when the fingers "
                             "closed on an object instead"
@@ -721,7 +709,7 @@ class FrankaDriver:
             # libfranka's own refusal - an out-of-limit target, a reflex stop, a
             # dropped link. Reported verbatim: it names the limit that was hit,
             # which is more than any envelope in this module could establish.
-            return _refuse(f"send_action: FCI refused the command: {exc}")
+            return refuse(f"send_action: FCI refused the command: {exc}")
         return {"status": "success", "content": [{"json": {"commanded": commanded, "robot": self._tool_name}}]}
 
     def _live_handles(self) -> tuple[Any, Any]:
@@ -802,7 +790,7 @@ class FrankaDriver:
     ) -> dict[str, Any]:
         """Refuse: no provider emits Franka-shaped actions yet."""
         del instruction, policy_port, policy_host, policy_provider, duration, policy_kwargs
-        return _refuse(f"start_task: {_NO_POLICY_PROVIDER}")
+        return refuse(f"start_task: {_NO_POLICY_PROVIDER}")
 
     def run_policy(
         self,
@@ -813,7 +801,7 @@ class FrankaDriver:
     ) -> dict[str, Any]:
         """Refuse: no provider emits Franka-shaped actions yet."""
         del policy_object, instruction, duration, n_steps
-        return _refuse(f"run_policy: {_NO_POLICY_PROVIDER}")
+        return refuse(f"run_policy: {_NO_POLICY_PROVIDER}")
 
     def get_task_status(self) -> dict[str, Any]:
         """Report that no policy task is in flight, and why none can be."""
@@ -842,13 +830,13 @@ class FrankaDriver:
             a stopped arm.
         """
         if not self.is_connected:
-            return _refuse(f"stop_task: not connected to {self._hostname or 'any FCI host'}")
+            return refuse(f"stop_task: not connected to {self._hostname or 'any FCI host'}")
         panda, gripper = self._live_handles()
         if panda is None:
-            return _refuse(f"stop_task: not connected to {self._hostname or 'any FCI host'}")
+            return refuse(f"stop_task: not connected to {self._hostname or 'any FCI host'}")
         reason = self._halt(panda, gripper)
         if reason is not None:
-            return _refuse(f"stop_task: {reason}")
+            return refuse(f"stop_task: {reason}")
         return {"status": "success", "content": [{"text": f"stop_task: {self._tool_name} motion stopped"}]}
 
     # ------------------------------------------------------------------ #

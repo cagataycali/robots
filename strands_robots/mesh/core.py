@@ -23,15 +23,16 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from strands_robots._mesh_switch import mesh_env_request
+from strands_robots._pacing import Ticker
 from strands_robots.audit import log_safety_event
 from strands_robots.bus_access import joint_read_source, read_joints, read_observation
 from strands_robots.mesh import security as _security
-from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.sensors import SensorLoopsMixin
 from strands_robots.mesh.session import (
     CAMERA_HZ,
     HEARTBEAT_HZ,
     STATE_HZ,
+    _is_transport_backend,
     current_session,
     get_session,
     hz_from_env,
@@ -243,7 +244,7 @@ MAX_DEGRADED_DETAIL_LEN: int = 256
 
 #: Total budget for joining the sensor loops :meth:`Mesh.start` launched, spent
 #: across all of them rather than per loop: the loops wind down in parallel and
-#: notice the stop within 10ms (:class:`~strands_robots.mesh.pacing.Ticker`), so
+#: notice the stop within 10ms (:class:`~strands_robots._pacing.Ticker`), so
 #: a per-loop budget would let one wedged driver read cost nine times this. Named
 #: so the docstring, the WARNING and the tests read one value. Matches
 #: :data:`strands_robots.mesh.input._INPUT_JOIN_TIMEOUT_S` and
@@ -1257,7 +1258,7 @@ class Mesh(SensorLoopsMixin):
     def _heartbeat_loop(self) -> None:
         """Announce this peer and prune stale ones at ``HEARTBEAT_HZ``.
 
-        Paced by :class:`~strands_robots.mesh.pacing.Ticker`, and the stakes here
+        Paced by :class:`~strands_robots._pacing.Ticker`, and the stakes here
         are the smallest of the converted loops -- worth saying rather than
         borrowing the camera loop's severity. ``HEARTBEAT_HZ`` is 2.0 and the tick
         body is cheap, so the period the old ``Event.wait`` added the work to was
@@ -1344,7 +1345,7 @@ class Mesh(SensorLoopsMixin):
     def _state_loop(self) -> None:
         """Publish this peer's state at ``STATE_HZ``.
 
-        Paced by :class:`~strands_robots.mesh.pacing.Ticker` rather than by
+        Paced by :class:`~strands_robots._pacing.Ticker` rather than by
         ``self._stop_event.wait(period)``, which is a delay where a rate needs a
         deadline: the time :meth:`_read_state` spends on the serial bus was added
         to the period instead of being subtracted from it, so the loop published
@@ -3814,11 +3815,13 @@ class Mesh(SensorLoopsMixin):
            also holds the override code (see
            :meth:`_resume_lockout`).
 
-        Returns ``None`` for non-Zenoh transports (bridge / IoT) and
-        when no session is currently open. In that case the safety
-        path falls back to the body-level HMAC binding alone -- the
-        cross-session-forgery defence is Zenoh-specific because only
-        Zenoh exposes a TLS-bound publisher identity.
+        Returns ``None`` under ``STRANDS_MESH_BACKEND=iot`` / ``bridge`` and
+        when no session is currently open. In that case the safety path
+        publishes through the transport's ``put()`` with the body-level HMAC
+        binding alone. The bridge's Zenoh leg does open a session with a zid,
+        but a raw publish on it reaches the LAN only: the MQTT/IoT leg is fed
+        by :meth:`BridgeTransport.put`, so a zid here would keep every e-stop
+        and resume off the cloud side.
 
         Also returns ``None`` if the session module import fails. That arm is
         defence in depth rather than a reachable configuration: this module
@@ -3827,6 +3830,8 @@ class Mesh(SensorLoopsMixin):
         cannot raise. It is kept so a future refactor that drops the
         module-scope import degrades here instead of raising on the safety path.
         """
+        if _is_transport_backend():
+            return None
         try:
             from strands_robots.mesh.session import _current_zenoh_session_directly
 

@@ -24,7 +24,7 @@ The consequences, all measured on ``MockPolicy``:
   characters are the keys a robot would have been commanded on.
 * A repeated name was bound at width 3 and emitted at width 2, because the
   names key the emitted action dict and the duplicate collapses there. The same
-  collapse narrows ``lerobot_async``'s ``{key: float for key in
+  collapse narrows ``lerobot_local``'s ``{key: float for key in
   self.robot_state_keys}`` hardware-feature map, which then declares fewer
   columns than ``align_action_values`` is handed.
 * A ``Mapping`` was accepted with its values silently discarded, a one-shot
@@ -100,7 +100,7 @@ the shared domain. It cannot prove that any of them RAISES: a body keeping the
 Only ``MockPolicy`` and ``RemotePolicy`` were driven behaviourally, so on the
 others the refusal was asserted structurally and had never fired - measured
 with coverage over the suite, the ``raise ValueError(error)`` line was unexecuted
-in ``cosmos3``, ``curobo``, ``groot``, ``lerobot_async``, ``lerobot_local``
+in ``cosmos3``, ``curobo``, ``groot``, ``lerobot_local``
 and ``moveit2``. Each is now constructed and driven directly, and the
 table that does so is derived from ``_MUST_VALIDATE`` so a provider added later
 cannot quietly join the structurally-only half.
@@ -134,7 +134,6 @@ _MUST_VALIDATE = {
     "policies/cosmos3/policy.py::Cosmos3Policy",
     "policies/curobo/policy.py::CuroboPolicy",
     "policies/groot/policy.py::Gr00tPolicy",
-    "policies/lerobot_async/policy.py::LerobotAsyncPolicy",
     "policies/lerobot_local/policy.py::LerobotLocalPolicy",
     "policies/mock.py::MockPolicy",
     "policies/microduck/policy.py::MicroduckPolicy",
@@ -811,13 +810,6 @@ def _groot() -> Any:
     return Gr00tPolicy()
 
 
-def _lerobot_async() -> Any:
-    """Both required kwargs supplied; the inference client connects lazily."""
-    from strands_robots.policies.lerobot_async.policy import LerobotAsyncPolicy
-
-    return LerobotAsyncPolicy(policy_type="act", pretrained_name_or_path="unused/checkpoint")
-
-
 def _lerobot_local() -> Any:
     """An empty checkpoint path leaves the model unloaded."""
     from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
@@ -848,7 +840,6 @@ _OWNING_SURFACES: list[_Surface] = [
     ("policies/cosmos3/policy.py::Cosmos3Policy", _cosmos3, "robot_state_keys", None),
     ("policies/curobo/policy.py::CuroboPolicy", _curobo, "_robot_state_keys", None),
     ("policies/groot/policy.py::Gr00tPolicy", _groot, None, "zmq"),
-    ("policies/lerobot_async/policy.py::LerobotAsyncPolicy", _lerobot_async, "robot_state_keys", None),
     ("policies/lerobot_local/policy.py::LerobotLocalPolicy", _lerobot_local, "robot_state_keys", "torch"),
     ("policies/microduck/policy.py::MicroduckPolicy", _microduck, "_robot_state_keys", None),
     ("policies/moveit2/policy.py::MoveIt2Policy", _moveit2, "_robot_state_keys", "zmq"),

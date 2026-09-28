@@ -60,7 +60,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots._path_validation import resolve_output_path, validate_save_path
-from strands_robots.drivers.base import undeclared_verb_error
+from strands_robots.drivers.base import refuse, undeclared_verb_error
 from strands_robots.utils import (
     boolean_flag_error,
     finite_number_error,
@@ -435,11 +435,6 @@ def parse_robot_state(params: dict[str, Any]) -> dict[str, Any]:
         if key in params:
             state[key] = params[key]
     return state
-
-
-def _refuse(reason: str) -> dict[str, Any]:
-    """The driver's error envelope, one shape for every refusal path."""
-    return {"status": "error", "content": [{"text": reason}]}
 
 
 # --------------------------------------------------------------------------- #
@@ -1265,7 +1260,7 @@ class MicroduckDriver:
             envelope = self.stop_task()
         elif isinstance(action, str) and action in _ACTIONS:
             if self._needs_connect(action) and (reason := self.connect_eagerly()) is not None:
-                envelope = _refuse(f"{action}: {reason}")
+                envelope = refuse(f"{action}: {reason}")
             else:
                 envelope = await asyncio.to_thread(_ACTIONS[action], self, params)
         else:
@@ -1463,21 +1458,21 @@ class MicroduckDriver:
         0..1), ``skill`` (one of :data:`SKILLS`).
         """
         if robot_name is not None and robot_name != self._tool_name:
-            return _refuse(f"send_action: this driver fronts {self._tool_name!r} only, not {robot_name!r}")
+            return refuse(f"send_action: this driver fronts {self._tool_name!r} only, not {robot_name!r}")
         if not self.is_connected or self._client is None:
-            return _refuse("not connected - call connect_eagerly() first")
+            return refuse("not connected - call connect_eagerly() first")
 
         for name, value in action.items():
             if name in ("skill", "active"):
                 continue
             if (reason := finite_number_error(value, name, "send_action")) is not None:
-                return _refuse(reason)
+                return refuse(reason)
 
         commands = action_to_wire(action, self.known_skills)
         if isinstance(commands, str):
-            return _refuse(f"send_action: {commands}")
+            return refuse(f"send_action: {commands}")
         if not commands:
-            return _refuse(
+            return refuse(
                 f"send_action: nothing to send - none of {sorted(action)} names a Microduck intent; "
                 f"expected any of {sorted(_ACTION_KEYS)}"
             )
@@ -1492,7 +1487,7 @@ class MicroduckDriver:
                     result = self._client.call(method, params)
                     sent.append({"method": method, "params": params, "result": result})
             except OSError as exc:
-                return _refuse(f"send_action: {method} failed: {exc}")
+                return refuse(f"send_action: {method} failed: {exc}")
         self._stopped = False
         return {"status": "success", "content": [{"json": {"sent": sent, "robot": self._tool_name}}]}
 
@@ -1511,7 +1506,7 @@ class MicroduckDriver:
     ) -> dict[str, Any]:
         """Refuse: robotd runs the policy on-device, there is no joint-stream path."""
         del instruction, policy_port, policy_host, policy_provider, duration, policy_kwargs
-        return _refuse(
+        return refuse(
             "start_task: robotd runs the walking/skill policy on-device and exposes no per-joint write; "
             "send an intent through send_action (twist vx/vy/vyaw, or skill=...) instead"
         )
@@ -1530,7 +1525,7 @@ class MicroduckDriver:
         robotd, so there is nothing for a host rollout to stream.
         """
         del policy_object, instruction, duration, n_steps
-        return _refuse(
+        return refuse(
             "run_policy: on hardware the policy runs inside robotd (the same ONNX proven in sim); "
             "robotd exposes no per-joint write to stream targets to. Use send_action intents, or "
             'mode="sim" for a host-driven MicroduckPolicy rollout'
@@ -1549,11 +1544,11 @@ class MicroduckDriver:
         """Stop the robot, the closest thing to halting an on-device policy."""
         self._cancel_move()
         if self._client is None or not self._client.alive:
-            return _refuse("stop_task: not connected")
+            return refuse("stop_task: not connected")
         try:
             self._client.call(_M_STOP, {})
         except OSError as exc:
-            return _refuse(f"stop_task: robotd refused the stop: {exc}")
+            return refuse(f"stop_task: robotd refused the stop: {exc}")
         self._stopped = True
         return {"status": "success", "content": [{"text": "asked robotd to stop the robot (robot.stop)"}]}
 
@@ -1565,7 +1560,7 @@ class MicroduckDriver:
         """Enable or disable the policy/torque via ``robot.enable``."""
         if (reason := boolean_flag_error(on, "on", "enable_torque")) is not None:
             # on=false energising the servos is the failure mode this refuses.
-            return _refuse(reason)
+            return refuse(reason)
         return self._discrete(_M_ENABLE, {"on": on, "toggle": False}, "enable_torque")
 
     def relax(self) -> dict[str, Any]:
@@ -1598,11 +1593,11 @@ class MicroduckDriver:
 
     def _discrete(self, method: str, params: dict[str, Any], label: str) -> dict[str, Any]:
         if self._client is None or not self._client.alive:
-            return _refuse(f"{label}: not connected")
+            return refuse(f"{label}: not connected")
         try:
             result = self._client.call(method, params)
         except OSError as exc:
-            return _refuse(f"{label}: {method} failed: {exc}")
+            return refuse(f"{label}: {method} failed: {exc}")
         return {"status": "success", "content": [{"json": {"method": method, "result": result}}]}
 
     # ------------------------------------------------------------------ #
@@ -1619,7 +1614,7 @@ class MicroduckDriver:
         with self._cache_lock:
             state = self._last_state
         if state is None:
-            return _refuse("read_state: no robot.state received yet (not connected, or no frames)")
+            return refuse("read_state: no robot.state received yet (not connected, or no frames)")
         return {"status": "success", "content": [{"json": state}]}
 
     # ------------------------------------------------------------------ #
@@ -1694,7 +1689,7 @@ def _intent(driver: MicroduckDriver, method: str, params: dict[str, Any], label:
         return envelope
     result = envelope["content"][0]["json"].get("result")
     if isinstance(result, dict) and not _accepted(result):
-        return _refuse(f"{label}: robotd declined ({method}): {result.get('reason') or 'no reason given'}")
+        return refuse(f"{label}: robotd declined ({method}): {result.get('reason') or 'no reason given'}")
     driver._stopped = False
     return _ok(
         {"method": method, "params": params, "result": result, "note": "accepted by robotd; not proof of motion"}
@@ -1729,25 +1724,25 @@ def _act_move(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]
     for name in ("vx", "vy", "vyaw"):
         value = _number(params, name, "move", default=0.0)
         if isinstance(value, str):
-            return _refuse(value)
+            return refuse(value)
         values[name] = value
     if not any(values.values()):
-        return _refuse("move: vx, vy and vyaw are all zero - to halt, use `stop`")
+        return refuse("move: vx, vy and vyaw are all zero - to halt, use `stop`")
     duration = _number(params, "duration", "move", default=MOVE_DURATION_DEFAULT)
     if isinstance(duration, str):
-        return _refuse(duration)
+        return refuse(duration)
     if not MOVE_DURATION_MIN <= duration <= MOVE_DURATION_MAX:
-        return _refuse(f"move: duration={duration!r}s is outside [{MOVE_DURATION_MIN}, {MOVE_DURATION_MAX}]")
+        return refuse(f"move: duration={duration!r}s is outside [{MOVE_DURATION_MIN}, {MOVE_DURATION_MAX}]")
     mode = (driver._policies or {}).get("mode")
     if (reason := twist_error(values["vx"], values["vy"], values["vyaw"], mode)) is not None:
-        return _refuse(reason)
+        return refuse(reason)
     if driver._client is None or not driver._client.alive:
-        return _refuse("move: not connected")
+        return refuse("move: not connected")
     with driver._cache_lock:
         state = dict(driver._last_state or {})
     if state.get("policy") not in (None, "walk", "roller") and state.get("policy") != mode:
         # A skill is playing (kick, roulade...): robotd's blend ignores the twist.
-        return _refuse(f"move: the robot is running {state.get('policy')!r}; a twist is ignored until it finishes")
+        return refuse(f"move: the robot is running {state.get('policy')!r}; a twist is ignored until it finishes")
     driver._cancel_move()
     stream = _MoveStream(driver._client, values, duration)
     stream.start()
@@ -1773,16 +1768,16 @@ def _act_head(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]
         if name in params:
             value = _number(params, name, "head")
             if isinstance(value, str):
-                return _refuse(value)
+                return refuse(value)
             wire[name] = value
     if not wire:
-        return _refuse("head: give at least one of neck_pitch, head_pitch, head_yaw, head_roll (radians)")
+        return refuse("head: give at least one of neck_pitch, head_pitch, head_yaw, head_roll (radians)")
     if driver._client is None or not driver._client.alive:
-        return _refuse("head: not connected")
+        return refuse("head: not connected")
     try:
         driver._client.notify(_M_HEAD, wire)
     except OSError as exc:
-        return _refuse(f"head: {_M_HEAD} failed: {refusal_str(exc)}")
+        return refuse(f"head: {_M_HEAD} failed: {refusal_str(exc)}")
     return _ok(
         {
             "method": _M_HEAD,
@@ -1795,14 +1790,14 @@ def _act_head(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]
 def _act_pose(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
     active = params.get("active", True)
     if (reason := boolean_flag_error(active, "active", "pose")) is not None:
-        return _refuse(reason)
+        return refuse(reason)
     wire: dict[str, Any] = {"active": active}
     z = _number(params, "z", "pose", default=0.0)
     roll = _number(params, "roll", "pose", default=0.0)
     pitch = _number(params, "pitch", "pose", default=0.0)
     for value in (z, roll, pitch):
         if isinstance(value, str):
-            return _refuse(value)
+            return refuse(value)
     assert not isinstance(z, str) and not isinstance(roll, str) and not isinstance(pitch, str)
     for reason in (
         _within(z, POSE_Z_MIN, POSE_Z_MAX, "z", "m", "pose"),
@@ -1810,14 +1805,14 @@ def _act_pose(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]
         _within(pitch, -POSE_TILT_MAX, POSE_TILT_MAX, "pitch", "rad", "pose"),
     ):
         if reason is not None:
-            return _refuse(reason)
+            return refuse(reason)
     wire.update({"z": z, "roll": roll, "pitch": pitch})
     if driver._client is None or not driver._client.alive:
-        return _refuse("pose: not connected")
+        return refuse("pose: not connected")
     try:
         driver._client.notify(_M_POSE, wire)
     except OSError as exc:
-        return _refuse(f"pose: {_M_POSE} failed: {refusal_str(exc)}")
+        return refuse(f"pose: {_M_POSE} failed: {refusal_str(exc)}")
     return _ok(
         {
             "method": _M_POSE,
@@ -1830,28 +1825,28 @@ def _act_pose(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]
 def _act_mouth(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
     value = _number(params, "open", "mouth")
     if isinstance(value, str):
-        return _refuse(value)
+        return refuse(value)
     if not 0.0 <= value <= 1.0:
-        return _refuse(f"mouth: open={value!r} must be within 0..1")
+        return refuse(f"mouth: open={value!r} must be within 0..1")
     if driver._client is None or not driver._client.alive:
-        return _refuse("mouth: not connected")
+        return refuse("mouth: not connected")
     try:
         driver._client.notify(_M_MOUTH, {"open": value})
     except OSError as exc:
-        return _refuse(f"mouth: {_M_MOUTH} failed: {refusal_str(exc)}")
+        return refuse(f"mouth: {_M_MOUTH} failed: {refusal_str(exc)}")
     return _ok({"method": _M_MOUTH, "params": {"open": value}})
 
 
 def _act_do(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
     raw = params.get("skill")
     if not isinstance(raw, str) or not raw.strip():
-        return _refuse(f"do: skill (one of {list(driver.known_skills)}) is required")
+        return refuse(f"do: skill (one of {list(driver.known_skills)}) is required")
     skill = raw.strip().lower()
     if skill not in driver.known_skills:
         # The robot's list may have changed since connect; ask once before refusing.
         _refresh_policies(driver)
         if skill not in driver.known_skills:
-            return _refuse(f"do: unknown skill {raw!r}; this robot lists {list(driver.known_skills)}")
+            return refuse(f"do: unknown skill {raw!r}; this robot lists {list(driver.known_skills)}")
     driver._cancel_move()
     return _intent(driver, _M_DO, {"skill": skill}, "do")
 
@@ -1873,7 +1868,7 @@ def _act_skills(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, An
     del params
     result = _refresh_policies(driver)
     if isinstance(result, str):
-        return _refuse(f"skills: {result}")
+        return refuse(f"skills: {result}")
     return _ok(
         {
             "skills": list(driver.known_skills),
@@ -1888,14 +1883,14 @@ def _act_policies(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, 
     del params
     result = _refresh_policies(driver)
     if isinstance(result, str):
-        return _refuse(f"policies: {result}")
+        return refuse(f"policies: {result}")
     return _ok(result)
 
 
 def _sit_or_stand(driver: MicroduckDriver, want_sitting: bool, label: str) -> dict[str, Any]:
     result = _refresh_policies(driver)
     if isinstance(result, str):
-        return _refuse(f"{label}: {result}")
+        return refuse(f"{label}: {result}")
     sitting = result.get("sitting")
     if sitting is want_sitting:
         return _ok(
@@ -1907,7 +1902,7 @@ def _sit_or_stand(driver: MicroduckDriver, want_sitting: bool, label: str) -> di
             }
         )
     if "sit_toggle" not in driver.known_skills:
-        return _refuse(f"{label}: this robot lists no sit_toggle skill ({list(driver.known_skills)})")
+        return refuse(f"{label}: this robot lists no sit_toggle skill ({list(driver.known_skills)})")
     driver._cancel_move()
     envelope = _intent(driver, _M_DO, {"skill": "sit_toggle"}, label)
     if envelope["status"] == "success":
@@ -1940,15 +1935,15 @@ def _act_look_at(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, A
     for name in ("x", "y", "z"):
         value = _number(params, name, "look_at")
         if isinstance(value, str):
-            return _refuse(value)
+            return refuse(value)
         wire[name] = value
     if wire["x"] == 0.0 and wire["y"] == 0.0:
-        return _refuse("look_at: a target straight above or below the head (x=y=0) has no yaw; give an x or y")
+        return refuse("look_at: a target straight above or below the head (x=y=0) has no yaw; give an x or y")
     # ``LookParams.neck_pitch`` is a plain f64, not optional: the IK holds the
     # neck at this posture and aims the head around it (robotctl's default 0).
     neck = _number(params, "neck_pitch", "look_at", default=0.0)
     if isinstance(neck, str):
-        return _refuse(neck)
+        return refuse(neck)
     wire["neck_pitch"] = neck
     envelope = driver._discrete(_M_LOOK, wire, "look_at")
     if envelope["status"] != "success":
@@ -1972,7 +1967,7 @@ def _act_look_at(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, A
 def _act_enable(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
     on = params.get("on", True)
     if (reason := boolean_flag_error(on, "on", "enable")) is not None:
-        return _refuse(reason)
+        return refuse(reason)
     if not on:
         driver._cancel_move()
     return _intent(driver, _M_ENABLE, {"on": on, "toggle": False}, "enable")
@@ -1995,7 +1990,7 @@ def _confirmed(params: dict[str, Any], label: str, consequence: str) -> str | No
 
 def _act_relax(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
     if (reason := _confirmed(params, "relax", "cuts joint power; an unheld duck collapses")) is not None:
-        return _refuse(reason)
+        return refuse(reason)
     driver._cancel_move()
     return _intent(driver, _M_RELAX, {}, "relax")
 
@@ -2004,17 +1999,17 @@ def _act_init(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]
     if (
         reason := _confirmed(params, "init", "re-homes every servo to the init pose (limbs move, no obstacle check)")
     ) is not None:
-        return _refuse(reason)
+        return refuse(reason)
     driver._cancel_move()
     return _intent(driver, _M_INIT, {}, "init")
 
 
 def _act_reboot_motors(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
     if (reason := _confirmed(params, "reboot_motors", "power-cycles servos; the robot goes limp")) is not None:
-        return _refuse(reason)
+        return refuse(reason)
     ids = params.get("ids", [])
     if not isinstance(ids, list) or any(isinstance(i, bool) or not isinstance(i, int) or i < 0 for i in ids):
-        return _refuse(
+        return refuse(
             f"reboot_motors: ids must be a list of servo ids (non-negative integers), got {refusal_repr(ids)}"
         )
     driver._cancel_move()
@@ -2035,10 +2030,10 @@ def _act_sounds(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, An
 def _act_play_sound(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
     tag = params.get("tag")
     if not isinstance(tag, str) or tag.strip().lower() not in SOUND_TAGS:
-        return _refuse(f"play_sound: tag must be one of {list(PLAYABLE_SOUND_TAGS)}, got {refusal_repr(tag)}")
+        return refuse(f"play_sound: tag must be one of {list(PLAYABLE_SOUND_TAGS)}, got {refusal_repr(tag)}")
     tag = tag.strip().lower()
     if tag == "wheee":
-        return _refuse(
+        return refuse(
             "play_sound: 'wheee' is a held ride driven per tick by the pad trigger; this driver cannot keep that hold honestly"
         )
     return _intent(driver, _M_SOUND, {"tag": tag}, "play_sound")
@@ -2047,7 +2042,7 @@ def _act_play_sound(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str
 def _act_theremin(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
     active = params.get("active", True)
     if (reason := boolean_flag_error(active, "active", "theremin")) is not None:
-        return _refuse(reason)
+        return refuse(reason)
     return _intent(driver, _M_THEREMIN, {"active": active}, "theremin")
 
 
@@ -2065,7 +2060,7 @@ def _act_mode(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]
 def _act_set_mode(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
     mode = params.get("mode")
     if not isinstance(mode, str) or mode.strip().lower() not in DRIVE_MODES:
-        return _refuse(f"set_mode: mode must be one of {list(DRIVE_MODES)}, got {refusal_repr(mode)}")
+        return refuse(f"set_mode: mode must be one of {list(DRIVE_MODES)}, got {refusal_repr(mode)}")
     driver._cancel_move()
     envelope = _intent(driver, _M_SET_MODE, {"mode": mode.strip().lower()}, "set_mode")
     if envelope["status"] == "success":
@@ -2077,9 +2072,9 @@ def _act_set_mode(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, 
 def _act_load_policy(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
     slot, path = params.get("slot"), params.get("path")
     if not isinstance(slot, str) or not slot.strip():
-        return _refuse(f"load_policy: slot is required (known: {list(POLICY_SLOTS)})")
+        return refuse(f"load_policy: slot is required (known: {list(POLICY_SLOTS)})")
     if not isinstance(path, str) or not path.strip():
-        return _refuse("load_policy: path (an ONNX file ON THE ROBOT) is required")
+        return refuse("load_policy: path (an ONNX file ON THE ROBOT) is required")
     driver._cancel_move()
     return _intent(driver, _M_LOAD_POLICY, {"slot": slot.strip(), "path": path.strip()}, "load_policy")
 
@@ -2100,7 +2095,7 @@ def _act_health(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, An
         return envelope
     health = envelope["content"][0]["json"].get("result")
     if not isinstance(health, dict):
-        return _refuse(f"health: robot.health answered {refusal_repr(health)}")
+        return refuse(f"health: robot.health answered {refusal_repr(health)}")
     driver._absorb_health(health)
     imu = health.get("imu") or {}
     run = imu.get("consecutive_stale_blocks")
@@ -2133,7 +2128,7 @@ def _act_odometry(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, 
     with driver._cache_lock:
         state = dict(driver._last_state or {})
     if not state:
-        return _refuse("odometry: no robot.state received yet")
+        return refuse("odometry: no robot.state received yet")
     odom = state.get("odom") or {}
     return _ok(
         {
@@ -2199,34 +2194,32 @@ def _act_camera(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, An
     """
     save_path = params.get("save_path")
     if save_path is not None and (not isinstance(save_path, str) or not save_path.strip()):
-        return _refuse(f"camera: save_path must be a file name, got {refusal_repr(save_path)}")
+        return refuse(f"camera: save_path must be a file name, got {refusal_repr(save_path)}")
     root = frame_root()
     target: str | None = None
     if isinstance(save_path, str):
         try:
             target = resolve_output_path(validate_save_path(str(root), label="frame root"), save_path.strip())
         except ValueError as exc:
-            return _refuse(
+            return refuse(
                 f"camera: save_path must name a file inside {root} "
                 f"({refusal_str(exc)}); set {FRAME_ROOT_ENV} to collect frames elsewhere"
             )
     try:
         (sock, reader), response = _one_shot_call(driver._media_socket, _M_MEDIA_FRAME, {}, driver._timeout)
     except (OSError, ValueError) as exc:
-        return _refuse(f"camera: mediad at {driver._media_socket!r} did not answer: {refusal_str(exc)}")
+        return refuse(f"camera: mediad at {driver._media_socket!r} did not answer: {refusal_str(exc)}")
     try:
         header = response.get("result") or {}
         try:
             width, height, size = int(header["width"]), int(header["height"]), int(header["bytes"])
         except (KeyError, TypeError, ValueError):
-            return _refuse(f"camera: media.frame header lacks width/height/bytes: {refusal_repr(header)}")
+            return refuse(f"camera: media.frame header lacks width/height/bytes: {refusal_repr(header)}")
         if size != width * height * 2 or size <= 0:
-            return _refuse(
-                f"camera: header says {width}x{height} UYVY but {size} bytes (expected {width * height * 2})"
-            )
+            return refuse(f"camera: header says {width}x{height} UYVY but {size} bytes (expected {width * height * 2})")
         raw = reader.read(size)
         if len(raw) != size:
-            return _refuse(f"camera: mediad sent {len(raw)} of {size} frame bytes")
+            return refuse(f"camera: mediad sent {len(raw)} of {size} frame bytes")
     finally:
         reader.close()
         sock.close()
@@ -2240,7 +2233,7 @@ def _act_camera(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, An
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         uyvy_to_jpeg(width, height, int(header.get("rotate", 0) or 0), raw, path)
     except (OSError, ValueError) as exc:
-        return _refuse(f"camera: could not decode/write the frame: {refusal_str(exc)}")
+        return refuse(f"camera: could not decode/write the frame: {refusal_str(exc)}")
     return _ok(
         {
             "path": path,
@@ -2261,13 +2254,13 @@ def _act_tof(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
     try:
         (sock, reader), response = _one_shot_call(driver._tof_socket, _M_TOF_STREAM, {"on": True}, driver._timeout)
     except (OSError, ValueError) as exc:
-        return _refuse(f"tof: tofd at {driver._tof_socket!r} did not answer: {refusal_str(exc)}")
+        return refuse(f"tof: tofd at {driver._tof_socket!r} did not answer: {refusal_str(exc)}")
     try:
         deadline = time.monotonic() + driver._timeout
         while time.monotonic() < deadline:
             line = reader.readline()
             if not line:
-                return _refuse("tof: tofd closed the stream before a frame arrived")
+                return refuse("tof: tofd closed the stream before a frame arrived")
             try:
                 message = json.loads(line)
             except ValueError:
@@ -2275,9 +2268,9 @@ def _act_tof(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
             if message.get("method") == _M_TOF_FRAME:
                 frame = message.get("params") or {}
                 return _ok({**summarise_tof(frame), "subscribed": response.get("result")})
-        return _refuse(f"tof: no tof.frame within {driver._timeout}s - is the sensor mounted and tofd running?")
+        return refuse(f"tof: no tof.frame within {driver._timeout}s - is the sensor mounted and tofd running?")
     except OSError as exc:
-        return _refuse(f"tof: reading the stream failed: {refusal_str(exc)}")
+        return refuse(f"tof: reading the stream failed: {refusal_str(exc)}")
     finally:
         reader.close()
         sock.close()

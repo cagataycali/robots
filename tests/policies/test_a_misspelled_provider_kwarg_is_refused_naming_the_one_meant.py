@@ -2,7 +2,7 @@
 
 Pre-fix each provider had its own behaviour. A constructor with ``**kwargs``
 dropped ``create_policy("groot", hots="x")`` silently, so the client dialled
-the default host under ``status="success"``; ``remote`` and ``lerobot_async``
+the default host under ``status="success"``; ``remote``
 logged "ignoring unexpected constructor kwarg(s)" where no agent reads it; a
 constructor without a sink raised CPython's ``__init__() got an unexpected
 keyword argument 'acton_space'``, naming neither the provider nor the

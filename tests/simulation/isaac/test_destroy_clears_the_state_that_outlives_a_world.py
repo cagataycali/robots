@@ -2,11 +2,10 @@
 
 ``destroy()`` cleared seven registries - ``_robots``, ``_cameras``, ``_objects``,
 ``_prim_registry``, ``_action_controllers``, ``_cams_rec_state`` and
-``_recording_state_dict`` - and left six other pieces of per-world state in place.
+``_recording_state_dict`` - and left four other pieces of per-world state in place.
 Measured on a torn-down engine, every one of these survived:
 
     _applied_wrenches   _obs_noise   _obs_noise_rng   _dr_base
-    _frame_cache        _joint_cache
 
 All of them are keyed by an object / robot / camera name or a prim path, and those
 names are reused across worlds as a matter of course: a second world with a
@@ -20,8 +19,6 @@ the next ``create_world()`` inherited configuration for a scene it was never giv
 * ``randomize()``'s ``_dr_base`` first-touch baseline - which exists precisely to
   stop scaling compounding - anchored the new world's randomization to a pose from
   a world that no longer exists;
-* ``_frame_cache`` held a full RTX frame and ``_joint_cache`` a joint snapshot from
-  the old stage, readable as though current.
 
 ``_applied_wrenches`` is the sharpest case, because ``reset()`` already clears it -
 the shared contract is "reset() clears every latched wrench in the world". So
@@ -51,8 +48,6 @@ PER_WORLD_STATE: dict[str, dict[str, Any]] = {
     "_applied_wrenches": {"cube": {"force": [0.0, 0.0, 40.0], "torque": [0.0, 0.0, 0.0]}},
     "_obs_noise": {"arm": 0.05},
     "_dr_base": {"cube": [0.1, 0.2, 0.3]},
-    "_frame_cache": {"cam": "a-frame-from-the-old-stage"},
-    "_joint_cache": {"arm": {"j0": 1.23}},
 }
 
 

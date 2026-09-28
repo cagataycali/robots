@@ -28,9 +28,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     pass
 
+from strands_robots._pacing import Ticker
 from strands_robots.audit import log_safety_event
 from strands_robots.bus_access import read_observation
-from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.session import (
     HAND_HZ,
     HEALTH_HZ,
@@ -255,7 +255,7 @@ class SensorLoopsMixin:
         rate needs a deadline: the time a read spends on a bus or in a driver was
         added to the period rather than subtracted from it, so the loop ran at
         ``1 / (period + read)`` while every consumer read the achieved rate as the
-        sensor's own limit. :class:`~strands_robots.mesh.pacing.Ticker` paces on
+        sensor's own limit. :class:`~strands_robots._pacing.Ticker` paces on
         the selector timer instead, which treats the period as a deadline and
         still notices a stop within 10ms.
 

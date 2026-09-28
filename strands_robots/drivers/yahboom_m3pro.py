@@ -38,7 +38,8 @@ Three transports answer that graph, chosen by ``transport=``:
   (:class:`~strands_robots.drivers.yahboom_m3pro_twin.M3ProTwinGraph`). The
   same tool, verbs and units an agent uses on the robot, over the simulation:
   what an agent learns to say to the twin it says to the hardware. ``sim=``
-  hands in a built engine; otherwise one is built at the ``home`` keyframe.
+  hands in the built engine; ``Robot(..., transport="twin")`` builds it at the
+  ``home`` keyframe.
 
 The first two forward through the transports this package already owns
 (:func:`strands_robots.rosbridge.rosbridge_action` /
@@ -86,7 +87,7 @@ from typing import TYPE_CHECKING, Any, cast
 from strands.types.tools import ToolContext
 
 from strands_robots._command_gate import gate_command
-from strands_robots.drivers.base import halt_failure_detail, undeclared_verb_error
+from strands_robots.drivers.base import halt_failure_detail, refuse, undeclared_verb_error
 from strands_robots.drivers.yahboom_m3pro_wire import (
     ARM_CENTER_DEG,
     ARM_CHANNELS,
@@ -163,11 +164,6 @@ _GATE_TOOL_BY_TRANSPORT: dict[str, str] = {
     "ros2": "use_ros",
     "twin": "yahboom_m3pro_twin",
 }
-
-
-def _refuse(reason: str) -> dict[str, Any]:
-    """One refusal envelope, so every refusal has the same shape."""
-    return {"status": "error", "content": [{"text": reason}]}
 
 
 def _ros2_type(two_segment: str) -> str:
@@ -248,6 +244,9 @@ class YahboomM3ProDriver:
     registration pins the contract.
     """
 
+    #: The keyframe ``Robot(..., transport="twin")`` spawns the twin's engine at.
+    twin_keyframe = "home"
+
     def __init__(
         self,
         tool_name: str = "yahboom_m3pro",
@@ -279,8 +278,8 @@ class YahboomM3ProDriver:
             move_time_ms: The ``time`` field written when a caller does not
                 say - how long the servos take to reach an arm target.
             sim: ``twin`` only - a built sim engine carrying ``yahboom_m3pro``
-                (what ``Robot("yahboom_m3pro", mode="sim")`` returns). ``None``
-                builds one on :meth:`connect_eagerly`, at the ``home`` keyframe.
+                (what ``Robot("yahboom_m3pro", mode="sim")`` returns); required
+                there, and never destroyed by the driver.
             realtime: ``twin`` only - step the world at wall-clock speed so a
                 viewer sees the motion as the robot would make it. Default
                 ``False``: as fast as the physics allows.
@@ -307,6 +306,11 @@ class YahboomM3ProDriver:
             raise ValueError(reason)
         if sim is not None and transport != "twin":
             raise ValueError(f"{context}: sim= is the twin transport's engine; pass transport='twin' with it")
+        if sim is None and transport == "twin":
+            raise ValueError(
+                f"{context}: transport='twin' steps an engine it is handed; use "
+                "Robot('yahboom_m3pro', mode='real', transport='twin'), which builds it, or pass sim="
+            )
 
         self._twin: Any | None = None
         if transport == "twin":
@@ -506,7 +510,7 @@ class YahboomM3ProDriver:
         """The ``sensors`` verb: fresh odometry and IMU, or a refusal naming the silence."""
         state = self.read_state()
         if not state.get("odom") and not state.get("imu"):
-            return _refuse(
+            return refuse(
                 f"sensors: neither {ODOM_TOPIC} nor {IMU_TOPIC} answered within {self._timeout:g}s over "
                 f"{self.endpoint}. Is the robot's bringup running, with the micro-ROS agent connected to the board?"
             )
@@ -696,8 +700,6 @@ class YahboomM3ProDriver:
                 detail,
             )
         self._connected = False
-        if self._twin is not None:
-            self._twin.close()
 
     # ------------------------------------------------------------------ #
     # Write path.                                                        #
@@ -735,12 +737,12 @@ class YahboomM3ProDriver:
         """
         if not self._connected:
             suffix = f" ({self._connect_error})" if self._connect_error else ""
-            return _refuse(f"send_action: not connected - call connect_eagerly() first{suffix}")
+            return refuse(f"send_action: not connected - call connect_eagerly() first{suffix}")
         if not isinstance(action, dict) or not action:
-            return _refuse(f"send_action: action must be a non-empty dict of {list(ARM_CHANNELS + BASE_CHANNELS)}")
+            return refuse(f"send_action: action must be a non-empty dict of {list(ARM_CHANNELS + BASE_CHANNELS)}")
         bad = sorted(set(action) - set(ARM_CHANNELS) - set(BASE_CHANNELS))
         if bad:
-            return _refuse(f"send_action: unknown channel(s) {bad}; valid: {list(ARM_CHANNELS + BASE_CHANNELS)}")
+            return refuse(f"send_action: unknown channel(s) {bad}; valid: {list(ARM_CHANNELS + BASE_CHANNELS)}")
 
         arm_keys = [key for key in ARM_CHANNELS if key in action]
         base_keys = [key for key in BASE_CHANNELS if key in action]
@@ -751,7 +753,7 @@ class YahboomM3ProDriver:
                 degrees = list(self._last_arm_deg or HOME_DEG)
             for key in arm_keys:
                 if (reason := finite_number_error(action[key], key, "send_action")) is not None:
-                    return _refuse(reason)
+                    return refuse(reason)
                 joint = key[: -len(".pos")]
                 if joint == GRIPPER_JOINT:
                     degrees[5] = gripper_rad_to_deg(float(action[key]))
@@ -760,19 +762,19 @@ class YahboomM3ProDriver:
                     degrees[index] = arm_rad_to_deg(index + 1, float(action[key]), self._signs[index])
             for servo_id, angle in enumerate(degrees, start=1):
                 if (reason := servo_deg_error(servo_id, angle, f"servo{servo_id}", "send_action")) is not None:
-                    return _refuse(reason + " (converted from the model radians supplied)")
+                    return refuse(reason + " (converted from the model radians supplied)")
             if (refusal := self._send_arm(tuple(degrees), self._move_time_ms, tool_context)) is not None:
-                return _refuse(f"send_action: {refusal}")
+                return refuse(f"send_action: {refusal}")
             sent["arm_deg"] = list(degrees)
             sent["time_ms"] = self._move_time_ms
 
         if base_keys:
             for key in BASE_CHANNELS:
                 if key in action and (reason := twist_axis_error(action[key], key, "send_action")) is not None:
-                    return _refuse(reason)
+                    return refuse(reason)
             twist = {key: float(action.get(key, 0.0)) for key in BASE_CHANNELS}
             if (refusal := self._send_twist(twist, count=1, tool_context=tool_context)) is not None:
-                return _refuse(f"send_action: {refusal}")
+                return refuse(f"send_action: {refusal}")
             sent["twist"] = twist
 
         return {"status": "success", "content": [{"json": sent}]}
@@ -813,18 +815,18 @@ class YahboomM3ProDriver:
             A success envelope naming the degrees and time sent, or a refusal.
         """
         if not self._connected:
-            return _refuse("set_arm_degrees: not connected - call connect_eagerly() first")
+            return refuse("set_arm_degrees: not connected - call connect_eagerly() first")
         if not isinstance(joints, list | tuple) or len(joints) != 6:
-            return _refuse(f"set_arm_degrees: joints must be six servo angles in degrees, got {refusal_repr(joints)}")
+            return refuse(f"set_arm_degrees: joints must be six servo angles in degrees, got {refusal_repr(joints)}")
         for servo_id, angle in enumerate(joints, start=1):
             if (reason := servo_deg_error(servo_id, angle, f"joint{servo_id}", "set_arm_degrees")) is not None:
-                return _refuse(reason)
+                return refuse(reason)
         duration = self._move_time_ms if time_ms is None else time_ms
         if (reason := move_time_error(duration, "time_ms", "set_arm_degrees")) is not None:
-            return _refuse(reason)
+            return refuse(reason)
         degrees = tuple(int(round(float(angle))) for angle in joints)
         if (refusal := self._send_arm(degrees, int(duration), self._operator_context)) is not None:
-            return _refuse(f"set_arm_degrees: {refusal}")
+            return refuse(f"set_arm_degrees: {refusal}")
         return {"status": "success", "content": [{"json": {"arm_deg": list(degrees), "time_ms": int(duration)}}]}
 
     def set_gripper(self, open: Any, time_ms: Any = None) -> dict[str, Any]:  # noqa: A002 - the verb's own word
@@ -836,7 +838,7 @@ class YahboomM3ProDriver:
             time_ms: Servo travel time; ``None`` uses the driver's default.
         """
         if not isinstance(open, bool):
-            return _refuse(f"set_gripper: open must be true or false, got {refusal_repr(open)}")
+            return refuse(f"set_gripper: open must be true or false, got {refusal_repr(open)}")
         with self._cache_lock:
             degrees = list(self._last_arm_deg or HOME_DEG)
         degrees[5] = GRIPPER_OPEN_DEG if open else GRIPPER_CLOSED_DEG
@@ -874,27 +876,27 @@ class YahboomM3ProDriver:
         """
         context = tool_context or self._operator_context
         if duration_s is None:
-            return _refuse(
+            return refuse(
                 "move: duration_s is required - the base zeroes a twist it stops hearing within "
                 f"{CMD_VEL_WATCHDOG_S:g}s, so a twist without a duration is a twitch, not a move"
             )
         if (reason := positive_finite_number_error(duration_s, "duration_s", "move")) is not None:
-            return _refuse(reason)
+            return refuse(reason)
         if float(duration_s) > MAX_MOVE_DURATION_S:
-            return _refuse(
+            return refuse(
                 f"move: duration_s is at most {MAX_MOVE_DURATION_S:g}s, got {duration_s}. A longer run "
                 "belongs to repeated calls, with odometry read between legs."
             )
         twist = {"linear.x": linear_x, "linear.y": linear_y, "angular.z": angular_z}
         for key, value in twist.items():
             if (reason := twist_axis_error(value, key, "move")) is not None:
-                return _refuse(reason)
+                return refuse(reason)
         if not self._connected:
-            return _refuse("move: not connected - call connect_eagerly() first")
+            return refuse("move: not connected - call connect_eagerly() first")
         count = max(1, int(math.ceil(float(duration_s) * PUBLISH_RATE_HZ)))
         command = {key: float(value) for key, value in twist.items()}
         if (refusal := self._send_twist(command, count=count, tool_context=context)) is not None:
-            return _refuse(f"move: {refusal}")
+            return refuse(f"move: {refusal}")
         stopped = self.stop_task(tool_context=context)
         outcome = {
             "commanded": command,
@@ -932,7 +934,7 @@ class YahboomM3ProDriver:
     ) -> dict[str, Any]:
         """Refuse: no policy provider is wired to this robot yet."""
         del instruction, policy_port, policy_host, policy_provider, duration, policy_kwargs
-        return _refuse(
+        return refuse(
             "start_task: no policy provider is wired to the yahboom_m3pro driver yet. A caller with a "
             "built policy drives it by calling send_action on their own timer"
         )
@@ -946,7 +948,7 @@ class YahboomM3ProDriver:
     ) -> dict[str, Any]:
         """Refuse a host-driven rollout; this driver ships the transport only."""
         del policy_object, instruction, duration, n_steps
-        return _refuse(
+        return refuse(
             "run_policy: this driver sends one command per call and owns no control loop. "
             'Call send_action on your own timer, or use mode="sim" for a host-driven rollout'
         )
@@ -970,11 +972,11 @@ class YahboomM3ProDriver:
         correctly. A pre-approved ``/cmd_vel`` covers the halt with the drive.
         """
         if not self._connected:
-            return _refuse("stop_task: not connected")
+            return refuse("stop_task: not connected")
         zero = {key: 0.0 for key in BASE_CHANNELS}
         refusal = self._send_twist(zero, count=1, tool_context=tool_context or self._operator_context)
         if refusal is not None:
-            return _refuse(f"stop_task: {refusal}")
+            return refuse(f"stop_task: {refusal}")
         return {"status": "success", "content": [{"json": {"driver": "yahboom_m3pro", "twist": zero}}]}
 
     # ------------------------------------------------------------------ #

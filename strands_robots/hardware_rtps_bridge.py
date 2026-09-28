@@ -64,7 +64,7 @@ if TYPE_CHECKING:
 
     from strands_robots.hardware_robot import Robot
 
-from strands_robots.mesh.pacing import Ticker
+from strands_robots._pacing import Ticker
 
 logger = logging.getLogger(__name__)
 
@@ -421,7 +421,7 @@ class HardwareRtpsBridge(RosTelemetryBase):
         cyclonedds has no rclpy-style executor; we ``take()`` available samples
         each tick. ``take`` (not ``read``) so each command is delivered once.
 
-        Paced by :class:`~strands_robots.mesh.pacing.Ticker` rather than
+        Paced by :class:`~strands_robots._pacing.Ticker` rather than
         ``self._stop.wait(period)``. That wait is a delay, so the time spent
         delivering a batch of commands was added to the poll period instead of
         being subtracted from it -- at the 0.02s default an inbound actuation

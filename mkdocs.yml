@@ -78,7 +78,6 @@ plugins:
       policies/groot.md: reference/policies/groot.md
       policies/kimodo-sampling.md: reference/policies/kimodo-sampling.md
       policies/kimodo.md: reference/policies/kimodo.md
-      policies/lerobot-async.md: reference/policies/lerobot-async.md
       policies/lerobot-local-observations.md: reference/policies/lerobot-local-observations.md
       policies/lerobot-local.md: reference/policies/lerobot-local.md
       policies/microduck.md: reference/policies/microduck.md
