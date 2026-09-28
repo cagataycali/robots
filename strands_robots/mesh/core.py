@@ -22,11 +22,11 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from strands_robots._mesh_switch import mesh_env_request
 from strands_robots._pacing import Ticker
 from strands_robots.audit import log_safety_event
 from strands_robots.bus_access import joint_read_source, read_joints, read_observation
 from strands_robots.mesh import security as _security
+from strands_robots.mesh._kill_switch import mesh_disabled_by_env
 from strands_robots.mesh.sensors import SensorLoopsMixin
 from strands_robots.mesh.session import (
     CAMERA_HZ,
@@ -1182,7 +1182,7 @@ class Mesh(SensorLoopsMixin):
             if hasattr(r, "tool_name_str"):
                 payload["tool_name"] = r.tool_name_str
         except Exception:
-            pass
+            logger.debug("presence: tool_name not read from robot", exc_info=True)
 
         try:
             ts = getattr(r, "_task_state", None)
@@ -1191,7 +1191,7 @@ class Mesh(SensorLoopsMixin):
                 payload["task_status"] = getattr(status, "value", status)
                 payload["instruction"] = getattr(ts, "instruction", "")
         except Exception:
-            pass
+            logger.debug("presence: task state not read from robot", exc_info=True)
 
         try:
             inner = getattr(r, "robot", None)
@@ -1211,14 +1211,14 @@ class Mesh(SensorLoopsMixin):
                         if pub._running
                     ]
         except Exception:
-            pass
+            logger.debug("presence: camera and input inventory not read from robot", exc_info=True)
 
         try:
             action_features = getattr(r, "_action_features", None)
             if isinstance(action_features, dict):
                 payload["action_keys"] = list(action_features.keys())
         except Exception:
-            pass
+            logger.debug("presence: action features not read from robot", exc_info=True)
 
         try:
             world = getattr(r, "_world", None)
@@ -1228,7 +1228,7 @@ class Mesh(SensorLoopsMixin):
                 if isinstance(world_robots, dict):
                     payload["sim_robots"] = list(world_robots.keys())
         except Exception:
-            pass
+            logger.debug("presence: world inventory not read from robot", exc_info=True)
 
         # Advertise available extended topics. Every provider is probed under its
         # own guard (see ``_sensor_present``) so one faulting sensor cannot erase
@@ -1752,7 +1752,7 @@ class Mesh(SensorLoopsMixin):
             # bus reader too and must take the same lock as the probes.
             obs = read_observation(inner)
         except Exception:
-            pass
+            logger.debug("camera publish: read_observation failed, falling back to per-camera reads", exc_info=True)
 
         if obs is None:
             cameras_dict = getattr(inner, "cameras", None)
@@ -1766,7 +1766,7 @@ class Mesh(SensorLoopsMixin):
                     elif hasattr(cam_obj, "read"):
                         obs[cam_name] = cam_obj.read()
                 except Exception:
-                    pass
+                    logger.debug("camera publish: frame read failed for %s", cam_name, exc_info=True)
             if not obs:
                 return
 
@@ -3527,13 +3527,13 @@ class Mesh(SensorLoopsMixin):
                 try:
                     self._subs.remove(sub)
                 except ValueError:
-                    pass
+                    pass  # expected: the subscriber was already removed from the shared list
         if sub is None:
             return
         try:
             sub.undeclare()
         except Exception:
-            pass
+            logger.debug("unsubscribe: undeclare failed for %s", name, exc_info=True)
         with self._inbox_lock:
             self.inbox.pop(name, None)
 
@@ -4056,31 +4056,6 @@ class Mesh(SensorLoopsMixin):
         once Zenoh's mTLS + ACL took over identity and authorization.
         """
         put(key, payload)
-
-
-def mesh_disabled_by_env() -> bool:
-    """Report whether ``STRANDS_MESH`` forces the mesh off.
-
-    ``STRANDS_MESH=false`` (or ``0`` / ``no``) is documented in README's
-    Configuration table as "a hard kill switch that also overrides an explicit
-    ``mesh=True``". An operator who sets it is asking for no Zenoh session and no
-    presence on the fleet, so every path that can open one answers this -- not
-    only :func:`init_mesh`.
-
-    The switch is one-directional here: it only ever forces mesh OFF. Opting a
-    bare ``Robot()`` *on* via ``STRANDS_MESH=true`` is resolved in the ``Robot``
-    factory, which reads the affirmative spellings instead. A caller asking "may
-    I start a mesh?" wants this predicate; a caller asking "was I asked to start
-    one?" wants that one, and the two are not each other's negation -- an unset
-    variable answers False to both.
-
-    Resolved by :func:`strands_robots._mesh_switch.mesh_env_request`, which
-    holds both halves of the vocabulary. That is what makes an unrecognized
-    value reportable: this predicate alone cannot tell ``off`` (a typo) from
-    ``true`` (the other reader's business), because both are equally "not a
-    kill" to it.
-    """
-    return mesh_env_request() is False
 
 
 # init_mesh -- the only public constructor
