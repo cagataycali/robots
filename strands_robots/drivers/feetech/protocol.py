@@ -40,11 +40,7 @@ Wire frame (from the Feetech STS3215 datasheet, `SCS Communication`_):
 - ``LEN`` counts ``INSTR`` + params + checksum, i.e. ``n + 2``.
 - ``CHECKSUM = (~(ID + LEN + INSTR + sum(params))) & 0xFF``.
   This is the *additive* checksum Feetech uses. Protocol 2's CRC-16 does not
-  apply here. :mod:`~strands_robots.tools.pose_tool` already uses this
-  formula inline; the codec here reuses the *same* bit pattern so a frame
-  built by :func:`build_packet` is byte-identical to one the pose tool would
-  emit, and :func:`parse_status_packet` accepts what
-  :func:`~strands_robots.tools.pose_tool._parse_status_packet` accepts.
+  apply here.
 - No byte-stuffing. Protocol 2 stuffs to break the ``FF FF FD`` prefix out of
   payloads; Feetech's Protocol 1 tolerates ``FF`` inside a param because the
   parser resyncs on the ``FF FF`` header pair and a following byte cannot be
@@ -97,6 +93,9 @@ Named because two callers need it and neither should count it again: a reply's
 full length is ``STATUS_OVERHEAD + params``, which is what
 :func:`sync_read_reply_size` multiplies out and what
 :func:`parse_status_packet` checks a lone frame against."""
+
+_MAX_ERROR: Final[int] = 0x7F
+"""Highest error byte a servo sends: bit 7 is unused (``scservo_sdk`` ``rxPacket``)."""
 
 _MAX_PARAM_COUNT: Final[int] = 0xFA
 """``LEN`` is one byte, and it must carry ``params + 2``. Anything above
@@ -359,10 +358,9 @@ def _checksum(payload: bytes) -> int:
     """Feetech's additive checksum: bitwise-NOT of the low byte of the running sum.
 
     ``payload`` is the frame's ``ID + LEN + INSTR + params`` block - everything
-    the header does not cover and the checksum does. This is the identity
-    :mod:`~strands_robots.tools.pose_tool` uses (``~sum(packet[2:]) & 0xFF``);
-    stated here as a function so :func:`parse_status_packet` grades the same
-    bit pattern against inbound frames.
+    the header does not cover and the checksum does, stated as a function so
+    :func:`parse_status_packet` grades inbound frames with the same bit pattern
+    the builders write.
     """
     return (~sum(payload)) & 0xFF
 
@@ -662,8 +660,7 @@ def parse_status_packet(raw: bytes, expected_id: int, expected_param_count: int)
             module - not this codec - is responsible for framing the stream.
         expected_id: The ID the packet must carry. A mismatch is
             :class:`ProtocolError` because a bus with multiple motors may
-            reply out of order (the pose tool's status framing test names
-            the same shape).
+            reply out of order.
         expected_param_count: How many param bytes the READ or PING asked
             for. The frame's LEN is checked against ``expected_param_count +
             2`` so a servo that answers with the wrong param count is
@@ -695,10 +692,7 @@ def parse_status_packet(raw: bytes, expected_id: int, expected_param_count: int)
         raise ValueError(f"expected_param_count out of range: {expected_param_count}")
 
     # Resync on the header. A half-duplex bus can put the host's own echo
-    # (a single 0xFF) in front of the reply; :func:`_parse_status_packet` in
-    # ``strands_robots.tools.pose_tool`` handles that by scanning, and the codec
-    # does the same so
-    # the two agree on what a valid frame looks like.
+    # (a single 0xFF) in front of the reply.
     start = _find_header(raw)
     if start < 0:
         raise ProtocolError(f"no FF FF header found in {len(raw)} bytes")
@@ -723,6 +717,10 @@ def parse_status_packet(raw: bytes, expected_id: int, expected_param_count: int)
         raise ProtocolError(f"status packet has trailing bytes: got {len(frame)}, exactly {min_len} expected")
 
     error = frame[4]
+    # Bit 7 of the error byte is unused, so a set bit means the header was a
+    # coincidence in someone's payload; ``scservo_sdk``'s ``rxPacket`` refuses it.
+    if error > _MAX_ERROR:
+        raise ProtocolError(f"status packet error byte out of range: {error:#x} > {_MAX_ERROR:#x}")
     params = frame[5 : 5 + expected_param_count]
     got_checksum = frame[5 + expected_param_count]
 

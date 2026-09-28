@@ -29,6 +29,8 @@ import logging
 import threading
 from typing import Any
 
+from strands_robots.drivers.base import refuse
+
 logger = logging.getLogger(__name__)
 
 
@@ -263,11 +265,6 @@ def reset_dds_state() -> None:
         _dds_state["interface"] = None
 
 
-def _handle_refusal_envelope(text: str) -> dict[str, Any]:
-    """Wrap a refusal sentence in the envelope every ``@tool`` owes a caller."""
-    return {"status": "error", "content": [{"text": text}]}
-
-
 def live_handle_refusal(
     verb: str,
     driver: Any,
@@ -315,15 +312,13 @@ def live_handle_refusal(
         a caller instead of an exception.
     """
     if driver is None:
-        return _handle_refusal_envelope(
+        return refuse(
             f"{verb}: `driver` is required. Pass the live G1Driver "
             "handle the orchestrator constructed - an agent cannot "
             f"synthesize it, because {reads}."
         )
     if not callable(getattr(driver, accessor, None)):
-        return _handle_refusal_envelope(
-            f"{verb}: `driver` of type {type(driver).__name__!r} does not expose {expected}"
-        )
+        return refuse(f"{verb}: `driver` of type {type(driver).__name__!r} does not expose {expected}")
     return None
 
 

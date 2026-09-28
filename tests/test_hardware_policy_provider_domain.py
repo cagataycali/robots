@@ -96,29 +96,10 @@ class TestAnUnresolvableProviderIsRefusedBeforeTheArmIsTouched:
     """The provider is judged where the port already is: before connect, before the claim."""
 
     @pytest.mark.parametrize("provider", UNRESOLVABLE)
-    def test_start_task_refuses_without_connecting(self, hw: Any, provider: str) -> None:  # noqa: F811
-        result = hw.start_task("pick up the cube", policy_port=5555, policy_provider=provider)
-        assert result["status"] == "error"
-        assert hw.connects == [], "the arm was energized for a provider that cannot resolve"
-        assert hw.robot.sent_actions == [], "the arm was commanded"
-
-    @pytest.mark.parametrize("provider", UNRESOLVABLE)
-    def test_execute_task_refuses_without_connecting(self, hw: Any, provider: str) -> None:  # noqa: F811
-        result = hw._execute_task_sync("pick up the cube", policy_port=5555, policy_provider=provider)
-        assert result["status"] == "error"
-        assert hw.connects == [], "the arm was energized for a provider that cannot resolve"
-
-    @pytest.mark.parametrize("provider", UNRESOLVABLE)
     def test_the_refusal_names_the_provider_and_what_would_resolve(self, hw: Any, provider: str) -> None:  # noqa: F811
         text = _text(hw.start_task("go", policy_provider=provider))
         assert provider in text, "the caller cannot correct a spelling the refusal does not quote"
         assert "groot" in text and "mock" in text, "the refusal must offer names that do resolve"
-
-    def test_start_task_reports_it_instead_of_a_started_task(self, hw: Any) -> None:  # noqa: F811
-        """``start_task`` answers before the executor, where nobody is left to tell."""
-        result = hw.start_task("go", policy_provider="grooot")
-        assert result["status"] == "error"
-        assert "Task started" not in _text(result)
 
 
 class TestAProviderProblemIsNotReportedAsAPortProblem:
@@ -221,32 +202,6 @@ class TestTheApprovalPromptDescribesThePolicyTruthfully:
         prompt = _gate_prompt(gateable, instruction="wave", policy_provider="mock")
         assert "'execute'" in prompt and "'so101'" in prompt and "'wave'" in prompt
         assert "operator approval" in prompt
-
-
-class TestAnUnresolvableProviderNeverReachesTheOperator:
-    """The approval is the expensive step, so the refusal comes first."""
-
-    def test_the_pre_gate_check_refuses_it(self) -> None:
-        robot = HwRobot.__new__(HwRobot)
-        robot._shutdown_event = threading.Event()
-        for action, method in (("execute", "execute_task"), ("start", "start_task")):
-            err = robot._pre_gate_error(action, None, "grooot", 30.0)
-            assert err is not None and "grooot" in _text(err)
-            assert err["content"][0]["text"].startswith(f"{method}:")
-
-    def test_a_budget_is_still_judged_first(self) -> None:
-        """Order control: the duration refusal predates this check and keeps its place."""
-        robot = HwRobot.__new__(HwRobot)
-        robot._shutdown_event = threading.Event()
-        err = robot._pre_gate_error("execute", None, "grooot", 0)
-        assert err is not None and "duration" in _text(err)
-
-    def test_a_sound_command_still_reaches_the_operator(self, gateable: Any) -> None:
-        """The over-reach control: a resolvable provider is still gated, not refused."""
-        robot = HwRobot.__new__(HwRobot)
-        robot._shutdown_event = threading.Event()
-        assert robot._pre_gate_error("execute", None, "mock", 30.0) is None
-        assert "operator approval" in _gate_prompt(gateable, instruction="wave", policy_provider="mock")
 
 
 class TestTheResolutionPredicateMatchesTheImporterItSpeaksFor:

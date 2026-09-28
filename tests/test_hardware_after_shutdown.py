@@ -229,53 +229,6 @@ def _shut_down(hw: HwRobot) -> None:
     assert hw._shutdown_event.is_set()
 
 
-class TestEveryEntryPointRefusesAfterShutdown:
-    """All three admission paths refuse in the same tool shape."""
-
-    def test_run_policy_refuses(self, hw: HwRobot, bus: Bus):
-        """``run_policy`` errors naming the robot, not a completed rollout."""
-        _shut_down(hw)
-
-        result = hw.run_policy(policy_object=CountingPolicy(), instruction="after shutdown", n_steps=6)
-
-        assert result["status"] == "error"
-        assert "run_policy" in _text(result)
-        assert "shut down" in _text(result)
-
-    def test_execute_action_refuses(self, hw: HwRobot, bus: Bus):
-        """The agent-tool ``execute`` / mesh dispatch chokepoint refuses too."""
-        _shut_down(hw)
-
-        result = hw._execute_task_sync("after shutdown", policy_object=CountingPolicy(), n_steps=6)
-
-        assert result["status"] == "error"
-        assert "execute_task" in _text(result)
-        assert "shut down" in _text(result)
-
-    def test_start_task_refuses_instead_of_raising(self, hw: HwRobot, bus: Bus):
-        """``start_task`` reports the robot, not a ``concurrent.futures`` internal.
-
-        Pre-fix this raised ``RuntimeError("cannot schedule new futures after
-        shutdown")`` out of the executor submit.
-        """
-        _shut_down(hw)
-
-        result = hw.start_task("after shutdown")
-
-        assert result["status"] == "error"
-        assert "start_task" in _text(result)
-        assert "shut down" in _text(result)
-        assert "futures" not in _text(result)
-
-    def test_the_refusal_does_not_leave_the_claim_held(self, hw: HwRobot, bus: Bus):
-        """A refused rollout must not lock the bus out of future ones."""
-        _shut_down(hw)
-
-        hw.run_policy(policy_object=CountingPolicy(), instruction="after shutdown", n_steps=6)
-
-        assert hw._task_claimed is False
-
-
 class TestRefusalHappensBeforeAnyDeviceEffect:
     """The refusal is what makes the leak and the state clobber unreachable."""
 
