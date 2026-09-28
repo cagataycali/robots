@@ -1,35 +1,34 @@
-"""``docs/reference/policies/cosmos3.md`` enumerates the embodiments the provider registers.
+"""``docs/learn/policies/cosmos3.md`` enumerates the embodiments the provider registers.
 
 The cosmos3 provider is the one policy whose behaviour is selected by a second
 name: ``create_policy("cosmos3", embodiment=...)``. That name picks the
 conditioning domain, the action width and the column layout, so the set of
 accepted embodiments is a public API surface in its own right - and it is
-enumerated **nine times by hand**. Six sit on the pages a reader consults:
-the provider page's front-matter description, its ``## Embodiments`` table and
-the inline ``# droid | umi | ...`` comment in its first worked example; the
-domain/width/bundled-stats table and the bundled-vs-unbundled count above it,
-which the in-process backend page carries because that is where a caller
-supplies ``stats=``; and the provider row in ``README.md``. Three more were found by
-sweeping for the class rather than by reading the provider page, and are graded
-here for the same reason: the README quickstart's ``Embodiments: ...``
-paragraph, which sits under the runnable rollout command and is what a reader
-who never opens the provider page relies on (it also states three of ``droid``'s
-entry facts); the ``Available embodiments:`` sentence in the package docstring,
-one import from the registry and what ``help()`` prints; and the parenthetical
-in :class:`~strands_robots.policies.cosmos3.policy.Cosmos3Policy`'s
-``embodiment:`` ``Args:`` entry, which is the accepted-value list for the
-parameter a caller passes.
+enumerated by hand on four surfaces. Two sit on the pages a reader consults:
+the enumeration sentence that opens the provider page's ``## Embodiments``
+section, and the cosmos3 row of the provider matrix that ``docs/hooks/providers.py``
+renders into ``docs/learn/policies/index.md`` from ``registry/policies.json``
+(the row's "what it drives" cell carries the list in a parenthetical). Two more
+were found by sweeping for the class rather than by reading the provider page,
+and are graded here for the same reason: the ``Available embodiments:`` sentence
+in the package docstring, one import from the registry and what ``help()``
+prints; and the parenthetical in
+:class:`~strands_robots.policies.cosmos3.policy.Cosmos3Policy`'s ``embodiment:``
+``Args:`` entry, which is the accepted-value list for the parameter a caller
+passes.
 
 The two docstring surfaces are graded through ``__doc__`` rather than by
 reading the source, so a reflow or a moved definition cannot disarm them and
-the graded text is exactly what a reader is shown.
+the graded text is exactly what a reader is shown. The matrix row is graded
+through the hook that renders it, so the page's token is never read as prose.
 
-One nearby enumeration is deliberately **not** graded: the README's "other
-embodiments such as ``umi``/``av``/``bridge`` need only ``observation/image``"
-sentence. "such as" disclaims exhaustiveness, so requiring it to name every
-embodiment would convert a hedge into a maintained list. The claim it does make
-is about :attr:`Cosmos3Embodiment.camera_keys`, not about the accepted set, and
-belongs to a camera-key guard rather than this one.
+The old provider page carried five more enumerations (front-matter description,
+an ``## Embodiments`` table, an inline ``# droid | umi | ...`` comment, an
+``Embodiments:`` quickstart paragraph with per-embodiment numbers, and the
+domain/raw-dim/bundled-stats table of the in-process backend page). The new
+tree keeps one list per page, so those surfaces have no successor and their
+graders were retired; the sentence grader below grades both directions in
+their place.
 
 Nothing tied any of those to
 :data:`~strands_robots.policies.cosmos3.embodiments.EMBODIMENTS`. The
@@ -45,9 +44,7 @@ The companion guard in this directory,
 applies the same rule to this page's *keywords*: it grades them against
 ``inspect.signature`` "rather than against a copied list, so ... a newly
 documented one is graded without touching this file". This file applies that
-rule to the page's embodiment names, and to the per-embodiment facts the tables
-state (domain, raw action width, whether quantile stats ship bundled), which are
-read from the entry and from the stats directory rather than restated here.
+rule to the page's embodiment names.
 
 Every grader below is a pure function of ``(page text, registry)`` so
 :class:`TestTheGradersAreNotVacuous` can hand them a registry carrying an
@@ -57,8 +54,11 @@ that cannot see a missing embodiment would report a clean page forever.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -67,51 +67,12 @@ from strands_robots.policies.cosmos3.embodiments import EMBODIMENTS, Cosmos3Embo
 from strands_robots.policies.cosmos3.policy import Cosmos3Policy
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_PAGE = _REPO_ROOT / "docs" / "reference" / "policies" / "cosmos3.md"
-# The domain / raw-dim / bundled-stats table and the count sentence above it sit
-# on the in-process backend page, beside the decode_cosmos_chunk_to_targets call
-# whose stats= argument they tell a caller whether to supply.
-_STATS_PAGE = _REPO_ROOT / "docs" / "reference" / "policies" / "cosmos3-diffusers.md"
-_PROVIDERS = _REPO_ROOT / "docs" / "reference" / "policies" / "overview.md"  # provider matrix (was the README table)
-_STATS_DIR = _REPO_ROOT / "strands_robots" / "policies" / "cosmos3" / "stats"
+_PAGE = _REPO_ROOT / "docs" / "learn" / "policies" / "cosmos3.md"
+_PROVIDERS = _REPO_ROOT / "docs" / "learn" / "policies" / "index.md"  # carries the {{providers:table}} token
+_PROVIDERS_HOOK = _REPO_ROOT / "docs" / "hooks" / "providers.py"
 
-# The bundled-stats column states a property of the shipped package, not of the
-# entry: load_action_stats() resolves "<domain>_stats.json" in this directory and
-# refuses the domain when the file is absent. Reading the directory keeps the
-# column true when a domain's quantiles are added or removed.
-_STATS_SUFFIX = "_stats.json"
-
-# The README quickstart's rollout section states the accepted set in prose, and
-# for ``droid`` it also states three facts that live on the entry. Located by the
-# paragraph's opening word rather than by line number, so a re-wrap or a section
-# move does not disarm the graders below.
-_QUICKSTART_PREFIX = "Embodiments:"
-
-# The parenthetical facts that paragraph states, mapped to the entry attribute
-# each one restates. A parenthetical carrying none of these patterns states no
-# fact and is graded on nothing, which is what lets "(post-training only)" and
-# any future annotation coexist with the graded numbers.
-_QUICKSTART_FACTS: tuple[tuple[str, str], ...] = (
-    ("raw_action_dim", r"\b(\d+)D\b"),
-    ("action_chunk_size", r"\bchunk (\d+)\b"),
-    ("fps", r"\b(\d+) fps\b"),
-)
-
-# Spelled cardinals the count sentence uses. Small on purpose: the sentence
-# describes a split of the registered embodiments, and a registry large enough to
-# need a bigger word would have been rewritten to a digit long before.
-_CARDINALS = {
-    "one": 1,
-    "two": 2,
-    "three": 3,
-    "four": 4,
-    "five": 5,
-    "six": 6,
-    "seven": 7,
-    "eight": 8,
-    "nine": 9,
-    "ten": 10,
-}
+#: The header of the provider matrix ``docs/hooks/providers.py`` renders.
+_MATRIX_HEADER = ["provider", "class", "install extra", "also spelled", "what it drives", "trainer"]
 
 
 def _page_text() -> str:
@@ -119,19 +80,27 @@ def _page_text() -> str:
     return _PAGE.read_text(encoding="utf-8")
 
 
-def _stats_page_text() -> str:
-    """Return the in-process backend page, which carries the stats surfaces."""
-    return _STATS_PAGE.read_text(encoding="utf-8")
+def _providers_hook() -> ModuleType:
+    """Load ``docs/hooks/providers.py`` by path, the way mkdocs does."""
+    spec = importlib.util.spec_from_file_location("docs_hooks_providers", _PROVIDERS_HOOK)
+    assert spec is not None and spec.loader is not None, _PROVIDERS_HOOK
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("docs_hooks_providers", module)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _readme_text() -> str:
-    """Return the provider matrix page (the enumeration the README used to carry)."""
-    return _PROVIDERS.read_text(encoding="utf-8")
+    """Return the provider matrix as the reader sees it.
 
-
-def _bundled_domains() -> set[str]:
-    """Return the domains whose quantile stats ship in the package."""
-    return {p.name[: -len(_STATS_SUFFIX)] for p in _STATS_DIR.glob(f"*{_STATS_SUFFIX}")}
+    ``docs/learn/policies/index.md`` carries a ``{{providers:table}}`` token that
+    ``docs/hooks/providers.py`` expands at build time from
+    ``registry/policies.json``; grading the page source would read the token,
+    so the rendered table is graded instead.
+    """
+    page = _PROVIDERS.read_text(encoding="utf-8")
+    assert "{{providers:table}}" in page, f"{_PROVIDERS} no longer carries the providers:table token"
+    return _providers_hook().table()
 
 
 def _cells(line: str) -> list[str]:
@@ -188,137 +157,42 @@ def _names(cell: str) -> set[str]:
 # --------------------------------------------------------------------------- #
 
 
-def _front_matter_gap(md: str, registered: dict[str, Cosmos3Embodiment]) -> set[str]:
-    """Return registered embodiments the front-matter description omits."""
-    match = re.search(r"^description:(.*)$", md, re.M)
-    assert match is not None, f"{_PAGE} has no front-matter 'description:' line"
-    described = set(re.findall(r"[a-z0-9_]+", match.group(1)))
-    return set(registered) - described
+def _embodiments_sentence(md: str) -> str:
+    """Return the enumeration sentence that opens the ``## Embodiments`` section.
+
+    The section's first paragraph opens with a clause ending in a colon and then
+    lists the accepted names in backticks, ending at the first full stop.
+    Located by heading rather than by line number, so the page can grow above it.
+    """
+    match = re.search(r"^## Embodiments\s*\n+(.+?)(?:\n\n|\Z)", md, re.M | re.S)
+    assert match is not None, f"{_PAGE} has no '## Embodiments' section with a paragraph under it"
+    paragraph = " ".join(match.group(1).split())
+    head, colon, tail = paragraph.partition(":")
+    assert colon, f"{_PAGE} '## Embodiments' paragraph has no 'a, b, c:' enumeration clause: {paragraph!r}"
+    return tail.split(".")[0]
 
 
-def _embodiment_table_gap(md: str, registered: dict[str, Cosmos3Embodiment]) -> tuple[set[str], set[str]]:
-    """Return (registered but undocumented, documented but unregistered)."""
-    rows = _table(md, ["embodiment", "robot hardware", "strands sim asset"])
-    assert rows is not None, f"{_PAGE} has no '## Embodiments' table (header changed?)"
-    listed = {row[0].strip("`") for row in rows if row}
+def _embodiments_sentence_gap(md: str, registered: dict[str, Cosmos3Embodiment]) -> tuple[set[str], set[str]]:
+    """Return (registered but unlisted, listed but unregistered) for the section sentence."""
+    listed = _names(_embodiments_sentence(md))
     return set(registered) - listed, listed - set(registered)
-
-
-def _inline_enum_gap(md: str, registered: dict[str, Cosmos3Embodiment]) -> tuple[set[str], set[str]]:
-    """Return the gap in the ``embodiment=...  # a | b`` example comment."""
-    match = re.search(r'embodiment="[^"]*",\s*#\s*([A-Za-z0-9_ |]+)', md)
-    assert match is not None, f"{_PAGE} has no 'embodiment=\"...\"  # a | b' example comment"
-    listed = {tok.strip() for tok in match.group(1).split("|") if tok.strip()}
-    return set(registered) - listed, listed - set(registered)
-
-
-def _domain_table_gap(md: str, registered: dict[str, Cosmos3Embodiment]) -> tuple[set[str], set[str]]:
-    """Return the gap in the domain / raw dim / bundled-stats table."""
-    rows = _table(md, ["embodiment", "domain", "raw dim", "bundled stats"])
-    assert rows is not None, f"{_STATS_PAGE} has no domain/raw-dim/bundled-stats table (header changed?)"
-    listed = {row[0].strip("`") for row in rows if row}
-    return set(registered) - listed, listed - set(registered)
-
-
-def _domain_table_facts(md: str, registered: dict[str, Cosmos3Embodiment]) -> list[str]:
-    """Return one message per row whose stated facts disagree with the entry."""
-    rows = _table(md, ["embodiment", "domain", "raw dim", "bundled stats"]) or []
-    bundled = _bundled_domains()
-    problems = []
-    for row in rows:
-        name = row[0].strip("`")
-        entry = registered.get(name)
-        if entry is None:
-            continue
-        stated_domain, stated_dim, stated_bundled = row[1].strip("`"), row[2].strip(), row[3].strip().lower()
-        if stated_domain != entry.domain_name:
-            problems.append(f"{name}: table says domain {stated_domain!r}, entry says {entry.domain_name!r}")
-        if stated_dim != str(entry.raw_action_dim):
-            problems.append(f"{name}: table says raw dim {stated_dim}, entry says {entry.raw_action_dim}")
-        truth = "yes" if entry.domain_name in bundled else "no"
-        if stated_bundled != truth:
-            problems.append(
-                f"{name}: table says bundled stats {stated_bundled!r}, but "
-                f"{entry.domain_name}{_STATS_SUFFIX} is "
-                f"{'present' if truth == 'yes' else 'absent'} in {_STATS_DIR.name}/"
-            )
-    return problems
 
 
 def _readme_gap(readme: str, registered: dict[str, Cosmos3Embodiment]) -> set[str]:
-    """Return registered embodiments the README's cosmos3 provider row omits."""
-    rows = _table(readme, ["provider", "class", "install extra", "when to use"])
-    assert rows is not None, f"{_PROVIDERS} has no '| Provider | Class | Install extra | When to use |' table"
-    row = [r for r in rows if r and re.sub(r"[\[\]`]|\(.*\)", "", r[0]).strip() == "cosmos3"]  # cell may be a link
-    assert row, f"{_PROVIDERS} provider table has no 'cosmos3' row"
-    return set(registered) - _names(row[0][-1])
+    """Return registered embodiments the provider matrix's cosmos3 row omits.
 
-
-def _quickstart_paragraph(readme: str) -> str:
-    """Return the README quickstart paragraph that enumerates the embodiments.
-
-    Args:
-        readme: README text.
-
-    Returns:
-        The paragraph with its internal wrapping collapsed to single spaces, so
-        the graders reading it are insensitive to a re-wrap.
+    The "what it drives" cell of that row lists the embodiments in a
+    parenthetical (``(DROID/UMI/AV/bridge/OpenArm)``), spelled the way their
+    projects spell them; the registry's keys are lower case, so the comparison
+    is case-insensitive.
     """
-    found = [
-        collapsed
-        for block in readme.split("\n\n")
-        if (collapsed := " ".join(block.split())).startswith(_QUICKSTART_PREFIX)
-    ]
-    assert len(found) == 1, (
-        f"{_PAGE} has {len(found)} paragraphs beginning {_QUICKSTART_PREFIX!r}, expected exactly 1 - "
-        "the cosmos3 quickstart's embodiment paragraph moved, was reworded or was duplicated."
-    )
-    return found[0]
-
-
-def _quickstart_gap(readme: str, registered: dict[str, Cosmos3Embodiment]) -> set[str]:
-    """Return registered embodiments the README quickstart paragraph omits.
-
-    Only the missing direction is graded, for the same reason as
-    :func:`_readme_gap`: the paragraph is prose and carries backtick-quoted
-    identifiers that are not embodiments (``ConnectionError``), so an "extra"
-    check here would report the prose rather than a drift. The ``## Embodiments``
-    table is where a name the registry does not accept is caught.
-
-    Args:
-        readme: README text.
-        registered: Embodiment registry to grade against.
-
-    Returns:
-        The registered names the paragraph does not mention.
-    """
-    return set(registered) - _names(_quickstart_paragraph(readme))
-
-
-def _quickstart_facts(readme: str, registered: dict[str, Cosmos3Embodiment]) -> list[str]:
-    """Return one message per quickstart parenthetical fact the entry contradicts.
-
-    Args:
-        readme: README text.
-        registered: Embodiment registry to grade against.
-
-    Returns:
-        A list with one message per contradicted fact, empty when every stated
-        number agrees with its entry.
-    """
-    problems = []
-    for name, paren in re.findall(r"`([A-Za-z0-9_]+)`\s*\(([^)]*)\)", _quickstart_paragraph(readme)):
-        entry = registered.get(name)
-        if entry is None:
-            continue
-        for attr, pattern in _QUICKSTART_FACTS:
-            match = re.search(pattern, paren)
-            if match is None:
-                continue
-            stated, truth = int(match.group(1)), getattr(entry, attr)
-            if stated != truth:
-                problems.append(f"{name}: quickstart says {attr.replace('_', ' ')} {stated}, entry says {truth}")
-    return problems
+    rows = _table(readme, _MATRIX_HEADER)
+    assert rows is not None, f"the provider matrix has no '| {' | '.join(_MATRIX_HEADER)} |' table"
+    row = [r for r in rows if r and re.sub(r"[\[\]`]|\(.*\)", "", r[0]).strip() == "cosmos3"]  # cell is a link
+    assert row, "the provider matrix has no 'cosmos3' row"
+    drives = row[0][_MATRIX_HEADER.index("what it drives")]
+    listed = {tok.strip().lower() for paren in re.findall(r"\(([^)]*)\)", drives) for tok in paren.split("/")}
+    return set(registered) - listed
 
 
 def _package_docstring_gap(doc: str, registered: dict[str, Cosmos3Embodiment]) -> set[str]:
@@ -358,99 +232,28 @@ def _policy_args_gap(doc: str, registered: dict[str, Cosmos3Embodiment]) -> set[
     return set(registered) - set(re.findall(r"[a-z0-9_]+", match.group(1)))
 
 
-def _count_sentence_problems(md: str, registered: dict[str, Cosmos3Embodiment]) -> list[str]:
-    """Return a message when the bundled/unbundled count sentence disagrees.
-
-    The sentence above the domain table states the split as words ("Two domains
-    ship them bundled; the other two ... do not"). It is graded only when that
-    shape is present, so rewording it to carry no count is allowed - what is not
-    allowed is a stated count that the registry contradicts.
-
-    Args:
-        md: Markdown document text.
-        registered: Embodiment registry to grade against.
-
-    Returns:
-        A list with one message per contradicted count, empty when the sentence
-        agrees or states no count.
-    """
-    # The sentence wraps across a line break in the page, so collapse
-    # whitespace before matching: a re-wrap must not silently disarm this.
-    match = re.search(
-        r"(\w+) domains? ship them bundled; the other (\w+) registered embodiments? do not",
-        " ".join(md.split()),
-    )
-    if match is None:
-        return []
-    bundled_domains = _bundled_domains()
-    bundled = {n for n, e in registered.items() if e.domain_name in bundled_domains}
-    unbundled = set(registered) - bundled
-    problems = []
-    for word, truth, label in (
-        (match.group(1), len(bundled), "bundled"),
-        (match.group(2), len(unbundled), "unbundled"),
-    ):
-        stated = _CARDINALS.get(word.lower())
-        if stated is not None and stated != truth:
-            problems.append(f"sentence says {word!r} ({stated}) {label}, registry has {truth}: {sorted(registered)}")
-    return problems
-
-
 class TestEveryRegisteredEmbodimentIsDocumented:
-    """The page and the README account for exactly the registered set."""
+    """The page and the provider matrix account for exactly the registered set."""
 
-    def test_front_matter_description_names_every_embodiment(self) -> None:
-        missing = _front_matter_gap(_page_text(), EMBODIMENTS)
+    def test_embodiments_sentence_lists_exactly_the_registered_set(self) -> None:
+        missing, extra = _embodiments_sentence_gap(_page_text(), EMBODIMENTS)
         assert not missing, (
-            f"docs/reference/policies/cosmos3.md front-matter omits {sorted(missing)}. It is the "
-            "page's search/summary line, so an embodiment absent there is one a reader "
-            "browsing the docs never learns create_policy('cosmos3') accepts."
-        )
-
-    def test_embodiments_table_lists_exactly_the_registered_set(self) -> None:
-        missing, extra = _embodiment_table_gap(_page_text(), EMBODIMENTS)
-        assert not missing, (
-            f"the '## Embodiments' table omits {sorted(missing)}, which "
-            "create_policy('cosmos3', embodiment=...) accepts. Add a row naming the "
-            "hardware and the strands sim asset (or '-' when there is none)."
+            f"the '## Embodiments' sentence in docs/learn/policies/cosmos3.md omits {sorted(missing)}, which "
+            "create_policy('cosmos3', embodiment=...) accepts. It is the one enumeration on the page, so an "
+            "embodiment absent there is one a reader browsing the docs never learns the provider accepts."
         )
         assert not extra, (
-            f"the '## Embodiments' table lists {sorted(extra)}, which the registry does "
-            "not accept - a reader following the table gets a loud unknown-embodiment "
-            "failure. Remove the row or register the embodiment."
+            f"the '## Embodiments' sentence lists {sorted(extra)}, which the registry does "
+            "not accept - a reader following the page gets a loud unknown-embodiment "
+            "failure. Remove the name or register the embodiment."
         )
-
-    def test_first_example_comment_lists_exactly_the_registered_set(self) -> None:
-        missing, extra = _inline_enum_gap(_page_text(), EMBODIMENTS)
-        assert not missing, (
-            f"the 'embodiment=\"...\"  # ...' comment in the page's first example omits "
-            f"{sorted(missing)}. That comment is the enumeration a reader copying the "
-            "snippet reads, so it is the most-read list on the page."
-        )
-        assert not extra, f"the first example's comment lists unregistered embodiments {sorted(extra)}"
-
-    def test_domain_table_lists_exactly_the_registered_set(self) -> None:
-        missing, extra = _domain_table_gap(_stats_page_text(), EMBODIMENTS)
-        assert not missing, (
-            f"the domain/raw-dim/bundled-stats table omits {sorted(missing)}. That table "
-            "is what tells a caller whether it must supply stats= and stats_domain= to "
-            "decode_cosmos_chunk_to_targets, so an omitted row reads as 'no stats needed'."
-        )
-        assert not extra, f"the domain table lists unregistered embodiments {sorted(extra)}"
 
     def test_readme_provider_row_names_every_embodiment(self) -> None:
         missing = _readme_gap(_readme_text(), EMBODIMENTS)
         assert not missing, (
-            f"the provider matrix's cosmos3 row omits {sorted(missing)}. The row enumerates "
-            "the accepted embodiments, so it drifts the same way the page does."
-        )
-
-    def test_readme_quickstart_paragraph_names_every_embodiment(self) -> None:
-        missing = _quickstart_gap(_page_text(), EMBODIMENTS)
-        assert not missing, (
-            f"the cosmos3 page's 'Embodiments: ...' paragraph omits {sorted(missing)}. It sits "
-            "directly under the runnable rollout command, so it is the enumeration a reader who never opens "
-            "the provider page relies on."
+            f"the provider matrix's cosmos3 row omits {sorted(missing)}. The row's 'what it drives' cell "
+            "enumerates the accepted embodiments (from registry/policies.json), so it drifts the same way "
+            "the page does."
         )
 
     def test_package_docstring_names_every_embodiment(self) -> None:
@@ -469,38 +272,13 @@ class TestEveryRegisteredEmbodimentIsDocumented:
         )
 
 
-class TestTheDocumentedFactsMatchTheEntries:
-    """The per-embodiment facts the tables state are read, not restated."""
-
-    def test_domain_table_facts_match_the_registry_and_the_stats_directory(self) -> None:
-        problems = _domain_table_facts(_stats_page_text(), EMBODIMENTS)
-        assert not problems, f"{_STATS_PAGE.name} domain table disagrees with the code:\n  " + "\n  ".join(problems)
-
-    def test_quickstart_parenthetical_facts_match_the_registry(self) -> None:
-        problems = _quickstart_facts(_page_text(), EMBODIMENTS)
-        assert not problems, (
-            "the cosmos3 page's 'Embodiments:' paragraph states per-embodiment facts the registry contradicts:\n  "
-            + "\n  ".join(problems)
-        )
-
-    def test_the_bundled_count_sentence_matches_the_registry(self) -> None:
-        problems = _count_sentence_problems(_stats_page_text(), EMBODIMENTS)
-        assert not problems, (
-            "the sentence above the domain table states a count the registry contradicts:\n  " + "\n  ".join(problems)
-        )
-
-
 class TestThePremisesHold:
     """A reformat must fail loudly rather than make the graders report clean."""
 
     def test_every_graded_surface_is_found(self) -> None:
         md, readme = _page_text(), _readme_text()
-        assert _table(md, ["embodiment", "robot hardware", "strands sim asset"])
-        assert _table(_stats_page_text(), ["embodiment", "domain", "raw dim", "bundled stats"])
-        assert _table(readme, ["provider", "class", "install extra", "when to use"])
-        assert re.search(r'embodiment="[^"]*",\s*#', md)
-        assert re.search(r"^description:", md, re.M)
-        assert _quickstart_paragraph(md)
+        assert _table(readme, _MATRIX_HEADER)
+        assert _names(_embodiments_sentence(md))
         assert re.search(r"Available embodiments:", " ".join((cosmos3_package.__doc__ or "").split()))
         assert re.search(r"embodiment:[^(]*\(", " ".join((Cosmos3Policy.__doc__ or "").split()))
 
@@ -508,12 +286,6 @@ class TestThePremisesHold:
         assert len(EMBODIMENTS) >= 4, (
             "fewer embodiments than the four this guard was written against - if the "
             "registry shrank deliberately, re-read the graded surfaces."
-        )
-
-    def test_the_stats_directory_is_readable(self) -> None:
-        assert _bundled_domains(), (
-            f"no *{_STATS_SUFFIX} under {_STATS_DIR}: the bundled-stats column would grade "
-            "every domain as unbundled and the count sentence would follow it."
         )
 
 
@@ -533,26 +305,12 @@ class TestTheGradersAreNotVacuous:
         )
         return planted
 
-    def test_front_matter_grader_reports_it(self) -> None:
-        assert "zzz_planted_embodiment" in _front_matter_gap(_page_text(), self._planted())
-
-    def test_embodiment_table_grader_reports_it(self) -> None:
-        missing, _ = _embodiment_table_gap(_page_text(), self._planted())
-        assert "zzz_planted_embodiment" in missing
-
-    def test_inline_enum_grader_reports_it(self) -> None:
-        missing, _ = _inline_enum_gap(_page_text(), self._planted())
-        assert "zzz_planted_embodiment" in missing
-
-    def test_domain_table_grader_reports_it(self) -> None:
-        missing, _ = _domain_table_gap(_stats_page_text(), self._planted())
+    def test_embodiments_sentence_grader_reports_it(self) -> None:
+        missing, _ = _embodiments_sentence_gap(_page_text(), self._planted())
         assert "zzz_planted_embodiment" in missing
 
     def test_readme_grader_reports_it(self) -> None:
         assert "zzz_planted_embodiment" in _readme_gap(_readme_text(), self._planted())
-
-    def test_quickstart_grader_reports_it(self) -> None:
-        assert "zzz_planted_embodiment" in _quickstart_gap(_page_text(), self._planted())
 
     def test_package_docstring_grader_reports_it(self) -> None:
         assert "zzz_planted_embodiment" in _package_docstring_gap(cosmos3_package.__doc__ or "", self._planted())
@@ -560,47 +318,31 @@ class TestTheGradersAreNotVacuous:
     def test_policy_args_grader_reports_it(self) -> None:
         assert "zzz_planted_embodiment" in _policy_args_gap(Cosmos3Policy.__doc__ or "", self._planted())
 
-    def test_count_sentence_grader_reports_a_contradicted_count(self) -> None:
-        """The planted domain ships no stats, so the unbundled count grows by one."""
-        problems = _count_sentence_problems(_stats_page_text(), self._planted())
-        assert problems, "the count sentence grader did not notice an extra unbundled embodiment"
-        assert any("unbundled" in p for p in problems), problems
-
-    def test_domain_table_fact_grader_reports_a_wrong_stated_fact(self) -> None:
-        """A row whose stated width disagrees with its entry must be reported."""
-        page = _stats_page_text().replace("| `av` | `av` | 9 | no |", "| `av` | `av` | 7 | no |")
-        assert page != _stats_page_text(), "the av row this test rewrites is no longer in the page"
-        problems = _domain_table_facts(page, EMBODIMENTS)
-        assert any("raw dim" in p and p.startswith("av:") for p in problems), problems
-
-    def test_quickstart_fact_grader_reports_a_wrong_stated_fact(self) -> None:
-        """A stated chunk size the entry contradicts must be reported."""
-        readme = _page_text().replace("chunk 32", "chunk 31")
-        assert readme != _page_text(), "the 'Embodiments:' paragraph's 'chunk 32' fact is no longer on the page"
-        problems = _quickstart_facts(readme, EMBODIMENTS)
-        assert any("chunk" in p and p.startswith("droid:") for p in problems), problems
-
     def test_extra_direction_reports_an_unregistered_name(self) -> None:
         """A documented embodiment the registry drops must be reported too."""
         trimmed = {k: v for k, v in EMBODIMENTS.items() if k != "av"}
-        _, extra = _embodiment_table_gap(_page_text(), trimmed)
+        _, extra = _embodiments_sentence_gap(_page_text(), trimmed)
         assert "av" in extra
-        _, extra_domain = _domain_table_gap(_stats_page_text(), trimmed)
-        assert "av" in extra_domain
+
+    def test_the_sentence_grader_reads_only_the_enumeration_clause(self) -> None:
+        """Backticked names after the first full stop (`franka`, `panda`) are not embodiments."""
+        page = _page_text()
+        section = re.search(r"^## Embodiments\s*\n+(.+?)(?:\n\n|\Z)", page, re.M | re.S)
+        assert section is not None
+        assert "`franka`" in section.group(1), "the sim-asset sentence this test relies on moved"
+        assert "franka" not in _names(_embodiments_sentence(page))
 
 
 def test_a_missing_surface_is_reported_rather_than_skipped() -> None:
     """A moved page or renamed table must raise, never grade an empty set."""
     assert _PAGE.is_file(), _PAGE
-    assert _STATS_PAGE.is_file(), _STATS_PAGE
     assert _PROVIDERS.is_file(), _PROVIDERS
-    assert _table("| a | b |\n|---|---|\n| 1 | 2 |\n", ["provider", "class", "install extra", "when to use"]) is None
+    assert _PROVIDERS_HOOK.is_file(), _PROVIDERS_HOOK
+    assert _table("| a | b |\n|---|---|\n| 1 | 2 |\n", _MATRIX_HEADER) is None
     with pytest.raises(AssertionError):
         _readme_gap("no table here", EMBODIMENTS)
     with pytest.raises(AssertionError):
-        _embodiment_table_gap("no table here", EMBODIMENTS)
-    with pytest.raises(AssertionError):
-        _quickstart_paragraph("no such paragraph here")
+        _embodiments_sentence_gap("no section here", EMBODIMENTS)
     with pytest.raises(AssertionError):
         _package_docstring_gap("no 'Available embodiments' sentence here", EMBODIMENTS)
     with pytest.raises(AssertionError):
