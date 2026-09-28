@@ -107,10 +107,12 @@ class So101Scene:
     # -- construction -------------------------------------------------------
     @property
     def model(self) -> Any:
+        """The MuJoCo ``mjModel``."""
         return self.engine._world._model
 
     @property
     def data(self) -> Any:
+        """The MuJoCo ``mjData``."""
         return self.engine._world._data
 
     def _park_at_rest(self) -> None:
@@ -205,9 +207,11 @@ class So101Scene:
 
     # -- privileged reads ---------------------------------------------------
     def qpos(self) -> np.ndarray:
+        """The six joint positions in radians (state-key order)."""
         return np.array([self.data.qpos[a] for a in self.qpos_adr], dtype=float)
 
     def cube_pos(self) -> np.ndarray:
+        """World position of the block's centre."""
         return np.array(self.data.xpos[self.cube_body], dtype=float)
 
     def tcp(self) -> np.ndarray:
@@ -249,7 +253,7 @@ class So101Scene:
 
     def contacts(self) -> tuple[bool, bool, bool]:
         """``(cube_in_jaws, limit_hit, table_hit)`` from the current contact set."""
-        mj, m, d = self._mj, self.model, self.data
+        d = self.data
         touching_static = touching_moving = False
         table_hit = False
         for i in range(int(d.ncon)):
@@ -278,6 +282,7 @@ class So101Scene:
         return rot.T @ world_vec
 
     def snapshot(self) -> Privileged:
+        """Freeze every privileged quantity for this tick."""
         self._mj.mj_forward(self.model, self.data)
         in_jaws, limit_hit, table_hit = self.contacts()
         return Privileged(

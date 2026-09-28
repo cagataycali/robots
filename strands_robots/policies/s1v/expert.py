@@ -22,13 +22,13 @@ and ``safe``. Everything here is torch-free.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 
 from strands_robots.policies.s1v.primitives import (
-    DEFAULT_GRIPPER_STEP_PCT,
     DEFAULT_STEP_DEG,
     GRIPPER_JOINT,
     HOLD,
@@ -186,6 +186,7 @@ def grasp_aligned(priv: Privileged, st: ExpertState) -> bool:
 
 
 def is_success(priv: Privileged, st: ExpertState) -> bool:
+    """Reach: TCP within 2 cm of the goal. Pick: block held in both pads and lifted 5 cm."""
     if st.task == "reach":
         return bool(np.linalg.norm(target_for(priv, st) - priv.tcp) < REACH_TOL)
     start = st.cube_start if st.cube_start is not None else priv.cube
