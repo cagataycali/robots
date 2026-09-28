@@ -34,6 +34,7 @@
   --md-typeset-kbd-color: #f1efe9;
   --md-footer-bg-color: #0e1013;
   --md-footer-bg-color--dark: #000000;
+  --md-admonition-bg-color: #ffffff;
   --sr-fg: #15171a;
   --sr-card-bg: #ffffff;
   --sr-card-border: #e6e3dc;
@@ -54,7 +55,7 @@
   --md-accent-fg-color--transparent: var(--sr-accent-soft);
   --sr-scheme: dark;
   --sr-accent: #00ff77;
-  --sr-accent-bright: #00ff77;
+  --sr-accent-bright: var(--sr-accent);
   --sr-accent-soft: rgba(0, 255, 119, 0.12);
   --sr-on-accent: #06210f;
   --md-default-bg-color: #0b0d10;
@@ -88,11 +89,7 @@
 [data-md-color-scheme="slate"] .md-typeset .highlight span.filename { background: #0e1114; }
 [data-md-color-scheme="slate"] .md-nav__link--active { color: var(--sr-accent); }
 
-.md-header,
-.md-tabs {
-  background-color: var(--md-primary-fg-color);
-  color: #f3f4f6;
-}
+.md-header, .md-tabs { background-color: var(--md-primary-fg-color); color: #f3f4f6; }
 .md-header { border-bottom: 1px solid #1c2027; }
 .md-search__form { background-color: #1a1e25; }
 .md-search__input::placeholder { color: #8b929c; }
@@ -133,11 +130,7 @@
   padding: 1.1rem 1.2rem;
   transition: transform 120ms ease, border-color 120ms ease;
 }
-.sr-card:hover {
-  transform: translateY(-2px);
-  border-color: var(--sr-accent);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
-}
+.sr-card:hover { transform: translateY(-2px); border-color: var(--sr-accent); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08); }
 .sr-card h3 { margin: 0 0 0.4rem; font-size: 1.05em; }
 .sr-card h3 a { color: var(--sr-accent); }
 .sr-card p { margin: 0; color: var(--md-default-fg-color--light); font-size: 0.78rem; line-height: 1.5; }
@@ -166,7 +159,7 @@
   overflow: hidden;
 }
 .sr-robot-thumb img, .sr-robot__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.sr-robot-thumb span, .sr-robot__thumb span { color: var(--sr-muted); font-size: 0.7rem; }
+.sr-robot-thumb span, .sr-robot__thumb span, .sr-robot-nothumb { color: var(--sr-muted); font-size: 0.7rem; }
 .sr-robot > :not(.sr-robot-thumb) { margin-left: 0.85rem; margin-right: 0.85rem; }
 .sr-robot > h3, .sr-robot > p:not(.sr-robot-desc) { margin-top: 0.5rem; }
 .sr-robot > :last-child { margin-bottom: 0.85rem; }
@@ -297,3 +290,5 @@ robot-viewer[fullscreen] { aspect-ratio: auto; height: 100%; border-radius: 0; m
 
 /* Images lazy and bounded */
 .md-typeset img { max-width: 100%; border-radius: 8px; }
+
+@media (prefers-reduced-motion: reduce) { .sr-card, .sr-robot { transition: none; } .sr-card:hover, .sr-robot:hover { transform: none; } }
