@@ -104,11 +104,11 @@ MockPolicy | wave
 Note: MockPolicy does not read the instruction. Its actions - a test motion on every joint - were commanded to the robot whatever the task says; nothing above means the task was performed.
 ```
 
-The last line comes from `reads_instruction = False`: a policy that never reads the words says so in every report, so an agent cannot relay a test motion as done.
+The last line comes from `reads_instruction = False`: a policy that never reads the words says so in every report.
 
 ## Swap the policy, keep the robot
 
-Nothing in the robot or scene changes between providers; a registered class is one more string.
+Nothing in the robot or scene changes between providers.
 
 ```python
 from typing import Any
@@ -169,6 +169,7 @@ The same swap works on hardware: `Robot("so101", mode="real").start_task(instruc
 | a LeRobot checkpoint (ACT, diffusion, pi0, SmolVLA, GR00T N1.7, MolmoAct2) | [lerobot-local](lerobot-local.md) |
 | a GR00T inference server | [groot](groot.md) |
 | a Cosmos 3 policy server | [cosmos3](cosmos3.md) |
+| an SO-101 and a FLUX 3 Action checkpoint | [flux3_action](flux3-action.md) |
 | a Cartesian or joint goal and a GPU | [curobo](curobo.md) |
 | a Cartesian or joint goal and ROS 2 | [moveit2](moveit2.md) |
 | a Unitree G1 to walk | [wbc](wbc.md) |
