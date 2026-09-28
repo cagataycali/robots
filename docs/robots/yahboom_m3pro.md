@@ -9,8 +9,6 @@ description: "Yahboom ROSMASTER M3 Pro (mecanum base + DOFBOT-Pro 6-DOF arm: 5 s
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile_manip">Mobile manipulators</span><span class="sr-chip">10 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
 
-You have `yahboom_m3pro` in a MuJoCo world after one line, and the same object on the hardware with `mode="real"`.
-
 <robot-viewer name="yahboom_m3pro"></robot-viewer>
 
 ```python
@@ -46,10 +44,6 @@ Checks before it writes:
 - the firmware zeroes the base after 200 to 500 ms without a message, so a held move is a 10 Hz stream and an explicit zero
 - `get_observation` returns `{}` on the robot: the board publishes no arm joint-state topic
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [dimwael/yahboom_m3pro_description/mjcf](https://github.com/dimwael/yahboom_m3pro_description/tree/bdac682e57a8eeaf7b18eece44bfbfc54de98e8a/mjcf), scene `scene.xml`.
 
-Back to [Mobile manipulators](mobile_manip/index.md) or the [catalog](index.md).
+Back to [Mobile manipulators](mobile_manip/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

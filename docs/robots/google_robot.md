@@ -9,7 +9,7 @@ description: "Google Robot (mobile base + arm, RT-X)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile_manip">Mobile manipulators</span><span class="sr-chip">10 joints</span><span class="sr-chip sr-chip-sim">sim</span></p>
 
-You have `google_robot` in a MuJoCo world once its model is on disk. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
+No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
 <robot-viewer name="google_robot"></robot-viewer>
 
@@ -23,10 +23,6 @@ robot = Robot("google_robot")  # needs ~/.strands_robots/assets/google_robot/rob
 
 Aliases `Robot()` accepts: `oxe_google`.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [google-deepmind/mujoco_menagerie/google_robot](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/google_robot), scene `scene.xml`.
 
-Back to [Mobile manipulators](mobile_manip/index.md) or the [catalog](index.md).
+Back to [Mobile manipulators](mobile_manip/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

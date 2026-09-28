@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -246,7 +246,7 @@ class TestTheRequestIsLatched:
         def spy() -> bool:
             verdict = real()
             verdicts.append(verdict)
-            if len(verdicts) == 2:
+            if len(verdicts) == 3:
                 rig.robot._stop_requested.set()
             return verdict
 
@@ -254,9 +254,58 @@ class TestTheRequestIsLatched:
         thread = rig.start()
         rig.finish(thread)
 
-        assert verdicts == [False, False], "both stage checks should have passed"
+        assert verdicts == [False, False, False], "every stage check should have passed"
         assert rig.arm.sent_actions == []
         assert rig.robot._task_state.status == TaskStatus.STOPPED
+
+    def test_a_stop_between_the_claim_and_the_rollout_refuses_the_task(self, rig):
+        # The window ``start_task`` opens: the bus is claimed and "Task started"
+        # returned, but the executor has not picked the job up yet.
+        rig.open_all_gates()
+        assert rig.robot._claim_task("pick the cube") is None
+
+        result = rig.robot.stop_task()
+        rig.robot._drive_claimed_task("pick the cube", policy_object=_OneStepPolicy(), duration=5.0, n_steps=3)
+
+        assert "Task stopped (during connect)" in result["content"][0]["text"]
+        assert rig.arm.sent_actions == []
+        assert rig.policy_initialized == []
+        assert rig.robot._task_state.status == TaskStatus.STOPPED
+        rig.robot._executor.shutdown(wait=False)
+
+    def test_a_stop_before_the_worker_picks_the_job_up_releases_the_claim(self, rig):
+        # The single worker is busy, so the submitted job is still PENDING and
+        # the stop's cancel wins: nothing on the executor will release the claim.
+        busy = threading.Event()
+        rig.robot._executor.submit(busy.wait, DEADLINE)
+        assert rig.robot._claim_task("pick the cube") is None
+        rig.robot._task_state.task_future = rig.robot._executor.submit(
+            rig.robot._drive_claimed_task, "pick the cube", policy_object=_OneStepPolicy(), duration=5.0, n_steps=3
+        )
+
+        rig.robot.stop_task()
+        busy.set()
+
+        assert rig.robot._task_state.task_future is None, "a won cancel forgets the future it cancelled"
+        assert rig.robot._claim_task("place the cube") is None, "the next task must be admitted"
+        # A stop against the live claim must not re-cancel the dead future
+        # (``cancel()`` on a cancelled future returns True) and free the bus.
+        rig.robot.stop_task()
+        assert rig.robot._claim_task("third task") is not None, "the live claim must still hold the bus"
+        rig.robot._executor.shutdown(wait=True)
+
+    def test_a_new_claim_does_not_inherit_the_previous_tasks_future(self, rig):
+        # A predecessor cancelled while queued, then a synchronous ``execute``
+        # claims the bus without ever writing ``task_future``.
+        stale: Future[None] = Future()
+        stale.cancel()
+        rig.robot._task_state.task_future = stale
+
+        assert rig.robot._claim_task("pick the cube") is None
+        rig.robot.stop_task()
+
+        assert rig.robot._claim_task("place the cube") is not None, "a stale future must not release a live claim"
+        rig.robot._executor.shutdown(wait=True)
 
 
 class TestTheLatchDoesNotLeakForward:

@@ -9,7 +9,7 @@ description: "HopeJR Arm (high-DOF anthropomorphic arm, Feetech)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot, strands</span></p>
 
-You have `hope_jr` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("hope_jr")` in the default sim mode refuses by name.
+The registry ships no simulation asset for it, so `Robot("hope_jr")` in the default sim mode refuses by name.
 
 Real hardware, one call per driver that builds it:
 
@@ -38,8 +38,4 @@ Checks before it writes:
 - `stop` releases torque on every motor and names any that stayed driven
 - `transport="twin"` answers the same verbs from the arm's MuJoCo model
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
-Back to [Arms](arm/index.md) or the [catalog](index.md).
+Back to [Arms](arm/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

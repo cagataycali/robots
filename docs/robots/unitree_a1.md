@@ -9,7 +9,7 @@ description: "Unitree A1 Quadruped"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">13 joints</span><span class="sr-chip sr-chip-sim">sim</span></p>
 
-You have `unitree_a1` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
+No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
 <robot-viewer name="unitree_a1"></robot-viewer>
 
@@ -21,10 +21,6 @@ robot = Robot("unitree_a1")
 
 Aliases `Robot()` accepts: `a1`.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [unitreerobotics/unitree_mujoco/data/a1](https://github.com/unitreerobotics/unitree_mujoco/tree/f3300ff1bf0ab9efbea0162717353480d9b05d73/data/a1), scene `xml/a1.xml`.
 
-Back to [Mobile bases](mobile/index.md) or the [catalog](index.md).
+Back to [Mobile bases](mobile/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

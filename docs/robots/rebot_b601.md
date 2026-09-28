@@ -9,7 +9,7 @@ description: "Seeed Studio reBot B601-DM (6-DOF + gripper, Damiao CAN motors)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
 
-You have `rebot_b601` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("rebot_b601")` in the default sim mode refuses by name.
+The registry ships no simulation asset for it, so `Robot("rebot_b601")` in the default sim mode refuses by name.
 
 Real hardware, one call per driver that builds it:
 
@@ -24,8 +24,4 @@ Aliases `Robot()` accepts: `rebot_b601_follower`, `seeed_rebot_b601`, `b601_dm`.
 
 **lerobot.** `Robot("rebot_b601", mode="real")` builds lerobot's `rebot_b601_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given. Install lerobot from source: the type is not in the PyPI release.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
-Back to [Arms](arm/index.md) or the [catalog](index.md).
+Back to [Arms](arm/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

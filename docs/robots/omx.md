@@ -9,7 +9,7 @@ description: "OMX Robot Arm (ROBOTIS, CAN bus motors)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
 
-You have `omx` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("omx")` in the default sim mode refuses by name.
+The registry ships no simulation asset for it, so `Robot("omx")` in the default sim mode refuses by name.
 
 Real hardware, one call per driver that builds it:
 
@@ -23,8 +23,4 @@ Aliases `Robot()` accepts: `omx_follower`, `omx_robot`, `robotis_omx`.
 
 **lerobot.** `Robot("omx", mode="real")` builds lerobot's `omx_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
-Back to [Arms](arm/index.md) or the [catalog](index.md).
+Back to [Arms](arm/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

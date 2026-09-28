@@ -9,7 +9,7 @@ description: "PSYONIC Ability Hand (5-finger prosthetic, 11-DOF)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip">11 joints</span><span class="sr-chip sr-chip-sim">sim</span></p>
 
-You have `ability_hand` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
+No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
 <robot-viewer name="ability_hand"></robot-viewer>
 
@@ -21,10 +21,6 @@ robot = Robot("ability_hand")
 
 Aliases `Robot()` accepts: `psyonic_ability_hand`.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [psyonicinc/ability-hand-api/python/ah_simulators/mujoco_xml](https://github.com/psyonicinc/ability-hand-api/tree/89407424edfc22faceaedcd7c3ea2b7947cbbb2c/python/ah_simulators/mujoco_xml), scene `scene.xml`.
 
-Back to [Hands and grippers](hand/index.md) or the [catalog](index.md).
+Back to [Hands and grippers](hand/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

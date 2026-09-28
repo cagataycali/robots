@@ -9,8 +9,6 @@ description: "Robotiq 2F-85 Gripper (2-finger adaptive)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip">16 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
 
-You have `robotiq_2f85` in a MuJoCo world after one line, and the same object on the hardware with `mode="real"`.
-
 <robot-viewer name="robotiq_2f85"></robot-viewer>
 
 ```python
@@ -44,10 +42,6 @@ Checks before it writes:
 - `send_action` refuses while the gripper is not activated
 - `start_task` and `run_policy` refuse: a 1-DOF end effector is commanded as one dimension of the arm's action
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [google-deepmind/mujoco_menagerie/robotiq_2f85](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/robotiq_2f85), scene `scene.xml`.
 
-Back to [Hands and grippers](hand/index.md) or the [catalog](index.md).
+Back to [Hands and grippers](hand/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

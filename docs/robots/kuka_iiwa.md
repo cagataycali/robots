@@ -9,7 +9,7 @@ description: "KUKA LBR iiwa 14 (7-DOF collaborative)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">11 joints</span><span class="sr-chip sr-chip-sim">sim</span></p>
 
-You have `kuka_iiwa` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
+No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
 <robot-viewer name="kuka_iiwa"></robot-viewer>
 
@@ -21,10 +21,6 @@ robot = Robot("kuka_iiwa")
 
 Aliases `Robot()` accepts: `kuka_iiwa_14`.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [google-deepmind/mujoco_menagerie/kuka_iiwa_14](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/kuka_iiwa_14), scene `scene.xml`.
 
-Back to [Arms](arm/index.md) or the [catalog](index.md).
+Back to [Arms](arm/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

@@ -9,7 +9,7 @@ description: "Boston Dynamics Spot (with arm)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">20 joints</span><span class="sr-chip sr-chip-sim">sim</span></p>
 
-You have `spot` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
+No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
 <robot-viewer name="spot"></robot-viewer>
 
@@ -21,10 +21,6 @@ robot = Robot("spot")
 
 Aliases `Robot()` accepts: `boston_dynamics_spot`.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [google-deepmind/mujoco_menagerie/boston_dynamics_spot](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/boston_dynamics_spot), scene `scene_arm.xml`.
 
-Back to [Mobile bases](mobile/index.md) or the [catalog](index.md).
+Back to [Mobile bases](mobile/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

@@ -23,6 +23,7 @@ import itertools
 import logging
 import os
 import re
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -955,6 +956,13 @@ class Gr00tPolicy(Policy):
         self._action_mapping: ActionMapping | None = None
 
         if model_path is not None:
+            warnings.warn(
+                "Gr00tPolicy(model_path=) in-process GR00T is removed in 0.7; serve the checkpoint "
+                "and connect with host=/port=, or use create_policy('lerobot_local', policy_type='groot', "
+                "pretrained_name_or_path=...)",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             self._mode = "local"
             # Detection answers whether ANY loader can succeed, so it gates the
             # load for both spellings of the request. Forcing a release used to

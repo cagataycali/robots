@@ -12,25 +12,32 @@ The codec:
   frame field, where a value the field cannot hold would otherwise be
   truncated into one it can.
 
-No native driver is registered for a Dynamixel robot until a bus opens the
-port; one table pins that ``driver="strands"`` refuses each of them by name.
-
-Every suite is hardware-free by construction: the codec is pure.
+* :class:`TestTheBusOnTheWire` grades the bus against frames ``dynamixel_sdk``
+  sent, then drives koch end to end - read, move, release, a policy rollout -
+  over a port with six servos behind it. The other Dynamixel arms are refused.
 """
 
 from __future__ import annotations
 
+import asyncio
+from typing import Any
+
 import pytest
 
-from strands_robots.drivers import get_native_driver_class, list_native_drivers
+from strands_robots.drivers import get_native_driver_class
 from strands_robots.drivers.dynamixel import (
     CONTROL_TABLE,
+    KOCH_MOTORS,
+    DynamixelBus,
+    DynamixelDriver,
     Instruction,
     build_packet,
     checksum,
     decode_model_number,
     parse_status_packet,
+    parse_status_stream,
     sync_write_packet,
+    write_packet,
 )
 from strands_robots.drivers.dynamixel.protocol import (
     BROADCAST_ID,
@@ -355,40 +362,158 @@ class TestProtocol:
 
 
 # ============================================================================
-# No native driver until the bus lands.
+# The bus and the driver, over a port with six servos behind it.
 # ============================================================================
 
-#: The Dynamixel robots the package registry knows. None of them has a native
-#: driver: the codec above is the whole of the native Dynamixel path until a bus
-#: opens the port, so ``driver="strands"`` must refuse rather than build a robot
-#: that cannot read or move a joint.
-DYNAMIXEL_ROBOTS = ("koch", "aloha", "vx300s", "wx250s", "trossen_wxai", "dynamixel_2r")
+#: Frames ``dynamixel_sdk`` 4.1.0 put on the wire (``GroupSyncRead`` of
+#: Present_Position for ids 1-6, ``GroupSyncWrite`` of Goal_Position
+#: {1: 2048, 2: 1024, 6: 3000}, ``write1ByteTxOnly(3, TORQUE_ENABLE, 0)``) and
+#: the status packet it accepts from id 2 at 2048 counts. Captured once against
+#: the SDK so the transcript below grades bytes, not this codec against itself.
+SDK_SYNC_READ = bytes.fromhex("fffffd00fe0d008284000400010203040506b29b")
+SDK_SYNC_WRITE = bytes.fromhex("fffffd00fe160083740004000100080000020004000006b80b0000c2ea")
+SDK_TORQUE_OFF = bytes.fromhex("fffffd0003060003400000fd64")
+SDK_STATUS_ID2_2048 = bytes.fromhex("fffffd00020800550000080000bc32")
 
 
-@pytest.mark.parametrize(
-    ("canonical", "recipe"),
-    [
-        ("koch", "driver='lerobot'"),
-        *((name, "lerobot has no robot type for it either") for name in DYNAMIXEL_ROBOTS[1:]),
-    ],
-)
-def test_a_dynamixel_robot_on_the_native_driver_is_refused_with_the_path_that_moves_it(
-    canonical: str, recipe: str
-) -> None:
-    """``Robot(<dynamixel robot>, mode="real", driver="strands")`` refuses at build.
+def _status(servo_id: int, params: bytes = b"", err: int = 0) -> bytes:
+    """The status packet a servo answers with (``INST`` 0x55, then ``ERR``)."""
+    length = len(params) + 4
+    frame = HEADER + bytes([servo_id, length & 0xFF, length >> 8, 0x55, err]) + params
+    crc = checksum(frame)
+    return frame + bytes([crc & 0xFF, crc >> 8])
 
-    A registered driver whose every write refused handed back a robot under
-    ``status=success`` that could not move, so the failure surfaced at the first
-    ``send_action``. The refusal names the path that does move the arm (lerobot,
-    for a robot that declares a lerobot type) or says no shipped driver can.
+
+class FakeDynamixelPort:
+    """Six X-series servos on a half-duplex line, decoded by offset, not by the codec.
+
+    A servo moves to a ``Goal_Position`` only while torqued, as the hardware
+    does. ``mute`` servos answer nothing; ``err`` sets a servo's ``ERR`` byte.
     """
+
+    def __init__(self, counts: dict[int, int], *, mute: tuple[int, ...] = (), err: dict[int, int] | None = None):
+        self.counts, self.mute, self.err = dict(counts), set(mute), dict(err or {})
+        self.torque = dict.fromkeys(counts, 0)
+        self.writes: list[bytes] = []
+        self.is_open, self._pending = True, b""
+
+    @property
+    def in_waiting(self) -> int:
+        return len(self._pending)
+
+    def read(self, size: int) -> bytes:
+        out, self._pending = self._pending[:size], self._pending[size:]
+        return out
+
+    def close(self) -> None:
+        self.is_open = False
+
+    def write(self, data: bytes) -> int:
+        self.writes.append(bytes(data))
+        servo_id, inst, params = data[4], data[7], data[8:-2]
+        address = params[0] | params[1] << 8
+        if inst == Instruction.SYNC_READ:
+            for i in params[4:]:
+                if i not in self.mute:
+                    self._pending += _status(i, self.counts[i].to_bytes(4, "little", signed=True), self.err.get(i, 0))
+        elif inst == Instruction.SYNC_WRITE and address == CONTROL_TABLE["GOAL_POSITION"][0]:
+            for k in range(4, len(params), 5):
+                if self.torque.get(params[k]):
+                    self.counts[params[k]] = int.from_bytes(params[k + 1 : k + 5], "little", signed=True)
+        elif inst == Instruction.WRITE and servo_id not in self.mute:
+            if address == CONTROL_TABLE["TORQUE_ENABLE"][0]:
+                self.torque[servo_id] = params[2]
+            self._pending += _status(servo_id, err=self.err.get(servo_id, 0))
+        return len(data)
+
+
+def _koch(monkeypatch: pytest.MonkeyPatch, port: FakeDynamixelPort) -> Any:
+    """``Robot("koch", mode="real", driver="strands")`` with ``port`` behind ``serial.Serial``."""
+    import serial
+
+    from strands_robots import Robot
+
+    monkeypatch.setattr(serial, "Serial", lambda *args, **kwargs: port)
+    return Robot("koch", mode="real", driver="strands", port="/dev/ttyUSB0")
+
+
+class TestTheBusOnTheWire:
+    """The frames the bus sends are the SDK's; the arm reads, moves, releases and runs a policy."""
+
+    def test_every_frame_is_the_sdk_frame(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        port = FakeDynamixelPort(dict.fromkeys(range(1, 7), 2048))
+        bus = DynamixelBus(port="/dev/fake")
+        bus._conn = port
+        bus.sync_read()
+        bus.set_torque(True)
+        bus.write_goal_positions({name: 0.0 for name in ("shoulder_pan", "shoulder_lift")})
+        assert port.writes[0] == SDK_SYNC_READ
+        assert write_packet(3, CONTROL_TABLE["TORQUE_ENABLE"][0], b"\x00") == SDK_TORQUE_OFF
+        pairs = [(1, 2048), (2, 1024), (6, 3000)]
+        assert sync_write_packet(116, 4, [(i, c.to_bytes(4, "little")) for i, c in pairs]) == SDK_SYNC_WRITE
+        assert parse_status_stream(b"\x00" + SDK_STATUS_ID2_2048, [2], 4) == {2: (2048).to_bytes(4, "little")}
+
+    @pytest.mark.parametrize(
+        ("err", "verified"),
+        [(0x00, True), (0x80, True), (0x04, False), (0x84, False)],
+        ids=["clean", "hardware-alert-still-executed", "data-range-error", "alert-and-error"],
+    )
+    def test_only_an_error_number_refuses_a_reply(self, err: int, verified: bool) -> None:
+        stream = SDK_SYNC_READ + _status(4, (100).to_bytes(4, "little"), err)
+        assert (4 in parse_status_stream(stream, [4], 4)) is verified
+
+    def test_koch_reads_moves_and_releases(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        port = FakeDynamixelPort(dict.fromkeys(range(1, 7), 2048))
+        robot = _koch(monkeypatch, port)
+        assert type(robot) is DynamixelDriver
+        assert robot._set_torque_envelope(True)["status"] == "success"
+        assert robot.send_action({"shoulder_pan": 90.0, "gripper.pos": 100.0})["status"] == "success"
+        assert port.counts[1] == 3071 and port.counts[6] == 4095
+        joints = robot._read_joints_envelope()["content"][0]["json"]["joint_state"]
+        assert set(joints) == set(KOCH_MOTORS)
+        assert joints["shoulder_pan"] == pytest.approx(90.0, abs=360 / 4095)
+        asyncio.run(robot.stop())
+        assert set(port.torque.values()) == {0}
+
+    def test_a_mute_servo_is_named_as_possibly_still_driven(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        robot = _koch(monkeypatch, FakeDynamixelPort(dict.fromkeys(range(1, 7), 2048), mute=(6,)))
+        refusal = robot._set_torque_envelope(False)
+        assert refusal["status"] == "error" and "['gripper']" in refusal["content"][0]["text"]
+        assert "gripper" not in robot._read_joints_envelope()["content"][0]["json"]["joint_state"]
+
+    def test_a_policy_runs_at_thirty_hertz_and_stops(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        port = FakeDynamixelPort(dict.fromkeys(range(1, 7), 2048))
+        robot = _koch(monkeypatch, port)
+        robot._set_torque_envelope(True)
+        seen: list[dict[str, Any]] = []
+
+        def policy(observation: dict[str, Any]) -> dict[str, Any]:
+            seen.append(observation)
+            return {"shoulder_pan.pos": float(len(seen))}
+
+        assert robot.run_policy(policy, n_steps=15, control_frequency=30.0)["status"] == "success"
+        robot._rollout.join()
+        status = robot.get_task_status()["content"][0]["json"]
+        assert (status["steps"], status["running"]) == (15, False)
+        assert set(seen[0]) == {f"{name}.pos" for name in KOCH_MOTORS}
+        assert robot._read_joints_envelope()["content"][0]["json"]["joint_state"]["shoulder_pan"] == pytest.approx(
+            15.0, abs=360 / 4095
+        )
+        assert robot.stop_task()["status"] == "success"
+
+
+#: The Dynamixel arms with no verified motor map: ``driver="strands"`` refuses
+#: each rather than commanding joints it cannot name.
+UNMAPPED_DYNAMIXEL_ROBOTS = ("aloha", "vx300s", "wx250s", "trossen_wxai", "dynamixel_2r")
+
+
+@pytest.mark.parametrize("canonical", UNMAPPED_DYNAMIXEL_ROBOTS)
+def test_a_dynamixel_robot_without_a_motor_map_is_refused(canonical: str) -> None:
     from strands_robots import Robot
 
     assert get_native_driver_class(canonical) is None
-    assert canonical not in list_native_drivers()
-    with pytest.raises(ValueError, match="No native driver is registered") as excinfo:
+    with pytest.raises(ValueError, match="lerobot has no robot type for it either"):
         Robot(canonical, mode="real", driver="strands", port="/dev/null")
-    assert recipe in str(excinfo.value)
 
 
 # ============================================================================

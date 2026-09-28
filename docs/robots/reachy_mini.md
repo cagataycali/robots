@@ -9,8 +9,6 @@ description: "Pollen Reachy Mini (6-DOF Stewart head + antennas, 9 actuators)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="expressive">Expressive</span><span class="sr-chip">21 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
 
-You have `reachy_mini` in a MuJoCo world after one line, and the same object on the hardware with `mode="real"`.
-
 <robot-viewer name="reachy_mini"></robot-viewer>
 
 ```python
@@ -43,10 +41,6 @@ Checks before it writes:
 - `connect_eagerly` probes `GET /api/daemon/status`, which also reports Lite or Wireless hardware
 - `_imu`, `_pose` and `_battery` are cached from the daemon link and published by the mesh when present
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [pollen-robotics/reachy_mini/src/reachy_mini/descriptions/reachy_mini](https://github.com/pollen-robotics/reachy_mini/tree/292b2434cadbb3ff932863bd9b476741bb6ef2fd/src/reachy_mini/descriptions/reachy_mini), scene `mjcf/scene.xml`.
 
-Back to [Expressive](expressive/index.md) or the [catalog](index.md).
+Back to [Expressive](expressive/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

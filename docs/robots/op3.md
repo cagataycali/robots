@@ -9,7 +9,7 @@ description: "ROBOTIS OP3 Humanoid (20-DOF)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">21 joints</span><span class="sr-chip sr-chip-sim">sim</span></p>
 
-You have `op3` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
+No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
 <robot-viewer name="op3"></robot-viewer>
 
@@ -21,10 +21,6 @@ robot = Robot("op3")
 
 Aliases `Robot()` accepts: `robotis_op3`.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [google-deepmind/mujoco_menagerie/robotis_op3](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/robotis_op3), scene `scene.xml`.
 
-Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).
+Back to [Humanoids](humanoid/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

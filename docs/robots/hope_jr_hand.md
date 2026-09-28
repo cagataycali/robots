@@ -9,7 +9,7 @@ description: "HopeJR Hand (dexterous anthropomorphic hand, Feetech)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
 
-You have `hope_jr_hand` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("hope_jr_hand")` in the default sim mode refuses by name.
+The registry ships no simulation asset for it, so `Robot("hope_jr_hand")` in the default sim mode refuses by name.
 
 Real hardware, one call per driver that builds it:
 
@@ -23,8 +23,4 @@ Aliases `Robot()` accepts: `hopejr_hand`, `hope_junior_hand`.
 
 **lerobot.** `Robot("hope_jr_hand", mode="real")` builds lerobot's `hope_jr_hand` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
-Back to [Hands and grippers](hand/index.md) or the [catalog](index.md).
+Back to [Hands and grippers](hand/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

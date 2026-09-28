@@ -6,7 +6,7 @@ title: Aerial
 
 # Aerial
 
-Quadrotors, commanded as a setpoint stream. Every `aerial` robot in the registry, generated from `robots.json`; each card opens the robot's page with the viewer, the constructor and the hardware facts. The table below the cards is the same list as text.
+Quadrotors, commanded as a setpoint stream.
 
 {{robot_cards:aerial}}
 

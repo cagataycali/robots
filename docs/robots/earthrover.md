@@ -9,7 +9,7 @@ description: "EarthRover Mini Plus (mobile outdoor navigation)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot, strands</span></p>
 
-You have `earthrover` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("earthrover")` in the default sim mode refuses by name.
+The registry ships no simulation asset for it, so `Robot("earthrover")` in the default sim mode refuses by name.
 
 Real hardware, one call per driver that builds it:
 
@@ -38,8 +38,4 @@ Checks before it writes:
 - `POST /control` carries one twist frame; `GET /data` is the telemetry snapshot; `GET /v2/front` and `/v2/rear` are the cameras
 - `turn_sign=-1.0` corrects a rover observed turning the wrong way, at the call site
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
-Back to [Mobile bases](mobile/index.md) or the [catalog](index.md).
+Back to [Mobile bases](mobile/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

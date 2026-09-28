@@ -1976,6 +1976,77 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     "content": [{"text": f"Failed to create world: {e}"}],
                 }
 
+    def _flush_or_account_cameras_recording_before_destroy(self) -> None:
+        """Encode a held raw-camera recording, or name its loss, before teardown.
+
+        Issue #3330/#4086. ``stop_cameras_recording`` leaves a recording
+        registered when the clip encoder is absent: the frames are host-side
+        NumPy arrays, still in ``_cams_rec_state["buffers"]``, and the refusal
+        promises they are recoverable by installing the encoder and calling the
+        verb again. ``destroy()`` used to null ``_cams_rec_state`` outright,
+        discarding exactly those frames under ``status="success"`` - the silent
+        loss the refusal had ruled out (the buffers are host arrays that survive
+        the stage teardown and encode fine, unlike the comment there claimed).
+
+        This is teardown's last chance, so it honours the same rule the flush
+        does. If the encoder is installed, every camera's buffered frames are
+        encoded to their registered path now, before the stage is torn down. If
+        it is absent, the recording and its per-camera frame counts are named in
+        a WARNING - never dropped to ``None`` in silence.
+        """
+        state = getattr(self, "_cams_rec_state", None)
+        if not state:
+            self._cams_rec_state = None
+            return
+        buffered = {cam: len(state["buffers"][cam]) for cam in state["cameras"]}
+        if not any(buffered.values()):
+            # A registered-but-empty recording carries nothing to keep.
+            self._cams_rec_state = None
+            return
+
+        from strands_robots.rendering import require_clip_encoder
+        from strands_robots.rendering.video import encode_clip
+
+        sample_path = next(iter(state["paths"].values()))
+        try:
+            require_clip_encoder(sample_path, purpose="camera recording flush at destroy()")
+        except ImportError as exc:
+            logger.warning(
+                "destroy() is discarding camera recording %r: %s frames per camera are "
+                "held but the clip encoder is not installed (%s). Install it and call "
+                "stop_cameras_recording() before destroy() to keep them.",
+                state["name"],
+                buffered,
+                exc,
+            )
+            self._cams_rec_state = None
+            return
+
+        encoded: dict[str, int] = {}
+        for cam in state["cameras"]:
+            frames = state["buffers"][cam]
+            if not frames:
+                continue
+            try:
+                encode_clip(frames, state["paths"][cam], fps=state["fps"])
+                encoded[cam] = len(frames)
+            except (RuntimeError, ValueError, OSError) as e:
+                # OSError is how imageio-ffmpeg reports an encoder process that
+                # died mid-write; teardown must still run past it.
+                logger.warning(
+                    "destroy(): flushing camera recording %r failed for %r -> %s: %s",
+                    state["name"],
+                    cam,
+                    state["paths"][cam],
+                    e,
+                )
+        logger.info(
+            "destroy() encoded held camera recording %r before teardown: %s",
+            state["name"],
+            encoded,
+        )
+        self._cams_rec_state = None
+
     def destroy(self) -> dict[str, Any]:
         """Destroy the simulation world and release resources.
 
@@ -2004,6 +2075,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             num_envs_released = self._num_envs_active
             sim_time_at_destroy = self._sim_time
             step_count_at_destroy = self._step_count
+
+            # Issue #3330/#4086: a raw-camera recording left registered
+            # because the encoder was absent holds host-side frames that
+            # survive teardown and encode fine. Flush them now (or name the
+            # loss) before the stage goes, instead of nulling in silence.
+            self._flush_or_account_cameras_recording_before_destroy()
 
             try:
                 if self._world is not None:
@@ -2045,9 +2122,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             self._cameras.clear()
             self._objects.clear()
             self._prim_registry.clear()
-            # Drop any in-flight recorder state (buffers reference RTX
-            # frames that are meaningless after the stage tears down).
-            self._cams_rec_state = None
             # Same for the LeRobotDataset recording session: a live recorder
             # holds an OPEN LeRobot episode buffer whose camera frames came
             # from this stage. Mirror the MuJoCo/Newton behaviour (their

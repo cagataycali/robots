@@ -6,7 +6,7 @@ title: Bimanual
 
 # Bimanual
 
-Two arms on one frame, one action dict. Every `bimanual` robot in the registry, generated from `robots.json`; each card opens the robot's page with the viewer, the constructor and the hardware facts. The table below the cards is the same list as text.
+Two arms on one frame, one action dict.
 
 {{robot_cards:bimanual}}
 

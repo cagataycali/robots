@@ -9,7 +9,7 @@ description: "Dynamixel 2R Educational Arm (2-DOF)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">2 joints</span><span class="sr-chip sr-chip-sim">sim</span></p>
 
-You have `dynamixel_2r` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
+No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
 <robot-viewer name="dynamixel_2r"></robot-viewer>
 
@@ -19,10 +19,6 @@ from strands_robots import Robot
 robot = Robot("dynamixel_2r")
 ```
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [google-deepmind/mujoco_menagerie/dynamixel_2r](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/dynamixel_2r), scene `scene.xml`.
 
-Back to [Arms](arm/index.md) or the [catalog](index.md).
+Back to [Arms](arm/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

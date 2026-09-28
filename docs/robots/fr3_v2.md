@@ -9,8 +9,6 @@ description: "Franka Research 3 v2 (7-DOF + gripper, updated)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
 
-You have `fr3_v2` in a MuJoCo world after one line, and the same object on the hardware with `mode="real"`.
-
 <robot-viewer name="fr3_v2"></robot-viewer>
 
 ```python
@@ -44,10 +42,6 @@ Checks before it writes:
 - no 1 kHz torque loop: joint motion goes through `panda-py`'s guarded motion generator, which owns the realtime context
 - state is sourced at 1000 Hz and downsampled to `stream_rate_hz`; the stride is reported
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [google-deepmind/mujoco_menagerie/franka_fr3_v2](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/franka_fr3_v2), scene `scene.xml`.
 
-Back to [Arms](arm/index.md) or the [catalog](index.md).
+Back to [Arms](arm/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

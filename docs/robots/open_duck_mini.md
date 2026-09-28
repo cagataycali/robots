@@ -9,8 +9,6 @@ description: "Open Duck Mini V2 (16-DOF expressive biped, Feetech servos)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">16 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
 
-You have `open_duck_mini` in a MuJoCo world after one line, and the same object on the hardware with `mode="real"`.
-
 <robot-viewer name="open_duck_mini"></robot-viewer>
 
 ```python
@@ -45,10 +43,6 @@ Checks before it writes:
 - `stop` releases torque on every motor and names any that stayed driven
 - `transport="twin"` answers the same verbs from the arm's MuJoCo model
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [apirrone/Open_Duck_Mini/mini_bdx/robots/open_duck_mini_v2](https://github.com/apirrone/Open_Duck_Mini/tree/b23317a485b3cec7d8417f352478778b3475173c/mini_bdx/robots/open_duck_mini_v2), scene `scene.xml`.
 
-Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).
+Back to [Humanoids](humanoid/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

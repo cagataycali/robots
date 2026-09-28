@@ -66,6 +66,7 @@ from strands_robots.drivers.feetech.bus import (
     SO_ARM_MOTORS,
     FeetechBus,
     MotorCalibration,
+    MotorSpec,
     load_calibration,
 )
 from strands_robots.drivers.rollout import PolicyRollout, policy_from_provider
@@ -169,6 +170,15 @@ class FeetechDriver:
 
     tool_type = _TOOL_TYPE
 
+    #: What a subclass on another servo family overrides - the robots it
+    #: serves, the seams it offers, its motor map, its bus and the wire it names
+    #: in the tool spec. Every verb, unit and refusal below is shared.
+    SUPPORTED_ROBOTS: tuple[str, ...] = SUPPORTED_ROBOTS
+    TRANSPORTS: tuple[str, ...] = TRANSPORTS
+    MOTORS: dict[str, MotorSpec] = SO_ARM_MOTORS
+    BUS: type[FeetechBus] = FeetechBus
+    WIRE: str = "Feetech-native driver for {name} (STS/SMS series)"
+
     def __init__(
         self,
         tool_name: str,
@@ -192,6 +202,7 @@ class FeetechDriver:
         # only suggests otherwise.
         del cameras
         self._data_config = data_config
+        context = f"{type(self).__name__}({tool_name!r})"
         # A Feetech arm today is one U-shape bus. Aloha-style bimanual rigs
         # are Dynamixel not Feetech, so we accept a single ``port`` and refuse
         # ``ports`` outright rather than pretend to multi-bus a family that
@@ -200,8 +211,7 @@ class FeetechDriver:
         # roster of keywords this driver does read.
         if ports is not None:
             raise ValueError(
-                f"FeetechDriver({tool_name!r}): pass port= for the Feetech bus; "
-                f"multi-bus rigs are not part of {SUPPORTED_ROBOTS}",
+                f"{context}: pass port= for the bus; multi-bus rigs are not part of {self.SUPPORTED_ROBOTS}",
             )
         self._port: str | None = port
         # Graded, not coerced. pyserial takes the speed through its own
@@ -211,14 +221,14 @@ class FeetechDriver:
         # while ``get_status`` reported the converted number as the configured
         # one. The same domain :mod:`~strands_robots.tools.serial_tool` holds
         # its ``baudrate`` to, because the two reach the same ``serial.Serial``.
-        if (reason := positive_count_error(baud_rate, "baud_rate", f"FeetechDriver({tool_name!r})")) is not None:
+        if (reason := positive_count_error(baud_rate, "baud_rate", context)) is not None:
             raise ValueError(reason)
         self._baud_rate: int = baud_rate
         # Forwarded, not recorded. The bus has this knob, so a ``timeout`` this
         # constructor accepted and kept to itself would not be an extension
         # waiting for a downstream package - it is a window the caller set and
         # the bus never saw.
-        if (reason := positive_finite_number_error(timeout, "timeout", f"FeetechDriver({tool_name!r})")) is not None:
+        if (reason := positive_finite_number_error(timeout, "timeout", context)) is not None:
             raise ValueError(reason)
         self._timeout: float = float(timeout)
         # The arm's own measured travel, or None for the servo's full rotation.
@@ -235,7 +245,7 @@ class FeetechDriver:
             records = calibration
         elif calibration is not None:
             raise ValueError(
-                f"FeetechDriver({tool_name!r}): calibration must be a path to the JSON "
+                f"{context}: calibration must be a path to the JSON "
                 f"lerobot-calibrate wrote, or the records themselves, got {type(calibration).__name__}",
             )
         self._motor_ids: tuple[int, ...] = tuple(motor_ids)
@@ -244,20 +254,23 @@ class FeetechDriver:
         # that is refused, because the caller believes the arm is configured.
         # An ID this driver has no joint name for is refused for the same
         # reason - we would otherwise command a motor we cannot name.
-        motors = dict(SO_ARM_MOTORS)
+        motors = dict(self.MOTORS)
         if self._motor_ids:
-            known = {spec.motor_id: name for name, spec in SO_ARM_MOTORS.items()}
+            known = {spec.motor_id: name for name, spec in self.MOTORS.items()}
             if unknown := sorted(set(self._motor_ids) - set(known)):
                 raise ValueError(
-                    f"FeetechDriver({tool_name!r}): motor_ids {unknown} are not on an SO-arm; "
+                    f"{context}: motor_ids {unknown} are not on this arm; "
                     f"ids {sorted(known)} map to {[known[i] for i in sorted(known)]}",
                 )
-            motors = {known[i]: SO_ARM_MOTORS[known[i]] for i in self._motor_ids}
+            motors = {known[i]: self.MOTORS[known[i]] for i in self._motor_ids}
         # The seam. ``"serial"`` is the shipped default and is untouched by the
         # twin's knobs; ``"twin"`` builds the same bus surface over the model.
-        context = f"FeetechDriver({tool_name!r})"
-        if transport not in TRANSPORTS:
-            raise ValueError(f"{context}: transport must be one of {list(TRANSPORTS)}, got {transport!r}")
+        if transport not in self.TRANSPORTS:
+            raise ValueError(f"{context}: transport must be one of {list(self.TRANSPORTS)}, got {transport!r}")
+        if sim is not None and "twin" not in self.TRANSPORTS:
+            raise ValueError(
+                f"{context}: sim= is a twin engine, and this driver's transports are {list(self.TRANSPORTS)}"
+            )
         if sim is not None and transport != "twin":
             raise ValueError(f"{context}: sim= is the twin transport's engine; pass transport='twin' with it")
         if sim is None and transport == "twin":
@@ -282,7 +295,7 @@ class FeetechDriver:
                 realtime=bool(realtime),
             )
         else:
-            self._bus = FeetechBus(
+            self._bus = self.BUS(
                 port=self._port,
                 baud_rate=self._baud_rate,
                 motors=motors,
@@ -317,8 +330,7 @@ class FeetechDriver:
         return {
             "name": self._tool_name,
             "description": (
-                f"Feetech-native driver for {self._tool_name} (STS/SMS series). Joint targets are degrees; "
-                "gripper is percent open."
+                f"{self.WIRE.format(name=self._tool_name)}. Joint targets are degrees; gripper is percent open."
             ),
             "inputSchema": {
                 "json": {
@@ -552,7 +564,7 @@ class FeetechDriver:
             return refuse(f"run_policy: {reason}")
 
         rollout = PolicyRollout(
-            name=f"feetech-rollout-{self._tool_name}",
+            name=f"{type(self).__name__.removesuffix('Driver').lower()}-rollout-{self._tool_name}",
             policy=policy_object,
             instruction=instruction,
             duration=float(duration),
@@ -778,7 +790,7 @@ class FeetechDriver:
                         # keyword they forgot rather than as a wrong number.
                         "calibration_source": self._calibration_source,
                         "motor_ids": list(self._motor_ids),
-                        "supported_robots": list(SUPPORTED_ROBOTS),
+                        "supported_robots": list(self.SUPPORTED_ROBOTS),
                     }
                 }
             ],

@@ -9,8 +9,6 @@ description: "LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuat
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">9 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot, strands</span></p>
 
-You have `lekiwi` in a MuJoCo world after one line, and the same object on the hardware with `mode="real"`.
-
 <robot-viewer name="lekiwi"></robot-viewer>
 
 ```python
@@ -46,10 +44,6 @@ Checks before it writes:
 - `stop` releases torque on every motor and names any that stayed driven
 - `transport="twin"` answers the same verbs from the arm's MuJoCo model
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [Ekumen-OS/lekiwi/packages/lekiwi_sim/lekiwi_sim/assets](https://github.com/Ekumen-OS/lekiwi/tree/32cf6a69eb320cc22620cdaa529e35f20fc12b1f/packages/lekiwi_sim/lekiwi_sim/assets), scene `scene.xml`.
 
-Back to [Mobile bases](mobile/index.md) or the [catalog](index.md).
+Back to [Mobile bases](mobile/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).
