@@ -55,6 +55,11 @@ class S1VConfig:
     backbone: str = "facebook/dinov2-small"
     grid: int = 4
 
+    def __post_init__(self) -> None:
+        # CLS + a grid x grid pooled patch map per camera: the token count follows the grid.
+        self.tokens_per_camera = 1 + int(self.grid) ** 2
+        self.cameras = tuple(self.cameras)
+
     def save(self, path: Path) -> None:
         """Write the config as JSON."""
         Path(path).write_text(json.dumps(asdict(self), indent=2))
