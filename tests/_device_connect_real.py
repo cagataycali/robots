@@ -42,8 +42,8 @@ tore down, ``sys.modules["device_connect_edge"]`` was the first file's mock and
 ``robot_driver.DeviceDriver.__module__`` was that file's name. And a snapshot
 taken *before* the swap does not cover a real module a later-collected sibling
 imports during it: dropping that one at teardown is the orphaning above by
-another route - measured as the same four reachy cells, with
-``tests/test_device_connect_all_robots.py`` selected ahead of them. So a snapshot
+another route - measured as the same four reachy cells, with an installing
+file selected ahead of them. So a snapshot
 records only what is real, and a restore hands back only what is real, drops what
 is bound to a fake, and leaves a newer real module where the sibling that imported
 it can still reach it.

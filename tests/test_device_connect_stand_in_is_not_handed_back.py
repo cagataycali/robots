@@ -295,7 +295,7 @@ class TestTheEdgeSnapshotRecordsOnlyWhatIsReal:
         }
 
 
-#: A test module run last, grading what the two installing files leave behind.
+#: A test module run last, grading what the installing file leaves behind.
 _WHAT_IS_LEFT = """
 import sys
 
@@ -384,7 +384,7 @@ class TestTheMeasuredOrderings:
 
     def test_the_installing_file_ahead_of_the_reachy_driver_file(self) -> None:
         report = _run_pytest(
-            "tests/test_device_connect_all_robots.py",
+            "tests/test_device_connect_drivers.py",
             "tests/drivers/test_reachy_wireless_daemon_protocol.py",
             "-k",
             "not websocket_close",
@@ -392,11 +392,10 @@ class TestTheMeasuredOrderings:
         )
         assert _counted(report, "failed") == 0 and _counted(report, "passed") > 0, report[-4000:]
 
-    def test_both_installing_files_then_what_they_left_behind(self, tmp_path: Path) -> None:
+    def test_the_installing_file_then_what_it_left_behind(self, tmp_path: Path) -> None:
         probe = tmp_path / "test_what_is_left.py"
         probe.write_text(textwrap.dedent(_WHAT_IS_LEFT), encoding="utf-8")
         report = _run_pytest(
-            "tests/test_device_connect_all_robots.py",
             "tests/test_device_connect_drivers.py",
             str(probe),
             cwd=_REPO_ROOT,
