@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Sequence
 from typing import Any, ClassVar
 
 import numpy as np
@@ -221,6 +222,10 @@ class Flux3ActionPolicy(Policy):
         """
         if error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys"):
             raise ValueError(error)
+        if isinstance(robot_state_keys, str | bytes) or not isinstance(robot_state_keys, Sequence):
+            raise TypeError(
+                f"flux3_action.set_robot_state_keys expects a list of joint names, got {type(robot_state_keys).__name__}"
+            )
         self.robot_state_keys = list(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:
