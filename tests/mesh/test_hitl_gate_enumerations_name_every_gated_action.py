@@ -3,11 +3,15 @@
 ``robot_mesh`` gates a set of actions behind an out-of-band operator
 approval. Two constants own that set: the gateable vocabulary the env var
 accepts, and the default subset gated when the operator configures nothing.
-Several human-facing surfaces enumerate one of them - the README's
-configuration row, the security guide's gate and audit-trail bullets, the
-one-time warning logged when the gate is disabled, the dispatcher's own
-comment and docstring, an example's operator note, and the contract
-docstring of the suite that pins the resolver.
+Several human-facing surfaces enumerate one of them - the generated
+configuration row (``docs/reference/configuration.md``, rendered by
+``docs/hooks/env_vars.py``), the fleet page's approval sentence and the agents
+page's gate-table row (the successors of the old security guide's gate
+bullet), the one-time warning logged when the gate is disabled, the
+dispatcher's own comment and docstring, an example's operator note, and the
+contract docstring of the suite that pins the resolver. The old audit-trail
+bullet has no successor: the audit sections now say "every operator verdict"
+rather than listing actions, so nothing there enumerates the set.
 
 An enumeration that omits a member of the set it claims to list is a
 security defect rather than a wording slip, for two measured reasons. An
@@ -26,7 +30,9 @@ names it.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import inspect
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +42,9 @@ import strands_robots.tools.robot_mesh as rmt
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MESH_TOOL_SOURCE = Path(inspect.getsourcefile(rmt) or "")
+_CONFIGURATION = _REPO_ROOT / "docs" / "reference" / "configuration.md"
+_ENV_VARS_HOOK = _REPO_ROOT / "docs" / "hooks" / "env_vars.py"
+_CONFIGURATION_ANCHOR = "| <code>STRANDS_MESH_HITL_ACTIONS</code> |"
 
 # Cap on how far an enumeration may wrap past its anchor line. Wide enough
 # for the warning's three string fragments, narrow enough that a neighbouring
@@ -68,20 +77,20 @@ def _enumerations() -> tuple[_Enumeration, ...]:
         # operator writing a subset copies from.
         _Enumeration(
             "the configuration.md row",
-            _REPO_ROOT / "docs" / "reference" / "configuration.md",
-            "| `STRANDS_MESH_HITL_ACTIONS` |",
+            _CONFIGURATION,
+            _CONFIGURATION_ANCHOR,
             gateable,
         ),
         _Enumeration(
-            "the security guide's default-gate bullet",
-            _REPO_ROOT / "docs" / "reference" / "security" / "commands.md",
-            "The default gate is broader than just fleet-wide actions.",
+            "the fleet page's approval sentence",
+            _REPO_ROOT / "docs" / "learn" / "mesh" / "fleet.md",
+            "pause for operator approval by default",
             default,
         ),
         _Enumeration(
-            "the security guide's audit-trail bullet",
-            _REPO_ROOT / "docs" / "reference" / "security" / "commands.md",
-            "**Audit trail.**",
+            "the agents page's gate-table row",
+            _REPO_ROOT / "docs" / "learn" / "agents.md",
+            "| `robot_mesh` | `emergency_stop`",
             default,
         ),
         _Enumeration(
@@ -117,6 +126,22 @@ def _enumerations() -> tuple[_Enumeration, ...]:
     )
 
 
+def _rendered(path: Path) -> str:
+    """The file's text; the configuration page with ``{{env_vars}}`` expanded by its hook."""
+    text = path.read_text(encoding="utf-8")
+    if path != _CONFIGURATION:
+        return text
+    spec = importlib.util.spec_from_file_location("docs_env_vars_hook_hitl", _ENV_VARS_HOOK)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    assert "{{env_vars}}" in text, "docs/reference/configuration.md must carry the {{env_vars}} token"
+    rendered = module.on_page_markdown(text, page=None, config=None, files=None)
+    assert "{{env_vars}}" not in rendered, "the env_vars hook left the token unexpanded"
+    return rendered
+
+
 def _anchored_paragraph(path: Path, anchor: str) -> str | None:
     """Return the enumeration anchored at *anchor*, following its wrapping.
 
@@ -125,7 +150,7 @@ def _anchored_paragraph(path: Path, anchor: str) -> str | None:
     next. Extending until a blank line, a new bullet or a new table row
     covers both without letting the next list answer for this one.
     """
-    lines = (path.read_text(encoding="utf-8")).splitlines()
+    lines = _rendered(path).splitlines()
     start = next((i for i, line in enumerate(lines) if anchor in line), None)
     if start is None:
         return None
@@ -157,7 +182,7 @@ def test_the_documented_vocabulary_can_express_the_shipped_default() -> None:
     default from that row. A default action absent from the row is dropped
     from every such subset, silently.
     """
-    row = _anchored_paragraph(_REPO_ROOT / "docs" / "reference" / "configuration.md", "| `STRANDS_MESH_HITL_ACTIONS` |")
+    row = _anchored_paragraph(_CONFIGURATION, _CONFIGURATION_ANCHOR)
     assert row is not None, "premise: docs/reference/configuration.md no longer documents STRANDS_MESH_HITL_ACTIONS"
     unspellable = sorted(action for action in rmt._DEFAULT_INTERRUPT_ACTIONS if action not in row)
     assert not unspellable, (
@@ -209,12 +234,14 @@ def test_rpc_is_a_gated_actuation_action_the_dispatcher_audits() -> None:
 def test_the_device_connect_guides_already_name_every_gated_action() -> None:
     """The Device Connect docs are the surfaces that got this right.
 
-    ``rpc`` arrived with Device Connect, whose own guides name all six
-    actuation actions; the shared mesh surfaces did not follow. Keeping them
-    graded stops that asymmetry reappearing from the other side.
+    ``rpc`` arrived with Device Connect, whose own guide names all six
+    actuation actions twice; the shared mesh surfaces did not follow. Keeping
+    them graded stops that asymmetry reappearing from the other side. The old
+    ``docs/reference/device-connect.md`` page redirects to the generated API
+    reference, so the package's ``GUIDE.md`` carries both enumerations now.
     """
     for path, anchor in (
-        (_REPO_ROOT / "docs" / "reference" / "device-connect.md", "The actuation actions"),
+        (_REPO_ROOT / "strands_robots" / "device_connect" / "GUIDE.md", "the actuation actions"),
         (_REPO_ROOT / "strands_robots" / "device_connect" / "GUIDE.md", "is gated"),
     ):
         text = _anchored_paragraph(path, anchor)
