@@ -11,7 +11,7 @@ pip install 'strands-robots[ur]'          # ur-rtde: rtde_control + rtde_receive
 ```python title="sketch"
 from strands_robots import Robot
 
-arm = Robot("ur5e", mode="real", port="192.168.1.10")   # RTDE on port 30004; driver resolves to URDriver
+arm = Robot("ur5e", mode="real", driver="strands", port="192.168.1.10")   # URDriver, RTDE on port 30004; a bare call resolves to lerobot
 print(arm.connect_eagerly())
 print(arm.state())                                        # q, qd, TCP pose, TCP wrench in one round trip
 arm.send_action({"shoulder_pan_joint": 0.0, "wrist_3_joint": 1.57})   # radians, servoJ

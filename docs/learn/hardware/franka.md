@@ -11,7 +11,7 @@ pip install panda-py              # the panda-py binding over libfranka (MIT); n
 ```python title="sketch"
 from strands_robots import Robot
 
-arm = Robot("panda", mode="real", port="172.16.0.2")             # driver resolves to FrankaDriver
+arm = Robot("panda", mode="real", driver="strands", port="172.16.0.2")   # FrankaDriver; a bare call resolves to lerobot
 print(arm.connect_eagerly())                                      # None, or why not
 arm.send_action({f"joint{i}": 0.0 for i in range(1, 8)})         # all seven joints, radians
 ```

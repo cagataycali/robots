@@ -18,7 +18,7 @@ print(list_driver_coverage()["koch"])            # ('lerobot',)
 | `"strands"` | the native driver class registered for the robot | the robots in the table below |
 | `"auto"` (default value) | the registry's `hardware.driver` if set, else lerobot | everything |
 
-Robots lerobot has no type for (`panda`, `ur5e`, `unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"` in the registry, so a bare `Robot("ur5e", mode="real", port="192.168.1.10")` builds the native driver. Asking for `driver="strands"` on a robot with no native driver is refused by name, never served the lerobot path quietly.
+Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"` in the registry, so a bare `Robot("unitree_go2", mode="real", port="192.168.123.161")` builds the native driver. `panda` and `ur5e` have native drivers but no `hardware` block, so they resolve to lerobot until you ask: `Robot("ur5e", mode="real", driver="strands", port="192.168.1.10")`. Asking for `driver="strands"` on a robot with no native driver is refused by name, never served the lerobot path quietly.
 
 `port=` is polymorphic: a serial path for a Feetech bus, an IP for a controller, a `radio://` URI for a Crazyflie, `host:port` for a daemon. Each driver documents what it reads. A keyword the driver does not declare is refused (`Robot(..., prot="/dev/ttyACM0")` does not build an arm that auto-detects a port).
 
