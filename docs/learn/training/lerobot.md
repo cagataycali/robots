@@ -35,7 +35,7 @@ result = trainer.train(spec)
 print(result.status, result.checkpoint_dir, result.metrics)
 ```
 
-Then `create_policy("lerobot_local", pretrained_name_or_path=result.checkpoint_dir, embodiment="so101")` runs it; see [lerobot-local](../policies/lerobot-local.md) for the naming rules the checkpoint now carries.
+Then, with `STRANDS_TRUST_REMOTE_CODE=1` exported (the checkpoint's config is code the loader will not run unasked), `create_policy("lerobot_local", pretrained_name_or_path=result.checkpoint_dir, embodiment="so101")` runs it; see [lerobot-local](../policies/lerobot-local.md) for the naming rules the checkpoint now carries.
 
 ## What strands adds on top of lerobot
 
@@ -77,7 +77,7 @@ The boolean levers are checked, not read by truthiness: `"false"` is refused rat
 
 `create_trainer("groot")` calls Isaac-GR00T's `experiment.run` with a `FinetuneConfig`. `base_model` and `embodiment` are required; `tune` toggles components (`llm`, `visual`, `projector`, `diffusion`; default `{"llm": False, "visual": False, "projector": True, "diffusion": True}`); `augmentation` and `fps` map to GR00T's data config; `extra["groot_root"]` points at the checkout when it is not importable. `num_gpus > 1` uses torch `elastic_launch`.
 
-`create_trainer("cosmos3")` needs `prepare(spec)` first: it converts the HF checkpoint to DCP with `convert_model_to_dcp`. `train` loads a TOML recipe and applies `extra` as Hydra `key.path=value` overrides; `extra["cosmos_root"]` names the checkout. The floor is eight 80 GB GPUs.
+`create_trainer("cosmos3")` needs `prepare(spec)` first: it converts the HF checkpoint to DCP with `convert_model_to_dcp`. `train` loads a TOML recipe and applies `extra` as Hydra `key.path=value` overrides; `extra["cosmos_root"]` names the checkout and `extra["sft_toml"]` the recipe TOML; `validate()` refuses a spec without either by name. The floor is eight 80 GB GPUs.
 
 `create_trainer("sagemaker", image_uri=..., role_arn=..., instance_type="ml.g5.xlarge")` ships the same `TrainSpec` to a managed job and waits; the image packages one of the trainers above.
 

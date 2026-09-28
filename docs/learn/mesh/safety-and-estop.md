@@ -42,6 +42,8 @@ A resume is second-factor gated. `STRANDS_MESH_OVERRIDE_CODE` must be configured
 
 `{"action": "resume", "override_code": ...}` on one peer compares the code in constant time (both sides hashed to a fixed length first), throttles after `STRANDS_MESH_RESUME_MAX_FAILS` (default 5) failures for `STRANDS_MESH_RESUME_BACKOFF_S` (default 30 s), and answers one of two shapes: `{"status": "ok"}` or `{"status": "error", "error": "resume rejected"}`. "Lockout not engaged", "code unconfigured" and "wrong code" all get the generic shape on the wire; the structured reason goes to the local audit log only, so a prober learns nothing about the fleet's state.
 
+A receiver refuses a resume older than `STRANDS_MESH_RESUME_FRESHNESS_S` (default 60 s; a receiver whose clock is ahead of the operator trips it) and one more than `STRANDS_MESH_RESUME_FORWARD_SKEW_S` (default 5 s, the tight one) in its future, which a receiver behind the operator trips.
+
 On success the peer publishes `strands/safety/resume` carrying an HMAC-SHA256 `override_proof` keyed with the code over `peer_id`, `t`, `lockout_elapsed_s`, `proof_nonce` and the TLS session id, never the code itself. Receivers verify the proof, refuse a repeated `(issuer, proof_nonce)`, and only then clear their lockout. Every refusal leaves the lockout engaged.
 
 ## Stopping is never gated

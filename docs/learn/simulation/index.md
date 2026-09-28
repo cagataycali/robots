@@ -38,7 +38,9 @@ Every call returns an agent-tool envelope: `{"status": "success" | "error", "con
 
 ## SimEngine and Simulation
 
-`SimEngine` (`strands_robots/simulation/base.py`) is the abstract contract: world lifecycle (`create_world`, `reset`, `step`, `destroy`), entities (`add_robot`, `add_object`, `add_camera`), observation (`get_observation`, `render`, `get_contacts`), actuation (`send_action`), and the policy orchestration that is implemented once on the base and inherited by every backend: `run_policy`, `run_multi_policy`, `eval_policy`, `evaluate_benchmark`, `start_policy` / `stop_policy`, `replay_episode`, dataset recording.
+`SimEngine` (`strands_robots/simulation/base.py`) is the abstract contract: world lifecycle (`create_world`, `reset`, `step`, `destroy`), entities (`add_robot`, `add_object`), observation (`get_observation`, `render`, `get_contacts`), actuation (`send_action`), and the policy orchestration that is implemented once on the base and inherited by every backend: `run_policy`, `run_multi_policy`, `eval_policy`, `evaluate_benchmark`, `start_policy` / `stop_policy`, `replay_episode`, dataset recording.
+
+Cameras are per backend: MuJoCo, Newton and Isaac each define `add_camera`, and the base class does not, so a third-party engine adds its own.
 
 `Simulation` is the MuJoCo engine under its historical name. `from strands_robots.simulation import Simulation` and `create_simulation("mujoco")` give you the same `MuJoCoSimEngine`. `create_simulation` is the door: it resolves an alias, imports the backend lazily, and passes the remaining keywords to the constructor.
 

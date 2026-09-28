@@ -58,6 +58,26 @@ bundle = MicroduckPolicyBundle(
 sim.run_policy(robot_name="microduck", policy_object=bundle, policy_kwargs={"target_velocity": [0.15, 0.0]}, duration=10.0)
 ```
 
+## Skill scenes
+
+A weight and the scene it was trained in are one pair. `Robot("microduck")` resolves the entry's declared asset, flat ground with no props; four skills need more, shipped in the same asset directory. Running a skill on the wrong scene is not an error: a roller policy without wheels stands, a ball kick swings at nothing, and both report success.
+
+| skill | scene | the scene adds |
+|---|---|---|
+| `alpha_walking`, `alpha_stand`, `alpha_sitstand`, `roulade`, `alpha_ground_pick` | `scene.xml` (the declared asset) | nothing |
+| `roller`, `roller_crouch` | `scene_rollers.xml` | four passive ankle wheels |
+| `ball_kick_left`, `ball_kick_right` | `scene_ball.xml` | a 70 mm ball in front of the duck |
+
+Reach a variant by path: find `scene_rollers.xml` under `microduck/` on `get_search_paths()` and pass `Robot("microduck", urdf_path=str(scene))`. `scene_rollers.xml` inserts two wheel joints after each ankle, so a flat `qpos[7:21]` read gets wheels where `neck_pitch` and `head_pitch` sit on the default scene; the actuator order is the same on all three and `MicroduckPolicy` reads by joint name.
+
+### The ball scene places the ball, not the kick geometry
+
+`scene_ball.xml` declares the ball 0.3 m straight ahead; training placed it 0.09 m ahead and 0.042 m to the side of the kicking foot, so from the shipped position `ball_kick_left` reports success and misses. Teleport the ball before the rollout: write the free joint's `qpos` to that offset in the trunk's yaw frame and zero its `qvel`. The file names the joint `ball_free`, but `add_robot(name=...)` prefixes every joint, so resolve the name.
+
+### The stance every weight was trained in
+
+Actions decode as `default_pose + raw_action * action_scale`, so the stance is the origin of the network's output. It ships as `MICRODUCK_DEFAULT_POSE` and as the `STAND` keyframe of `scene.xml` and `scene_rollers.xml`: `Robot("microduck", urdf_path=str(scene), keyframe="STAND")` seats it and every `reset()` restores it. Without it the robot starts at the zero configuration, 0.458 rad off at the widest joint. `scene_ball.xml` declares no keyframe, so seat the stance there yourself.
+
 ## Run it
 
 Needs the extra; the weights download on first use.
