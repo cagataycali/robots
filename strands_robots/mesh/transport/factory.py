@@ -104,7 +104,7 @@ def release_transport() -> None:
             try:
                 _TRANSPORT.close()
             except Exception:
-                pass
+                logger.debug("transport close failed on release; dropping it anyway", exc_info=True)
             _TRANSPORT = None
             _TRANSPORT_REFS = 0
             _TRANSPORT_BACKEND = ""
