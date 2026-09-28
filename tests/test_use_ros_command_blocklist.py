@@ -10,9 +10,11 @@ refuses correctly is worthless if a verb never consults it.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import inspect
 import os
 import re
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, get_args
@@ -452,8 +454,8 @@ def test_every_command_verb_branch_hands_the_transport_the_operator_gate() -> No
 
 
 def test_the_blocklist_is_documented_where_operators_look() -> None:
-    """Every blocklisted surface and both env vars appear in the ROS 2 docs."""
-    docs = Path(__file__).resolve().parents[1] / "docs" / "reference" / "ros2" / "safety.md"
+    """Every blocklisted surface and the pre-approval variable appear in the ROS 2 page."""
+    docs = Path(__file__).resolve().parents[1] / "docs" / "learn" / "ros2.md"
     text = docs.read_text(encoding="utf-8")
     for entry in gate_mod.COMMAND_BLOCKLIST:
         assert entry in text, f"{entry} is blocked but undocumented"
@@ -461,16 +463,26 @@ def test_the_blocklist_is_documented_where_operators_look() -> None:
 
 
 # Files that document the pre-approval variable itself, and so have to describe
-# its reach correctly. The README Configuration table is the single source of
+# its reach correctly. The configuration reference is the single source of
 # truth for env vars, so a wrong contract there is the one that gets scaffolded
-# from. Every entry is required to name the variable by
+# from; in the new docs tree it is generated, so it is read through the hook
+# that renders it (:func:`_surface_text`). The ROS 2 page carries the gate's
+# prose and the agents page carries the verb table that names the variable.
+# Every entry is required to name the variable by
 # ``test_the_sweep_reaches_every_operator_facing_surface``, which is what keeps
 # this list from going stale into a vacuous sweep.
 _ALLOWLIST_DOCS: tuple[str, ...] = (
     "docs/reference/configuration.md",
-    "docs/reference/ros2/safety.md",
-    "docs/reference/security/hardware.md",
+    "docs/learn/ros2.md",
+    "docs/learn/agents.md",
 )
+
+# The pages of the new tree that document driving a blocked surface. The three
+# per-transport integration pages were merged into one ROS 2 page; the generated
+# page of a ROS-driven robot (``docs/robots/yahboom_m3pro.md`` shows ``/cmd_vel``)
+# is the surface a variable-keyed list cannot reach.
+_TRANSPORT_PAGES: frozenset[str] = frozenset({"docs/learn/ros2.md"})
+_GENERATED_PAGES_DIR = "docs/robots/"
 
 # A clause that names the halt and denies that it is gated claims an exemption.
 _HALT_PHRASES: tuple[str, ...] = ("zero-velocity", "zero velocity", "zero `twist`", "halt", "stop()")
@@ -490,10 +502,33 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _surface_text(name: str) -> str:
+    """The text of a documentation surface as a reader sees it.
+
+    ``docs/reference/configuration.md`` is a ``{{env_vars}}`` token that
+    ``docs/hooks/env_vars.py`` expands at build time from the package's own
+    reads, so it is rendered through that hook and its ``<code>`` folded to the
+    backticks a hand-written row uses. Every other page is read as written.
+    """
+    path = _repo_root() / name
+    source = path.read_text(encoding="utf-8")
+    if name != "docs/reference/configuration.md":
+        return source
+    hook = _repo_root() / "docs" / "hooks" / "env_vars.py"
+    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", hook)
+    assert spec is not None and spec.loader is not None
+    module = sys.modules.get(spec.name) or importlib.util.module_from_spec(spec)
+    if spec.name not in sys.modules:
+        sys.modules[spec.name] = module  # dataclasses in the hook resolve their module here
+        spec.loader.exec_module(module)
+    rendered = module.on_page_markdown(source, page=None, config=None, files=None)
+    assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"
+    return rendered.replace("<code>", "`").replace("</code>", "`")
+
+
 def _readme_allow_row() -> str:
     """Return the Configuration reference row documenting the pre-approval variable."""
-    readme = (_repo_root() / "docs/reference/configuration.md").read_text(encoding="utf-8")
-    for line in readme.splitlines():
+    for line in _surface_text("docs/reference/configuration.md").splitlines():
         if line.startswith("|") and f"`{gate_mod.COMMAND_ALLOW_ENV}`" in line:
             return line
     return ""
@@ -514,6 +549,7 @@ _EXCLUSIVE_REACH_PHRASES: tuple[str, ...] = (
 # namespaced surface sharing its base name.
 _BASE_NAME_REACH_PHRASES: tuple[str, ...] = (
     "same base name",
+    "by base name",
     "namespaced",
     "any namespace",
     "every namespace",
@@ -532,11 +568,7 @@ def _surfaces_documenting_the_allowlist() -> list[tuple[str, str]]:
     """
     surfaces: list[tuple[str, str]] = []
     for name in _ALLOWLIST_DOCS:
-        lines = [
-            line
-            for line in (_repo_root() / name).read_text(encoding="utf-8").splitlines()
-            if gate_mod.COMMAND_ALLOW_ENV in line
-        ]
+        lines = [line for line in _surface_text(name).splitlines() if gate_mod.COMMAND_ALLOW_ENV in line]
         if lines:
             surfaces.append((name, "\n".join(lines).lower()))
     gate_doc = inspect.getdoc(gate_command) or ""
@@ -596,14 +628,14 @@ def _command_surface_docs() -> list[str]:
     root = _repo_root()
     bare = {entry.rsplit("/", 1)[-1] for entry in gate_mod.COMMAND_BLOCKLIST}
     pages = ["README.md"] + sorted(str(path.relative_to(root)) for path in (root / "docs").rglob("*.md"))
-    return [name for name in pages if any(surface in (root / name).read_text(encoding="utf-8") for surface in bare)]
+    return [name for name in pages if any(surface in _surface_text(name) for surface in bare)]
 
 
 def _documented_halt_exemptions() -> list[tuple[str, int, str]]:
     """Every operator-facing clause asserting the halt is exempt from the gate."""
     found: list[tuple[str, int, str]] = []
     for name in _command_surface_docs():
-        text = (_repo_root() / name).read_text(encoding="utf-8")
+        text = _surface_text(name)
         for lineno, line in enumerate(text.splitlines(), 1):
             for clause in re.split(r"(?<=[.;])\s+|\s*\|\s*", line):
                 low = clause.lower()
@@ -728,16 +760,15 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
             f"pages documenting {gate_mod.COMMAND_ALLOW_ENV} are missing from the scan: "
             f"{sorted(set(_ALLOWLIST_DOCS) - scanned)}"
         )
-        transport_pages = {
-            "docs/reference/ros2-integration.md",
-            "docs/reference/rosbridge-integration.md",
-            "docs/reference/rtps-integration.md",
-        }
-        assert transport_pages <= scanned, (
-            f"transport integration pages outside the scan: {sorted(transport_pages - scanned)}"
+        assert _TRANSPORT_PAGES <= scanned, (
+            f"transport integration pages outside the scan: {sorted(_TRANSPORT_PAGES - scanned)}"
         )
         assert scanned - set(_ALLOWLIST_DOCS), (
             "the derived set is no wider than the allowlist pages, so deriving it buys nothing"
+        )
+        assert any(name.startswith(_GENERATED_PAGES_DIR) for name in scanned), (
+            "no generated robot page names a blocked surface, so the scan no longer reaches the "
+            "pages a variable-keyed list cannot"
         )
 
     def test_the_documented_read_exemption_is_real(self, monkeypatch: pytest.MonkeyPatch) -> None:
