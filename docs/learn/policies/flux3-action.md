@@ -65,4 +65,4 @@ The published NATTEN wheels carry kernels for sm_75 through sm_120 but not sm_11
 
 - SO-101 only; the DROID checkpoint (7 joints in radians plus gripper at 15 Hz) is not mapped.
 - About 22 GB of GPU memory in bf16, 14 GB of weights on first download.
-- The shipped `so101` asset cannot hold a cube by friction (issues #2145 and #2167): a sim episode shows the reach and the grasp motion, not a lifted cube.
+- The shipped `so101` asset cannot hold a cube by friction (issues #2145 and #2167); scripted picks weld it with `attach_bodies`, a policy rollout cannot, so judge a sim episode on the reach and grasp motion.
