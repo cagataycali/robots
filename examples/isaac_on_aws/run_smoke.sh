@@ -159,10 +159,19 @@ echo "== fetching the unitree_g1 asset on the host (the image has no git) =="
 RD=\$(python3 -c "import re, pathlib; print(re.search(r'\"(robot_descriptions>=[^\"]*)\"', pathlib.Path('/opt/strands/pyproject.toml').read_text()).group(1))")
 echo "  installing \$RD"
 rm -rf /opt/strands/rd /opt/strands/assets
-python3 -m pip -q install --target /opt/strands/rd "\$RD" 2>&1 | tail -1
-# 2>/dev/null: the clone writes a per-file tqdm bar to stderr, ~2300 lines of it.
+# Not piped into tail: a pipe masks the exit status (dash, the shell SSM runs
+# this under, has no pipefail), so a missing python3-pip would print "No
+# module named pip" and be silently skipped, leaving the asset absent.
+python3 -m pip -q install --target /opt/strands/rd "\$RD" \
+  || { echo "FATAL: pip install \$RD failed on the host - is python3-pip installed?" >&2; exit 1; }
+# The import triggers the clone: robot_descriptions writes a per-file tqdm bar
+# to stderr (~2300 lines, dropped by 2>/dev/null) AND a "Cloning ..."/"Found
+# commit ..." notice to STDOUT. A bare $() would fold that notice into PKG and
+# `cp -rL "$PKG"` would then get a multi-line non-path, so the real path is
+# emitted behind a PKGPATH= sentinel and sed pulls that one line back out.
 PKG=\$(PYTHONPATH=/opt/strands/rd python3 -c \
-  "from robot_descriptions import g1_mj_description as m; print(m.PACKAGE_PATH)" 2>/dev/null)
+  "from robot_descriptions import g1_mj_description as m; print('PKGPATH=' + m.PACKAGE_PATH)" \
+  2>/dev/null | sed -n 's/^PKGPATH=//p')
 echo "  cloned to \$PKG"
 
 # Copied, not symlinked. The library's own resolver symlinks the package dir into
