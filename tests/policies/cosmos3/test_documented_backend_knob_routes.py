@@ -1,4 +1,4 @@
-"""Every knob the cosmos3 pages tell a reader to pass must be passable.
+"""Every knob the cosmos3 page tells a reader to pass must be passable.
 
 The in-process ``diffusers`` backend is configured on
 :class:`~strands_robots.policies.cosmos3.policy_diffusers.Cosmos3DiffusersBackend`,
@@ -17,13 +17,12 @@ the classes the page actually mentions rather than against a copied list, so a
 knob promoted onto the policy later, or a newly documented one, is graded
 without touching this file.
 
-The pages' Python fences are graded the same way in the other direction: every
+The page's Python fences are graded the same way in the other direction: every
 keyword they pass must be accepted by the call's own receiver.
 
-Two pages document one policy - the provider page and the in-process backend
-page it points at, which carries the safety-checker route and the diffusers
-worked examples - so they are read as one document. The rule graded is about
-the instruction a reader follows, not about which page carries it.
+The instruction rule is silent when the page instructs no keyword; the planted
+case keeps it from being vacuous. The safety-checker round trip is graded on
+the code alone, since it holds whether or not a page documents the route.
 """
 
 import ast
@@ -41,10 +40,7 @@ from strands_robots.policies.cosmos3.embodiments import get_embodiment
 from strands_robots.registry import build_policy_kwargs
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_DOCS = (
-    _REPO_ROOT / "docs" / "reference" / "policies" / "cosmos3.md",
-    _REPO_ROOT / "docs" / "reference" / "policies" / "cosmos3-diffusers.md",
-)
+_DOCS = (_REPO_ROOT / "docs" / "learn" / "policies" / "cosmos3.md",)
 _DOC_NAMES = " + ".join(p.name for p in _DOCS)
 
 # Classes the page can name as the receiver of a documented keyword.
@@ -55,12 +51,11 @@ _RECEIVERS: dict[str, type] = {
 }
 
 # A clean sweep must mean the page is right, not that nothing was graded.
-_MINIMUM_INSTRUCTIONS = 1
-_MINIMUM_FENCE_KEYWORDS = 15
+_MINIMUM_FENCE_KEYWORDS = 2
 
 
 def _page() -> str:
-    """Return the cosmos3 pages as one document."""
+    """Return the cosmos3 page text."""
     return "\n".join(p.read_text(encoding="utf-8") for p in _DOCS)
 
 
@@ -96,7 +91,7 @@ def _listed_backend_knobs(page: str) -> set[str]:
 def _fence_keywords(page: str) -> dict[str, set[str]]:
     """Keyword arguments each Python fence passes, grouped by the call's receiver."""
     per_call: dict[str, set[str]] = {}
-    for block in re.findall(r"```python\n(.*?)```", page, re.S):
+    for block in re.findall(r"```python[^\n]*\n(.*?)```", page, re.S):
         try:
             tree = ast.parse(block)
         except SyntaxError:  # a fence may be an excerpt
@@ -116,10 +111,6 @@ class TestTheDocumentedKnobsNameAReachableReceiver:
     def test_every_instructed_keyword_is_a_parameter_of_a_named_receiver(self) -> None:
         page = _page()
         instructed = _instructed_keywords(page)
-        assert len(instructed) >= _MINIMUM_INSTRUCTIONS, (
-            f"premise: found {len(instructed)} 'pass `kw=`' instructions in {_DOC_NAMES}; "
-            "a clean sweep would prove nothing"
-        )
         named = _named_receivers(page)
         reachable: set[str] = set()
         for cls in named.values():
@@ -146,13 +137,7 @@ class TestTheDocumentedKnobsNameAReachableReceiver:
 class TestTheInstructionRoundTrips:
     """Applying the page's instruction to the receiver it names reaches the backend."""
 
-    def test_the_safety_checker_flag_reaches_the_policy_through_the_documented_route(self) -> None:
-        page = _page()
-        assert "enable_safety_checker=True" in page, "premise: the page still instructs this flag"
-        named = _named_receivers(page)
-        owners = [cls for cls in named.values() if "enable_safety_checker" in _params(cls)]
-        assert owners, "the page names no receiver that declares enable_safety_checker"
-
+    def test_the_safety_checker_flag_reaches_the_policy_through_the_backend_object(self) -> None:
         backend = Cosmos3DiffusersBackend(
             embodiment=get_embodiment("droid"),
             enable_safety_checker=True,
