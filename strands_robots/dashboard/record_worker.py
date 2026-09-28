@@ -146,7 +146,9 @@ def upload_verdict(
     try:
         result = push()
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "detail": f"saved locally, upload FAILED: {exc}"}
+        # the hub's own words go to the log; the browser learns the kind of failure, not its internals
+        logger.exception("dataset upload failed")
+        return {"ok": False, "detail": f"saved locally, upload FAILED: {type(exc).__name__}"}
     status = (result or {}).get("status") if isinstance(result, dict) else None
     if status == "success":
         return {"ok": True, "detail": f"pushed to {(result or {}).get('repo_id') or dataset}"}
@@ -356,7 +358,8 @@ class RecordWorker:
             self._recorder.finalize()
         except Exception as exc:  # noqa: BLE001
             self._backend.close()
-            return {"ok": False, "detail": f"finalize failed: {exc}"}
+            logger.exception("dataset finalize failed")
+            return {"ok": False, "detail": f"finalize failed: {type(exc).__name__}"}
         if upload:
             wanted = (repo_id or "").strip() or None
             verdict = upload_verdict(
@@ -412,7 +415,7 @@ class RecordWorker:
                     self.tick()
                 except Exception as exc:  # noqa: BLE001 - loop survives a bad read
                     with self._lock:
-                        self._last_error = f"control step failed: {exc}"
+                        self._last_error = f"control step failed: {type(exc).__name__}"
                     logger.warning("record tick failed: %r", exc)
 
     def _motion_verdict_locked(self) -> dict[str, Any] | None:

@@ -28,6 +28,7 @@ from strands_robots.dashboard.dataset_check import (
     dataset_id_is_a_path,
     record_target_verdict,
 )
+from strands_robots.dashboard.log_redaction import one_line
 from strands_robots.dashboard.record_worker import RecordWorker, hardware_backend, thumb_name
 from strands_robots.utils import refusal_str, require_optional
 
@@ -53,33 +54,48 @@ EMPTY_SESSION: dict[str, Any] = {
 }
 
 
-def _under_dataset_home(dataset: str) -> bool:
-    """Whether the directory this id resolves to sits under ``$HF_LEROBOT_HOME``.
+def _contained_dataset_dir(dataset: str) -> str | None:
+    """The directory this id resolves to, as a path string under ``$HF_LEROBOT_HOME``, or None.
 
     The id has already passed :func:`dataset_id_error`, so this is the second lock on the same
-    door: whatever ``resolve_dataset_dir`` makes of the name, the result is checked after
-    ``resolve()`` (symlinks followed, ``..`` folded) against the home.
+    door. The candidate is the home joined with the name and folded with ``normpath`` (``..``
+    collapsed), and it must start with the home both as written and after symlinks are followed;
+    the writer's own resolution (``resolve_dataset_dir``) must then land on that very directory,
+    so the place inspected here and the place written to are one place.
     """
     from strands_robots.dataset_recorder import resolve_dataset_dir
     from strands_robots.dataset_source import _lerobot_home
 
+    name = (dataset or "").strip()
+    if not name:
+        return None
     try:
-        home = Path(_lerobot_home()).expanduser().resolve()
-        target = Path(resolve_dataset_dir(dataset)).expanduser().resolve()
+        home = os.path.realpath(os.path.expanduser(str(_lerobot_home())))
+        candidate = os.path.normpath(os.path.join(home, name))
+        if not candidate.startswith(home + os.sep):
+            return None
+        if not os.path.realpath(candidate).startswith(home + os.sep):
+            return None
+        writer = os.path.normpath(os.path.expanduser(str(resolve_dataset_dir(name))))
     except (OSError, RuntimeError, ValueError):
-        return False
-    return target == home or target.is_relative_to(home)
+        return None
+    if writer != candidate and os.path.realpath(writer) != os.path.realpath(candidate):
+        return None
+    return candidate
+
+
+def _under_dataset_home(dataset: str) -> bool:
+    """Whether the directory this id resolves to sits under ``$HF_LEROBOT_HOME`` (the home itself counts)."""
+    return not (dataset or "").strip() or _contained_dataset_dir(dataset) is not None
 
 
 def _target_facts(dataset: str) -> dict[str, Any]:
     """What is on disk where this dataset would be written."""
-    name = (dataset or "").strip()
-    if not name:
+    contained = _contained_dataset_dir(dataset)
+    if contained is None:
         return {}
     try:
-        from strands_robots.dataset_recorder import resolve_dataset_dir
-
-        d = resolve_dataset_dir(name)
+        d = Path(contained)
         if not d.exists():
             return {"exists": False}
         meta = (d / "meta" / "info.json").exists()
@@ -396,7 +412,7 @@ class RecordController:
             cams = (peers.get(peer_id) or {}).get("cameras") or {}
             return dict(cams) if isinstance(cams, dict) else {}
         except Exception:  # noqa: BLE001 - a probe must not break the session
-            logger.debug("[record] could not read camera evidence for %s", peer_id)
+            logger.debug("[record] could not read camera evidence for %s", one_line(peer_id))
             return {}
 
     def _peer_snapshot(self, peer_id: str) -> Any:
@@ -407,7 +423,7 @@ class RecordController:
                 return None
             return (bridge.snapshot().get("peers") or {}).get(peer_id)
         except Exception:  # noqa: BLE001 - a probe must not break the session
-            logger.debug("[record] could not read the mesh snapshot for %s", peer_id)
+            logger.debug("[record] could not read the mesh snapshot for %s", one_line(peer_id))
             return None
 
     def _joint_problem(self, peer_id: str) -> Any:
@@ -416,7 +432,7 @@ class RecordController:
             fields = self._devices.annotations_by_peer().get(peer_id) or {}
             return fields.get("joint_problem")
         except Exception:  # noqa: BLE001
-            logger.debug("[record] could not read the joint annotation for %s", peer_id)
+            logger.debug("[record] could not read the joint annotation for %s", one_line(peer_id))
             return None
 
     def _managed(self, peer_id: str, *, role: str) -> Any:
