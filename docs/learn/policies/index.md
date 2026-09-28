@@ -31,6 +31,12 @@ class Policy(ABC):
     def requires_images(self) -> bool: ...            # default True; planners return False
 
     @property
+    def required_bodies(self) -> tuple[str, ...]: ... # default (); a whole-body tracker names its anchor link
+
+    @property
+    def children(self) -> tuple[Policy, ...]: ...     # default (); a wrapper lists the policies it drives
+
+    @property
     @abstractmethod
     def provider_name(self) -> str: ...
 ```

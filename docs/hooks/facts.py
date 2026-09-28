@@ -17,7 +17,7 @@ Keys (all derived, none configured):
 * ``aliases``           alias strings across the registry
 * ``tools``             ``@tool`` decorators under ``strands_robots/``
 * ``sim_backends``      simulation backend packages (mujoco, newton, isaac)
-* ``policy_providers``  packages under ``strands_robots/policies/``
+* ``policy_providers``  providers in ``registry/policies.json``
 * ``native_drivers``    entries in ``_SHIPPED_DRIVERS`` (drivers/__init__.py)
 * ``sim_assets``        robots with an ``asset`` block (renderable in the viewer)
 
@@ -55,7 +55,7 @@ def numbers() -> dict[str, int]:
         for p in (_PKG / "simulation").iterdir()
         if p.is_dir() and not p.name.startswith("_") and p.name not in _SIM_NON_BACKENDS
     )
-    providers = sorted(p.name for p in (_PKG / "policies").iterdir() if p.is_dir() and not p.name.startswith("_"))
+    providers = json.loads((_PKG / "registry" / "policies.json").read_text(encoding="utf-8"))["providers"]
     native_drivers = len(
         re.findall(r'^\s+\("strands_robots\.drivers\.', (_PKG / "drivers" / "__init__.py").read_text(encoding="utf-8"), re.M)
     )
