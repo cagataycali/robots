@@ -9,14 +9,16 @@ description: "Google Robot (mobile base + arm, RT-X)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile_manip">Mobile manipulators</span><span class="sr-chip">10 joints</span><span class="sr-chip sr-chip-sim">sim</span></p>
 
-You have `google_robot` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
+You have `google_robot` in a MuJoCo world once its model is on disk. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
 <robot-viewer name="google_robot"></robot-viewer>
 
-```python
+The model is not fetched for you (`auto_download: false` in the registry): place `google_robot/robot.xml` under `~/.strands_robots/assets/` (or `$STRANDS_ASSETS_DIR`) first, or the call refuses with "model file is not on disk".
+
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("google_robot")
+robot = Robot("google_robot")  # needs ~/.strands_robots/assets/google_robot/robot.xml on disk
 ```
 
 Aliases `Robot()` accepts: `oxe_google`.

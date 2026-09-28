@@ -11,7 +11,7 @@ description: "Pollen Reachy 2"
 
 You have `reachy2` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("reachy2")` in the default sim mode refuses by name.
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("reachy2", mode="real", port="/dev/ttyACM0")  # lerobot reachy2

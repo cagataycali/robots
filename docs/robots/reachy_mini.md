@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("reachy_mini")
 ```
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("reachy_mini", mode="real", port="reachy-mini.local:8000")  # ReachyDriver

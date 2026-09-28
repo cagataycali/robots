@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("yahboom_m3pro")
 ```
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("yahboom_m3pro", mode="real", port="192.168.1.50:9090")  # YahboomM3ProDriver

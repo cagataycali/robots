@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("ur10e")
 ```
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("ur10e", mode="real", driver="strands", port="192.168.1.10")  # URDriver

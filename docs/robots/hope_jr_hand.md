@@ -11,7 +11,7 @@ description: "HopeJR Hand (dexterous anthropomorphic hand, Feetech)"
 
 You have `hope_jr_hand` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("hope_jr_hand")` in the default sim mode refuses by name.
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("hope_jr_hand", mode="real", port="/dev/ttyACM0")  # lerobot hope_jr_hand

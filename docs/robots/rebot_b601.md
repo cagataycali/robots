@@ -11,7 +11,7 @@ description: "Seeed Studio reBot B601-DM (6-DOF + gripper, Damiao CAN motors)"
 
 You have `rebot_b601` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("rebot_b601")` in the default sim mode refuses by name.
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("rebot_b601", mode="real", port="/dev/ttyACM0")  # lerobot rebot_b601_follower

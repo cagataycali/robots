@@ -9,14 +9,16 @@ description: "Trossen WidowX AI Bimanual"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="bimanual">Bimanual</span><span class="sr-chip">17 joints</span><span class="sr-chip sr-chip-sim">sim</span></p>
 
-You have `trossen_wxai` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
+You have `trossen_wxai` in a MuJoCo world once its model is on disk. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
 <robot-viewer name="trossen_wxai"></robot-viewer>
 
-```python
+The model is not fetched for you (`auto_download: false` in the registry): place `trossen_wxai/trossen_ai_bimanual.xml` under `~/.strands_robots/assets/` (or `$STRANDS_ASSETS_DIR`) first, or the call refuses with "model file is not on disk".
+
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("trossen_wxai")
+robot = Robot("trossen_wxai")  # needs ~/.strands_robots/assets/trossen_wxai/trossen_ai_bimanual.xml on disk
 ```
 
 Aliases `Robot()` accepts: `trossen_ai_bimanual`.

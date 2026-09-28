@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("crazyflie")
 ```
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("crazyflie", mode="real", port="radio://0/80/2M/E7E7E7E7E7")  # CrazyflieDriver

@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("robotiq_2f85")
 ```
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("robotiq_2f85", mode="real", port="192.168.1.11")  # RobotiqDriver

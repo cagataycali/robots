@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("panda")
 ```
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("panda", mode="real", driver="strands", port="172.16.0.2")  # FrankaDriver

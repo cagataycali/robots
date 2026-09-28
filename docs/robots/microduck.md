@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("microduck")
 ```
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("microduck", mode="real", port="ssh://radxa@microduck.local")  # MicroduckDriver

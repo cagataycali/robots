@@ -11,10 +11,14 @@ description: "Bi-manual reBot B601-DM (dual 6-DOF + gripper, Damiao CAN motors)"
 
 You have `bi_rebot_b601` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("bi_rebot_b601")` in the default sim mode refuses by name.
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
-robot = Robot("bi_rebot_b601", mode="real", port="/dev/ttyACM0")  # lerobot bi_rebot_b601_follower
+from lerobot.robots.rebot_b601_follower.config_rebot_b601_follower import RebotB601FollowerConfig
+
+robot = Robot("bi_rebot_b601", mode="real",  # lerobot bi_rebot_b601_follower: one config per arm, no single port
+              left_arm_config=RebotB601FollowerConfig(port="/dev/ttyACM0"),
+              right_arm_config=RebotB601FollowerConfig(port="/dev/ttyACM1"))
 # this lerobot type is on lerobot main, not on PyPI: install lerobot from source
 ```
 
@@ -22,7 +26,7 @@ Aliases `Robot()` accepts: `bi_rebot_b601_follower`, `dual_rebot_b601`.
 
 ## Hardware
 
-**lerobot.** `Robot("bi_rebot_b601", mode="real")` builds lerobot's `bi_rebot_b601_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device and `cameras=` the lerobot camera dict. This is the default when `driver=` is not given. Install lerobot from source: the type is not in the PyPI release.
+**lerobot.** `Robot("bi_rebot_b601", mode="real")` builds lerobot's `bi_rebot_b601_follower` with `pip install 'strands-robots[lerobot]'`; the config declares no `port=`; pass `left_arm_config=` and `right_arm_config=`, one `RebotB601FollowerConfig` per arm with its own `port` and `cameras`, and `cameras=` for cameras attached to neither arm. This is the default when `driver=` is not given. Install lerobot from source: the type is not in the PyPI release.
 
 ## Policies
 

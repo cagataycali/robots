@@ -11,7 +11,7 @@ description: "OMX Robot Arm (ROBOTIS, CAN bus motors)"
 
 You have `omx` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("omx")` in the default sim mode refuses by name.
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("omx", mode="real", port="/dev/ttyACM0")  # lerobot omx_follower

@@ -11,7 +11,7 @@ description: "EarthRover Mini Plus (mobile outdoor navigation)"
 
 You have `earthrover` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("earthrover")` in the default sim mode refuses by name.
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("earthrover", mode="real", port="/dev/ttyACM0")  # lerobot earthrover_mini_plus

@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("unitree_g1")
 ```
 
-Real hardware, one line per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it (needs the robot on the wire):
 
 ```python title="sketch"
 robot = Robot("unitree_g1", mode="real", driver="lerobot", port="/dev/ttyACM0")  # lerobot unitree_g1
