@@ -134,6 +134,7 @@ _MUST_VALIDATE = {
     "policies/cosmos3/policy.py::Cosmos3Policy",
     "policies/curobo/policy.py::CuroboPolicy",
     "policies/groot/policy.py::Gr00tPolicy",
+    "policies/laya/policy.py::LayaPolicy",
     "policies/lerobot_local/policy.py::LerobotLocalPolicy",
     "policies/mock.py::MockPolicy",
     "policies/microduck/policy.py::MicroduckPolicy",
@@ -796,6 +797,13 @@ def _cosmos3() -> Any:
     return Cosmos3Policy(backend="service")
 
 
+def _laya() -> Any:
+    """An injected router keeps the Laya weights out of the construction."""
+    from strands_robots.policies.laya.policy import LayaPolicy
+
+    return LayaPolicy(router=object())
+
+
 def _curobo() -> Any:
     """An injected planner keeps cuRobo itself out of the construction."""
     from strands_robots.policies.curobo.policy import CuroboPolicy
@@ -840,6 +848,7 @@ _OWNING_SURFACES: list[_Surface] = [
     ("policies/cosmos3/policy.py::Cosmos3Policy", _cosmos3, "robot_state_keys", None),
     ("policies/curobo/policy.py::CuroboPolicy", _curobo, "_robot_state_keys", None),
     ("policies/groot/policy.py::Gr00tPolicy", _groot, None, "zmq"),
+    ("policies/laya/policy.py::LayaPolicy", _laya, "robot_state_keys", None),
     ("policies/lerobot_local/policy.py::LerobotLocalPolicy", _lerobot_local, "robot_state_keys", "torch"),
     ("policies/microduck/policy.py::MicroduckPolicy", _microduck, "_robot_state_keys", None),
     ("policies/moveit2/policy.py::MoveIt2Policy", _moveit2, "_robot_state_keys", "zmq"),
@@ -863,7 +872,7 @@ def test_the_behavioural_table_covers_every_surface_that_owns_the_check() -> Non
     """Derived, so a provider added later cannot skip the behavioural half.
 
     ``MockPolicy`` and ``RemotePolicy`` are driven by the sections above; these
-    seven are the remainder. A tenth owning surface fails here rather than
+    eight are the remainder. An eleventh owning surface fails here rather than
     joining the set whose refusal only the AST classifier ever sees.
     """
     driven_above = {"policies/mock.py::MockPolicy", "inference/client.py::RemotePolicy"}
