@@ -227,7 +227,9 @@ def _matrix() -> str:
         native = f"`{item.native_driver}`" if item.native_driver else _NONE
         asset = f"`{item.asset_dir}`" if item.asset_dir else _NONE
         policies = ", ".join(f"`{p}`" for p in item.policies) or _NONE
-        lines.append(f"| [`{item.name}`]({item.name}.md) | `{item.category}` | {lerobot} | {native} | {asset} | {policies} |")
+        lines.append(
+            f"| [`{item.name}`]({item.name}.md) | `{item.category}` | {lerobot} | {native} | {asset} | {policies} |"
+        )
     return "\n".join(lines)
 
 

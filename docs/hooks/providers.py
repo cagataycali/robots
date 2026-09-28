@@ -92,6 +92,7 @@ def _spellings(spec: dict) -> str:
 
 
 def table() -> str:
+    """The provider matrix as markdown, one row per registry provider."""
     rows = [
         "| provider | class | install extra | also spelled | what it drives | trainer |",
         "|---|---|---|---|---|---|",
@@ -101,7 +102,9 @@ def table() -> str:
         link = f"[`{name}`]({page})" if (_REPO / "docs" / "learn" / "policies" / page).exists() else f"`{name}`"
         trainer = "yes" if spec.get("trainer") else "no"
         desc = spec["description"].replace("\u2014", ",").replace("|", "/")
-        rows.append(f"| {link} | `{spec['class']}` | {_extra_cell(name, spec)} | {_spellings(spec)} | {desc} | {trainer} |")
+        rows.append(
+            f"| {link} | `{spec['class']}` | {_extra_cell(name, spec)} | {_spellings(spec)} | {desc} | {trainer} |"
+        )
     return "\n".join(rows)
 
 
@@ -122,6 +125,7 @@ def _class_init(module: str, cls: str) -> tuple[ast.FunctionDef | None, list[str
 
 
 def kwargs_table(name: str) -> str:
+    """The constructor keywords of one provider as a markdown table."""
     spec = _providers().get(name)
     if spec is None:
         log.warning("providers hook: unknown provider %s", name)
@@ -162,6 +166,7 @@ def _embodiments() -> dict:
 
 
 def cameras_table() -> str:
+    """The camera-key table for lerobot policy types as markdown."""
     data = _embodiments()
     aliases: dict[str, list[str]] = {}
     for alias, target in data["aliases"].items():
@@ -181,12 +186,15 @@ def cameras_table() -> str:
 
 
 def embodiments_line() -> str:
+    """The one-line list of GR00T embodiment tags."""
     data = _embodiments()
     names = list(data["configs"]) + list(data["aliases"])
     return ", ".join(f"`{n}`" for n in names)
 
 
 def substitute(markdown: str, page_path: str = "<string>") -> str:
+    """Expand every ``{{providers:...}}`` token in ``markdown``."""
+
     def _one(match: re.Match[str]) -> str:
         kind, arg = match.group(1), match.group(2)
         if kind == "table":
@@ -204,6 +212,7 @@ def substitute(markdown: str, page_path: str = "<string>") -> str:
 
 
 def on_page_markdown(markdown: str, page, config, files) -> str:  # noqa: ANN001 - mkdocs signature
+    """mkdocs hook entry point: expand the providers tokens."""
     return substitute(markdown, page.file.src_path)
 
 

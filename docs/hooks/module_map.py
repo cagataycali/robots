@@ -34,7 +34,11 @@ def _layers() -> list[tuple[str, tuple[str, ...]]]:
     """``LAYERS`` from the grader, as (name, members) pairs."""
     tree = ast.parse(_GRADER.read_text(encoding="utf-8"))
     for node in tree.body:
-        target = node.target if isinstance(node, ast.AnnAssign) else (node.targets[0] if isinstance(node, ast.Assign) else None)
+        target = (
+            node.target
+            if isinstance(node, ast.AnnAssign)
+            else (node.targets[0] if isinstance(node, ast.Assign) else None)
+        )
         if isinstance(target, ast.Name) and target.id == "LAYERS" and node.value is not None:
             value = ast.literal_eval(node.value)
             return [(str(name), tuple(str(m) for m in members)) for name, members in value]

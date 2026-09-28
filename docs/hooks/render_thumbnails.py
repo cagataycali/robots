@@ -43,6 +43,7 @@ HIDE = """() => { const v = document.querySelector('robot-viewer'); for (const s
 
 
 def main() -> int:
+    """Render one thumbnail per robot with a sim asset; return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--site", default="http://127.0.0.1:8765/")
     parser.add_argument("names", nargs="*")
@@ -69,10 +70,19 @@ def main() -> int:
                 page.evaluate(MOUNT, name)
                 page.wait_for_function(READY, timeout=180_000)
                 if page.evaluate("document.querySelector('robot-viewer')._state") != "ready":
-                    raise RuntimeError(page.evaluate("document.querySelector('robot-viewer').shadowRoot.querySelector('.status')?.textContent"))
+                    raise RuntimeError(
+                        page.evaluate(
+                            "document.querySelector('robot-viewer').shadowRoot.querySelector('.status')?.textContent"
+                        )
+                    )
                 page.evaluate(HIDE)
                 page.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
-                png = page.screenshot(clip={"x": 0, "y": 0, "width": 800, "height": 600}, omit_background=True, animations="disabled", timeout=120_000)
+                png = page.screenshot(
+                    clip={"x": 0, "y": 0, "width": 800, "height": 600},
+                    omit_background=True,
+                    animations="disabled",
+                    timeout=120_000,
+                )
                 Image.open(io.BytesIO(png)).convert("RGBA").save(OUT / f"{name}.webp", quality=85, method=6)
                 ok += 1
                 print(f"ok   {name} {time.monotonic() - t0:.1f}s", flush=True)

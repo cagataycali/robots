@@ -27,7 +27,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 DOCS = REPO / "docs"
-DEFAULT_PYTHON = str(REPO / ".venv" / "bin" / "python") if (REPO / ".venv" / "bin" / "python").exists() else sys.executable
+DEFAULT_PYTHON = (
+    str(REPO / ".venv" / "bin" / "python") if (REPO / ".venv" / "bin" / "python").exists() else sys.executable
+)
 TIMEOUT_S = 120
 FENCE = re.compile(r"^```python[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
 
@@ -39,7 +41,12 @@ def fences(page: Path) -> list[str]:
 
 def run(code: str, python: str) -> tuple[str, float, str]:
     """(status, seconds, tail of output) for one fence."""
-    env = {**os.environ, "PYTHONPATH": str(REPO), "MUJOCO_GL": os.environ.get("MUJOCO_GL", "cgl"), "PYTHONUNBUFFERED": "1"}
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(REPO),
+        "MUJOCO_GL": os.environ.get("MUJOCO_GL", "cgl"),
+        "PYTHONUNBUFFERED": "1",
+    }
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as handle:
         handle.write(code)
         path = handle.name
@@ -57,6 +64,7 @@ def run(code: str, python: str) -> tuple[str, float, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run every runnable fence and print one row each; return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("python", nargs="?", default=DEFAULT_PYTHON, help="interpreter to run fences with")
     parser.add_argument("--only", action="append", default=[], help="page path under docs/ (repeatable)")
@@ -72,7 +80,11 @@ def main(argv: list[str] | None = None) -> int:
         for index, code in enumerate(fences(page), start=1):
             status, seconds, tail = run(code, args.python)
             rows.append((str(page.relative_to(DOCS)), index, status, seconds, tail))
-            print(f"{status:7} {seconds:6.1f}s  {page.relative_to(DOCS)} #{index}" + (f"  {tail}" if status != "PASS" else ""), flush=True)
+            print(
+                f"{status:7} {seconds:6.1f}s  {page.relative_to(DOCS)} #{index}"
+                + (f"  {tail}" if status != "PASS" else ""),
+                flush=True,
+            )
 
     failed = [r for r in rows if r[2] != "PASS"]
     print()

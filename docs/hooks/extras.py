@@ -74,7 +74,7 @@ def _package_names(specs: list[str]) -> str:
     names: list[str] = []
     for spec in specs:
         if spec.startswith(_SELF):
-            names.append(f"`[{spec[len(_SELF):-1]}]`")
+            names.append(f"`[{spec[len(_SELF) : -1]}]`")
             continue
         match = _PIN.match(spec)
         names.append(f"`{match.group(1) if match else spec}`")
@@ -82,6 +82,7 @@ def _package_names(specs: list[str]) -> str:
 
 
 def extras_table() -> str:
+    """The install-extras table as markdown."""
     extras = _project()["optional-dependencies"]
     rows = ["| extra | installs | purpose |", "|---|---|---|"]
     for name, specs in extras.items():
@@ -90,6 +91,8 @@ def extras_table() -> str:
 
 
 def substitute(markdown: str, page_path: str = "<string>") -> str:
+    """Expand the extras token in ``markdown``; ``page_path`` names the page in warnings."""
+
     def _one(match: re.Match[str]) -> str:
         key = match.group(1)
         if key == "table":
@@ -103,4 +106,5 @@ def substitute(markdown: str, page_path: str = "<string>") -> str:
 
 
 def on_page_markdown(markdown: str, page, config, files) -> str:  # noqa: ANN001 - mkdocs signature
+    """mkdocs hook entry point: expand the extras token."""
     return substitute(markdown, page.file.src_path)

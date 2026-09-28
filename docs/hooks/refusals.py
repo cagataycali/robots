@@ -67,15 +67,21 @@ def _doc_comments(source: str) -> dict[str, str]:
 
 def _string_tuple(tree: ast.Module, name: str, constants: dict[str, str]) -> tuple[str, ...]:
     for node in tree.body:
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        targets = (
+            node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        )
         if any(isinstance(t, ast.Name) and t.id == name for t in targets) and isinstance(node.value, ast.Tuple):
-            return tuple(constants.get(e.id, e.id) if isinstance(e, ast.Name) else str(e.value) for e in node.value.elts)
+            return tuple(
+                constants.get(e.id, e.id) if isinstance(e, ast.Name) else str(e.value) for e in node.value.elts
+            )
     return ()
 
 
 def _string_dict(tree: ast.Module, name: str, constants: dict[str, str]) -> dict[str, str]:
     for node in tree.body:
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        targets = (
+            node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        )
         if any(isinstance(t, ast.Name) and t.id == name for t in targets) and isinstance(node.value, ast.Dict):
             out: dict[str, str] = {}
             for k, v in zip(node.value.keys, node.value.values, strict=True):

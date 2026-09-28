@@ -34,13 +34,25 @@ _FAMILY: dict[str, tuple[str, str, str]] = {
     "strands_robots.drivers.g1": ("DDS (CycloneDDS)", "`[ros2]` + `unitree_sdk2_python`", "unitree.md"),
     "strands_robots.drivers.go2": ("DDS (CycloneDDS)", "`[ros2]` + `unitree_sdk2_python`", "unitree.md"),
     "strands_robots.drivers.reachy": ("http + WebSocket (reachy daemon)", "`pip install websockets`", "reachy-mini.md"),
-    "strands_robots.drivers.microduck": ("unix socket, JSON-RPC (robotd)", "base install, `ssh` for a remote duck", "microduck.md"),
+    "strands_robots.drivers.microduck": (
+        "unix socket, JSON-RPC (robotd)",
+        "base install, `ssh` for a remote duck",
+        "microduck.md",
+    ),
     "strands_robots.drivers.robotiq.driver": ("ethernet (Modbus TCP)", "base install", "drivers.md"),
-    "strands_robots.drivers.booster": ("DDS (vendor SDK)", "`booster_robotics_sdk_python`, vendor wheel", "booster-t1.md"),
+    "strands_robots.drivers.booster": (
+        "DDS (vendor SDK)",
+        "`booster_robotics_sdk_python`, vendor wheel",
+        "booster-t1.md",
+    ),
     "strands_robots.drivers.ur": ("ethernet (RTDE, port 30004)", "`[ur]`", "ur.md"),
     "strands_robots.drivers.crazyflie": ("radio (CRTP over Crazyradio)", "`[crazyflie]`", "drivers.md"),
     "strands_robots.drivers.earthrover": ("http (earth-rovers-sdk)", "`[earthrover]`", "drivers.md"),
-    "strands_robots.drivers.yahboom_m3pro": ("rosbridge WebSocket / rclpy / twin", "`[rosbridge]` or `[ros2]`", "drivers.md"),
+    "strands_robots.drivers.yahboom_m3pro": (
+        "rosbridge WebSocket / rclpy / twin",
+        "`[rosbridge]` or `[ros2]`",
+        "drivers.md",
+    ),
 }
 
 
@@ -82,6 +94,7 @@ def rows() -> list[tuple[str, str, str, str, str]]:
 
 
 def table() -> str:
+    """The native-driver table as markdown."""
     lines = ["| robot | driver class | transport | install | setup |", "|---|---|---|---|---|"]
     for robot, cls, transport, extra, page in rows():
         lines.append(f"| `{robot}` | `{cls}` | {transport} | {extra} | [{page[:-3]}]({page}) |")
@@ -89,6 +102,7 @@ def table() -> str:
 
 
 def on_page_markdown(markdown: str, page, config, files) -> str:  # noqa: ANN001 - mkdocs signature
+    """mkdocs hook entry point: expand the drivers token."""
     if not _TOKEN.search(markdown):
         return markdown
     return _TOKEN.sub(lambda _m: table(), markdown)

@@ -35,7 +35,11 @@ _TOKEN = re.compile(r"^\{\{\s*tools_ref\s*\}\}\s*$", re.M)
 _AREAS: tuple[tuple[str, str, str], ...] = (
     ("tools/g1/", "Unitree G1", "The humanoid's DDS surface: locomotion, arm gestures, tasks and sensor reads."),
     ("tools/reachy/", "Reachy Mini", "Head, antennas, body turn, home and stop on the Mini daemon."),
-    ("tools/", "Core", "Cameras, teleoperation, training, rollouts, poses, the serial bus, the mesh and ROS transports."),
+    (
+        "tools/",
+        "Core",
+        "Cameras, teleoperation, training, rollouts, poses, the serial bus, the mesh and ROS transports.",
+    ),
     ("mesh/", "Mesh bridges", "Tools a bridged ROS 2, rosbridge or mobile-base robot publishes on the mesh."),
     ("dashboard/", "Dashboard console", "Tools the dashboard's agent console hands its model."),
 )
@@ -59,7 +63,9 @@ class Tool:
 
 def _is_tool_decorator(node: ast.expr) -> bool:
     func = node.func if isinstance(node, ast.Call) else node
-    return (isinstance(func, ast.Name) and func.id == "tool") or (isinstance(func, ast.Attribute) and func.attr == "tool")
+    return (isinstance(func, ast.Name) and func.id == "tool") or (
+        isinstance(func, ast.Attribute) and func.attr == "tool"
+    )
 
 
 def _template(node: ast.expr) -> str | None:
@@ -314,7 +320,9 @@ def render() -> str:
             else:
                 verbs = "no parameters"
             name = _code(t.name) + (" (built at runtime)" if t.nested else "")
-            lines.append(f"| {name} | {_code(t.module.removeprefix('strands_robots.'))} | {_cell(t.summary)} | {verbs} |")
+            lines.append(
+                f"| {name} | {_code(t.module.removeprefix('strands_robots.'))} | {_cell(t.summary)} | {verbs} |"
+            )
         lines.append("")
     return "\n".join(lines)
 

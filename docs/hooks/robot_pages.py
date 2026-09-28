@@ -66,13 +66,13 @@ DRIVERS: dict[str, dict[str, object]] = {
         "port": 'serial device of the SCS bus, for example `"/dev/ttyACM0"` or `"/dev/tty.usbserial-*"`',
         "example": '"/dev/ttyACM0"',
         "sdk": "`pyserial` (`pip install pyserial`); calibration file from `lerobot-calibrate`",
-        "kwargs": "`baud_rate=1_000_000`, `calibration=<path or records>`, `motor_ids=()`, `timeout=1.0`, `transport=\"serial\"` or `\"twin\"`",
+        "kwargs": '`baud_rate=1_000_000`, `calibration=<path or records>`, `motor_ids=()`, `timeout=1.0`, `transport="serial"` or `"twin"`',
         "units": "degrees per joint, `gripper` in percent open; keys `shoulder_pan` or `shoulder_pan.pos`",
         "checks": (
             "the bus opens the port and discovers the servo ids on connect",
             "without `calibration=` the driver reads and commands the servo's full travel, not the arm's measured travel; `get_status` reports `calibration_source`",
             "`stop` releases torque on every motor and names any that stayed driven",
-            "`transport=\"twin\"` answers the same verbs from the arm's MuJoCo model",
+            '`transport="twin"` answers the same verbs from the arm\'s MuJoCo model',
         ),
     },
     "FrankaDriver": {
@@ -244,6 +244,7 @@ def _load_coverage():  # noqa: ANN202 - a sibling hook module
 
 @lru_cache(maxsize=1)
 def registry() -> dict[str, dict]:
+    """The robot registry, read once from ``robots.json``."""
     return json.loads(_REGISTRY.read_text(encoding="utf-8"))["robots"]
 
 
@@ -287,7 +288,9 @@ def _model_link(base_url: str | None) -> str | None:
 
 def _chips(name: str, spec: dict, cov, entry: dict) -> str:  # noqa: ANN001
     joints = spec.get("joints")
-    parts = [f'<span class="sr-chip sr-chip-family" data-family="{spec["category"]}">{html.escape(_label(spec["category"]))}</span>']
+    parts = [
+        f'<span class="sr-chip sr-chip-family" data-family="{spec["category"]}">{html.escape(_label(spec["category"]))}</span>'
+    ]
     if isinstance(joints, int):
         parts.append(f'<span class="sr-chip">{joints} joints</span>')
     if entry.get("sim"):
@@ -304,7 +307,10 @@ def _chips(name: str, spec: dict, cov, entry: dict) -> str:  # noqa: ANN001
 BIMANUAL_ARM_CONFIG: dict[str, tuple[str, str]] = {
     "bi_so_follower": ("lerobot.robots.so_follower.config_so_follower", "SOFollowerConfig"),
     "bi_openarm_follower": ("lerobot.robots.openarm_follower.config_openarm_follower", "OpenArmFollowerConfig"),
-    "bi_rebot_b601_follower": ("lerobot.robots.rebot_b601_follower.config_rebot_b601_follower", "RebotB601FollowerConfig"),
+    "bi_rebot_b601_follower": (
+        "lerobot.robots.rebot_b601_follower.config_rebot_b601_follower",
+        "RebotB601FollowerConfig",
+    ),
 }
 
 
@@ -338,7 +344,11 @@ def _hardware_section(name: str, spec: dict, cov) -> str:  # noqa: ANN001
     out: list[str] = ["## Hardware", ""]
     hardware = spec.get("hardware") or {}
     if cov.lerobot_type:
-        source = " Install lerobot from source: the type is not in the PyPI release." if hardware.get("requires_lerobot_from_source") else ""
+        source = (
+            " Install lerobot from source: the type is not in the PyPI release."
+            if hardware.get("requires_lerobot_from_source")
+            else ""
+        )
         default = " The default when `driver=` is not given." if cov.default_driver == "lerobot" else ""
         if cov.lerobot_type in BIMANUAL_ARM_CONFIG:
             cls = BIMANUAL_ARM_CONFIG[cov.lerobot_type][1]
@@ -349,13 +359,15 @@ def _hardware_section(name: str, spec: dict, cov) -> str:  # noqa: ANN001
         else:
             wiring = "`port=` is the serial device, `cameras=` the lerobot camera dict."
         out.append(
-            f"**lerobot.** `Robot(\"{name}\", mode=\"real\")` builds lerobot's `{cov.lerobot_type}` "
+            f'**lerobot.** `Robot("{name}", mode="real")` builds lerobot\'s `{cov.lerobot_type}` '
             f"with `pip install 'strands-robots[lerobot]'`; {wiring}{default}{source}"
         )
         out.append("")
     if cov.native_driver:
         facts = DRIVERS[cov.native_driver]
-        default = "the default for this robot" if cov.default_driver == "strands" else 'selected with `driver="strands"`'
+        default = (
+            "the default for this robot" if cov.default_driver == "strands" else 'selected with `driver="strands"`'
+        )
         out.append(f"**`{cov.native_driver}`** ({default}) speaks {facts['link']}. Source: `{facts['module']}`.")
         out.append("")
         out.append("| | |")
@@ -371,7 +383,9 @@ def _hardware_section(name: str, spec: dict, cov) -> str:  # noqa: ANN001
             out.append(f"- {check}")
         out.append("")
     if not cov.drivers:
-        out.append(f"No driver builds `{name}` for real at this commit; the registry lists no `lerobot_type` and no native driver registers for it.")
+        out.append(
+            f"No driver builds `{name}` for real at this commit; the registry lists no `lerobot_type` and no native driver registers for it."
+        )
         out.append("")
     return "\n".join(out)
 
@@ -399,11 +413,13 @@ def robot_page(name: str) -> str:
     manual = (spec.get("asset") or {}).get("auto_download", True) is False
     sim_clause = "once its model is on disk" if manual else "after one line"
     if sim and cov.real:
-        intro = f"You have `{name}` in a MuJoCo world {sim_clause}, and the same object on the hardware with `mode=\"real\"`."
+        intro = (
+            f'You have `{name}` in a MuJoCo world {sim_clause}, and the same object on the hardware with `mode="real"`.'
+        )
     elif sim:
-        intro = f"You have `{name}` in a MuJoCo world {sim_clause}. No driver reaches this robot's hardware yet, so `mode=\"real\"` refuses by name."
+        intro = f'You have `{name}` in a MuJoCo world {sim_clause}. No driver reaches this robot\'s hardware yet, so `mode="real"` refuses by name.'
     elif cov.real:
-        intro = f"You have `{name}` on its hardware after one line. The registry ships no simulation asset for it, so `Robot(\"{name}\")` in the default sim mode refuses by name."
+        intro = f'You have `{name}` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("{name}")` in the default sim mode refuses by name.'
     else:
         intro = f"`{name}` is registered by name and alias, with no simulation asset and no driver at this commit."
     lines += [intro, ""]
@@ -411,14 +427,17 @@ def robot_page(name: str) -> str:
         if entry.get("viewer"):
             lines += [f'<robot-viewer name="{name}"></robot-viewer>', ""]
         else:
-            lines += ["The model has no public source to stream, so this page has no 3D view; the thumbnail is a local render.", ""]
+            lines += [
+                "The model has no public source to stream, so this page has no 3D view; the thumbnail is a local render.",
+                "",
+            ]
         asset = spec.get("asset") or {}
         if asset.get("auto_download", True) is False:
             placement = f"{asset['dir']}/{asset['model_xml']}"
             lines += [
                 f"The model is not fetched for you (`auto_download: false`): place `{placement}` under "
                 "`~/.strands_robots/assets/` (or `$STRANDS_ASSETS_DIR`) first, or the call refuses with "
-                "\"model file is not on disk\".",
+                '"model file is not on disk".',
                 "",
                 '```python title="sketch"',
                 "from strands_robots import Robot",
@@ -449,7 +468,10 @@ def robot_page(name: str) -> str:
     gripper = spec.get("gripper")
     if gripper:
         acts = ", ".join(f"`{a}`" for a in gripper.get("actuators", ()))
-        lines += [f"Gripper actuator {acts}: closed at the {gripper.get('closed')} end of travel, open at the {gripper.get('open')} end.", ""]
+        lines += [
+            f"Gripper actuator {acts}: closed at the {gripper.get('closed')} end of travel, open at the {gripper.get('open')} end.",
+            "",
+        ]
     if cov.real or spec.get("hardware"):
         lines += [_hardware_section(name, spec, cov)]
     if cov.policies:
@@ -465,6 +487,7 @@ def robot_page(name: str) -> str:
 
 
 def family_page(category: str) -> str:
+    """Markdown for one family index page."""
     label, sentence = FAMILIES.get(category, (category, ""))
     names = [n for n, s in registry().items() if s["category"] == category]
     lines = [
@@ -517,6 +540,7 @@ def generate() -> tuple[list[Path], int]:
 
 
 def card(name: str, prefix: str) -> str:
+    """One robot card as HTML."""
     spec = registry()[name]
     entry = manifest().get(name, {})
     cov = _load_coverage().row(name)
@@ -536,7 +560,9 @@ def card(name: str, prefix: str) -> str:
         badges += f'<span class="sr-chip">{joints} joints</span>'
     aliases = spec.get("aliases") or []
     alias_html = (
-        '<p class="sr-robot-aliases">' + " ".join(f"<code>{html.escape(a)}</code>" for a in aliases[:4]) + "</p>" if aliases else ""
+        '<p class="sr-robot-aliases">' + " ".join(f"<code>{html.escape(a)}</code>" for a in aliases[:4]) + "</p>"
+        if aliases
+        else ""
     )
     return (
         f'<article class="sr-robot" data-family="{spec["category"]}" data-sim="{str(bool(entry.get("sim"))).lower()}" data-real="{str(cov.real).lower()}">'
@@ -550,6 +576,7 @@ def card(name: str, prefix: str) -> str:
 
 
 def cards(category: str | None, prefix: str) -> str:
+    """The card grid for a family (or every robot when ``category`` is None)."""
     names = [n for n, s in registry().items() if category is None or s["category"] == category]
     if category is not None and not names:
         log.warning("robot_cards: unknown family %r", category)
@@ -557,6 +584,7 @@ def cards(category: str | None, prefix: str) -> str:
 
 
 def family_table(category: str, link_prefix: str = "") -> str:
+    """The family table as markdown, one row per robot."""
     cov = _load_coverage()
     lines = ["| Robot | Description | Joints | Sim | Real | Drivers |", "|---|---|---:|:---:|:---:|---|"]
     for name, spec in registry().items():
@@ -573,6 +601,7 @@ def family_table(category: str, link_prefix: str = "") -> str:
 
 
 def substitute(markdown: str, prefix: str, link_prefix: str = "") -> str:
+    """Expand the robot cards and family table tokens in ``markdown``."""
     markdown = _TOKEN_CARDS.sub(lambda m: cards(m.group(1), prefix), markdown)
     return _TOKEN_TABLE.sub(lambda m: family_table(m.group(1), link_prefix), markdown)
 
@@ -587,11 +616,13 @@ def _site_prefix(page, config) -> str:  # noqa: ANN001
 
 
 def on_pre_build(config) -> None:  # noqa: ANN001 - mkdocs signature
+    """mkdocs hook entry point: regenerate the robot pages before the build."""
     written, changed = generate()
     log.info("robot pages: %d generated under docs/robots/, %d changed", len(written), changed)
 
 
 def on_page_markdown(markdown: str, page, config, files) -> str:  # noqa: ANN001 - mkdocs signature
+    """mkdocs hook entry point: expand the robot tokens on a page."""
     if "{{" not in markdown:
         return markdown
     src = page.file.src_path.replace("\\", "/")

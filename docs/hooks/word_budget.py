@@ -24,6 +24,7 @@ def words(page: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Print every page over the budget; return 1 when any is."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--limit", type=int, default=LIMIT, help=f"word budget per page (default {LIMIT})")
     parser.add_argument("--all", action="store_true", help="list every page, not only the ones over budget")

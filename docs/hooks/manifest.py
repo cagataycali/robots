@@ -60,11 +60,19 @@ _VIEWER_UNSUPPORTED: dict[str, str] = {
 _DESCRIPTION_REPOS: dict[str, tuple[str, str, str]] = {
     # name: (owner/repo, commit, subdir)
     "openarm": ("enactic/openarm_mujoco", "cd30dd4c0a97832d1c063bf759514ed18fbe04a5", "v1"),
-    "ability_hand": ("psyonicinc/ability-hand-api", "89407424edfc22faceaedcd7c3ea2b7947cbbb2c", "python/ah_simulators/mujoco_xml"),
+    "ability_hand": (
+        "psyonicinc/ability-hand-api",
+        "89407424edfc22faceaedcd7c3ea2b7947cbbb2c",
+        "python/ah_simulators/mujoco_xml",
+    ),
     "elf2": ("bxirobotics/robot_models", "eabe24ce937f8e633077a163b883e92e8996c36e", "elf2_dof25/xml"),
     "jvrc": ("isri-aist/jvrc_mj_description", "0f0ce7daefdd66c54e0909a6bf2c22154844f5f3", ""),
     "rby1": ("uynitsuj/rby1_description", "e4c07203aa0a0d1b6b3b39da105cb00a77e2bc72", "models/rby1a/mujoco"),
-    "unitree_h1_2": ("unitreerobotics/unitree_ros", "267182b8521c8d6a631bab1fe63836873237a525", "robots/h1_2_description"),
+    "unitree_h1_2": (
+        "unitreerobotics/unitree_ros",
+        "267182b8521c8d6a631bab1fe63836873237a525",
+        "robots/h1_2_description",
+    ),
     "aliengo": ("unitreerobotics/unitree_mujoco", "f3300ff1bf0ab9efbea0162717353480d9b05d73", "data/aliengo"),
     "unitree_a1": ("unitreerobotics/unitree_mujoco", "f3300ff1bf0ab9efbea0162717353480d9b05d73", "data/a1"),
 }
@@ -74,7 +82,11 @@ def _lfs_url(name: str, asset: dict) -> str | None:
     """GitHub's LFS media endpoint for the same directory; jsDelivr serves LFS pointers, not blobs."""
     if name in _DESCRIPTION_REPOS:
         repo, commit, subdir = _DESCRIPTION_REPOS[name]
-        return f"https://media.githubusercontent.com/media/{repo}/{commit}/{subdir}/" if subdir else f"https://media.githubusercontent.com/media/{repo}/{commit}/"
+        return (
+            f"https://media.githubusercontent.com/media/{repo}/{commit}/{subdir}/"
+            if subdir
+            else f"https://media.githubusercontent.com/media/{repo}/{commit}/"
+        )
     source = asset.get("source") or {"type": "menagerie"}
     if source.get("type") == "menagerie":
         return f"https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/{MENAGERIE_REF}/{asset['dir']}/"
@@ -82,7 +94,11 @@ def _lfs_url(name: str, asset: dict) -> str | None:
         repo = _REPO_MOVES.get(source["repo"], source["repo"])
         ref = _GITHUB_REFS.get(name, source.get("ref") or "main")
         subdir = source.get("subdir", "").strip("/")
-        return f"https://media.githubusercontent.com/media/{repo}/{ref}/{subdir}/" if subdir else f"https://media.githubusercontent.com/media/{repo}/{ref}/"
+        return (
+            f"https://media.githubusercontent.com/media/{repo}/{ref}/{subdir}/"
+            if subdir
+            else f"https://media.githubusercontent.com/media/{repo}/{ref}/"
+        )
     return None
 
 
@@ -147,7 +163,11 @@ def on_pre_build(config) -> None:  # noqa: ANN001 - mkdocs signature
     manifest = build_manifest()
     _OUT.parent.mkdir(parents=True, exist_ok=True)
     _OUT.write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    log.info("viewer manifest: %d robots, %d renderable", len(manifest["robots"]), sum(1 for r in manifest["robots"].values() if r["viewer"]))
+    log.info(
+        "viewer manifest: %d robots, %d renderable",
+        len(manifest["robots"]),
+        sum(1 for r in manifest["robots"].values() if r["viewer"]),
+    )
 
 
 if __name__ == "__main__":

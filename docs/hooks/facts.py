@@ -57,7 +57,9 @@ def numbers() -> dict[str, int]:
     )
     providers = json.loads((_PKG / "registry" / "policies.json").read_text(encoding="utf-8"))["providers"]
     native_drivers = len(
-        re.findall(r'^\s+\("strands_robots\.drivers\.', (_PKG / "drivers" / "__init__.py").read_text(encoding="utf-8"), re.M)
+        re.findall(
+            r'^\s+\("strands_robots\.drivers\.', (_PKG / "drivers" / "__init__.py").read_text(encoding="utf-8"), re.M
+        )
     )
     out: dict[str, int] = {
         "robots": len(robots),
@@ -91,4 +93,5 @@ def substitute(markdown: str, page_path: str = "<string>") -> str:
 
 
 def on_page_markdown(markdown: str, page, config, files) -> str:  # noqa: ANN001 - mkdocs signature
+    """mkdocs hook entry point: expand every ``{{n:key}}`` token."""
     return substitute(markdown, page.file.src_path)
