@@ -434,9 +434,9 @@ def reads() -> dict[str, Read]:
                     record(name, module, _default_text(default))
     by_module = {_module_name(p): (p.read_text(encoding="utf-8"), tree) for p, tree in trees.items()}
     for entry in out.values():
-        meaning, default = _note(entry.name, by_module)
-        if default:
-            entry.defaults = {default}
+        meaning, noted_default = _note(entry.name, by_module)
+        if noted_default:
+            entry.defaults = {noted_default}
         if meaning:
             entry.meaning = meaning
             continue
