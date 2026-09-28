@@ -15,7 +15,7 @@ The process joins the Zenoh mesh as a robot-less gateway: one page drives hardwa
 
 | tab | shows |
 |---|---|
-| Fleet | every live mesh peer (joints, cameras, task, lockout) and every registry robot; teleop pairing, a task form |
+| Fleet | every live mesh robot (joints, cameras, task, lockout; a host process folds into its `__` robots) and every registry robot; teleop pairing, a task form |
 | Devices | this machine's serial ports and cameras; spawn a robot process per port (a managed mesh child), assign cameras, read its log, despawn |
 | Record | a LeRobot dataset session: arms, cameras, start / stop / redo / discard episodes, thumbnails, labels, upload |
 | Train | datasets, trainers, a graded job form, live loss, checkpoints, validation on a robot, a deploy snippet |

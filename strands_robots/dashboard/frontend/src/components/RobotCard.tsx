@@ -15,11 +15,10 @@ import RunForm from './RunForm'
 import ConsentSheet from './ConsentSheet'
 import { useJointFailure } from '../lib/useJointFailure'
 
-export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange, hostsChildren}: {
+export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange }: {
   peer: Peer
   /** a '<id>-twin' peer is live in the fleet (App reads the same snapshot) */
   twinLive?: boolean
-  hostsChildren?: string[] | null
   onOpen?: (peerId: string) => void
   onBusyChange?: (peerId: string, running: boolean) => void
 }) {
@@ -40,7 +39,7 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
   const twin = twinButtonCopy({ peerId: peer.peer_id, twinLive, busy: twinBusy })
 
   const status = type === 'robot'
-    ? statusSentence(peerStatusFields(peer, telemetry, hostsChildren))
+    ? statusSentence(peerStatusFields(peer, telemetry))
     : null
 
   // The app keeps a screen wake lock while anything is moving.
