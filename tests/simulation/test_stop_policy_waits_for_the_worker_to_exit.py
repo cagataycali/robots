@@ -142,8 +142,9 @@ def _stop_policy_entry() -> str:
         except (ImportError, AttributeError):
             obj = importlib.import_module(dotted)
         method = getattr(obj, "stop_policy", None)
-        if method is not None and inspect.getdoc(method):
-            docstrings.append(inspect.getdoc(method))
+        doc = inspect.getdoc(method) if method is not None else None
+        if doc:
+            docstrings.append(doc)
     assert docstrings, f"{_API_PAGE.name} renders no object with a stop_policy docstring"
     return page + "\n" + "\n".join(docstrings)
 
