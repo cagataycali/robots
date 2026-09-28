@@ -454,6 +454,33 @@ def refusal_str(value: Any) -> str:
         return _describe_unrenderable(value)
 
 
+_LOG_CONTROL_RE: Final = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def log_safe(value: Any, limit: int = 200) -> str:
+    """A caller-supplied value, safe to place in one log line.
+
+    A log file is parsed by line, so a carriage return or a line feed inside a
+    value that arrived from outside the process (a dataset id, a robot name, a
+    download URL, a peer id) forges a second entry that never happened. Both
+    become their two-character escapes, every other control character becomes
+    ``\\xNN``, and a value longer than ``limit`` is cut with ``...`` so one
+    value cannot fill the file either. Use it as the ``%s`` argument of a log
+    call rather than formatting the value into the message string.
+
+    Args:
+        value: The value to render; ``str(value)`` is used, or a description
+            when that itself raises.
+        limit: Longest text returned, in characters.
+
+    Returns:
+        A single-line string.
+    """
+    text = refusal_str(value).replace("\r", "\\r").replace("\n", "\\n")
+    text = _LOG_CONTROL_RE.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
 def _describe_unrenderable(value: Any) -> str:
     """Describe a value whose own rendering raised.
 

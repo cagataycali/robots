@@ -1025,7 +1025,6 @@ const BUNDLE_ROUTES = [
   "/api/safety",
   "/api/safety/estop",
   "/api/safety/resume",
-  "/api/safety/{p}",
   "/api/settings",
   "/api/sim",
   "/api/sim/ports",
@@ -4239,7 +4238,7 @@ function ConsentSheet({ need, target, onCancel, onRetry }) {
     }
   ) });
 }
-function RobotCard({ peer, twinLive = false, onOpen, onBusyChange, hostsChildren }) {
+function RobotCard({ peer, twinLive = false, onOpen, onBusyChange }) {
   var _a, _b;
   const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin, consent, clearConsent, retryLast } = useTask(peer);
   const [sheet, setSheet] = reactExports.useState(false);
@@ -4250,7 +4249,7 @@ function RobotCard({ peer, twinLive = false, onOpen, onBusyChange, hostsChildren
   const offline = !!peer.stale;
   const telemetry = useTelemetry(peer);
   const twin = twinButtonCopy({ peerId: peer.peer_id, twinLive, busy: twinBusy });
-  const status = type === "robot" ? statusSentence(peerStatusFields(peer, telemetry, hostsChildren)) : null;
+  const status = type === "robot" ? statusSentence(peerStatusFields(peer, telemetry)) : null;
   reactExports.useEffect(() => {
     onBusyChange == null ? void 0 : onBusyChange(peer.peer_id, running);
   }, [running, peer.peer_id]);
@@ -11691,9 +11690,9 @@ function SimTab({ onClose }) {
     }
   };
   const toggleEstop = async () => {
-    const action = (lockout == null ? void 0 : lockout.state) === "locked" ? "resume" : "estop";
+    const route = (lockout == null ? void 0 : lockout.state) === "locked" ? "/api/safety/resume" : "/api/safety/estop";
     try {
-      setLockout((await post(`/api/safety/${action}`)).lockout);
+      setLockout((await post(route)).lockout);
       setMsg(null);
     } catch (e) {
       await failed(e);
@@ -13452,6 +13451,7 @@ function Dashboard() {
       joints: Object.keys(((_a2 = q.state) == null ? void 0 : _a2.joints) ?? {}).length
     };
   })), [list]);
+  const cards = reactExports.useMemo(() => list.filter((p) => !fleetHosts[p.peer_id]), [list, fleetHosts]);
   const pairInputs = reactExports.useMemo(() => list.map((q) => {
     var _a2, _b2;
     return {
@@ -13684,26 +13684,22 @@ function Dashboard() {
     ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "grid", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(LanHint, {}),
       (() => {
-        const lb = lockoutBanner(list);
+        const lb = lockoutBanner(cards);
         return lb ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `lockout-banner ${lb.severity}`, role: "status", style: { gridColumn: "1 / -1" }, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": "true", children: "🛑" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: lb.text })
         ] }) : null;
       })(),
-      list.map((p) => {
-        var _a2;
-        return /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: `the card for ${p.peer_id}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-          RobotCard,
-          {
-            peer: p,
-            twinLive: liveTwins.has(`${p.peer_id}-twin`),
-            hostsChildren: ((_a2 = fleetHosts[p.peer_id]) == null ? void 0 : _a2.children) ?? null,
-            onOpen: setDetail,
-            onBusyChange: (id, running) => setBusyPeers((s) => s[id] === running ? s : { ...s, [id]: running })
-          },
-          p.peer_id
-        ) }, p.peer_id);
-      })
+      cards.map((p) => /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: `the card for ${p.peer_id}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+        RobotCard,
+        {
+          peer: p,
+          twinLive: liveTwins.has(`${p.peer_id}-twin`),
+          onOpen: setDetail,
+          onBusyChange: (id, running) => setBusyPeers((s) => s[id] === running ? s : { ...s, [id]: running })
+        },
+        p.peer_id
+      ) }, p.peer_id))
     ] }),
     detailPeer && /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the robot detail view", onDismiss: () => setDetail(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       RobotDetail,

@@ -64,9 +64,9 @@ class TestTheEstopButtonReadsOneState:
             "the button's label is not read from the recorded lockout"
         )
         handler = _function_body(source, "const toggleEstop = async () =>")
-        assert re.search(r"const action = lockout\?\.state === 'locked' \? 'resume' : 'estop'", handler), (
-            "the click does not choose its action from the recorded lockout"
-        )
+        assert re.search(
+            r"const route = lockout\?\.state === 'locked' \? '/api/safety/resume' : '/api/safety/estop'", handler
+        ), "the click does not choose its action from the recorded lockout"
         assert "className" not in handler, "the click reads a painted class, which the label does not follow"
 
     def test_no_handler_fabricates_a_lockout(self) -> None:

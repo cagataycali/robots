@@ -19,6 +19,7 @@ import logging
 import os
 import threading
 import time
+from dataclasses import replace
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -40,6 +41,8 @@ _TELEMETRY_HZ = 15.0
 #: misses it rather than reporting a robot that renders nothing as running.
 #: Creating the GL context is the slowest part of starting, so this is generous.
 READY_TIMEOUT = 60.0
+#: What :class:`Safety` locks. Never the fleet: mesh peers answer only the signed rail.
+SCOPE = "this dashboard's simulation"
 
 
 class Safety:
@@ -63,7 +66,10 @@ class Safety:
         now = time.time()
         with self._lock:
             frozen = self.store.freeze_all()
-            self.lockout = safety_state.apply_event(self.lockout, kind="estop", data={"source": by, "t": now}, now=now)
+            folded = safety_state.apply_event(self.lockout, kind="estop", data={"source": by, "t": now}, now=now)
+            self.lockout = replace(
+                folded, reason=f"an e-stop from {folded.by or by} locked {SCOPE}; mesh peers were not stopped"
+            )
         logger.warning("e-stop by %s froze %d session(s)", one_line(by), len(frozen), extra=self.lockout.as_fields())
         return {"lockout": self.lockout.as_fields(), "frozen": frozen}
 
@@ -71,7 +77,8 @@ class Safety:
         """Fold a resume (state becomes ``unknown``) and thaw sessions - atomically, see :meth:`estop`."""
         now = time.time()
         with self._lock:
-            self.lockout = safety_state.apply_event(self.lockout, kind="resume", data={"source": by, "t": now}, now=now)
+            folded = safety_state.apply_event(self.lockout, kind="resume", data={"source": by, "t": now}, now=now)
+            self.lockout = replace(folded, reason=f"{SCOPE} was resumed; the next command it accepts proves it clear")
             thawed = self.store.thaw_all()
         return {"lockout": self.lockout.as_fields(), "thawed": thawed}
 
@@ -370,8 +377,12 @@ async def telemetry(ws: WebSocket, session_id: str, poses: bool = False) -> None
 
 @router.get("/api/safety")
 async def safety_status(request: Request, _: dict = Depends(access.require_session)) -> dict[str, Any]:
-    """The lockout as this dashboard understands it."""
-    return {"lockout": _safety(request).lockout.as_fields()}
+    """Two named scopes: ``lockout`` is :data:`SCOPE`; ``fleet`` is the mesh verdict, when a mesh bridge is attached."""
+    out: dict[str, Any] = {"scope": SCOPE, "lockout": _safety(request).lockout.as_fields()}
+    fleet = getattr(getattr(request.app.state, "bridge", None), "_lockout", None)
+    if isinstance(fleet, safety_state.Lockout):
+        out["fleet"] = fleet.as_fields()
+    return out
 
 
 @router.post("/api/safety/estop")

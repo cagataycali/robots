@@ -51,6 +51,7 @@ from typing import Any
 
 from strands_robots._mesh_switch import MESH_ENV_VAR
 from strands_robots.mesh._backend_select import select_backend
+from strands_robots.mesh._kill_switch import mesh_disabled_by_env
 from strands_robots.utils import partial_construction_repr, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
@@ -1006,16 +1007,11 @@ def get_session() -> Any | None:
     # about Zenoh: an IoT/bridge transport publishes this robot to the fleet
     # just as a Zenoh session does, and one gate covers every backend.
     #
-    # Imported inside the function, not at module scope: core imports this
-    # module (twice) while mesh/__init__ loads it, so a top-level import would
-    # be a genuine cycle. Reaching the mesh package lazily from inside the
-    # function that needs it is the technique _mesh_switch's docstring already
-    # describes for the same reason -- strands_robots.robot does it so that
-    # importing Robot does not eagerly pull in the Zenoh-backed session. The
-    # constant above comes from _mesh_switch instead, which imports nothing
-    # from the package and so is reachable at module scope.
-    from strands_robots.mesh.core import mesh_disabled_by_env
-
+    # The predicate comes from ``mesh._kill_switch``, a leaf next to this
+    # module, not from ``core``: core imports this module at module scope, so
+    # reaching back into it (even from inside the function) was an import
+    # cycle. The leaf imports only ``_mesh_switch``, which imports nothing from
+    # the package, so both are reachable at module scope.
     if mesh_disabled_by_env():
         logger.debug(
             "Mesh transport not acquired: STRANDS_MESH=%r is a hard kill switch",
@@ -1049,8 +1045,6 @@ def _get_zenoh_session_directly() -> Any | None:
     # The kill switch, for the same reason as in ``get_session``: this
     # door exists to skip the transport factory, not to skip the switch, and
     # it reaches the same ``zenoh.open``.
-    from strands_robots.mesh.core import mesh_disabled_by_env
-
     if mesh_disabled_by_env():
         logger.debug(
             "Zenoh session not opened: STRANDS_MESH=%r is a hard kill switch",
