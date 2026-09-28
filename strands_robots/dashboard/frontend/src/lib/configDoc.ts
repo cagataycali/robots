@@ -37,7 +37,7 @@ export function composeConfigDoc(s: SettingsDoc, agent: AgentInfo | null): Confi
       max_tokens: a.max_tokens ?? null,
       built: !!agent,
     },
-    voice: { provider: v.provider ?? 'openai', voice_name: v.voice_name ?? null, providers: ['openai', 'gemini', 'nova'] },
+    voice: { provider: v.provider ?? 'openai', voice_name: v.voice_name ?? null, providers: ['openai', 'nova_sonic'] },
     mesh: {
       connect: m.connect ?? [],
       listen: m.listen ?? [],

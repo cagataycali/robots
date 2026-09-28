@@ -147,7 +147,7 @@ render: the session reports **error** and the port is released.
 | `STRANDS_ROBOTS_DATA_DIRS` | unset | extra dataset roots, colon separated, admitted next to the home |
 | `STRANDS_TRAIN_OUTPUT_DIR` | `~/.strands_robots/training` | where training jobs may write |
 | `STRANDS_DASH_AGENT_PHYSICAL_MOTION` | unset | the standing grant that lets a task or calibration move real hardware without a confirm; leave unset unless the operator is watching |
-| `VOICE_PROVIDER` / `VOICE_NAME` | `openai` | the speech-to-speech provider behind `/ws/voice` (`openai`, `nova_sonic`, `gemini`) |
+| `VOICE_PROVIDER` / `VOICE_NAME` | `openai` | the speech-to-speech provider behind `/ws/voice` (`openai`, `nova_sonic`) |
 | `DASHBOARD_ENV_FILE` | `.env` | the file Settings writes env keys to |
 
 Every auth duration knob (`STRANDS_DASH_AUTH_TOKEN_TTL`, `SESSION_MAX_AGE`,

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import base64
 import contextlib
 import logging
 import os
@@ -26,7 +25,7 @@ appeared) or press play themselves, and do NOT retry, reword or pick another
 robot. A spoken yes cannot grant it - only their tap can. Stopping is never
 refused, so always act on a stop request immediately."""
 
-_DEFAULT_VOICES = {"openai": "marin", "nova_sonic": "tiffany", "gemini": "Kore"}
+_DEFAULT_VOICES = {"openai": "marin", "nova_sonic": "tiffany"}
 
 
 _refusal_listeners: list[Any] = []
@@ -145,41 +144,57 @@ def make_fleet_tool(bridge: Any) -> Any:
     return fleet
 
 
+#: The provider model each backend speaks when ``VOICE_MODEL`` is unset.
+_DEFAULT_MODEL_IDS = {"openai": "gpt-realtime", "nova_sonic": "amazon.nova-2-sonic-v1:0"}
+
+#: What the browser sends: PCM16 mono at 16 kHz (``useVoice.ts`` downsamples to it).
+BROWSER_INPUT_RATE = 16000
+
+
 def _build_bidi_model(provider: str, voice: str | None = None) -> Any:
+    """One speech-to-speech model, built against the ``strands.experimental.bidi`` 1.57 surface.
+
+    ``model_id`` is a required field there, so each backend carries a default the
+    operator overrides with ``VOICE_MODEL``.
+    """
     provider = provider.lower()
     v = voice or _DEFAULT_VOICES.get(provider)
+    model_id = os.getenv("VOICE_MODEL") or _DEFAULT_MODEL_IDS.get(provider)
 
     if provider in ("nova_sonic", "novasonic", "nova"):
-        from strands.experimental.bidi.models import BidiNovaSonicModel
+        from strands.experimental.bidi.models.bedrock import BedrockNovaSonicModel
 
-        region = os.getenv("AWS_REGION", "us-east-1")
-        cfg = {"audio": {"voice": v}} if v else None
-        return BidiNovaSonicModel(provider_config=cfg, client_config={"region": region})
+        kwargs: dict[str, Any] = {"model_id": model_id, "region": os.getenv("AWS_REGION", "us-east-1")}
+        if v:
+            kwargs["voice"] = v
+        return BedrockNovaSonicModel(**kwargs)
 
     if provider in ("openai", "openai_realtime"):
-        from strands.experimental.bidi.models import BidiOpenAIRealtimeModel
+        from strands.experimental.bidi.models.openai import OpenAIRealtimeModel
 
-        kwargs: dict[str, Any] = {}
+        kwargs = {"model_id": model_id, "transcription_model_id": None}
         if v:
-            kwargs["provider_config"] = {"audio": {"voice": v}}
-        if os.getenv("VOICE_MODEL"):
-            kwargs["model_id"] = os.environ["VOICE_MODEL"]
+            kwargs["voice"] = v
         if os.getenv("OPENAI_API_KEY"):
-            kwargs["client_config"] = {"api_key": os.environ["OPENAI_API_KEY"]}
-        return BidiOpenAIRealtimeModel(**kwargs)
+            kwargs["api_key"] = os.environ["OPENAI_API_KEY"]
+        return OpenAIRealtimeModel(**kwargs)
 
-    if provider in ("gemini", "gemini_live"):
-        from strands.experimental.bidi.models import BidiGeminiLiveModel
+    # No Gemini Live: its SDK (google-genai) caps websockets below 17 and this
+    # package requires websockets>=17.0, so the two cannot be installed together.
+    raise ValueError(f"unknown voice provider: {provider!r} (openai | nova_sonic)")
 
-        kwargs = {}
-        if v:
-            kwargs["provider_config"] = {"audio": {"voice": v}}
-        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-        if api_key:
-            kwargs["client_config"] = {"api_key": api_key}
-        return BidiGeminiLiveModel(**kwargs)
 
-    raise ValueError(f"unknown voice provider: {provider!r} (openai | nova_sonic | gemini)")
+def _resample_pcm16(data: bytes, src_rate: int, dst_rate: int) -> bytes:
+    """Linear resample of mono PCM16; identity when the rates already agree."""
+    if src_rate == dst_rate or not data:
+        return data
+    import numpy as np
+
+    pcm = np.frombuffer(data[: len(data) - (len(data) % 2)], dtype="<i2").astype(np.float32)
+    n_out = max(1, int(round(len(pcm) * dst_rate / src_rate)))
+    x_out = np.linspace(0.0, len(pcm) - 1, n_out)
+    out = np.interp(x_out, np.arange(len(pcm), dtype=np.float32), pcm)
+    return bytes(np.clip(np.rint(out), -32768, 32767).astype("<i2").tobytes())
 
 
 def build_voice_agent(provider: str | None = None, voice: str | None = None, *, bridge: Any = None) -> Any:
@@ -218,22 +233,13 @@ async def run_voice_session(ws: Any, *, bridge: Any = None) -> None:
     import json
     import queue as _queue
 
-    # The bidi event vocabulary is experimental and has been renamed between SDK
-    # releases (``BidiAudioStreamEvent`` became ``BidiAudioDeltaEvent``, and so on).
-    # Resolve the input class by candidate name and classify output events by the
-    # ``type`` string they all carry, so a rename is a no-op here rather than an
-    # ImportError at the first spoken word.
-    import strands.experimental.bidi.types.events as _bidi_events
-    from starlette.websockets import WebSocketDisconnect
-
-    audio_input_cls: Any = next(
-        (getattr(_bidi_events, n) for n in ("BidiAudioInputEvent",) if hasattr(_bidi_events, n)), None
-    )
-    if audio_input_cls is None:
-        raise ImportError(
-            "strands.experimental.bidi has no audio input event this dashboard knows how to send",
-            name="strands.experimental.bidi.types.events",
-        )
+    # The bidi event vocabulary is experimental and is renamed between SDK
+    # releases; output events are classified by the ``type`` string they all
+    # carry, so a rename there is a no-op rather than an ImportError at the
+    # first spoken word. Input is the 1.57 ``AudioDelta`` (format + bytes only:
+    # the rate is the model's, read from ``get_audio_config()``).
+    from fastapi import WebSocketDisconnect
+    from strands.experimental.bidi.types.media import AudioDelta
 
     def _event_type(event: Any) -> str:
         try:
@@ -270,24 +276,25 @@ async def run_voice_session(ws: Any, *, bridge: Any = None) -> None:
                 break
 
     class _BrowserInput:
+        _in_rate: int = BROWSER_INPUT_RATE
+
         async def start(self, agent: Any) -> None:
-            self._cfg = agent.model.config["audio"]
+            cfg = agent.model.get_audio_config()
+            self._in_rate = int(cfg["input"].get("sample_rate", BROWSER_INPUT_RATE))
 
         async def stop(self) -> None:
             pass
 
         async def __call__(self) -> Any:
             data = await in_q.get()
-            return audio_input_cls(
-                audio=base64.b64encode(data).decode(),
-                channels=self._cfg.get("channels", 1),
-                format=self._cfg.get("format", "pcm"),
-                sample_rate=self._cfg.get("input_rate", 16000),
+            return AudioDelta(
+                format="pcm",
+                source={"bytes": _resample_pcm16(data, BROWSER_INPUT_RATE, self._in_rate)},
             )
 
     class _BrowserOutput:
         async def start(self, agent: Any) -> None:
-            rate = agent.model.config["audio"]["output_rate"]
+            rate = int(agent.model.get_audio_config()["output"]["sample_rate"])
             await ws.send_text(json.dumps({"type": "voice_meta", "rate": rate}))
 
         async def stop(self) -> None:
@@ -297,18 +304,14 @@ async def run_voice_session(ws: Any, *, bridge: Any = None) -> None:
             kind = _event_type(event)
             if kind.startswith("bidi_audio") and hasattr(event, "get") and event.get("audio"):
                 await ws.send_text(json.dumps({"type": "audio", "data": event["audio"]}))
-            elif kind.startswith("bidi_transcript") and hasattr(event, "get") and event.get("text") is not None:
+            elif kind.startswith("bidi_transcript") and hasattr(event, "get"):
+                # 1.57 streams ``delta`` per transcript event; older wheels sent ``text``.
+                text = event.get("delta", event.get("text"))
+                if text is None:
+                    return
                 try:
-                    await ws.send_text(
-                        json.dumps(
-                            {
-                                "type": "transcript",
-                                "role": event.get("role", ""),
-                                "text": event.get("text", ""),
-                            }
-                        )
-                    )
-                except Exception:
+                    await ws.send_text(json.dumps({"type": "transcript", "role": event.get("role", ""), "text": text}))
+                except Exception:  # noqa: BLE001 - the socket is going away; the words were spoken
                     pass
 
     try:

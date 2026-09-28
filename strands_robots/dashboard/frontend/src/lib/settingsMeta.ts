@@ -255,7 +255,7 @@ const KEYWORDS_OF: Record<string, string> = {
   'mesh.camera_hz': 'fps frames rate video bandwidth',
   'mesh.connect': 'endpoints dial router zenoh peer',
   'mesh.listen': 'endpoints bind accept zenoh',
-  'voice.provider': 'speech tts openai gemini nova sonic',
+  'voice.provider': 'speech tts openai nova sonic',
   'voice.voice_name': 'speaker tts voice',
 }
 

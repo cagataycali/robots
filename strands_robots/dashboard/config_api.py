@@ -33,14 +33,12 @@ KNOWN_MODELS = [
     "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 ]
 
-VOICE_PROVIDERS = ["openai", "nova_sonic", "gemini"]
+VOICE_PROVIDERS = ["openai", "nova_sonic"]
 
 #: Env vars worth surfacing even when absent from the .env file, so an operator
 #: can discover what the dashboard actually reads.
 INTERESTING_ENV = [
     "OPENAI_API_KEY",
-    "GOOGLE_API_KEY",
-    "GEMINI_API_KEY",
     "HF_TOKEN",
     "AWS_REGION",
     "AWS_PROFILE",

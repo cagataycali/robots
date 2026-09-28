@@ -16,9 +16,7 @@ from strands_robots.dashboard import access
 
 router = APIRouter(tags=["voice"])
 
-_VOICE_EXTRA = (
-    "strands-agents[bidi] plus a voice provider key (OPENAI_API_KEY, AWS creds for nova_sonic, or GEMINI_API_KEY)"
-)
+_VOICE_EXTRA = "strands-robots[voice] plus a voice provider key (OPENAI_API_KEY, or AWS credentials for nova_sonic)"
 
 
 @router.websocket("/ws/voice")
