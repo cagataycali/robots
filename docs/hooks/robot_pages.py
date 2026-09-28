@@ -299,11 +299,30 @@ def _chips(name: str, spec: dict, cov, entry: dict) -> str:  # noqa: ANN001
     return '<p class="sr-chips">' + "".join(parts) + "</p>"
 
 
+# lerobot's bimanual configs declare no ``port``: each takes ``left_arm_config`` and
+# ``right_arm_config``, one single-arm config per side. (module, class) per lerobot type.
+BIMANUAL_ARM_CONFIG: dict[str, tuple[str, str]] = {
+    "bi_so_follower": ("lerobot.robots.so_follower.config_so_follower", "SOFollowerConfig"),
+    "bi_openarm_follower": ("lerobot.robots.openarm_follower.config_openarm_follower", "OpenArmFollowerConfig"),
+    "bi_rebot_b601_follower": ("lerobot.robots.rebot_b601_follower.config_rebot_b601_follower", "RebotB601FollowerConfig"),
+}
+
+
 def _real_fences(name: str, spec: dict, cov) -> list[str]:  # noqa: ANN001
     """The ``mode="real"`` lines, one per driver that builds this robot."""
     lines: list[str] = []
     hardware = spec.get("hardware") or {}
-    if cov.lerobot_type:
+    if cov.lerobot_type in BIMANUAL_ARM_CONFIG:
+        module, cls = BIMANUAL_ARM_CONFIG[cov.lerobot_type]
+        pin = "" if cov.default_driver == "lerobot" else ', driver="lerobot"'
+        lines += [
+            f"from {module} import {cls}",
+            "",
+            f'robot = Robot("{name}", mode="real"{pin},  # lerobot {cov.lerobot_type}: one config per arm, no single port',
+            f'              left_arm_config={cls}(port="/dev/ttyACM0"),',
+            f'              right_arm_config={cls}(port="/dev/ttyACM1"))',
+        ]
+    elif cov.lerobot_type:
         pin = "" if cov.default_driver == "lerobot" else ', driver="lerobot"'
         lines.append(f'robot = Robot("{name}", mode="real"{pin}, port="/dev/ttyACM0")  # lerobot {cov.lerobot_type}')
     if cov.native_driver:
@@ -321,10 +340,17 @@ def _hardware_section(name: str, spec: dict, cov) -> str:  # noqa: ANN001
     if cov.lerobot_type:
         source = " Install lerobot from source: the type is not in the PyPI release." if hardware.get("requires_lerobot_from_source") else ""
         default = " This is the default when `driver=` is not given." if cov.default_driver == "lerobot" else ""
+        if cov.lerobot_type in BIMANUAL_ARM_CONFIG:
+            cls = BIMANUAL_ARM_CONFIG[cov.lerobot_type][1]
+            wiring = (
+                f"the config declares no `port=`; pass `left_arm_config=` and `right_arm_config=`, one `{cls}` per arm "
+                f"with its own `port` and `cameras`, and `cameras=` for cameras attached to neither arm."
+            )
+        else:
+            wiring = "`port=` is the serial device and `cameras=` the lerobot camera dict."
         out.append(
             f"**lerobot.** `Robot(\"{name}\", mode=\"real\")` builds lerobot's `{cov.lerobot_type}` "
-            f"with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device and `cameras=` "
-            f"the lerobot camera dict.{default}{source}"
+            f"with `pip install 'strands-robots[lerobot]'`; {wiring}{default}{source}"
         )
         out.append("")
     if cov.native_driver:
@@ -370,10 +396,12 @@ def robot_page(name: str) -> str:
         _chips(name, spec, cov, entry),
         "",
     ]
+    manual = (spec.get("asset") or {}).get("auto_download", True) is False
+    sim_clause = "once its model is on disk" if manual else "after one line"
     if sim and cov.real:
-        intro = f"You have `{name}` in a MuJoCo world after one line, and the same object on the hardware with `mode=\"real\"`."
+        intro = f"You have `{name}` in a MuJoCo world {sim_clause}, and the same object on the hardware with `mode=\"real\"`."
     elif sim:
-        intro = f"You have `{name}` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode=\"real\"` refuses by name."
+        intro = f"You have `{name}` in a MuJoCo world {sim_clause}. No driver reaches this robot's hardware yet, so `mode=\"real\"` refuses by name."
     elif cov.real:
         intro = f"You have `{name}` on its hardware after one line. The registry ships no simulation asset for it, so `Robot(\"{name}\")` in the default sim mode refuses by name."
     else:
@@ -384,10 +412,26 @@ def robot_page(name: str) -> str:
             lines += [f'<robot-viewer name="{name}"></robot-viewer>', ""]
         else:
             lines += ["The model has no public source to stream, so this page has no 3D view; the thumbnail is a local render.", ""]
-        lines += ["```python", "from strands_robots import Robot", "", f'robot = Robot("{name}")', "```", ""]
+        asset = spec.get("asset") or {}
+        if asset.get("auto_download", True) is False:
+            placement = f"{asset['dir']}/{asset['model_xml']}"
+            lines += [
+                "The model is not fetched for you (`auto_download: false` in the registry): place "
+                f"`{placement}` under `~/.strands_robots/assets/` (or `$STRANDS_ASSETS_DIR`) first, "
+                "or the call refuses with \"model file is not on disk\".",
+                "",
+                '```python title="sketch"',
+                "from strands_robots import Robot",
+                "",
+                f'robot = Robot("{name}")  # needs ~/.strands_robots/assets/{placement} on disk',
+                "```",
+                "",
+            ]
+        else:
+            lines += ["```python", "from strands_robots import Robot", "", f'robot = Robot("{name}")', "```", ""]
     if cov.real:
         lines += [
-            "Real hardware, one line per driver that builds it (needs the robot on the wire):",
+            "Real hardware, one call per driver that builds it (needs the robot on the wire):",
             "",
             '```python title="sketch"',
             *_real_fences(name, spec, cov),
