@@ -58,7 +58,7 @@ _PURPOSE: dict[str, str] = {
     "ollama": "Ollama model provider for the agent",
     "inference": "WebSocket inference server",
     "sagemaker": "SageMaker endpoints",
-    "all": "every runtime extra above (not dev)",
+    "all": "a curated bundle; GPU backends, cosmos3, ros2 and the hardware drivers stay opt-in",
     "dev": "tests and linters",
 }
 

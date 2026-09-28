@@ -22,7 +22,7 @@ strands-robots doctor
   PASS  mujoco 3.9.0
   WARN  MUJOCO_GL=cgl (needs display)
         Darwin has no offscreen MuJoCo backend, so a window server is required
-  PASS  lerobot 0.5.1
+  PASS  lerobot 0.6.1
   PASS  torchcodec 0.10.0 / torch 2.10.0 loads
   WARN  torch 2.10.0 is CPU-only build
         Policy inference will run on CPU (no CUDA device found on this machine)

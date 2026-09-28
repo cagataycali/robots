@@ -7,7 +7,8 @@ description: Post-tune a LeRobot policy from a recorded dataset: the lerobot_tra
 By the end of this page you can turn a recorded LeRobotDataset into a fine-tuned checkpoint that `create_policy` loads back, from Python or from an agent, and you know which knobs are strands' and which belong to lerobot.
 
 ```bash
-pip install 'strands-robots[lerobot]'    # lerobot[feetech,dataset]; accelerate for train(), peft for method="lora"
+pip install 'strands-robots[lerobot]'    # lerobot[feetech,dataset]
+pip install 'lerobot[training]'          # accelerate for train(); add peft for method="lora"
 ```
 
 ## Python: TrainSpec and LerobotTrainer

@@ -12,7 +12,7 @@ pip install 'strands-robots[wbc]'    # onnxruntime + pyyaml + huggingface_hub; n
 
 ## What it is
 
-`WBCPolicy` ports the non-gait reference runner from NVlabs/GR00T-WholeBodyControl (`run_mujoco_gear_wbc.py`): an 86-wide observation, a 7-wide command block, and two ONNX policies, a balance `policy.onnx` and a `walk_policy.onnx` selected by commanded velocity. It drives the 15 leg and waist joints of the G1 and holds the arm joints at their nominal defaults. `requires_images` is `False`; the controller reads joint state and base IMU only. Layer an arm policy on top with `CompositePolicy` (legs and waist from `wbc`, arms from a manipulation policy).
+`WBCPolicy` ports the non-gait reference runner from NVlabs/GR00T-WholeBodyControl (`run_mujoco_gear_wbc.py`): an 86-wide observation, a 7-wide command block, and two ONNX policies, a balance `policy.onnx` and a `walk_policy.onnx` selected by commanded velocity. It drives the 15 leg and waist joints of the G1 and holds the arm joints at their nominal defaults. `requires_images` is `False`; the controller reads joint state and base IMU only. Layer an arm policy on top with [`CompositePolicy`](../../reference/api/policies.md#built-in-policies) (legs and waist from `wbc`, arms from a manipulation policy).
 
 `WBCGaitPolicy` (`wbc_gait`) ports the gait-clock variant (`run_mujoco_gear_wbc_gait.py`): a 95-wide observation with a step-frequency command slot and a two-element left/right foot phase clock, and a single ONNX policy whose input is `[batch, 570]`. Everything else (SONIC PD gains, name-resolved joint map, checkpoint resolution) is inherited.
 
