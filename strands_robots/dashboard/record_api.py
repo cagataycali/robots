@@ -291,10 +291,12 @@ class RecordController:
             if bad_id:
                 raise HTTPException(422, bad_id)
             # From here on the id is the checked one, not the body string.
-            contained_id = _contained_dataset_id(dataset)
-            if contained_id is None:
-                raise HTTPException(400, OUTSIDE_DATASET_HOME)
-            dataset = contained_id
+            # A blank name is a missing field, not a path: it goes on to record_target_verdict's 422.
+            if dataset:
+                contained_id = _contained_dataset_id(dataset)
+                if contained_id is None:
+                    raise HTTPException(400, OUTSIDE_DATASET_HOME)
+                dataset = contained_id
             bad = record_target_verdict(dataset, **_target_facts(dataset))
             if bad:
                 raise HTTPException(409 if dataset.strip() else 422, bad)
