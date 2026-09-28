@@ -17,8 +17,11 @@ contradicts the refusal's own opening ("so101 drives policies").
 
 The refusal now names the destination for each group, an unknown spelling still
 gets the plain refusal byte for byte, and building it cannot raise on the value
-it reports. The quickstart itself is pinned here to verbs the tool it hands the
-agent actually has.
+it reports. The docs are pinned here too: every page under ``docs/`` whose fence
+hands ``Agent(tools=[...])`` a ``Robot(..., mode="real", ...)`` may only prompt
+that agent for verbs the tool has (the quickstart that once asked for
+``teleoperate`` is now ``docs/start/first-agent.md``), and recording a real arm is
+shown through the ``lerobot_teleoperate`` tool on the data pages.
 """
 
 from __future__ import annotations
@@ -35,7 +38,14 @@ from strands_robots.hardware_robot import _PUBLISHED_ACTIONS, RobotTaskState
 from strands_robots.hardware_robot import Robot as HwRobot
 from tests._daemon_executor import DaemonThreadExecutor
 
-QUICKSTART = Path(__file__).resolve().parents[1] / "docs" / "getting-started" / "quickstart.md"
+DOCS = Path(__file__).resolve().parents[1] / "docs"
+#: The page the old quickstart's real-robot agent prompt lives on now.
+FIRST_AGENT = DOCS / "start" / "first-agent.md"
+#: The pages that show how a real arm is recorded.
+RECORDING_PAGES = (DOCS / "learn" / "data" / "record.md", DOCS / "learn" / "hardware" / "teleoperation.md")
+_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.S)
+_REAL_ROBOT = re.compile(r"^(?P<var>\w+)\s*=\s*Robot\([^\n]*mode=\"real\"", re.M)
+_AGENT = re.compile(r"^(?P<agent>\w+)\s*=\s*Agent\(\s*tools=\[(?P<tools>[^\]]*)\]", re.M)
 REAL_ROBOT_ACTIONS = set(_PUBLISHED_ACTIONS)
 # The refusal opens with the vocabulary, read from the same tuple the schema's
 # enum is built from - so a verb added to one cannot go unnamed by the other.
@@ -206,23 +216,50 @@ def test_the_refusal_is_one_content_block_of_text():
 class TestTheQuickstartAsksTheRealRobotToolOnlyForVerbsItHas:
     """The prompt handed to ``Agent(tools=[follower])`` may only use verbs this tool has."""
 
-    def _agent_prompts_over_a_real_robot(self) -> list[str]:
-        text = QUICKSTART.read_text()
-        prompts = []
-        for m in re.finditer(r"Agent\(tools=\[(?P<tools>[^\]]+)\]\)\(\s*(?P<prompt>(?:\"[^\"]*\"\s*)+)\)", text):
-            if "follower" in m.group("tools").split(","):
-                prompts.append("".join(re.findall(r'"([^"]*)"', m.group("prompt"))))
-        return prompts
+    @staticmethod
+    def _agent_prompts_over_a_real_robot() -> list[tuple[str, str]]:
+        """``(page, prompt)`` for every prompt sent to an agent holding a real robot tool.
+
+        Read per fence: a ``Robot(..., mode="real", ...)`` binding, an
+        ``Agent(tools=[...])`` that lists that binding, and every string the
+        fence then passes to that agent.
+        """
+        found: list[tuple[str, str]] = []
+        for page in sorted(DOCS.rglob("*.md")):
+            for fence in _FENCE.findall(page.read_text(encoding="utf-8")):
+                real = {m.group("var") for m in _REAL_ROBOT.finditer(fence)}
+                if not real:
+                    continue
+                for agent in _AGENT.finditer(fence):
+                    tools = {t.strip() for t in agent.group("tools").split(",")}
+                    if not tools & real:
+                        continue
+                    calls = re.finditer(rf"\b{agent.group('agent')}\(\s*(?P<prompt>(?:\"[^\"]*\"\s*)+)\)", fence)
+                    for call in calls:
+                        prompt = "".join(re.findall(r'"([^"]*)"', call.group("prompt")))
+                        found.append((page.relative_to(DOCS).as_posix(), prompt))
+        return found
+
+    def test_the_docs_still_prompt_an_agent_over_a_real_robot(self):
+        """The rule below is not vacuous: the first-agent page hands a real arm to an agent."""
+        pages = {page for page, _ in self._agent_prompts_over_a_real_robot()}
+        assert FIRST_AGENT.relative_to(DOCS).as_posix() in pages, pages
 
     def test_no_prompt_over_the_real_robot_asks_for_teleoperation_or_recording(self):
-        for prompt in self._agent_prompts_over_a_real_robot():
+        for page, prompt in self._agent_prompts_over_a_real_robot():
             for verb in ("start_recording", "stop_recording", "teleoperate"):
-                assert verb not in prompt, f"the quickstart asks the real robot tool for {verb!r}: {prompt!r}"
+                assert verb not in prompt, f"docs/{page} asks the real robot tool for {verb!r}: {prompt!r}"
 
     def test_recording_a_real_arm_is_shown_through_lerobot_teleoperate(self):
-        text = QUICKSTART.read_text()
-        assert "from strands_robots import lerobot_teleoperate" in text
-        assert "Agent(tools=[lerobot_teleoperate])" in text
+        """Recording under a leader arm is the ``lerobot_teleoperate`` tool, and the data pages say so."""
+        shown = [
+            page.relative_to(DOCS).as_posix()
+            for page in RECORDING_PAGES
+            if re.search(r"lerobot_teleoperate\(action=\"start\"", page.read_text(encoding="utf-8"))
+        ]
+        assert shown, (
+            f'none of {[p.relative_to(DOCS).as_posix() for p in RECORDING_PAGES]} shows lerobot_teleoperate(action="start")'
+        )
 
     def test_the_real_robot_tool_still_has_exactly_the_four_verbs(self):
         enum = set(_hw().tool_spec["inputSchema"]["json"]["properties"]["action"]["enum"])

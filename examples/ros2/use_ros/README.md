@@ -15,7 +15,7 @@ move, computes the heading error, and issues corrective turns until each corner
 is within tolerance - 43 `use_ros` calls in all, every one in-process through
 rclpy (no `ros2` CLI).
 
-![A Strands agent driving a closed-loop square in turtlesim via use_ros](../../../docs/assets/use_ros_agent_square.gif)
+![A Strands agent driving a closed-loop square in turtlesim via use_ros](../../../docs/assets/img/use_ros_agent_square.gif)
 
 ```
 start pose: (3.0, 3.0, 0.0)

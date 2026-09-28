@@ -890,32 +890,61 @@ def _install_extra_cells(text: str) -> list[tuple[int, str]]:
     return found
 
 
+#: The docs hooks that expand a table token into an install-extra table at build
+#: time. The docs tree types no such table by hand any more: ``{{extras:table}}``
+#: on ``start/install.md`` and ``{{providers:table}}`` on ``learn/policies/index.md``
+#: are rendered from ``pyproject.toml`` and ``registry/policies.json``, so the
+#: page is graded as the build emits it, hook mappings included.
+_TABLE_HOOKS = ("extras", "providers")
+_GENERATED_TABLE_PAGES = frozenset({"docs/start/install.md", "docs/learn/policies/index.md"})
+
+
+def _rendered_markdown(path: Path) -> str:
+    """The page text with the docs hooks' ``{{...}}`` table tokens expanded."""
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    if "docs" not in path.relative_to(_REPO_ROOT).parts or "{{" not in text:
+        return text
+    for name in _TABLE_HOOKS:
+        hook_path = _REPO_ROOT / "docs" / "hooks" / f"{name}.py"
+        spec = importlib.util.spec_from_file_location(f"docs_{name}_hook_dependency_audit", hook_path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        text = module.substitute(text, path.relative_to(_REPO_ROOT / "docs").as_posix())
+    return text
+
+
 def test_install_extra_table_columns_name_only_declared_extras() -> None:
     """A cell under ``| Install extra |`` must name an extra that exists.
 
     This is the third surface: a reader choosing a provider or a feature scans
     the catalogue column rather than a prose command, and copies the name out of
     it. The qualified-mention sweep above cannot see that spelling, because the
-    cell carries the bare name - the distribution is named by the header.
+    cell carries the bare name - the distribution is named by the header. The
+    tables are generated, so the cells graded are the hooks' output: a provider
+    the hook maps to an extra pyproject does not declare shows up here.
     """
     extras = _declared_extras()
     offenders: list[str] = []
-    columns = 0
+    columns: set[str] = set()
     cells = 0
     for path in _iter_scanned_files():
         if path.suffix.lower() != ".md":
             continue
-        found = _install_extra_cells(path.read_text(encoding="utf-8", errors="ignore"))
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        found = _install_extra_cells(_rendered_markdown(path))
         if not found:
             continue
-        columns += 1
+        columns.add(rel)
         cells += len(found)
-        rel = path.relative_to(_REPO_ROOT).as_posix()
         offenders.extend(
             f"{rel}:{number} names [{name}]" for number, name in found if _normalize_extra(name) not in extras
         )
     # A scan that has stopped matching must fail rather than report a clean tree.
-    assert columns >= 3, f"only {columns} file(s) with an install-extra column were read"
+    assert _GENERATED_TABLE_PAGES <= columns, (
+        f"the generated install-extra tables were not read: {sorted(_GENERATED_TABLE_PAGES - columns)}"
+    )
     assert cells >= 20, f"only {cells} extra name(s) were read out of install-extra columns"
     assert not offenders, (
         "these table cells tell a reader to install an extra that does not exist. pip exits 0 on "

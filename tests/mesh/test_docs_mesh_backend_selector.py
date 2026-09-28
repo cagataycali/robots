@@ -20,6 +20,15 @@ undocumented while the credential that link carries was listed, and a reader
 configured half a posture. A selector documented only by its dependency is half
 a configuration.
 
+The new docs tree documents the selector in three shapes: the generated
+matrix on ``docs/reference/configuration.md`` (the ``{{env_vars}}`` token that
+``docs/hooks/env_vars.py`` expands, read here through that hook so the page is
+graded as built, its first cell a ``<code>`` span), the "Three switches" row on
+``docs/learn/mesh/index.md``, and the "Three backends" table on
+``docs/learn/mesh/bridges.md`` whose header cell is the variable and whose body
+rows are its values. The extra is named in prose as ```mesh-iot``` (README) as
+well as ``[mesh-iot]``, so both spellings count as naming it.
+
 Three properties are graded, all derived from
 :mod:`strands_robots.mesh._backend_select` rather than from a list kept beside
 it, so a fourth transport is graded the hour it lands:
@@ -53,7 +62,9 @@ a rule about its documented spellings be derived rather than restated.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -69,16 +80,20 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: The page whose IoT section tells the reader to consult the configuration
 #: matrix for the ``STRANDS_MESH_*`` knobs, so the selector has to be in it.
 _MATRIX_PAGE = "docs/reference/configuration.md"
+_ENV_VARS_HOOK = _REPO_ROOT / "docs" / "hooks" / "env_vars.py"
 
 #: The extra that installs the dependency ``iot`` and ``bridge`` need. Naming it
 #: is not a routing claim; naming it *as* the routing mechanism is.
-_EXTRA = re.compile(r"\[mesh-iot\]")
+_EXTRA = re.compile(r"\[mesh-iot\]|`mesh-iot`")
 
 #: Verbs a paragraph uses to claim traffic moves somewhere.
 _ROUTING_CLAIM = re.compile(r"\brout(?:e|es|ing)\b|\bswitch(?:es)?\b|\bsends? traffic\b", re.I)
 
-#: A single-variable table row: first cell is exactly one backticked variable.
-_ROW_VAR = re.compile(r"^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|")
+#: A single-variable table row: first cell is exactly one variable, in the
+#: backticks a hand-written row uses or the ``<code>`` the hook emits.
+_ROW_VAR = re.compile(r"^\|\s*(?:`|<code>)([A-Z][A-Z0-9_]*)(?:`|</code>)\s*\|")
+#: A table separator row, which tells a header row from a body row.
+_SEPARATOR = re.compile(r"^\|?\s*:?-{3,}")
 
 #: The guard is only meaningful while it still reaches the shipped pages.
 _MINIMUM_PAGES = 20
@@ -88,6 +103,26 @@ _MINIMUM_PARAGRAPHS = 200
 def _pages() -> list[Path]:
     """Every shipped markdown page a reader configures the mesh from."""
     return [_REPO_ROOT / "README.md", *sorted((_REPO_ROOT / "docs").rglob("*.md"))]
+
+
+def _text(page: Path) -> str:
+    """The page as built: the configuration matrix with ``{{env_vars}}`` expanded by its hook."""
+    text = page.read_text(encoding="utf-8")
+    if str(page.relative_to(_REPO_ROOT)) != _MATRIX_PAGE:
+        return text
+    spec = importlib.util.spec_from_file_location("docs_env_vars_hook_backend", _ENV_VARS_HOOK)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    assert "{{env_vars}}" in text, f"{_MATRIX_PAGE} must carry the {{{{env_vars}}}} token"
+    rendered = module.on_page_markdown(text, page=None, config=None, files=None)
+    assert "{{env_vars}}" not in rendered, "the env_vars hook left the token unexpanded"
+    return rendered
+
+
+def _cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
 
 
 def _paragraphs(text: str) -> list[str]:
@@ -123,13 +158,32 @@ def _selector_rows() -> list[tuple[str, str, str]]:
     for page in _pages():
         if not page.exists():
             continue
-        for line in page.read_text(encoding="utf-8").splitlines():
+        lines = _text(page).splitlines()
+        for index, line in enumerate(lines):
             stripped = line.strip()
             match = _ROW_VAR.match(stripped)
-            if match and match.group(1) == _ENV and stripped.endswith("|"):
-                cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-                if len(cells) >= 3:
-                    rows.append((str(page.relative_to(_REPO_ROOT)), cells[1], cells[-1]))
+            if not (match and match.group(1) == _ENV and stripped.endswith("|")):
+                continue
+            cells = _cells(stripped)
+            if len(cells) < 3:
+                continue
+            relative = str(page.relative_to(_REPO_ROOT))
+            if index + 1 < len(lines) and _SEPARATOR.match(lines[index + 1].strip()):
+                # A table headed by the variable: its body rows are the values,
+                # one per row, and the row marked default is the default.
+                body: list[str] = []
+                for row in lines[index + 2 :]:
+                    if not row.strip().startswith("|"):
+                        break
+                    body.append(_cells(row)[0])
+                default = next((cell for cell in body if "default" in cell.lower()), "")
+                rows.append((relative, " ".join(body), default))
+            else:
+                # A hand-written row is ``| var | description | default |``; the generated
+                # matrix is ``| var | read in | default | meaning |`` with ``<code>`` spans.
+                folded = [cell.replace("<code>", "`").replace("</code>", "`") for cell in cells]
+                default = folded[2] if len(folded) > 3 else folded[-1]
+                rows.append((relative, " ".join(folded[1:]), default))
     return rows
 
 
@@ -167,17 +221,13 @@ class TestTheScanReachesThePages:
         )
 
     def test_enough_paragraphs_are_scanned(self) -> None:
-        total = sum(len(_paragraphs(page.read_text(encoding="utf-8"))) for page in _pages() if page.exists())
+        total = sum(len(_paragraphs(_text(page))) for page in _pages() if page.exists())
         assert total >= _MINIMUM_PARAGRAPHS, f"only {total} paragraphs parsed; the prose scan reads almost nothing"
 
     def test_the_extra_is_still_mentioned_somewhere(self) -> None:
         """The routing rule is only meaningful while some page names the extra."""
         mentions = sum(
-            1
-            for page in _pages()
-            if page.exists()
-            for para in _paragraphs(page.read_text(encoding="utf-8"))
-            if _EXTRA.search(para)
+            1 for page in _pages() if page.exists() for para in _paragraphs(_text(page)) if _EXTRA.search(para)
         )
         assert mentions, "no paragraph mentions the [mesh-iot] extra, so the routing rule grades nothing"
 
@@ -238,7 +288,7 @@ class TestNoPageCreditsTheExtraWithRouting:
             (str(page.relative_to(_REPO_ROOT)), para)
             for page in _pages()
             if page.exists()
-            for para in _unnamed_routing_claims(page.read_text(encoding="utf-8"))
+            for para in _unnamed_routing_claims(_text(page))
         ]
         assert not offenders, (
             f"paragraph(s) credit the [mesh-iot] extra with routing traffic without naming "
@@ -306,6 +356,14 @@ class TestTheGuardWouldCatchARegression:
             "a row naming only two of the accepted backends reads as complete, so the "
             "vocabulary rule cannot see a missing transport"
         )
+
+    def test_a_table_headed_by_the_variable_reads_its_body_rows_as_the_vocabulary(self) -> None:
+        """The bridges page shape: header cell is the variable, one value per body row."""
+        rows = [row for row in _selector_rows() if row[0] == "docs/learn/mesh/bridges.md"]
+        assert rows, "premise: docs/learn/mesh/bridges.md no longer heads a table with the selector"
+        _, description, default = rows[0]
+        assert _advertised_spellings(description) == set(_BACKENDS)
+        assert "default" in default.lower() and _DEFAULT in default
 
     def test_an_assignment_spelling_is_not_read_as_a_value(self) -> None:
         """`VAR=iot` is prose about the variable, not an entry in the vocabulary."""

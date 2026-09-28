@@ -12,6 +12,7 @@ port is judged.
 
 from __future__ import annotations
 
+import re
 import threading
 from pathlib import Path
 
@@ -22,7 +23,17 @@ from strands_robots.hardware_robot import RobotTaskState
 from strands_robots.registry.policies import get_policy_provider, list_policy_providers
 from tests._daemon_executor import DaemonThreadExecutor
 
-QUICKSTART = Path(__file__).resolve().parents[1] / "docs" / "getting-started" / "quickstart.md"
+_DOCS = Path(__file__).resolve().parents[1] / "docs"
+#: The pages that carry the quickstart's record, train, run story now: the old
+#: getting-started/quickstart.md redirects to start/first-robot.md and the
+#: record-train-deploy recipe to learn/training/lerobot.md, which hands the trained
+#: checkpoint to the provider.
+QUICKSTART_PAGES = (_DOCS / "start" / "first-robot.md", _DOCS / "learn" / "training" / "lerobot.md")
+#: A documented lerobot_local build or task start, with its full argument list.
+_LEROBOT_LOCAL_CALL = re.compile(
+    r"(?:create_policy|start_task|run_policy)\((?:[^()]|\([^()]*\))*?lerobot_local(?:[^()]|\([^()]*\))*\)",
+    re.DOTALL,
+)
 
 
 class _Arm:
@@ -128,5 +139,18 @@ class TestExecuteTask:
 
 
 def test_the_quickstart_hands_start_task_the_checkpoint_it_trained():
-    text = QUICKSTART.read_text()
-    assert 'policy_provider="lerobot_local",\n                    pretrained_name_or_path="/tmp/pick_ckpt"' in text
+    """Every documented ``lerobot_local`` build or task start names its checkpoint.
+
+    The quickstart used to hand ``start_task`` the checkpoint it had just trained
+    in one call; the same claim is graded on the pages that carry that story now,
+    so no page shows the provider being started without ``pretrained_name_or_path``,
+    which is exactly the call the guard above refuses.
+    """
+    calls = [
+        (page.relative_to(_DOCS).as_posix(), match.group(0))
+        for page in QUICKSTART_PAGES
+        for match in _LEROBOT_LOCAL_CALL.finditer(page.read_text(encoding="utf-8"))
+    ]
+    assert calls, "premise: the quickstart pages no longer build or start a lerobot_local policy"
+    missing = [(page, call) for page, call in calls if "pretrained_name_or_path" not in call]
+    assert not missing, f"lerobot_local is handed out without the checkpoint it needs: {missing}"

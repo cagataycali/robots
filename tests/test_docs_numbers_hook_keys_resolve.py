@@ -1,4 +1,4 @@
-"""The docs numbers hook (docs/hooks/numbers.py) resolves every token the pages use.
+"""The docs facts hook (docs/hooks/facts.py) resolves every token the pages use.
 
 The hook substitutes ``{{n:key}}`` at build time from the registry and the
 package tree, so a page can no longer state a robot count the registry does
@@ -17,12 +17,12 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
-_HOOK = _REPO / "docs" / "hooks" / "numbers.py"
+_HOOK = _REPO / "docs" / "hooks" / "facts.py"
 _TOKEN = re.compile(r"\{\{\s*n:([a-z_]+)\s*\}\}")
 
 
 def _load_hook():
-    spec = importlib.util.spec_from_file_location("docs_numbers_hook", _HOOK)
+    spec = importlib.util.spec_from_file_location("docs_facts_hook", _HOOK)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)

@@ -30,12 +30,13 @@ Both divergences contradicted a parity claim the code and docs already made.
 Newton's ``randomize`` docstring said "Keyword names and defaults mirror the
 MuJoCo backend so randomization code transfers across backends unchanged" - the
 premise (names and defaults) is narrower than the conclusion (code transfers),
-and the missing third term was the order. ``docs/reference/simulation/newton.md`` states
-the camera order as ``add_camera(name, position, target, fov=60, width, height,
-parent_body=None)`` and calls it "matching the MuJoCo signature", and
-``docs/reference/simulation/domain-randomization.md`` lists the three ranges in MuJoCo's
-order. Those two documented orders are what this module grades the backends
-against, so the pages and the signatures cannot drift apart.
+and the missing third term was the order. ``docs/learn/simulation/worlds-and-objects.md``
+states the camera order as ``add_camera(name, position, target, fov=60, width,
+height, parent_body=None)`` for every backend (and ``newton.md`` says the call
+"works here as on MuJoCo"), and ``docs/learn/simulation/randomization.md`` writes
+the ``randomize`` signature with the three ranges in MuJoCo's order. Those two
+documented orders are what this module grades the backends against, so the
+pages and the signatures cannot drift apart.
 
 The rule is that a backend may *add* parameters but must not *permute* the ones
 it shares. That is deliberately weaker than "a shared parameter sits at the same
@@ -198,10 +199,9 @@ def _documented_signature_order(page: str, marker: str, names: tuple[str, ...]) 
 def _documented_call_order(page: str, marker: str, names: tuple[str, ...]) -> list[str]:
     """The order ``names`` are *assigned* in, in the first documented call after ``marker``.
 
-    Matches ``name=`` rather than a bare mention: the randomization page
-    annotates ``randomize_physics`` with a comment naming ``mass_range`` and
-    ``friction_range`` before either is passed, so a bare-mention scan reads that
-    comment as the documented order.
+    Matches ``name=`` rather than a bare mention, so a comment or a sentence
+    naming a parameter before it is passed cannot decide the order. Names the
+    call does not pass are left out of the result.
 
     Args:
         page: Path relative to the repository root.
@@ -213,7 +213,8 @@ def _documented_call_order(page: str, marker: str, names: tuple[str, ...]) -> li
     """
     text = (_REPO_ROOT / page).read_text(encoding="utf-8")
     start = text.index(marker)
-    return _order_in(text[start : start + 900], names, r"\b{}\s*=")
+    window = text[start : start + 900]
+    return _order_in(window, tuple(n for n in names if re.search(rf"\b{n}\s*=", window)), r"\b{}\s*=")
 
 
 _SHARED_METHODS = _shared_methods()
@@ -285,9 +286,11 @@ class TestOnePositionalCallMeansOneThingEverywhere:
 class TestTheDocumentedOrderIsEveryBackendsOrder:
     """The two pages that write an order down grade the signatures."""
 
-    def test_the_camera_order_matches_the_newton_page(self) -> None:
+    def test_the_camera_order_matches_the_worlds_page(self) -> None:
         names = ("fov", "width", "height")
-        documented = _documented_signature_order("docs/reference/simulation/newton.md", "`add_camera(name,", names)
+        documented = _documented_signature_order(
+            "docs/learn/simulation/worlds-and-objects.md", "`add_camera(name,", names
+        )
         assert documented == ["fov", "width", "height"], documented
         engines = _engines()
         for backend, engine in engines.items():
@@ -296,10 +299,15 @@ class TestTheDocumentedOrderIsEveryBackendsOrder:
 
     def test_the_randomization_range_order_matches_the_randomization_page(self) -> None:
         names = ("color_range", "friction_range", "mass_range")
-        documented = _documented_call_order(
-            "docs/reference/simulation/domain-randomization.md", "sim.randomize(", names
+        documented = _documented_signature_order(
+            "docs/learn/simulation/randomization.md", "`randomize(randomize_colors=", names
         )
         assert documented == ["color_range", "friction_range", "mass_range"], documented
+        in_the_worked_call = _documented_call_order("docs/learn/simulation/randomization.md", "sim.randomize(", names)
+        assert len(in_the_worked_call) >= 2, "the page's worked randomize call passes fewer than two ranges"
+        assert in_the_worked_call == [n for n in documented if n in in_the_worked_call], (
+            f"the worked call orders the ranges {in_the_worked_call}, the signature line {documented}"
+        )
         engines = _engines()
         graded = 0
         for backend, engine in engines.items():

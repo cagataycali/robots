@@ -280,10 +280,12 @@ class TestNoAmbiguousReadShipsInTheDocs:
 
     def test_the_docs_scan_reaches_the_tools_page(self) -> None:
         """A fence that constructs a tool and calls it is parsed, not skipped."""
-        page = _REPO_ROOT / "docs" / "reference" / "hardware" / "tools.md"
+        # reference/hardware/tools.md became the generated reference/tools.md; the
+        # hand-written fence that builds serial_tool and calls it lives on the Feetech page.
+        page = _REPO_ROOT / "docs" / "learn" / "hardware" / "feetech-arms.md"
         bodies = [match.group(1) for match in _PYTHON_FENCE.finditer(page.read_text(encoding="utf-8"))]
 
-        assert any("serial_tool(action=" in body for body in bodies), "premise: tools.md calls a tool in a fence"
+        assert any("serial_tool(action=" in body for body in bodies), "premise: feetech-arms.md calls a tool in a fence"
 
     def test_the_text_fallback_reads_a_parenthesised_import(self) -> None:
         """An unparsable fence still yields its banned read, comments and aliases aside."""

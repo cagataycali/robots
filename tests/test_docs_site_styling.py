@@ -11,14 +11,13 @@ together. This module pins the joins that a silent edit would break:
   one file under a stated line budget;
 * the two colour schemes declare the same variables, so dark mode cannot lose a
   colour light mode has, and the accent is declared once per scheme;
-* the table-stacking contract is spelled by both halves - the stylesheet reads
-  ``data-sr-stack`` and ``attr(data-th)``, ``docs/assets/docs.js`` writes both;
-* every class the robot-cards hook emits has a rule (the card component moved
-  out of a second stylesheet, and the hook does not know that);
+* every element the robot-pages hook emits carries a styled class (the catalog
+  cards, chips and thumbnails are generated markup, and the hook does not know
+  which stylesheet covers them);
 * the sidebar does not render every page of every section at once, and
-  ``navigation.tabs`` stays off until the nav is short enough for the tab strip
-  (24 top-level sections need a 2,565px strip in a 1,216px bar at 1,280px wide,
-  which clips 13 of them).
+  ``navigation.tabs`` is only on while the nav is short enough for the tab strip
+  (the six-tab nav fits; 24 top-level sections needed a 2,565px strip in a
+  1,216px bar at 1,280px wide, which clipped 13 of them).
 """
 
 from __future__ import annotations
@@ -27,17 +26,20 @@ import importlib.util
 import re
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MKDOCS_YML = REPO_ROOT / "mkdocs.yml"
 DOCS_DIR = REPO_ROOT / "docs"
 STYLESHEET = DOCS_DIR / "stylesheets" / "extra.css"
-SCRIPT = DOCS_DIR / "assets" / "docs.js"
+ROBOT_PAGES_HOOK = REPO_ROOT / "docs" / "hooks" / "robot_pages.py"
 
-# The rewritten stylesheet is 199 lines; the budget leaves room to grow without
-# room to drift back into a per-rule override sheet.
-LINE_BUDGET = 200
+# The stylesheet carries the palette, the landing hero, the 3D viewer chrome,
+# the robot cards and the filter chips in 290 lines; the budget leaves room to
+# grow without room to drift back into a per-rule override sheet.
+LINE_BUDGET = 300
+
+# Material names the light scheme in mkdocs.yml; the dark one is its ``slate``.
+LIGHT_SCHEME = "paper"
+DARK_SCHEME = "slate"
 
 # Material lays the tab strip out in one row and clips the overflow, so tabs
 # only work for a nav short enough to fit.
@@ -45,20 +47,32 @@ MAX_SECTIONS_FOR_TABS = 8
 
 
 def _block(key: str) -> list[str]:
-    """The ``- item`` entries of a top-level or nested mkdocs.yml block."""
+    """The ``- item`` entries of a top-level or nested mkdocs.yml block.
+
+    The items may sit at the key's indent or one level deeper; the first item
+    fixes the item indent, and deeper lines (a mapping item's other keys) are
+    skipped. A mapping item (``- path: x``) is reduced to its first value.
+    """
     text = MKDOCS_YML.read_text(encoding="utf-8")
     match = re.search(rf"^(\s*){re.escape(key)}:\s*$", text, re.M)
     assert match, f"mkdocs.yml has no {key!r} block"
-    indent = match.group(1)
+    key_indent = len(match.group(1))
+    item_indent: int | None = None
     items: list[str] = []
     for line in text[match.end() :].splitlines()[1:]:
         if not line.strip():
             continue
-        if not line.startswith(indent) or (line.strip()[0] != "-" and len(line) - len(line.lstrip()) <= len(indent)):
+        indent = len(line) - len(line.lstrip())
+        if indent <= key_indent and not (indent == key_indent and line.strip().startswith("- ")):
             break
-        if len(line) - len(line.lstrip()) != len(indent) or not line.strip().startswith("- "):
+        if item_indent is None:
+            item_indent = indent
+        if indent != item_indent or not line.strip().startswith("- "):
             continue
-        items.append(line.strip()[2:].strip())
+        item = line.strip()[2:].strip()
+        if re.match(r"^[a-z_]+:\s", item):
+            item = item.split(":", 1)[1].strip()
+        items.append(item)
     return items
 
 
@@ -76,15 +90,20 @@ def _scheme_variables(scheme: str) -> set[str]:
     return set(re.findall(r"(--[a-z0-9-]+):", match.group(1)))
 
 
-def _hook_card_classes() -> set[str]:
-    """Every class name the robot-cards hook puts in a page."""
-    spec = importlib.util.spec_from_file_location("docs_robot_cards_hook", REPO_ROOT / "docs/hooks/robot_cards.py")
+def _hook_class_lists() -> set[tuple[str, ...]]:
+    """Every ``class="..."`` list the robot-pages hook puts in a page.
+
+    Covers the catalog cards, every generated robot page and every family page,
+    so a chip that only appears on a per-robot page is checked too.
+    """
+    spec = importlib.util.spec_from_file_location("docs_robot_pages_hook", ROBOT_PAGES_HOOK)
     assert spec is not None and spec.loader is not None
     hook = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hook)
-    categories = sorted({spec_["category"] for spec_ in hook.registry().values()})
-    html = hook.cards(categories)
-    return {name for value in re.findall(r'class="([^"]+)"', html) for name in value.split()}
+    html = [hook.cards(None, "")]
+    html += [hook.robot_page(name) for name in hook.registry()]
+    html += [hook.family_page(category) for category in hook._families_in_order()]
+    return {tuple(value.split()) for chunk in html for value in re.findall(r'class="([^"]+)"', chunk)}
 
 
 def test_every_declared_stylesheet_and_script_exists() -> None:
@@ -111,7 +130,7 @@ def test_the_look_is_one_stylesheet_within_budget() -> None:
 
 def test_both_colour_schemes_declare_the_same_variables() -> None:
     """A variable set in one scheme only leaves the other reading a stale value."""
-    light, dark = _scheme_variables("default"), _scheme_variables("slate")
+    light, dark = _scheme_variables(LIGHT_SCHEME), _scheme_variables(DARK_SCHEME)
     assert light == dark, (
         f"colour schemes declare different variables; light only: "
         f"{sorted(light - dark)}, dark only: {sorted(dark - light)}"
@@ -130,30 +149,18 @@ def test_the_accent_is_declared_once_per_scheme() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    ("path", "token"),
-    [
-        (STYLESHEET, "table[data-sr-stack]"),
-        (STYLESHEET, "attr(data-th)"),
-        (SCRIPT, "data-sr-stack"),
-        (SCRIPT, "data-th"),
-    ],
-    ids=["css-reads-the-mark", "css-reads-the-label", "js-writes-the-mark", "js-writes-the-label"],
-)
-def test_the_phone_table_contract_is_spelled_by_both_halves(path: Path, token: str) -> None:
-    """Stacked table cards need the mark and the per-cell label to agree."""
-    assert token in path.read_text(encoding="utf-8"), (
-        f"{path.name} no longer spells {token!r}: a table of three or more "
-        f"columns would scroll sideways on a phone, or stack with unlabelled cells."
-    )
-
-
 def test_every_generated_card_class_is_styled() -> None:
-    """The card component covers the markup the robot-cards hook emits."""
+    """The card component covers the markup the robot-pages hook emits.
+
+    An element is styled when at least one class on it has a rule: a modifier
+    such as ``sr-chip-sim`` rides on ``sr-chip`` and needs no rule of its own.
+    """
     css = STYLESHEET.read_text(encoding="utf-8")
-    unstyled = sorted(name for name in _hook_card_classes() if f".{name}" not in css)
+    unstyled = sorted(
+        " ".join(classes) for classes in _hook_class_lists() if not any(f".{name}" in css for name in classes)
+    )
     assert not unstyled, (
-        f"docs/hooks/robot_cards.py emits classes with no rule in "
+        f"docs/hooks/robot_pages.py emits elements with no styled class in "
         f"{STYLESHEET.name}: {unstyled}. It is the site's only stylesheet, so "
         f"the generated catalog would render unstyled."
     )

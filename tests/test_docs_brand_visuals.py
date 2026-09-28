@@ -1,100 +1,63 @@
-"""Repo hygiene: the animated brand SVGs stay wired into the docs and README.
+"""Repo hygiene: the brand assets the site and README point at are real files.
 
-The site and README open with three hand-authored animated SVGs that carry the
-project's visual identity (true-black glassmorphism, brand green ``#00FF77`` +
-cyan ``#22D3EE``):
+The from-scratch docs carry one brand asset, the Strands mark
+(``docs/assets/img/mark.svg``), wired in as the site logo and favicon in
+``mkdocs.yml``. The three animated SVGs of the old site (``hero_loop.svg``,
+``architecture_flow.svg``, ``mesh_network.svg``) left the tree with it; the
+README still embeds them by repo-relative path, and GitHub renders a broken
+image for every path that resolves to nothing.
 
-* ``hero_loop.svg`` - the perceive/reason/act/world control loop, on the AI
-  agents page and at the top of the README.
-* ``architecture_flow.svg`` - the four-layer stack with action/observation
-  signal flow, on the architecture page and the README "How it works" section.
-* ``mesh_network.svg`` - peer coordination over the Zenoh mesh, on the mesh
-  page and beside the README's mesh row.
-
-Each is surfaced through the ``brand-figure``/``brand-svg`` CSS treatment in
-``docs/stylesheets/extra.css``. This guard fails fast if an asset is deleted,
-an embed is dropped, an SVG stops being valid (or static) XML, or the CSS hook
-disappears - any of which would silently degrade the landing experience.
+This guard fails fast if the mark is deleted or stops being valid XML, if
+``mkdocs.yml`` stops pointing the logo and favicon at it, or if any
+repo-relative image the README embeds is missing from the tree.
 """
 
 from __future__ import annotations
 
+import re
 import xml.dom.minidom
 from pathlib import Path
-from xml.etree import ElementTree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DOCS = REPO_ROOT / "docs"
-ASSETS = DOCS / "assets"
-EXTRA_CSS = DOCS / "stylesheets" / "extra.css"
+MARK = DOCS / "assets" / "img" / "mark.svg"
+MKDOCS_YML = REPO_ROOT / "mkdocs.yml"
 README = REPO_ROOT / "README.md"
 
-BRAND_SVGS = ("hero_loop.svg", "architecture_flow.svg", "mesh_network.svg")
+_IMG_SRC = re.compile(r"""<img[^>]*\ssrc=["']([^"']+)["']""")
+_MD_IMG = re.compile(r"!\[[^\]]*\]\(([^)\s]+)")
 
 
-def test_brand_svg_assets_exist() -> None:
-    """All three animated brand SVGs ship under docs/assets/."""
-    for name in BRAND_SVGS:
-        assert (ASSETS / name).is_file(), f"missing brand asset: docs/assets/{name}"
+def test_brand_mark_exists_and_is_valid_svg() -> None:
+    """The Strands mark ships under docs/assets/img and parses as XML."""
+    assert MARK.is_file(), f"missing brand asset: {MARK.relative_to(REPO_ROOT)}"
+    text = MARK.read_text(encoding="utf-8")
+    # Raises on malformed XML: the browser would otherwise show a broken favicon.
+    xml.dom.minidom.parseString(text)
+    assert "<svg" in text
 
 
-def test_brand_svgs_are_valid_animated_xml() -> None:
-    """Each brand SVG parses as XML and carries SMIL animation (<animate*>)."""
-    for name in BRAND_SVGS:
-        text = (ASSETS / name).read_text(encoding="utf-8")
-        # Raises on malformed XML - the docs build would otherwise serve a broken asset.
-        xml.dom.minidom.parseString(text)
-        assert "<animate" in text, f"{name} lost its SMIL animation"
+def test_mkdocs_points_logo_and_favicon_at_the_mark() -> None:
+    """Both theme slots use the same mark, relative to docs/."""
+    config = MKDOCS_YML.read_text(encoding="utf-8")
+    for slot in ("logo", "favicon"):
+        match = re.search(rf"^\s+{slot}:\s*(\S+)\s*$", config, re.M)
+        assert match, f"mkdocs.yml has no theme {slot}"
+        assert (DOCS / match.group(1)).is_file(), f"theme {slot} {match.group(1)} is not a file under docs/"
 
 
-def test_docs_pages_embed_their_brand_svg() -> None:
-    """Agents, architecture, and mesh pages each embed their SVG via the brand class."""
-    pairs = {
-        DOCS / "reference" / "agents.md": "hero_loop.svg",
-        DOCS / "reference" / "architecture.md": "architecture_flow.svg",
-        DOCS / "reference" / "mesh.md": "mesh_network.svg",
-    }
-    for page, asset in pairs.items():
-        text = page.read_text(encoding="utf-8")
-        assert asset in text, f"{page.name} no longer embeds {asset}"
-        assert "brand-svg" in text, f"{page.name} dropped the brand-svg CSS hook"
-
-
-def test_readme_embeds_all_brand_svgs() -> None:
-    """The README surfaces all three animated brand SVGs.
-
-    ``hero_loop.svg`` opens the README; ``architecture_flow.svg`` illustrates
-    the "How it works" section and ``mesh_network.svg`` sits beside the mesh
-    row - matching the docs pages that embed the same assets. Each is
-    referenced by its ``docs/assets/`` repo-relative path so GitHub renders it.
-    """
+def _readme_repo_images() -> list[str]:
     text = README.read_text(encoding="utf-8")
-    for name in BRAND_SVGS:
-        assert f"docs/assets/{name}" in text, f"README no longer embeds {name}"
+    srcs = _IMG_SRC.findall(text) + _MD_IMG.findall(text)
+    return [s for s in srcs if not s.startswith(("http://", "https://", "data:"))]
 
 
-def test_hero_loop_rails_sit_beside_the_node_that_references_them() -> None:
-    """ROBOTS rail is left (beside Tools); POLICIES rail is right (beside Act).
-
-    The hero loop's Tools node (left, ``sim - teleop - record - mesh``) faces
-    the robots, and its Act node (right, ``policy - IK - joint targets``) is
-    driven by a policy, so each capability rail must sit beside the loop node
-    that references it (#3007). Asserted as a relationship between the two
-    rail headings rather than as fixed coordinates, so a future re-layout
-    that keeps the semantics is free to move both rails.
-    """
-    root = ElementTree.fromstring((ASSETS / "hero_loop.svg").read_text(encoding="utf-8"))
-    ns = "{http://www.w3.org/2000/svg}"
-    heads = {t.text: float(t.get("x", "0")) for t in root.iter(f"{ns}text") if t.text in ("POLICIES", "ROBOTS")}
-    assert set(heads) == {"POLICIES", "ROBOTS"}, heads
-    assert heads["ROBOTS"] < heads["POLICIES"], (
-        "ROBOTS must be the left rail (beside Tools: sim/teleop/record/mesh) and "
-        "POLICIES the right rail (beside Act: policy/IK/joint targets)"
-    )
+def test_readme_embeds_at_least_one_repo_image() -> None:
+    """The README carries repo-hosted figures; a README with none would make the next test vacuous."""
+    assert _readme_repo_images(), "README embeds no repo-relative image"
 
 
-def test_extra_css_defines_brand_figure() -> None:
-    """The active stylesheet defines the brand-figure / brand-svg treatment."""
-    css = EXTRA_CSS.read_text(encoding="utf-8")
-    assert ".brand-figure" in css, "extra.css missing .brand-figure rule"
-    assert ".brand-svg" in css or "img.brand-svg" in css, "extra.css missing .brand-svg rule"
+def test_every_repo_image_the_readme_embeds_exists() -> None:
+    """Every repo-relative <img src> or ![](...) in the README resolves to a file GitHub can render."""
+    missing = [src for src in _readme_repo_images() if not (REPO_ROOT / src).is_file()]
+    assert not missing, f"README embeds images that are not in the tree (GitHub renders a broken image): {missing}"

@@ -67,7 +67,9 @@ from strands_robots.drivers import get_native_driver_class, resolve_driver
 from strands_robots.registry import get_robot, resolve_name
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
-_PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+#: A python fence, with or without a title (``python title="sketch"`` marks
+#: the calls that need hardware on the wire).
+_PYTHON_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
 
 #: Modes whose returned type is a simulation rather than a hardware surface.
 _SIM_MODES = frozenset({None, "sim"})
@@ -297,10 +299,11 @@ def _simulation_surfaces() -> dict[str, frozenset[str]]:
 
 
 #: Pages that must contribute a read in each partition, set below today's
-#: counts (5 hardware-mode, 20 sim-mode) so an ordinary docs edit does not trip
-#: it while a narrowed file glob does.
+#: counts on the rewritten site (7 hardware-mode, 9 sim-mode; the site answers
+#: one question per page, so fewer pages bind a ``Robot()`` result) so an
+#: ordinary docs edit does not trip it while a narrowed file glob does.
 _MINIMUM_HARDWARE_SOURCES = 4
-_MINIMUM_SIMULATION_SOURCES = 10
+_MINIMUM_SIMULATION_SOURCES = 6
 
 
 def _assert_the_scan_reaches_the_docs_tree(reads: list[_Read], minimum: int) -> None:

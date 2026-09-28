@@ -1131,6 +1131,34 @@ def _real_parameters(engine_cls: type, method_name: str) -> tuple[set[str], set[
     return set(parameters) | {"self"}, required
 
 
+def _real_parameter_order(engine_cls: type, method_name: str) -> list[str] | None:
+    """Real parameter names of an advertised method, in declaration order.
+
+    The order sibling of :func:`_real_parameters`. ``self`` and the
+    ``*args`` / ``**kwargs`` sinks are dropped (a sink has no position a caller
+    fills), leaving the positional-or-keyword and keyword-only parameters in
+    the order the method declares them.
+
+    Args:
+        engine_cls: The engine class the method is resolved on.
+        method_name: The advertised method name.
+
+    Returns:
+        The ordered parameter names, or ``None`` when the method is not
+        introspectable on this class.
+    """
+    function = getattr(engine_cls, method_name, None)
+    if not callable(function):
+        return None
+    try:
+        parameters = inspect.signature(function).parameters
+    except (TypeError, ValueError):
+        return None
+    return [
+        name for name, p in parameters.items() if name != "self" and p.kind not in (p.VAR_KEYWORD, p.VAR_POSITIONAL)
+    ]
+
+
 # Every backend that overrides describe(), keyed by the label a failure names.
 # Resolved lazily: importing a backend module needs no simulator runtime, but it
 # does need the package's own optional deps, so the import happens inside the
@@ -1234,6 +1262,38 @@ class TestDescribeSignaturesAgreeWithTheMethodsOnEveryBackend:
         assert not violations, (
             f"{label}: describe() omits parameters the method requires: {sorted(violations)}. "
             "A call built from the advertised signature alone must be a complete call."
+        )
+
+    @pytest.mark.parametrize("label", sorted(_DESCRIBE_BACKENDS))
+    def test_every_advertised_signature_preserves_parameter_order(self, label):
+        """Advertised parameters must appear in the real declaration order.
+
+        The two tests above pin that every advertised keyword EXISTS and that
+        every required keyword is PRESENT, but neither reads the order. An
+        agent that copies an advertised signature to build a POSITIONAL call
+        lands each argument on whatever parameter really sits at that index, so
+        a reordered string (``add_camera`` once advertised ``width, height,
+        fov`` while the method declares ``fov, width, height``) silently sends
+        ``fov`` to ``width``. This pins that the advertised parameters that name
+        real parameters are an in-order subsequence of the real signature -
+        omitting a trailing optional one is allowed (an abbreviation), but
+        reordering or interleaving them is not. Pass-through keywords a
+        ``**kwargs`` method forwards are ignored, having no real position.
+        """
+        engine_cls = _describe_backend(label)
+        violations = []
+        for method_name, signature in sorted(_describe_signature_strings(engine_cls).items()):
+            order = _real_parameter_order(engine_cls, method_name)
+            if order is None:
+                continue
+            advertised_real = [name for name in _advertised_param_names(signature) if name in order]
+            iterator = iter(order)
+            if not all(name in iterator for name in advertised_real):
+                violations.append(f"{method_name}: advertised {advertised_real} vs real order {order}")
+        assert not violations, (
+            f"{label}: describe() advertises parameters out of their real order: {sorted(violations)}. "
+            "An agent building a positional call from the advertised signature would land arguments on "
+            "the wrong parameters. Keep the advertised order in step with the method's real signature."
         )
 
 
@@ -1419,3 +1479,26 @@ class TestEveryDeliveredContractMethodIsOnTheBackendSurface:
         assert not _describe_merges_the_base_surface(_describe_backend("newton")), (
             "Newton builds its surface from scratch -- the condition that let the contract drift"
         )
+
+
+@pytest.mark.skipif(not _HAS_MUJOCO, reason="MuJoCo not installed")
+def test_live_add_camera_advertisement_matches_the_real_signature():
+    """The live MuJoCo add_camera advertisement carries the real parameter order.
+
+    add_camera declares ``(name, position, target, fov, width, height,
+    parent_body)``; the discovery surface must advertise ``fov`` before
+    ``width``/``height`` and name ``parent_body`` (the wrist-mount parameter),
+    the ordering and parameter a stale hand-written string had dropped.
+    """
+    import os
+
+    os.environ.setdefault("MUJOCO_GL", "egl")
+    from strands_robots.simulation import Simulation
+
+    sim = Simulation()
+    try:
+        head = sim.describe()["methods"]["add_camera"].split("->", 1)[0]
+        assert head.index("fov") < head.index("width") < head.index("height")
+        assert "parent_body" in head
+    finally:
+        sim.destroy()

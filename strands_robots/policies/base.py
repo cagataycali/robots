@@ -351,6 +351,15 @@ class Policy(ABC):
     #: no motion, so a custom non-reader is not described as the mock.
     instruction_free_actions: ClassVar[str | None] = None
 
+    #: Why this policy cannot be rolled out without an action controller the
+    #: engine installs for it, or ``None`` (the default) when it drives the
+    #: scene's actuators as they are. A declaration, not a capability check:
+    #: an engine that can install the controller overrides
+    #: :meth:`~strands_robots.simulation.base.SimEngine._maybe_install_action_controller`;
+    #: every other engine refuses the rollout with this text instead of
+    #: running it without the controller.
+    requires_action_controller: ClassVar[str | None] = None
+
     @property
     def required_bodies(self) -> tuple[str, ...]:
         """Named rigid bodies whose world pose this policy needs in its observation.

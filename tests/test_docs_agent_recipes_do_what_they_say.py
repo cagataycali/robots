@@ -1,40 +1,39 @@
 """A recipe a page hands an agent-writer imports under that page's install, and builds what it says.
 
-``docs/reference/agents.md`` teaches the two things a reader cannot get from the tool spec:
-which tools to hand the ``Agent``, and how a plain-English dimension becomes an
-``add_object`` call. Both of its recipes were satisfiable only on some other
-page's terms.
+``docs/learn/agents.md`` teaches the two things a reader cannot get from the tool spec:
+which tools to hand the ``Agent``, and what happens when the model asks a real robot to
+move. ``docs/learn/simulation/worlds-and-objects.md`` teaches how a plain-English
+dimension becomes an ``add_object`` call. The old versions of both pages were
+satisfiable only on some other page's terms:
 
-* The "Add more tools" snippet imports ``pose_tool``, whose module body requires
+* The agents page's snippet imports ``pose_tool``, whose module body requires
   ``pyserial``. No extra of this project declares that (it arrives inside
-  ``lerobot[feetech]``), and the page's own install fence is
-  ``strands-agents "strands-robots[sim-mujoco]"`` -- so following the page top to
-  bottom ends in ``ImportError: cannot import name 'pose_tool'``.
-  ``docs/reference/hardware/tools.md`` states the dependency; this page did not.
-* The "Common patterns" table mapped "Add a 5cm red cube" to ``size=[0.025]*3``.
-  ``size`` is the FULL extent, so that builds a 2.5 cm cube -- half what the
-  instruction asks for, and the half-extents MuJoCo stores for a 5 cm one.
-  ``add_object``'s own docstring and ``docs/reference/simulation/objects.md`` spell 5 cm as
-  ``[0.05, 0.05, 0.05]``, and ``add_object("default_box")`` compiles exactly
-  those extents.
+  ``lerobot[feetech]``), and the Start pages install ``strands-robots[sim-mujoco]``,
+  so following the site top to bottom ends in ``ImportError``. The page that
+  imports a guarded tool has to name the install line itself.
+* A "Common patterns" table once mapped "Add a 5cm red cube" to ``size=[0.025]*3``.
+  ``size`` is the FULL extent, so that built a 2.5 cm cube, the half-extents MuJoCo
+  stores for a 5 cm one. The new page states the convention as a table, one row per
+  shape, and that table is graded by building each shape and measuring the geom.
 
 The import rule is graded over every shipped page and example, with the guarded
 tools and their install tokens harvested from the ``require_optional`` calls in
 ``strands_robots/tools/``, so an import-time dependency that lands later is
-covered without editing a list. The size rule builds each documented row and
+covered without editing a list. The size rule builds each documented shape and
 measures the compiled geom, so it grades the recipe and not the string.
 """
 
 from __future__ import annotations
 
 import ast
+import inspect
 import re
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-AGENTS_PAGE = REPO_ROOT / "docs" / "reference" / "agents.md"
+OBJECTS_PAGE = REPO_ROOT / "docs" / "learn" / "simulation" / "worlds-and-objects.md"
 TOOLS_DIR = REPO_ROOT / "strands_robots" / "tools"
 
 
@@ -72,10 +71,11 @@ GUARDED = _import_time_guarded_tools()
 
 
 def _shipped_prose() -> list[Path]:
-    """Every page and example a reader copies from."""
+    """Every page and example a reader copies from; generated robot pages carry no imports."""
+    docs = REPO_ROOT / "docs"
     return sorted(
         {
-            *(REPO_ROOT / "docs").rglob("*.md"),
+            *(p for p in docs.rglob("*.md") if "robots" not in p.relative_to(docs).parts),
             *(REPO_ROOT / "examples").rglob("*.py"),
             *(REPO_ROOT / "examples").rglob("*.md"),
             REPO_ROOT / "README.md",
@@ -124,58 +124,72 @@ def test_a_page_importing_a_guarded_tool_names_the_install_it_needs(path: Path, 
     )
 
 
-def _literal(node: ast.expr) -> object:
-    """Evaluate a documented argument: a literal, or the ``[x] * n`` a table uses."""
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
-        left, right = _literal(node.left), _literal(node.right)
-        if isinstance(left, list) and isinstance(right, int):
-            return left * right
-        raise ValueError(f"unsupported product in a documented recipe: {ast.unparse(node)}")
-    return ast.literal_eval(node)
+# --- the size convention ---------------------------------------------------------
+
+#: How the page's ``size`` row for each shape maps onto the geom MuJoCo stores, given
+#: one probe size. ``expected`` is what ``model.geom_size`` must read for that probe.
+_PROBES: dict[str, tuple[list[float], list[float]]] = {
+    "box": ([0.05, 0.06, 0.07], [0.025, 0.03, 0.035]),  # full edge lengths, halved
+    "ellipsoid": ([0.05, 0.06, 0.07], [0.025, 0.03, 0.035]),
+    "sphere": ([0.04], [0.02]),  # diameter to radius
+    "cylinder": ([0.04, 0.0, 0.2], [0.02, 0.1]),  # diameter, unused, full height
+    "capsule": ([0.04, 0.0, 0.2], [0.02, 0.1]),  # diameter, unused, cylinder length
+}
+
+_CONVENTION_WORDS: dict[str, str] = {
+    "box": "full edge lengths",
+    "ellipsoid": "full edge lengths",
+    "sphere": "diameter",
+    "cylinder": "full height",
+    "capsule": "cylinder length",
+}
 
 
-def _sized_add_object_rows(page: str) -> list[tuple[str, float, str, list[float]]]:
-    """Table rows that state a size in cm and answer with an ``add_object`` call.
-
-    Returns the instruction, the size it states, and the shape and extents its
-    recipe passes - explicit columns, because a ``**kwargs`` dict harvested from
-    prose has no type the signature accepts.
-    """
-    rows = []
-    for instruction, chain in re.findall(r"^\|\s*\"([^\"]+)\"\s*\|(.+?)\|\s*$", page, re.MULTILINE):
-        centimetres = re.search(r"(\d+(?:\.\d+)?)\s*cm", instruction, re.IGNORECASE)
-        call = re.search(r"add_object\((.*?)\)`", chain)
-        if not centimetres or not call:
+def _size_rows() -> dict[str, str]:
+    """``shape -> size cell`` from the page's size-convention table."""
+    rows: dict[str, str] = {}
+    for line in OBJECTS_PAGE.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^\|\s*((?:`\w+`(?:,\s*)?)+)\s*\|(.+)\|\s*$", line)
+        if not match:
             continue
-        parsed = ast.parse(f"add_object({call.group(1)})", mode="eval").body
-        assert isinstance(parsed, ast.Call)
-        kwargs = {kw.arg: _literal(kw.value) for kw in parsed.keywords if kw.arg}
-        size, shape = kwargs.get("size"), kwargs.get("shape", "box")
-        if isinstance(size, list) and isinstance(shape, str):
-            rows.append((instruction, float(centimetres.group(1)), shape, [float(x) for x in size]))
+        for shape in re.findall(r"`(\w+)`", match.group(1)):
+            rows[shape] = match.group(2).strip()
     return rows
 
 
-SIZED_ROWS = _sized_add_object_rows(AGENTS_PAGE.read_text(encoding="utf-8"))
+SIZE_ROWS = _size_rows()
 
 
-def test_the_page_still_documents_a_sized_recipe():
-    """A table that lost its sized row would silently stop being graded."""
-    assert SIZED_ROWS, f"{AGENTS_PAGE.relative_to(REPO_ROOT)} documents no add_object size recipe"
+def test_the_page_still_documents_the_size_convention():
+    """A table that lost its rows would silently stop being graded."""
+    assert set(_PROBES) <= set(SIZE_ROWS), (
+        f"{OBJECTS_PAGE.relative_to(REPO_ROOT)} lacks size rows for {sorted(set(_PROBES) - set(SIZE_ROWS))}"
+    )
+    text = OBJECTS_PAGE.read_text(encoding="utf-8")
+    assert "full extent" in text, "the page must say size is the full extent, the fact the old table got wrong"
 
 
-@pytest.mark.parametrize(
-    ("instruction", "centimetres", "shape", "size"),
-    SIZED_ROWS,
-    ids=[instruction for instruction, _, _, _ in SIZED_ROWS],
-)
-def test_a_documented_size_recipe_builds_the_size_it_states(
-    instruction: str, centimetres: float, shape: str, size: list[float]
-):
+def test_the_documented_signature_names_only_real_parameters():
+    from strands_robots.simulation.mujoco.simulation import Simulation
+
+    text = OBJECTS_PAGE.read_text(encoding="utf-8")
+    shown = re.search(r"`add_object\(([^)]*)\)`", text)
+    assert shown is not None, "the page no longer states the add_object signature"
+    listed = [p.split("=")[0].strip() for p in shown.group(1).split(",") if p.strip()]
+    real = [p for p in inspect.signature(Simulation.add_object).parameters if p != "self"]
+    assert listed == real, f"the page shows add_object({', '.join(listed)}); the method takes ({', '.join(real)})"
+
+
+@pytest.mark.parametrize("shape", sorted(_PROBES))
+def test_each_documented_size_row_builds_the_extent_it_states(shape: str):
     """``size`` is the full extent, so the compiled geom must measure what the row says."""
     mj = pytest.importorskip("mujoco")
     from strands_robots.simulation.mujoco.simulation import Simulation
 
+    assert _CONVENTION_WORDS[shape] in SIZE_ROWS.get(shape, ""), (
+        f"the {shape} row reads {SIZE_ROWS.get(shape)!r}; expected it to say {_CONVENTION_WORDS[shape]!r}"
+    )
+    size, expected = _PROBES[shape]
     sim = Simulation(tool_name="test_docs_agent_recipe_sim", mesh=False)
     try:
         sim.create_world()
@@ -184,10 +198,10 @@ def test_a_documented_size_recipe_builds_the_size_it_states(
         assert model is not None, "the documented recipe compiled no world"
         geom = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, "documented_geom")
         assert geom >= 0, "the documented recipe compiled no geom"
-        edges = [2 * half for half in model.geom_size[geom]]
+        stored = [float(x) for x in model.geom_size[geom][: len(expected)]]
     finally:
         sim.cleanup()
-    assert max(edges) == pytest.approx(centimetres / 100.0), (
-        f"{instruction!r} maps to size={size}, which builds "
-        f"{max(edges) * 100:.2f} cm; size is the full extent, not the half-extents MuJoCo stores"
+    assert stored == pytest.approx(expected), (
+        f"{shape}: size={size} compiles geom_size={stored}; the row says {SIZE_ROWS[shape]!r}, "
+        "which predicts {expected}"
     )

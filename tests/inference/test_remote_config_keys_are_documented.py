@@ -3,10 +3,12 @@
 """One page documents every knob the ``remote`` provider accepts.
 
 ``strands_robots/registry/policies.json`` declares the ``config_keys`` a caller
-may pass through ``create_policy("remote", ...)``, and ``docs/reference/inference/remote.md``
-is the page every other surface sends that caller to -- the provider matrix in
-``docs/reference/policies/overview.md``, the ``strands_robots.inference`` package docstring
-and the nav row all name it.
+may pass through ``create_policy("remote", ...)``, and ``docs/learn/policies/remote.md``
+is the page every other surface sends that caller to: the provider matrix in
+``docs/learn/policies/index.md``, the old ``reference/inference/remote.md`` redirect
+and the nav row all name it. Its constructor table is the ``{{providers:kwargs:remote}}``
+token, rendered from ``RemotePolicy.__init__`` by ``docs/hooks/providers.py``, so the
+page is graded as the reader sees it, with the token expanded by the shipped hook.
 
 Until this file's companion change ``connect_timeout`` and ``request_timeout``
 were documented on a second, 316-word page instead, so the page a reader is sent
@@ -20,8 +22,10 @@ expectation tracks the code rather than a second copy of it.
 
 from __future__ import annotations
 
+import importlib.util
 import inspect
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -29,7 +33,8 @@ import pytest
 from strands_robots.inference import RemotePolicy
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DOC = _REPO_ROOT / "docs" / "reference" / "inference" / "remote.md"
+_DOC = _REPO_ROOT / "docs" / "learn" / "policies" / "remote.md"
+_HOOK = _REPO_ROOT / "docs" / "hooks" / "providers.py"
 _REGISTRY = _REPO_ROOT / "strands_robots" / "registry" / "policies.json"
 
 #: A registry entry that had shrunk to a key or two would make every rule below
@@ -44,7 +49,18 @@ def _config_keys() -> list[str]:
 
 
 def _page() -> str:
-    return _DOC.read_text(encoding="utf-8")
+    """The remote page with its ``{{providers:...}}`` tokens expanded by the shipped hook."""
+    spec = importlib.util.spec_from_file_location("docs_hooks_providers", _HOOK)
+    assert spec is not None and spec.loader is not None
+    module = sys.modules.get(spec.name)
+    if module is None:
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    source = _DOC.read_text(encoding="utf-8")
+    rendered = module.substitute(source, "learn/policies/remote.md")
+    assert rendered != source, "learn/policies/remote.md carries no {{providers:kwargs:remote}} token"
+    return rendered
 
 
 def _documented_defaults() -> list[tuple[str, str]]:
@@ -73,7 +89,7 @@ def test_every_config_key_is_named_on_the_page(key: str) -> None:
     (``host=``) and others as the config key itself (``connect_timeout``).
     """
     assert f"`{key}`" in _page() or f"`{key}=`" in _page(), (
-        f"docs/reference/inference/remote.md does not name the `{key}` config key the remote "
+        f"docs/learn/policies/remote.md does not name the `{key}` config key the remote "
         "provider accepts - a reader sent to this page cannot look the knob up"
     )
 
@@ -82,6 +98,6 @@ def test_every_config_key_is_named_on_the_page(key: str) -> None:
 def test_the_documented_default_is_the_constructor_default(key: str, default: str) -> None:
     """The stated default is RemotePolicy's, so changing one side reds here."""
     assert default in _page(), (
-        f"RemotePolicy defaults {key} to {default}, which docs/reference/inference/remote.md "
+        f"RemotePolicy defaults {key} to {default}, which docs/learn/policies/remote.md "
         "does not state - the page and the constructor have drifted"
     )

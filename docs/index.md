@@ -1,110 +1,80 @@
 ---
-description: Name a robot and get one object your code and your agent can both drive - in MuJoCo simulation today, on the real machine when you plug it in.
+hide: [navigation, toc]
+template_class: sr-home
 ---
 
 # Strands Robots
 
-<figure class="brand-figure" markdown="span">
-  ![An SO-101 arm closing its gripper on a red cube and lifting it clear of the table in MuJoCo](https://github.com/user-attachments/assets/b5fb7582-5bcb-4053-a9f7-9f08ec42a411){ loading=lazy }
-  <figcaption>Your first pick - <code>examples/18_so101_pick_and_lift.py</code>, MuJoCo, laptop CPU.</figcaption>
-</figure>
+<div class="sr-hero" markdown>
+<div markdown>
+<p class="sr-hero__title">One <em>Robot</em> object. Any robot.</p>
+<p class="sr-hero__lead">Simulated or physical, arm or humanoid, the same call. Hand it to a Strands Agent and it becomes a tool the model can use. A real arm does not move until an operator says yes.</p>
+<div class="sr-hero__actions">
+<a class="sr-btn sr-btn--primary" href="start/">Start</a>
+<a class="sr-btn" href="robots/">Pick a robot</a>
+<span class="sr-install">pip install "strands-robots[sim-mujoco]"</span>
+</div>
+</div>
+<div markdown>
+<robot-viewer name="so101" autoload></robot-viewer>
+</div>
+</div>
 
-Name a robot and you get one object your code and your agent can both drive: in simulation
-today, on the real machine when you plug it in.
+<div class="sr-proof" markdown>
+<div><strong>{{n:robots}}</strong><span>robots in the registry, arms, hands, humanoids, quadrupeds, mobile bases</span></div>
+<div><strong>{{n:policy_providers}}</strong><span>policy providers behind one <code>run_policy</code> call</span></div>
+<div><strong>{{n:native_drivers}}</strong><span>native hardware drivers that need no lerobot install</span></div>
+</div>
 
-Written for you if:
+<div class="sr-grid" markdown>
+<div class="sr-card" markdown>
+### [Start](start/index.md)
+Install, move a simulated SO-101, plug in the real one, hand it to an agent, run the doctor.
+</div>
+<div class="sr-card" markdown>
+### [Robots](robots/index.md)
+The catalog: arms, hands, humanoids, quadrupeds, mobile bases. Which ones simulate, which ones have a driver.
+</div>
+<div class="sr-card" markdown>
+### [Agents](learn/agents.md)
+`Agent(tools=[robot])`. What the model sees, what it can call, and the approval gate in front of real motion.
+</div>
+<div class="sr-card" markdown>
+### [Simulation](learn/simulation/index.md)
+MuJoCo on the CPU by default, Newton and Isaac on a GPU. Worlds, objects, cameras, predicates, recordings.
+</div>
+<div class="sr-card" markdown>
+### [Hardware](learn/hardware/drivers.md)
+Native drivers and lerobot drivers, teleoperation, cameras, calibration.
+</div>
+<div class="sr-card" markdown>
+### [Mesh](learn/mesh/fleet.md)
+Several robots on several machines with one e-stop. Zenoh, mTLS, an access-control list.
+</div>
+</div>
 
-- **An arm sits on your desk.** SO-101, Franka, UR5e - one call in sim, the same call with
-  `mode="real"` once the cable is in.
-- **You train policies.** Roll out SmolVLA, GR00T or your own checkpoint, record the episodes
-  as a LeRobot dataset, replay them.
-- **Your agent needs hands.** One tool per robot; the agent picks the action and reads back
-  what happened.
+## One API, sim or real
 
-## Install
-
-```bash
-uv venv --python 3.12 && source .venv/bin/activate
-uv pip install "strands-robots[sim-mujoco]"   # simulation
-uv pip install "strands-robots[all]"          # sim + hardware + most policies
-```
-
-## Drive one
+<div class="sr-pair" markdown>
 
 ```python
-from strands import Agent
 from strands_robots import Robot
 
-arm = Robot("so101", mode="sim")            # MuJoCo scene, CPU, no GPU
-Agent(tools=[arm])("Pick up the red cube")
+robot = Robot("so101", mode="sim")
+robot.send_action({"1": 0.5}, n_substeps=200)
+print(robot.get_robot_state()["content"][0]["text"])
+robot.cleanup()
 ```
 
-The factory returns the backend itself, so the same object is callable from Python -
-`arm.get_robot_state()`, `arm.run_policy(...)` - and `mode="real"` drives a physical SO-101
-through the same actions.
+```python title="sketch"
+from strands_robots import Robot
 
-## Next
-
-<div class="grid cards" markdown>
-
--   :material-play-circle-outline:{ .lg .middle } **Move something**
-
-    ---
-
-    Install, step a scene, save the first frame, run the pick that lifts a cube.
-
-    [:octicons-arrow-right-24: Quickstart](getting-started/quickstart.md)
-
--   :material-robot-outline:{ .lg .middle } **Find your robot**
-
-    ---
-
-    {{n:robots}} of them, {{n:hardware}} declaring a driver: arms, hands, humanoids, rovers.
-
-    [:octicons-arrow-right-24: Robot catalog](robots/index.md)
-
--   :material-robot-happy-outline:{ .lg .middle } **Hand it to an agent**
-
-    ---
-
-    Give the robot to a Strands agent and ask for the task in plain English.
-
-    [:octicons-arrow-right-24: AI agents](reference/agents.md)
+robot = Robot("so101", mode="real", driver="strands", port="/dev/ttyACM0")
+robot.send_action({"shoulder_pan": 30.0})
+print(robot.tool_spec["description"])
+robot.cleanup()
+```
 
 </div>
 
-## Robots at work
-
-<div class="grid" markdown>
-
-<figure markdown="span">
-  ![Unitree G1 walking forward under the whole-body-control policy provider](https://github.com/user-attachments/assets/b313e219-b985-4899-80ac-58582e0d90c5){ loading=lazy }
-  <figcaption><code>run_policy(policy_provider="wbc")</code> - G1, 0 to 2.8 m in 8 s.</figcaption>
-</figure>
-
-<figure markdown="span">
-  ![Pollen Microduck, a 14-DOF biped, walking across the floor of a MuJoCo scene](https://github.com/user-attachments/assets/0b75411b-6d6b-4af9-ae8d-0c215470d66c){ loading=lazy }
-  <figcaption><code>microduck</code> provider - <code>alpha_walking.onnx</code> at 0.3 m/s.</figcaption>
-</figure>
-
-<figure markdown="span">
-  ![Simulated SO-101 executing a SmolVLA policy rollout recorded to video](assets/run_policy_video_demo.gif){ loading=lazy }
-  <figcaption>SmolVLA through <code>lerobot_local</code>, rendered headless.</figcaption>
-</figure>
-
-</div>
-
-## What runs on what
-
-**{{n:robots}} robots** in the registry, {{n:hardware}} of them declaring a driver, across
-{{n:categories}} categories and {{n:sim_backends}} simulation backends. More are drivable - a
-native driver needs no declaration - and the join is derived, not typed out:
-
-```python
-from strands_robots.drivers import list_driver_coverage
-
-list_driver_coverage()["so101"]     # ('lerobot', 'strands')
-```
-
-Deeper: [Policy providers](reference/policies/overview.md) · [Architecture](reference/architecture.md) ·
-[API reference](reference/api-reference.md) · [Tool reference](reference/tools.md)
+The left fence runs on a laptop. The right one needs an SO-101 on USB, and the arm is the same tool with the same verbs. The sim addresses joints by the model's names in radians; the native driver addresses servos by name in degrees. [Start here](start/index.md).

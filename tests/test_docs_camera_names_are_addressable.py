@@ -10,9 +10,11 @@ cameras on the reader's behalf, and each has to stay inside that alphabet:
 * **The examples.** A fence showing ``add_camera(name="wrist cam")`` does not fail
   at the line the reader copied - it returns ``status="error"``, and every line
   below it runs against a scene missing the camera the example is about.
-* **The camera-naming table.** ``docs/reference/policies/camera-naming.md`` tells the reader
-  to name their sim cameras after a policy's expected source key, so a key in that
-  column that ``add_camera`` refuses is advice that cannot be followed.
+* **The camera-naming table.** ``docs/learn/policies/lerobot-local.md`` tells the
+  reader to name their sim cameras after a policy's expected source key. The
+  table is ``{{providers:cameras}}``, rendered by ``docs/hooks/providers.py``
+  from the embodiments, so the rendered column is what is graded: a key in it
+  that ``add_camera`` refuses is advice that cannot be followed.
 * **The embodiments.** Those source keys come from ``obs_rename`` in
   ``strands_robots/policies/lerobot_local/embodiments.json``. A key that is not a
   nameable camera makes the embodiment unsatisfiable from sim: the pre-flight
@@ -26,6 +28,7 @@ names are read; one computed at runtime is not something this file can resolve.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from pathlib import Path
@@ -35,7 +38,10 @@ from strands_robots.utils import scoped_camera_name_error
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _EMBODIMENTS = _REPO_ROOT / "strands_robots" / "policies" / "lerobot_local" / "embodiments.json"
-_CAMERA_NAMING_DOC = _REPO_ROOT / "docs" / "reference" / "policies" / "camera-naming.md"
+_CAMERA_NAMING_DOC = _REPO_ROOT / "docs" / "learn" / "policies" / "lerobot-local.md"
+_PROVIDERS_HOOK = _REPO_ROOT / "docs" / "hooks" / "providers.py"
+#: The page that documents ``add_camera`` itself, where the name rule is stated.
+_ADD_CAMERA_DOC = _REPO_ROOT / "docs" / "learn" / "simulation" / "worlds-and-objects.md"
 
 #: A literal name claimed at an ``add_camera`` call, keyword or positional. Read
 #: with a pattern rather than through :mod:`ast`, because the documented fences
@@ -60,14 +66,25 @@ def _documented_camera_names() -> list[tuple[str, str]]:
     return found
 
 
+def _rendered_camera_table() -> str:
+    """The camera table as the build renders it into the policies page."""
+    page = _CAMERA_NAMING_DOC.read_text(encoding="utf-8")
+    assert "{{providers:cameras}}" in page, f"{_CAMERA_NAMING_DOC.name} no longer places the camera table"
+    spec = importlib.util.spec_from_file_location("docs_providers_hook", _PROVIDERS_HOOK)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.cameras_table()
+
+
 def _table_source_keys() -> list[str]:
-    """The ``add_camera`` name column of the camera-naming translation table."""
+    """The "camera key you attach" column of the rendered camera-naming table."""
     keys: list[str] = []
-    for row in _CAMERA_NAMING_DOC.read_text(encoding="utf-8").splitlines():
+    for row in _rendered_camera_table().splitlines():
         cells = [c.strip() for c in row.split("|")]
-        if len(cells) < 5 or not cells[4].startswith("`observation.images."):
+        if len(cells) < 5 or not cells[3].startswith("`observation.images."):
             continue
-        for cell in cells[3].split("/"):
+        for cell in cells[2].split("<br>"):
             name = cell.strip().strip("`")
             if name:
                 keys.append(name)
@@ -119,16 +136,21 @@ def test_every_embodiment_expects_a_camera_name_that_can_exist() -> None:
 
 
 def test_the_documented_alphabet_agrees_with_the_live_rule() -> None:
-    """The prose in ``docs/reference/recording.md`` and the door agree on both lists.
+    """The page that documents ``add_camera`` and the door agree on both lists.
 
-    Accepted shapes and refused ones, so the paragraph cannot drift into
-    describing a rule the door does not apply.
+    One accepted shape of each kind (bare, underscore, hyphen, robot-scoped)
+    and the refused shapes a reader is likely to try, so the sentence cannot
+    drift into describing a rule the door does not apply.
     """
-    text = (_REPO_ROOT / "docs" / "reference" / "recording.md").read_text(encoding="utf-8")
+    text = _ADD_CAMERA_DOC.read_text(encoding="utf-8")
     accepted = ("wrist", "front_cam", "cam-2", "arm0/wrist_cam")
     refused = ("a b", "wrist.rgb", "*", "..", "sub/../etc", "a//b")
-    for name in accepted + refused:
-        assert f"`{name}`" in text, f"docs/reference/recording.md no longer shows {name!r}"
+    shown = accepted + refused[:2] + (refused[3],)
+    for name in shown:
+        assert f"`{name}`" in text, (
+            f"docs/{_ADD_CAMERA_DOC.relative_to(_REPO_ROOT / 'docs')} does not show {name!r}; the page that "
+            f"documents add_camera states which names it accepts and which it refuses"
+        )
     assert [n for n in accepted if _refused(n)] == []
     assert [n for n in refused if not _refused(n)] == []
 

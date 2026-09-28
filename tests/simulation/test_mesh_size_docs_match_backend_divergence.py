@@ -26,10 +26,14 @@ measures correctly.
 
 So ``size=[2, 3, 4]`` scales the asset on one backend and is ignored on the
 other, and **both calls report success** - which is what makes the divergence
-expensive to discover. The Newton mesh section - now
-``docs/reference/simulation/newton-scenes.md`` - asserted the opposite in as many words
-("at parity with the MuJoCo backend"), so a reader porting a scene between the
-two had the one paragraph that would have warned them telling them not to look.
+expensive to discover. The old Newton scenes page asserted the opposite in as
+many words ("at parity with the MuJoCo backend"), so a reader porting a scene
+between the two had the one paragraph that would have warned them telling them
+not to look. In the new docs tree the two surfaces are the "Same API, same
+rules" section of ``docs/learn/simulation/newton.md`` (the sentence a porting
+reader trusts) and the "Meshes and materials" section of
+``docs/learn/simulation/worlds-and-objects.md`` (the backend-agnostic mesh
+``add_object``, whose ``size`` contract is MuJoCo's).
 
 Why this guard and not a fix
 ----------------------------
@@ -69,14 +73,22 @@ from strands_robots.simulation.mujoco.spec_builder import _SIZE_LAYOUT, _validat
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from tests.simulation.test_pose_vector_domain_across_backends import _newton_stub
 
-_DOCS = pathlib.Path(__file__).parents[2] / "docs" / "reference" / "simulation"
+_DOCS = pathlib.Path(__file__).parents[2] / "docs" / "learn" / "simulation"
 
-#: The two pages that document a mesh ``add_object``: the Newton scenes page and
-#: the backend-agnostic meshes guide, whose ``size`` contract is MuJoCo's.
+#: The two pages that document a mesh ``add_object``: the Newton page and the
+#: backend-agnostic worlds guide, whose ``size`` contract is MuJoCo's.
 MESH_PAGES: tuple[pathlib.Path, ...] = (
-    _DOCS / "newton-scenes.md",
-    _DOCS / "meshes-and-materials.md",
+    _DOCS / "newton.md",
+    _DOCS / "worlds-and-objects.md",
 )
+
+#: The level-2 section on each page that carries the claim a porting reader
+#: acts on: Newton's cross-backend sameness section, and the mesh section of the
+#: worlds guide.
+MESH_SECTION: dict[str, str] = {
+    "newton.md": "## Same API, same rules",
+    "worlds-and-objects.md": "## Meshes and materials",
+}
 
 #: The open contract decision each page must point at while the two disagree.
 DECISION = "#2300"
@@ -94,15 +106,16 @@ _ONE_TRIANGLE = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n"
 
 
 def mesh_section(page: pathlib.Path) -> str:
-    """The ``## Mesh objects`` block of ``page``, up to the next level-2 heading.
+    """The claim-carrying block of ``page``, up to the next level-2 heading.
 
-    The block is the unit that carries the claim: a reader who jumps to "Mesh
-    objects" from the nav never passes the ``size`` table earlier on the page, so
-    a caveat parked there would not reach them.
+    The block is the unit that carries the claim: a reader who jumps to it from
+    the nav never passes the ``size`` table earlier on the page, so a caveat
+    parked there would not reach them.
     """
+    heading = MESH_SECTION[page.name]
     text = page.read_text(encoding="utf-8")
-    match = re.search(r"^## Mesh objects$(.*?)(?=^## |\Z)", text, re.M | re.S)
-    assert match is not None, f"{page.name} has no '## Mesh objects' section"
+    match = re.search(rf"^{re.escape(heading)}$(.*?)(?=^## |\Z)", text, re.M | re.S)
+    assert match is not None, f"{page.name} has no {heading!r} section"
     return match.group(1)
 
 
@@ -164,8 +177,8 @@ class TestTheProseSaysSo:
     def test_the_mesh_section_names_the_open_decision(self, page: pathlib.Path, tmp_path: pathlib.Path) -> None:
         assert backends_disagree(tmp_path), "premise gone - see TestTheMeasuredDivergence"
         assert DECISION in mesh_section(page), (
-            f"{page.name}'s mesh section documents a 'size' the other backend reads "
-            f"differently without pointing at {DECISION}, so a reader porting a scene "
+            f"{page.name}'s {MESH_SECTION[page.name]!r} section documents a mesh add whose 'size' the other "
+            f"backend reads differently without pointing at {DECISION}, so a reader porting a scene "
             "between the two learns nothing about it."
         )
 

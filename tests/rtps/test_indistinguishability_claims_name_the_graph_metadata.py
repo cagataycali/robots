@@ -15,6 +15,11 @@ So a claim about what a ROS 2 observer cannot distinguish carries its condition,
 in the surface that makes it - the same rule
 ``tests/rtps/test_install_hint_scopes_the_wheel_promise.py`` applies to the
 ``[ros2]`` extra's "self-contained wheel" promise.
+
+The write-up every qualification points at lived on the old
+``docs/reference/ros2/rtps-robot.md``; that page redirects to
+``docs/learn/ros2.md`` now, so the section and its anchor are graded there, and
+a surface that cites the anchor must cite a page that exists and carries it.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ import pytest
 _ROOT = Path(__file__).resolve().parents[2]
 
 #: Where the four axes are written up; every qualification points here.
-_PAGE = _ROOT / "docs" / "reference" / "ros2" / "rtps-robot.md"
+_PAGE = _ROOT / "docs" / "learn" / "ros2.md"
 _SECTION = "## What a ROS 2 node can still tell apart"
 _ANCHOR = "what-a-ros-2-node-can-still-tell-apart"
 
@@ -82,11 +87,21 @@ def test_the_page_documents_every_axis_the_graph_exposes() -> None:
 
 
 def test_every_surface_citing_the_section_resolves_to_its_heading() -> None:
-    """A qualification is only usable if the anchor it names exists."""
+    """A qualification is only usable if the anchor it names exists, on a page that exists."""
     citing = [p for p in _shipped_surfaces() if _ANCHOR in p.read_text(encoding="utf-8")]
     assert citing, f"no surface points at #{_ANCHOR}; the qualification has no write-up"
     slug = _SECTION.removeprefix("## ").lower().replace(" ", "-")
     assert slug == _ANCHOR, f"the section slugs to {slug!r}, not the cited {_ANCHOR!r}"
+    dangling: dict[str, list[str]] = {}
+    for surface in citing:
+        for cited in re.findall(rf"(docs/[\w./-]+\.md)#{_ANCHOR}", surface.read_text(encoding="utf-8")):
+            page = _ROOT / cited
+            if not page.exists() or _SECTION not in page.read_text(encoding="utf-8"):
+                dangling.setdefault(surface.relative_to(_ROOT).as_posix(), []).append(cited)
+    assert not dangling, (
+        f"these surfaces cite #{_ANCHOR} on a page that is gone or no longer carries {_SECTION!r} "
+        f"(it lives on {_PAGE.relative_to(_ROOT).as_posix()} now): {dangling}"
+    )
 
 
 def test_no_shipped_surface_claims_a_ros2_observer_cannot_tell_the_rtps_path_apart() -> None:

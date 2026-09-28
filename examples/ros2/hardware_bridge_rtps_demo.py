@@ -19,7 +19,7 @@ ROS 2 node, rviz, or `ros2 topic echo` reads this exactly as it reads the rclpy
 bridge or a real hardware node. The graph metadata differs - a bare participant
 has no ROS 2 node name and no type hash, so `ros2 node list` does not list it and
 `ros2 topic info -v` reports `_CREATED_BY_BARE_DDS_APP_` with an `INVALID` type
-hash (docs/reference/ros2/rtps-robot.md#what-a-ros-2-node-can-still-tell-apart):
+hash (docs/learn/ros2.md#what-a-ros-2-node-can-still-tell-apart):
 
     ros2 topic echo /so101/joint_states
     ros2 topic pub --once /so101/joint_command sensor_msgs/msg/JointState \

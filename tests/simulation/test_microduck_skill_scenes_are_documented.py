@@ -1,6 +1,6 @@
 """Every Microduck skill the page advertises names the scene it needs.
 
-``docs/reference/policies/microduck.md`` opens by listing the nine shipped Pollen weights
+``docs/learn/policies/microduck.md`` opens by listing the nine shipped Pollen weights
 :class:`~strands_robots.policies.microduck.MicroduckPolicy` wraps and says they
 drive the biped "through the standard ``Robot(...).run_policy`` seam - in MuJoCo
 or on hardware". Five of those nine run on the scene the registry entry declares.
@@ -46,6 +46,7 @@ is a public-API decision rather than a docs fix.
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import re
 from pathlib import Path
 from typing import Any
@@ -56,7 +57,7 @@ import pytest
 from strands_robots.policies.microduck import MICRODUCK_DEFAULT_POSE, MICRODUCK_JOINT_NAMES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-PAGE = REPO_ROOT / "docs" / "reference" / "policies" / "microduck.md"
+PAGE = REPO_ROOT / "docs" / "learn" / "policies" / "microduck.md"
 
 #: The directory the ``microduck`` entry downloads into, and the scene it names.
 ASSET_DIR = "microduck"
@@ -64,6 +65,10 @@ DEFAULT_SCENE = "scene.xml"
 
 #: A skill list shorter than this means the opening paragraph stopped listing
 #: weights, so the cross-reference below would pass by having nothing to check.
+#: The page spells the nine weights as seven names, two of them globs
+#: (``ball_kick_*``, ``roller*``), so the opening is counted in patterns and the
+#: table, which enumerates, is counted in skills.
+MINIMUM_ADVERTISED = 7
 MINIMUM_SKILLS = 9
 
 #: Fewer rows than this means the table stopped covering the scenes, so the
@@ -82,7 +87,7 @@ TRAINED_BALL_ABS_Y = 0.042
 #: The asset's own comment calls the current values "STAND2" because they
 #: supersede an earlier ``STAND`` commented out beside them; the live keyframe
 #: kept the name, so ``keyframe="STAND2"`` is refused.
-STANCE_HEADING = "### The stance every weight was trained in"
+STANCE_HEADING = re.compile(r"^#{2,3} .*\bstance\b.*$", re.IGNORECASE | re.MULTILINE)
 STANCE_KEYFRAME = "STAND"
 
 #: The one scene a ball kick needs, and the one that declares no keyframe.
@@ -100,46 +105,77 @@ def _page() -> str:
     return PAGE.read_text(encoding="utf-8")
 
 
-def _section(text: str, heading: str) -> str:
-    """Return one ``##`` section's body, so a rule reads only its own prose."""
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    end = rest.find("\n## ")
-    return rest if end == -1 else rest[:end]
+def _section(text: str, heading: re.Pattern[str], expected: str) -> str:
+    """Return the body of the first section whose heading matches, refusing by name.
+
+    The new tree does not fix heading text, so a section is found by what its
+    heading is about (``heading``) and the body runs to the next heading of the
+    same or a higher level. A page with no such heading fails naming ``expected``
+    rather than surfacing ``ValueError: substring not found``.
+    """
+    match = heading.search(text)
+    assert match is not None, f"{PAGE.name} has no heading about {expected}"
+    level = len(match.group(0)) - len(match.group(0).lstrip("#"))
+    rest = text[match.end() :]
+    following = re.search(rf"^#{{1,{level}}} ", rest, re.MULTILINE)
+    return rest if following is None else rest[: following.start()]
 
 
 def _advertised_skills(text: str) -> set[str]:
-    """The weights named in the opening sentence's parenthetical.
+    """The weights named in the opening's parenthetical, as names or globs.
 
-    The list is read from the parenthetical that follows "policies", rather than
-    from the whole opening: the paragraph below it names metadata fields
-    (``joint_names``, ``action_scale``) in the same backticked style, and those
-    are not skills. Anchoring on the structure keeps the rule derived - a tenth
-    weight added to the list is graded - where a list of names to ignore would
-    have to be edited every time the prose grew.
+    The list is read from the parenthetical that follows "ONNX actors" (the old
+    page said "policies"), rather than from the whole opening: the paragraph
+    around it names metadata fields (``joint_names``, ``action_scale``) in the
+    same backticked style, and those are not skills. Anchoring on the structure
+    keeps the rule derived - a tenth weight added to the list is graded - where a
+    list of names to ignore would have to be edited every time the prose grew.
 
-    A pair is spelled ``ball_kick_left``/``ball_kick_right`` inside one span
-    pair, so each backticked run is split on ``/`` rather than taken whole.
+    A pair may be spelled ``ball_kick_left``/``ball_kick_right`` inside one span,
+    so each backticked run is split on ``/``; a family may be spelled as a glob
+    (``roller*``), which :func:`_advertises` matches against the table's names.
     """
-    opening = text[: text.index("## Walking in MuJoCo")]
-    start = opening.index("policies (") + len("policies (")
-    listed = opening[start : opening.index(")", start)]
+    opening = re.search(r"(?:ONNX actors|policies) \(([^)]*)\)", text)
+    assert opening is not None, f"{PAGE.name} no longer lists the shipped weights in its opening"
     return {
         token.strip()
-        for span in re.findall(r"`([^`]+)`", listed)
+        for span in re.findall(r"`([^`]+)`", opening.group(1))
         for token in span.split("/")
-        if re.fullmatch(r"[a-z][a-z0-9_]*", token.strip())
+        if re.fullmatch(r"[a-z][a-z0-9_*]*", token.strip())
     }
 
 
+def _advertises(patterns: set[str], skill: str) -> bool:
+    """Whether a table skill is covered by one of the opening's names or globs."""
+    return any(fnmatch.fnmatchcase(skill, pattern) for pattern in patterns)
+
+
 def _scene_table(text: str) -> dict[str, str]:
-    """Map every skill named in the Skill scenes table to the scene it needs."""
+    """Map every skill named in the skill-to-scene table to the scene it needs.
+
+    The table is the one whose header row has a ``skill`` and a ``scene`` column,
+    wherever on the page it sits.
+    """
     rows: dict[str, str] = {}
-    for line in _section(text, "## Skill scenes").splitlines():
-        if not line.startswith("|") or "---" in line:
+    lines = text.splitlines()
+    header = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.startswith("|")
+            and {"skill", "scene"} <= {cell.strip().lower() for cell in line.strip("|").split("|")}
+        ),
+        None,
+    )
+    if header is None:
+        return rows
+    for line in lines[header + 1 :]:
+        if not line.startswith("|"):
+            break
+        if "---" in line:
             continue
         cells = [cell.strip() for cell in line.strip("|").split("|")]
-        if len(cells) < 2 or cells[0] == "skill":
+        if len(cells) < 2:
             continue
         scene = re.search(r"`([A-Za-z0-9_]+\.xml)`", cells[1])
         if scene is None:
@@ -147,6 +183,13 @@ def _scene_table(text: str) -> dict[str, str]:
         for skill in re.findall(r"`([a-z][a-z0-9_]*)`", cells[0]):
             rows[skill] = scene.group(1)
     return rows
+
+
+def _scene_for(skill: str) -> str:
+    """The scene the table names for ``skill``, refusing by name when the row is missing."""
+    table = _scene_table(_page())
+    assert skill in table, f"the skill-to-scene table on {PAGE.name} names no scene for `{skill}`; rows: {table}"
+    return table[skill]
 
 
 def _scene_path(scene: str) -> Path:
@@ -173,12 +216,9 @@ def _scene_model(scene: str):
     return mujoco, mujoco.MjModel.from_xml_path(str(_scene_path(scene)))
 
 
-def _subsection(text: str, heading: str) -> str:
-    """Return one ``###`` subsection's body, so a rule reads only its own prose."""
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    ends = [offset for offset in (rest.find("\n### "), rest.find("\n## ")) if offset != -1]
-    return rest if not ends else rest[: min(ends)]
+def _stance_section(text: str) -> str:
+    """The subsection that documents the trained stance and its keyframe."""
+    return _section(text, STANCE_HEADING, "the stance every weight was trained in")
 
 
 @contextlib.contextmanager
@@ -233,19 +273,13 @@ def _ball_bodies(mujoco, model) -> list[str]:
     return [name for name in names if name and "ball" in name]
 
 
-#: The subsection the placement invariant lives in.
-PLACEMENT_HEADING = "### The ball scene carries the ball, not the kick geometry"
+#: The subsection the placement invariant lives in: the heading is about the ball.
+PLACEMENT_HEADING = re.compile(r"^#{2,3} .*\bball\b.*$", re.IGNORECASE | re.MULTILINE)
 
 
 def _placement_section(text: str) -> str:
-    """The placement paragraph, refusing by name when the heading is gone.
-
-    ``_section`` resolves with ``str.index``, so a renamed heading would surface
-    as ``ValueError: substring not found`` and name nothing. Asserting presence
-    first means a rename fails saying which heading it could not find.
-    """
-    assert PLACEMENT_HEADING in text, f"the page no longer carries {PLACEMENT_HEADING!r}"
-    return _section(text, PLACEMENT_HEADING)
+    """The placement paragraph, refusing by name when no heading is about the ball."""
+    return _section(text, PLACEMENT_HEADING, "the ball scene's placement of the ball")
 
 
 def _declared_ball_position(mujoco, model) -> list[float]:
@@ -266,7 +300,16 @@ class TestThePageNamesASceneForEverySkill:
     def test_the_opening_paragraph_still_lists_the_shipped_weights(self) -> None:
         """Non-vacuity: the cross-reference needs a skill list to check."""
         skills = _advertised_skills(_page())
-        assert len(skills) >= MINIMUM_SKILLS, f"expected at least {MINIMUM_SKILLS} skills, found {sorted(skills)}"
+        assert len(skills) >= MINIMUM_ADVERTISED, (
+            f"expected at least {MINIMUM_ADVERTISED} skill names or globs, found {sorted(skills)}"
+        )
+
+    def test_the_table_enumerates_every_shipped_weight(self) -> None:
+        """Non-vacuity: the globs in the opening are resolved by the table, so it must enumerate."""
+        skills = set(_scene_table(_page()))
+        assert len(skills) >= MINIMUM_SKILLS, (
+            f"expected the skill-to-scene table to name at least {MINIMUM_SKILLS} skills, found {sorted(skills)}"
+        )
 
     def test_the_table_still_covers_more_than_the_default_scene(self) -> None:
         """Non-vacuity: a one-row table would name no variant to verify."""
@@ -276,13 +319,17 @@ class TestThePageNamesASceneForEverySkill:
     def test_every_advertised_skill_appears_in_the_scene_table(self) -> None:
         """A weight advertised without a scene is the gap this file closes."""
         text = _page()
-        unnamed = sorted(_advertised_skills(text) - set(_scene_table(text)))
+        table = set(_scene_table(text))
+        unnamed = sorted(
+            pattern for pattern in _advertised_skills(text) if not any(_advertises({pattern}, skill) for skill in table)
+        )
         assert not unnamed, f"advertised with no scene named: {unnamed}"
 
     def test_the_table_names_no_skill_the_page_does_not_advertise(self) -> None:
         """Over-reach guard: the table describes the page, not a wider set."""
         text = _page()
-        unadvertised = sorted(set(_scene_table(text)) - _advertised_skills(text))
+        advertised = _advertised_skills(text)
+        unadvertised = sorted(skill for skill in _scene_table(text) if not _advertises(advertised, skill))
         assert not unadvertised, f"in the table but never advertised: {unadvertised}"
 
 
@@ -303,27 +350,25 @@ class TestTheTablesClaimsAreTrueOfTheAssets:
 
     def test_a_roller_skill_is_pointed_at_a_scene_that_has_wheels(self) -> None:
         """The rollers scene adds the four passive ankle wheels."""
-        scene = _scene_table(_page())["roller"]
+        scene = _scene_for("roller")
         assert scene != DEFAULT_SCENE, "roller must not be pointed at the wheel-less default"
         mujoco, model = _scene_model(scene)
         assert len(_wheel_joints(mujoco, model)) == 4
 
     def test_a_ball_kick_skill_is_pointed_at_a_scene_that_has_a_ball(self) -> None:
         """The ball scene carries the prop. Where it sits is graded separately."""
-        scene = _scene_table(_page())["ball_kick_left"]
+        scene = _scene_for("ball_kick_left")
         assert scene != DEFAULT_SCENE, "ball_kick must not be pointed at the ball-less default"
         mujoco, model = _scene_model(scene)
         assert _ball_bodies(mujoco, model) == ["ball"]
 
     def test_the_two_roller_skills_share_one_scene(self) -> None:
         """Both roller weights want the same wheels; one row covers them."""
-        table = _scene_table(_page())
-        assert table["roller"] == table["roller_crouch"]
+        assert _scene_for("roller") == _scene_for("roller_crouch")
 
     def test_the_two_ball_kick_skills_share_one_scene(self) -> None:
         """One scene carries the prop for both; the side is the policy's."""
-        table = _scene_table(_page())
-        assert table["ball_kick_left"] == table["ball_kick_right"]
+        assert _scene_for("ball_kick_left") == _scene_for("ball_kick_right")
 
 
 class TestTheJointLayoutClaimsHold:
@@ -345,7 +390,7 @@ class TestTheJointLayoutClaimsHold:
     def test_the_ball_scene_leaves_the_robots_position_slice_alone(self) -> None:
         """The ball's free joint is appended, so ``qpos[7:21]`` still holds."""
         mujoco, default = _scene_model(DEFAULT_SCENE)
-        _, ball = _scene_model(_scene_table(_page())["ball_kick_left"])
+        _, ball = _scene_model(_scene_for("ball_kick_left"))
 
         def layout(model) -> dict[str, int]:
             return {
@@ -360,7 +405,7 @@ class TestTheJointLayoutClaimsHold:
     def test_the_rollers_scene_moves_nine_of_the_fourteen_joints(self) -> None:
         """The count the page and the asset-shape guard both state."""
         mujoco, default = _scene_model(DEFAULT_SCENE)
-        _, rollers = _scene_model(_scene_table(_page())["roller"])
+        _, rollers = _scene_model(_scene_for("roller"))
 
         def layout(model) -> dict[str, int]:
             return {
@@ -376,7 +421,7 @@ class TestTheJointLayoutClaimsHold:
     def test_the_wheels_land_where_the_page_says_the_head_joints_sit(self) -> None:
         """The concrete mis-read the page warns a slice reader about."""
         mujoco, default = _scene_model(DEFAULT_SCENE)
-        _, rollers = _scene_model(_scene_table(_page())["roller"])
+        _, rollers = _scene_model(_scene_for("roller"))
 
         def at(model, addresses: set[int]) -> list[str]:
             return [
@@ -410,7 +455,7 @@ class TestThePageSaysTheSceneDoesNotPlaceTheBallWhereTrainingDid:
         Both axes differ. Forward, the scene is more than twice the trained offset;
         laterally it is centred where training offset the ball to the kicking foot.
         """
-        mujoco, model = _scene_model(_scene_table(_page())["ball_kick_left"])
+        mujoco, model = _scene_model(_scene_for("ball_kick_left"))
         forward, lateral, _height = _declared_ball_position(mujoco, model)
         assert forward > 2 * TRAINED_BALL_OFFSET_X, (
             f"the scene declares the ball {forward} m ahead, which is no longer far "
@@ -422,7 +467,7 @@ class TestThePageSaysTheSceneDoesNotPlaceTheBallWhereTrainingDid:
     def test_the_page_records_the_trained_offset_and_the_scenes_own_position(self) -> None:
         """Both numbers, so a reader can see the gap rather than take it on trust."""
         section = _placement_section(_page())
-        mujoco, model = _scene_model(_scene_table(_page())["ball_kick_left"])
+        mujoco, model = _scene_model(_scene_for("ball_kick_left"))
         forward = _declared_ball_position(mujoco, model)[0]
         for number in (f"{forward} m", f"{TRAINED_BALL_OFFSET_X} m", f"{TRAINED_BALL_ABS_Y} m"):
             assert number in section, f"the placement paragraph does not state {number}"
@@ -446,17 +491,17 @@ class TestThePageDocumentsTheTrainedStance:
 
     def test_the_section_names_the_keyframe_that_reaches_the_stance(self) -> None:
         """A reader who cannot name the keyframe cannot reach the stance."""
-        body = _subsection(_page(), STANCE_HEADING)
+        body = _stance_section(_page())
         assert f'keyframe="{STANCE_KEYFRAME}"' in body
 
     def test_the_section_names_the_constant_rather_than_repeating_the_pose(self) -> None:
         """A copied pose drifts: the asset has already revised this one."""
-        body = _subsection(_page(), STANCE_HEADING)
+        body = _stance_section(_page())
         assert "MICRODUCK_DEFAULT_POSE" in body
 
     def test_the_section_names_the_scene_where_the_route_is_unavailable(self) -> None:
         """The one scene a ball kick needs declares no keyframe at all."""
-        assert BALL_SCENE in _subsection(_page(), STANCE_HEADING)
+        assert BALL_SCENE in _stance_section(_page())
 
 
 class TestTheStanceClaimsAreTrueOfTheAssets:

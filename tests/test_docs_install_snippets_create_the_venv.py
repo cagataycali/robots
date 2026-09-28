@@ -15,9 +15,12 @@ Only commands inside fenced code blocks are graded: prose may name
 ``uv pip install`` while explaining the rule, and that mention is not a step a
 reader runs.
 
-Feature pages (``docs/reference/mesh.md``, ``docs/reference/policies/*.md``, ...) are out of scope:
-they layer one extra onto an environment the reader already has, and
-``docs/getting-started/installation.md`` states the rule once for all of them.
+Feature pages (``docs/learn/**``) are out of scope: they layer one extra onto an
+environment the reader already has, and ``docs/start/install.md`` states the
+rule once for all of them. ``docs/start/doctor.md`` quotes a doctor report whose
+SKIP line names a ``uv pip install`` remedy; that is output, not a step, so it
+is out of scope too. The landing page's install line is plain ``pip install``,
+which the rule does not concern.
 """
 
 from __future__ import annotations
@@ -31,10 +34,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Pages a reader reaches before they have an environment.
 ENTRY_POINTS = (
     "README.md",
-    "docs/index.md",
-    "docs/getting-started/installation.md",
-    "docs/getting-started/quickstart.md",
-    "docs/reference/contributing.md",
+    "docs/start/install.md",
+    "docs/project/contributing.md",
 )
 
 

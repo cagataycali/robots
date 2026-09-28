@@ -30,8 +30,9 @@ block containing the words "Multicast scouting is ON" passes on its own merits.
 
 Scope: the prose surfaces that describe *this* transport
 --------------------------------------------------------
-Every module under :mod:`strands_robots.mesh`, ``docs/reference/mesh.md``, and the repository
-diagrams. Device Connect's D2D pages are deliberately outside it, and that is a
+Every module under :mod:`strands_robots.mesh`, the mesh pages under
+``docs/learn/mesh/`` (the old ``docs/reference/mesh.md`` guide redirects there; the
+discovery prose sits on ``index.md``), and the repository diagrams. Device Connect's D2D pages are deliberately outside it, and that is a
 measured boundary rather than an exemption:
 :class:`strands_robots.device_connect.RobotDeviceDriver` and its siblings
 configure no Zenoh session at all - the package reads no scouting key, imports no
@@ -148,7 +149,7 @@ def _prose_surfaces() -> list[Path]:
     """The prose that describes the ``strands_robots.mesh`` transport."""
     candidates = [
         *_MESH_PKG.rglob("*.py"),
-        _REPO_ROOT / "docs" / "reference" / "mesh.md",  # the mesh guide (posture prose moved out of README)
+        *(_REPO_ROOT / "docs" / "learn" / "mesh").glob("*.md"),  # the mesh guide (posture prose moved out of README)
         *(_REPO_ROOT / "examples").rglob("*.svg"),
         *(_REPO_ROOT / "docs").rglob("*.svg"),
     ]
@@ -194,7 +195,8 @@ class TestTheCorpusIsRealRatherThanEmpty:
             "strands_robots/mesh/core.py",
             "strands_robots/mesh/session.py",
             "strands_robots/mesh/iot/camera_offload.py",
-            "docs/reference/mesh.md",
+            "docs/learn/mesh/index.md",
+            "docs/learn/mesh/bridges.md",
             "examples/lerobot/architecture.svg",
         ):
             assert expected in relative, f"{expected} dropped out of the scanned scope"

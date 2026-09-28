@@ -16,8 +16,8 @@ their episode index.
 The rest of the package already documents the three-step form: the
 ``run_policy(n_episodes=...)`` docstring and its implementation comment both
 describe the manual loop it replaces as ``run_policy(); save_episode();
-reset()``, ``docs/reference/recording.md`` resets at the top of its loop and explains
-``reset()``'s own episode-boundary behaviour, and
+reset()``, ``docs/learn/data/record.md`` records its episodes through the
+first-class ``run_policy(n_episodes=..., reset_between=True)`` form, and
 :mod:`strands_robots.policies.persistent` shows the same three calls. This guard
 holds the remaining publication sites to that form.
 
@@ -29,10 +29,10 @@ starts and fails; nothing about the wording is asserted. The arguments the
 recipes elide as ``...`` are supplied by this module: it is the sequence of
 calls that is under test.
 
-The Newton recipe is executed on the MuJoCo engine because the shape of the
-defect is backend-independent - ``save_episode`` is the shared facade method on
-every backend and none of them reset - and MuJoCo is the reference backend
-available without a solver install.
+The docs tree no longer publishes a hand-stepped collection loop (the Newton
+scenes guide that carried one was folded into ``learn/simulation/newton.md``
+without it), so the executed recipe is the one ``save_episode``'s docstring
+embeds; the docs pages are held to the first-class form by text.
 """
 
 from __future__ import annotations
@@ -101,25 +101,8 @@ def _save_episode_docstring_recipe() -> str:
     return match.group(0)
 
 
-def _newton_doc_recipe() -> str:
-    """The collection block in the Newton scenes guide."""
-    text = (_REPO_ROOT / "docs" / "reference" / "simulation" / "newton-scenes.md").read_text(encoding="utf-8")
-    blocks = [
-        block
-        for block in re.findall(r"```python\n(.*?)```", text, re.S)
-        if "start_recording" in block and "save_episode" in block
-    ]
-    assert len(blocks) == 1, (
-        "premise: expected exactly one collection block in "
-        f"docs/reference/simulation/newton-scenes.md, found {len(blocks)}. A guard that matches "
-        "no block, or the wrong one, would pass without grading the recipe."
-    )
-    return blocks[0]
-
-
 _RECIPES = {
     "save_episode docstring": _save_episode_docstring_recipe,
-    "docs/reference/simulation/newton-scenes.md": _newton_doc_recipe,
 }
 
 
@@ -232,14 +215,19 @@ class TestTheSitesThatAlreadyPublishTheResetKeepIt:
         [
             "strands_robots/simulation/base.py",
             "strands_robots/policies/persistent.py",
-            "docs/reference/recording.md",
+            "docs/learn/data/record.md",
         ],
     )
     def test_the_manual_loop_is_named_with_its_reset(self, relative_path: str) -> None:
+        """A site names ``reset()`` in its loop, or records through ``reset_between=True``.
+
+        The second spelling is the first-class multi-episode API, measured above
+        to start every episode from the scene pose; the record page publishes it.
+        """
         text = (_REPO_ROOT / relative_path).read_text(encoding="utf-8")
         assert "save_episode" in text, f"premise: {relative_path} no longer mentions save_episode"
-        assert "reset()" in text, (
-            f"{relative_path} documents the manual collection loop but no longer "
-            "names reset(). Dropping it reintroduces the bimodal start-state "
-            "distribution this module measures."
+        assert "reset()" in text or "reset_between=True" in text, (
+            f"{relative_path} documents the multi-episode collection loop but names neither "
+            "reset() nor reset_between=True. Dropping the reset reintroduces the bimodal "
+            "start-state distribution this module measures."
         )

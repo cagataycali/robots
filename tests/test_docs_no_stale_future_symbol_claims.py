@@ -4,7 +4,7 @@ A page written while a symbol was still a plan keeps that sentence after the
 symbol lands. The reader who stops at the sentence walks away believing a
 capability is unavailable, and nothing in the toolchain notices: ruff, mypy and
 the xref guards all check symbols the docs *name*, never claims about whether a
-named symbol exists yet. ``docs/reference/policies/wbc.md`` said layering an upper body on
+named symbol exists yet. ``docs/reference/policies/wbc.md`` (now ``docs/learn/policies/wbc.md``) said layering an upper body on
 WBC locomotion "is the job of a future ``CompositePolicy``, out of scope for this
 provider" for two months after ``CompositePolicy`` landed - and the same page
 documented it, with a runnable example and a rollout artifact, 260 lines further
@@ -18,10 +18,10 @@ behind an optional extra is still resolved.
 Two deliberate narrowings, each measured against the current tree:
 
 * ``is planned`` is not a marker. "The full collision-free trajectory is planned
-  and cached on the first call" (``docs/reference/policies/curobo.md``) is the domain verb,
+  and cached on the first call" (``docs/learn/policies/curobo.md``) is the domain verb,
   not a roadmap claim.
 * ``future`` must not open a hyphenated compound. "the lookahead offsets for the
-  future-reference window" (``docs/reference/policies/protomotions.md``) describes a
+  future-reference window" (``docs/learn/policies/protomotions.md``) describes a
   window, not a plan.
 
 A claim about a name the package does not define is left alone: it is either
@@ -62,9 +62,10 @@ _BACKTICKED_SYMBOL = re.compile(r"`([A-Z][A-Za-z0-9]*)`")
 _FENCE = re.compile(r"^\s*```")
 _ABBREVIATION = re.compile(r"\b(?:e\.g|i\.e|etc|vs|cf|approx)\.$", re.IGNORECASE)
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
-#: A link to a section, on the page itself (``(#anchor)``) or on another docs
-#: page (``(sibling.md#anchor)``): group 1 is the page, group 2 the anchor.
-_SECTION_LINK = re.compile(r"\[[^\]]*\]\(([\w./-]*)#([a-z0-9-]+)\)")
+#: A link to a docs page or section: on the page itself (``(#anchor)``) or on
+#: another docs page (``(sibling.md)`` or ``(sibling.md#anchor)``): group 1 is
+#: the page, group 2 the anchor (empty when the link is to the whole page).
+_SECTION_LINK = re.compile(r"\[[^\]]*\]\((?:([\w./-]+\.md)(?:#([a-z0-9-]+))?|#([a-z0-9-]+))\)")
 
 
 def _defined_symbols() -> dict[str, str]:
@@ -226,7 +227,7 @@ class TestNoDocsPageCallsAShippedSymbolFuture:
         """A clean result must mean the docs are right, not that nothing was read."""
         pages = _docs_pages()
         assert len(pages) > 50, f"only {len(pages)} docs pages were read"
-        assert DOCS_DIR / "reference" / "policies" / "wbc.md" in pages
+        assert DOCS_DIR / "learn" / "policies" / "wbc.md" in pages
         assert len(_defined_symbols()) > 100, "the package symbol index is suspiciously small"
         # The sweep is exercised on a known bad-shaped sentence rather than on
         # the live tree: a docs tree with no not-yet claim at all is the goal
@@ -263,38 +264,45 @@ class TestNoDocsPageCallsAShippedSymbolFuture:
 
 
 class TestTheWBCPagePointsAtTheCompositeSection:
-    """The intro sends a reader to the section that shows how to compose.
+    """The WBC page sends a reader who wants an upper body to where composing is documented.
 
-    The section is free to live on another page - a link that names one is
-    resolved and read there - but it has to exist and to carry the call.
+    The old page carried a "Composing an upper body" section of its own; the
+    new one names ``CompositePolicy`` in its intro and the class is documented
+    on the API reference (mkdocstrings) and described in the provider matrix.
+    The mention has to link one of those, or the sentence is a dead end again.
     """
 
-    _PAGE = DOCS_DIR / "reference" / "policies" / "wbc.md"
+    _PAGE = DOCS_DIR / "learn" / "policies" / "wbc.md"
 
     @pytest.fixture
     def page(self) -> str:
         return self._PAGE.read_text(encoding="utf-8")
 
     def _linked_sections(self, page: str) -> list[tuple[Path, str, str]]:
-        """Every section the intro's composite paragraph links, as (path, anchor, text)."""
+        """Every page or section the composite paragraph links, as (path, anchor, text)."""
         intro = next(p for _, p in _prose_blocks(page) if "CompositePolicy" in p)
         links = _SECTION_LINK.findall(intro)
-        assert links, f"the intro names CompositePolicy without linking the section: {intro}"
+        assert links, (
+            f"wbc.md names CompositePolicy without linking where it is documented "
+            f"(reference/api/policies.md or the provider matrix): {intro}"
+        )
         resolved = []
-        for target, anchor in links:
+        for target, anchor, own_anchor in links:
             path = (self._PAGE.parent / target).resolve() if target else self._PAGE
-            resolved.append((path, anchor, path.read_text(encoding="utf-8")))
+            assert path.is_file(), f"the composite paragraph links {target}, which is not a docs page"
+            resolved.append((path, anchor or own_anchor, path.read_text(encoding="utf-8")))
         return resolved
 
     def test_the_first_composite_mention_links_a_heading_that_exists(self, page: str) -> None:
         for path, anchor, text in self._linked_sections(page):
-            assert anchor in _anchors(text), f"the intro links #{anchor}, which is not a heading of {path.name}"
+            if anchor:
+                assert anchor in _anchors(text), f"the intro links #{anchor}, which is not a heading of {path.name}"
 
     def test_the_composite_section_it_points_at_shows_the_call(self, page: str) -> None:
-        """The linked section is the one carrying the runnable composite."""
+        """The linked page is one that documents the composite: the class or a call."""
         carriers = [
             path.name
             for path, _, text in self._linked_sections(page)
-            if "## Composing an upper body" in text and "CompositePolicy(" in text
+            if "::: strands_robots.policies.composite.CompositePolicy" in text or "CompositePolicy(" in text
         ]
-        assert carriers, "no page the intro links shows a runnable CompositePolicy(...) composite section"
+        assert carriers, "no page the WBC intro links documents CompositePolicy (mkdocstrings block or a call)"

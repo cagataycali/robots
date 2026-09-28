@@ -11,7 +11,9 @@ never sees the peers of the other fleet cannot deduce the knob from the
 symptom.
 
 Until this file's companion change, ``STRANDS_MESH_NAMESPACE`` was named on
-neither the README environment-variable matrix nor ``docs/reference/security.md``. The
+neither the README environment-variable matrix nor the mesh security page. In the
+new tree the matrix is ``docs/reference/configuration.md`` rendered through
+``docs/hooks/env_vars.py`` and the prose surface is ``docs/learn/mesh/topics.md``. The
 default value (``"strands"``) is a documented default an operator overriding
 fleet isolation needs to know before they change it, because a rolling change
 across a fleet leaves the two halves unable to see each other for the duration
@@ -53,20 +55,55 @@ non-empty value is honoured verbatim.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import pathlib
 import re
+import sys
 
 from strands_robots.mesh import _zenoh_config
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "_zenoh_config.py"
-_PAGE = _ROOT / "docs" / "reference" / "security" / "mesh.md"
+_PAGE = _ROOT / "docs" / "learn" / "mesh" / "topics.md"
 _README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
+_HOOK = _ROOT / "docs" / "hooks" / "env_vars.py"
 
-_HEADING = "### Fleet routing isolation (namespace)"
 _PREFIX = "STRANDS_MESH_NAMESPACE"
 _KNOWN = frozenset({"STRANDS_MESH_NAMESPACE"})
 _DEFAULT = "strands"
+
+
+def _matrix_text() -> str:
+    """The configuration page with ``{{env_vars}}`` expanded by the shipped hook.
+
+    The hook writes variables as ``<code>VAR</code>``; the text is folded to the
+    backticks a hand-written row uses so the row rules read either spelling.
+    """
+    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _HOOK)
+    assert spec is not None and spec.loader is not None
+    module = sys.modules.get(spec.name) or importlib.util.module_from_spec(spec)
+    if spec.name not in sys.modules:
+        sys.modules[spec.name] = module  # dataclasses in the hook resolve their module here
+        spec.loader.exec_module(module)
+    source = _README.read_text(encoding="utf-8")
+    rendered = module.on_page_markdown(source, page=None, config=None, files=None)
+    assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"
+    return rendered.replace("<code>", "`").replace("</code>", "`")
+
+
+def _namespace_section() -> str:
+    """The section of the prose page that names ``STRANDS_MESH_NAMESPACE``.
+
+    The new tree has no heading dedicated to the namespace; the paragraph lives
+    where the key prefix is introduced. The section is the run of text between
+    the ``##`` headings around the first mention, so the content rules read the
+    prose about the variable and nothing else on the page.
+    """
+    page_text = _PAGE.read_text(encoding="utf-8")
+    sections = re.split(r"^## .*$", page_text, flags=re.MULTILINE)
+    named = [section for section in sections if _PREFIX in section]
+    assert named, f"{_PAGE.relative_to(_ROOT)} does not name {_PREFIX} in any section"
+    return named[0]
 
 
 def _namespace_env_reads() -> frozenset[str]:
@@ -120,7 +157,7 @@ def test_every_namespace_variable_the_module_reads_has_a_readme_matrix_row() -> 
     with no discoverable entry.
     """
     reads = _namespace_env_reads()
-    readme_text = _README.read_text(encoding="utf-8")
+    readme_text = _matrix_text()
     missing = sorted(name for name in reads if f"`{name}`" not in readme_text)
     assert not missing, f"README matrix is missing rows for: {missing}"
 
@@ -135,7 +172,7 @@ def test_every_namespace_variable_the_module_reads_is_named_on_the_security_page
     reads = _namespace_env_reads()
     page_text = _PAGE.read_text(encoding="utf-8")
     missing = sorted(name for name in reads if name not in page_text)
-    assert not missing, f"docs/reference/security/mesh.md is missing names for: {missing}"
+    assert not missing, f"docs/learn/mesh/topics.md is missing names for: {missing}"
 
 
 def test_the_security_page_names_the_default_namespace() -> None:
@@ -146,15 +183,8 @@ def test_the_security_page_names_the_default_namespace() -> None:
     track. An operator overriding it needs the default named to know what
     they are diverging from.
     """
-    page_text = _PAGE.read_text(encoding="utf-8")
-    # Find the namespace section and grade its content specifically.
-    section_match = re.search(
-        rf"{re.escape(_HEADING)}\n\n(.*?)(?=\n### |\n## |\Z)",
-        page_text,
-        re.DOTALL,
-    )
-    assert section_match, f"heading '{_HEADING}' is missing from docs/reference/security/mesh.md"
-    section = section_match.group(1)
+    # Grade the namespace section's content specifically.
+    section = _namespace_section()
     assert _DEFAULT in section, (
         f"the namespace section names the variable but not its default {_DEFAULT!r}; "
         "operators overriding fleet isolation need the default named to know what "
@@ -172,18 +202,13 @@ def test_the_security_page_names_the_silent_mismatch_failure_mode() -> None:
     A documentation change that named the variable and did not name that
     property would leave the operator without the diagnostic hook.
     """
-    page_text = _PAGE.read_text(encoding="utf-8")
-    section_match = re.search(
-        rf"{re.escape(_HEADING)}\n\n(.*?)(?=\n### |\n## |\Z)",
-        page_text,
-        re.DOTALL,
-    )
-    assert section_match, f"heading '{_HEADING}' is missing from docs/reference/security/mesh.md"
-    section = section_match.group(1).lower()
+    section = _namespace_section().lower()
     # The section must name the fact that a mismatch is silent / absent /
     # not-loud. Any of these phrasings satisfies the rule; the point is
     # that the operator reading the section learns the diagnostic hook.
-    silent_phrases = ("silent", "absent", "appears absent", "no application traffic")
+    # The same phrase set the matrix-row rule below accepts: "cannot exchange"
+    # is how the new topics page states that two prefixes never meet.
+    silent_phrases = ("silent", "absent", "appears absent", "no application traffic", "cannot exchange")
     matched = [phrase for phrase in silent_phrases if phrase in section]
     assert matched, (
         "the namespace section does not name the silent-mismatch failure mode; "
@@ -197,20 +222,24 @@ def test_the_security_page_names_the_silent_mismatch_failure_mode() -> None:
 def test_the_readme_row_names_the_default_and_the_silent_mismatch() -> None:
     """The README matrix row itself names the two facts that make the knob usable.
 
-    A caller who never opens docs/reference/security.md and only reads the matrix must
+    A caller who never opens docs/learn/mesh/topics.md and only reads the matrix must
     still learn (a) the default value, and (b) that a mismatch is silent --
     the two facts that make the variable actionable rather than a name.
     """
-    readme_text = _README.read_text(encoding="utf-8")
-    # Row starts at the pipe-and-backtick line; regex captures through the
-    # closing pipe of the default column (which ends with a bare newline).
+    readme_text = _matrix_text()
+    # The generated row is ``| variable | read by | default | meaning |``; the
+    # hand-written matrix was ``| variable | description | default |``. Either
+    # way the cells after the name are the description and the default, in
+    # whichever order, so both are searched for each fact.
     row_match = re.search(
-        r"^\| `STRANDS_MESH_NAMESPACE` \| ([^|]+) \| ([^|]+) \|",
+        r"^\| `STRANDS_MESH_NAMESPACE` \|((?: [^|\n]* \|)+)",
         readme_text,
         re.MULTILINE,
     )
     assert row_match, "README matrix has no row for STRANDS_MESH_NAMESPACE"
-    description, default_column = row_match.group(1), row_match.group(2)
+    cells = [cell.strip() for cell in row_match.group(1).strip().strip("|").split("|")]
+    description = " ".join(cells)
+    default_column = description
     assert _DEFAULT in default_column, (
         f"the STRANDS_MESH_NAMESPACE row's default column is {default_column!r}, does not name the {_DEFAULT!r} default"
     )

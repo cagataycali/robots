@@ -5,8 +5,10 @@
 ``create_policy("sonic")`` builds the same policy as
 ``create_policy("wbc")``. A caller who cannot enumerate those spellings has
 to already know them, which is the opposite of what a discovery surface is
-for -- and ``docs/reference/policies/overview.md`` points readers at
-``list_providers()`` as the way to list what ``create_policy`` accepts.
+for -- and ``docs/learn/policies/index.md`` tells readers the provider matrix's
+"Also spelled" column lists the shorthands ``create_policy`` accepts, while
+``docs/reference/api/policies.md`` renders ``list_aliases`` (whose docstring is
+the enumeration recipe) through mkdocstrings.
 
 The headline guard asks the question a caller actually has -- is every
 accepted spelling reported by *some* public discovery surface -- rather than
@@ -45,8 +47,13 @@ POLICIES_JSON = REPO_ROOT / "strands_robots" / "registry" / "policies.json"
 
 #: Docs that teach a caller how to enumerate accepted provider spellings.
 #: Graded as prose: a runnable snippet is a usage example, not a claim about
-#: which set is complete.
-_ENUMERATION_DOCS = ("docs/reference/api-reference.md", "docs/reference/policies/overview.md")
+#: which set is complete. The learn page teaches it in a level-2 section (the
+#: generated matrix plus the sentence about its "Also spelled" column), so the
+#: section is the block there; the reference page teaches it by rendering the
+#: ``list_aliases`` docstring, so the directive that renders it is the surface.
+_ENUMERATION_DOCS = ("docs/learn/policies/index.md",)
+_REFERENCE_DOC = "docs/reference/api/policies.md"
+_REFERENCE_DIRECTIVE = "::: strands_robots.policies.factory"
 
 #: Surfaces a caller can reach to discover provider spellings. Probed by name
 #: so this file collects (and the headline guard reports a real coverage gap)
@@ -194,10 +201,31 @@ def _names_the_spelling(text: str, spelling: str) -> bool:
 def _teaches_enumeration(text: str) -> bool:
     """Whether ``text`` tells a caller how to enumerate what the factory takes.
 
-    Both surfaces plus the factory: a block naming only one of them is
-    describing that function, not the accepted set.
+    Either the two surfaces plus the factory (the docstring recipe), or a
+    section that says which spellings ``create_policy`` accepts (the learn
+    page's matrix sentence). A block naming only one function is describing
+    that function, not the accepted set.
     """
-    return all(token in text for token in ("list_providers", "list_aliases", "create_policy"))
+    if all(token in text for token in ("list_providers", "list_aliases", "create_policy")):
+        return True
+    return "create_policy" in text and re.search(r"\baccepts\b", text) is not None and "spelled" in text
+
+
+def _sections(text: str) -> list[str]:
+    """Level-2 sections of a page, fences dropped, each as one block."""
+    sections: list[str] = []
+    for part in re.split(r"^## ", text, flags=re.M):
+        prose = " ".join(_prose_blocks(part))
+        if prose:
+            sections.append(prose)
+    return sections
+
+
+def _reference_renders(name: str) -> bool:
+    """Whether the API page's factory directive lists ``name`` among its members."""
+    text = (REPO_ROOT / _REFERENCE_DOC).read_text(encoding="utf-8")
+    block = re.search(rf"^{re.escape(_REFERENCE_DIRECTIVE)}\n((?:[ \t]+.*\n?)*)", text, re.M)
+    return block is not None and re.search(rf"^\s+-\s+{re.escape(name)}\s*$", block.group(1), re.M) is not None
 
 
 def _enumeration_surfaces() -> dict[str, str]:
@@ -210,9 +238,11 @@ def _enumeration_surfaces() -> dict[str, str]:
         found["strands_robots/policies/factory.py::list_aliases"] = docstring
     for relative in _ENUMERATION_DOCS:
         text = (REPO_ROOT / relative).read_text(encoding="utf-8")
-        for block in _prose_blocks(text):
+        for block in _sections(text):
             if _teaches_enumeration(block):
                 found[f"{relative}: {block[:56]}..."] = block
+    if _reference_renders("list_aliases") and _teaches_enumeration(docstring):
+        found[f"{_REFERENCE_DOC}: {_REFERENCE_DIRECTIVE} renders list_aliases"] = docstring
     return found
 
 
@@ -355,10 +385,13 @@ def test_the_enumeration_surfaces_are_found() -> None:
         f"list_aliases' own docstring no longer teaches enumeration, so the guard below grades "
         f"less than it claims; found: {sorted(surfaces)}"
     )
-    for relative in _ENUMERATION_DOCS:
+    for relative in (*_ENUMERATION_DOCS, _REFERENCE_DOC):
         assert any(key.startswith(relative) for key in surfaces), (
             f"{relative} no longer states the enumeration recipe in prose; found: {sorted(surfaces)}"
         )
+    assert _reference_renders("list_providers") and _reference_renders("create_policy"), (
+        f"{_REFERENCE_DOC} no longer renders the two functions the recipe names beside list_aliases"
+    )
 
 
 def test_every_enumeration_surface_names_the_unregistered_spellings() -> None:

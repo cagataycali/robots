@@ -87,6 +87,11 @@ curl -sL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-containe
 apt-get update && apt-get install -y nvidia-container-toolkit
 nvidia-ctk runtime configure --runtime=docker
 systemctl restart docker
+# run_smoke.sh fetches the unitree_g1 asset ON THIS HOST with
+# "python3 -m pip install --target". Ubuntu's python3 ships without pip and
+# without ensurepip, so without this the install fails with "No module named
+# pip" - a failure run_smoke.sh now aborts on rather than swallowing.
+apt-get install -y python3-pip
 touch /var/local/strands-bootstrap-done
 CLOUDINIT
 )

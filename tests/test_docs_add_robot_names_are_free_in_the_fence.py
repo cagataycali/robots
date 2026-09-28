@@ -8,8 +8,10 @@ a "second arm" therefore builds a one-arm world, and every line below it in the
 example runs against a scene the reader was not shown.
 
 This grades every ``python`` fence in ``docs/**/*.md`` and ``README.md``: the
-names ``Robot(...)`` and ``add_robot(...)`` register inside one fence must be
-pairwise distinct. Only string-literal names are graded; a name computed at
+names ``Robot(...)`` and ``add_robot(...)`` register on one engine variable must
+be pairwise distinct. Rebinding the variable (``sim = create_simulation(...)``
+again, or inside a factory function the fence defines) starts a new world, so a
+name is free again. Only string-literal names are graded; a name computed at
 runtime is not something this file can resolve.
 """
 
@@ -22,7 +24,8 @@ from pathlib import Path
 import strands_robots
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
-_PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+#: A python fence, with or without a title (``python title="sketch"``).
+_PYTHON_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
 
 
 def _documentation_files() -> list[Path]:
@@ -71,7 +74,10 @@ def _duplicate_names(source: str) -> list[str]:
 
     ``sim = Robot("so100")`` binds ``sim`` to a world holding ``"so100"``; a later
     ``sim.add_robot(...)`` may not ask for that name again, nor one an earlier
-    ``sim.add_robot`` took. A different variable is a different world.
+    ``sim.add_robot`` took. A different variable is a different world, and so is
+    the same variable bound again (``sim = create_simulation(...)``): the fence
+    on ``learn/policies/rl.md`` builds one engine inside ``make_env`` and a second
+    one after training, each with its own ``so101``.
     """
     try:
         tree = ast.parse(source)
@@ -80,10 +86,14 @@ def _duplicate_names(source: str) -> list[str]:
     taken: dict[str, set[str]] = {}
     duplicates: list[str] = []
     for node in sorted(ast.walk(tree), key=lambda n: (getattr(n, "lineno", 0), getattr(n, "col_offset", 0))):
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
-            if _callee_name(node.value) == "Robot" and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-                name = _factory_name(node.value)
-                taken[node.targets[0].id] = {name} if name else set()
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            # Any rebinding is a new object; a sim-mode Robot() seeds it with its own name.
+            name = (
+                _factory_name(node.value)
+                if isinstance(node.value, ast.Call) and _callee_name(node.value) == "Robot"
+                else None
+            )
+            taken[node.targets[0].id] = {name} if name else set()
         elif isinstance(node, ast.Call) and _callee_name(node) == "add_robot":
             func = node.func
             if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)):
@@ -116,3 +126,10 @@ def test_the_grader_sees_a_factory_name_reused_by_add_robot() -> None:
     fence = 'sim = Robot("so100")\nsim.add_robot(name="so100", position=[0.0, 0.5, 0.0])\n'
     assert _duplicate_names(fence) == ["so100"]
     assert _duplicate_names('sim = Robot("so100")\nsim.add_robot(name="arm2", data_config="so100")\n') == []
+
+
+def test_the_grader_sees_two_add_robots_on_one_engine_but_not_on_two() -> None:
+    twice = 'sim = create_simulation("mujoco")\nsim.add_robot("so101")\nsim.add_robot("so101")\n'
+    assert _duplicate_names(twice) == ["so101"]
+    rebound = 'sim = create_simulation("mujoco")\nsim.add_robot("so101")\nsim = create_simulation("mujoco")\nsim.add_robot("so101")\n'
+    assert _duplicate_names(rebound) == []

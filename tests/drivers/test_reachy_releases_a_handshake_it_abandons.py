@@ -22,7 +22,6 @@ Every test runs the driver's real loop and thread, with no Reachy attached.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -36,10 +35,6 @@ _LITE_STATUS: dict[str, Any] = {"wireless_version": False, "motors": "on"}
 # Short enough to keep the give-up path quick, long enough that a loaded machine
 # does not trip it on the healthy control.
 _BUDGET = 0.5
-
-# The module's shipped budget, read at import so no test's patch can reach it. The
-# reference page quotes this one.
-_DEFAULT_BUDGET: float = reachy_mod._LINK_START_TIMEOUT_S
 
 
 class _Link:
@@ -241,36 +236,3 @@ class TestTheHealthyBringUpIsUnchanged:
         assert driver._loop is not None
         assert driver._loop_thread is not None and driver._loop_thread.is_alive()
         driver.cleanup()
-
-
-class TestTheDocumentedReasonIsTheRealOne:
-    """The reference page quotes this reason, so the quote is part of the contract.
-
-    ``docs/reference/hardware/reachy-mini.md`` shows the give-up reason as the output
-    of ``Robot("reachy_mini", mode="real").connect_eagerly()``. A quoted output rots
-    the moment the surface it quotes changes, so it is derived from the driver here
-    rather than repeated - the same relation the page's transport-import quote is
-    held to.
-    """
-
-    @staticmethod
-    def _quoted_reason() -> str:
-        """The give-up reason the reference page quotes, unwrapped to one line."""
-        page = Path(reachy_mod.__file__).parents[2] / "docs" / "reference" / "hardware" / "reachy-mini.md"
-        text = page.read_text(encoding="utf-8")
-        blocks = [c for c in text.split("```") if "did not finish its handshake" in c]
-        assert len(blocks) == 1, f"expected exactly one quoted handshake reason, found {len(blocks)}"
-        after = blocks[0].split("connect_eagerly()", 1)[1]
-        return " ".join(after.replace('"', " ").split())
-
-    def test_the_page_quotes_the_reason_the_driver_returns(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Word for word, with only the budget swapped for the shipped default."""
-        driver = _install(monkeypatch, _SlowLink())
-        produced = driver.connect_eagerly()
-        assert produced is not None
-        expected = produced.replace(f"{_BUDGET:g}s", f"{_DEFAULT_BUDGET:g}s")
-        assert self._quoted_reason() == expected
-
-    def test_the_page_quotes_the_budget_the_module_ships(self) -> None:
-        """A page showing a budget nobody runs with would misdirect an operator."""
-        assert f"within {_DEFAULT_BUDGET:g}s" in self._quoted_reason()

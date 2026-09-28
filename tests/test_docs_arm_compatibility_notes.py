@@ -1,66 +1,69 @@
-"""Repo hygiene: the arms page's capability claims agree with the registry.
+"""Repo hygiene: the arms family's capability claims agree with the registry.
 
-``docs/robots/arms.md`` ends in a *Compatibility notes* block whose bullets are
-set-membership claims about ``registry/robots.json``: which arms have no sim
-asset, and which have a real-hardware path. A reader plans hardware work from
-them, so a stale name there is a wrong answer rather than a cosmetic one.
+``docs/robots/arm/index.md`` used to end in a hand-written *Compatibility notes*
+block: which arms have no sim asset, which drive real hardware through LeRobot,
+which through a native driver. All three bullets went stale at once (``panda``
+and ``ur5e`` were called LeRobot arms when LeRobot registers no Franka or UR
+type; ``rebot_b601`` had no asset and was unlisted), so this file was written
+to grade them.
 
-Nothing graded those bullets, and all three claims had gone stale:
-
-* The sim-asset exception named ``hope_jr`` and ``omx``. ``rebot_b601`` also
-  declares no ``asset`` block, so it was the third exception and unlisted.
-* The real-hardware bullet named ``panda``, ``so100`` and ``ur5e``. Only
-  ``so100`` was right - neither ``panda`` nor ``ur5e`` declares a ``hardware``
-  block at all, so ``Robot("panda", mode="real")`` refuses with
-  ``Unsupported robot type: 'panda'``. The claim mattered because it is the
-  opposite of the truth: a reader was told the Franka arms already drive real
-  hardware through LeRobot, when LeRobot registers no Franka type.
-* "The rest are simulation-only" then misdescribed the nine arms that do have a
-  path (``dynamixel_2r``, ``hope_jr``, ``koch``, ``omx``, ``openarm``,
-  ``rebot_b601``, ``so101``, ``vx300s``, ``wx250s``).
-
-``tests/test_docs_robot_catalog_coverage.py`` grades the same page and could not
-see any of it: its four guards pin catalog-table *membership*, the robot *counts*
-and the *Aliases* column, and a capability claim in the prose block is none of
-those. This file grades the prose.
-
-Both routes are read from the repo's own sources of truth rather than restated
-here, so an arm that gains a driver fails the bullet that should have named it:
+The page is generated now. ``docs/hooks/robot_pages.py`` expands
+``{{robot_family_table:arm}}`` into one row per arm with ``Sim``, ``Real`` and
+``Drivers`` cells, and writes each arm's own ``docs/robots/<arm>.md`` with the
+same facts as chips (``sr-chip-sim``, ``sr-chip-real``, ``driver: ...``). The
+three claims survive as columns instead of bullets, and a reader still plans
+hardware work from them, so a wrong cell is a wrong answer rather than a
+cosmetic one. Both are graded against the repo's own sources of truth rather
+than a restated list, so an arm that gains a driver fails the cell that should
+have said so:
 
 * LeRobot: the entry declares ``hardware.lerobot_type``.
   :func:`test_every_declared_lerobot_type_is_one_lerobot_registers` is the
   premise that makes declaring one mean the path works.
 * Native: :func:`strands_robots.drivers.registry.get_native_driver_class`
   answers for the name.
+* Sim: the entry declares an ``asset`` block.
 
-Deliberately out of scope: the block's last bullet, about what the ``joints``
-count includes. Of the 59 registry robots whose asset compiles here, 50 declare
-a ``joints`` value other than the asset's actuator count, so that field is a
-loose informational number whose contract needs deciding before it can be
-graded - a different question from which arms drive hardware.
+Deliberately out of scope: the ``Joints`` column. Of the registry robots whose
+asset compiles here, most declare a ``joints`` value other than the asset's
+actuator count, so that field is a loose informational number whose contract
+needs deciding before it can be graded, a different question from which arms
+drive hardware.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ROBOTS_JSON = REPO_ROOT / "strands_robots" / "registry" / "robots.json"
-ARMS_PAGE = REPO_ROOT / "docs" / "robots" / "arms.md"
+ROBOTS_DIR = REPO_ROOT / "docs" / "robots"
+ARMS_PAGE = ROBOTS_DIR / "arm" / "index.md"
+HOOK = REPO_ROOT / "docs" / "hooks" / "robot_pages.py"
+TABLE_TOKEN = "{{robot_family_table:arm}}"
 
-#: Pattern identifying the bullet each claim lives on, matched against the
-#: whitespace-normalised bullet so a re-wrap cannot stop a rule applying. Each
-#: keys on the claim's *subject* rather than on one phrasing, so it still finds
-#: the bullet after a reword: ``sim asset`` matched the shipped
-#: "have no MuJoCo sim asset" as well as the current "declare no sim asset".
-NO_SIM_ASSET_CLAIM = ("sim-asset exception", re.compile(r"sim asset", re.IGNORECASE))
-LEROBOT_CLAIM = ("LeRobot real-hardware", re.compile(r"real hardware.*lerobot", re.IGNORECASE))
-NATIVE_CLAIM = ("native-driver real-hardware", re.compile(r"native (?:strands )?driver", re.IGNORECASE))
-CLAIMS = (NO_SIM_ASSET_CLAIM, LEROBOT_CLAIM, NATIVE_CLAIM)
+#: One rendered row: robot link, description, joints, Sim, Real, Drivers.
+_ROW = re.compile(r"^\| \[`(?P<robot>[a-z0-9_]+)`\]\([^)]*\) \| (?P<rest>.*) \|$", re.M)
+_CODE = re.compile(r"`([^`]+)`")
+
+
+def _hook():
+    """The robot pages hook, loaded from the docs tree the build loads it from."""
+    name = "docs_robot_pages_hook"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, HOOK)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _registry() -> dict[str, dict]:
@@ -73,47 +76,33 @@ def _arm_names() -> set[str]:
     return {name for name, entry in _registry().items() if entry.get("category") == "arm"}
 
 
-def _compatibility_bullets() -> list[str]:
-    """Return the *Compatibility notes* bullets, each whitespace-normalised.
-
-    A bullet is joined across its continuation lines, so a rule keys on the
-    sentence rather than on where the line happens to wrap.
-    """
-    text = ARMS_PAGE.read_text(encoding="utf-8")
-    section = re.search(r"\n## Compatibility notes\b(.*?)(?:\n## |\Z)", text, re.DOTALL)
-    assert section, "docs/robots/arms.md is missing a '## Compatibility notes' section"
-    bullets: list[str] = []
-    for line in section.group(1).splitlines():
-        if line.startswith("- "):
-            bullets.append(line[2:])
-        elif line.strip() and bullets:
-            bullets[-1] += " " + line.strip()
-    return [" ".join(bullet.split()) for bullet in bullets]
+def _rows(rendered: str) -> dict[str, dict[str, str]]:
+    """Parse a rendered family table into robot -> {sim, real, drivers}."""
+    out: dict[str, dict[str, str]] = {}
+    for match in _ROW.finditer(rendered):
+        cells = [c.strip() for c in match.group("rest").split("|")]
+        assert len(cells) == 5, f"{match.group('robot')} row has {len(cells) + 1} cells, expected 6"
+        _description, _joints, sim, real, drivers = cells
+        out[match.group("robot")] = {"sim": sim, "real": real, "drivers": drivers}
+    return out
 
 
-def _names_in(bullet: str) -> set[str]:
-    """Return the registry arm names a bullet lists.
+def _published_rows() -> dict[str, dict[str, str]]:
+    """The arms table as the build renders it from the page's token."""
+    page = ARMS_PAGE.read_text(encoding="utf-8")
+    assert TABLE_TOKEN in page, f"docs/robots/arm/index.md no longer carries {TABLE_TOKEN}"
+    rendered = _hook().substitute(page, "../../", "../")
+    assert TABLE_TOKEN not in rendered, "robot_pages.py left the family table token unexpanded"
+    return _rows(rendered)
 
-    Only backticked tokens that are registry arm names count, so incidental code
-    spans (``lerobot_type``, ``driver="strands"``) are not read as claims.
-    """
-    return {token for token in re.findall(r"`([^`]+)`", bullet)} & _arm_names()
 
-
-def _claimed_arms(claim: tuple[str, re.Pattern[str]]) -> set[str] | None:
-    """Return the arms the bullet making ``claim`` lists, or ``None`` if absent.
-
-    ``None`` distinguishes "the page makes no such claim" from "it claims an
-    empty set", so a rule can report the missing bullet rather than a set
-    difference against nothing.
-    """
-    what, pattern = claim
-    matching = [bullet for bullet in _compatibility_bullets() if pattern.search(bullet)]
-    assert len(matching) <= 1, (
-        f"{len(matching)} Compatibility notes bullets make the {what} claim: {matching}. "
-        "Split or merge them so exactly one bullet owns it."
-    )
-    return _names_in(matching[0]) if matching else None
+def _claimed(column: str, value: str | None = None) -> set[str]:
+    """Arms whose ``column`` cell equals ``value``, or whose Drivers cell names ``column``."""
+    rows = _published_rows()
+    if column == "drivers":
+        assert value is not None
+        return {name for name, cells in rows.items() if value in _CODE.findall(cells["drivers"])}
+    return {name for name, cells in rows.items() if cells[column] == value}
 
 
 def _arms_without_a_sim_asset() -> set[str]:
@@ -133,55 +122,47 @@ def _arms_with_a_native_driver() -> set[str]:
     return {name for name in _arm_names() if get_native_driver_class(name) is not None}
 
 
-def _report(claimed: set[str] | None, derived: set[str], what: str) -> str:
-    """Return a failure message naming the exact edit the page needs."""
-    if claimed is None:
-        return (
-            f"docs/robots/arms.md Compatibility notes makes no {what} claim, but the registry gives "
-            f"that path to {sorted(derived)}. Add a bullet naming them, so a reader planning hardware "
-            "work is not told the robot is simulation-only."
-        )
+def _report(claimed: set[str], derived: set[str], what: str) -> str:
+    """Return a failure message naming the exact edit the table needs."""
     return (
-        f"docs/robots/arms.md Compatibility notes: the {what} bullet lists "
-        f"{sorted(claimed)} but the registry says {sorted(derived)}.\n"
+        f"docs/robots/arm/index.md: the {what} column marks {sorted(claimed)} but the registry says {sorted(derived)}.\n"
         f"  missing from the page: {sorted(derived - claimed)}\n"
-        f"  named but not true:    {sorted(claimed - derived)}"
+        f"  marked but not true:   {sorted(claimed - derived)}"
     )
 
 
-class TestTheBlockIsShapedTheWayTheRulesAssume:
-    """Premises. Each rule below reads a set off the page; these pin that it can."""
+class TestTheTableIsShapedTheWayTheRulesAssume:
+    """Premises. Each rule below reads a set off the table; these pin that it can."""
 
-    def test_the_page_has_a_compatibility_notes_section(self) -> None:
-        assert _compatibility_bullets(), "no bullets found under '## Compatibility notes'"
+    def test_the_table_has_one_row_per_arm(self) -> None:
+        rows = _published_rows()
+        assert set(rows) == _arm_names(), (
+            f"rows the registry does not hold as arms: {sorted(set(rows) - _arm_names())}; "
+            f"arms with no row: {sorted(_arm_names() - set(rows))}"
+        )
 
     def test_the_registry_declares_arms(self) -> None:
-        assert len(_arm_names()) > 10, f"only {len(_arm_names())} arms - the rules below would be near-vacuous"
+        assert len(_arm_names()) > 10, f"only {len(_arm_names())} arms, the rules below would be near-vacuous"
 
-    @pytest.mark.parametrize("claim", CLAIMS, ids=[claim[0] for claim in CLAIMS])
-    def test_each_claim_the_page_makes_names_at_least_one_arm(self, claim: tuple[str, re.Pattern[str]]) -> None:
-        """A bullet that makes a claim must name an arm, or its rule reads nothing.
-
-        A page that omits the bullet entirely is a different failure, reported by
-        the rule that grades that claim, so it is skipped here rather than
-        conflated with an empty list.
-        """
-        what, _ = claim
-        claimed = _claimed_arms(claim)
-        if claimed is None:
-            pytest.skip(f"the page makes no {what} claim - the rule for it reports that")
-        assert claimed, f"the {what} bullet names no registry arm, so its rule reads nothing"
+    def test_every_cell_is_yes_or_dash(self) -> None:
+        for name, cells in _published_rows().items():
+            assert cells["sim"] in {"yes", "-"}, f"{name} Sim cell is {cells['sim']!r}"
+            assert cells["real"] in {"yes", "-"}, f"{name} Real cell is {cells['real']!r}"
+            drivers = set(_CODE.findall(cells["drivers"]))
+            assert drivers <= {"lerobot", "strands"}, f"{name} Drivers cell names {drivers}"
+            assert (cells["real"] == "yes") == bool(drivers), f"{name}: Real and Drivers disagree"
 
     def test_every_arm_declaring_hardware_declares_a_lerobot_type(self) -> None:
         """Pin the coincidence the LeRobot derivation currently rests on.
 
-        The bullet is derived from ``hardware.lerobot_type`` rather than from the
-        presence of a ``hardware`` block, and today every arm that has the block
-        names a type - so the two readings pick the same set and the distinction
-        is invisible. It is not invisible in general: ``reachy_mini`` declares
-        ``{"driver": "strands"}`` with no type at all. When the first arm does
-        that, this fails and says the two derivations have come apart, rather
-        than the LeRobot bullet quietly gaining a robot LeRobot cannot build.
+        The LeRobot claim is derived from ``hardware.lerobot_type`` rather than
+        from the presence of a ``hardware`` block, and today every arm that has
+        the block names a type, so the two readings pick the same set and the
+        distinction is invisible. It is not invisible in general:
+        ``reachy_mini`` declares ``{"driver": "strands"}`` with no type at all.
+        When the first arm does that, this fails and says the two derivations
+        have come apart, rather than the LeRobot column quietly gaining a robot
+        LeRobot cannot build.
         """
         typeless = {
             name
@@ -190,14 +171,14 @@ class TestTheBlockIsShapedTheWayTheRulesAssume:
         }
         assert not typeless, (
             f"these arms declare a hardware block with no lerobot_type: {sorted(typeless)}. "
-            "The LeRobot bullet is derived from the type, so they belong on the native-driver "
-            "bullet (or on neither) - check which route each one actually has."
+            "The lerobot driver cell is derived from the type, so they belong on the native "
+            "driver (or on neither): check which route each one actually has."
         )
 
     def test_every_declared_lerobot_type_is_one_lerobot_registers(self) -> None:
         """Declaring a ``lerobot_type`` must mean LeRobot can build it.
 
-        The LeRobot bullet is derived from the registry alone so it grades on an
+        The LeRobot column is derived from the registry alone so it grades on an
         install without LeRobot. This is the premise that makes the registry a
         sound stand-in: every type the arms declare is one LeRobot registers.
         """
@@ -218,32 +199,32 @@ class TestTheBlockIsShapedTheWayTheRulesAssume:
 class TestEachCapabilityClaimMatchesTheRegistry:
     """The three set-membership claims, each against its source of truth."""
 
-    def test_the_sim_asset_exception_names_every_arm_without_one(self) -> None:
-        claimed = _claimed_arms(NO_SIM_ASSET_CLAIM)
+    def test_the_sim_column_marks_every_arm_without_an_asset_as_dash(self) -> None:
+        claimed = _claimed("sim", "-")
         derived = _arms_without_a_sim_asset()
-        assert claimed == derived, _report(claimed, derived, NO_SIM_ASSET_CLAIM[0])
+        assert claimed == derived, _report(claimed, derived, "Sim (dash)")
 
-    def test_the_lerobot_bullet_names_every_arm_declaring_a_lerobot_type(self) -> None:
-        claimed = _claimed_arms(LEROBOT_CLAIM)
+    def test_the_lerobot_driver_cell_names_every_arm_declaring_a_lerobot_type(self) -> None:
+        claimed = _claimed("drivers", "lerobot")
         derived = _arms_with_a_lerobot_type()
-        assert claimed == derived, _report(claimed, derived, LEROBOT_CLAIM[0])
+        assert claimed == derived, _report(claimed, derived, "Drivers (`lerobot`)")
 
-    def test_the_native_driver_bullet_names_every_arm_with_one(self) -> None:
-        claimed = _claimed_arms(NATIVE_CLAIM)
+    def test_the_strands_driver_cell_names_every_arm_with_a_native_driver(self) -> None:
+        claimed = _claimed("drivers", "strands")
         derived = _arms_with_a_native_driver()
-        assert claimed == derived, _report(claimed, derived, NATIVE_CLAIM[0])
+        assert claimed == derived, _report(claimed, derived, "Drivers (`strands`)")
 
 
 class TestTheClaimsAreConsistentWithEachOther:
-    """Cross-checks that hold whichever names the bullets carry."""
+    """Cross-checks that hold whichever names the cells carry."""
 
     def test_no_arm_the_page_calls_sim_only_has_a_real_path(self) -> None:
-        """The page says every unnamed arm is simulation-only, so no arm may be both."""
+        """A dash in Real says simulation-only, so no such arm may have a driver."""
         real = _arms_with_a_lerobot_type() | _arms_with_a_native_driver()
-        named = (_claimed_arms(LEROBOT_CLAIM) or set()) | (_claimed_arms(NATIVE_CLAIM) or set())
-        assert real == named, (
-            "docs/robots/arms.md says every arm it does not name is simulation-only, but the registry "
-            f"gives a real-hardware path to {sorted(real - named)} and the page names {sorted(named - real)} "
+        marked = _claimed("real", "yes")
+        assert real == marked, (
+            "docs/robots/arm/index.md marks an arm with a dash in Real as simulation-only, but the registry "
+            f"gives a real-hardware path to {sorted(real - marked)} and the page marks {sorted(marked - real)} "
             "without one."
         )
 
@@ -254,66 +235,67 @@ class TestTheClaimsAreConsistentWithEachOther:
         assert not stranded, f"arms with no sim asset and no real-hardware path: {sorted(stranded)}"
 
 
-class TestTheRulesAreNotVacuous:
-    """Constructed exemplars, so the rules are graded on a page that is wrong.
+class TestEachArmPageCarriesTheSameFacts:
+    """The chips on ``docs/robots/<arm>.md`` say what the family table says."""
 
-    After the fix the shipped page satisfies every rule, so it can no longer
-    exercise a rejection - these drive the same comparison over text that is
-    deliberately stale, including the exact wording this file was written for.
+    @pytest.mark.parametrize("name", sorted(_arm_names()))
+    def test_the_arm_page_chips_match_the_registry(self, name: str) -> None:
+        page = ROBOTS_DIR / f"{name}.md"
+        assert page.is_file(), f"docs/robots/{name}.md is not generated"
+        text = page.read_text(encoding="utf-8")
+        has_asset = bool(_registry()[name].get("asset"))
+        lerobot = name in _arms_with_a_lerobot_type()
+        native = name in _arms_with_a_native_driver()
+        assert ('class="sr-chip sr-chip-sim"' in text) == has_asset, f"{name}: sim chip disagrees with the asset block"
+        assert ('class="sr-chip sr-chip-real"' in text) == (lerobot or native), (
+            f"{name}: real chip disagrees with the drivers"
+        )
+        expected = ", ".join(d for d, on in (("lerobot", lerobot), ("strands", native)) if on)
+        if expected:
+            assert f"driver: {expected}</span>" in text, f"{name}: driver chip does not read 'driver: {expected}'"
+        else:
+            assert "sr-chip-driver" not in text, f"{name}: driver chip on a simulation-only arm"
+
+
+class TestTheRulesAreNotVacuous:
+    """Constructed exemplars, so the rules are graded on a table that is wrong.
+
+    The shipped table satisfies every rule, so it can no longer exercise a
+    rejection; these drive the same parser over rows that are deliberately
+    stale, including the exact claim this file was written for.
     """
 
-    @staticmethod
-    def _claimed_from(bullet: str) -> set[str]:
-        """Apply the page's own extraction rule to one bullet of prose."""
-        return _names_in(" ".join(bullet.split()))
-
-    def test_the_wording_this_file_was_written_for_is_rejected(self) -> None:
+    def test_the_claim_this_file_was_written_for_is_rejected(self) -> None:
         stale = (
-            "`panda`, `so100`, and `ur5e` are also supported on real hardware via LeRobot. "
-            "The rest are simulation-only at the moment."
+            "| [`panda`](../panda.md) | Franka | 7 | yes | yes | `lerobot` |\n"
+            "| [`ur5e`](../ur5e.md) | UR | 6 | yes | yes | `lerobot` |\n"
+            "| [`so100`](../so100.md) | SO-100 | 6 | yes | yes | `lerobot` |\n"
         )
-        claimed = self._claimed_from(stale)
+        rows = _rows(stale)
+        claimed = {n for n, c in rows.items() if "lerobot" in _CODE.findall(c["drivers"])}
         assert claimed == {"panda", "so100", "ur5e"}, claimed
-        assert claimed != _arms_with_a_lerobot_type(), "the stale wording must not satisfy the LeRobot rule"
+        assert claimed != _arms_with_a_lerobot_type(), "the stale claim must not satisfy the LeRobot rule"
 
-    def test_the_stale_sim_asset_wording_is_rejected(self) -> None:
-        stale = "Exceptions: `hope_jr` and `omx` have no MuJoCo sim asset."
-        assert self._claimed_from(stale) != _arms_without_a_sim_asset()
+    def test_a_missing_sim_dash_is_rejected(self) -> None:
+        stale = "| [`rebot_b601`](../rebot_b601.md) | ReBot | 6 | yes | yes | `lerobot` |\n"
+        rows = _rows(stale)
+        assert "rebot_b601" in _arms_without_a_sim_asset()
+        assert rows["rebot_b601"]["sim"] != "-", "the exemplar must mark a sim asset the registry lacks"
 
-    def test_the_corrected_wording_is_accepted(self) -> None:
-        fixed = "Exceptions: `hope_jr`, `omx` and `rebot_b601` declare no sim asset."
-        assert self._claimed_from(fixed) == _arms_without_a_sim_asset()
-
-    def test_the_claim_patterns_find_the_shipped_wording_too(self) -> None:
-        """The patterns key on the subject, so a reword still grades the claim.
-
-        Pinned against the exact bullets this file replaced: if a pattern only
-        matched the new phrasing, a future reword would make the rule report
-        "no such claim" instead of grading the names, and a wrong list would
-        pass. The shipped page made no native-driver claim at all, which is why
-        that pattern has no counterpart here.
-        """
-        shipped_sim_asset = "Exceptions: `hope_jr` and `omx` have no MuJoCo sim asset and require physical hardware."
-        shipped_lerobot = "`panda`, `so100`, and `ur5e` are also supported on real hardware via LeRobot."
-        assert NO_SIM_ASSET_CLAIM[1].search(shipped_sim_asset), "pattern misses the wording it replaced"
-        assert LEROBOT_CLAIM[1].search(shipped_lerobot), "pattern misses the wording it replaced"
-        assert not NATIVE_CLAIM[1].search(shipped_lerobot), "the shipped page made no native-driver claim"
-
-    def test_an_incidental_code_span_is_not_read_as_a_claim(self) -> None:
-        """``lerobot_type`` and ``driver="strands"`` are spans, not robot names."""
-        bullet = 'names a `lerobot_type`, selected with `driver="strands"`: `koch`'
-        assert self._claimed_from(bullet) == {"koch"}
+    def test_the_parser_reads_a_correct_row(self) -> None:
+        good = "| [`koch`](../koch.md) | Koch v1.1 | 7 | yes | yes | `lerobot` |\n"
+        assert _rows(good) == {"koch": {"sim": "yes", "real": "yes", "drivers": "`lerobot`"}}
 
 
 def test_the_derived_sets_have_the_shape_the_page_describes() -> None:
     """Guard against a registry change that would make the page's structure wrong.
 
-    The page presents LeRobot and native as two routes with an overlap. If one
-    became empty, or every arm gained a path, the prose would need rewriting
-    rather than relisting.
+    The table presents LeRobot and native as two routes with an overlap. If one
+    became empty, or every arm gained a path, the prose around it would need
+    rewriting rather than regenerating.
     """
     lerobot = _arms_with_a_lerobot_type()
     native = _arms_with_a_native_driver()
-    assert lerobot, "no arm declares a lerobot_type - the LeRobot bullet has nothing to say"
-    assert native, "no arm has a native driver - the native bullet has nothing to say"
-    assert (lerobot | native) < _arm_names(), "every arm now has a real path - 'every other arm' is empty"
+    assert lerobot, "no arm declares a lerobot_type, the lerobot column has nothing to say"
+    assert native, "no arm has a native driver, the strands column has nothing to say"
+    assert (lerobot | native) < _arm_names(), "every arm now has a real path, 'simulation-only' is empty"

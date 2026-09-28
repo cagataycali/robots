@@ -1,200 +1,504 @@
 site_name: Strands Robots
-site_url: https://strands-labs.github.io/robots
-site_description: "Robot control, simulation, and training for Strands Agents"
+site_url: https://strands-labs.github.io/robots/
+site_description: One Robot object, any robot, in simulation or on real hardware, driven by an agent.
 repo_url: https://github.com/strands-labs/robots
 repo_name: strands-labs/robots
-extra_css:
-- stylesheets/extra.css?v=3
-extra_javascript:
-- https://unpkg.com/mermaid@10/dist/mermaid.min.js
-- assets/mermaid-init.js
-- assets/docs.js
-nav:
-- Start:
-  - index.md
-  - Installation: getting-started/installation.md
-  - Robot Factory: getting-started/robot-factory.md
-- Robots:
-  - robots/index.md
-  - Arms: robots/arms.md
-  - Bimanual: robots/bimanual.md
-  - Hands: robots/hands.md
-  - Humanoids: robots/humanoids.md
-  - Mobile: robots/mobile.md
-  - Mobile manip: robots/mobile-manip.md
-  - Aerial: robots/aerial.md
-- Recipes:
-  - recipes/index.md
-  - Quickstart: getting-started/quickstart.md
-  - Pick up a cube: recipes/pick-and-lift.md
-  - Swap the policy: recipes/swap-the-policy.md
-  - Record a dataset: recipes/record-a-dataset.md
-  - Record, train, deploy: recipes/record-train-deploy.md
-  - Judge episodes: recipes/judge-episodes.md
-  - Score a benchmark: recipes/score-a-benchmark.md
-  - Rough terrain: recipes/rough-terrain.md
-  - Randomize for sim2real: recipes/randomize-for-sim2real.md
-  - Rewind and perturb: recipes/rewind-and-perturb.md
-- Reference: reference/index.md
-plugins:
-- search
-- redirects:
-    redirect_maps:
-      agents.md: reference/agents.md
-      api-reference.md: reference/api-reference.md
-      architecture.md: reference/architecture.md
-      contracts.md: reference/contracts.md
-      contributing.md: reference/contributing.md
-      dashboard.md: reference/dashboard.md
-      data/annotation.md: reference/data/annotation.md
-      data/dataset-recorder.md: reference/data/dataset-recorder.md
-      data/episode-judge.md: reference/data/episode-judge.md
-      data/episode-labels.md: reference/data/episode-labels.md
-      data/reading-back.md: reference/data/reading-back.md
-      data/verifying-datasets.md: reference/data/verifying-datasets.md
-      device-connect.md: reference/device-connect.md
-      examples/overview.md: recipes/index.md
-      reference/examples/overview.md: recipes/index.md
-      hardware/booster-t1.md: reference/hardware/booster-t1.md
-      hardware/microduck.md: reference/hardware/microduck.md
-      hardware/native-drivers.md: reference/hardware/native-drivers.md
-      hardware/reachy-mini.md: reference/hardware/reachy-mini.md
-      hardware/robot-control.md: reference/hardware/robot-control.md
-      hardware/so-arms.md: reference/hardware/so-arms.md
-      hardware/teleoperation-loop.md: reference/hardware/teleoperation-loop.md
-      hardware/teleoperation.md: reference/hardware/teleoperation.md
-      hardware/tools.md: reference/hardware/tools.md
-      hardware/twin-transport.md: reference/hardware/twin-transport.md
-      hardware/unitree-g1.md: reference/hardware/unitree-g1.md
-      hardware/universal-robots.md: reference/hardware/universal-robots.md
-      inference/remote.md: reference/inference/remote.md
-      mesh-topics.md: reference/mesh-topics.md
-      mesh.md: reference/mesh.md
-      policies/camera-naming.md: reference/policies/camera-naming.md
-      policies/cosmos3-diffusers.md: reference/policies/cosmos3-diffusers.md
-      policies/cosmos3.md: reference/policies/cosmos3.md
-      policies/curobo.md: reference/policies/curobo.md
-      policies/custom-policies.md: reference/policies/custom-policies.md
-      policies/groot.md: reference/policies/groot.md
-      policies/kimodo-sampling.md: reference/policies/kimodo-sampling.md
-      policies/kimodo.md: reference/policies/kimodo.md
-      policies/lerobot-local-observations.md: reference/policies/lerobot-local-observations.md
-      policies/lerobot-local.md: reference/policies/lerobot-local.md
-      policies/microduck.md: reference/policies/microduck.md
-      policies/molmoact2.md: reference/policies/molmoact2.md
-      policies/moveit2.md: reference/policies/moveit2.md
-      policies/overview.md: reference/policies/overview.md
-      policies/persistent-worker.md: reference/policies/persistent-worker.md
-      policies/protomotions-motion-cache.md: reference/policies/protomotions-motion-cache.md
-      policies/protomotions.md: reference/policies/protomotions.md
-      policies/rl.md: reference/policies/rl.md
-      policies/wbc-rollouts.md: reference/policies/wbc-rollouts.md
-      policies/wbc.md: reference/policies/wbc.md
-      policies/wbc_gait.md: reference/policies/wbc_gait.md
-      recording.md: reference/recording.md
-      ros2-integration.md: reference/ros2-integration.md
-      ros2/ackermann.md: reference/ros2/ackermann.md
-      ros2/hardware-bridge.md: reference/ros2/hardware-bridge.md
-      ros2/mesh-bridge.md: reference/ros2/mesh-bridge.md
-      ros2/rosbridge-robot.md: reference/ros2/rosbridge-robot.md
-      ros2/rtps-robot.md: reference/ros2/rtps-robot.md
-      ros2/safety.md: reference/ros2/safety.md
-      ros2/sim-bridge.md: reference/ros2/sim-bridge.md
-      rosbridge-integration.md: reference/rosbridge-integration.md
-      rtps-integration.md: reference/rtps-integration.md
-      security.md: reference/security.md
-      security/audit-log.md: reference/security/audit-log.md
-      security/commands.md: reference/security/commands.md
-      security/hardware.md: reference/security/hardware.md
-      security/mesh.md: reference/security/mesh.md
-      security/policy-code.md: reference/security/policy-code.md
-      simulation/domain-randomization.md: reference/simulation/domain-randomization.md
-      simulation/isaac-parity.md: reference/simulation/isaac-parity.md
-      simulation/isaac.md: reference/simulation/isaac.md
-      simulation/meshes-and-materials.md: reference/simulation/meshes-and-materials.md
-      simulation/newton-scenes.md: reference/simulation/newton-scenes.md
-      simulation/newton.md: reference/simulation/newton.md
-      simulation/objects.md: reference/simulation/objects.md
-      simulation/observers.md: reference/simulation/observers.md
-      simulation/overview.md: reference/simulation/overview.md
-      simulation/physics.md: reference/simulation/physics.md
-      simulation/predicates.md: reference/simulation/predicates.md
-      simulation/rollout-results.md: reference/simulation/rollout-results.md
-      simulation/rollouts.md: reference/simulation/rollouts.md
-      simulation/scene-editing.md: reference/simulation/scene-editing.md
-      simulation/spawning.md: reference/simulation/spawning.md
-      simulation/terrain.md: reference/simulation/terrain.md
-      simulation/troubleshooting.md: reference/simulation/troubleshooting.md
-      simulation/world-building.md: reference/simulation/world-building.md
-      training/overview.md: reference/training/overview.md
-      training/provider-knobs.md: reference/training/provider-knobs.md
-      training/rl-reference.md: reference/training/rl-reference.md
-      training/rl.md: reference/training/rl.md
-      training/vla_workflow.md: reference/training/vla_workflow.md
-      troubleshooting.md: reference/troubleshooting.md
-hooks:
-  - docs/hooks/coverage_matrix.py
-  - docs/hooks/media.py
-  - docs/hooks/numbers.py
-  - docs/hooks/reference_index.py
-  - docs/hooks/robot_cards.py
-  - docs/hooks/tool_reference.py
-validation:
-  links:
-    anchors: warn
+edit_uri: edit/main/docs/
+strict: true
+docs_dir: docs
+exclude_docs: |
+  hooks/
 
 theme:
   name: material
-  logo: assets/strands-logo.svg
-  favicon: assets/strands-logo.svg
+  custom_dir: overrides
+  language: en
+  font:
+    text: Inter
+    code: JetBrains Mono
+  logo: assets/img/mark.svg
+  favicon: assets/img/mark.svg
+  icon:
+    repo: fontawesome/brands/github
   palette:
-    - scheme: default
-      primary: white
-      accent: green
+    - media: "(prefers-color-scheme: light)"
+      scheme: paper
+      primary: custom
+      accent: custom
       toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - scheme: slate
-      primary: black
-      accent: green
+        icon: material/weather-night
+        name: Dark
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
       toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
+        icon: material/weather-sunny
+        name: Paper
   features:
-  - navigation.indexes
-  - toc.follow
-  - content.code.copy
-  - content.tabs.link
-  - navigation.top
-  - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - navigation.tracking
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - path: assets/viewer/robot-viewer.js
+    type: module
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/strands-labs/robots
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/strands-robots/
+
+hooks:
+  - docs/hooks/facts.py
+  - docs/hooks/extras.py
+  - docs/hooks/manifest.py
+  - docs/hooks/coverage.py
+  - docs/hooks/robot_pages.py
+  - docs/hooks/providers.py
+  - docs/hooks/tools_ref.py
+  - docs/hooks/env_vars.py
+  - docs/hooks/refusals.py
+  - docs/hooks/module_map.py
+  - docs/hooks/drivers.py
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+          options:
+            docstring_style: google
+            docstring_options:
+              warnings: false
+              warn_unknown_params: false
+            docstring_section_style: table
+            show_source: false
+            show_signature_annotations: true
+            separate_signature: true
+            merge_init_into_class: true
+            show_if_no_docstring: false
+            show_root_toc_entry: false
+            allow_inspection: false
+            heading_level: 3
+  - redirects:
+      redirect_maps:
+        agents.md: learn/agents.md
+        api-reference.md: reference/api/index.md
+        architecture.md: project/architecture.md
+        contracts.md: reference/api/index.md
+        contributing.md: project/contributing.md
+        dashboard.md: learn/dashboard.md
+        data/annotation.md: learn/data/label-and-judge.md
+        data/dataset-recorder.md: learn/data/record.md
+        data/episode-judge.md: learn/data/label-and-judge.md
+        data/episode-labels.md: learn/data/label-and-judge.md
+        data/reading-back.md: learn/data/stream-and-sync.md
+        data/verifying-datasets.md: learn/data/verify.md
+        device-connect.md: reference/api/mesh.md
+        examples/overview.md: learn/index.md
+        getting-started/installation.md: start/install.md
+        getting-started/quickstart.md: start/first-robot.md
+        getting-started/robot-factory.md: reference/api/robot.md
+        hardware/booster-t1.md: learn/hardware/booster-t1.md
+        hardware/microduck.md: learn/hardware/microduck.md
+        hardware/native-drivers.md: learn/hardware/drivers.md
+        hardware/reachy-mini.md: learn/hardware/reachy-mini.md
+        hardware/robot-control.md: start/first-real-arm.md
+        hardware/so-arms.md: learn/hardware/feetech-arms.md
+        hardware/teleoperation-loop.md: learn/hardware/teleoperation.md
+        hardware/teleoperation.md: learn/hardware/teleoperation.md
+        hardware/tools.md: reference/tools.md
+        hardware/twin-transport.md: learn/hardware/drivers.md
+        hardware/unitree-g1.md: learn/hardware/unitree.md
+        hardware/universal-robots.md: learn/hardware/ur.md
+        inference/remote.md: learn/policies/remote.md
+        mesh-topics.md: learn/mesh/topics.md
+        mesh.md: learn/mesh/fleet.md
+        policies/camera-naming.md: learn/policies/lerobot-local.md
+        policies/cosmos3-diffusers.md: learn/policies/cosmos3.md
+        policies/cosmos3.md: learn/policies/cosmos3.md
+        policies/curobo.md: learn/policies/curobo.md
+        policies/custom-policies.md: reference/api/policies.md
+        policies/groot.md: learn/policies/groot.md
+        policies/kimodo-sampling.md: learn/policies/kimodo.md
+        policies/kimodo.md: learn/policies/kimodo.md
+        policies/lerobot-local-observations.md: learn/policies/lerobot-local.md
+        policies/lerobot-local.md: learn/policies/lerobot-local.md
+        policies/microduck.md: learn/policies/microduck.md
+        policies/molmoact2.md: learn/policies/index.md
+        policies/moveit2.md: learn/policies/moveit2.md
+        policies/overview.md: learn/policies/index.md
+        policies/persistent-worker.md: reference/api/policies.md
+        policies/protomotions-motion-cache.md: learn/policies/protomotions.md
+        policies/protomotions.md: learn/policies/protomotions.md
+        policies/rl.md: learn/policies/rl.md
+        policies/wbc-rollouts.md: learn/policies/wbc.md
+        policies/wbc.md: learn/policies/wbc.md
+        policies/wbc_gait.md: learn/policies/wbc.md
+        recipes/index.md: learn/index.md
+        recipes/judge-episodes.md: learn/data/label-and-judge.md
+        recipes/pick-and-lift.md: learn/simulation/predicates-and-rollouts.md
+        recipes/randomize-for-sim2real.md: learn/simulation/randomization.md
+        recipes/record-a-dataset.md: learn/data/record.md
+        recipes/record-train-deploy.md: learn/training/lerobot.md
+        recipes/rewind-and-perturb.md: learn/simulation/predicates-and-rollouts.md
+        recipes/rough-terrain.md: learn/simulation/worlds-and-objects.md
+        recipes/score-a-benchmark.md: learn/simulation/predicates-and-rollouts.md
+        recipes/swap-the-policy.md: learn/policies/index.md
+        recording.md: learn/data/record.md
+        reference/agents.md: learn/agents.md
+        reference/api-reference.md: reference/api/index.md
+        reference/architecture.md: project/architecture.md
+        reference/contracts.md: reference/api/index.md
+        reference/contributing.md: project/contributing.md
+        reference/dashboard.md: learn/dashboard.md
+        reference/data/annotation.md: learn/data/label-and-judge.md
+        reference/data/dataset-recorder.md: learn/data/record.md
+        reference/data/episode-judge.md: learn/data/label-and-judge.md
+        reference/data/episode-labels.md: learn/data/label-and-judge.md
+        reference/data/reading-back.md: learn/data/stream-and-sync.md
+        reference/data/verifying-datasets.md: learn/data/verify.md
+        reference/device-connect.md: reference/api/mesh.md
+        reference/examples/overview.md: learn/index.md
+        reference/hardware/booster-t1.md: learn/hardware/booster-t1.md
+        reference/hardware/microduck.md: learn/hardware/microduck.md
+        reference/hardware/native-drivers.md: learn/hardware/drivers.md
+        reference/hardware/reachy-mini.md: learn/hardware/reachy-mini.md
+        reference/hardware/robot-control.md: start/first-real-arm.md
+        reference/hardware/so-arms.md: learn/hardware/feetech-arms.md
+        reference/hardware/teleoperation-loop.md: learn/hardware/teleoperation.md
+        reference/hardware/teleoperation.md: learn/hardware/teleoperation.md
+        reference/hardware/tools.md: reference/tools.md
+        reference/hardware/twin-transport.md: learn/hardware/drivers.md
+        reference/hardware/unitree-g1.md: learn/hardware/unitree.md
+        reference/hardware/universal-robots.md: learn/hardware/ur.md
+        reference/inference/remote.md: learn/policies/remote.md
+        reference/mesh-topics.md: learn/mesh/topics.md
+        reference/mesh.md: learn/mesh/fleet.md
+        reference/policies/camera-naming.md: learn/policies/lerobot-local.md
+        reference/policies/cosmos3-diffusers.md: learn/policies/cosmos3.md
+        reference/policies/cosmos3.md: learn/policies/cosmos3.md
+        reference/policies/curobo.md: learn/policies/curobo.md
+        reference/policies/custom-policies.md: reference/api/policies.md
+        reference/policies/groot.md: learn/policies/groot.md
+        reference/policies/kimodo-sampling.md: learn/policies/kimodo.md
+        reference/policies/kimodo.md: learn/policies/kimodo.md
+        reference/policies/lerobot-local-observations.md: learn/policies/lerobot-local.md
+        reference/policies/lerobot-local.md: learn/policies/lerobot-local.md
+        reference/policies/microduck.md: learn/policies/microduck.md
+        reference/policies/molmoact2.md: learn/policies/index.md
+        reference/policies/moveit2.md: learn/policies/moveit2.md
+        reference/policies/overview.md: learn/policies/index.md
+        reference/policies/persistent-worker.md: reference/api/policies.md
+        reference/policies/protomotions-motion-cache.md: learn/policies/protomotions.md
+        reference/policies/protomotions.md: learn/policies/protomotions.md
+        reference/policies/rl.md: learn/policies/rl.md
+        reference/policies/wbc-rollouts.md: learn/policies/wbc.md
+        reference/policies/wbc.md: learn/policies/wbc.md
+        reference/policies/wbc_gait.md: learn/policies/wbc.md
+        reference/recording.md: learn/data/record.md
+        reference/ros2-integration.md: learn/ros2.md
+        reference/ros2/ackermann.md: learn/ros2.md
+        reference/ros2/hardware-bridge.md: learn/ros2.md
+        reference/ros2/mesh-bridge.md: learn/ros2.md
+        reference/ros2/rosbridge-robot.md: learn/ros2.md
+        reference/ros2/rtps-robot.md: learn/ros2.md
+        reference/ros2/safety.md: learn/mesh/safety-and-estop.md
+        reference/ros2/sim-bridge.md: learn/ros2.md
+        reference/rosbridge-integration.md: learn/ros2.md
+        reference/rtps-integration.md: learn/ros2.md
+        reference/security.md: learn/security.md
+        reference/security/audit-log.md: learn/security.md
+        reference/security/commands.md: learn/security.md
+        reference/security/hardware.md: learn/security.md
+        reference/security/mesh.md: learn/mesh/safety-and-estop.md
+        reference/security/policy-code.md: reference/refusal-codes.md
+        reference/simulation/domain-randomization.md: learn/simulation/randomization.md
+        reference/simulation/isaac-parity.md: learn/simulation/isaac.md
+        reference/simulation/isaac.md: learn/simulation/isaac.md
+        reference/simulation/meshes-and-materials.md: learn/simulation/worlds-and-objects.md
+        reference/simulation/newton-scenes.md: learn/simulation/newton.md
+        reference/simulation/newton.md: learn/simulation/newton.md
+        reference/simulation/objects.md: learn/simulation/worlds-and-objects.md
+        reference/simulation/observers.md: learn/simulation/predicates-and-rollouts.md
+        reference/simulation/overview.md: learn/simulation/index.md
+        reference/simulation/physics.md: learn/simulation/mujoco.md
+        reference/simulation/predicates.md: learn/simulation/predicates-and-rollouts.md
+        reference/simulation/rollout-results.md: learn/simulation/predicates-and-rollouts.md
+        reference/simulation/rollouts.md: learn/simulation/predicates-and-rollouts.md
+        reference/simulation/scene-editing.md: learn/simulation/worlds-and-objects.md
+        reference/simulation/spawning.md: learn/simulation/worlds-and-objects.md
+        reference/simulation/terrain.md: learn/simulation/worlds-and-objects.md
+        reference/simulation/troubleshooting.md: start/doctor.md
+        reference/simulation/world-building.md: learn/simulation/worlds-and-objects.md
+        reference/training/overview.md: learn/training/lerobot.md
+        reference/training/provider-knobs.md: learn/training/lerobot.md
+        reference/training/rl-reference.md: learn/training/rl.md
+        reference/training/rl.md: learn/training/rl.md
+        reference/training/vla_workflow.md: learn/training/lerobot.md
+        reference/troubleshooting.md: start/doctor.md
+        robots/aerial.md: robots/aerial/index.md
+        robots/arms.md: robots/arm/index.md
+        robots/bimanual.md: robots/bimanual/index.md
+        robots/hands.md: robots/hand/index.md
+        robots/humanoids.md: robots/humanoid/index.md
+        robots/mobile-manip.md: robots/mobile_manip/index.md
+        robots/mobile.md: robots/mobile/index.md
+        ros2-integration.md: learn/ros2.md
+        ros2/ackermann.md: learn/ros2.md
+        ros2/hardware-bridge.md: learn/ros2.md
+        ros2/mesh-bridge.md: learn/ros2.md
+        ros2/rosbridge-robot.md: learn/ros2.md
+        ros2/rtps-robot.md: learn/ros2.md
+        ros2/safety.md: learn/mesh/safety-and-estop.md
+        ros2/sim-bridge.md: learn/ros2.md
+        rosbridge-integration.md: learn/ros2.md
+        rtps-integration.md: learn/ros2.md
+        security.md: learn/security.md
+        security/audit-log.md: learn/security.md
+        security/commands.md: learn/security.md
+        security/hardware.md: learn/security.md
+        security/mesh.md: learn/mesh/safety-and-estop.md
+        security/policy-code.md: reference/refusal-codes.md
+        simulation/domain-randomization.md: learn/simulation/randomization.md
+        simulation/isaac-parity.md: learn/simulation/isaac.md
+        simulation/isaac.md: learn/simulation/isaac.md
+        simulation/meshes-and-materials.md: learn/simulation/worlds-and-objects.md
+        simulation/newton-scenes.md: learn/simulation/newton.md
+        simulation/newton.md: learn/simulation/newton.md
+        simulation/objects.md: learn/simulation/worlds-and-objects.md
+        simulation/observers.md: learn/simulation/predicates-and-rollouts.md
+        simulation/overview.md: learn/simulation/index.md
+        simulation/physics.md: learn/simulation/mujoco.md
+        simulation/predicates.md: learn/simulation/predicates-and-rollouts.md
+        simulation/rollout-results.md: learn/simulation/predicates-and-rollouts.md
+        simulation/rollouts.md: learn/simulation/predicates-and-rollouts.md
+        simulation/scene-editing.md: learn/simulation/worlds-and-objects.md
+        simulation/spawning.md: learn/simulation/worlds-and-objects.md
+        simulation/terrain.md: learn/simulation/worlds-and-objects.md
+        simulation/troubleshooting.md: start/doctor.md
+        simulation/world-building.md: learn/simulation/worlds-and-objects.md
+        training/overview.md: learn/training/lerobot.md
+        training/provider-knobs.md: learn/training/lerobot.md
+        training/rl-reference.md: learn/training/rl.md
+        training/rl.md: learn/training/rl.md
+        training/vla_workflow.md: learn/training/lerobot.md
+        troubleshooting.md: start/doctor.md
+
 markdown_extensions:
-- pymdownx.highlight:
-    anchor_linenums: true
-- pymdownx.inlinehilite
-- pymdownx.snippets:
-    base_path: ['.']
-    check_paths: true
-- pymdownx.superfences:
-    custom_fences:
-    - name: mermaid
-      class: mermaid
-      format: !!python/name:pymdownx.superfences.fence_code_format ''
-- pymdownx.tabbed:
-    alternate_style: true
-- admonition
-- pymdownx.details
-- pymdownx.betterem
-- pymdownx.mark
-- pymdownx.caret
-- pymdownx.tilde
-- pymdownx.keys
-- pymdownx.tasklist:
-    custom_checkbox: true
-- pymdownx.emoji:
-    emoji_index: !!python/name:material.extensions.emoji.twemoji ''
-    emoji_generator: !!python/name:material.extensions.emoji.to_svg ''
-- attr_list
-- md_in_html
-- tables
-- toc:
-    permalink: true
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.keys
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+
+nav:
+  - Home: index.md
+  - Start:
+      - start/index.md
+      - start/install.md
+      - start/first-robot.md
+      - start/first-real-arm.md
+      - start/first-agent.md
+      - start/doctor.md
+  - Robots:
+      - robots/index.md
+      - Arms:
+          - robots/arm/index.md
+          - robots/arx_l5.md
+          - robots/dynamixel_2r.md
+          - robots/fr3.md
+          - robots/fr3_v2.md
+          - robots/hope_jr.md
+          - robots/kinova_gen3.md
+          - robots/koch.md
+          - robots/kuka_iiwa.md
+          - robots/omx.md
+          - robots/rebot_b601.md
+          - robots/openarm.md
+          - robots/panda.md
+          - robots/piper.md
+          - robots/sawyer.md
+          - robots/so100.md
+          - robots/so101.md
+          - robots/ur10e.md
+          - robots/ur5e.md
+          - robots/vx300s.md
+          - robots/wx250s.md
+          - robots/xarm7.md
+          - robots/yam.md
+          - robots/z1.md
+      - Bimanual:
+          - robots/bimanual/index.md
+          - robots/aloha.md
+          - robots/bi_openarm.md
+          - robots/bi_rebot_b601.md
+          - robots/bi_so_follower.md
+          - robots/trossen_wxai.md
+      - Hands and grippers:
+          - robots/hand/index.md
+          - robots/ability_hand.md
+          - robots/aero_hand.md
+          - robots/allegro_hand.md
+          - robots/leap_hand.md
+          - robots/robotiq_2f85.md
+          - robots/robotiq_2f85_v4.md
+          - robots/shadow_dexee.md
+          - robots/shadow_hand.md
+          - robots/hope_jr_hand.md
+      - Humanoids:
+          - robots/humanoid/index.md
+          - robots/adam_lite.md
+          - robots/apollo.md
+          - robots/asimov_v0.md
+          - robots/booster_t1.md
+          - robots/cassie.md
+          - robots/elf2.md
+          - robots/fourier_n1.md
+          - robots/jvrc.md
+          - robots/microduck.md
+          - robots/op3.md
+          - robots/open_duck_mini.md
+          - robots/rby1.md
+          - robots/reachy2.md
+          - robots/talos.md
+          - robots/toddlerbot_2xc.md
+          - robots/toddlerbot_2xm.md
+          - robots/unitree_g1.md
+          - robots/unitree_h1.md
+          - robots/unitree_h1_2.md
+      - Mobile bases:
+          - robots/mobile/index.md
+          - robots/aliengo.md
+          - robots/anymal_b.md
+          - robots/anymal_c.md
+          - robots/earthrover.md
+          - robots/go1.md
+          - robots/lekiwi.md
+          - robots/robot_soccer_kit.md
+          - robots/spot.md
+          - robots/unitree_a1.md
+          - robots/unitree_go2.md
+      - Mobile manipulators:
+          - robots/mobile_manip/index.md
+          - robots/yahboom_m3pro.md
+          - robots/stretch.md
+          - robots/stretch3.md
+          - robots/tiago_dual.md
+          - robots/google_robot.md
+          - robots/lekiwi_client.md
+      - Aerial:
+          - robots/aerial/index.md
+          - robots/crazyflie.md
+          - robots/skydio_x2.md
+      - Expressive:
+          - robots/expressive/index.md
+          - robots/reachy_mini.md
+  - Learn:
+      - learn/index.md
+      - Agents: learn/agents.md
+      - Policies:
+          - learn/policies/index.md
+          - LeRobot local: learn/policies/lerobot-local.md
+          - GR00T: learn/policies/groot.md
+          - Cosmos 3: learn/policies/cosmos3.md
+          - cuRobo: learn/policies/curobo.md
+          - MoveIt2: learn/policies/moveit2.md
+          - WBC: learn/policies/wbc.md
+          - Kimodo: learn/policies/kimodo.md
+          - ProtoMotions: learn/policies/protomotions.md
+          - Microduck: learn/policies/microduck.md
+          - RL checkpoint: learn/policies/rl.md
+          - Remote: learn/policies/remote.md
+      - Simulation:
+          - learn/simulation/index.md
+          - MuJoCo: learn/simulation/mujoco.md
+          - Isaac Sim: learn/simulation/isaac.md
+          - Newton: learn/simulation/newton.md
+          - Worlds and objects: learn/simulation/worlds-and-objects.md
+          - Predicates and rollouts: learn/simulation/predicates-and-rollouts.md
+          - Randomization: learn/simulation/randomization.md
+      - Training:
+          - learn/training/index.md
+          - LeRobot: learn/training/lerobot.md
+          - RL: learn/training/rl.md
+      - Data:
+          - Record: learn/data/record.md
+          - Verify: learn/data/verify.md
+          - Label and judge: learn/data/label-and-judge.md
+          - Stream and sync: learn/data/stream-and-sync.md
+      - Hardware:
+          - Drivers: learn/hardware/drivers.md
+          - Teleoperation: learn/hardware/teleoperation.md
+          - Cameras: learn/hardware/cameras.md
+          - Calibration: learn/hardware/calibration.md
+          - Feetech arms: learn/hardware/feetech-arms.md
+          - Unitree G1 and Go2: learn/hardware/unitree.md
+          - Franka: learn/hardware/franka.md
+          - Universal Robots: learn/hardware/ur.md
+          - Reachy Mini: learn/hardware/reachy-mini.md
+          - Microduck: learn/hardware/microduck.md
+          - Booster T1: learn/hardware/booster-t1.md
+      - Mesh:
+          - learn/mesh/index.md
+          - Fleet: learn/mesh/fleet.md
+          - Safety and e-stop: learn/mesh/safety-and-estop.md
+          - Topics: learn/mesh/topics.md
+          - Bridges: learn/mesh/bridges.md
+      - Dashboard: learn/dashboard.md
+      - ROS 2: learn/ros2.md
+      - Security: learn/security.md
+  - Reference:
+      - reference/index.md
+      - Tools: reference/tools.md
+      - Command line: reference/cli.md
+      - Configuration: reference/configuration.md
+      - Refusal codes: reference/refusal-codes.md
+      - Changelog: reference/changelog.md
+      - API:
+          - reference/api/index.md
+          - Robot and factory: reference/api/robot.md
+          - Registry: reference/api/registry.md
+          - Simulation: reference/api/simulation.md
+          - Policies: reference/api/policies.md
+          - Drivers: reference/api/drivers.md
+          - Tools: reference/api/tools.md
+          - Data: reference/api/data.md
+          - Mesh: reference/api/mesh.md
+  - Project:
+      - project/index.md
+      - Architecture: project/architecture.md
+      - Contributing: project/contributing.md
+      - Roadmap: project/roadmap.md
+      - Security policy: project/security-policy.md

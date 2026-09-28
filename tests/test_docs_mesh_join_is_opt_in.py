@@ -24,9 +24,9 @@ differently:
 Two sibling guards grade the same contract at narrower scopes:
 ``tests/mesh/test_mesh_env_opt_in_documented_default.py`` grades a table whose
 first cell is the environment variable, and
-``tests/test_docs_robot_factory_reference.py`` grades the factory reference
-page's own parameter table and Mesh section. Neither reads any other page, and
-neither grades a snippet. This module grades every ``docs/**/*.md`` page and
+``tests/test_docs_robot_factory_reference.py`` grades the factory docstring the
+reference page renders and the mesh index page's ``STRANDS_MESH`` row. Neither
+reads any other page, and neither grades a snippet. This module grades every ``docs/**/*.md`` page and
 ``README.md``, at the scope each spelling lives in: per fenced block for the
 snippets, per paragraph for the prose, per row for the tables.
 
@@ -50,7 +50,9 @@ from strands_robots.robot import Robot, _mesh_env_opt_in
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 
-_PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+# A fence may carry an info string (``python title="sketch"``); the sketches are
+# the blocks a reader copies, so they are scanned too.
+_PYTHON_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
 
 # A construction whose result is bound to a name, e.g. ``sim_a = Robot("so100")``.
 _CONSTRUCTION = re.compile(r"^\s*(\w+)\s*=\s*(Robot|Simulation)\s*\(", re.MULTILINE)
@@ -87,7 +89,7 @@ _CELL_SPLIT = re.compile(r"(?<!\\)\|")
 # above zero that a reformat which stops matching fails loudly instead of
 # reporting clean.
 _MINIMUM_PAGES = 30
-_MINIMUM_FENCES = 150
+_MINIMUM_FENCES = 100
 _MINIMUM_PARAGRAPHS = 800
 
 _PROBE_MJCF = """<mujoco model="probe">

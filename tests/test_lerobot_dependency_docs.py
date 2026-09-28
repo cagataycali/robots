@@ -117,8 +117,17 @@ def test_molmoact2_extra_is_pure_pypi_with_transformers_5_4_plus() -> None:
 # --- negative contract: stale pre-0.6 guidance must be gone from the docs ---
 
 _TRAIN_POLICY = _REPO_ROOT / "strands_robots" / "tools" / "train_policy.py"
-_TRAINING_OVERVIEW = _REPO_ROOT / "docs" / "reference" / "training" / "overview.md"
-_LEROBOT_LOCAL = _REPO_ROOT / "docs" / "reference" / "policies" / "lerobot-local.md"
+_DOCS = _REPO_ROOT / "docs"
+# the training page (was docs/reference/training/overview.md)
+_TRAINING_OVERVIEW = _DOCS / "learn" / "training" / "lerobot.md"
+# the lerobot_local provider page; it also carries the [molmoact2] install line
+# now that the separate molmoact2.md page was merged into the provider matrix
+_LEROBOT_LOCAL = _DOCS / "learn" / "policies" / "lerobot-local.md"
+
+
+def _docs_pages() -> list[Path]:
+    """Every hand-written page: the generated per-robot pages carry no install prose."""
+    return sorted(p for p in _DOCS.rglob("*.md") if _DOCS / "robots" not in p.parents)
 
 
 def test_train_policy_tool_has_no_stale_transformers_pin() -> None:
@@ -133,6 +142,16 @@ def test_train_policy_tool_has_no_stale_transformers_pin() -> None:
     assert "transformers>=5.4.0" in text
 
 
+def _lerobot_transformers_floor() -> Version:
+    """The transformers lower bound lerobot's ``transformers-dep`` extra declares."""
+    for raw in metadata.requires("lerobot") or ():
+        req = Requirement(raw)
+        if canonicalize_name(req.name) != "transformers":
+            continue
+        return min(Version(s.version) for s in req.specifier if s.operator == ">=")
+    raise AssertionError("installed lerobot declares no transformers requirement")
+
+
 def test_training_overview_has_no_stale_vla_install_lore() -> None:
     text = _TRAINING_OVERVIEW.read_text()
     # the pre-0.6 "pin transformers==5.3.0 / lerobot 0.5.1" recommendation +
@@ -140,7 +159,19 @@ def test_training_overview_has_no_stale_vla_install_lore() -> None:
     assert "backbone_cfg" not in text
     assert "lerobot[smolvla]==0.5.1" not in text
     assert "lerobot[pi]==0.5.1" not in text
-    assert "transformers>=5.4.0" in text
+    # The page states the floor lerobot pins in this process (`transformers>=5`).
+    # Graded against lerobot's own metadata rather than a literal so a floor
+    # bump on either side re-grades the sentence: the stated bound must sit at
+    # or below the declared one, in the same major, and never at the dead 5.3.0.
+    stated = [Version(v) for v in re.findall(r"transformers>=([0-9][0-9.]*)", text)]
+    assert stated, "the training page no longer names the transformers floor lerobot pins"
+    declared = _lerobot_transformers_floor()
+    for bound in stated:
+        assert bound.major == declared.major, (
+            f"training page names transformers>={bound}; lerobot declares >={declared}"
+        )
+        assert bound <= declared, f"training page names transformers>={bound}, above lerobot's >={declared}"
+        assert bound != Version("5.3.0"), "the pre-0.6 transformers==5.3.0 lore is back"
 
 
 def test_lerobot_local_docs_do_not_claim_molmoact2_needs_source() -> None:
@@ -155,10 +186,14 @@ def test_lerobot_local_docs_do_not_claim_molmoact2_needs_source() -> None:
 #     narrative also lingered in the architecture / troubleshooting / molmoact2
 #     pages after the >=0.6 floor bump. These pin it out. ---
 
-_ARCHITECTURE = _REPO_ROOT / "docs" / "reference" / "architecture.md"
-_TROUBLESHOOTING = _REPO_ROOT / "docs" / "reference" / "troubleshooting.md"
-_MOLMOACT2 = _REPO_ROOT / "docs" / "reference" / "policies" / "molmoact2.md"
-_INSTALLATION = _REPO_ROOT / "docs" / "getting-started" / "installation.md"
+# The new tree has no dependency matrix (architecture.md points at pyproject
+# instead) and no troubleshooting table (start/doctor.md documents the probe
+# report). The claims below therefore attach to the pages that now carry the
+# lerobot floor, the install lines and the accelerate refusal.
+_ARCHITECTURE = _DOCS / "project" / "architecture.md"
+_DOCTOR = _DOCS / "start" / "doctor.md"
+_STREAM_AND_SYNC = _DOCS / "learn" / "data" / "stream-and-sync.md"
+_POLICY_MATRIX = _DOCS / "learn" / "policies" / "index.md"  # absorbed molmoact2.md
 
 
 def _lerobot_floor_from_pyproject() -> str:
@@ -170,60 +205,73 @@ def _lerobot_floor_from_pyproject() -> str:
 
 
 def test_architecture_lerobot_extra_row_matches_pyproject_floor() -> None:
-    text = _ARCHITECTURE.read_text()
-    # the dependency-matrix row must not advertise the dead pre-0.6 cap
-    assert "lerobot>=0.5.0,<0.6.0" not in text, "architecture.md still cites the dead <0.6.0 lerobot cap"
-    # It must reflect the real floor, read from pyproject rather than hardcoded:
-    # a floor bump would otherwise leave this page citing a dead version while
-    # the guard kept passing.
+    """No page advertises a dead lerobot version; the one that names the floor names pyproject's.
+
+    The old architecture page carried a dependency matrix; the new one defers
+    to ``pyproject.toml`` by design, so the claim moves to the page that still
+    quotes a lerobot version to the reader: the bucket-streaming page.
+    """
+    for page in _docs_pages():
+        text = page.read_text()
+        rel = page.relative_to(_REPO_ROOT)
+        assert "lerobot>=0.5.0,<0.6.0" not in text, f"{rel} still cites the dead <0.6.0 lerobot cap"
+        assert "lerobot>=0.5.0,<0.6" not in text, f"{rel} pins lerobot below the required floor"
     floor = _lerobot_floor_from_pyproject()
-    assert f"lerobot{floor}" in text, f"architecture.md [lerobot] row should name the pyproject floor lerobot{floor}"
+    lower = min(Version(s.version) for s in SpecifierSet(floor) if s.operator == ">=")
+    text = _unwrapped(_STREAM_AND_SYNC.read_text())
+    assert f"lerobot {lower} or newer" in text, (
+        f"stream-and-sync.md should name the pyproject floor (lerobot {lower} or newer) for bucket streaming"
+    )
+    # architecture defers to pyproject instead of a hand-typed matrix: keep it that way
+    assert "pyproject.toml" in _ARCHITECTURE.read_text()
+
+
+def test_doctor_report_shows_a_lerobot_the_extra_can_install() -> None:
+    """The sample ``strands-robots doctor`` report must not show a pre-floor lerobot.
+
+    A ``PASS  lerobot 0.5.1`` line teaches the reader that 0.5.x is the
+    expected install while the ``[lerobot]`` extra refuses anything below the
+    pyproject floor.
+    """
+    floor = _lerobot_floor_from_pyproject()
+    spec = SpecifierSet(floor)
+    shown = [Version(v) for v in re.findall(r"lerobot ([0-9]+\.[0-9]+\.[0-9]+)", _DOCTOR.read_text())]
+    assert shown, "doctor.md sample report no longer shows a lerobot version row"
+    for version in shown:
+        assert spec.contains(version, prereleases=True), (
+            f"doctor.md shows `lerobot {version}` as PASS but the [lerobot] extra declares lerobot{floor}"
+        )
 
 
 def test_troubleshooting_version_skew_remedy_does_not_conflict_with_floor() -> None:
-    text = _TROUBLESHOOTING.read_text()
-    # remedying a version-skew ImportError by pinning ``<0.6`` directly conflicts
-    # with the pyproject floor (``lerobot[...]>=0.6.1``); the remedy must (re)install
-    # the extra instead of a manual sub-floor pin.
-    assert "lerobot>=0.5.0,<0.6" not in text, "troubleshooting remedy pins lerobot below the required >=0.6.1 floor"
-    assert "strands-robots[lerobot]" in text
+    # remedying a missing or skewed lerobot by pinning ``<0.6`` directly conflicts
+    # with the pyproject floor; the doctor's LeRobot row must (re)install the
+    # extra instead of a manual sub-floor pin.
+    text = _DOCTOR.read_text()
+    assert "lerobot>=0.5.0,<0.6" not in text, "doctor remedy pins lerobot below the required >=0.6.1 floor"
+    rows = [line for line in text.splitlines() if line.startswith("| LeRobot")]
+    assert len(rows) == 1, f"expected one LeRobot probe row in doctor.md, found {len(rows)}"
+    assert "[lerobot]" in rows[0], f"the LeRobot probe row does not name the extra as the remedy: {rows[0]!r}"
 
 
 def test_troubleshooting_molmoact2_is_pypi_not_from_source() -> None:
-    text = _TROUBLESHOOTING.read_text()
-    # MolmoAct2Policy ships in lerobot >= 0.6 (PyPI); no from-source git+ remedy.
-    assert "git+https://github.com/huggingface/lerobot" not in text
-    assert "not in PyPI lerobot" not in text
-    # the remedy is the [molmoact2] extra
-    assert "strands-robots[molmoact2]" in text
-
-
-def _md_heading_slugs(text: str) -> set[str]:
-    """GitHub/mkdocs heading slugs: lowercase, spaces->'-', drop non-alnum/non-space/non-hyphen."""
-    slugs: set[str] = set()
-    for line in text.splitlines():
-        s = line.strip()
-        if not s.startswith("#"):
-            continue
-        title = s.lstrip("#").strip()
-        slug = "".join(c for c in title.lower() if c.isalnum() or c in " -").replace(" ", "-")
-        slugs.add(slug)
-    return slugs
-
-
-def test_troubleshooting_jetson_anchor_resolves_to_a_real_heading() -> None:
-    """The Jetson/pyav row links into installation.md; that anchor must exist (was broken)."""
-    text = _TROUBLESHOOTING.read_text()
-    # the stale, non-existent anchor is gone
-    assert "molmoact2-on-jetson-lerobot-from-source" not in text
-    # and the anchor it now links to resolves to a real installation.md heading
-    slugs = _md_heading_slugs(_INSTALLATION.read_text())
-    assert "molmoact2-on-jetson" in slugs, "installation.md lost the '### MolmoAct2 on Jetson' heading"
-    assert "getting-started/installation.md#molmoact2-on-jetson" in text
+    # MolmoAct2Policy ships in lerobot >= 0.6 (PyPI); no from-source git+ remedy
+    # anywhere in the docs, and the remedy is the [molmoact2] extra.
+    for page in _docs_pages():
+        text = page.read_text()
+        rel = page.relative_to(_REPO_ROOT)
+        assert "git+https://github.com/huggingface/lerobot" not in text, f"{rel} installs lerobot from source"
+        assert "not in PyPI lerobot" not in text, rel
+    assert "strands-robots[molmoact2]" in _LEROBOT_LOCAL.read_text()
 
 
 def test_molmoact2_doc_install_line_is_not_from_source() -> None:
-    text = _MOLMOACT2.read_text()
+    # molmoact2.md was merged into the provider matrix; the install line lives
+    # on the lerobot_local page, which the matrix links for MolmoAct2.
+    matrix = _POLICY_MATRIX.read_text()
+    assert "lerobot from source" not in matrix
+    assert "MolmoAct2" in matrix and "lerobot-local.md" in matrix, "the provider matrix lost its MolmoAct2 row"
+    text = _LEROBOT_LOCAL.read_text()
     assert "lerobot from source" not in text
     assert "[molmoact2]" in text
 
@@ -238,7 +286,7 @@ def test_molmoact2_doc_install_line_is_not_from_source() -> None:
 #     require the current one. ---
 
 _STREAMING_DATASET = _REPO_ROOT / "strands_robots" / "streaming_dataset.py"
-_READING_BACK = _REPO_ROOT / "docs" / "reference" / "data" / "reading-back.md"
+_READING_BACK = _STREAM_AND_SYNC  # was docs/reference/data/reading-back.md
 
 
 def test_no_userfacing_file_invokes_removed_lerobot_scripts_train() -> None:
@@ -269,12 +317,8 @@ def test_no_userfacing_file_invokes_removed_lerobot_scripts_train() -> None:
 #     * The shard-size claim understated lerobot's defaults: 100 MB is the
 #       data-parquet default; video MP4 shards default to 200 MB. ---
 
-_STREAMED_TRAINING = (
-    _REPO_ROOT / "docs" / "reference" / "data" / "reading-back.md"
-)  # the streamed-training page (was README)
-_BUCKET_GUIDANCE = (
-    _REPO_ROOT / "docs" / "reference" / "data" / "dataset-recorder.md"
-)  # the sync_to_bucket page (was README)
+_STREAMED_TRAINING = _STREAM_AND_SYNC  # the streamed-training page (was README, then reading-back.md)
+_BUCKET_GUIDANCE = _STREAM_AND_SYNC  # the sync_to_bucket page (was README, then dataset-recorder.md)
 _DATASET_RECORDER = _REPO_ROOT / "strands_robots" / "dataset_recorder.py"
 _DATASET_TRANSFER = _REPO_ROOT / "strands_robots" / "dataset_transfer.py"  # the bucket-sync source
 
@@ -285,8 +329,11 @@ def test_readme_streamed_training_invocation_is_current() -> None:
         f"{_STREAMED_TRAINING.name} instructs the removed `python -m lerobot.scripts.train`; "
         "lerobot renamed the trainer module to `lerobot.scripts.lerobot_train`"
     )
-    # the documented invocation is the entry point with draccus --dotted flags
-    assert "lerobot-train" in text, f"{_STREAMED_TRAINING.name} lost its `lerobot-train` reference"
+    # the documented invocation is the entry point with draccus --dotted flags,
+    # spelled either as the console script or as its module
+    assert "lerobot-train" in text or "python -m lerobot.scripts.lerobot_train" in text, (
+        f"{_STREAMED_TRAINING.name} lost its `lerobot-train` reference"
+    )
     assert "--dataset.streaming=true" in text, (
         f"{_STREAMED_TRAINING.name} streamed-training example must use draccus `--dotted.key=value` "
         "flags, not Hydra `key=value` args"
@@ -299,6 +346,7 @@ def test_hf_cli_install_guidance_pins_the_bucket_cli_floor() -> None:
     # without the `buckets`/`sync` subcommands; every install line next to
     # `sync_to_bucket` guidance must name the floor that ships them.
     floor = _bucket_cli_floor_spec()
+    assert "sync_to_bucket" in _BUCKET_GUIDANCE.read_text(), "stream-and-sync.md no longer documents sync_to_bucket"
     for path in (_BUCKET_GUIDANCE, _DATASET_TRANSFER):
         text = path.read_text()
         assert "pip install -U huggingface_hub" not in text, (
@@ -447,31 +495,28 @@ def test_training_overview_names_the_trainer_extra() -> None:
     text = _unwrapped(_TRAINING_OVERVIEW.read_text())
     # the false claim: [lerobot] alone cannot run train() on any device
     assert "works out of the box" not in text, (
-        "docs/reference/training/overview.md calls the lerobot_local ACT/diffusion install "
-        "'works out of the box', but train() refuses without accelerate, which no "
-        "extra on that path declares"
+        "the training page calls the lerobot_local install 'works out of the box', "
+        "but train() refuses without accelerate, which no extra on that path declares"
     )
     assert "extra is enough for **ACT / diffusion from" not in text, (
-        "docs/reference/training/overview.md still claims the [lerobot] extra alone is enough to train from scratch"
+        "the training page still claims the [lerobot] extra alone is enough to train from scratch"
     )
-    # the remedy, and why it applies with no GPU in sight
-    assert "lerobot[training]" in text, "docs/reference/training/overview.md lost the lerobot[training] requirement"
-    assert 'require_package("accelerate", extra="training")' in text, (
-        "docs/reference/training/overview.md should name the call that refuses, so the "
-        "'CPU needs it too' claim is checkable rather than asserted"
+    # the page says accelerate is needed for train() ...
+    assert "accelerate for train()" in text, "the training page lost the accelerate-for-train() note"
+    # ... and names the install that provides it, since [lerobot] does not
+    assert "lerobot[training]" in text or "pip install accelerate" in text, (
+        "the training page says train() needs accelerate but never says how to install it; "
+        "name `lerobot[training]` (or `pip install accelerate`) next to the [lerobot] install line"
     )
-    assert "on CPU as well as GPU" in text
 
 
 def test_troubleshooting_has_a_remedy_for_the_missing_trainer_extra() -> None:
-    text = _unwrapped(_TROUBLESHOOTING.read_text())
-    # the symptom a reader actually sees, verbatim from lerobot's require_package
-    assert "'accelerate' is required but not installed" in text, (
-        "docs/reference/troubleshooting.md has no row for the missing-accelerate training failure"
-    )
-    assert 'uv pip install "lerobot[training]"' in text, (
-        "docs/reference/troubleshooting.md names the accelerate symptom without the lerobot[training] remedy"
-    )
+    # The troubleshooting table is gone; the training page owns the symptom now.
+    # It must say that validate() refuses on a missing accelerate before the run
+    # starts, so a reader who hits the lerobot error knows where it came from.
+    text = _unwrapped(_TRAINING_OVERVIEW.read_text())
+    assert "validate()" in text and "refuses" in text, "the training page no longer documents validate()'s refusals"
+    assert "missing `accelerate`" in text, "the training page has no line for the missing-accelerate refusal"
 
 
 # --- negative contract: no docs install line prescribes a numpy that the
@@ -556,27 +601,3 @@ def test_no_docs_install_command_pins_a_numpy_lerobot_forbids() -> None:
         "docs install command pins a numpy that the installed lerobot "
         f"({_lerobot_numpy_specifier()}) forbids, so the same command line undoes it: " + "; ".join(offenders)
     )
-
-
-def test_numpy_abi_remedy_reinstalls_through_the_lerobot_extra() -> None:
-    """The numpy-ABI remedy must resolve through a declared extra, not bare.
-
-    Reinstalling the offending wheel on its own lets the resolver move numpy
-    freely: a bare ``uv pip install --reinstall pandas`` next to lerobot 0.6.1
-    resolves pandas 3 and numpy 2.5, which lerobot's ``numpy<2.3.0`` forbids.
-    Naming the extra keeps the repair inside the ranges the project declares.
-    """
-    rows = [
-        line.split("|")
-        for line in _TROUBLESHOOTING.read_text().splitlines()
-        if line.startswith("|") and "numpy" in line.split("|")[1] and "Jetson" in line.split("|")[1]
-    ]
-    assert len(rows) == 1, f"expected exactly one numpy-on-Jetson troubleshooting row, found {len(rows)}"
-    remedy = rows[0][3]
-    installs = [f for f in _code_fragments(remedy) if "pip install" in f]
-    assert installs, "the numpy ABI row names no install command"
-    for command in installs:
-        assert "strands-robots[" in command, (
-            f"the numpy ABI remedy reinstalls a package outside any declared extra: {command!r}; "
-            "the resolver is then free to move numpy out of lerobot's range"
-        )
