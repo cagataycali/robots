@@ -1,58 +1,70 @@
-"""The Training overview's data-loop fence must open the gate its step 4 hits.
+"""The LeRobot training page must open the gate its load-it-back step hits.
 
-``create_policy(ckpt)`` resolves a lerobot checkpoint directory to
-``lerobot_local``, which ``_check_trust_remote_code`` refuses unless
-``STRANDS_TRUST_REMOTE_CODE`` is set - a local, freshly trained directory
-included. ``examples/07_post_tune_any_policy.py`` sets the opt-in at that step;
-the ``docs/reference/training/overview.md`` fence copied from it is what a reader runs, so
-it must carry the same line or step 4 raises ``UntrustedRemoteCodeError`` on a
-clean install.
+``create_policy("lerobot_local", pretrained_name_or_path=...)`` resolves a
+lerobot checkpoint directory to ``lerobot_local``, which
+``_check_trust_remote_code`` refuses unless ``STRANDS_TRUST_REMOTE_CODE`` is
+set - a local, freshly trained directory included.
+``examples/07_post_tune_any_policy.py`` sets the opt-in at that step; the
+training page is what a reader follows, so wherever it tells them to load the
+checkpoint they just trained it must have named the opt-in first, or that step
+raises ``UntrustedRemoteCodeError`` on a clean install.
 
-This execs only the fence's ``os.environ`` statements under a cleared
-environment and then calls the gate exactly as ``create_policy`` does.
+The old ``docs/reference/training/overview.md`` carried the load as a runnable
+data-loop fence copied from the example, and this test exec'd the fence's
+``os.environ`` statements. Its successor, ``docs/learn/training/lerobot.md``,
+states the load as one sentence after the training fence, so the same claim is
+graded on the page's text: the gate is asked first, to prove the opt-in is
+still required, and then the page must name the variable before the load.
 """
 
 from __future__ import annotations
 
-import ast
 import re
 from pathlib import Path
 
 import pytest
 
 import strands_robots
-from strands_robots.policies.factory import _check_trust_remote_code
+from strands_robots.policies.factory import UntrustedRemoteCodeError, _check_trust_remote_code
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
-_PAGE = _REPO_ROOT / "docs" / "reference" / "training" / "overview.md"
-_PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+_PAGE = _REPO_ROOT / "docs" / "learn" / "training" / "lerobot.md"
+_OPT_IN = "STRANDS_TRUST_REMOTE_CODE"
+#: The load-it-back step: a lerobot_local policy built from the trained checkpoint.
+_LOAD = re.compile(r"""create_policy\(\s*["']lerobot_local["'][^)]*checkpoint_dir""")
 
 
-def _data_loop_fence() -> str:
-    fences = [f for f in _PYTHON_FENCE.findall(_PAGE.read_text(encoding="utf-8")) if "create_policy(ckpt" in f]
-    assert len(fences) == 1, "the data-loop fence is the one that loads the trained checkpoint"
-    return fences[0]
+def _page() -> str:
+    return _PAGE.read_text(encoding="utf-8")
 
 
-def _environ_statements(source: str) -> list[ast.stmt]:
-    """Top-level imports plus every statement that touches ``os.environ``."""
-    picked: list[ast.stmt] = []
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Import):
-            picked.append(node)
-        elif isinstance(node, ast.stmt) and "os.environ" in ast.unparse(node):
-            picked.append(node)
-    return picked
+def test_the_page_still_tells_the_reader_to_load_the_trained_checkpoint() -> None:
+    """The step this file guards is on the page; a page without it grades nothing."""
+    assert _LOAD.search(_page()), (
+        "docs/learn/training/lerobot.md no longer shows create_policy('lerobot_local', "
+        "pretrained_name_or_path=result.checkpoint_dir, ...); if the load moved, repoint _LOAD"
+    )
 
 
-def test_the_fence_sets_the_opt_in_before_it_loads_the_checkpoint(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("STRANDS_TRUST_REMOTE_CODE", raising=False)
-    fence = _data_loop_fence()
+def test_the_gate_still_refuses_lerobot_local_without_the_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reason the page has to name the variable: the load fails without it."""
+    monkeypatch.delenv(_OPT_IN, raising=False)
+    with pytest.raises(UntrustedRemoteCodeError):
+        _check_trust_remote_code("lerobot_local")
 
-    env_source = "\n".join(ast.unparse(stmt) for stmt in _environ_statements(fence))
-    exec(env_source, {})  # noqa: S102 - the docs fence is the artefact under test
 
-    _check_trust_remote_code("lerobot_local")  # raises UntrustedRemoteCodeError when the fence did not opt in
-
-    body = fence.split("if __name__", 1)[1]
-    assert body.index("STRANDS_TRUST_REMOTE_CODE") < body.index("create_policy(ckpt"), "the opt-in precedes the load"
+def test_the_page_names_the_opt_in_before_it_loads_the_checkpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reader following the page top to bottom has set the variable when they reach the load."""
+    text = _page()
+    load = _LOAD.search(text)
+    assert load is not None
+    first_mention = text.find(_OPT_IN)
+    assert first_mention != -1, (
+        f"docs/learn/training/lerobot.md tells the reader to load the trained checkpoint with "
+        f"create_policy('lerobot_local', ...) and never names {_OPT_IN}; on a clean install that step "
+        "raises UntrustedRemoteCodeError. Name the opt-in (export or os.environ) before the load."
+    )
+    assert first_mention < load.start(), f"{_OPT_IN} is named on the page only after the checkpoint load"
+    # What the page prescribes opens the gate: set it the way the page spells it.
+    monkeypatch.setenv(_OPT_IN, "1")
+    _check_trust_remote_code("lerobot_local")
