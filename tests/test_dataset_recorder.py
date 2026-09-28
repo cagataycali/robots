@@ -10,6 +10,7 @@ normalization, drop accounting), plus episode/finalize/push lifecycle.
 """
 
 import logging
+import re
 from pathlib import Path
 
 import numpy as np
@@ -2385,6 +2386,34 @@ def test_resolve_dataset_dir_treats_bare_repo_id_as_local_path():
 
     # No owner/name slash -> a local directory path, not $HF_LEROBOT_HOME/<id>.
     assert resolve_dataset_dir("my_local_dataset") == Path("my_local_dataset")
+
+
+@pytest.mark.parametrize("escaping_id", ["owner/../../etc", "owner/..", "a/./..", "owner/name/../../.."])
+def test_resolve_dataset_dir_refuses_a_hub_id_that_leaves_the_dataset_home(tmp_path, monkeypatch, escaping_id):
+    """An ``owner/name`` id is written under ``$HF_LEROBOT_HOME``; its segments cannot walk out of it.
+
+    The dashboard refuses such ids before they reach the library, and this is
+    the library's own lock on the same door: ``create(overwrite=True)`` removes
+    the directory it resolves, so the resolution must not be steerable outside
+    the home by the id alone. The sentence is fixed and says nothing about
+    what is on disk at the refused location.
+    """
+    from strands_robots import dataset_source
+
+    monkeypatch.setattr(dataset_source, "_lerobot_home", lambda: tmp_path / "home")
+
+    with pytest.raises(ValueError, match=re.escape(dataset_source.OUTSIDE_DATASET_HOME)):
+        dataset_source.resolve_dataset_dir(escaping_id)
+
+
+def test_resolve_dataset_dir_keeps_a_hub_id_under_the_dataset_home(tmp_path, monkeypatch):
+    from strands_robots import dataset_source
+
+    monkeypatch.setattr(dataset_source, "_lerobot_home", lambda: tmp_path / "home")
+
+    assert dataset_source.resolve_dataset_dir("owner/name") == tmp_path / "home" / "owner" / "name"
+    # A folded duplicate separator is still the same directory, not a refusal.
+    assert dataset_source.resolve_dataset_dir("owner//name") == tmp_path / "home" / "owner" / "name"
 
 
 def test_create_raises_clear_error_on_existing_dataset_without_overwrite(tmp_path, monkeypatch):

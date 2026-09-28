@@ -27,6 +27,7 @@ still resolves a local path.
 from __future__ import annotations
 
 import inspect
+import os
 from pathlib import Path
 from typing import Any
 
@@ -96,13 +97,47 @@ def local_dataset_dir(repo_id: str) -> Path | None:
     return None
 
 
+#: The one sentence a Hub id that would leave the dataset home is refused with.
+#: Fixed on purpose: it says nothing about what is or is not on disk there.
+OUTSIDE_DATASET_HOME = "The dataset id does not name a directory under the LeRobot dataset home."
+
+
+def hub_dataset_dir(repo_id: str) -> Path:
+    """``$HF_LEROBOT_HOME/{repo_id}`` for an ``owner/name`` Hub id, contained to the home.
+
+    The id is joined onto the home and folded with :func:`os.path.normpath`, so
+    a ``..`` segment collapses before anything is compared, and the folded
+    candidate must start with the home followed by a separator. An id that
+    would land anywhere else (``owner/../../etc``, or one that folds onto the
+    home itself) is refused with :data:`OUTSIDE_DATASET_HOME`. The check is
+    lexical: a symlink the owner placed inside the home (a dataset directory
+    moved to a larger disk) still resolves, the same choice
+    :func:`~strands_robots.utils.safe_join` makes for the asset cache.
+
+    Args:
+        repo_id: HuggingFace dataset id (``owner/name``).
+
+    Returns:
+        The contained directory under the dataset home.
+
+    Raises:
+        ValueError: The id would leave the dataset home.
+    """
+    home = os.path.normpath(str(_lerobot_home()))
+    candidate = os.path.normpath(os.path.join(home, repo_id))
+    if not candidate.startswith(home + os.sep):
+        raise ValueError(OUTSIDE_DATASET_HOME)
+    return Path(candidate)
+
+
 def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
     """Resolve the on-disk directory a dataset will be WRITTEN to.
 
     * explicit ``root`` -> used verbatim;
     * a ``repo_id`` that is itself a path -> the directory it names
       (:func:`local_dataset_dir`);
-    * otherwise ``$HF_LEROBOT_HOME/{repo_id}``.
+    * otherwise ``$HF_LEROBOT_HOME/{repo_id}``, contained to the home
+      (:func:`hub_dataset_dir`).
 
     Every writing entry point hands the result down as an explicit ``root``
     rather than letting LeRobot resolve a second time - otherwise the directory
@@ -120,12 +155,16 @@ def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
 
     Returns:
         The resolved dataset directory as a :class:`~pathlib.Path`.
+
+    Raises:
+        ValueError: An ``owner/name`` id whose segments would leave the dataset
+            home (:data:`OUTSIDE_DATASET_HOME`).
     """
     if root:
         return Path(root)
     if (local := local_dataset_dir(repo_id)) is not None:
         return local
-    return _lerobot_home() / repo_id
+    return hub_dataset_dir(repo_id)
 
 
 def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None) -> tuple[Any, int, int]:
