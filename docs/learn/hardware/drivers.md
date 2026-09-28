@@ -66,11 +66,11 @@ That is the real `FeetechDriver` with the arm's MuJoCo model at the far end of t
 ```python title="sketch"
 from strands_robots.drivers import register_native_driver
 
-register_native_driver("my_arm", MyArmDriver)          # refuses a class missing a contract member
-robot = Robot("my_arm", mode="real", driver="strands", port="/dev/ttyUSB0")
+register_native_driver("koch_follower", MyKochDriver)   # refuses a class missing a contract member
+robot = Robot("koch_follower", mode="real", driver="strands", port="/dev/ttyUSB0")
 ```
 
-`register_native_driver` checks `missing_driver_members(cls)` first and refuses double registration unless `overwrite=True`. A package outside this repo registers at import time; the shipped table tolerates a caller registering first.
+`register_native_driver` binds a driver class to a registry robot name and checks `missing_driver_members(cls)` first; it refuses double registration unless `overwrite=True`. It does not make a new name known: for a robot the registry has never heard of, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` from `strands_robots.registry` first, then register the driver under the same name. A package outside this repo registers at import time; the shipped table tolerates a caller registering first.
 
 ## Where the gates are
 
