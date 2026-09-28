@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from strands_robots.utils import positive_count_error
+from strands_robots.utils import boolean_flag_error, positive_count_error, positive_finite_number_error
 
 # Supported render modes
 RENDER_MODES = ("headless", "rtx_realtime", "rtx_pathtracing")
@@ -206,15 +206,24 @@ class IsaacConfig:
     device : str
         CUDA device string. ``"cuda:0"`` (default) or ``"cuda:N"``.
     headless : bool
-        Run without GUI. Default True (required for cloud/CI runners).
+        Run without GUI. Default True (required for cloud/CI runners). Must be a
+        boolean on :func:`strands_robots.utils.boolean_flag_error` -- it selects
+        a posture rather than scaling a quantity, so a truthy non-boolean such
+        as ``"off"`` is refused rather than reaching the ``SimulationApp`` launch
+        dict verbatim.
         ``STRANDS_ISAAC_HEADLESS`` overrides this field when set: one of
         ``("1", "true", "yes", "on")`` forces headless, one of
         ``("0", "false", "no", "off")`` forces windowed, empty or unset leaves
         the field alone, and any other spelling is refused.
     physics_dt : float
-        Physics timestep in seconds. Default 1/120 s.
+        Physics timestep in seconds. Default 1/120 s. Must be a positive finite
+        number on :func:`strands_robots.utils.positive_finite_number_error` --
+        the same domain ``create_world`` applies to the effective dt -- so a
+        ``nan``, ``inf``, boolean or non-real default cannot be held by a
+        constructed object.
     rendering_dt : float
-        Rendering timestep in seconds. Default 1/30 s.
+        Rendering timestep in seconds. Default 1/30 s. Same domain as
+        ``physics_dt``.
     render_mode : str
         Rendering pipeline: ``"headless"`` (no rendering),
         ``"rtx_realtime"`` (fast, rasterization-based ``RayTracedLighting``),
@@ -238,7 +247,8 @@ class IsaacConfig:
         with every other backend's gravity surface, so it is applied there
         rather than restated here.
     ground_plane : bool
-        Whether to add a ground plane on ``create_world()``. Default True.
+        Whether to add a ground plane on ``create_world()``. Default True. Must
+        be a boolean on :func:`strands_robots.utils.boolean_flag_error`.
     stage_path : str
         USD stage path prefix, and the root every prim this backend creates is
         addressed under (``{stage_path}/Robots/{name}``, and the same shape for
@@ -263,7 +273,8 @@ class IsaacConfig:
         Default camera height in pixels. Default 480. Same domain as
         ``camera_width``.
     verbose : bool
-        Enable verbose logging from Isaac Sim/Kit. Default False.
+        Enable verbose logging from Isaac Sim/Kit. Default False. Must be a
+        boolean on :func:`strands_robots.utils.boolean_flag_error`.
     extra : dict
         Escape-hatch for Isaac-specific or experimental options.
     """
@@ -312,13 +323,43 @@ class IsaacConfig:
         if (envs_err := positive_count_error(self.num_envs, "num_envs", type(self).__name__)) is not None:
             raise ValueError(envs_err)
 
-        # Validate physics_dt
-        if self.physics_dt <= 0:
-            raise ValueError(f"physics_dt must be > 0, got {self.physics_dt}")
+        # Validate physics_dt / rendering_dt on the shared continuous domain
+        # (:func:`strands_robots.utils.positive_finite_number_error`) that
+        # :meth:`~strands_robots.simulation.base.SimEngine._validate_timestep`
+        # -- the one ``create_world`` runs over the effective dt and names
+        # ``physics_dt`` for -- applies to the timestep a caller spends. The
+        # hand-rolled ``<= 0`` pair this replaces was a bare comparison: it is
+        # ``False`` for ``nan`` and for ``inf`` (``nan <= 0`` and ``inf <= 0``
+        # are both ``False``), so a dt no integrator can advance by was stored
+        # on a constructed object to be caught a call later under a knob the
+        # caller never spelled, or not at all; it read ``True`` as a dt of 1.0
+        # -- a one-second physics step, 120x the default -- because ``bool`` is
+        # an ``int`` subclass, and ``10**400`` raised ``OverflowError`` out of
+        # the arithmetic. Each field is graded separately so the message names
+        # the one to fix.
+        for param, value in (("physics_dt", self.physics_dt), ("rendering_dt", self.rendering_dt)):
+            if (dt_err := positive_finite_number_error(value, param, type(self).__name__)) is not None:
+                raise ValueError(dt_err)
 
-        # Validate rendering_dt
-        if self.rendering_dt <= 0:
-            raise ValueError(f"rendering_dt must be > 0, got {self.rendering_dt}")
+        # Validate the boolean flags on the shared posture domain
+        # (:func:`strands_robots.utils.boolean_flag_error`). Each selects a
+        # posture rather than scaling a quantity -- ``headless`` whether Kit
+        # opens a window, ``ground_plane`` whether the stage gets a floor,
+        # ``verbose`` the log level -- so a non-boolean is refused rather than
+        # read by truthiness. Untyped, ``headless="off"`` reached the
+        # ``SimulationApp`` launch dict verbatim (a non-empty string is truthy,
+        # so it opened a window while spelling the opposite) while the
+        # ``STRANDS_ISAAC_HEADLESS`` env door already refuses ``"maybe"`` -- one
+        # field, two spellings, one of them graded. The field is validated here,
+        # before the env door below may override ``headless`` with a resolved
+        # boolean.
+        for param, value in (
+            ("headless", self.headless),
+            ("ground_plane", self.ground_plane),
+            ("verbose", self.verbose),
+        ):
+            if (flag_err := boolean_flag_error(value, param, type(self).__name__)) is not None:
+                raise ValueError(flag_err)
 
         # Validate camera dimensions on the shared pixel floor
         # (:func:`strands_robots.utils.positive_count_error`) that ``add_camera``

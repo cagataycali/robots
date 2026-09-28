@@ -297,11 +297,19 @@ class TestNeighbouringSurfacesStayOutOfScope:
         for mode in RENDER_MODES:
             assert _config(render_mode=mode).render_mode == "rtx_pathtracing", mode
 
-    def test_the_headless_field_itself_is_not_type_checked(self):
-        """A non-bool passed directly is still accepted. That is the argument
-        domain rather than the environment vocabulary, and it is a separate
-        change."""
-        assert _config(headless="false").headless == "false"
+    @pytest.mark.parametrize("field", ["headless", "ground_plane", "verbose"])
+    def test_the_boolean_fields_are_graded_at_construction(self, field):
+        """A non-bool passed directly is now refused, not stored.
+
+        This is the argument domain rather than the environment vocabulary: the
+        env door already refused ``"maybe"``, while the field itself was
+        unchecked, so ``headless="off"`` reached the ``SimulationApp`` launch
+        dict verbatim (a non-empty string is truthy, so it opened a window while
+        spelling the opposite). Each boolean flag is now graded on the shared
+        :func:`~strands_robots.utils.boolean_flag_error` posture domain, so a
+        truthy spelling of off is refused under the field's own name."""
+        with pytest.raises(ValueError, match=field):
+            _config(**{field: "false"})
 
 
 class TestNoIsaacEnvSwitchSurfaceDrifts:

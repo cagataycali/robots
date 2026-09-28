@@ -481,30 +481,37 @@ class TestAnUnusableEngineDefaultIsNamedUnderItsOwnKnob:
 
 
 class TestTheConfigGuardCannotSeeEveryUnusableDefault:
-    """Why the effective-dt check is load-bearing rather than defensive.
+    """Where the effective-dt check is load-bearing rather than defensive.
 
-    Neither non-MuJoCo backend fully validates its engine default at
-    construction: ``NewtonSimEngine.__init__`` stores ``default_timestep`` raw,
-    and ``IsaacConfig.__post_init__`` tests ``physics_dt <= 0`` - a bare
-    comparison, which is False for ``nan`` and for ``inf``, and True-for-neither
-    of the booleans. So an unusable default really can be held by a constructed
-    object, and ``create_world``'s effective-dt check is the only thing between
-    it and a world built on a dt no integrator can advance by.
+    ``NewtonSimEngine.__init__`` still stores ``default_timestep`` raw, so an
+    unusable Newton default really can be held by a constructed object, and
+    ``create_world``'s effective-dt check is the only thing between it and a
+    world built on a dt no integrator can advance by. Isaac used to be the same
+    - ``IsaacConfig.__post_init__`` graded ``physics_dt`` with a bare ``<= 0``,
+    which is False for ``nan`` and for ``inf`` and read ``True`` as a dt of 1.0
+    - so a value no integrator can honor was stored to be caught a call later
+    under a knob the caller never spelled, or not at all. Now the config grades
+    both dt fields on the shared continuous domain at construction, so the
+    replacement Isaac cell below pins the refusal rather than the gap, while the
+    Newton cell keeps the last surface the effective-dt check protects.
     """
 
-    @pytest.mark.parametrize("value", [float("nan"), float("inf"), True], ids=repr)
-    def test_isaac_config_admits_a_default_create_world_then_refuses(self, value: Any) -> None:
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), True, 10**400], ids=repr)
+    @pytest.mark.parametrize("field", ["physics_dt", "rendering_dt"])
+    def test_isaac_config_refuses_an_unusable_default_at_construction(self, field: str, value: Any) -> None:
+        """The gap is closed: the config cannot hold a dt no integrator honors.
+
+        ``IsaacConfig`` grades ``physics_dt`` and ``rendering_dt`` on the shared
+        :func:`~strands_robots.utils.positive_finite_number_error` domain, so
+        ``nan``, ``inf``, the booleans and a value past the float64 range are
+        refused at construction under the field's own name - not stored to be
+        reported a call later under ``physics_dt`` when the caller spelled
+        ``rendering_dt``, and never silently held.
+        """
         from strands_robots.simulation.isaac.config import IsaacConfig
 
-        config = IsaacConfig(physics_dt=value)  # constructs: the `<= 0` test cannot see it
-        # Identity rather than equality: the claim is that the field is stored with
-        # no coercion at all, which `nan == nan` being False would otherwise hide.
-        assert config.physics_dt is value
-
-        engine = _isaac_engine(value)
-        result = _create_world(engine)
-        assert result["status"] == "error"
-        assert "physics_dt" in _text(result)
+        with pytest.raises(ValueError, match=field):
+            IsaacConfig(**{field: value})
 
     def test_the_newton_constructor_stores_the_default_unvalidated(self) -> None:
         """Source fact behind the fixture: ``__init__`` only assigns it."""
