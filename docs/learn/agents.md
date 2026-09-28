@@ -5,7 +5,7 @@ At the end of this page you have a Strands `Agent` that holds a robot as one of 
 ```python
 from strands import Agent
 from strands_robots import Robot
-from strands_robots.tools import pose_tool, robot_mesh
+from strands_robots.tools import pose_tool, robot_mesh   # pose_tool needs `pip install pyserial`
 
 arm = Robot("so101")                       # simulation, the default mode
 agent = Agent(tools=[arm, pose_tool, robot_mesh])

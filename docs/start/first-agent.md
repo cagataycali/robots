@@ -45,7 +45,7 @@ robot.cleanup()
 
 The model calls `get_robot_state`, then `set_joint_positions` or `actuate_robot` with some `step` calls, then `get_robot_state` again, and writes what it found. On one run on this checkout the answer reported the gripper moving from `[+0.020, -0.376, +0.259]` to `[-0.150, -0.335, +0.237]`, a 17 cm sweep along -X for a 0.5 rad pan. Your model will pick its own actions and words; the joint it reports back is read from physics, not invented.
 
-Other tools mount the same way and are listed in the [tool reference](../reference/tools.md):
+Other tools mount the same way and are listed in the [tool reference](../reference/tools.md). `pose_tool` talks to a Feetech bus and needs `pip install pyserial` on top of the Start install:
 
 ```python
 from strands import Agent
