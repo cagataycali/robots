@@ -67,7 +67,6 @@ export const BUNDLE_ROUTES: readonly string[] = [
   '/api/safety',
   '/api/safety/estop',
   '/api/safety/resume',
-  '/api/safety/{p}',
   '/api/settings',
   '/api/sim',
   '/api/sim/ports',

@@ -1025,7 +1025,6 @@ const BUNDLE_ROUTES = [
   "/api/safety",
   "/api/safety/estop",
   "/api/safety/resume",
-  "/api/safety/{p}",
   "/api/settings",
   "/api/sim",
   "/api/sim/ports",
@@ -11691,9 +11690,9 @@ function SimTab({ onClose }) {
     }
   };
   const toggleEstop = async () => {
-    const action = (lockout == null ? void 0 : lockout.state) === "locked" ? "resume" : "estop";
+    const route = (lockout == null ? void 0 : lockout.state) === "locked" ? "/api/safety/resume" : "/api/safety/estop";
     try {
-      setLockout((await post(`/api/safety/${action}`)).lockout);
+      setLockout((await post(route)).lockout);
       setMsg(null);
     } catch (e) {
       await failed(e);
