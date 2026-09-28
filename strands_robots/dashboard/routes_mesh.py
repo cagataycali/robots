@@ -56,6 +56,7 @@ from strands_robots.dashboard.ws_observability import (
     close_verdict,
     fps_cap,
 )
+from strands_robots.simulation.models import registry_entry
 from strands_robots.utils import boolean_flag_error
 
 logger = logging.getLogger(__name__)
@@ -517,7 +518,7 @@ async def toggle_twin(request: Request, peer_id: str, _: dict = Depends(access.r
         raise HTTPException(503, "device manager not mounted - twins need the devices lane")
     body = await _json_body(request)
     twin_id = f"{peer_id}-twin"
-    existing = dm.robots.get(twin_id)
+    existing = registry_entry(dm.robots, twin_id)
     if existing and existing.alive():
         return cast("dict[str, Any]", await asyncio.to_thread(dm.despawn, twin_id))
     robot_name = body.get("robot_name")

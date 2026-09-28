@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from strands_robots.dashboard import bus_claim
+from strands_robots.simulation.models import registered, registry_entry
 
 from ..utils import non_negative_whole_number_error, refusal_repr, refusal_str
 from . import arm_roles, camera_liveness
@@ -852,7 +853,7 @@ class AutoSpawnWatcher:
                 return f"port {device} already claimed by managed robot {m.peer_id}"
         peer_id = profile.get("peer_id")
         if peer_id:
-            managed = self.manager.robots.get(peer_id)
+            managed = registry_entry(self.manager.robots, peer_id)
             if managed is not None and managed.alive():
                 return f"peer {peer_id} already running locally"
             try:
@@ -1257,7 +1258,7 @@ class DeviceManager:
             return None
         streaming: set[int] = set()
         for peer_id, names in live_cameras.items():
-            managed = self.robots.get(peer_id)
+            managed = registry_entry(self.robots, peer_id)
             if managed is None:
                 continue
             wanted = {str(n).split("/")[-1] for n in names}
@@ -1679,18 +1680,18 @@ class DeviceManager:
 
     def logs(self, peer_id: str) -> dict[str, Any]:
         """Full ring buffer for one managed robot."""
-        m = self.robots.get(peer_id)
+        m = registry_entry(self.robots, peer_id)
         if m is None:
             return {"error": f"unknown peer {peer_id}"}
         return {"peer_id": peer_id, "alive": m.alive(), "lines": list(m.logs)}
 
     def _unique_peer_id(self, base: str) -> str:
         """A peer id that is not already tracked, starting from ``base``."""
-        if base not in self.robots:
+        if not registered(self.robots, base):
             return base
         for n in range(2, 1000):
             candidate = f"{base}-{n}"
-            if candidate not in self.robots:
+            if not registered(self.robots, candidate):
                 return candidate
         return f"{base}-{uuid.uuid4().hex[:6]}"  # pathological; still unique
 
@@ -1741,7 +1742,7 @@ class DeviceManager:
             return {"error": "port required for mode=real"}
         peer_id = peer_id or self._unique_peer_id(f"{robot_name}-{mode}-{int(time.time()) % 10000}")
         with self._lock:
-            if peer_id in self.robots and self.robots[peer_id].alive():
+            if (_live := registry_entry(self.robots, peer_id)) is not None and _live.alive():
                 return {"error": f"peer {peer_id} already running"}
             if mode == "real" and port:
                 tracked = {
@@ -1844,7 +1845,7 @@ class DeviceManager:
         _now = now or time.monotonic
         deadline = _now() + max(0.0, timeout)
         while True:
-            managed = self.robots.get(peer_id)
+            managed = registry_entry(self.robots, peer_id)
             if managed is None:
                 return {"status": "gone"}
             if not managed.alive():
@@ -2049,7 +2050,7 @@ class DeviceManager:
     def despawn(self, peer_id: str) -> dict[str, Any]:
         """Stop a managed peer's child process and drop it from the roster."""
         with self._lock:
-            m = self.robots.get(peer_id)
+            m = registry_entry(self.robots, peer_id)
             if m is None:
                 return {"error": f"unknown peer {peer_id}"}
             if m.process is not None and m.alive():
@@ -2082,7 +2083,7 @@ class DeviceManager:
                 )
             }
         with self._lock:
-            m = self.robots.get(peer_id)
+            m = registry_entry(self.robots, peer_id)
             if m is None:
                 return {
                     "error": (
