@@ -96,6 +96,8 @@ A benchmark spec is a dict or a JSON / YAML file: `name`, `instruction`, `defaul
 
 ## Reading a result
 
+The four **posture** flags of `run_policy` and `eval_policy` (`fast_mode`, `reset_between`, `wbc_install_torque_control`, `async_rtc`) select a branch, so a non-boolean is refused rather than read by truthiness: `fast_mode="false"` would otherwise run unpaced. `SimEngine._validate_posture_flags` checks them before any robot is resolved, so a refused call builds no policy and touches no scene; `PolicyRunner.run` does not repeat it.
+
 Every rollout returns `{"status", "content": [{"text"}, {"json"}]}`. The `json` block of `eval_policy` and `evaluate_benchmark` carries `success_rate`, `n_success`, `episodes_completed`, `avg_steps`, `actions_applied`, `stopped_early`, `pass_hat_k` (the probability that `k` consecutive attempts all succeed, `k` up to 8, estimated as `C(c, k) / C(n, k)`), inference timing (`avg_inference_ms`, `max_inference_ms`, RTC counters), `policy_load_time_s`, and a per-episode list. Read `pass_hat_k` before deploying: a policy at 60% clears five in a row about 8% of the time.
 
 `seed` reseeds the client RNGs once and derives a per-episode seed from a master RNG, so two evaluations with the same seed replay the same episodes. `video={"path": "out.mp4", "fps": 30, "camera": "front", "width": 640, "height": 480}` records an MP4 per episode (`fps` is capped at the control frequency); `video_paths` in the `json` block lists them.

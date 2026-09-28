@@ -87,6 +87,12 @@ _NOTES: dict[str, Note] = {
         "Per-joint slew bound on inbound `act` values, in frame units per second (default {DEFAULT_INPUT_SLEW_ABS}).",
         default="DEFAULT_INPUT_SLEW_ABS",
     ),
+    "STRANDS_MESH_BACKEND": Note(
+        "strands_robots.mesh._backend_select",
+        "Which mesh transport `Mesh.start` builds: one of {BACKENDS}; unset or an unknown value lands on "
+        "{DEFAULT_BACKEND} with one warning per distinct typo.",
+        default="DEFAULT_BACKEND",
+    ),
     "STRANDS_GROOT_WIRE_LOG": Note(
         "strands_robots.policies.groot.policy",
         "Directory the GR00T wire-payload dumps land in, e.g. `~/groot-wire`; unset means nothing is written.",

@@ -64,6 +64,8 @@ Four verdicts. `PASS` and `FAIL` are what they say; a `FAIL` line carries a `Fix
 | Mesh | zenoh is installed and `mesh=True` would start under the configured ACL and TLS posture | `WARN` without zenoh, or when the mesh would refuse to start, with the choices listed |
 | Sim Test | `Robot("so100")` builds in sim and returns an observation | `FAIL` with the exception, pointing at `MUJOCO_GL` and the MuJoCo install |
 
+A failed `pip install 'strands-robots[ros2]'` on a Jetson is not a doctor row: it is the aarch64 build, written up at [ROS 2](../learn/ros2.md#linux-aarch64-jetson).
+
 The `Mesh` row is the one people meet first: a bare `Robot("so101")` never starts a mesh, so the warning costs nothing until you pass `mesh=True`. When you do, [Fleet](../learn/mesh/fleet.md) explains the three postures the note lists.
 
 ## When a fence on these pages fails

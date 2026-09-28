@@ -13,6 +13,7 @@ class Policy(ABC):
     control_frequency: float | None = None          # runtime sets it before the loop
     rtc_observed_delay_steps: int | None = None      # runtime sets it before each call
     reads_instruction: ClassVar[bool] = True         # False: the words never shape the actions
+    instruction_free_actions: ClassVar[str | None] = None   # what a non-reader's actions are, for the task notice
 
     @abstractmethod
     async def get_actions(self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any) -> list[dict[str, Any]]: ...
@@ -40,6 +41,8 @@ class Policy(ABC):
     @abstractmethod
     def provider_name(self) -> str: ...
 ```
+
+The fence is abridged; the rest of the contract (`execution_horizon`, `instruction_free_actions`, `is_chunk_emitting`, `set_control_frequency`, `set_rtc_observed_delay`) is rendered on the [API reference](../../reference/api/policies.md).
 
 `get_actions` returns one action dict per control tick: joint name to a python `float` (or `list[float]` for a grouped actuator), never an array. The list is the action chunk; the runtime plays it at `control_frequency` and asks again.
 

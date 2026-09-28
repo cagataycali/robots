@@ -42,7 +42,7 @@ sim.destroy()
 
 ## Same API, same rules
 
-`add_camera(parent_body=...)` works here as on MuJoCo. `set_obs_noise` mirrors the MuJoCo signature so an identical call behaves the same. Terrain, task objects and the predicate DSL read the same observation surface. The `wbc` torque shim is MuJoCo-only, so a WBC rollout on Newton refuses unless `wbc_install_torque_control=False` against a torque-actuated scene.
+`add_camera(parent_body=...)` works here as on MuJoCo. On Newton a mesh `size` scales the mesh per axis (default `[1, 1, 1]`); MuJoCo and Isaac ignore it and still report success (#2300). `set_obs_noise` mirrors the MuJoCo signature so an identical call behaves the same. Terrain, task objects and the predicate DSL read the same observation surface. The `wbc` torque shim is MuJoCo-only, so a WBC rollout on Newton refuses unless `wbc_install_torque_control=False` against a torque-actuated scene.
 
 ## Limits
 

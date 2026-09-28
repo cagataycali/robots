@@ -1107,8 +1107,8 @@ def test_the_sweep_and_the_single_branch_mode_share_one_prose_rule(
 # ``docs/**/*.md`` page against a budget. Two additions to one page compose to a
 # count neither head has, and a text-clean merge is the normal case, so both
 # halves of the prose-only argument fail there (#3961). The numbers below are the
-# incident's: #3907 and #3940 on ``docs/reference/policies/moveit2.md``, base 1479, heads
-# 1493 and 1497, composed 1511 against 1500.
+# incident's: #3907 and #3940 on ``docs/reference/policies/moveit2.md``, base 879, heads
+# 893 and 897, composed 911 against 900 (the numbers are the incident's, shifted onto the 900-word budget).
 
 _PAGE = "docs/reference/policies/moveit2.md"
 _GRADER_PATH = _REPO_ROOT / "tests" / "test_docs_pages_are_within_the_word_budget.py"
@@ -1142,13 +1142,13 @@ def test_a_docs_page_pair_each_inside_the_budget_but_composing_over_it_is_report
     on the required check with nothing to resolve, so the pair belongs in the
     reported section with the three counts a reader needs to see the sum.
     """
-    get = _docs_pair(1479, 1493, 1497)
+    get = _docs_pair(879, 893, 897)
 
     assert _sweep(monkeypatch, get, tmp_path) == 1
 
     report = capsys.readouterr().out
     assert "compose over the word budget (1)" in report
-    assert f"| #10 + #20 | `{_PAGE}` | base 1479, #10 1493, #20 1497, composed 1511 > 1500 |" in report
+    assert f"| #10 + #20 | `{_PAGE}` | base 879, #10 893, #20 897, composed 911 > 900 |" in report
     # Promoted out of the not-reported list, not duplicated into it.
     assert "prose-only" not in report
 
@@ -1156,13 +1156,13 @@ def test_a_docs_page_pair_each_inside_the_budget_but_composing_over_it_is_report
 def test_a_docs_page_pair_whose_composition_stays_inside_the_budget_is_still_prose_only(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The exemption is kept for a page the sum leaves inside: 1479 + 11 + 9 = 1499.
+    """The exemption is kept for a page the sum leaves inside: 879 + 11 + 9 = 899.
 
     One word under is the boundary the grader draws (``<=``), so a sweep that
     reported this pair would be reporting a composition the required check would
     pass.
     """
-    get = _docs_pair(1479, 1490, 1488)
+    get = _docs_pair(879, 890, 888)
 
     assert _sweep(monkeypatch, get, tmp_path) == 0
 
@@ -1182,7 +1182,7 @@ def test_an_unreadable_docs_page_blob_is_named_as_unevaluated_rather_than_inside
     page is listed where every other unreadable input is, and leaves the
     not-reported list, which would describe it as considered and cleared.
     """
-    recorded = _docs_pair(1479, 1493, 1497)
+    recorded = _docs_pair(879, 893, 897)
 
     def get(url: str, token: str) -> object:
         if "/contents/" in url and url.endswith("?ref=aaaa1111"):
@@ -1203,12 +1203,12 @@ def test_a_head_already_over_the_budget_alone_is_its_own_red_not_a_composition(
 ) -> None:
     """A branch the grader already fails on its own needs no pair to explain it.
 
-    The composition is over too (1479 + 31 + 11), but the finding this section
+    The composition is over too (879 + 31 + 11), but the finding this section
     makes is "neither branch can see it", and one of them can. The same test is
     what leaves a page the grader exempts alone: an exemption is over on every
     head by construction.
     """
-    get = _docs_pair(1479, 1510, 1490)
+    get = _docs_pair(879, 910, 890)
 
     assert _sweep(monkeypatch, get, tmp_path) == 0
 
@@ -1228,7 +1228,7 @@ def test_the_budget_composition_reads_every_blob_from_the_base_repository_and_th
     compare endpoint already relies on -- and the base blob once when both sides
     share the merge base the compare payload carries.
     """
-    recorded = _docs_pair(1479, 1493, 1497)
+    recorded = _docs_pair(879, 893, 897)
     urls: list[str] = []
 
     def counting(url: str, token: str) -> object:

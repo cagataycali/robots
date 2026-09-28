@@ -252,9 +252,9 @@ One prose surface is graded, and there both halves of that argument fail.
 ``docs/**/*.md`` page against :data:`DOCS_WORD_BUDGET`, so two additions to one
 page near the budget compose to a count neither branch has, and a text-clean
 merge is the normal case for two paragraphs added in different sections. #3907
-and #3940 both edited ``docs/reference/policies/moveit2.md`` (base 1479 words): 1493 and
-1497 words at their heads, both passing, and 1511 composed over the shared base
-against a budget of 1500. The sweep listed the pair as prose-only, and whichever
+and #3940 both edited ``docs/reference/policies/moveit2.md`` (base 879 words, shifted onto the 900-word budget): 893 and
+897 words at their heads, both passing, and 911 composed over the shared base
+against a budget of 900. The sweep listed the pair as prose-only, and whichever
 squashed second would have turned ``main`` red on the required check with
 nothing to resolve (#3961). So the sweep reads the three blobs -- each head's and
 the base's -- for a shared docs page, counts words exactly as the grader does
@@ -338,7 +338,7 @@ PROSE_SUFFIXES = frozenset({".md", ".rst", ".txt"})
 #: standard library, so the grader's module is not reachable from here; the two
 #: literals are pinned equal by ``tests/test_merge_base_overlap.py``, which reads
 #: the grader's source, so a change to either without the other fails the suite.
-DOCS_WORD_BUDGET = 1500
+DOCS_WORD_BUDGET = 900
 
 #: Where the word-budget grader's population lives, as a path prefix.
 DOCS_ROOT = "docs/"

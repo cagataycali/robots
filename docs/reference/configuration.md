@@ -13,3 +13,11 @@ Two rules apply everywhere. A boolean variable accepts `1`, `true`, `yes` (case-
 The `meaning` column is the first sentence in a docstring or comment of the reading module that names the variable. Where the source has no such sentence the column points at the module instead.
 
 {{env_vars}}
+
+### CA Pin Rotation Runbook
+
+The AWS IoT transport pins the SHA-256 of the Amazon Root CA1 PEM, and the accepted set is a collection, so old and new pins can be valid at once. When AWS rotates the root, every fleet member refuses the new certificate until a pin covering it is accepted; deleting the cached PEM only re-downloads the same unpinned bytes.
+
+Recompute the pin of what the URL serves: `python -c "import hashlib, urllib.request as u; print(hashlib.sha256(u.urlopen('https://www.amazontrust.com/repository/AmazonRootCA1.pem').read()).hexdigest())"`.
+
+Planned rotation: verify the new certificate out of band (a digest from the connection that served the bytes proves nothing); ship a release that adds the new pin and keeps the old one; wait for fleet uptake, bounded by the slowest member; drop the old pin in a follow-up release. Emergency: stage the verified pin in `STRANDS_MESH_CA_PINS` (comma-separated 64-char lowercase hex, additive, invalid entries skipped with a warning) and remove the override once the release is deployed. `STRANDS_MESH_DISABLE_CA_PIN` is not part of this procedure: it turns the check off and marks the result unverified-origin, a break-glass for a broken pin, never the response to a rotation.

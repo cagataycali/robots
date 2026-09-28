@@ -179,7 +179,11 @@ def _selector_rows() -> list[tuple[str, str, str]]:
                 default = next((cell for cell in body if "default" in cell.lower()), "")
                 rows.append((relative, " ".join(body), default))
             else:
-                rows.append((relative, cells[1], cells[-1]))
+                # A hand-written row is ``| var | description | default |``; the generated
+                # matrix is ``| var | read in | default | meaning |`` with ``<code>`` spans.
+                folded = [cell.replace("<code>", "`").replace("</code>", "`") for cell in cells]
+                default = folded[2] if len(folded) > 3 else folded[-1]
+                rows.append((relative, " ".join(folded[1:]), default))
     return rows
 
 

@@ -6,8 +6,10 @@ description: protomotions tracks a reference motion under physics with NVIDIA GE
 
 By the end of this page you can play a reference motion clip on a simulated Unitree G1 that balances and reacts to contact, and chain it after `kimodo` so a text prompt becomes a physically tracked motion.
 
+`onnx_path` and `yaml_path` take a local file each; a Hub id is not fetched for you.
+
 ```bash
-pip install 'strands-robots[protomotions]'    # onnxruntime + pyyaml + huggingface_hub
+pip install 'strands-robots[protomotions,sim-mujoco]'    # onnxruntime + pyyaml + huggingface_hub; the fences below also need mujoco
 ```
 
 ## What it is
@@ -49,10 +51,12 @@ from strands_robots.policies.protomotions.bridge import qpos_to_motion_data
 config = KimodoConfig()
 agent = DiffusersKimodoAgent(config)                                # the sampler KimodoPolicy builds internally
 qpos = agent.sample("a person waving with the right hand", num_frames=120, diffusion_steps=100, guidance_scale=7.5, seed=0)
-cache = qpos_to_motion_data(qpos, fps=config.native_fps, proto_mjcf_path="g1_29dof.xml")   # (frames, 7 + 29) -> MotionPlayer cache
+cache = qpos_to_motion_data(qpos, fps=config.native_fps, proto_mjcf_path="g1_bm_no_mesh_box_feet.xml")   # (frames, 7 + 29) -> MotionPlayer cache
 
 tracker = create_policy("protomotions", onnx_path="unified_pipeline.onnx", motion=cache)
 ```
+
+The MJCF is `g1_bm_no_mesh_box_feet.xml` from `NVlabs/ProtoMotions` (`curl -LO https://raw.githubusercontent.com/NVlabs/ProtoMotions/main/protomotions/data/assets/mjcf/g1_bm_no_mesh_box_feet.xml`); its three meshed siblings need Git LFS, otherwise the parse fails with `decoder failed for mesh file`.
 
 ## Run it
 

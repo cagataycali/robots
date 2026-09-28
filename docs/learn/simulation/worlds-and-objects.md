@@ -81,7 +81,7 @@ Three MJCF assets ship in `strands_robots/simulation/task_objects/`: `hinged_car
 
 ## Meshes and materials
 
-`add_object(shape="mesh", mesh_path="part.stl", mass=0.2)` registers the file as a MuJoCo mesh asset (`spec.add_mesh`), so any format MuJoCo's compiler reads works; the file's own units set the extent. Robot meshes come from `robot_descriptions` and the bundled menagerie tree through `strands_robots.simulation.model_registry` (`resolve_model`, `register_urdf`, `list_available_models`). Isaac converts MJCF and meshes into USD (`isaac/mjcf_assets.py`, `isaac/mesh_assets.py`).
+`add_object(shape="mesh", mesh_path="part.stl", mass=0.2)` registers the file as a MuJoCo mesh asset (`spec.add_mesh`), so any format MuJoCo's compiler reads works; a mesh `size` is a per-axis scale on Newton only, MuJoCo and Isaac ignore it and report success (#2300); the file's own units set the extent. Robot meshes come from `robot_descriptions` and the bundled menagerie tree through `strands_robots.simulation.model_registry` (`resolve_model`, `register_urdf`, `list_available_models`). Isaac converts MJCF and meshes into USD (`isaac/mjcf_assets.py`, `isaac/mesh_assets.py`).
 
 ## Terrain
 
