@@ -74,6 +74,7 @@ record→train→deploy loop) as Jupyter notebooks - all CPU-only, no hardware o
 |------|--------------|
 | [`vla/molmoact2_so101_pickplace.py`](vla/molmoact2_so101_pickplace.py) | Real hardware + MolmoAct2 VLA policy on SO-101 |
 | [`vla/cosmos3_sim_rollout.py`](vla/cosmos3_sim_rollout.py) | Cosmos 3 VLA in MuJoCo with WebSocket policy server |
+| [`laya/laya_gated_rollout.py`](laya/laya_gated_rollout.py) | Laya text-only typed decisions as a System 1 gate on the so101 in MuJoCo (`confidence_gate`, per-tick audit); `laya/experiment/` holds the H1/H2/H3 study runner. **GPU: Optional** |
 | [`wbc/wbc_g1_torque_deploy.py`](wbc/wbc_g1_torque_deploy.py) | GR00T-WBC (SONIC) locomotion on the Unitree G1 via the torque-control deploy loop |
 | [`lerobot/hub_to_hardware.py`](lerobot/hub_to_hardware.py) | Full agent-driven pipeline: record, train, deploy |
 | [`fleet/05_work_order_dispatch.py`](fleet/05_work_order_dispatch.py) | Structured work-order ingress (JSONL queue) mapped onto per-site capability manifests: deterministic feasibility filter + NACK, mesh dispatch behind HITL, order_id threaded through the signed audit log. **GPU: No** (`--dry-run` is dependency-free) |
