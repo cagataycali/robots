@@ -183,6 +183,16 @@ moveit2 = [
 # silently-broken install of the squatter package. Tracked in the
 # follow-up issue linked from PR #306.
 curobo = []
+# FLUX 3 Action (Black Forest Labs, 2026-09-22): in-process flow-matching VLA with an
+# SO-101 checkpoint (black-forest-labs/flux-3-action-so101). The inference
+# package `flux-action` is NOT on PyPI - it installs from
+# github.com/black-forest-labs/flux-action (Python 3.12, torch>=2.10 CUDA) and
+# needs `natten` from the wheel index at https://whl.natten.org/ (a wheel per
+# torch/CUDA pair, including aarch64 for Jetson Thor). Pin torch + natten to
+# the same CUDA first, then `pip install "flux-action @ git+https://github.com/black-forest-labs/flux-action"`.
+# Like curobo, the extra is empty on purpose: pinning a git URL here would break
+# the PyPI publish. See policies/flux3_action/ and docs/learn/policies/flux3-action.md.
+flux3 = []
 # GR00T Whole-Body-Control (SONIC) locomotion policy. Runs the ONNX
 # controllers in-process via onnxruntime (no torch, no sidecar) - a light
 # extra, like the client side of moveit2. Model weights are NOT bundled;

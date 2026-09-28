@@ -1,0 +1,291 @@
+"""FLUX 3 Action policy provider - in-process inference through ``flux_action``.
+
+FLUX 3 Action (Black Forest Labs, released 2026-09-22) is a flow-matching VLA that
+predicts a 42-step chunk of absolute joint targets from two cameras, an 8-tick
+observation history and a text instruction. Its SO-101 checkpoint
+``black-forest-labs/flux-3-action-so101`` speaks the lerobot SO-101 convention
+(arm joints in degrees, gripper in percent); :class:`UnitAdapter` bridges that to
+the robot's own units (radians in the MuJoCo ``so101`` model).
+
+Two consumption modes, both honouring the ``Policy`` contract that a returned list
+is executed one entry per control tick:
+
+``"queued"`` (default)
+    ``get_actions`` returns ONE action per call, so the runner asks again every
+    tick and ``flux_action``'s own ``select_action`` sees every observation. That
+    is the control loop the model was trained for: 30 Hz, history of every tick,
+    replan after ``n_action_steps`` (32) of the 42 predicted steps.
+``"chunk"``
+    ``get_actions`` returns ``execute_steps`` actions from one stateless
+    ``predict_action_chunk`` call. Open-loop within the chunk, useful for
+    fixed-horizon comparisons; the history then only sees one tick per chunk.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any, ClassVar
+
+import numpy as np
+
+from strands_robots.policies._state_keys import observation_joint_keys
+from strands_robots.policies.base import Policy
+from strands_robots.utils import require_optional
+
+from .units import SO101_JOINT_LABELS, SO101_SIM_GRIPPER_RANGE_RAD, SO101_SIM_JOINT_OFFSETS_DEG, UnitAdapter
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_CHECKPOINT = "black-forest-labs/flux-3-action-so101"
+_MODES = ("queued", "chunk")
+_CAMERA_ROLES = ("scene", "wrist")
+
+
+class Flux3ActionPolicy(Policy):
+    """FLUX 3 Action SO-101 checkpoint driving a 6-joint arm at 30 Hz.
+
+    Args:
+        pretrained_name_or_path: Hugging Face repo id or local directory holding the
+            fine-tuned checkpoint (``config.json`` + ``model.safetensors``). The base
+            video VAE and text encoder are fetched by ``flux_action`` from
+            ``black-forest-labs/flux-3-action-base`` at the revision the checkpoint pins.
+        revision: Optional git revision for a hub repo.
+        device: Torch device for inference (``"cuda"`` by default; the 3.9B
+            transformer plus encoders need roughly 22 GB in bf16).
+        camera_map: Observation image key for each FLUX role, e.g.
+            ``{"scene": "front", "wrist": "gripper_cam"}``. Defaults to the role names
+            themselves (``"scene"`` and ``"wrist"``). Both roles are required.
+        joint_units: Units of the robot's joint positions, ``"rad"`` (MuJoCo) or
+            ``"deg"`` (lerobot hardware with ``use_degrees``).
+        joint_signs: Five joint directions (+1/-1) applied before the offsets.
+        joint_offsets_deg: Five additive degree offsets applied after the unit scale
+            and sign (see :class:`UnitAdapter`); default carries the MuJoCo zero into
+            the checkpoint's calibration frame. Pass all zeros for lerobot hardware.
+        gripper_range: ``(closed, open)`` gripper joint values in robot units mapped
+            to 0..100 percent. Defaults to the MuJoCo ``so101`` gripper travel; pass
+            ``(0, 100)`` for lerobot hardware.
+        mode: ``"queued"`` (one action per tick through ``select_action``) or
+            ``"chunk"`` (``execute_steps`` actions per stateless chunk).
+        execute_steps: Actions consumed per chunk in ``"chunk"`` mode; 1..42.
+        task: Default instruction when the caller passes an empty one.
+        warn_outside_training_range: Log once when the converted state leaves the
+            checkpoint's ``state`` q01/q99 window, a cheap unit / calibration check.
+    """
+
+    provider_name: ClassVar[str] = "flux3_action"
+    requires_images: ClassVar[bool] = True
+    reads_instruction: ClassVar[bool] = True
+
+    def __init__(
+        self,
+        pretrained_name_or_path: str = DEFAULT_CHECKPOINT,
+        revision: str | None = None,
+        device: str = "cuda",
+        camera_map: dict[str, str] | None = None,
+        joint_units: str = "rad",
+        joint_signs: tuple[float, float, float, float, float] | list[float] = (1.0, 1.0, 1.0, 1.0, 1.0),
+        joint_offsets_deg: tuple[float, float, float, float, float] | list[float] = SO101_SIM_JOINT_OFFSETS_DEG,
+        gripper_range: tuple[float, float] | list[float] = SO101_SIM_GRIPPER_RANGE_RAD,
+        mode: str = "queued",
+        execute_steps: int = 32,
+        task: str = "",
+        warn_outside_training_range: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        if mode not in _MODES:
+            raise ValueError(f"mode must be one of {_MODES}, got {mode!r}")
+        if not 1 <= int(execute_steps) <= 42:
+            raise ValueError(f"execute_steps must be within 1..42 (chunk_size), got {execute_steps}")
+        self.camera_map = {role: role for role in _CAMERA_ROLES}
+        if camera_map:
+            unknown = set(camera_map) - set(_CAMERA_ROLES)
+            if unknown:
+                raise ValueError(f"camera_map roles must be {_CAMERA_ROLES}, unknown: {sorted(unknown)}")
+            self.camera_map.update({k: str(v) for k, v in camera_map.items()})
+        self.units = UnitAdapter(
+            joint_units=joint_units,
+            joint_signs=tuple(float(x) for x in joint_signs),
+            joint_offsets_deg=tuple(float(x) for x in joint_offsets_deg),
+            gripper_range=(float(gripper_range[0]), float(gripper_range[1])),
+        )
+        self.pretrained_name_or_path = pretrained_name_or_path
+        self.revision = revision
+        self.device = device
+        self.mode = mode
+        self.execute_steps = int(execute_steps)
+        self.task = task
+        self.warn_outside_training_range = warn_outside_training_range
+        self.robot_state_keys: list[str] = []
+        self._current_instruction: str | None = None
+        self._warned_range = False
+        # Timing telemetry: every tick's wall time and, separately, the ticks that
+        # ran the transformer (a replan). Milliseconds.
+        self.tick_ms: list[float] = []
+        self.inference_ms: list[float] = []
+
+        self._torch = require_optional(
+            "torch", extra="flux3", hint="FLUX 3 Action needs torch with CUDA; install with the flux3 extra."
+        )
+        require_optional(
+            "flux_action",
+            extra="flux3",
+            hint="pip install 'flux-action @ git+https://github.com/black-forest-labs/flux-action' (and natten).",
+        )
+        from flux_action.inference.so101 import load_policy
+
+        t0 = time.perf_counter()
+        self._policy = load_policy(pretrained_name_or_path, revision=revision).to(device)
+        self._policy.eval()
+        self.load_s = time.perf_counter() - t0
+        cfg = self._policy.config
+        self.n_obs_steps = int(cfg.n_obs_steps)
+        self.chunk_size = int(cfg.chunk_size)
+        self.n_action_steps = int(cfg.n_action_steps)
+        self.fps = int(cfg.fps)
+        self._state_window = self._training_state_window()
+        logger.info(
+            "flux3_action: loaded %s on %s in %.1fs (history %d, chunk %d, execute %d, %d Hz)",
+            pretrained_name_or_path,
+            device,
+            self.load_s,
+            self.n_obs_steps,
+            self.chunk_size,
+            self.n_action_steps,
+            self.fps,
+        )
+
+    # -- Policy contract --------------------------------------------------
+
+    def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        """Remember the robot's joint key order; six keys map onto the SO-101 joints."""
+        self.robot_state_keys = list(robot_state_keys)
+
+    def reset(self, seed: int | None = None) -> None:
+        """Clear the observation history and the action queue; starts a new episode."""
+        super().reset(seed)
+        self._policy.reset()
+        self._current_instruction = None
+        if seed is not None:
+            self._torch.manual_seed(seed)
+
+    @classmethod
+    def preflight(cls, observation_keys: set[str], **policy_config: Any) -> None:
+        """Refuse before loading 3.9B parameters when a required camera is missing."""
+        camera_map = {role: role for role in _CAMERA_ROLES}
+        camera_map.update(policy_config.get("camera_map") or {})
+        missing = [f"{role}={key!r}" for role, key in camera_map.items() if key not in observation_keys]
+        if missing:
+            images = sorted(k for k in observation_keys if "." not in k and not k.isdigit())
+            raise ValueError(
+                "flux3_action needs two cameras named by camera_map; missing "
+                f"{', '.join(missing)}. Observation keys: {images}. Add cameras with "
+                "robot.add_camera(name=...) or pass camera_map={'scene': ..., 'wrist': ...}."
+            )
+
+    async def get_actions(
+        self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        """Return the next action(s) as joint targets in the robot's units.
+
+        Args:
+            observation_dict: Flat robots observation: six joint floats plus the two
+                camera images as ``(H, W, 3)`` uint8 arrays.
+            instruction: Task text; falls back to ``task`` when empty. A changed
+                instruction resets the history (a new task is a new episode).
+            **kwargs: Ignored (contract: providers ignore unknown keys).
+
+        Returns:
+            ``[{joint: target}]`` - one dict in ``"queued"`` mode, ``execute_steps``
+            dicts in ``"chunk"`` mode.
+        """
+        text = instruction or self.task
+        if self._current_instruction is not None and text != self._current_instruction:
+            self._policy.reset()
+        self._current_instruction = text
+        keys, state = self._joint_state(observation_dict)
+        batch = self._batch(observation_dict, state, text)
+        t0 = time.perf_counter()
+        if self.mode == "queued":
+            queue_empty = len(getattr(self._policy, "_action_queue", ())) == 0
+            with self._torch.inference_mode():
+                out = self._policy.select_action(batch)
+            rows = out.detach().float().cpu().numpy().reshape(1, -1)
+        else:
+            queue_empty = True
+            with self._torch.inference_mode():
+                chunk = self._policy.predict_action_chunk(batch)
+            rows = chunk.detach().float().cpu().numpy()[0, : self.execute_steps]
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        self.tick_ms.append(elapsed_ms)
+        if queue_empty:
+            self.inference_ms.append(elapsed_ms)
+        return [dict(zip(keys, self.units.model_to_robot(row.tolist()), strict=True)) for row in rows]
+
+    # -- helpers ----------------------------------------------------------
+
+    def _joint_state(self, observation: dict[str, Any]) -> tuple[list[str], list[float]]:
+        keys = observation_joint_keys(observation, self.robot_state_keys)
+        if len(keys) != 6:
+            raise ValueError(
+                f"flux3_action drives exactly 6 joints [{', '.join(SO101_JOINT_LABELS)}]; "
+                f"observation carries {len(keys)}: {keys}"
+            )
+        state = self.units.robot_to_model([float(observation[k]) for k in keys])
+        if self.warn_outside_training_range and not self._warned_range and self._state_window is not None:
+            lo, hi = self._state_window
+            outside = [
+                f"{name}={v:.1f} not in [{a:.1f}, {b:.1f}]"
+                for name, v, a, b in zip(SO101_JOINT_LABELS, state, lo, hi, strict=True)
+                if v < a or v > b
+            ]
+            if outside:
+                self._warned_range = True
+                logger.warning(
+                    "flux3_action: converted state is outside the checkpoint's training q01..q99 window "
+                    "(%s). Check joint_units / joint_offsets_deg / gripper_range; the model saw real "
+                    "SO-101 calibrations, not this robot's zero.",
+                    "; ".join(outside),
+                )
+        return keys, state
+
+    def _batch(self, observation: dict[str, Any], state: list[float], text: str) -> dict[str, Any]:
+        torch = self._torch
+        batch: dict[str, Any] = {
+            "state": torch.tensor([state], dtype=torch.float32, device=self.device),
+            "task": [text],
+        }
+        for role, key in self.camera_map.items():
+            image = observation.get(key)
+            if image is None:
+                raise ValueError(
+                    f"flux3_action camera {role!r} expects observation key {key!r}; "
+                    f"available image keys: {[k for k, v in observation.items() if isinstance(v, np.ndarray) and v.ndim == 3]}"
+                )
+            batch[f"images.{role}"] = self._to_chw_uint8(np.asarray(image))
+        return batch
+
+    def _to_chw_uint8(self, image: np.ndarray) -> Any:
+        if image.ndim != 3 or image.shape[-1] not in (3, 4):
+            raise ValueError(f"flux3_action expects (H, W, 3) uint8 images, got shape {image.shape}")
+        rgb = image[..., :3]
+        if rgb.dtype != np.uint8:
+            rgb = np.clip(rgb * 255.0 if rgb.max() <= 1.0 else rgb, 0, 255).astype(np.uint8)
+        tensor = self._torch.from_numpy(np.ascontiguousarray(rgb)).permute(2, 0, 1).unsqueeze(0)
+        return tensor.to(self.device, non_blocking=True)
+
+    def _training_state_window(self) -> tuple[list[float], list[float]] | None:
+        """The checkpoint's ``state`` q01/q99 quantiles (``config.state_normalization``)."""
+        norm = getattr(self._policy.config, "state_normalization", None)
+        if not isinstance(norm, dict) or "q01" not in norm or "q99" not in norm:
+            return None
+        lo, hi = [float(x) for x in norm["q01"]], [float(x) for x in norm["q99"]]
+        if len(lo) != 6 or len(hi) != 6:
+            return None
+        return lo, hi
+
+    def __repr__(self) -> str:
+        return (
+            f"Flux3ActionPolicy(pretrained_name_or_path={self.pretrained_name_or_path!r}, mode={self.mode!r}, "
+            f"device={self.device!r}, joint_units={self.units.joint_units!r})"
+        )
