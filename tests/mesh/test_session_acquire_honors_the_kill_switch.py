@@ -40,8 +40,8 @@ import pytest
 import strands_robots.mesh.session as session_mod
 from strands_robots._mesh_switch import AFFIRMATIVE, NEGATIVE
 
-#: Both doors that reach ``zenoh.open``. Declared here for the behavioural cells and
-#: checked against the module itself by :class:`TestEveryAcquireDoorAsksTheSwitch`.
+#: Both acquire doors. Graded behaviourally here; :class:`TestEveryAcquireDoorAsksTheSwitch`
+#: checks that only one function body in the module reaches ``zenoh.open``.
 _SESSION_OPENERS = ("get_session", "_get_zenoh_session_directly")
 
 
@@ -209,9 +209,10 @@ class TestEveryAcquireDoorAsksTheSwitch:
     def test_every_door_reaching_zenoh_open_consults_the_kill_switch(self) -> None:
         doors = self._acquire_doors(Path(inspect.getfile(session_mod)).read_text(encoding="utf-8"))
 
-        assert len(doors) >= len(_SESSION_OPENERS), (
-            f"found {sorted(doors)} but this file grades {len(_SESSION_OPENERS)} doors "
-            "behaviourally -- the derivation stopped seeing a door it used to see"
+        assert sorted(doors) == ["_get_zenoh_session_directly"], (
+            f"found {sorted(doors)} reaching zenoh.open; every acquire door in "
+            f"{_SESSION_OPENERS} must route through the one open body, so a fix to it "
+            "cannot be made on one copy and forgotten on the other"
         )
         ungated = sorted(name for name, called in doors.items() if "mesh_disabled_by_env" not in called)
         assert not ungated, (

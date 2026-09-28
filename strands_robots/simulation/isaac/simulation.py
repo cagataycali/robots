@@ -88,6 +88,42 @@ logger = logging.getLogger(__name__)
 _MIN_RENDER_PX = 640
 
 
+def _vertical_fov_lens_mm(
+    fov_deg: float, width: int, height: int, horizontal_aperture_mm: float
+) -> tuple[float, float]:
+    """Map a VERTICAL field of view (fovy) to USD lens parameters.
+
+    ``add_camera(fov=)`` is the vertical field of view in degrees on every
+    backend -- MuJoCo and Newton pass it straight to MuJoCo's ``fovy``, and the
+    :meth:`get_camera_params` intrinsics fallback derives ``fy`` from it. Isaac
+    has one focal length shared by both axes, so the vertical meaning is set by
+    the aperture: the vertical aperture is derived from the horizontal one and
+    the image aspect ratio (which keeps pixels square, ``fx == fy``), and the
+    focal length maps ``fovy`` onto the vertical axis via the pinhole relation
+
+        focal_length = vertical_aperture / (2 * tan(fovy / 2)).
+
+    Fed through USD's own intrinsics (``fx = width * f / h_ap``,
+    ``fy = height * f / v_ap``) this yields ``fx == fy == height /
+    (2 * tan(fovy / 2))`` -- exactly the square, vertical-FOV intrinsics MuJoCo
+    reports for the same call -- independent of the aperture's absolute value.
+
+    Args:
+        fov_deg: vertical field of view in degrees, in ``(0, 180)``.
+        width: image width in pixels (positive).
+        height: image height in pixels (positive).
+        horizontal_aperture_mm: the camera's horizontal aperture in mm.
+
+    Returns:
+        ``(vertical_aperture_mm, focal_length_mm)``.
+    """
+    import math
+
+    vertical_aperture_mm = horizontal_aperture_mm * float(height) / float(width)
+    focal_length_mm = vertical_aperture_mm / (2.0 * math.tan(math.radians(fov_deg) / 2.0))
+    return vertical_aperture_mm, focal_length_mm
+
+
 def _world_to_body_frame(quat_wxyz: Any, vec: Any) -> list[float]:
     """Express a WORLD-frame 3-vector in the body frame given a (w,x,y,z) quaternion.
 
@@ -7069,12 +7105,15 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             If ``None``, the camera keeps its constructed orientation
             (identity).
         fov : float
-            Horizontal field of view in degrees. Default 60.0. Declared in the
-            same position as on the MuJoCo and Newton backends, so a positional
-            call is read the same way on all three. Mapped onto
-            ``Camera.set_focal_length`` using the standard pinhole relation
-            ``focal_length = horizontal_aperture / (2 * tan(fov/2))`` with the
-            USD-default 24 mm horizontal aperture.
+            Vertical field of view (fovy) in degrees. Default 60.0. This is the
+            one meaning shared with the MuJoCo and Newton backends (which pass
+            it to MuJoCo's ``fovy``) and with the ``get_camera_params``
+            intrinsics fallback, so a positional call is read the same way on
+            all three. Mapped onto ``Camera.set_focal_length`` on the vertical
+            axis (see :func:`_vertical_fov_lens_mm`): the vertical aperture is
+            derived from the horizontal one and the image aspect ratio so pixels
+            stay square (``fx == fy``), giving ``fx == fy == height /
+            (2*tan(fovy/2))`` -- the same intrinsics MuJoCo reports.
         width : int, optional
             Image width in pixels; a positive integer. ``None`` (omitted)
             takes ``IsaacConfig.camera_width``.
@@ -7212,7 +7251,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     ],
                 }
             # An fov outside (0, 180) is not merely mis-framed here: the pinhole
-            # relation ``focal_length = horizontal_aperture / (2 * tan(fov / 2))``
+            # relation ``focal_length = vertical_aperture / (2 * tan(fov / 2))``
             # in :meth:`_create_camera_prim` raises ``ZeroDivisionError`` for
             # ``0`` - which is NOT in the except tuple below, so it propagates
             # out of this method - and yields a ``nan`` focal length for a
@@ -7756,8 +7795,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         ``omni.isaac.sensor``. Try modern first, fall back so 4.x
         installs keep working.
         """
-        import math
-
         try:
             from isaacsim.sensors.camera import Camera  # type: ignore[import-not-found]
         except ImportError:
@@ -7776,24 +7813,35 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # than silently on the first render attempt.
         camera.initialize()
 
-        # Map FOV (deg, horizontal) to focal length (mm) using the
-        # standard pinhole lens relation:
+        # ``fov_deg`` is the VERTICAL field of view (fovy) -- the one meaning
+        # shared with the MuJoCo and Newton backends and with the
+        # :meth:`get_camera_params` intrinsics fallback. Isaac has a single
+        # focal length shared by both axes, so the vertical meaning is set
+        # through the aperture: derive the vertical aperture from the
+        # horizontal one and the image aspect ratio (keeping pixels square,
+        # fx == fy) and map fovy onto the focal length on the vertical axis
+        # (see :func:`_vertical_fov_lens_mm`), giving
+        # fx == fy == height / (2*tan(fovy/2)) exactly.
         #
-        #     focal_length = horizontal_aperture / (2 * tan(fov / 2))
-        #
-        # The horizontal aperture MUST be the camera's actual aperture,
-        # read back from the prim -- assuming a nominal 24 mm is wrong on
-        # Isaac's Camera (its default aperture + unit convention yield
-        # fx~=6348 px at 640 px, i.e. a ~6 deg telephoto, instead of the
-        # intended 60 deg / fx~=554). Deriving the focal length from the
-        # read-back aperture makes the resulting pixel intrinsics
-        # fx = width / (2*tan(fov/2)) exactly, independent of the
+        # The horizontal aperture MUST be the camera's actual aperture, read
+        # back from the prim -- assuming a nominal 24 mm is wrong on Isaac's
+        # Camera (its default aperture + unit convention yield a telephoto fx
+        # instead of the intended fovy). Deriving both apertures from the
+        # read-back value makes the pixel intrinsics independent of the
         # aperture's absolute value or units.
         try:
             horizontal_aperture_mm = float(camera.get_horizontal_aperture())
         except (AttributeError, RuntimeError, TypeError, ValueError):
             horizontal_aperture_mm = 24.0
-        focal_length_mm = horizontal_aperture_mm / (2.0 * math.tan(math.radians(fov_deg) / 2.0))
+        vertical_aperture_mm, focal_length_mm = _vertical_fov_lens_mm(fov_deg, width, height, horizontal_aperture_mm)
+        # Pin the vertical aperture so USD's intrinsics read fy off the value
+        # we derived rather than a conform-policy guess; best-effort because
+        # some Camera builds recompute it from the render aspect (to the same
+        # value) and expose no setter.
+        try:
+            camera.set_vertical_aperture(vertical_aperture_mm)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
         camera.set_focal_length(focal_length_mm)
 
         # Enable the depth annotator on the RTX render product. Isaac

@@ -1023,8 +1023,6 @@ def get_session() -> Any | None:
         )
         return None
 
-    global _SESSION, _SESSION_REFS  # noqa: PLW0603
-
     if _is_transport_backend():
         # Delegate to the transport factory. The factory holds its own
         # refcount independently of _SESSION_REFS - that's fine, callers
@@ -1032,6 +1030,35 @@ def get_session() -> Any | None:
         from strands_robots.mesh.transport.factory import get_transport
 
         return get_transport()
+
+    return _get_zenoh_session_directly()
+
+
+def _get_zenoh_session_directly() -> Any | None:
+    """Open/reuse the Zenoh session directly, bypassing transport-backend routing.
+
+    This is used by :class:`~strands_robots.mesh.transport.zenoh_transport.ZenohTransport`
+    when it is instantiated as part of a :class:`BridgeTransport`. In that scenario,
+    ``get_session()`` would re-enter the factory's ``_LOCK`` (since
+    ``_is_transport_backend()`` returns True for bridge mode) causing a deadlock.
+
+    It is also the function :func:`get_session` itself calls once the backend
+    branch is not taken, so the Zenoh open (listener, client fallback, explicit
+    endpoints) lives in exactly one place regardless of ``STRANDS_MESH_BACKEND``.
+    """
+    # The kill switch, for the same reason as in ``get_session``: this
+    # door exists to skip the transport factory, not to skip the switch, and
+    # it reaches the same ``zenoh.open``.
+    from strands_robots.mesh.core import mesh_disabled_by_env
+
+    if mesh_disabled_by_env():
+        logger.debug(
+            "Zenoh session not opened: STRANDS_MESH=%r is a hard kill switch",
+            os.getenv(MESH_ENV_VAR, ""),
+        )
+        return None
+
+    global _SESSION, _SESSION_REFS  # noqa: PLW0603
 
     with _SESSION_LOCK:
         if _SESSION is not None:
@@ -1166,138 +1193,6 @@ def get_session() -> Any | None:
         # Explicit endpoints provided via env vars.
         # Build cfg outside the try (same loud-on-misconfig discipline
         # as the auto-listener path).
-        cfg = _build_config()
-        try:
-            _SESSION = zenoh.open(cfg)
-            _SESSION_REFS = 1
-            logger.info("Zenoh mesh session opened")
-            return _SESSION
-        except zenoh_error_types() as exc:
-            logger.warning("Zenoh session open failed: %s", exc)
-            return None
-
-
-def _get_zenoh_session_directly() -> Any | None:
-    """Open/reuse the Zenoh session directly, bypassing transport-backend routing.
-
-    This is used by :class:`~strands_robots.mesh.transport.zenoh_transport.ZenohTransport`
-    when it is instantiated as part of a :class:`BridgeTransport`. In that scenario,
-    ``get_session()`` would re-enter the factory's ``_LOCK`` (since
-    ``_is_transport_backend()`` returns True for bridge mode) causing a deadlock.
-
-    This function always goes through the raw Zenoh path regardless of
-    ``STRANDS_MESH_BACKEND``. It shares the same ``_SESSION`` singleton and
-    ``_SESSION_LOCK``.
-    """
-    # The kill switch, for the same reason as ``get_session`` upstairs: this
-    # door exists to skip the transport factory, not to skip the switch, and
-    # it reaches the same ``zenoh.open``.
-    from strands_robots.mesh.core import mesh_disabled_by_env
-
-    if mesh_disabled_by_env():
-        logger.debug(
-            "Zenoh session not opened: STRANDS_MESH=%r is a hard kill switch",
-            os.getenv(MESH_ENV_VAR, ""),
-        )
-        return None
-
-    global _SESSION, _SESSION_REFS  # noqa: PLW0603
-
-    with _SESSION_LOCK:
-        if _SESSION is not None:
-            _SESSION_REFS += 1
-            return _SESSION
-
-        try:
-            import zenoh
-        except ImportError:
-            _report_zenoh_missing()
-            return None
-
-        port_env = os.getenv("STRANDS_MESH_PORT", "7447")
-        try:
-            mesh_port = int(port_env)
-            if not (1 <= mesh_port <= 65535):
-                raise ValueError(f"port {mesh_port} out of range")
-        except ValueError as exc:
-            logger.warning(
-                "Invalid STRANDS_MESH_PORT=%r (%s) - falling back to 7447",
-                port_env,
-                exc,
-            )
-            mesh_port = 7447
-
-        connect_env = os.getenv("ZENOH_CONNECT")
-        listen_env = os.getenv("ZENOH_LISTEN")
-
-        if not connect_env and not listen_env:
-            # (See get_session above for full rationale.)
-            from strands_robots.mesh import _acl_config
-            from strands_robots.mesh._zenoh_config import resolve_auth_mode
-
-            # Loud-on-misconfig: if STRANDS_MESH_AUTH_MODE is set to
-            # anything other than "mtls"/"none", let resolve_auth_mode()
-            # raise ValueError here. Mesh.start crashes with a clear
-            # stacktrace instead of silently falling back to "mtls"
-            # and emitting three confusing fallback warnings later
-            # (the prior try/except was dead -- _build_config() below
-            # invokes resolve_auth_mode() again unconditionally).
-            # Aligns with the loud-on-misconfig posture of _float_env
-            # and _load_acl_file.
-            #
-            # Prefer the thread-local
-            # ``auth_mode`` stash. Mirrors the same fix at the
-            # ``get_session`` boundary upstairs and the
-            # ``_build_config`` boundary at line 328-329. See full
-            # rationale on the upstream copy.
-            _stashed_mode = _acl_config._get_thread_auth_mode()
-            _auth_mode = _stashed_mode if _stashed_mode is not None else resolve_auth_mode()
-            scheme = "tls" if _auth_mode == "mtls" else "tcp"
-            local_ep = f"{scheme}/127.0.0.1:{mesh_port}"
-
-            # Build cfg outside the listener try so config-shape
-            # ValueError surfaces loudly.
-            cfg = _build_config()
-            cfg.insert_json5("listen/endpoints", json.dumps([local_ep]))
-            cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
-            try:
-                _SESSION = zenoh.open(cfg)
-                _SESSION_REFS = 1
-                logger.info("Zenoh mesh session opened (listener on %s)", local_ep)
-                return _SESSION
-            except zenoh_error_types() as exc:
-                # Narrow tuple mirroring the narrowing applied in
-                # get_session() upstairs. Config-shape
-                # ValueError now propagates instead of being swallowed at DEBUG.
-                logger.debug(
-                    "Zenoh listener on %s unavailable (%s) - trying client mode",
-                    local_ep,
-                    exc,
-                )
-
-            # Same topology as ``get_session`` upstairs, through the one
-            # helper. Before this, the two fallbacks disagreed: this site
-            # opened a client with no ``connect/retry`` and no
-            # ``exit_on_failure=false``, so when the hub process died the
-            # bridge-transport peer went permanently dark - no reconnect
-            # loop, no surfaced error. Both now retry the hub endpoint in
-            # the background (measured for client mode: delivery resumed
-            # after a 6s hub outage with no process restart).
-            cfg = _build_config()
-            fallback_mode = _apply_fallback_topology(cfg, local_ep, scheme)
-            try:
-                _SESSION = zenoh.open(cfg)
-                _SESSION_REFS = 1
-                logger.info(
-                    "Zenoh mesh session opened (%s, retrying -> %s)",
-                    fallback_mode,
-                    local_ep,
-                )
-                return _SESSION
-            except zenoh_error_types() as exc:
-                logger.warning("Zenoh session open failed (%s fallback): %s", fallback_mode, exc)
-                return None
-
         cfg = _build_config()
         try:
             _SESSION = zenoh.open(cfg)

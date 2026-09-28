@@ -28,8 +28,6 @@ def require_optional(
 ) -> object:
     """Import an optional dependency, raising a clear error if missing.
 
-    Once imported, the module is cached so subsequent calls are free.
-
     Args:
         module_name: Dotted module name to import (e.g. ``"zmq"``).
         pip_install: Explicit pip package name if it differs from *module_name*.
@@ -91,16 +89,6 @@ def require_optionals(
 ) -> None:
     """Require several optional dependencies, reporting ALL missing ones at once.
 
-    Unlike calling :func:`require_optional` in a loop -- which raises on the
-    FIRST missing module and hides the rest -- this probes every name and, if
-    any are absent, raises a single ``ImportError`` naming every missing module.
-    That lets a caller in a partially-provisioned environment fix all of them in
-    one install instead of discovering them one reinstall at a time (each retry
-    of a heavy load path is expensive).
-
-    Present modules are imported and cached (same as :func:`require_optional`),
-    so a follow-up ``require_optional`` for any of them is free.
-
     Args:
         module_names: Dotted module names to require (e.g. ``("transformers",
             "peft", "scipy")``).
@@ -151,24 +139,7 @@ def require_optionals(
 
 
 def lerobot_version() -> str:
-    """Return the installed lerobot version, or ``"unknown"`` if undeterminable.
-
-    Best-effort and never raises: it exists for error messages, where naming the
-    installed version is what distinguishes "lerobot is missing" from "lerobot
-    is present but something it needs is not". Lives here rather than beside one
-    of its callers because those callers sit in different modules
-    (:mod:`strands_robots.dataset_recorder` and
-    :mod:`strands_robots.streaming_dataset`) and must not report the version
-    differently.
-
-    ``except ImportError`` is deliberately the whole handler. ``version`` signals
-    an unresolvable distribution with ``PackageNotFoundError``, which subclasses
-    ``ModuleNotFoundError`` and so already *is* an ``ImportError``. Naming it in
-    the handler as well would bind it as a local that the ``import`` above may
-    never reach, and evaluating the handler would then raise
-    ``UnboundLocalError`` out of a function documented never to raise - on
-    precisely the failure the second name looked like it was covering.
-    """
+    """Return the installed lerobot version, or ``"unknown"`` if undeterminable."""
     try:
         from importlib.metadata import version
 
@@ -179,22 +150,6 @@ def lerobot_version() -> str:
 
 def lerobot_install_error() -> str | None:
     """Return why ``import lerobot`` cannot reach an install, or None when it can.
-
-    Two different states read the same to ``import lerobot`` and must not read
-    the same to a caller: lerobot absent, and a *directory* named ``lerobot`` on
-    the import path. Python imports the second as a namespace package, so the
-    import succeeds while the package is empty - ``__path__`` is the directory,
-    ``__file__`` is ``None``, and every registry lookup through it reports zero
-    choices, which a caller cannot tell from a real install that registers
-    nothing. Both spellings of that state are ordinary: a script run from a
-    directory holding a ``git clone`` of lerobot (whose sources live under
-    ``src/``, so the checkout root is not itself a package), and this repository's
-    own ``examples/lerobot/`` beside ``examples/08_discover_lerobot.py``, which
-    Python puts on ``sys.path`` as the script's directory.
-
-    ``__file__ is None`` is the whole test, and it is narrow on purpose: an
-    editable install and a copy on ``PYTHONPATH`` both set ``__file__`` to a real
-    ``__init__.py`` and are real installs.
 
     Returns:
         A message naming the cause and its remedy, or ``None`` when lerobot
@@ -226,27 +181,6 @@ def lerobot_install_error() -> str | None:
 @functools.cache
 def ensure_lerobot_family_registered(family: str) -> None:
     """Import every subpackage of ``lerobot.<family>`` so its registry is populated.
-
-    lerobot declares each device through a ``@<Kind>Config.register_subclass``
-    decorator that runs when the device's own subpackage is imported, and the
-    family's ``__init__`` deliberately does not import them - it says so in a
-    comment - so that a vendor SDK is not pulled into every ``import lerobot``.
-    Until the walk below runs, the family's :class:`draccus.ChoiceRegistry` has
-    no choices at all and a lookup reports every device as unknown.
-
-    Walking with :mod:`pkgutil` rather than naming the subpackages is what makes
-    a device lerobot adds in a future release available with no change here, and
-    it is also the only way to reach a device whose registered name differs from
-    its subpackage (``so101_follower`` and ``so100_follower`` both live in
-    ``so_follower/``, ``lekiwi_client`` in ``lekiwi/``).
-
-    One function for every family, because the three that need it - ``robots``,
-    ``cameras`` and ``teleoperators`` - differ in nothing but the package name:
-    keeping a copy per caller is what put a private helper of the robot factory
-    on the import path of the teleoperator factory, which reaches for the robot
-    registry only to say "that name is a follower, not a leader". It lives here,
-    beside :func:`lerobot_version`, because it is optional-dependency resolution
-    rather than a concern of any one host.
 
     Args:
         family: The subpackage of ``lerobot`` to walk, e.g. ``"robots"``.
@@ -290,17 +224,7 @@ def ensure_lerobot_family_registered(family: str) -> None:
 
 @functools.cache
 def ensure_lerobot_plugins_registered() -> None:
-    """Import every installed third-party lerobot plugin distribution.
-
-    lerobot's own loader imports every distribution whose name starts with one
-    of its plugin prefixes (``lerobot_robot_``, ``lerobot_camera_``,
-    ``lerobot_teleoperator_``, ...), and each of those registers itself into the
-    matching :class:`draccus.ChoiceRegistry` as an import side effect. One call
-    therefore populates every registry at once, which is why this is a single
-    cached helper rather than a per-family step: a vendor camera and a vendor
-    robot arrive from the same import, so registering one kind while the caller
-    happens to be resolving the other would leave the second unreachable.
-    """
+    """Import every installed third-party lerobot plugin distribution."""
     try:
         from lerobot.utils.import_utils import register_third_party_plugins
     except ImportError:
@@ -332,29 +256,6 @@ DEFAULT_BASE_DIR = Path.home() / ".strands_robots"
 def base_dir_path() -> Path:
     """Where the base directory for strands-robots user data resolves to.
 
-    Resolution (in priority order):
-
-    1. ``STRANDS_BASE_DIR`` env var - explicit override. Use this when
-       you want to relocate strands-robots user data (the asset cache,
-       the user registry, the USD and checkpoint caches, the harness
-       memory) to a non-default location. The render, scene, video and
-       audit sandboxes each carry their own variable and are not moved
-       by this one.
-    2. ``~/.strands_robots/`` - default.
-
-    This answers where the directory *is* without creating it, which is what
-    a caller that only compares paths needs: a validator asking whether a
-    host path lies under the base dir must not write to the filesystem to
-    answer, and must not fail when the home directory is unwritable.
-    :func:`get_base_dir` is the same resolution plus creation.
-
-    Note:
-        ``STRANDS_ASSETS_DIR`` **only** controls the assets subdirectory
-        (see :func:`get_assets_dir`). It does *not* move the base dir,
-        so user-level metadata like ``user_robots.json`` always lands in
-        a predictable location rather than wherever the assets happen
-        to be pointed.
-
     Returns:
         Path to the base directory, whether or not it exists.
     """
@@ -364,10 +265,6 @@ def base_dir_path() -> Path:
 
 def get_base_dir() -> Path:
     """Get the base directory for strands-robots user data, creating it if needed.
-
-    Resolves through :func:`base_dir_path` - see it for the resolution order
-    and for the read-only spelling to use when the directory only has to be
-    compared against, not written to.
 
     Returns:
         Path to the base directory (created if needed).
@@ -379,13 +276,6 @@ def get_base_dir() -> Path:
 
 def get_assets_dir() -> Path:
     """Get the assets directory (robot model files, meshes, URDFs).
-
-    Resolution:
-        1. ``STRANDS_ASSETS_DIR`` env var - used as-is
-        2. ``assets/`` under :func:`base_dir_path`, so relocating the base
-           dir takes the asset cache - the largest directory of the set -
-           with it rather than leaving it on the home filesystem
-        3. ``~/.strands_robots/assets/`` - default
 
     Returns:
         Path to the assets directory (created if needed).
@@ -429,11 +319,6 @@ def resolve_asset_path(relative_or_absolute: str | Path | None, default_name: st
 def safe_join(base: Path, untrusted: str, *, resolve_symlinks: bool = False) -> Path:
     """Join *base* with an untrusted relative path, rejecting traversal.
 
-    Used to protect against ``../`` escapes in registry-sourced or
-    user-supplied path components before they reach the filesystem. Containment
-    is always verified lexically; set *resolve_symlinks* to additionally reject
-    symlinked components that escape *base* after resolution.
-
     Args:
         base: Trusted base directory.
         untrusted: Relative path component (may contain ``/`` but must not
@@ -454,11 +339,6 @@ def safe_join(base: Path, untrusted: str, *, resolve_symlinks: bool = False) -> 
     Raises:
         ValueError: If the resulting path would escape *base* (lexically, or via
             a symlink when *resolve_symlinks* is set).
-
-    Example::
-
-        safe_join(Path("/assets"), "robot/model.xml")   # OK
-        safe_join(Path("/assets"), "../etc/passwd")     # ValueError
     """
     joined = Path(os.path.normpath(base / untrusted))
     base_norm = Path(os.path.normpath(base))
@@ -479,16 +359,7 @@ def safe_join(base: Path, untrusted: str, *, resolve_symlinks: bool = False) -> 
 
 
 def get_search_paths() -> list[Path]:
-    """Get ordered list of asset search paths.
-
-    Used by both :mod:`strands_robots.assets.manager` and
-    :mod:`strands_robots.assets.download` - centralised here to avoid
-    a circular dependency between those two modules.
-
-    Order (local assets take priority over defaults):
-        1. User asset dir (``STRANDS_ASSETS_DIR`` or ``~/.strands_robots/assets/``)
-        2. ``CWD/assets`` (project-local, deduplicated if it resolves to the same dir)
-    """
+    """Get ordered list of asset search paths."""
     paths: list[Path] = []
     user_cache = get_assets_dir()
     paths.append(user_cache)
@@ -500,17 +371,6 @@ def get_search_paths() -> list[Path]:
 
 def process_rss_mb() -> float | None:
     """Current resident set size (RSS) of this process, in megabytes.
-
-    Used to surface ``policy_resident_rss_mb`` telemetry so a caller can see
-    whether a heavy model (e.g. a multi-GB VLA checkpoint) is actually resident
-    after a load - and, across a multi-episode loop, that it stays resident
-    rather than oscillating as it would if the policy were rebuilt per episode.
-
-    Prefers :mod:`psutil` (true *current* RSS, the meaningful "is it resident
-    now" number). Falls back to :func:`resource.getrusage`, which reports peak
-    RSS for the process (``ru_maxrss``) - an over-estimate of current usage, but
-    still a useful floor when psutil is absent. ``ru_maxrss`` is in kilobytes on
-    Linux and bytes on macOS; both are normalised to MB.
 
     Returns:
         Resident memory in MB as a float, or ``None`` when neither source is
@@ -537,26 +397,7 @@ def process_rss_mb() -> float | None:
 
 
 def is_boolean(value: Any) -> bool:
-    """Return True when ``value`` is a python or a numpy boolean.
-
-    The single boolean predicate behind every numeric domain in this module and
-    the runtime writers that reuse them. Two properties make a boolean worth its
-    own check rather than letting the numeric coercion decide:
-
-    * ``bool`` is an ``int`` subclass, so ``float(True)`` is ``1.0`` and a
-      boolean survives every ``float()`` / ``numbers.Real`` gate as a silent
-      ``1.0`` - one radian, one metre, one Newton, depending on where it landed.
-    * ``numpy.bool_`` is *not* a ``bool`` subclass, so ``isinstance(value, bool)``
-      alone misses the boolean a policy or a comparison produces
-      (``gripper > 0.5``). It is also not registered as ``numbers.Real``, which
-      is why the vector domains here reject it through their ``numbers.Real``
-      check; a writer that coerces with a bare ``float()`` has no such backstop
-      and needs this predicate.
-
-    The ``.item()`` unwrap covers a numpy boolean scalar and a 0-d boolean array
-    while leaving every numeric scalar - and every multi-element array, which
-    has no single item - reported as non-boolean.
-    """
+    """Return True when ``value`` is a python or a numpy boolean."""
     if isinstance(value, bool):
         return True
     item = getattr(value, "item", None)
@@ -570,39 +411,6 @@ def is_boolean(value: Any) -> bool:
 
 def sequence_length(value: Any) -> int | None:
     """Return the length of ``value``, or ``None`` when it does not carry one.
-
-    Every validator that accepts a vector first asks "how many components is
-    this?", and the obvious spelling - ``hasattr(value, "__len__")`` followed by
-    ``len(value)`` - is unsafe for the value class this library actually
-    receives. A 0-d numpy array (``np.array(0.5)``, or the result of a reduction
-    such as ``np.mean(...)``) and a 0-d torch tensor both *declare* ``__len__``
-    and then raise from it, so the ``hasattr`` probe passes and the ``len()``
-    call escapes with a bare ``len() of unsized object`` that names neither the
-    parameter nor the method - past agent-tool dispatch, which is documented
-    never to raise.
-
-    ``TypeError`` covers the two spellings this probe was written for - CPython
-    raises it for a value carrying no ``__len__`` at all (a plain ``float``, a
-    ``numpy.float64``) and for the 0-d array whose ``__len__`` exists and
-    refuses - but it is not the superset it was once documented as, and the gap
-    needs no hostile value to reach. ``len()`` converts whatever ``__len__``
-    returns into an index, and that conversion has refusals of its own: a
-    negative length raises ``ValueError`` and a length past ``sys.maxsize``
-    raises ``OverflowError``, both from CPython rather than from the value. A
-    ``__len__`` that computes its answer - ``self._end - self._start`` on a
-    proxy whose window is inverted - is ordinary Python returning an ordinary
-    ``int`` and reaches neither branch a ``TypeError`` probe has.
-
-    So the exception's type is not the question being asked. Every one of these
-    answers the caller's question the same way - this value does not carry a
-    readable component count - so all of them report as ``None`` and one branch
-    covers them. A probe on the path whose whole purpose is to answer an
-    unusable input with a message cannot assume good behaviour of the value it
-    was handed, which is the property #1873, #1874, #1875 and #1878 established
-    on four neighbouring guards. Only ``len(value)`` runs inside the ``try``, so
-    a broad clause here masks no logic of this library's own; ``Exception``
-    rather than ``BaseException`` keeps ``KeyboardInterrupt`` and ``SystemExit``
-    propagating.
 
     Args:
         value: Any caller-supplied value a validator needs the length of.
@@ -619,29 +427,6 @@ def sequence_length(value: Any) -> int | None:
 def refusal_repr(value: Any) -> str:
     """``repr(value)`` for a refusal message, or a description when it cannot be built.
 
-    Every scalar guard below renders the value it refuses through this, and none
-    of them renders one any other way. Rendering a rejected value must not be
-    able to raise: it runs only on the path whose entire purpose is to answer an
-    unusable input with a structured message instead of an exception, and every
-    caller of every one of those guards documents that ``{status, content}``
-    result as the only channel a bad value is reported on. A guard that raises
-    while building a refusal fails on exactly the path that exists so it does
-    not.
-
-    Two cases reach it, and neither is hypothetical. ``repr`` of an ``int`` wider
-    than :func:`sys.get_int_max_str_digits` (4300 digits by default) raises
-    ``ValueError``, and ``device_connect``'s ``@rpc()`` surfaces forward a remote
-    caller's number unchanged while Python integers are arbitrary-precision. And
-    a third-party type may raise anything at all from its own ``__repr__`` -
-    :class:`numbers.Real` is a registration rather than an inheritance, so a
-    scalar that satisfies a guard's type test owes it nothing else - which is why
-    the guarantee here is unconditional rather than a list of the exceptions
-    known today.
-
-    ``int.bit_length`` needs no decimal conversion, so the value most likely to
-    arrive unprintable is still described by its magnitude rather than reported
-    as an opaque type name.
-
     Args:
         value: The rejected value.
 
@@ -656,18 +441,6 @@ def refusal_repr(value: Any) -> str:
 
 def refusal_str(value: Any) -> str:
     """``str(value)`` for a refusal message, or a description when it cannot be built.
-
-    The :func:`refusal_repr` counterpart for the two messages that report a
-    value plainly rather than quoted, where ``repr`` is not interchangeable:
-    NumPy 2 reprs a scalar with its type, so rendering an ``np.float32`` fov
-    through ``repr`` would silently turn ``got 200.0`` into
-    ``got np.float32(200.0)`` in text an agent reads.
-
-    ``str`` is exactly as able to raise as ``repr`` and for the same two reasons:
-    it falls back to ``__repr__`` when a type defines no ``__str__``, and
-    ``str`` of an ``int`` wider than :func:`sys.get_int_max_str_digits` performs
-    the same decimal conversion. So a plainly-rendered value needs the same
-    guarantee rather than a weaker one.
 
     Args:
         value: The rejected value.
@@ -684,16 +457,6 @@ def refusal_str(value: Any) -> str:
 def _describe_unrenderable(value: Any) -> str:
     """Describe a value whose own rendering raised.
 
-    Shared by :func:`refusal_repr` and :func:`refusal_str` so the two render
-    forms cannot describe the same unrenderable value differently.
-
-    ``int.bit_length`` needs no decimal conversion, so the value most likely to
-    arrive unrenderable - an ``int`` past the interpreter's digit limit - is
-    still described by its magnitude rather than reported as an opaque type
-    name. The sign is not recoverable from a bit length, which is acceptable
-    because every guard's own text states the domain the value was refused
-    against.
-
     Args:
         value: The value whose rendering raised.
 
@@ -709,19 +472,6 @@ def _describe_unrenderable(value: Any) -> str:
 def _describe_failed_read(exc: Exception) -> str:
     """``RuntimeError: no keys for you`` for a read a refusal could not complete.
 
-    The one spelling of a failed read in this module's refusal text, shared by
-    the guard that reports a read whose *verdict* it became
-    (:func:`_read_name_list`) and the read a message makes only to *quote*
-    something (:func:`_read_to_quote`). Named rather than repeated for the reason
-    :func:`_describe_unrenderable` is shared between the two render forms: a
-    refusal degraded on one path must not describe the same failure differently
-    from another.
-
-    ``exc`` goes through :func:`refusal_str` rather than being interpolated: a
-    value hostile enough to raise from its own read is not one whose exception is
-    assumed to have a working ``__str__``, which would be the #1873 escape
-    reintroduced inside a message built to avoid it.
-
     Args:
         exc: The exception the read raised.
 
@@ -733,16 +483,6 @@ def _describe_failed_read(exc: Exception) -> str:
 
 def _read_to_quote(value: Any) -> tuple[list[Any] | None, str | None]:
     """The elements of ``value`` for a refusal to quote, or why they could not be read.
-
-    The read a refusal makes for its own *text*, which is a different job from
-    :func:`_read_name_list`'s and needs the opposite answer. There the verdict
-    depends on the read, so a read that fails becomes the verdict. Here the
-    verdict is settled *before* the read happens - a mapping is refused whatever
-    its keys say, and a string whatever its characters are - so a read that fails
-    must not replace it: the caller passed a mapping, and that is the mistake
-    worth reporting even when its keys cannot be quoted. The failure is therefore
-    described for the message to carry rather than returned as a message of its
-    own (#1903).
 
     Args:
         value: The caller-supplied value a refusal wants to quote.
@@ -760,47 +500,6 @@ def _read_to_quote(value: Any) -> tuple[list[Any] | None, str | None]:
 
 def refusal_container_repr(value: Any) -> str:
     """``repr(value)`` for a refusal that reports a whole container, elementwise if it must.
-
-    The container counterpart to :func:`refusal_repr`, and the reason the two
-    cannot be one function. ``repr`` of a list recurses into its elements, so a
-    container is unrenderable whenever any *one* of its elements is, and
-    :func:`refusal_repr`'s whole-value fallback would answer that with
-    ``<unrepresentable list>`` - erasing every element that rendered perfectly
-    well, and the element count with them. That count is frequently the entire
-    reason for the refusal (``must be a 3-element vector, got 4``), so a
-    container needs a *rendering* rather than a fallback.
-
-    ``repr`` is tried on the whole container first, so a container that can
-    render itself is reported in exactly the text it was before this existed -
-    including a ``tuple``, a ``dict`` and a NumPy array, whose own reprs
-    (``(1.0, 2.0)``, ``{'a': 1}``, ``array([1., 2.])``) no elementwise form
-    reproduces. Only when that raises is the container described component by
-    component, substituting just the components that cannot print::
-
-        [1.0, <int of 16610 bits>, 3.0]
-
-    The offending component is located by its **position**, not by an inserted
-    index, so the fallback keeps the shape of the ``repr`` it stands in for.
-    Every guard that names an index does so in its own text (``{param}[{i}]``),
-    which is unchanged; an index inserted here too would state it twice, in two
-    forms that could disagree.
-
-    Nothing is elided. Truncating would erase elements that rendered fine, which
-    is the exact failure of the whole-value fallback this exists to avoid, and
-    ``repr`` of a long container - the text this stands in for - is not
-    truncated either.
-
-    A :class:`~collections.abc.Mapping` is rendered as a mapping rather than as
-    the list of its keys, because :func:`name_list_error` refuses one *for*
-    discarding its values: a message showing only the keys would perform the
-    discarding it is complaining about.
-
-    The rendering is one level deep. These containers carry scalars by contract -
-    a nested list is itself a refusal reason, reported as ``elements must be
-    numbers`` - so an inner container's contents are never what the message is
-    about, and recursing would additionally have to track what it had already
-    visited to terminate on a self-referential value, which the interpreter's own
-    ``repr`` does for the fast path above and a hand-written walk would not.
 
     Args:
         value: The rejected container.
@@ -832,17 +531,6 @@ def refusal_container_repr(value: Any) -> str:
 def _beyond_float_range(value: Any) -> bool:
     """Whether ``float(value)`` overflows, i.e. no float64 stands for ``value``.
 
-    Not a domain in its own right - a helper that names, in one place, the
-    condition the three numeric guards below need a *reason* for rather than a
-    crash. ``float()`` raises ``OverflowError`` for a real whose magnitude
-    exceeds :data:`sys.float_info.max`, and Python integers are
-    arbitrary-precision while ``device_connect``'s ``@rpc()`` surfaces forward a
-    remote caller's number unchanged, so one is a request away.
-
-    The condition is *not* limited to ``int``: ``Fraction(10**400, 3)`` is a
-    registered :class:`numbers.Real` that overflows identically, which is why
-    the guards ask this question of the conversion rather than of the type.
-
     Returns:
         ``True`` when the conversion overflows. ``False`` when it succeeds *or*
         fails any other way - a :class:`numbers.Real` registration guarantees no
@@ -860,39 +548,6 @@ def _beyond_float_range(value: Any) -> bool:
 
 def positive_finite_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive finite number.
-
-    Shared domain for every CONTINUOUS knob a caller supplies as a positive
-    real: a rate or a span of time (a control-loop frequency in Hz, a rollout
-    or teleop ``duration`` in seconds), and a dimensionless multiplier (the
-    terrain curriculum ``difficulty`` that scales a heightfield's peak
-    elevation). Unlike :func:`positive_whole_number_error` a fractional value is
-    perfectly usable here (``2.5`` seconds, ``62.5`` Hz, a ``0.5`` scale), so
-    only the sign and the finiteness are constrained. It lives here rather than beside one of its
-    callers because those callers sit in different layers
-    (:mod:`strands_robots.teleop_mixin` must not depend on
-    :mod:`strands_robots.simulation`), and the accepted domain must not diverge
-    between them.
-
-    Only a positive finite value can be honored. Such a knob is always a
-    divisor (the loop period is ``1 / hz``), a horizon (``duration *
-    frequency`` steps) or a multiplier (``elevation * difficulty``), so ``0``
-    makes the period undefined, the horizon empty or the scaled quantity
-    degenerate, a negative value inverts it, ``nan`` poisons every comparison it
-    reaches (``nan > 0`` and ``nan <= 0`` are both ``False``), and ``inf``
-    collapses the period to ``0`` - an unthrottled loop, not a fast one.
-    Accepts any real scalar (so a NumPy ``np.float32`` rate read from a config
-    array passes) and rejects ``bool`` explicitly - an ``int`` subclass whose
-    ``True`` would act as a silent ``1``.
-
-    **A value past the float64 range is refused with a reason of its own.**
-    ``10**400`` is positive and finite, so ``must be > 0`` would be a false
-    statement about it, and it used to raise ``OverflowError`` out of the
-    ``float()`` this guard converts with - failing on the path that exists so it
-    does not. It is not a new boundary: this guard already accepts up to
-    ``sys.float_info.max`` (``1e300`` and ``10**308`` both pass) and stopped
-    dead one step past it, so the range is the edge the domain always had and
-    all that changes is that the guard now names it. Nothing raises out of here
-    for any real scalar; see :func:`_beyond_float_range`.
 
     Args:
         value: The caller-supplied value.
@@ -928,34 +583,6 @@ def positive_finite_number_error(value: Any, param: str, context: str) -> str | 
 def finite_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable finite number of either sign.
 
-    Shared domain for a SIGNED physical quantity a command carries verbatim to a
-    robot - a linear or angular velocity component, an offset, a coordinate read
-    as a scalar. Both signs are legitimate (reverse is a negative linear
-    velocity, clockwise a negative yaw rate), so :func:`positive_finite_number_error`
-    cannot express this domain; only finiteness and numeric-ness are constrained.
-    It lives here rather than beside one of its callers because those callers sit
-    in different layers (:mod:`strands_robots.mesh` must not depend on
-    :mod:`strands_robots.simulation`), and the accepted domain must not diverge
-    between them.
-
-    Only a finite value can be honored. ``nan``/``inf`` serialize into a wire
-    message as a valid IEEE-754 float64, so the transport accepts them and the
-    receiving controller integrates them into its state estimate - a silently
-    poisoned pose rather than a rejected command. A non-real value (a numeric
-    string, ``None``, a list) otherwise raises a bare ``TypeError`` from the
-    ``float()`` coercion, escaping the structured ``{"status": "error"}``
-    tool-result contract. Accepts any real scalar (so a NumPy ``np.float32``
-    velocity read from a policy action passes) and rejects ``bool`` explicitly -
-    an ``int`` subclass whose ``True`` would act as a silent ``1``.
-
-    **A value past the float64 range is refused with a reason of its own.**
-    The paragraph above is the argument for it: an accepted value goes onto the
-    wire as an IEEE-754 float64, and ``10**400`` has no float64 form to put
-    there. Its own reason is needed because ``10**400`` *is* a finite number, so
-    ``must be a finite number`` would be false of the one value class most in
-    need of an honest refusal - and before that reason existed the guard raised
-    ``OverflowError`` here instead of answering.
-
     Args:
         value: The caller-supplied value.
         param: The parameter it came from, used in the message.
@@ -984,65 +611,6 @@ def finite_number_error(value: Any, param: str, context: str) -> str | None:
 
 def positive_whole_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive whole number.
-
-    Shared domain for two families of positive discrete quantity:
-
-    * The media knobs that count frames or pixels - the recorders' ``fps``,
-      ``width``, ``height`` and in-memory frame cap, the
-      ``run_policy(video=...)`` dict fields, and the
-      :func:`~strands_robots.rendering.encode_clip` playback rate and
-      macro-block rounding.
-    * The physics steps one applied action is held for - the ``n_substeps`` of
-      every backend's
-      :meth:`~strands_robots.simulation.base.SimEngine.send_action`.
-
-    It lives here rather than beside one of its callers because those callers sit
-    in different layers (:mod:`strands_robots.rendering` must not depend on
-    :mod:`strands_robots.simulation`), and the accepted domain must not diverge
-    between them. Only a positive whole number can be honored: ``0`` makes the
-    capture loop's ``1 / fps`` period undefined, a negative rate is rejected by
-    the ffmpeg writer, a zero/negative frame cap drops every frame, and a
-    ``send_action`` advancing no physics leaves a target written that the world
-    never integrates - which is why ``0`` is refused there rather than honored
-    as "write but do not advance", with
-    :meth:`~strands_robots.simulation.base.SimEngine.step` named as the surface
-    that advances a count of its own. Accepts any real scalar with an integral
-    value (so a NumPy ``np.int64`` height or a ``30.0`` computed from a config
-    float passes) and rejects ``bool`` explicitly - an ``int`` subclass whose
-    ``True`` would act as a silent 1.
-
-    **Magnitude is part of this domain, unlike its ``non_negative`` sibling.**
-    :func:`non_negative_whole_number_error` accepts ``10**400`` as a matter of
-    documented policy, on the grounds that a per-call ceiling belongs to the
-    consumer - and for its one caller that holds, because MuJoCo's
-    ``_MAX_STEPS_PER_CALL`` is exactly such a ceiling and refuses an outsized
-    step count with a reason of its own. Exactly one consumer of *this* domain
-    owns such a ceiling: :func:`coerce_zmq_timeout_ms` composes this guard and
-    then applies :data:`MAX_ZMQ_TIMEOUT_MS`, because a ZMQ send/receive timeout
-    is stored as a C ``int`` and this domain accepts ``2**31``.
-    Its callers are ``fps``, ``width``, ``height``, ``max_frames``,
-    ``encode_clip``'s ``macro_block_size``, the mesh
-    robots' ``drive(count=...)``, ``send_action(n_substeps=)`` and the ZMQ
-    clients' ``timeout_ms``. Two of those
-    repeat work that nothing bounds: ``drive`` repeats an actuation command, so
-    an unbounded count is an unbounded actuation loop against a physical robot
-    rather than a slow call, and ``n_substeps`` is a physics-step count that
-    ``_MAX_STEPS_PER_CALL`` does *not* reach - that ceiling is applied by
-    ``step`` alone, so a count ``step`` refuses is still accepted through
-    ``send_action`` on every backend. So the two guards are the same scalar
-    policy with the floor moved *and* one deliberate difference, which is
-    recorded here rather than left for a reader to find by measuring.
-
-    That last point is a boundary, not a claim to have closed it: refusing
-    ``10**400`` here is the float64 edge the domain already had, and choosing a
-    *resource* ceiling for a substep count is the same per-backend decision
-    tracked for ``step`` in #1871.
-
-    Refusing is therefore the verdict, and it needs a reason of its own:
-    ``10**400`` *is* a positive whole number. As above, the float64 range is not
-    a new boundary - ``1e300`` is accepted by this guard today - it is the edge
-    the domain already had, at which the guard used to raise ``OverflowError``
-    rather than answer.
 
     Args:
         value: The caller-supplied value.
@@ -1084,70 +652,6 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
 
 def non_negative_whole_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable non-negative whole number.
-
-    Shared domain for two families of discrete quantity whose ``0`` is a real
-    setting rather than a degenerate one:
-
-    * The number of physics steps a caller asks a simulation to advance - the
-      ``n_steps`` of every backend's
-      :meth:`~strands_robots.simulation.base.SimEngine.step`.
-    * The two whole-number teleop knobs
-      :mod:`~strands_robots.tools.lerobot_teleoperate` puts on the lerobot CLI,
-      where ``dataset_reset_time_s=0`` is "no operator pause between recorded
-      episodes" and ``replay_episode=0`` is the first episode.
-
-    Not the only physics-step count in the tree, and the difference is the
-    floor rather than the scalar policy: the ``n_substeps`` of
-    :meth:`~strands_robots.simulation.base.SimEngine.send_action` is guarded by
-    :func:`positive_whole_number_error`, because that surface writes an actuator
-    target before it advances and a ``0`` there leaves the target written and
-    never integrated. ``step`` owns the honored zero; ``send_action`` refuses
-    its own and names ``step``. A reader arriving here from ``send_action``
-    would otherwise take this floor for that surface's.
-
-    It stands to :func:`positive_whole_number_error` exactly as
-    :func:`non_negative_count_error` stands to :func:`positive_count_error`: the
-    same scalar policy with the floor moved to ``0``, because ``0`` is a
-    first-class value here rather than a degenerate one. The MuJoCo backend has
-    documented ``step(0)`` as "an accepted no-op" since its numeric inputs were
-    hardened, and an agent loop that computes ``n_steps`` from a remaining
-    duration reaches ``0`` on the last iteration of a rollout that has run out
-    of time. Refusing it would reject that loop's final call, which is why this
-    is a separate domain rather than a caller of the positive one.
-
-    Accepts any real scalar with an integral value, so a step count that came
-    from arithmetic - ``int(duration / dt)`` promoted to ``np.int64`` by a NumPy
-    dt, or a ``30.0`` read from a config - is honored. The caller coerces the
-    accepted value with ``int()`` before using it as a ``range()`` bound; that
-    coercion is safe *because* this guard has already performed it and compared
-    the result back, which is the whole reason the two steps are ordered this
-    way. ``bool`` is rejected explicitly: it is an ``int`` subclass, so a bare
-    ``value < 0`` test lets ``True`` through as a silent count of one physics
-    step, and ``numpy.bool_`` is not registered as ``numbers.Real`` so it is
-    refused by the scalar check.
-
-    Every real scalar gets a verdict; nothing raises out of here. That is the
-    contract, not a detail, because the callers document their structured
-    ``{status, content}`` result as the only channel a bad count is reported
-    through, and one of them takes its count from a remote process. It is why
-    the integrality test is an ``int()`` in a ``try`` rather than a ``float()``
-    round-trip: ``float`` raises ``OverflowError`` for an ``int`` wider than a
-    float, which turned a refusal into a crash for the very values most in need
-    of one.
-
-    **Magnitude is not part of this domain.** ``10**400`` is a non-negative
-    whole number and is accepted as one. Whether a count is too large to advance
-    in a single call is a per-call resource policy - MuJoCo's
-    ``_MAX_STEPS_PER_CALL``, which refuses it with a reason of its own - and a
-    domain guard that quietly stopped at the float range would be exactly the
-    kind of boundary-by-implementation-accident this family exists to remove.
-
-    **This is the one place the two guards differ**, and the ceiling above is
-    the whole reason: :func:`positive_whole_number_error` refuses an outsized
-    value because none of its consumers owns such a ceiling and one of them
-    repeats a command to a robot. So "the same policy with the floor moved" is
-    true of every other input and not of this one. The asymmetry is deliberate;
-    if a ceiling ever appears on that side, this is the paragraph to revisit.
 
     Args:
         value: The caller-supplied value.
@@ -1201,20 +705,6 @@ def non_negative_whole_number_error(value: Any, param: str, context: str) -> str
 def step_aborted_msg(completed: int, requested: int, *, context: str = "step") -> str:
     """Refusal text when a batched step loop loses its world mid-run.
 
-    Pairs with :func:`non_negative_whole_number_error`, which settles the step
-    *count*; this settles what a backend says when a count it accepted becomes
-    unfinishable partway through. Every backend's ``step`` releases
-    ``SimEngine._STEPS_PER_BATCH`` steps' worth of lock so concurrent actions can
-    interleave, and releasing the lock is what lets a concurrent teardown - the
-    ``cleanup`` world handoff of GH #116 - land between two batches.
-
-    The count is in the text because some of it happened: a bare "no world"
-    would read as the call having done nothing, which is the same
-    report-disagrees-with-the-world defect the step-count domain removed. It is
-    one shared helper rather than three literals so the three backends refuse
-    identically in wording and not merely in verdict, as the pose, colour and
-    size domains do.
-
     Args:
         completed: Steps actually advanced before the world went away.
         requested: The count the caller asked for.
@@ -1231,60 +721,6 @@ def step_aborted_msg(completed: int, requested: int, *, context: str = "step") -
 
 def positive_count_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive integer count.
-
-    Shared domain for five families of discrete quantity:
-
-    * The knobs that count iterations of a control or rollout loop - the
-      simulation's ``n_episodes`` / ``max_steps`` / ``control_substeps`` /
-      ``action_horizon`` and the hardware control loop's ``action_horizon``.
-    * A camera's pixel dimensions - the ``width`` / ``height`` of
-      ``add_camera`` and of the render family (``render``, ``get_frame``,
-      ``get_camera_params``) on every simulation backend. A backend may add
-      an upper bound of its own on top of this floor (MuJoCo caps at the
-      offscreen framebuffer size; the ray-traced backends have no such
-      buffer), but the floor itself must not differ between them: the same
-      camera configuration cannot be refused on one backend and accepted on
-      another.
-    * A bound on a slice of a token sequence - the ``tokenizer_max_length`` a
-      VLA provider hands a HuggingFace tokenizer as ``max_length`` alongside
-      ``truncation=True``. The tokenizer takes it as a slice bound over the
-      encoded instruction, so a count below one silently produces an EMPTY
-      prompt rather than an error.
-    * A count of things to be built and run in parallel - the ``num_envs`` of
-      ``RLTrainSpec`` and of every RL backend that acts on it (the from-scratch
-      PPO / FastTD3 / FastSAC trainers, :class:`~strands_robots.training.rl.vec_env.VecSimEnv`,
-      the Isaac backend's ``replicate``), and the ``max_workers`` sizing the one
-      thread pool a vectorized env steps its sub-envs through. Each is spent
-      building live resources - a physics engine per environment, an OS thread
-      per worker - so a count the caller did not mean is not a bad number but
-      the wrong number of engines.
-    * The speed a serial bus is opened at - the ``baudrate`` of
-      :mod:`~strands_robots.tools.serial_tool` and the ``baud_rate`` of every
-      surface that opens one: :class:`~strands_robots.drivers.feetech.driver.FeetechDriver`,
-      :class:`~strands_robots.drivers.feetech.bus.FeetechBus` and
-      ``pose_tool``'s motor controller. They all reach one ``serial.Serial``,
-      which takes the speed through its own ``int()`` and refuses only a
-      negative - so a speed that is not a count is applied rather than
-      reported: ``2.7`` opens the port at 2 baud and ``0`` opens it
-      successfully at a speed no servo answers.
-
-    It lives here rather than beside one of its callers because those callers
-    sit in different layers (:mod:`strands_robots.hardware_robot` must not
-    depend on :mod:`strands_robots.simulation`), and the accepted domain must
-    not diverge between them: the same count cannot be refused for a digital
-    twin and accepted for the arm it mirrors.
-
-    Distinct from :func:`positive_whole_number_error`, which accepts any real
-    scalar with an integral value so a ``30.0`` read from a config or an
-    ``np.int64`` probed from a camera can be honored. The values guarded here
-    are consumed directly as ``range()`` bounds, slice indices, or an array /
-    framebuffer dimension, where an integral float raises ``TypeError``
-    ("``'float' object cannot be interpreted as an integer``") rather than being
-    coerced, so only a true ``int`` can be honored.
-
-    ``bool`` is rejected explicitly. It is an ``int`` subclass, so a bare
-    ``value < 1`` test lets ``True`` through as a silent count of 1 while
-    rejecting ``False`` - a value the caller never meant either way.
 
     Args:
         value: The caller-supplied value.
@@ -1305,38 +741,6 @@ def positive_count_error(value: Any, param: str, context: str) -> str | None:
 
 def tcp_port_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` cannot address a TCP port.
-
-    Shared domain for every caller-supplied port number: the agent tools that
-    reach a service over TCP (``use_rosbridge``'s WebSocket,
-    ``gr00t_inference``'s inference service), the mesh bridges that construct
-    one, the policy providers that dial one (``groot``, ``moveit2``,
-    ``cosmos3``), the Device Connect drivers
-    that address a device daemon
-    (:class:`~strands_robots.device_connect.reachy_mini_driver.ReachyMiniDriver`'s
-    ``api_port``), and the simulation backends that bind one
-    (:meth:`~strands_robots.simulation.newton.simulation.NewtonSimEngine.open_viewer`'s
-    ``port`` for the viser dashboard). A port is an index into the
-    16-bit TCP port
-    space, so only an ``int`` in ``[1, 65535]`` names one: ``0`` asks the kernel
-    for an ephemeral port rather than naming a port, and a value outside the
-    range has nothing to bind or connect to.
-
-    A lazily-connecting transport makes the range load-bearing at the boundary
-    rather than at the socket: ZMQ's ``connect`` accepts ``tcp://host:99999``
-    and a WebSocket/gRPC target is only resolved on first use, so a port outside
-    the range is not refused by the transport - it fails much later as an
-    unreachable service, implicating the server rather than the port.
-
-    It lives here rather than beside one of its callers for the same reason
-    :func:`positive_count_error` does: those callers sit in different layers
-    (:mod:`strands_robots.tools` and :mod:`strands_robots.mesh` must not depend
-    on each other) and the accepted domain must not diverge between them - the
-    same port cannot be refused by one transport onto a service and accepted by
-    the next.
-
-    ``bool`` is rejected explicitly. It is an ``int`` subclass, so a bare
-    ``1 <= value <= 65535`` test lets ``True`` through as a silent port 1 - a
-    privileged port the caller never named.
 
     Args:
         value: The caller-supplied value.
@@ -1363,17 +767,6 @@ _URI_COMPONENT_DELIMITERS = frozenset("/?#@:[]\\")
 def _read_uri_host(value: str) -> tuple[tuple[str, str, list[str]] | None, str | None]:
     """The host as a plain string, its body and its delimiters - or why it did not read.
 
-    :func:`dial_host_error`'s verdict is computed from the caller's own string
-    operations - ``startswith``, a slice, and a character scan - and a ``str``
-    subclass owes none of them an answer. That makes this the :func:`_read_name_list`
-    case rather than the :func:`_read_to_quote` one: the read *is* the verdict, so a
-    read that fails becomes one, and the guard refuses a host it could not inspect
-    instead of raising out of the path whose whole purpose is to answer an unusable
-    value with text.
-
-    A bracketed IPv6 literal is unwrapped here because the brackets decide whether
-    ``:`` belongs to the host, which is part of reading it rather than of judging it.
-
     Args:
         value: The caller-supplied host, already known to be a ``str``.
 
@@ -1398,46 +791,6 @@ def _read_uri_host(value: str) -> tuple[tuple[str, str, list[str]] | None, str |
 
 def dial_host_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` cannot address the host half of a websocket URI.
-
-    The other half of :func:`tcp_port_error`. Every caller-supplied port this
-    package dials is held to that shared domain, for the reason its consumers
-    record: an unusable port is not refused by the transport, it is *applied*,
-    and surfaces much later as an unreachable server that implicates the service
-    the caller was trying to reach. The host beside it is interpolated into the
-    same expression - ``ws://{host}:{port}`` - and was held to nothing, so the
-    URI parse resolved a value that is not a host instead of refusing it:
-
-    * A URI delimiter re-cuts the URI, and the validated port is the component
-      it takes. ``host="127.0.0.1/foo"`` parses as host ``127.0.0.1``, path
-      ``/foo:<port>`` and port **80**, so the client dials a port nobody
-      configured - the port domain cannot see this, because it is the host half
-      that discards the port. ``host="ws://127.0.0.1"``, the shape a caller who
-      pastes a URI supplies, parses as host ``ws`` on port 80.
-    * ``""`` builds no URI at all: the parse reports "hostname isn't provided"
-      and raises ``InvalidURI``, which is not an ``OSError`` and so escapes the
-      channel these clients convert into their actionable "could not reach the
-      server" hint.
-    * A non-string is carried by the f-string verbatim. ``None`` reaches the
-      resolver as the DNS name ``"none"`` and an ``int`` as its digits, so the
-      client dials a name the caller never wrote.
-    * A resolver silently repairs some values rather than reporting them: a tab
-      inside a host is dropped, and a trailing NUL truncates the lookup.
-
-    Only the shape a URI and a resolver can be *given* is decided here. Whether
-    the host resolves, and whether anything is listening on it, are facts about
-    the network a constructor cannot know and that the connect path already
-    reports.
-
-    ``"0.0.0.0"`` stays accepted: it is the documented way to reach a server
-    bound on every interface, it interpolates and dials cleanly, and readiness
-    probes special-case it. ``""`` means the same thing to a ``bind`` call and
-    nothing to a URI, so the refusal for it names ``"0.0.0.0"`` as the spelling
-    that works.
-
-    A ZMQ endpoint is deliberately not held to this domain. ``tcp://`` is not a
-    URI, and ``zmq``'s own address parse refuses every delimiter spelling above
-    at ``connect`` with the whole address in the message, so the transport there
-    reports what this function would.
 
     Args:
         value: The caller-supplied host.
@@ -1486,43 +839,6 @@ def dial_host_error(value: Any, param: str, context: str) -> str | None:
 def non_negative_count_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable non-negative integer count.
 
-    Shared domain for three families of discrete quantity whose ``0`` is a
-    first-class value rather than a degenerate one:
-
-    * The number of control steps a loop executes while an inference request is
-      in flight
-      (:attr:`~strands_robots.policies.base.Policy.rtc_observed_delay_steps`).
-      That count is exactly ``0`` in the dominant case: a synchronous eval loop
-      pauses the world during inference, so no step elapses.
-    * A reproducibility seed -
-      :attr:`~strands_robots.training.base.TrainSpec.seed` and the ``seed`` of
-      :meth:`~strands_robots.streaming_dataset.StreamingDatasetReader.open` -
-      where ``0`` is simply a seed. Its appliers disagree about everything
-      outside this domain: ``torch.manual_seed`` reduces a negative seed modulo
-      ``2**64`` (so ``-1`` silently becomes ``2**64 - 1`` and collides with a
-      seed a caller could have named), while NumPy's legacy seeder refuses a
-      negative or a float.
-    * The episode counts of the dataset-integrity gate
-      (:func:`strands_robots.verify_dataset.verify_dataset`'s ``expected`` and
-      ``min_frames``, and the sim facade's
-      :meth:`~strands_robots.simulation.base.SimEngine.verify_dataset_episodes`).
-      ``expected=0`` asks that a dataset be empty and ``min_frames=0`` skips the
-      per-episode length check, so ``0`` selects a mode there rather than
-      degenerating one. A value outside the domain cannot: the length check runs
-      only for a threshold above zero, so a negative or non-finite one disables
-      the check instead of failing it.
-
-    Refusing ``0`` would reject the common configuration for all three, which is
-    why this is a separate domain rather than a caller of
-    :func:`positive_count_error`.
-
-    In every other respect it mirrors :func:`positive_count_error`: only a true
-    ``int`` can be honored - an integral float raises ``TypeError`` at an action
-    chunk's slice, and ``numpy.random.seed(3.0)`` raises the same class of cast
-    error rather than being coerced - and ``bool`` is rejected explicitly because
-    as an ``int`` subclass a bare ``value < 0`` test lets ``True`` through as a
-    silent count, or a silent seed, of one.
-
     Args:
         value: The caller-supplied value.
         param: The parameter name it came from, used in the message.
@@ -1540,42 +856,6 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
 def declared_count(value: object) -> int | None:
     """The count a dataset's ``meta/info.json`` declares, or ``None`` for none.
 
-    Read-side counterpart of :func:`non_negative_count_error`, and the same type
-    and floor rule: that domain grades a count a CALLER passed and reports why it
-    was refused, while this one grades a count a FILE declares, where the only
-    answers a reader can act on are the count itself and the absence of one.
-    Every reader of a LeRobot header count asks that question of the same file -
-    the parquet cross-check in
-    :func:`~strands_robots.dataset_metadata.read_dataset_episode_indices`, the
-    metadata-drift check in
-    :func:`~strands_robots.verify_dataset.verify_dataset`, the validation-split
-    denominator in ``strands_robots.training.lerobot``, the episode count the
-    ``lerobot_train`` tool splits, and the task count
-    :func:`validation_split_error` decides that split against - so the answer
-    lives here: one file, one value, one verdict.
-
-    A declaration outside the domain is ``None`` (the header declares no count),
-    never a nearby number, because every alternative is silently destructive at
-    surfaces that certify datasets:
-
-    * ``int(2.5)`` truncates to ``2``, which is exactly the count a two-episode
-      parquet holds - so a header no writer could have produced reads as
-      agreement between the two independent metadata sources.
-    * ``int(1e400)`` raises ``OverflowError``. ``1e400`` is a well-formed JSON
-      number (RFC 8259 bounds no range) that ``json.load`` parses to ``inf``, so
-      a perfectly readable file raises out of readers whose documented answer for
-      an unusable header is "unknown", and past a tool envelope.
-    * ``bool`` is an ``int`` subclass, so a bare type test reads ``true`` as a
-      one-episode dataset - and, at the sibling ``total_tasks`` header this same
-      domain grades, as a single-task one.
-    * A ``str`` digit and an integral ``float`` are refused rather than coerced,
-      because coercing is what let the readers disagree: one accepted ``"2"`` as
-      two episodes while another refused it as unusable.
-
-    A reader that must report an unusable declaration rather than pass it over
-    compares against the raw value it read: ``None`` here with the key present
-    means the file declares something that is not a count.
-
     Args:
         value: The value the metadata file carried under the count's key, or
             ``None`` when the key is absent.
@@ -1590,38 +870,6 @@ def declared_count(value: object) -> int | None:
 
 def step_cadence_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable cadence in training steps.
-
-    Shared domain for a periodic-action interval a training run is paced by -
-    :attr:`~strands_robots.training.base.TrainSpec.save_freq`, the checkpoint
-    cadence every post-tuning backend forwards to its own trainer. A cadence is
-    consumed as the modulus of a ``step % cadence`` test, so only a true ``int``
-    can be honored, and its callers sit in different layers (the
-    ``lerobot_train`` tool builds an argv token from one; the
-    :class:`~strands_robots.training.base.Trainer` backends assign one into a
-    typed config, a Hydra override, or a serialized hyperparameter), which is
-    why the domain lives here rather than beside one of them: the same cadence
-    cannot be refused by the tool and accepted by the trainer that wraps the
-    identical pipeline.
-
-    **A non-positive cadence is a capability, not an unusable value, so this
-    domain has no floor.** LeRobot documents it and implements it -
-    ``should_save_checkpoint`` is ``(save_freq > 0 and step % save_freq == 0) or
-    step == total_steps``, whose docstring reads "a non-positive ``save_freq``
-    disables periodic saving (only the final checkpoint is written)". ``0`` and a
-    negative therefore select a mode, exactly as they do for
-    :func:`non_negative_count_error`'s ``min_frames``, and only the *type* is
-    graded here. That also makes this a distinct domain from
-    :func:`positive_count_error` and :func:`non_negative_count_error`, which
-    share this type rule but each impose a floor the mode would trip.
-
-    Every other spelling of the number is unusable, and in a way no consumer
-    reports: a ``float`` passes the ``> 0`` test and then never satisfies
-    ``step % cadence == 0`` for an integral step, so a fractional cadence
-    silently becomes the disabled mode; a non-finite one does the same; a ``str``
-    raises ``TypeError`` out of the comparison itself, inside the training loop;
-    and ``bool`` is refused explicitly because as an ``int`` subclass it passes a
-    bare type test while ``True`` is a modulus of one - a full checkpoint every
-    single step.
 
     Args:
         value: The caller-supplied cadence.
@@ -1645,51 +893,6 @@ def step_cadence_error(value: Any, param: str, context: str) -> str | None:
 
 def torch_device_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a device string torch can parse.
-
-    Shared domain for every caller-supplied torch device this package spends. It
-    reaches torch from three surfaces that cannot be reconciled after the fact:
-    the ``lerobot_train`` tool interpolates it into ``--policy.device=`` in the
-    argv of a DETACHED process; :class:`~strands_robots.training.lerobot.LerobotTrainer`
-    assigns it onto ``policy_cfg.device`` for the same pipeline in-process; and
-    the from-scratch RL backends hand
-    :attr:`~strands_robots.training.rl.base_algo.RLTrainSpec.device` straight to
-    ``torch.device`` in :meth:`setup`. The domain lives here for the reason
-    :func:`step_cadence_error` gives for the cadence beside it in that same argv:
-    those callers sit in different layers, and the same device must not be
-    refused by one and accepted by another that wraps the identical pipeline.
-
-    The admitted set is torch's own, read by handing the value to
-    ``torch.device`` rather than by comparing against a copied list of device
-    types. A torch build that gains a backend is admitted here with no edit, and
-    torch's own exception enumerates the types it accepts, so a refusal names the
-    admitted set without restating it.
-
-    Only the *spelling* is graded, never availability. ``torch.device("cuda")``
-    constructs on a CPU-only box and must stay accepted, because a queued or
-    containerised run legitimately names a device the dispatching machine does
-    not have. That is also why a non-``str`` is refused before torch is
-    consulted at all: ``torch.device(0)`` reads the accelerator inventory, so
-    asking torch about it would make one spec validate on a GPU box and fail on a
-    CPU box - and an ordinal that does resolve is worse than one that does not,
-    because ``torch.device(1)`` constructs on any host and then fails at the
-    first ``.to()`` with ``CUDA error: invalid device ordinal``, from a
-    ``torch/nn/modules/module.py`` frame that names neither the parameter nor the
-    run that supplied it.
-
-    Whether an *unstated* device is refused belongs to the caller, not here: a
-    surface that documents a falsy value as "resolve the default" replaces it
-    before asking, and one that writes the value into an argv verbatim asks about
-    it as given. This function grades the value it is handed.
-
-    When torch is not importable the domain is unknown and the value passes
-    through unguarded, which is the posture every live-sourced domain in this
-    module takes when its source cannot be read.
-
-    The refused value is rendered through :func:`refusal_repr`, as every scalar
-    guard here is: ``repr`` can itself raise - on an ``int`` wider than
-    :func:`sys.get_int_max_str_digits`, or from any third-party ``__repr__`` - and
-    a guard that raises while building a refusal fails on exactly the path that
-    exists so it does not.
 
     Args:
         value: The caller-supplied device.
@@ -1734,37 +937,6 @@ MAX_DDS_DOMAIN_ID = 232
 def dds_domain_id_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` cannot name a DDS domain.
 
-    Shared domain for every caller-supplied ROS 2 / DDS domain id: the hardware
-    ``Robot``'s ``ros2_domain``, a simulation backend's ``ros2_domain``, and the
-    ``domain_id`` the rclpy telemetry bridge
-    (:class:`~strands_robots.ros_telemetry.RosTelemetryBridge`) and the pure-RTPS
-    bridge (:class:`~strands_robots.hardware_rtps_bridge.HardwareRtpsBridge`)
-    publish on, and the ``domain_id`` a native driver opens its own DDS
-    participant on (:class:`~strands_robots.drivers.booster.BoosterDriver`). A
-    domain id indexes the RTPS port map, so only an ``int`` in
-    ``[0, MAX_DDS_DOMAIN_ID]`` names one - see :data:`MAX_DDS_DOMAIN_ID` for the
-    arithmetic that fixes the ceiling.
-
-    The rclpy bridge makes the range load-bearing at the boundary rather than at
-    the participant: it pins the domain by writing ``ROS_DOMAIN_ID`` into the
-    process environment, and that write happens before ``rclpy`` is even
-    imported. So a value outside the range is not refused by the transport - it
-    is published to the whole process, where it outlives the call that set it
-    and steers every later participant (and every subprocess that inherits the
-    environment) at a domain nothing can be reached on.
-
-    It lives here rather than beside one of its callers for the same reason
-    :func:`tcp_port_error` does: those callers sit in different layers
-    (:mod:`strands_robots.hardware_robot`, :mod:`strands_robots.simulation`,
-    :mod:`strands_robots.drivers` and the two bridge modules) and the accepted
-    domain must not diverge between
-    them - the same domain id cannot be refused by the rclpy bridge and accepted
-    by the RTPS one, when the two exist to advertise the same topics.
-
-    ``bool`` is rejected explicitly. It is an ``int`` subclass, so a bare
-    ``0 <= value <= 232`` test lets ``True`` through as a silent domain 1 and
-    ``False`` through as domain 0 - a domain the caller never named.
-
     Args:
         value: The caller-supplied value.
         param: The parameter name it came from, used in the message.
@@ -1792,23 +964,6 @@ SUPPORTED_GROOT_VERSIONS = ("n1.5", "n1.6", "n1.7")
 def groot_version_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` names no Isaac-GR00T release with a loader.
 
-    ``groot_version=`` overrides Isaac-GR00T auto-detection and is read as a
-    release selector - a loader in local mode, and the observation wire shape in
-    service mode, which loads nothing - so only the spellings in
-    :data:`SUPPORTED_GROOT_VERSIONS` name anything. A value outside that set used to match no dispatch branch and
-    fall through to the same ``ImportError`` a missing package raises, reporting
-    the environment as lacking Isaac-GR00T even when the release was installed
-    and auto-detected - so a misspelling was answered with an install
-    instruction for a package the caller already had, and the parameter that
-    caused it was not named. Grading the value here names the typo instead.
-
-    ``None`` is the not-supplied sentinel, as it is for every other optional
-    parameter on that policy: it means "auto-detect the installed release", and
-    passes. Every other value is a claim about which release the policy is
-    dealing with, so a blank or mis-cased one (``""``, ``"N1.7"``) is a claim
-    that cannot be honoured rather than an absent one - and ``""`` in particular is what an unset
-    environment variable interpolates to.
-
     Args:
         value: The caller-supplied release selector.
         param: The parameter name it came from, used in the message.
@@ -1832,55 +987,6 @@ MAX_ZMQ_TIMEOUT_MS = 2**31 - 1
 
 def coerce_zmq_timeout_ms(method: str, param_name: str, value: Any) -> tuple[int | None, str | None]:
     """Read ``value`` as a ZMQ send/receive timeout in milliseconds.
-
-    Shared domain for the ``timeout_ms`` of both ZMQ REQ inference clients -
-    :class:`~strands_robots.policies.groot.client.Gr00tInferenceClient` and
-    :class:`~strands_robots.policies.moveit2.client.MoveIt2InferenceClient` -
-    which each hand it to ``setsockopt(RCVTIMEO)`` and ``setsockopt(SNDTIMEO)``
-    on the socket they dial their sidecar with. It is the third remote-inference
-    transport, and it is spelled differently from the WebSocket and gRPC pair's
-    ``connect_timeout`` / ``request_timeout`` (#1984), which is why it was
-    missed when those were settled: same concern, different parameter name.
-
-    Returns the value **coerced to** ``int``, which is load-bearing rather than
-    tidiness. ``setsockopt`` takes a C ``int`` and refuses every other spelling
-    of the same budget, so ``15000.0`` read out of a JSON config and
-    ``np.int64(15000)`` read out of a config array both raise
-    ``TypeError: expected int`` from inside ``pyzmq`` - naming no parameter -
-    even though each names a perfectly usable budget. The sibling transports
-    accept those spellings, so coercing here is what keeps one budget from
-    being usable on two transports and unusable on the third.
-
-    Only a positive whole number can be honored, and the floor is where the
-    damage is. A ``0`` timeout is ZMQ's "return immediately" spelling, so every
-    request raises ``zmq.Again`` regardless of whether a sidecar is listening -
-    and both clients' ``ping()`` catch every exception and return ``False``, so
-    a running, reachable server is reported as unreachable with the reason at
-    ``logger.debug`` only. ``False`` is the same value arriving by a different
-    route, and ``True`` is a silent 1 ms budget whose verdict depends on how
-    long the peer takes to answer, so it fails on one client and passes on the
-    other against the same sidecar.
-
-    **The ceiling is the transport's, not a policy choice.** ``RCVTIMEO`` is
-    stored as a C ``int``, so :data:`MAX_ZMQ_TIMEOUT_MS` - ``2**31 - 1`` ms,
-    close to 24.9 days - is the largest budget ZMQ will accept; one millisecond
-    more raises ``OverflowError: value too large to convert to int``. This is
-    why :func:`positive_whole_number_error` cannot be applied on its own: that
-    domain accepts ``2**31`` as a positive whole number inside the float64
-    range, and the transport then refuses it with a message naming nothing.
-
-    ``-1`` is refused, and it is the one value that deserves the reason stated.
-    ZMQ documents it as "block forever", so unlike the ``inf`` of the sibling
-    transports it *is* honored - which is what makes it dangerous rather than
-    merely useless. It reinstates on the request path exactly the hang that
-    ``LINGER = 0``, set two lines below in the same ``_init_socket``, exists to
-    prevent on teardown: a request to an unreachable sidecar never returns, and
-    ``ping()`` - whose whole contract is to answer ``True`` or ``False`` about
-    connectivity - can then never answer at all. Neither client documents ``-1``
-    as a spelling, and an unbounded wait on a robot control path wants its own
-    parameter and its own decision rather than arriving as a negative
-    millisecond count. A premise test pins ZMQ's treatment of it, so this
-    reopens loudly if that changes.
 
     Args:
         method: Message prefix identifying the surface that received the value,
@@ -1924,39 +1030,6 @@ def coerce_zmq_timeout_ms(method: str, param_name: str, value: Any) -> tuple[int
 def _read_name_list(value: object, param: str, context: str) -> tuple[list[Any], str | None]:
     """Read ``value`` into a list once, or return why the read could not finish.
 
-    The single read every verdict in :func:`name_list_error` is then computed
-    from. It exists because that guard used to read the caller's value on each
-    branch that needed it - the entry walk, the duplicate walk, and the
-    duplicate message's own ``list(value)`` - and none of those reads was
-    guarded. An acceptable value was read twice and a repeated one three times,
-    so a value that answers a read at all could break the guard on any of them.
-
-    Reading once is not only about the escape. The reads were independent, so
-    nothing required them to agree, and a value whose contents differ between
-    two of them was refused on the strength of a list no check had examined: a
-    two-entry ``Sequence`` yielding ``["top", "wrist"]`` and then ``["top",
-    "top"]`` cleared the per-entry domain checks against the first and was
-    refused as a repeat against the second, in a message rendering a third. One
-    read makes the verdict and the text it quotes the same list by construction.
-
-    The read is still element by element rather than ``list(value)``, which
-    matters for the same reason it does in :func:`finite_vector_error`: a
-    materialising call raises before any element has been examined, so its
-    verdict could not name how far the read got. Here the whole value is
-    collected either way - a repeat cannot be ruled out without reading every
-    entry, so there is no verdict this guard could reach by stopping early -
-    but the *index* is what distinguishes a value that produced two good names
-    from one that produced none, and that is worth keeping.
-
-    Both stems are the ones :func:`finite_vector_error` already uses, with this
-    guard's own unquoted ``{param}[{i}]`` index style and a remedy worded for
-    names rather than numbers. A read that never began is reported without an
-    index, because there is no element to name; the index is the measurement.
-
-    The exception is rendered by :func:`_describe_failed_read`, which is also what
-    a refusal that could only not *quote* something reports (#1903), so the two
-    cannot describe one failure two ways.
-
     Args:
         value: The caller-supplied value, already known to be a
             :class:`~collections.abc.Sequence` by the check above the call.
@@ -1997,69 +1070,6 @@ def _read_name_list(value: object, param: str, context: str) -> tuple[list[Any],
 
 def name_list_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable list of distinct key names.
-
-    Shared domain for every parameter that carries an ordered list of KEY
-    NAMES: the LeRobot ``image_keys`` (model VISUAL feature keys to declare on
-    the config), the simulation ``cameras`` subset accepted
-    by ``render_all``, the two plain-MP4 recorders and every backend's
-    ``start_recording``, and the ``robot_state_keys`` accepted by every
-    provider's :meth:`~strands_robots.policies.base.Policy.set_robot_state_keys`
-    (the ordered joint/motor names a policy emits as its action-dict keys), and
-    the ``camera_keys`` / ``joint_names`` / ``action_names`` that
-    :meth:`~strands_robots.dataset_recorder.DatasetRecorder.create` declares as
-    the recorded dataset's column names.
-    They name different vocabularies, but the shape contract is identical -
-    several distinct non-blank names, in the order the caller wants them - and
-    every consumer reaches the same failure when it is not met, so the rule
-    lives here rather than beside any one of them.
-
-    On the ``robot_state_keys`` path the duplicate case is the dict collapse
-    above: the emitted action dict is keyed by these names, so a three-entry
-    list with one repeat emits two commands rather than three.
-    Note that the provider resolving these names by
-    membership rather than by position (WBC) deliberately tolerates a repeat -
-    it resolves to its first occurrence - so it is not a caller of this
-    function.
-
-    The mistake this exists for is a single name passed as a bare string.
-    ``str`` is iterable, so ``list("wrist")`` yields ``['w', 'r', 'i', 's', 't']``
-    - five names the caller never wrote, one per character. Nothing downstream
-    can tell that apart from a deliberate five-entry list, so it is accepted and
-    the consequence surfaces far from the call: a model built declaring
-    per-character features, a ``KeyError: 'w'`` raised mid-rollout when the
-    frame for a one-letter camera is looked up, or a recording refused as five
-    unknown cameras rather than as one mis-typed parameter.
-
-    A ``Mapping`` is refused for the same reason in the other direction: it is
-    iterable over its keys, so its values would be silently discarded.
-
-    A repeated name is refused because it cannot be honored as written, and the
-    consumers disagree on which way it fails. A duplicate collapses where the
-    name keys a dict - the LeRobot feature map, or a dataset schema, which then
-    declares fewer columns than asked for (two ``camera_keys`` entries naming one
-    camera declare a single camera column) - and doubles where each entry drives
-    its own unit of work: ``render_all`` renders the same view twice;
-    and a plain-MP4 recorder opens a second encoder on the one output path, so
-    the same camera is rendered and appended twice per capture tick while the
-    artifact ledger reports two files where one exists.
-
-    Only a :class:`~collections.abc.Sequence` is accepted, which excludes
-    one-shot iterators. That matters on the LeRobot path, where the value is
-    read twice - once by the pre-flight check and again at load - so a generator
-    exhausted by the first read would present as empty to the second. That is a
-    statement about the *consumers*: this function itself reads the value once,
-    through :func:`_read_name_list`, and a read that cannot finish is answered
-    with a message rather than raising out of the guard.
-
-    An empty sequence is not rejected here, and ``None`` is the caller's to skip
-    rather than this function's to accept - a surface where an absent value IS an
-    error keeps that verdict its own. Which verdict that is depends on what the
-    parameter names: the LeRobot ``image_keys`` DECLARES the model's visual
-    features, and absence derives them from the embodiment instead, so a falsy
-    value there genuinely means "not supplied" and that caller gates this check
-    on truthiness. A parameter that instead SELECTS a subset of a collection the
-    call already owns would reach the opposite verdict, and supplies that refusal
-    beside this check rather than here.
 
     Args:
         value: The caller-supplied value.
@@ -2151,28 +1161,6 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
 def camera_schema_key(name: str) -> str:
     """The LeRobot dataset feature name a scene camera is recorded under.
 
-    A simulation namespaces a robot's own cameras with ``/`` (``arm0/wrist``),
-    but a LeRobot feature name cannot contain ``/`` - it is reserved for
-    nested-feature addressing - so the separator collapses to ``__`` for the
-    dataset schema (``arm0__wrist``).
-
-    That collapse is the only reason a recorded column name can differ from the
-    camera name that produced it, so the rule lives here rather than beside any
-    one of the surfaces that need it: every backend's ``start_recording``
-    declaring the schema, the guard that refuses a scene whose cameras do not
-    have distinct keys
-    (:func:`~strands_robots.simulation.recording.camera_schema_key_collision_error`),
-    and :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame`
-    renaming an observed frame onto its declared column. All three have to agree
-    on one mapping for a frame to reach the column declared for it, and a second
-    spelling of the rule is a second thing to keep in step.
-
-    The mapping is NOT injective: two distinct camera names can share one key
-    (``arm0/wrist`` and ``arm0__wrist`` both give ``arm0__wrist``), which is
-    what the collision guard exists to refuse. It IS idempotent, so applying it
-    to a key returns that key - which is why a caller may name a camera in
-    either form.
-
     Args:
         name: A scene camera name, raw (``arm0/wrist``) or already schema-safe.
 
@@ -2196,26 +1184,6 @@ BOOLEAN_VECTOR_REASON = (
 
 def _read_finite_vector(method: str, param_name: str, vec: Any) -> tuple[list[float], str | None]:
     """Read ``vec`` into floats once, or return why it is unusable.
-
-    The single read every verdict in :func:`finite_vector_error` is computed
-    from, together with the floats that read produced.
-
-    It exists because the three coercions built on that guard validated their
-    value with it and then read the value *again*, unguarded, to build their
-    floats. Two consequences, and the second is the one that reaches a stated
-    contract. A value that answers the checked read and refuses the next one
-    raised straight out of the coercion (#1906) - including out of
-    :func:`coerce_rgba`'s wrong-length refusal, whose whole purpose is to answer
-    an unusable colour with text. And the reads were independent, so nothing
-    obliged them to agree: the components a refusal quoted need not have been
-    the components any check examined. Returning the read makes the verdict and
-    the floats the caller keeps one list by construction.
-
-    This is :func:`_read_name_list`'s shape (#1897) on the numeric guards. The
-    read moves rather than the signature: :func:`finite_vector_error` and
-    :func:`pose_vector_error` have 24 call sites across four modules that want a
-    verdict and nothing else, so they stay as they were and this is what they
-    are now computed from.
 
     Args:
         method: Calling method name, used in error text.
@@ -2328,67 +1296,7 @@ def _read_finite_vector(method: str, param_name: str, vec: Any) -> tuple[list[fl
 
 
 def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
-    """Return an error message if any element of ``vec`` is not a finite number.
-
-    Guards the numeric vectors a scene-construction call bakes into the
-    compiled MJCF (``add_object`` color/size, ``add_camera`` position/target,
-    etc.) against the two classes the numeric-input campaign targets:
-
-    * A non-numeric or non-iterable element (e.g. ``["a", "b", "c"]`` or a
-      nested list) otherwise raises a bare ``TypeError``/``ValueError`` deep
-      inside MuJoCo's ``add_geom`` or a ``size <= 0`` comparison - escaping the
-      structured ``{"status": "error"}`` tool-result contract.
-    * A ``nan``/``inf`` component is baked verbatim into the geom/camera and
-      either poisons the physics state on the next ``mj_forward`` or aborts the
-      spec recompile with a cryptic "spec recompile refused", reporting a
-      success/garbage result instead of an actionable error.
-    * A value whose iteration raises something other than ``TypeError`` -
-      from ``__iter__``, or from ``__next__`` once the read is under way -
-      otherwise propagates that exception out of the guard, which is the same
-      contract break by a different route - the caller asked for a verdict and
-      got a traceback. Both are reported, and not in the same words, because the
-      two are not the same measurement: a refusing ``__iter__`` yields "could not
-      be iterated", since whether it held numbers is precisely what could not be
-      determined, while a read that fails part-way names the element it stopped
-      at, the components before it having been read and found finite.
-
-    A numpy real scalar per element is accepted (``np.float64`` and friends are
-    registered as ``numbers.Real``), matching the "accept NumPy scalar
-    components" behaviour of the other sim setters; a ``bool`` is refused
-    because ``float(True)`` would silently write ``1.0`` where a coordinate,
-    extent or colour channel belongs. Length is NOT checked here (size is shape-dependent, so
-    its count is checked against the shape afterwards); use
-    :func:`pose_vector_error` for a fixed length, or :func:`coerce_rgba` for a
-    colour, whose count the rgba row it is written into defines. Returns ``None``
-    when every element is a finite real number.
-
-    The read itself is :func:`_read_finite_vector`, which returns the floats it
-    built alongside this verdict; this is the verdict half, for the callers that
-    want only a message. Both are one read of ``vec`` (#1906).
-
-    Deferring the count is what makes a *readable* length part of this verdict.
-    A caller holding only a message counts the components by reading ``vec``
-    again, and a value with no readable length cannot be read twice - the read
-    behind this verdict consumes it, so the caller's own count sees nothing. That
-    is a different question from the count itself ("how many components is this?"
-    versus "is that answerable at all"), and it is the one
-    :func:`sequence_length` owns and cannot raise answering (#1888). Refusing it
-    is the rule :func:`coerce_size_vector` - this function's own sibling over the
-    same read - :func:`coerce_rgba` and :func:`_read_pose_vector` already apply,
-    in the same words and for the same reason. Without it a generator of finite
-    numbers passed this verdict and then reached the caller's count as an empty
-    vector, so ``add_object`` reported a three-component extent as ``got 0
-    (size=[])`` and ``patch_scene_mjcf`` raised ``object of type 'generator' has
-    no len()`` into its envelope, naming neither the field nor the method while
-    the sibling fields of that same op named both.
-
-    The probe runs *after* the component read rather than before it, which is the
-    order :func:`coerce_size_vector` uses and the reason every refusal this guard
-    already gave is unchanged: a value whose ``__iter__`` raises, or whose read
-    fails part-way, has no readable length either, and those verdicts say what
-    actually happened instead of reporting a domain check that never ran (#1875,
-    #1878).
-    """
+    """Return an error message if any element of ``vec`` is not a finite number."""
     err = _read_finite_vector(method, param_name, vec)[1]
     if err is not None:
         return err
@@ -2402,23 +1310,6 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
 
 def _read_pose_vector(method: str, param_name: str, vec: Any, expected_len: int) -> tuple[list[float], str | None]:
     """Read ``vec`` into ``expected_len`` floats once, or say why it is unusable.
-
-    :func:`pose_vector_error`'s read, split out for the reason
-    :func:`_read_finite_vector` is (#1906): :func:`coerce_pose_vector` validated
-    the pose through the guard and then read it again to build the floats.
-
-    The length probe is unchanged and still runs before any element is produced,
-    so a wrong-length vector is still refused without reading one - it is
-    :func:`sequence_length`, which answers from ``__len__`` and cannot raise.
-    What this returns is therefore the *element* read, the one the coercion used
-    to duplicate.
-
-    That probe answers a *reported* length, and the read below produces the
-    components, so the accepted count is checked a second time against what the
-    read actually yielded (#1909). The two are independent reads and nothing
-    obliges them to agree; the length gate keeps its position, because refusing a
-    wrong reported length without producing an element is worth keeping, and the
-    re-check is the same question asked of the components that exist.
 
     Args:
         method: Calling method name, used in error text.
@@ -2498,27 +1389,7 @@ def _read_pose_vector(method: str, param_name: str, vec: Any, expected_len: int)
 
 
 def pose_vector_error(method: str, param_name: str, vec: Any, expected_len: int) -> str | None:
-    """Return an error message if ``vec`` is not ``expected_len`` finite numbers.
-
-    Fixed-length wrapper over :func:`finite_vector_error` for the pose
-    vectors written straight into ``data.qpos`` (``move_object`` /
-    ``add_object`` position+orientation, ``add_camera`` position+target). A
-    wrong-length vector otherwise raises a bare ``ValueError`` inside the numpy
-    assignment - escaping the structured ``{"status": "error"}`` tool-result
-    contract - and a ``nan``/``inf`` component is propagated through the whole
-    physics state by ``mj_forward``, reporting ``success`` while silently
-    poisoning the simulation. A numpy real scalar per element is accepted.
-
-    It lives here rather than beside one of its callers because those callers
-    sit in different layers: the scene-construction facade builds a pose before
-    the model is compiled, while the motion primitives take one against a live
-    model, and their accepted domain must not diverge - a pose either backend
-    entry point refuses must be refused by the other. Returns ``None`` when
-    ``vec`` is acceptable.
-
-    The read itself is :func:`_read_pose_vector`, for the same reason
-    :func:`finite_vector_error` defers to :func:`_read_finite_vector` (#1906).
-    """
+    """Return an error message if ``vec`` is not ``expected_len`` finite numbers."""
     return _read_pose_vector(method, param_name, vec, expected_len)[1]
 
 
@@ -2526,21 +1397,6 @@ def coerce_pose_vector(
     method: str, param_name: str, vec: Any, expected_len: int
 ) -> tuple[list[float] | None, str | None]:
     """Validate an optional pose vector and normalize it to plain floats.
-
-    Membership, not truthiness: a pose parameter is "supplied" when it is not
-    ``None``. Testing the vector itself (``if position:``, ``position or
-    <default>``) is wrong twice over. A NumPy array - the natural product of any
-    pose arithmetic, and what every docstring here advertises as accepted -
-    raises a bare ``ValueError: truth value of an array ... is ambiguous``
-    through the structured tool-result contract, and an empty vector reads as
-    "omitted", so the default is substituted (or the write skipped) while the
-    call reports success.
-
-    Normalizing to a ``list[float]`` keeps the accepted NumPy input from
-    outliving this boundary: the pose is stored on :class:`SimObject` /
-    :class:`SimRobot` (both annotated ``list[float]``), echoed in the status
-    text, and written into the spec, so a raw ``np.float64`` element would leak
-    ``np.float64(0.05)`` into agent-visible output.
 
     Args:
         method: Calling method name, used in error text.
@@ -2589,10 +1445,6 @@ MIN_QUATERNION_NORM = 1e-8
 def _quaternion_direction_error(method: str, param_name: str, floats: list[float]) -> str | None:
     """The one rule a quaternion adds over a position, shared by both wrappers.
 
-    ``floats`` has already been read and validated by :func:`_read_pose_vector`,
-    so this examines four plain ``float`` values rather than anything of the
-    caller's.
-
     Args:
         method: Calling method or op name, used in error text.
         param_name: Parameter or field name, used in error text.
@@ -2609,23 +1461,6 @@ def _quaternion_direction_error(method: str, param_name: str, floats: list[float
 
 def coerce_orientation_quaternion(method: str, param_name: str, quat: Any) -> tuple[list[float] | None, str | None]:
     """Validate an optional wxyz orientation and normalize it to plain floats.
-
-    Single definition of the library's orientation contract, shared by every
-    entry point that writes a wxyz quaternion so their accepted domains cannot
-    diverge. It is :func:`coerce_pose_vector` with ``expected_len=4`` plus the
-    one rule a quaternion adds over a position: four finite components are not
-    enough, because they can still fail to describe a rotation.
-
-    A quaternion is a DIRECTION with a magnitude the target buffers ignore, so
-    any non-unit value is fine - ``[0, 2, 0, 0]`` and ``[0, 1, 0, 0]`` are the
-    same half turn, and every consumer either normalizes or is scale-invariant.
-    A norm below :data:`MIN_QUATERNION_NORM` has no direction to recover,
-    though, and nothing downstream reports that: MuJoCo substitutes identity for
-    an all-zero body quaternion and reports success, so the rotation the caller
-    requested is silently replaced by no rotation at all. ``move_object`` then
-    echoes the requested quaternion back in its success text while
-    ``get_body_state`` reports identity - one call, two answers, neither of them
-    flagged.
 
     Args:
         method: Calling method name, used in error text.
@@ -2654,18 +1489,6 @@ def coerce_orientation_quaternion(method: str, param_name: str, quat: Any) -> tu
 def orientation_quaternion_error(method: str, param_name: str, quat: Any) -> str | None:
     """Return an error message if ``quat`` is not a usable wxyz orientation.
 
-    Error-only wrapper over :func:`coerce_orientation_quaternion`, for the
-    callers that hold a value to the orientation domain without taking the
-    normalized floats back - the structured scene ops, which pass the caller's
-    value straight to the spec write.
-
-    It pairs with :func:`coerce_orientation_quaternion` the way
-    :func:`pose_vector_error` pairs with :func:`coerce_pose_vector`, and differs
-    from it in the same one respect: ``None`` is REFUSED here rather than read as
-    an omission. An op dict is not a keyword argument - a key that is PRESENT
-    carries a supplied value - so reading ``{"op": ..., "quat": None}`` as "no
-    orientation asked for" would apply identity under a success result.
-
     Args:
         method: Calling method or op name, used in error text.
         param_name: Parameter or field name, used in error text.
@@ -2692,31 +1515,6 @@ RGBA_LAYOUT = "RGB, or RGBA with alpha"
 
 def coerce_rgba(method: str, param_name: str, color: Any) -> tuple[list[float] | None, str | None]:
     """Validate an optional colour and normalize it to 4 RGBA components.
-
-    Single definition of the library's colour contract, shared by every backend
-    so their accepted domains cannot diverge - a colour one backend refuses is
-    refused by all of them. Three components are read as RGB and completed with
-    an opaque alpha, the one component a colour buffer defines a default for;
-    four are read as RGBA verbatim; any other count is refused, because it can
-    only be applied by fabricating the missing components or discarding the
-    extra ones - either way painting a colour the caller never asked for under a
-    success result.
-
-    Membership, not truthiness: a colour is "supplied" when it is not ``None``.
-    Testing the vector itself (``color or <default>``) is wrong twice over. A
-    NumPy array - what colour arithmetic and any palette lookup produce - raises
-    a bare ``ValueError: truth value of an array ... is ambiguous`` through the
-    structured tool-result contract, and an empty vector reads as *omitted*, so
-    the backend default is painted while the call reports success.
-
-    Normalizing to a ``list[float]`` of exactly 4 keeps the accepted NumPy input
-    from outliving this boundary - the colour is stored on :class:`SimObject`
-    (annotated ``list[float]``) and echoed in agent-visible status text, so a
-    surviving ``np.float64`` would leak ``np.float64(1.0)`` into it - and makes
-    the ``color[:3]`` reads the shape builders do well-defined by construction
-    rather than by the caller's discipline. Both counts above are counts of the
-    components this function read, so "exactly 4" holds for any value, not only
-    for one whose ``__len__`` agrees with its contents (#1909).
 
     Args:
         method: Calling method name, used in error text.
@@ -2766,41 +1564,6 @@ def coerce_rgba(method: str, param_name: str, color: Any) -> tuple[list[float] |
 
 def coerce_size_vector(method: str, param_name: str, size: Any) -> tuple[list[float] | None, str | None]:
     """Validate an optional object ``size`` and normalize it to plain floats.
-
-    The part of the library's extent contract that does not depend on the shape:
-    a ``size`` is a vector of finite real numbers, or it is omitted. The MuJoCo
-    backend's ``add_object`` has composed exactly this domain with its own
-    shape-aware table since its numeric inputs were hardened -
-    :func:`finite_vector_error` for the components, ``_validate_size`` for the
-    count and the consumed extents - and this is the half a backend with no such
-    table can still apply, so the same value cannot be usable on one backend and
-    unusable on another.
-
-    Membership, not truthiness: a ``size`` is "supplied" when it is not ``None``.
-    Testing the vector itself (``size or <default>``) is wrong twice over. A
-    NumPy array - what any extent arithmetic or a randomization draw produces -
-    raises a bare ``ValueError: truth value of an array ... is ambiguous``
-    through the structured tool-result contract, and an empty vector is falsy, so
-    it reads as *omitted* and the backend default extent is applied while the
-    call reports success.
-
-    An empty vector is therefore refused rather than read as an omission. That is
-    a statement about zero components only, not about how many a shape needs: no
-    shape can be built from no extents at all, so the refusal holds whatever the
-    per-shape count turns out to be.
-
-    Normalizing to a ``list[float]`` keeps the accepted NumPy input from
-    outliving this boundary - the extent is stored on :class:`SimObject`
-    (annotated ``list[float]``) and echoed in agent-visible status text, so a
-    surviving ``np.float64`` would leak ``np.float64(0.05)`` into it.
-
-    What this deliberately does NOT decide is every axis whose answer depends on
-    the shape: the component **count** each shape requires, whether a short
-    vector may be completed from defaults, and whether a component must be
-    positive (MuJoCo bounds only the components the shape actually consumes, so a
-    cylinder may legitimately pass ``size[1] == 0``). Those three differ per
-    backend today and need one contract decision rather than a helper default;
-    #1858 tracks them.
 
     Args:
         method: Calling method name, used in error text.
@@ -2864,49 +1627,7 @@ FREE_CAMERA_TOKENS: Final[tuple[str | None, ...]] = (None, "", "default", "free"
 
 
 def reserved_camera_name_error(method: str, param_name: str, name: Any) -> str | None:
-    """Return an error message if ``name`` is a free-camera routing token.
-
-    The creation-site counterpart to :data:`FREE_CAMERA_TOKENS`. A backend whose
-    ``render`` / ``render_depth`` / ``get_frame`` select the free camera for a
-    token cannot also let ``add_camera`` *claim* that token: the camera is
-    registered, compiled into the scene and advertised by ``list_cameras``, and
-    every render of it silently returns the free view instead. Nothing reports an
-    error at any point, so the caller reads a success and a plausible frame.
-
-    Measured on MuJoCo 3.11.0, one ``create_world`` then
-    ``add_camera("free", position=[8, 8, 8], target=[0, 0, 0])``:
-
-    * ``status="success"``, text ``Camera 'free' added at [8.0, 8.0, 8.0]``;
-    * ``world.cameras`` holds ``'free'`` and ``mj_name2id(model, CAMERA, "free")``
-      resolves it, so the camera really is in the compiled model;
-    * ``list_cameras()`` answers ``['default', 'free']``, offering the name as
-      renderable;
-    * and ``render(camera_name="free")`` takes the ``cam_id = -1`` branch with
-      label ``"free (default)"`` - the camera at ``[8, 8, 8]`` is unreachable
-      through the very API that created it.
-
-    ``"default"`` reached the same end by a worse route. It is refused there only
-    as a *duplicate*, because ``create_world`` registers the built-in free view
-    under that name, and the refusal prescribes a remedy that completes the
-    defect: ``remove_camera("default")`` succeeds, the following
-    ``add_camera("default", ...)`` succeeds, and the scene is left with an
-    unreachable camera where the advertised free-view alias used to be.
-
-    This guard is why the domain is stated as a name rule rather than left to the
-    duplicate-name test: a duplicate is a fact about what is registered, and a
-    reserved token is a fact about what can be addressed.
-
-    Only a backend that *routes* the tokens applies it. The Isaac backend's
-    ``get_frame`` looks its camera up in ``self._cameras`` directly with no token
-    check, so ``"default"`` there is an ordinary addressable name - and is that
-    backend's documented signature default - which is coherent and must not be
-    broken by this rule.
-
-    Returns ``None`` for every name that is not a routing token, including a
-    value that is not a string at all: an unaddressable name is
-    :func:`entity_name_error`'s domain, and that guard runs first at every call
-    site, so this one is only ever reached with a genuine ``str``.
-    """
+    """Return an error message if ``name`` is a free-camera routing token."""
     if not isinstance(name, str):
         return None
     if name not in FREE_CAMERA_TOKENS:
@@ -2925,26 +1646,6 @@ def reserved_camera_name_error(method: str, param_name: str, name: Any) -> str |
 
 def free_camera_routing_rank(name: Any) -> int:
     """Sort rank that orders the free view behind every real camera.
-
-    The routing-site counterpart to :func:`reserved_camera_name_error`. That
-    guard keeps a caller from *creating* a camera under a
-    :data:`FREE_CAMERA_TOKENS` name; this one keeps the free view a backend
-    creates for itself from outranking a camera the caller did create, wherever
-    cameras compete for a fixed number of slots.
-
-    ``create_world`` registers the built-in free view under ``"default"`` before
-    any ``add_camera`` call, so it is FIRST in ``list_cameras()`` and first among
-    the image entries of ``get_observation()``. Any consumer that fills N slots
-    from that sequence therefore hands slot 0 to a fixed three-quarter debug
-    view of the whole scene - a view no checkpoint was trained on and no caller
-    asked to be an input - and, when the slots run out, drops one of the
-    caller's real cameras to make room for it.
-
-    Used as a ``list.sort`` / ``sorted`` key, this sinks the token names to the
-    end while leaving the real cameras in their existing relative order (both
-    are stable), so it changes which camera a *guess* picks and nothing else. It
-    does not remove the free view from the candidates: a scene whose only camera
-    is the free view still fills the slot it would have filled.
 
     Args:
         name: An observation camera key. Membership is the whole rule, so the
@@ -2970,22 +1671,6 @@ def mounted_camera_pose_error(
     start: str | None = None,
 ) -> str | None:
     """Return an error message when a camera is mounted on a body with no pose of its own.
-
-    ``add_camera(parent_body=...)`` reads ``position`` and ``target`` in the
-    parent body's LOCAL frame. The free-camera defaults - ``[1, 1, 1]`` looking
-    at ``[0, 0, 0]`` - are a sensible world-frame overview, and a mistake in a
-    body frame: they place the camera 1.73 m from the body looking back at it,
-    a third-person view that rides along with the arm and shows the arm, which
-    is not the wrist view the mount exists for. Measured on
-    ``add_camera(name="wrist", parent_body="so101/gripper")`` (the exact
-    call ``list_bodies`` and the camera-naming guide suggested): a 320x240
-    render of the whole arm from above, the gripper a few pixels wide. Under
-    ``status="success"`` an agent has no reason to look twice, so a "wrist"
-    stream recorded into a dataset carried the wrong view end to end.
-
-    Both backends mount cameras (MuJoCo and Newton), so the rule lives here
-    beside :func:`camera_fov_error` for the same reason that one does: a call
-    one backend refuses must be refused by the other.
 
     Args:
         method: The calling method, opening the message (``"add_camera"``).
@@ -3019,39 +1704,7 @@ def mounted_camera_pose_error(
 
 
 def camera_fov_error(method: str, param_name: str, value: Any) -> str | None:
-    """Return an error message if ``value`` is not a usable camera field of view.
-
-    A camera's vertical field of view must be a finite angle in the open
-    interval ``(0, 180)`` degrees. This lives here, beside
-    :func:`pose_vector_error`, for the same reason that one does: the MuJoCo and
-    Newton backends both expose ``add_camera(fov=...)`` and their accepted
-    domain must not diverge - an fov either backend refuses must be refused by
-    the other, and a second copy of the interval would drift from the first.
-
-    Outside that interval a camera is not merely mis-posed but unusable, and
-    each backend fails differently and late rather than at config time:
-
-    * MuJoCo bakes the value into the MJCF ``fovy`` attribute, so the spec
-      recompile aborts inside ``inject_camera_into_scene`` with a cryptic "spec
-      recompile refused".
-    * Newton stores it and derives the pinhole intrinsics
-      ``0.5 * height / tan(radians(fov) / 2)`` at render time, which is ``nan``
-      for a ``nan`` fov and raises ``ZeroDivisionError`` for ``0``.
-
-    A NumPy real scalar is accepted (``np.float32(58.0)`` read out of a config
-    array is a legitimate fov); a ``bool`` is refused because ``float(True)``
-    would silently mean a 1-degree lens. Returns ``None`` when ``value`` is a
-    usable field of view.
-
-    Nothing raises out of here. This guard is the one member of the scalar
-    numeric family that needed no new text to make that true: a magnitude past
-    the float64 range - which used to raise ``OverflowError`` out of the
-    ``float()`` below - exceeds 180 degrees by three hundred orders of
-    magnitude, so the interval message it already had is a true statement about
-    such a value. Having a bounded interval to appeal to is what distinguishes
-    it from :func:`positive_finite_number_error` and :func:`finite_number_error`,
-    whose domains are unbounded above and so have no such reason available.
-    """
+    """Return an error message if ``value`` is not a usable camera field of view."""
 
     def not_a_number() -> str:
         return f"{method}: '{param_name}' must be a finite number in degrees, got {refusal_repr(value)}."
@@ -3081,60 +1734,6 @@ def camera_fov_error(method: str, param_name: str, value: Any) -> str | None:
 
 def entity_name_error(method: str, param_name: str, name: Any) -> str | None:
     """Return an error message if ``name`` cannot address the entity it names.
-
-    The creation-site counterpart to the total lookups in
-    :mod:`strands_robots.simulation.models`. A lookup asks whether a name
-    addresses something, so a name that cannot be a registry key is honestly
-    "absent"; a creation site *claims* a name, so the same value has to be
-    refused instead - an entity registered under a name that nothing can
-    resolve is unreachable through the very API that created it.
-
-    It lives here, beside :func:`camera_fov_error`, for the same reason that one
-    does: ``add_object`` / ``add_camera`` / ``add_robot`` exist on more than one
-    backend and their accepted domain must not diverge - a name one backend
-    refuses must be refused by the others, and a second copy of the rule would
-    drift from the first. The MuJoCo ``patch_scene_mjcf`` ops that claim a name
-    (``add_body`` / ``add_geom`` / ``add_site``) are a fourth door onto the same
-    spec and route through it too, because "which names may address an entity"
-    is a property of the backend, not of the call used to create one.
-
-    Three values are refused, each because it produces an entity that some part
-    of this API cannot address (measured on MuJoCo 3.11.0, one ``create_world``
-    then ``add_object``):
-
-    * **Not a ``str``.** ``add_object(7, ...)`` registered the key ``7`` and
-      only then raised ``TypeError`` out of MuJoCo's ``add_body``, leaving the
-      world holding an entry for a body that does not exist; a name that is not
-      hashable at all (``["x"]``) raised out of the duplicate-name test.
-      ``add_robot(7, ...)`` did compile, under the int registry key ``7`` -
-      which the tool surface, where every name arrives as a JSON string, can
-      never address. A falsy non-``str`` was worse than either: ``add_robot(0)``
-      silently derived the label ``"arm"`` from the model and reported success
-      under a name the caller never asked for.
-    * **The empty string.** ``""`` is MuJoCo's own sentinel for an unnamed
-      entity, so ``mj_name2id(model, BODY, "")`` returns ``-1``:
-      ``add_object("")`` succeeded and ``get_body_state(body_name="")`` then
-      reported ``Body '' not found``. For a camera it also collides with a
-      routing token - ``render(camera_name="")`` selects the free camera - so a
-      camera created as ``""`` can never be rendered from.
-    * **A ``str`` containing a NUL.** The compiled model compares names only up
-      to the first NUL, so ``add_object("a\\x00b")`` registered ``'a\\x00b'``
-      while the body compiled as ``'a'``, and ``mj_name2id(..., "a\\x00b")``
-      returned the id of ``'a'``. Two names, one entity, each layer believing a
-      different one. Through ``add_robot`` the NUL took the namespace separator
-      with it: the bodies compiled as ``'abase'`` / ``'alink'`` rather than
-      under the ``'a\\x00b/'`` prefix ``list_bodies`` looks for.
-
-    Nothing else is refused. In particular this is NOT the MJCF-interpolation
-    allowlist (``^[a-zA-Z0-9_-]+$``): a namespaced body label (``so101/gripper``)
-    and a dotted or unicode object name are all addressable, and narrowing the
-    domain to an allowlist is a separate decision from refusing a name that
-    demonstrably cannot address its entity.
-
-    A ``str`` subclass is accepted - it is a string by every operation here and
-    by the registry. Callers with a documented "derive the name" input (the
-    MuJoCo ``add_robot(name=None)`` / ``add_robot(name="")`` short form) must
-    check for that input before calling this, since ``""`` is refused here.
 
     Args:
         method: Calling method name, used in error text.
@@ -3168,38 +1767,6 @@ def entity_name_error(method: str, param_name: str, name: Any) -> str | None:
 
 def camera_name_error(method: str, param_name: str, name: Any, *, routes_free_camera_tokens: bool) -> str | None:
     """Return an error message if ``name`` cannot address the camera it claims.
-
-    The whole name rule for a camera creation site, in one place and in one
-    order: :func:`entity_name_error` first (a value that cannot be a registry
-    key at all), then :func:`reserved_camera_name_error` (a ``str`` this
-    backend's own render entry points resolve past), then
-    :func:`scoped_camera_name_error` (a ``str`` this backend registers happily
-    and the consumers that key frames by it read as structure). Every
-    ``add_camera`` reads it, so the order is a property of the rule rather than
-    of whichever body a caller reached.
-
-    That order was the defect this composition removes. The two guards had been
-    applied separately at each site, and the sites disagreed about where the
-    name rule sits relative to the *value* rules: MuJoCo refused a routing token
-    before validating ``position`` / ``target`` / ``fov`` / the pixel
-    dimensions, Newton refused it after all four. Both refused the same request
-    -- which is all the cross-backend parity test compared -- while naming
-    different causes. Measured on this tree, one ``create_world`` on each
-    backend::
-
-        add_camera("default", fov=0.0)          mujoco: 'default' is reserved
-                                                newton: 'fov' must be in (0, 180)
-        add_camera("default", position=[nan,1,1]) mujoco: 'default' is reserved
-                                                newton: 'position' must contain finite numbers
-        add_camera("free", width=0)             mujoco: 'free' is reserved
-                                                newton: width must be a positive integer
-
-    A caller fixing what the message names learns the name is unusable only on
-    the round trip after it, and the reserved-name refusal is the one fault no
-    change of value can clear. :func:`reserved_camera_name_error` documents its
-    own dependence on the order ("that guard runs first at every call site, so
-    this one is only ever reached with a genuine ``str``") - an assumption no
-    single site owned until this one did.
 
     Args:
         method: The calling method, for the message prefix (e.g. ``"add_camera"``).
@@ -3247,47 +1814,6 @@ _SCOPED_CAMERA_NAME: Final = re.compile(rf"\A{_CAMERA_TOKEN_ALPHABET}(?:/{_CAMER
 def camera_token_error(method: str, param_name: str, name: Any) -> str | None:
     """Return an error message if ``name`` cannot key the camera it names.
 
-    A camera's name in a ``cameras`` mapping is not just a label: it is the
-    identity every downstream consumer keys that camera's frames by, and each of
-    them reserves punctuation of its own. So the name has to be a bare token
-    (:data:`_CAMERA_TOKEN`) at every door that accepts one - the
-    :class:`~strands_robots.hardware_robot.Robot` factory's ``cameras`` mapping
-    and the ``robot_cameras`` of
-    :func:`~strands_robots.tools.lerobot_teleoperate.lerobot_teleoperate` - and
-    the rule lives here, beside :func:`entity_name_error`, for the same reason
-    that one does: two doors onto one name must not accept different alphabets.
-
-    Three consumers, each of which reads a character it reserves as structure
-    rather than as part of the name:
-
-    * **The mesh topic.**
-      :meth:`~strands_robots.mesh.core.Mesh._encode_and_publish_frames`
-      publishes each frame on ``strands/<peer_id>/camera/<name>``. A ``/`` in
-      the name adds a topic level, so the frame lands under a key no
-      ``strands/*/camera/*`` subscription matches, and ``*`` / ``**`` are Zenoh
-      wildcards, which a ``put`` is routed by intersection - the frame is
-      delivered to every peer that subscribes to any camera rather than to the
-      one asking for this camera. Measured on this tree, a camera named
-      ``'wrist/ref'`` published its 274054-byte inline frame on
-      ``strands/rover-01/camera/wrist/ref``, which is the shape of the small S3
-      *pointer* the IoT transport exempts from its camera-frame drop
-      (:func:`~strands_robots.mesh.transport.iot_transport._is_camera_ref`), so
-      the whole frame was forwarded to the broker the drop exists to spare.
-    * **The S3 key.**
-      :meth:`~strands_robots.mesh.iot.camera_offload.CameraOffloader.s3_key_for`
-      joins the name into ``<prefix>/<peer_id>/<name>/<ts>.jpg``, so ``..``
-      walks out of the peer's own prefix.
-    * **The argv.** ``lerobot_teleoperate`` renders the entry into the nested
-      ``--robot.cameras`` dict lerobot's draccus CLI parses, where ``,``, ``:``,
-      ``{``, ``}``, ``=`` and whitespace are structure - a name carrying one
-      changes the shape of that dict rather than the value in it, and is
-      reported minutes later in a detached subprocess's log.
-
-    The name is additionally the dataset feature key a recording writes it under
-    (``observation.images.<name>``, see
-    :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame`), whose
-    ``.`` separator is the same kind of structure.
-
     Args:
         method: The surface being called, for the message prefix (e.g.
             ``"Robot(cameras=...)"``).
@@ -3319,35 +1845,6 @@ def camera_token_error(method: str, param_name: str, name: Any) -> str | None:
 
 def scoped_camera_name_error(method: str, param_name: str, name: Any) -> str | None:
     """Return an error message if a sim camera's *name* cannot key its own frames.
-
-    The sim-scene counterpart to :func:`camera_token_error`. That rule holds a
-    camera's name to one bare token, because the name is the identity every
-    downstream consumer keys the camera's frames by and each of them reserves
-    punctuation of its own; this one applies the same alphabet to a sim scene,
-    where a name may additionally carry one namespace level.
-
-    One level, and not a free path, because a robot's namespace is one level:
-    ``add_robot`` registers every robot it spawns with
-    ``SimRobot.namespace = "<robot>/"`` and namespaces its bodies, joints and
-    actuators under it, so ``add_camera("alice/wrist_cam", ...)`` is how a wrist
-    camera is scoped to the robot ``alice``. That prefix is also the only one the
-    mesh removes: :meth:`~strands_robots.mesh.core.Mesh._publish_sim_cameras`
-    strips exactly ``r.namespace`` from each MuJoCo camera name before handing
-    the short name to
-    :meth:`~strands_robots.mesh.core.Mesh._encode_and_publish_frames`, so a
-    one-level scoped name reaches the topic as the bare token that function's
-    consumers require. A second level survives the strip, and is structure again.
-
-    Everything else is refused for the reasons :func:`camera_token_error`
-    documents: the mesh topic (a ``/`` adds a level no ``strands/*/camera/*``
-    subscription matches, and ``*`` / ``**`` are Zenoh wildcards a ``put`` is
-    routed by intersection), the S3 object key (``..`` walks out of the peer's
-    own prefix), the ``observation.images.<name>`` dataset feature key, and the
-    nested ``--robot.cameras`` dict lerobot's CLI parses. Measured on one
-    ``create_world`` before this guard, ``add_camera`` returned
-    ``status="success"`` for ``'..'``, ``'sub/../etc'``, ``'a b'``, ``'cam#1'``,
-    ``'*'``, ``'**'``, ``'a//b'``, ``'/lead'`` and ``'trail/'``, and
-    ``list_cameras`` reported every one of them.
 
     Args:
         method: The surface being called, for the message prefix (e.g.
@@ -3383,38 +1880,6 @@ def scoped_camera_name_error(method: str, param_name: str, name: Any) -> str | N
 def published_string_error(value: Any, param: str, context: str) -> str | None:
     """Return an error message if a field published as a string did not arrive as one.
 
-    The agent-boundary counterpart to :func:`entity_name_error`. That guard runs
-    at the creation sites which *claim* a name; this one runs at the dispatcher,
-    for every field the tool's own schema declares ``"type": "string"`` -- names,
-    but also paths, ids, XML, and enum-valued selectors.
-
-    It exists because the dispatcher already promises this. Its documented
-    validation layer refuses an unknown parameter, refuses a missing required one
-    "(no raw Python ``TypeError``)", and checks a vector's length and dtype
-    "before the value reaches numpy / MuJoCo" -- but a scalar string field had no
-    such layer, so a non-string value was carried into the method body and failed
-    wherever that body first assumed a string. What the caller received was not a
-    refusal naming the field: it was ``AttributeError: 'int' object has no
-    attribute 'lower'`` out of a registry lookup, ``TypeError: stat: path should
-    be string, bytes, os.PathLike or integer, not list`` out of ``os.stat``, or
-    ``TypeError: unhashable type: 'list'`` out of a dict subscript. None of those
-    names the parameter, and none of them can be acted on.
-
-    Checking it here rather than at each entry point is the same reasoning
-    :func:`strands_robots.simulation.mujoco.backend.mj_name_to_id` records for
-    entity lookups: routing every one through a single funnel means a field added
-    later is safe by construction. It is also why the check keys off the
-    *published* schema -- the set it enforces is derived from that schema at
-    import time, so a field published tomorrow is covered without a second list
-    to keep in sync.
-
-    Only the type is refused. The empty string is NOT: ``instruction=""`` is the
-    documented default for a rollout and ``render(camera_name="")`` selects the
-    free camera, so the emptiness rule belongs at the creation sites that
-    :func:`entity_name_error` guards, not at the boundary. A ``str`` subclass is
-    accepted, for the same reason it is there -- it is a string by every
-    operation that follows.
-
     Args:
         value: The caller's value.
         param: Parameter name, used in error text.
@@ -3436,25 +1901,6 @@ def published_string_error(value: Any, param: str, context: str) -> str | None:
 def stale_output_dir_is_clearable(output_dir: str) -> bool:
     """True when ``output_dir`` exists and holds nothing, so clearing it is free.
 
-    Both LeRobot training entry points clear a stale ``output_dir`` on a fresh
-    (non-resuming) start, because lerobot's own ``TrainPipelineConfig.validate``
-    refuses a pre-existing one unless ``resume=True``. This is the single owner
-    of the bound on that hygiene, so the two cannot disagree about what a fresh
-    start is allowed to remove.
-
-    Emptiness is the bound because the removal is a recursive
-    ``shutil.rmtree(..., ignore_errors=True)``: it reports neither what it took
-    nor a partial failure, and nothing it takes is recoverable. A directory with
-    nothing in it is the only one where that is free.
-
-    Emptiness also SUBSUMES the "no resumable checkpoint" test, so this needs no
-    checkpoint probe: a directory holding a checkpoint is not empty, whatever
-    layout the checkpoint is in. That matters because a checkpoint is not always
-    visible to a resume probe - lerobot's ``save_checkpoint`` writes
-    ``model.safetensors`` before ``train_config.json``, so a run interrupted
-    between the two leaves the trained weights on disk under a checkpoint no
-    resume probe reports, and a checkpoint-keyed bound clears exactly that.
-
     Args:
         output_dir: Path a run is about to write checkpoints into.
 
@@ -3470,24 +1916,7 @@ def stale_output_dir_is_clearable(output_dir: str) -> bool:
 
 
 def _episode_indices(value: Any) -> list[int] | None:
-    """Episode indices a passthrough value carries, or ``None`` for no restriction.
-
-    Text is read with lerobot's own CLI decoder, the decoder both the
-    ``--dataset.episodes=[0,1,2]`` argv and the in-process config assignment
-    already travel, so a subset spelled as text is counted exactly as it will be
-    configured.
-
-    The read is guarded element by element, in the shape :func:`_read_name_list`
-    uses and for its reason: this feeds a preflight that must return a verdict
-    rather than raise, and a ``Sequence`` whose ``__iter__`` or whose element
-    production raises would otherwise escape through it. ``next()`` is called
-    explicitly because a ``for`` cannot guard the call it makes.
-
-    Anything that is not a sequence of plain ints counts as no restriction -
-    including a ``bool``, which is an ``int`` in Python and would otherwise read
-    ``True`` as "episode 1". The config field itself refuses such a value with the
-    accepted spellings named, so no run starts on it and there is no split to size.
-    """
+    """Episode indices a passthrough value carries, or ``None`` for no restriction."""
     if isinstance(value, str):
         try:
             from draccus import cfgparsing
@@ -3520,23 +1949,6 @@ def _episode_indices(value: Any) -> list[int] | None:
 
 def effective_episode_count(total_episodes: int, episodes: Any, exclude_episodes: Any = None) -> int:
     """Episodes a run will actually train and validate over.
-
-    lerobot sizes its train/eval split from the episodes the DATASET was built
-    from - ``full_dataset.episodes``, the subset left by ``dataset.episodes`` and
-    ``dataset.exclude_episodes`` - not from the ``total_episodes`` its header
-    declares (``lerobot.datasets.factory.make_train_eval_datasets``). A caller
-    who divides a requested holdout by the header count while lerobot multiplies
-    by the subset reserves fewer episodes than asked: 3 episodes of the 15 an
-    episode filter kept becomes ``ceil(15 * (3 - 0.5) / 30) == 2``.
-
-    The subset is resolved by lerobot's own ``resolve_episode_indices`` when the
-    installed version has it, so the arithmetic cannot drift from the resolver
-    the run will use - including its rule that an index outside the dataset is
-    dropped with a warning rather than refused, which SHRINKS the subset.
-    lerobot 0.6.1, the declared floor, has neither that resolver nor
-    ``DatasetConfig.exclude_episodes`` (both landed in one commit) and hands
-    ``dataset.episodes`` to ``LeRobotDataset`` verbatim, which is what the
-    fallback counts.
 
     Args:
         total_episodes: What the dataset's ``meta/info.json`` declares.
@@ -3571,13 +1983,6 @@ def episode_subset_budget_error(
 ) -> str | None:
     """Error text when a holdout does not fit the SUBSET a passthrough left.
 
-    The holdout is bounded by the episodes the run actually loads, which an
-    episode allowlist or exclusion list narrows below the header count. Comparing
-    against the header instead let ``val_episodes=5`` past a bound check on a
-    30-episode dataset whose passthrough selected 4, and the fraction that was
-    then emitted held out 1 - a run that logs an eval loss over the wrong number
-    of episodes looks correct.
-
     Args:
         val_episodes: The requested held-out episode count.
         total_episodes: What the dataset's ``meta/info.json`` declares.
@@ -3610,15 +2015,6 @@ def episode_subset_budget_error(
 def validation_split_fraction(val_episodes: int, total_episodes: int) -> float:
     """``dataset.eval_split`` that holds out exactly ``val_episodes`` episodes.
 
-    lerobot builds its held-out validation set by taking
-    ``ceil(n_episodes * eval_split)`` episodes from each task's tail, so every
-    fraction in ``((N - 1) / total, N / total]`` holds out exactly ``N``. This
-    returns the MIDPOINT of that interval rather than its ``N / total`` upper
-    bound, because the bound is not float-safe: ``25 * (7 / 25)`` evaluates to
-    ``7.000000000000001``, whose ceiling is 8 - one episode more than the caller
-    asked to reserve. The midpoint leaves half an episode of slack on either
-    side, so the requested count survives the round trip at every dataset size.
-
     Args:
         val_episodes: Number of episodes to hold out. Must be positive and
             smaller than ``total_episodes``; callers validate that themselves so
@@ -3633,26 +2029,6 @@ def validation_split_fraction(val_episodes: int, total_episodes: int) -> float:
 
 def validation_split_error(val_episodes: int, total_tasks: Any, context: str, *, passthrough_param: str) -> str | None:
     """Error text when a global episode COUNT cannot be honored as a split.
-
-    lerobot expresses a validation split as one ``eval_split`` FRACTION and
-    applies ``ceil(n_episodes * eval_split)`` to each task independently, so a
-    single fraction reproduces a global episode count only on a single-task
-    dataset. With ``T > 1`` tasks the ceiling is taken ``T`` times and the total
-    held out is generally not the requested ``N`` - reserving 1 episode of a
-    two-task dataset would hold out 2. Rather than quietly reserve a different
-    number of episodes than asked, callers refuse and point at the fraction,
-    which addresses the per-task behaviour directly.
-
-    A ``total_tasks`` of 0, or no header at all, means the dataset does not
-    record a task count (lerobot's own field defaults to 0), which is treated as
-    single-task. A header that declares something which is NOT a count is a
-    THIRD outcome and refused on its own terms: the count is what decides
-    whether the request is expressible, so an unusable declaration is neither
-    single-task nor multi-task, and honoring it as the former is exactly how a
-    multi-task dataset reached lerobot's per-task ceiling. The declaration is
-    graded by :func:`declared_count`, the one owner every reader of a LeRobot
-    header count shares, so callers hand this the value their ``meta/info.json``
-    carried rather than a number of their own.
 
     Args:
         val_episodes: The requested held-out episode count, for the message.
@@ -3700,12 +2076,6 @@ def validation_split_error(val_episodes: int, total_tasks: Any, context: str, *,
 def optional_callable_error(value: Any, param: str, context: str) -> str | None:
     """Return an error message unless ``value`` is callable or ``None``.
 
-    Shared by public facades and their directly-drivable implementation layers
-    for optional callback parameters.  ``callable`` is deliberately the whole
-    domain: signatures are not inspected, because builtins, decorated callables
-    and objects with an opaque ``__call__`` cannot be checked reliably before
-    invocation.
-
     Args:
         value: The optional callback supplied by the caller.
         param: Parameter name, used in the refusal text.
@@ -3721,30 +2091,6 @@ def optional_callable_error(value: Any, param: str, context: str) -> str | None:
 
 def teleoperator_contract_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` cannot serve as a teleoperator.
-
-    The domain for the one collaborator every teleop surface consumes the same
-    way: a device polled for a joint command once per tick. A callable
-    ``get_action`` is the whole contract checked here - what it returns is
-    normalised by the loop that reads it (a dict, an array or a bare scalar all
-    resolve to a flat action), and no signature is inspected, for the reason
-    :func:`optional_callable_error` gives.
-
-    It lives here rather than beside one of its callers because those callers sit
-    in different layers - :mod:`strands_robots.teleop_mixin` holds the local
-    attach door, :class:`strands_robots.hardware_robot.Robot` the mesh publish
-    entry point, and :class:`strands_robots.mesh.input.InputPublisher` the
-    directly-drivable loop underneath it - and the accepted domain must not
-    diverge between them: a device one door turns away cannot be started by the
-    next.
-
-    Every one of those loops polls on a BACKGROUND thread, which is what makes
-    this worth refusing at the door rather than on first poll. A device with no
-    ``get_action`` raises inside the loop body, where the handler counts an error
-    and moves on to the next tick: the session reports ``running``, publishes
-    nothing at all, and falls silent once its logging budget is spent. On the
-    publish entry point the refusal also has to precede the teardown of a
-    publisher already registered under the same device name, or a device that can
-    never be polled costs the caller the working stream it was replacing.
 
     Args:
         value: The caller-supplied teleoperator.
@@ -3769,44 +2115,6 @@ def teleoperator_contract_error(value: Any, param: str, context: str) -> str | N
 def boolean_flag_error(value: Any, param: str, context: str) -> str | None:
     """Return an error message unless *value* is a python or numpy boolean.
 
-    The domain for a flag whose two values select two *postures* rather than
-    scaling a quantity: an IoT policy that grants a capability or withholds it
-    (:func:`~strands_robots.mesh.iot.provision.provision_robot`'s
-    ``allow_estop_publish``), a confirmation gate in front of a destructive
-    action, or a preview mode
-    (:func:`~strands_robots.mesh.iot.bootstrap.bootstrap_account`'s ``confirm``,
-    ``dry_run`` and ``force_update``).
-
-    Reading such a flag by truthiness is what this refuses. Every non-empty
-    string is truthy, so ``"false"``, ``"no"``, ``"off"`` and ``"0"`` - the
-    spellings an operator reaches for when opting out - select the *permissive*
-    posture: a security opt-out that fails open, and a confirmation gate that
-    confirms. A non-zero number and ``math.nan`` read the same way, and ``None``
-    or ``[]`` silently take the other branch without ever being a declared
-    spelling of it.
-
-    There is no vocabulary to parse as a fallback either. A flag arrives already
-    typed, unlike an environment variable whose only shape is a string, so the
-    honest answer is to check it. Parsing would only move which spellings invert:
-    ``"on"``, ``"enabled"`` and ``"y"`` are absent from every such vocabulary in
-    this package, and each would then resolve to the *restrictive* posture while
-    reading as an opt-in.
-
-    It lives here rather than beside one of its callers because the flags sit in
-    more than one module, and the accepted domain must not diverge: a spelling
-    one provisioning entry point refuses cannot be honoured by the next. It is
-    also the inverse of the numeric domains above - those reject a boolean
-    through :func:`is_boolean` because ``bool`` is an ``int`` subclass that would
-    pass as a silent ``1``, while this one requires the boolean they turn away.
-
-    Distinct from
-    :func:`~strands_robots.device_connect.resolve_allow_insecure`, which answers
-    a related question and is not a caller of this: it resolves one setting from
-    two sources, so its domain is ``bool | None`` - ``None`` is the documented
-    spelling for *fall through to the environment variable* - and its refusal
-    names that variable's own opt-in vocabulary. This domain has one source and
-    no such sentinel, so it refuses ``None`` along with every other non-boolean.
-
     Args:
         value: The flag as supplied.
         param: Parameter name, for the message.
@@ -3827,21 +2135,6 @@ def boolean_flag_error(value: Any, param: str, context: str) -> str | None:
 
 def partial_construction_repr(obj: object) -> str:
     """Describe an object whose ``__init__`` did not finish, naming no attribute.
-
-    ``repr`` is what a traceback, a debugger and a failing assertion render, so
-    it must not be the thing that hides a failure. A class that validates its
-    own arguments raises before it assigns the attributes its ``__repr__``
-    reads, and the raising frame keeps that half-built instance alive - so
-    rendering it reports ``[AttributeError ... raised in repr()]`` naming an
-    attribute that has nothing to do with the refusal under investigation.
-    Returning this instead reports the lifecycle fact that *is* relevant, and
-    deliberately names no attribute so nobody is sent chasing one.
-
-    The wording lives here rather than beside any one caller because those
-    callers sit in different layers - the ROS 2 / rosbridge / RTPS transport
-    bridges, the teleop input streams, the dataset recorder, the peer registry
-    and the simulation engines - and the phrase a reader learns to recognise in
-    a traceback must not diverge between them.
 
     Args:
         obj: The partially constructed object being rendered.
