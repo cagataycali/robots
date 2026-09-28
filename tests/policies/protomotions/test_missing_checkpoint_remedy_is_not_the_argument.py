@@ -37,8 +37,11 @@ from strands_robots.policies.protomotions.policy import ProtoMotionsPolicy
 
 _ROOT = Path(__file__).resolve().parents[3]
 _PACKAGE = _ROOT / "strands_robots" / "policies" / "protomotions"
-_DOC = _ROOT / "docs" / "reference" / "policies" / "protomotions.md"
-_CACHE_DOC = _ROOT / "docs" / "reference" / "policies" / "protomotions-motion-cache.md"
+#: The provider page. The old reference/policies/protomotions.md and its
+#: protomotions-motion-cache.md companion both redirect here, so the install line,
+#: the remedy sentence and the bridge recipe are read off one page now.
+_DOC = _ROOT / "docs" / "learn" / "policies" / "protomotions.md"
+_CACHE_DOC = _DOC
 
 #: Stated locally so these cells are an independent oracle rather than a
 #: restatement of the module constants they grade.
@@ -146,6 +149,16 @@ class TestTheRemedyNamesAStep:
         assert "_GTP_G1_ONNX_FILENAME" in raised[0], raised[0]
 
 
+def _install_section() -> str:
+    """The page's opening section: its install fence and everything before the first ``## ``.
+
+    The new page opens with the install line instead of carrying an ``## Install``
+    heading, so the section is the text between the title and the first ``## ``.
+    """
+    text = " ".join(_DOC.read_text(encoding="utf-8").split())
+    return text.split("## ", 1)[0]
+
+
 class TestTheInstallSectionDoesNotPromiseAFetch:
     """Regression: the docs sentence that sent readers down the dead end."""
 
@@ -157,8 +170,7 @@ class TestTheInstallSectionDoesNotPromiseAFetch:
 
     def test_the_install_section_says_the_paths_are_local(self) -> None:
         """A reader must not be left to infer that a model id would work."""
-        text = " ".join(_DOC.read_text(encoding="utf-8").split())
-        install = text.split("## Install", 1)[-1].split("##", 1)[0]
+        install = _install_section()
         assert "local file" in install, install
 
 
@@ -187,10 +199,13 @@ class TestTheInstallLineCarriesEveryExtraThePageUses:
 
     def test_the_install_fence_names_the_simulation_extra(self) -> None:
         """A reader who copies one line gets a runnable page."""
-        text = " ".join(_DOC.read_text(encoding="utf-8").split())
-        install = text.split("## Install", 1)[-1].split("##", 1)[0]
+        install = _install_section()
         assert "sim-mujoco]" in install, install
-        assert 'pip install "strands-robots[protomotions,sim-mujoco]"' in install, install
+        one_line = {
+            'pip install "strands-robots[protomotions,sim-mujoco]"',
+            "pip install 'strands-robots[protomotions,sim-mujoco]'",
+        }
+        assert any(line in install for line in one_line), install
 
 
 class TestTheReferenceMJCFIsNamed:

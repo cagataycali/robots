@@ -21,7 +21,12 @@ three gates that call it, so setting it takes all three effects:
 the current environment would take, so it cannot print PASS for a spelling the
 gates refuse - it did, for ``on``, while it borrowed ``_zenoh_config._bool_env``.
 
-Until this file's companion change, ``docs/reference/security.md`` named the variable only
+On the current docs tree the ACL posture lives in the ``## The Zenoh ACL`` section
+of ``docs/learn/mesh/bridges.md`` (the old ``reference/security/mesh.md`` redirects
+to the mesh pages) and the environment matrix is ``docs/reference/configuration.md``,
+rendered from the package by ``docs/hooks/env_vars.py``.
+
+Until this file's companion change, the old security page named the variable only
 as a silencer for that session warning and said nothing about the loader
 refusal; the first correction then over-rotated and asserted the token "does not
 silence" the warning, which reader 3 contradicts. Both framings understated the
@@ -42,7 +47,7 @@ opt-in, a rules-count ceiling) is held to the same rule the hour it lands, and
 so is a fourth *reader* of the existing token. Properties, plus one
 keep-the-derivation-honest premise:
 
-- **Every acknowledgement variable the module reads has a README matrix row.**
+- **Every acknowledgement variable the module reads has a configuration matrix row.**
   This is what makes the matrix a single index for the ACL-configuration
   family; a reader scanning the matrix for the blacklist-acknowledgement knob
   should find it.
@@ -85,10 +90,12 @@ reach this gate.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 import logging
 import pathlib
 import re
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -99,10 +106,11 @@ from strands_robots.mesh import _acl_config
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PACKAGE = _ROOT / "strands_robots"
 _MODULE = _PACKAGE / "mesh" / "_acl_config.py"
-_PAGE = _ROOT / "docs" / "reference" / "security" / "mesh.md"
+_PAGE = _ROOT / "docs" / "learn" / "mesh" / "bridges.md"
 _CONFIG_REFERENCE = _ROOT / "docs" / "reference" / "configuration.md"
+_ENV_HOOK = _ROOT / "docs" / "hooks" / "env_vars.py"
 
-_HEADING = "### Blacklist ACL acknowledgement (`STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`)"
+_HEADING = "## The Zenoh ACL"
 _PREFIX = "STRANDS_MESH_ACCEPT_PERMISSIVE_ACL"
 _KNOWN = frozenset({"STRANDS_MESH_ACCEPT_PERMISSIVE_ACL"})
 
@@ -180,18 +188,36 @@ def _reader_sites() -> dict[str, str]:
 
 
 def _security_page_section() -> str:
-    """Return the acknowledgement subsection from ``docs/reference/security/mesh.md``.
+    """Return the ACL section from ``docs/learn/mesh/bridges.md``.
 
-    Bounded by the section heading and the next ``### `` sibling.
+    Bounded by the section heading and the next ``## `` sibling.
     """
     text = _PAGE.read_text(encoding="utf-8")
     start = text.find(_HEADING)
-    assert start >= 0, f"security page is missing heading {_HEADING!r}"
+    assert start >= 0, f"mesh bridges page is missing heading {_HEADING!r}"
     after = text[start + len(_HEADING) :]
-    end = after.find("\n### ")
+    end = after.find("\n## ")
     if end < 0:
         return after
     return after[:end]
+
+
+def _rendered_config_reference() -> str:
+    """The configuration page with ``{{env_vars}}`` expanded by the shipped hook.
+
+    The matrix is generated from every environment read in the package, so the
+    page is graded as the reader sees it, with ``<code>`` cells folded to backticks.
+    """
+    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _ENV_HOOK)
+    assert spec is not None and spec.loader is not None
+    module = sys.modules.get(spec.name) or importlib.util.module_from_spec(spec)
+    if spec.name not in sys.modules:
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    source = _CONFIG_REFERENCE.read_text(encoding="utf-8")
+    rendered = module.on_page_markdown(source, page=None, config=None, files=None)
+    assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"
+    return rendered.replace("<code>", "`").replace("</code>", "`")
 
 
 def test_the_derivation_finds_the_acknowledgement_variable_the_module_reads() -> None:
@@ -220,8 +246,10 @@ def test_every_acknowledgement_variable_the_module_reads_has_a_config_matrix_row
     fleet configuration, so a variable the ACL loader reads without a row is a
     knob with no discoverable entry.
     """
-    matrix = _CONFIG_REFERENCE.read_text(encoding="utf-8")
-    missing = [name for name in _accept_env_reads() if not re.search(rf"^\| `{re.escape(name)}`", matrix, re.MULTILINE)]
+    matrix = _rendered_config_reference()
+    missing = [
+        name for name in _accept_env_reads() if not re.search(rf"^\|\s*`{re.escape(name)}`", matrix, re.MULTILINE)
+    ]
     assert not missing, (
         f"docs/reference/configuration.md env-var matrix is missing a row for {missing}; "
         f"add one beside the STRANDS_MESH_ACL_FILE row so the ACL-configuration "
@@ -238,9 +266,7 @@ def test_every_acknowledgement_variable_the_module_reads_is_named_on_the_securit
     """
     section = _security_page_section()
     missing = [name for name in _accept_env_reads() if name not in section]
-    assert not missing, (
-        f"docs/reference/security.md acknowledgement subsection is missing {missing}; add a bullet naming each one"
-    )
+    assert not missing, f"docs/learn/mesh/bridges.md ACL section is missing {missing}; add a sentence naming each one"
 
 
 def test_the_security_page_names_both_acl_shapes() -> None:
@@ -253,12 +279,11 @@ def test_the_security_page_names_both_acl_shapes() -> None:
     """
     section = _security_page_section().lower()
     assert "blacklist" in section, (
-        "acknowledgement subsection does not name the blacklist shape; "
+        "ACL section does not name the blacklist shape; "
         "an operator setting the token needs to know which of the two ACL shapes it acknowledges"
     )
     assert "whitelist" in section, (
-        "acknowledgement subsection does not name the whitelist shape; "
-        "the two-shape distinction is the point of the refusal"
+        "ACL section does not name the whitelist shape; the two-shape distinction is the point of the refusal"
     )
 
 
@@ -276,8 +301,7 @@ def test_the_security_page_names_the_refusal_not_a_warning() -> None:
     """
     section = _security_page_section()
     assert "PermissiveACLError" in section, (
-        "acknowledgement subsection does not name PermissiveACLError; "
-        "the refusal is what the token unblocks, not a warning"
+        "ACL section does not name PermissiveACLError; the refusal is what the token unblocks, not a warning"
     )
 
 
@@ -296,7 +320,7 @@ def test_the_security_page_names_the_start_gate_opt_in() -> None:
     """
     section = _security_page_section()
     assert "_refuse_under_permissive_default_acl" in section, (
-        "acknowledgement subsection does not name the start-gate the "
+        "ACL section does not name the start-gate the "
         "token opts into; an operator reading only this page would not "
         "learn that setting the token also lets the wire come up under "
         "the built-in permissive default"
@@ -321,7 +345,7 @@ def test_the_security_page_names_the_session_warning_suppression() -> None:
     """
     section = _security_page_section()
     assert "_build_config" in section, (
-        "acknowledgement subsection does not name session._build_config, "
+        "ACL section does not name session._build_config, "
         "the third reader of the token; the prose must describe every "
         "reader so an operator learns the full blast radius before setting it"
     )
@@ -330,7 +354,7 @@ def test_the_security_page_names_the_session_warning_suppression() -> None:
     # silence" clause.
     lower = section.lower()
     assert "suppressed" in lower or "silenced" in lower or "silences" in lower, (
-        "acknowledgement subsection does not describe the per-session "
+        "ACL section does not describe the per-session "
         "WARNING as suppressed by the token; the code skips the WARNING "
         "when the token is set (session.py::_build_config), and the "
         "prose must describe that -- omitting it or asserting the "
@@ -373,7 +397,7 @@ def test_the_security_page_names_both_remediations() -> None:
     """
     section = _security_page_section().lower()
     assert "deny" in section, (
-        "acknowledgement subsection does not name the deny-shape remediation; "
+        "ACL section does not name the deny-shape remediation; "
         "the refusal offers two remediations and the safer one is missing"
     )
 
