@@ -75,9 +75,13 @@ def _engine(*, main_tid: int, pump_running: bool = False) -> Any:
     engine._main_jobs = queue.Queue()
     engine._idle_converge = 1
     engine._idle_render_period = 3600.0
-    # The idle preview would otherwise step the world on the pump thread and
-    # pollute the affinity assertions; only send_action's steps are under test.
-    engine._converge_render = lambda n: None  # type: ignore[method-assign]
+
+    def _no_preview(n: int = 8) -> None:
+        # The idle preview would otherwise step the world on the pump thread and
+        # pollute the affinity assertions; only send_action's steps are under test.
+        return None
+
+    engine._converge_render = _no_preview  # type: ignore[method-assign]
     robot = _RobotState(name="arm", prim_path="/World/Robots/arm", joint_names=["j0", "j1"])
     robot.articulation = None
     engine._robots = {"arm": robot}
