@@ -136,7 +136,11 @@ def test_no_start_page_sells_a_manipulation_its_fences_do_not_perform(page: Path
     if not sold:
         return
     providers = {m for fence in _fences(page) for m in re.findall(r'policy_provider="([a-z0-9_]+)"', fence)}
-    delivering = [p for p in providers if (cls := provider_policy_class(p)) is not None and cls.reads_instruction]
+    delivering = [
+        p
+        for p in providers
+        if (cls := provider_policy_class(p)) is not None and getattr(cls, "reads_instruction", False)
+    ]
     assert delivering, (
         f"{page.relative_to(REPO_ROOT)} promises {sold} but runs {sorted(providers) or 'no policy'}; "
         "none of those acts on the words"

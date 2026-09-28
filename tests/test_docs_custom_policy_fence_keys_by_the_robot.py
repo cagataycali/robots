@@ -87,6 +87,6 @@ def test_the_policy_action_is_keyed_by_the_keys_the_runtime_gave_it(robot_keys: 
 def test_the_policy_declares_it_reads_no_instruction() -> None:
     """The page's next paragraph hangs on ``reads_instruction = False``; the class says so."""
     policy_cls = _policy_class()
-    assert policy_cls.reads_instruction is False
+    assert getattr(policy_cls, "reads_instruction", None) is False
     assert policy_cls().requires_images is False
     assert policy_cls().provider_name == _PROVIDER

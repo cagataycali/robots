@@ -80,7 +80,7 @@ def test_every_provider_has_a_docs_page() -> None:
     missing = sorted(
         name
         for name in providers - _INLINE_DOCUMENTED
-        if rows[name] is None or not (POLICIES_DIR / rows[name]).is_file()
+        if (page := rows[name]) is None or not (POLICIES_DIR / page).is_file()
     )
     assert not missing, (
         f"registered policy providers whose matrix row links no docs page: {missing}. Add a page "

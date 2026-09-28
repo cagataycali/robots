@@ -38,8 +38,8 @@ PROVIDERS_HOOK = REPO_ROOT / "docs" / "hooks" / "providers.py"
 def _rendered_overview() -> str:
     """The page as the build sees it: ``{{providers:*}}`` tokens expanded by the hook."""
     spec = importlib.util.spec_from_file_location("docs_providers_hook", PROVIDERS_HOOK)
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
     spec.loader.exec_module(module)
     return module.substitute(OVERVIEW_MD.read_text(encoding="utf-8"), "learn/policies/index.md")
 

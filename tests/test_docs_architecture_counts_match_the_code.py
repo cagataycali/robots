@@ -115,10 +115,17 @@ def _shipped_drivers() -> int:
     """Entries of ``_SHIPPED_DRIVERS``, read with ``ast`` like the hooks do."""
     tree = ast.parse((PACKAGE / "drivers" / "__init__.py").read_text(encoding="utf-8"))
     for node in tree.body:
-        target = node.target if isinstance(node, ast.AnnAssign) else None
-        if isinstance(node, ast.Assign):
+        target: ast.expr | None = None
+        if isinstance(node, ast.AnnAssign):
+            target = node.target
+        elif isinstance(node, ast.Assign):
             target = node.targets[0]
-        if isinstance(target, ast.Name) and target.id == "_SHIPPED_DRIVERS" and node.value is not None:
+        if (
+            isinstance(node, (ast.AnnAssign, ast.Assign))
+            and isinstance(target, ast.Name)
+            and target.id == "_SHIPPED_DRIVERS"
+            and node.value is not None
+        ):
             return len(ast.literal_eval(node.value))
     raise AssertionError("_SHIPPED_DRIVERS not found in strands_robots/drivers/__init__.py")
 
