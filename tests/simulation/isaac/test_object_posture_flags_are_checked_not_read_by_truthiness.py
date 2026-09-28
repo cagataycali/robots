@@ -42,9 +42,9 @@ from strands_robots.utils import boolean_flag_error  # noqa: E402
 
 #: Non-booleans the domain refuses (the opt-out spellings that read as truthy,
 #: plus the branch-takers that are never a declared spelling).
-_NON_BOOL = ("false", "no", "off", "0", "", None, 0, 1, [], "true")
+_NON_BOOL: tuple[Any, ...] = ("false", "no", "off", "0", "", None, 0, 1, [], "true")
 #: The booleans the domain honours.
-_BOOL = (True, False, np.bool_(True), np.bool_(False))
+_BOOL: tuple[Any, ...] = (True, False, np.bool_(True), np.bool_(False))
 
 
 class _KinematicHandle:
