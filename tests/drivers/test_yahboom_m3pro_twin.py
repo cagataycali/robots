@@ -41,6 +41,7 @@ from strands_robots.drivers.yahboom_m3pro_twin import (
     world_to_body,
     yaw_to_quaternion,
 )
+from strands_robots.robot import Robot
 
 _DT = 0.002
 
@@ -182,17 +183,9 @@ class TestTheTwinIsTheRobotsGraph:
         assert YahboomM3ProDriver().sim is None
         assert YahboomM3ProDriver(transport="twin", sim=engine).sim is engine
 
-    def test_a_build_failure_is_a_named_reason(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import strands_robots.simulation as sim_mod
-
-        def _boom(*args: Any, **kwargs: Any) -> Any:
-            raise ImportError("mujoco is not installed")
-
-        monkeypatch.setattr(sim_mod, "create_simulation", _boom)
-        driver = YahboomM3ProDriver(transport="twin")
-        reason = driver.connect_eagerly()
-        assert reason is not None and "mujoco is not installed" in reason
-        assert not driver.is_connected
+    def test_the_twin_without_an_engine_is_refused_naming_the_factory(self) -> None:
+        with pytest.raises(ValueError, match=r"handed; use Robot\('yahboom_m3pro', mode='real', transport='twin'\)"):
+            YahboomM3ProDriver(transport="twin")
 
     def test_the_gate_is_not_consulted_on_the_twin(
         self, twin: YahboomM3ProDriver, engine: _FakeEngine, monkeypatch: pytest.MonkeyPatch
@@ -318,7 +311,6 @@ class TestTheBaseReachesTheModel:
 
         engine.ranges = ranges
         graph = M3ProTwinGraph(sim=engine)
-        assert graph.connect() is None
         reply = graph("publish", topic=CMD_VEL_TOPIC, fields={"linear": {"x": 0.9}, "angular": {}}, count=1, rate=10.0)
         text = reply["content"][0]["text"]
         assert reply["status"] == "success", reply
@@ -363,18 +355,17 @@ class TestLifecycle:
         twin.cleanup()
         assert not twin.is_connected
         assert engine.destroyed is False, "the caller built it, the caller destroys it"
-        assert twin.sim is None
+        assert twin.connect_eagerly() is None, "and the same engine serves the next session"
 
-    def test_an_engine_the_twin_built_is_destroyed_on_close(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_the_factory_builds_the_engine_at_home_and_hands_it_in(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import strands_robots.simulation as sim_mod
 
-        built = _FakeEngine()
+        built = _FakeEngine()  # its add_robot asserts the home keyframe
         monkeypatch.setattr(sim_mod, "create_simulation", lambda *a, **k: built)
-        driver = YahboomM3ProDriver(transport="twin")
-        assert driver.connect_eagerly() is None
+        driver = Robot("yahboom_m3pro", mode="real", transport="twin", mesh=False)
+        assert isinstance(driver, YahboomM3ProDriver)
         assert driver.sim is built
-        driver.cleanup()
-        assert built.destroyed is True
+        assert driver.connect_eagerly() is None
 
     def test_every_agent_verb_runs_on_the_twin(self, twin: YahboomM3ProDriver, engine: _FakeEngine) -> None:
         for request in (
