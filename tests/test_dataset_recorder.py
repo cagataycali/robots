@@ -2402,7 +2402,7 @@ def test_resolve_dataset_dir_refuses_a_hub_id_that_leaves_the_dataset_home(tmp_p
 
     monkeypatch.setattr(dataset_source, "_lerobot_home", lambda: tmp_path / "home")
 
-    with pytest.raises(ValueError, match=re.escape(dataset_source.OUTSIDE_DATASET_HOME)):
+    with pytest.raises(ValueError, match=re.escape(dataset_source.HUB_ID_OUTSIDE_HOME)):
         dataset_source.resolve_dataset_dir(escaping_id)
 
 

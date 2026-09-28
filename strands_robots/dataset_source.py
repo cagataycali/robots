@@ -99,7 +99,7 @@ def local_dataset_dir(repo_id: str) -> Path | None:
 
 #: The one sentence a Hub id that would leave the dataset home is refused with.
 #: Fixed on purpose: it says nothing about what is or is not on disk there.
-OUTSIDE_DATASET_HOME = "The dataset id does not name a directory under the LeRobot dataset home."
+HUB_ID_OUTSIDE_HOME = "The dataset id does not name a directory under the LeRobot dataset home."
 
 
 def hub_dataset_dir(repo_id: str) -> Path:
@@ -109,7 +109,7 @@ def hub_dataset_dir(repo_id: str) -> Path:
     a ``..`` segment collapses before anything is compared, and the folded
     candidate must start with the home followed by a separator. An id that
     would land anywhere else (``owner/../../etc``, or one that folds onto the
-    home itself) is refused with :data:`OUTSIDE_DATASET_HOME`. The check is
+    home itself) is refused with :data:`HUB_ID_OUTSIDE_HOME`. The check is
     lexical: a symlink the owner placed inside the home (a dataset directory
     moved to a larger disk) still resolves, the same choice
     :func:`~strands_robots.utils.safe_join` makes for the asset cache.
@@ -126,7 +126,7 @@ def hub_dataset_dir(repo_id: str) -> Path:
     home = os.path.normpath(str(_lerobot_home()))
     candidate = os.path.normpath(os.path.join(home, repo_id))
     if not candidate.startswith(home + os.sep):
-        raise ValueError(OUTSIDE_DATASET_HOME)
+        raise ValueError(HUB_ID_OUTSIDE_HOME)
     return Path(candidate)
 
 
@@ -158,7 +158,7 @@ def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
 
     Raises:
         ValueError: An ``owner/name`` id whose segments would leave the dataset
-            home (:data:`OUTSIDE_DATASET_HOME`).
+            home (:data:`HUB_ID_OUTSIDE_HOME`).
     """
     if root:
         return Path(root)
