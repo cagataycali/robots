@@ -34,6 +34,8 @@ import pytest
 import strands_robots
 
 _PACKAGE = pathlib.Path(strands_robots.__file__).parent / "device_connect"
+#: The daemon link module, which moved beside the native Reachy driver.
+_DAEMON_LINK = pathlib.Path(strands_robots.__file__).parent / "drivers" / "reachy_transport.py"
 _PAGE = pathlib.Path(strands_robots.__file__).parent.parent / "docs" / "reference" / "device-connect.md"
 
 #: The module that owns the Reachy Mini daemon link. Its variables configure one
@@ -56,7 +58,7 @@ def _env_reads() -> dict[str, set[str]]:
         ``os.environ.get`` / ``os.environ[...]`` key under the package.
     """
     found: dict[str, set[str]] = {}
-    for path in sorted(_PACKAGE.rglob("*.py")):
+    for path in [*sorted(_PACKAGE.rglob("*.py")), _DAEMON_LINK]:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             name = None
@@ -159,7 +161,7 @@ class TestTheReferenceCoversTheSurface:
 
     def test_the_documented_tls_spellings_really_upgrade_the_link(self, page: str) -> None:
         """Each spelling the row advertises turns the daemon link into TLS."""
-        from strands_robots.device_connect import reachy_transport
+        from strands_robots.drivers import reachy_transport
 
         spellings = _documented_spellings(page, "REACHY_DAEMON_TLS")
         assert spellings, (
@@ -180,7 +182,7 @@ class TestThePlaintextDefaultIsWhyTheOmissionMatters:
 
     def test_the_token_alone_leaves_the_credential_in_cleartext(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Setting only the documented variable ships the token over plaintext."""
-        from strands_robots.device_connect import reachy_transport
+        from strands_robots.drivers import reachy_transport
 
         monkeypatch.setenv("REACHY_DAEMON_TOKEN", "s3cr3t")
         monkeypatch.delenv("REACHY_DAEMON_TLS", raising=False)
@@ -193,14 +195,14 @@ class TestThePlaintextDefaultIsWhyTheOmissionMatters:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The accepted vocabulary is closed, so the row can enumerate it."""
-        from strands_robots.device_connect import reachy_transport
+        from strands_robots.drivers import reachy_transport
 
         monkeypatch.setenv("REACHY_DAEMON_TLS", "enabled")
         assert reachy_transport._daemon_use_tls() is False
 
     def test_certificates_are_verified_until_the_operator_opts_out(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Verification is the default; the documented opt-out is what drops it."""
-        from strands_robots.device_connect import reachy_transport
+        from strands_robots.drivers import reachy_transport
 
         monkeypatch.delenv("REACHY_DAEMON_TLS_INSECURE", raising=False)
         assert reachy_transport._daemon_verify_tls() is True

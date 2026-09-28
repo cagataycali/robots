@@ -17,14 +17,14 @@ from device_connect_edge.drivers import DeviceDriver, emit, get_rpc_source_devic
 from device_connect_edge.types import DeviceIdentity, DeviceStatus
 
 from strands_robots.device_connect._authz import attached_runtime, authz_error, is_authorized_caller
-from strands_robots.device_connect.reachy_transport import (
+from strands_robots.drivers.reachy_envelope import envelope_error
+from strands_robots.drivers.reachy_transport import (
     WebSocketLink,
     ZenohLink,
     api,
     identity_pose,
     rpy_to_pose,
 )
-from strands_robots.drivers.reachy_envelope import envelope_error
 from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
 from strands_robots.utils import dial_host_error, finite_number_error, tcp_port_error
 
@@ -572,7 +572,7 @@ class ReachyMiniDriver(DeviceDriver):
     def _transport_failure(self, result: Any, verb: str) -> dict[str, Any] | None:
         """Return a refusal for a daemon reply that never landed, else ``None``.
 
-        :func:`~strands_robots.device_connect.reachy_transport.api` reports every
+        :func:`~strands_robots.drivers.reachy_transport.api` reports every
         HTTP and connection failure as ``{"error": ...}`` rather than raising, so
         a reply carrying that key is a call that did not reach the daemon. Nesting
         it under a key of the envelope's own (``{"status": "success", "result":
@@ -806,7 +806,7 @@ class ReachyMiniDriver(DeviceDriver):
         :meth:`strands_robots.mesh.sensors.SensorLoopsMixin._stamp_local_keys`.
 
         A daemon that was not reached is reported rather than merged.
-        :func:`~strands_robots.device_connect.reachy_transport.api` answers
+        :func:`~strands_robots.drivers.reachy_transport.api` answers
         every HTTP and connection failure with ``{"error": ...}`` instead of
         raising, so the unreachable daemon this RPC exists to detect came back
         as ``status="success"`` with the reason merged in beside it. The native

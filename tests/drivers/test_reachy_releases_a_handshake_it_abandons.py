@@ -119,7 +119,7 @@ def _install(monkeypatch: pytest.MonkeyPatch, link: _Link, *, budget: float = _B
         del host, port, method, data
         return dict(_LITE_STATUS) if path == reachy_mod._PATH_STATUS else {"ok": True}
 
-    monkeypatch.setattr("strands_robots.device_connect.reachy_transport.api", _api)
+    monkeypatch.setattr("strands_robots.drivers.reachy_transport.api", _api)
     monkeypatch.setattr(reachy_mod, "_LINK_START_TIMEOUT_S", budget)
 
     def _build(self: ReachyDriver, *, is_lite: bool) -> Any:
