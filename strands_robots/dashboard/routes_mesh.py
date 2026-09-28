@@ -192,8 +192,10 @@ async def fleet(request: Request, mode: str = "all", _: dict = Depends(access.re
     bridge = _bridge(request)
     snapshot = bridge.snapshot()
     coalesce = bridge.coalesce_stats()
+    # A GIL-atomic copy: ``bridge.peers`` is mutated on the zenoh presence thread, and
+    # ``mesh_ingest`` iterates it here on the event loop at the page's poll cadence.
     ingest, app.state.mesh_ingest_prev = mesh_ingest(
-        bridge.peers,
+        dict(bridge.peers),
         coalesce,
         time.time(),
         getattr(app.state, "mesh_ingest_prev", None),
@@ -345,6 +347,20 @@ async def teleop_receive(request: Request, peer_id: str, _: dict = Depends(acces
     # The leader is a peer too: pointing a follower at a stream nobody publishes is a 45 s wait
     # ending in a shrug.
     require_peer(request, source)
+    # Same consent rail as ``start_task``: on a real follower this POST is motion (the receiver
+    # enables tracking and the arm snaps toward the leader's pose), so it needs the browser's
+    # confirmation or the operator's standing grant. ``teleop_stop`` stays ungated.
+    bridge = _bridge(request)
+    verdict = task_gate(
+        bridge.peers.get(peer_id), confirmed=body.get("confirmed"), target=peer_id, action="teleop_receive"
+    )
+    if not verdict["allowed"]:
+        refusal: dict[str, Any] = {"error": verdict["reason"], "peer_id": peer_id, "ok": False, "verdict": verdict}
+        consent.attach_consent(refusal, verdict, subject=peer_id)
+        bridge.record_activity(
+            "api", "teleop_receive", target=peer_id, detail="refused: motion not confirmed", ok=False
+        )
+        raise HTTPException(403, refusal)
     cmd = {
         "action": "teleop_receive",
         "source_peer_id": source,
@@ -352,7 +368,7 @@ async def teleop_receive(request: Request, peer_id: str, _: dict = Depends(acces
     }
     # The first declare_subscriber on a peer can take >15 s (zenoh declare + gossip propagation):
     # not a deadlock, just slow.
-    result = await _bridge(request).send_cmd_async(peer_id, cmd, timeout=45.0)
+    result = await bridge.send_cmd_async(peer_id, cmd, timeout=45.0)
     return {"peer_id": peer_id, "result": result}
 
 
@@ -373,8 +389,11 @@ async def teleop_stop(request: Request, peer_id: str, _: dict = Depends(access.r
 # ----------------------------------------------------------------------
 
 
-def task_gate(peer: dict[str, Any] | None, *, confirmed: object, target: str) -> dict[str, Any]:
-    """May this task POST start motion on *target*? Same shape as ``agent_motion_allowed``.
+def task_gate(peer: dict[str, Any] | None, *, confirmed: object, target: str, action: str = "task") -> dict[str, Any]:
+    """May this POST start motion on *target*? Same shape as ``agent_motion_allowed``.
+
+    ``action`` is one of :data:`agent_motion.GATED_ACTIONS`: a task, or pointing a follower
+    at a leader stream (``teleop_receive``), which moves the follower the moment it lands.
 
     Three ways through, in order: the peer is provably a sim; the browser
     confirmed the click (``confirmed`` must be a JSON boolean, so a string
@@ -384,10 +403,10 @@ def task_gate(peer: dict[str, Any] | None, *, confirmed: object, target: str) ->
     Anything else is refused, and the refusal is one
     :func:`consent.classify_refusal` recognises.
     """
-    verdict = agent_motion.agent_motion_allowed("task", peer=peer, target=target)
+    verdict = agent_motion.agent_motion_allowed(action, peer=peer, target=target)
     if not verdict.get("physical"):
         return verdict
-    if confirmed is not None and (text := boolean_flag_error(confirmed, "confirmed", "task")):
+    if confirmed is not None and (text := boolean_flag_error(confirmed, "confirmed", action)):
         return {
             "allowed": False,
             "physical": True,

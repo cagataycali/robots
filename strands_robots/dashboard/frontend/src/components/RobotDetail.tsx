@@ -63,7 +63,8 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
       setTeleop('unreachable'); setStarted({ ok: false, line: `${leaderId} could not start publishing, so nothing was pointed at it: ${(e as Error).message}` }); return
     }
     try {
-      await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop/receive`, { method: 'POST', body: JSON.stringify({ source_peer_id: leaderId }) })
+      // confirmed: this call is only reachable through the armed 'confirm — … MOVES with it' button above.
+      await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop/receive`, { method: 'POST', body: JSON.stringify({ source_peer_id: leaderId, confirmed: true }) })
     } catch (e) {
       /** HALF-BUILT CHAIN: the leader IS publishing now and the follower refused. */
       setTeleop('unreachable'); setStranded(leaderId)
@@ -133,7 +134,8 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
       return
     }
     try {
-      await api(`/api/robots/${encodeURIComponent(followerId)}/teleop/receive`, { method: 'POST', body: JSON.stringify({ source_peer_id: peer.peer_id }) })
+      // confirmed: reached only through the armed confirm button; the follower here is a sim twin anyway.
+      await api(`/api/robots/${encodeURIComponent(followerId)}/teleop/receive`, { method: 'POST', body: JSON.stringify({ source_peer_id: peer.peer_id, confirmed: true }) })
     } catch (e) {
       setMirrorBusy(false); setMirrorOn(followerId) // half-built: the stop button must appear
       setMirrorLine({ ok: false, line: `${peer.peer_id} is publishing, but ${followerId} would not follow: ${(e as Error).message} — stop below removes the publisher` })

@@ -4956,7 +4956,7 @@ function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onOpen, onC
       return;
     }
     try {
-      await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop/receive`, { method: "POST", body: JSON.stringify({ source_peer_id: leaderId }) });
+      await api(`/api/robots/${encodeURIComponent(peer.peer_id)}/teleop/receive`, { method: "POST", body: JSON.stringify({ source_peer_id: leaderId, confirmed: true }) });
     } catch (e) {
       setTeleop("unreachable");
       setStranded(leaderId);
@@ -5037,7 +5037,7 @@ function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onOpen, onC
       return;
     }
     try {
-      await api(`/api/robots/${encodeURIComponent(followerId)}/teleop/receive`, { method: "POST", body: JSON.stringify({ source_peer_id: peer.peer_id }) });
+      await api(`/api/robots/${encodeURIComponent(followerId)}/teleop/receive`, { method: "POST", body: JSON.stringify({ source_peer_id: peer.peer_id, confirmed: true }) });
     } catch (e) {
       setMirrorBusy(false);
       setMirrorOn(followerId);
