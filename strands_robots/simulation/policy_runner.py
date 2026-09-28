@@ -4376,14 +4376,22 @@ class PolicyRunner:
                 if master_rng is not None:
                     episode_seed = master_rng.randint(0, 2**31 - 1)
                     set_eval_seed(episode_seed)
-                    try:
-                        policy.reset(seed=episode_seed)
-                    except Exception as e:  # noqa: BLE001 - reset is best-effort
-                        logger.warning(
-                            "policy.reset(seed=%d) raised %s; continuing without per-episode reset",
-                            episode_seed,
-                            e,
-                        )
+                # Reset the policy at EVERY episode boundary, seeded or not: the
+                # sim was just reset above, and a policy carrying an observation
+                # history or an action queue (flux3_action, groot, any RTC
+                # provider) would otherwise start episode N conditioned on
+                # episode N-1's frames. Observed on the SO-101: the unseeded
+                # 10-episode recording drifted its shoulder_lift command by a
+                # further ~5 rad every episode until the model saw nothing but
+                # a clamped joint.
+                try:
+                    policy.reset(seed=episode_seed)
+                except Exception as e:  # noqa: BLE001 - reset is best-effort
+                    logger.warning(
+                        "policy.reset(seed=%s) raised %s; continuing without per-episode reset",
+                        episode_seed,
+                        e,
+                    )
 
                 if async_rtc:
                     # Opt-in async overlap: a single background worker computes the
