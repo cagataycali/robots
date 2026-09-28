@@ -9,6 +9,12 @@ install (``CYCLONEDDS_HOME``). Every remedy that offers the extra must say so -
 "self-contained pip wheel" alone sends the aarch64 user back to a command that
 cannot succeed, and the rclpy refusal offers the extra as the *escape* from an
 install that already failed.
+
+The remedies cite ``docs/reference/rtps-integration.md#linux-aarch64-jetson``. That
+path redirects to ``docs/learn/ros2.md`` (``redirect_maps`` in mkdocs.yml), so the
+recipe the anchor lands on is graded there, under the heading that produces the
+``#linux-aarch64-jetson`` fragment, and the troubleshooting successor
+(``start/doctor.md``) has to point at it.
 """
 
 from __future__ import annotations
@@ -23,12 +29,18 @@ from tests._blocked_module import blocked
 
 _DOCS = Path(__file__).resolve().parents[2] / "docs"
 _ANCHOR = "docs/reference/rtps-integration.md#linux-aarch64-jetson"
+#: Where the cited path redirects to on the current tree.
+_RECIPE_PAGE = _DOCS / "learn" / "ros2.md"
 _HEADING = "### Linux aarch64 (Jetson)"
+#: The fragment the heading renders to, as a sibling page links it.
+_FRAGMENT = "ros2.md#linux-aarch64-jetson"
 
 
 def _aarch64_section() -> str:
-    text = (_DOCS / "reference" / "rtps-integration.md").read_text()
-    assert _HEADING in text, f"{_HEADING!r} is the section every remedy points at"
+    text = _RECIPE_PAGE.read_text()
+    assert _HEADING in text, (
+        f"{_HEADING!r} is the section every remedy points at ({_ANCHOR} redirects to learn/ros2.md)"
+    )
     return text.split(_HEADING, 1)[1]
 
 
@@ -78,8 +90,10 @@ def test_the_anchor_resolves_to_a_recipe_with_both_routes() -> None:
     section = _aarch64_section()
     assert "CYCLONEDDS_HOME=/opt/ros/$ROS_DISTRO" in section, "the sourced-distro route"
     assert "eclipse-cyclonedds/cyclonedds" in section, "the build-from-source route"
-    for page in ("reference/ros2-integration.md", "reference/troubleshooting.md"):
-        assert "rtps-integration.md#linux-aarch64-jetson" in (_DOCS / page).read_text(), page
+    # The troubleshooting page (start/doctor.md absorbed reference/troubleshooting.md)
+    # sends a reader with a failed aarch64 install to the recipe.
+    for page in ("start/doctor.md",):
+        assert _FRAGMENT in (_DOCS / page).read_text(), page
 
 
 def test_the_recipe_says_when_cyclonedds_home_is_needed_at_runtime() -> None:

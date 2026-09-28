@@ -13,11 +13,22 @@ no-op for the state they are actually in.
 These tests grade the shipped tables against the resolver itself rather than
 against a hand-copied list of spellings, so widening the accepted spellings
 later cannot silently invalidate the guard.
+
+Two table shapes ship. The hand-written switch tables (``docs/learn/mesh/index.md``)
+carry a ``values`` column that marks the default inline (``unset (default)``), and
+``docs/reference/configuration.md`` renders one generated row per variable through
+``docs/hooks/env_vars.py`` with a ``default`` column of its own. Both are read as
+the reader sees them: the default cell is found by its header (or by the inline
+``(default)`` marker), and the configuration page's one-sentence boolean rule
+("A boolean variable accepts ``1``, ``true``, ``yes``") counts as that page's
+opt-in spelling, since it sits directly above the table.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -26,10 +37,64 @@ from strands_robots.robot import _mesh_env_opt_in
 
 _ENV = "STRANDS_MESH"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+_CONFIG_REFERENCE = _REPO_ROOT / "docs" / "reference" / "configuration.md"
+_ENV_HOOK = _REPO_ROOT / "docs" / "hooks" / "env_vars.py"
+#: The configuration page states the accepted boolean spellings once, above the table.
+_BOOLEAN_RULE = re.compile(r"boolean variable accepts ((?:`[A-Za-z0-9]+`,\s*)*(?:and\s*)?`[A-Za-z0-9]+`)")
+#: A value marked as the default inline: ``unset (default)``.
+_INLINE_DEFAULT = re.compile(r"([^,;]+?)\s*\(default\)")
 
 # The guard is only meaningful while it still reaches the shipped tables. If a
 # rename or a reformat drops them all, fail loudly instead of reporting clean.
 _MINIMUM_DOCUMENTED_ROWS = 2
+
+
+def _rendered_configuration_page() -> str:
+    """The configuration page with ``{{env_vars}}`` expanded by the shipped hook, ``<code>`` folded to backticks."""
+    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _ENV_HOOK)
+    assert spec is not None and spec.loader is not None
+    module = sys.modules.get(spec.name) or importlib.util.module_from_spec(spec)
+    if spec.name not in sys.modules:
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    source = _CONFIG_REFERENCE.read_text(encoding="utf-8")
+    rendered = module.on_page_markdown(source, page=None, config=None, files=None)
+    assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"
+    return rendered.replace("<code>", "`").replace("</code>", "`")
+
+
+def _page_texts() -> list[tuple[str, str]]:
+    """Every user-facing page as the reader sees it, keyed by repository-relative path."""
+    texts: list[tuple[str, str]] = []
+    for doc in [_REPO_ROOT / "README.md", *sorted((_REPO_ROOT / "docs").rglob("*.md"))]:
+        if not doc.exists():
+            continue
+        relative = str(doc.relative_to(_REPO_ROOT))
+        text = _rendered_configuration_page() if doc == _CONFIG_REFERENCE else doc.read_text(encoding="utf-8")
+        texts.append((relative, text))
+    return texts
+
+
+def _cells(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+    return [cell.strip() for cell in stripped.strip("|").split("|")]
+
+
+def _default_cell(header: list[str] | None, cells: list[str]) -> str:
+    """The row's default: the ``default`` column when the table has one, else the ``(default)``-marked value.
+
+    Falls back to the last cell, the shape the older tables used, when neither is present.
+    """
+    if header is not None:
+        lowered = [cell.lower() for cell in header]
+        if "default" in lowered:
+            return cells[lowered.index("default")]
+    marked = [match.group(1).strip() for cell in cells[1:] for match in _INLINE_DEFAULT.finditer(cell)]
+    if marked:
+        return ", ".join(marked)
+    return cells[-1]
 
 
 def _documented_rows() -> list[tuple[str, int, str, str]]:
@@ -37,22 +102,29 @@ def _documented_rows() -> list[tuple[str, int, str, str]]:
 
     Returns:
         A list of ``(relative_path, line_number, description_cell, default_cell)``
-        tuples. Rows that bundle several variables into one cell are skipped:
-        this guard grades the single-variable rows a reader copies a value from.
+        tuples. ``description_cell`` is every cell of the row except the default,
+        joined, plus the page's boolean rule sentence when it states one. Rows
+        that bundle several variables into one cell are skipped: this guard grades
+        the single-variable rows a reader copies a value from.
     """
-    docs = [_REPO_ROOT / "README.md", *sorted((_REPO_ROOT / "docs").rglob("*.md"))]
     rows: list[tuple[str, int, str, str]] = []
-    for doc in docs:
-        if not doc.exists():
-            continue
-        for lineno, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
-            stripped = line.strip()
-            if not stripped.startswith("|") or not stripped.endswith("|"):
+    for relative, text in _page_texts():
+        rule = _BOOLEAN_RULE.search(text)
+        page_spellings = rule.group(1) if rule else ""
+        header: list[str] | None = None
+        for lineno, line in enumerate(text.splitlines(), 1):
+            cells = _cells(line)
+            if cells is None:
+                header = None
                 continue
-            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if header is None:
+                header = cells
+                continue
             if len(cells) < 3 or cells[0] != f"`{_ENV}`":
                 continue
-            rows.append((str(doc.relative_to(_REPO_ROOT)), lineno, cells[1], cells[-1]))
+            default = _default_cell(header, cells)
+            description = " ".join(cell for cell in cells[1:] if cell != default)
+            rows.append((relative, lineno, f"{description} {page_spellings}".strip(), default))
     return rows
 
 

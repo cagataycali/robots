@@ -34,7 +34,9 @@ from strands_robots.training.factory import import_trainer_class, list_trainers
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DOCS = _REPO_ROOT / "docs"
-_TRAINING_OVERVIEW = _DOCS / "reference" / "training" / "overview.md"
+#: The training landing page. The old reference/training/overview.md redirects into
+#: learn/training/, and its dependency table became the "What trains where" table here.
+_TRAINING_OVERVIEW = _DOCS / "learn" / "training" / "index.md"
 
 # Providers the dependency table has to speak about. Their backends are third-party
 # checkouts, so *which interpreter imports them* is the operator-visible question.
@@ -46,10 +48,12 @@ _ACCEPTS_ARGUMENT = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
-# The dependency table, addressed by its own header so the capability table further
-# up the page - whose "Launcher" column describes the *upstream* project, not this
-# one - is not graded as if it were install guidance.
-_DEPENDENCY_TABLE_HEADER = "| Provider / policy | Install | Notes |"
+# The dependency table, addressed by its own header so the kind-of-training table
+# further up the page, keyed on the same provider names, is not graded as if it were
+# install guidance. Its "in process" column is where the row says which interpreter
+# imports the backend.
+_DEPENDENCY_TABLE_HEADER = "| trainer | drives | in process | floor |"
+_INTERPRETER_COLUMN = "in process"
 
 
 def _doc_pages() -> list[Path]:
@@ -131,6 +135,18 @@ def _dependency_table_row(provider: str) -> str:
         if line.startswith(f"| `{provider}` |"):
             return line
     return ""
+
+
+def _in_process_cell(row: str) -> str:
+    """The row's cell under the dependency table's ``in process`` column, lowercased.
+
+    ``yes`` there is the page's spelling of "the backend is imported in the calling
+    interpreter"; a ``no`` names the process that imports it instead (``no, AWS``).
+    """
+    headers = [cell.strip().lower() for cell in _DEPENDENCY_TABLE_HEADER.strip("|").split("|")]
+    cells = [cell.strip().lower() for cell in row.strip().strip("|").split("|")]
+    index = headers.index(_INTERPRETER_COLUMN)
+    return cells[index] if index < len(cells) else ""
 
 
 def _page_label(page: Path) -> str:
@@ -228,7 +244,11 @@ def test_the_dependency_row_states_which_interpreter_imports_the_backend(provide
     row = _dependency_table_row(provider)
     assert row, f"no dependency-table row for `{provider}` in {_TRAINING_OVERVIEW.name}"
     lowered = row.lower()
-    assert "calling interpreter" in lowered or "same environment" in lowered.replace("**", ""), (
+    assert (
+        "calling interpreter" in lowered
+        or "same environment" in lowered.replace("**", "")
+        or _in_process_cell(row).startswith("yes")
+    ), (
         f"the `{provider}` dependency row does not say which interpreter imports the backend, "
         f"so an operator cannot tell which environment to install it into: {row}"
     )
