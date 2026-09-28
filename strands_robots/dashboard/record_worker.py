@@ -461,10 +461,26 @@ class RecordWorker:
             if ep.frames == 1:
                 for cam in self._backend.camera_keys:
                     if cam in obs:
-                        p = self._thumb_dir / f"{ep.index}_{cam}.jpg"
+                        # The camera name is client-chosen (spawn config). validate_cameras already
+                        # closes its charset; this is the same reduction the read route applies, so
+                        # the file written here is the file /thumb/{episode}/{camera} looks for and
+                        # no name can be a path.
+                        safe = thumb_name(cam)
+                        if not safe:
+                            continue
+                        p = self._thumb_dir / f"{ep.index}_{safe}.jpg"
                         if _save_thumbnail(obs[cam], p):
                             ep.thumbnails[cam] = f"/api/record/thumb/{ep.index}/{cam}"
             return True
+
+
+def thumb_name(camera: str) -> str:
+    """The bare file-name form of a camera name: alphanumerics, ``-`` and ``_`` only.
+
+    Shared contract with ``record_api``'s ``/thumb/{episode}/{camera}`` route, which reduces
+    the URL segment the same way, so the writer and the reader agree on the file.
+    """
+    return "".join(c for c in str(camera) if c.isalnum() or c in "-_")
 
 
 def camera_verdict(requested: Any, present: Any) -> dict[str, Any] | None:

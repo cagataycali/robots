@@ -28,7 +28,7 @@ from strands_robots.dashboard.dataset_check import (
     dataset_id_is_a_path,
     record_target_verdict,
 )
-from strands_robots.dashboard.record_worker import RecordWorker, hardware_backend
+from strands_robots.dashboard.record_worker import RecordWorker, hardware_backend, thumb_name
 from strands_robots.utils import refusal_str, require_optional
 
 logger = logging.getLogger(__name__)
@@ -640,8 +640,9 @@ def build_router(
 
     @r.get("/thumb/{episode}/{camera}")
     async def thumb(request: Request, episode: int, camera: str) -> FileResponse:
-        # camera comes from a URL path - keep it a bare name, no traversal
-        safe = "".join(c for c in camera if c.isalnum() or c in "-_")
+        # camera comes from a URL path - keep it a bare name, no traversal (the writer in
+        # record_worker.tick applies the same record_worker.thumb_name reduction)
+        safe = thumb_name(camera)
         path = ctl(request).thumb_dir / f"{int(episode)}_{safe}.jpg"
         if not path.is_file():
             raise HTTPException(404, "no thumbnail for that episode/camera")
