@@ -116,7 +116,28 @@ const TEMPLATE = `
   .code { position:absolute; top:.6rem; left:.6rem; max-width: calc(100% - 15.5rem); font-family: "JetBrains Mono", ui-monospace, monospace; font-size:.62rem; line-height:1.45; color: var(--sr-fg, #15171a); background: color-mix(in srgb, var(--_card) 88%, transparent); backdrop-filter: blur(8px); border:1px solid var(--_border); border-radius:10px; padding:.5rem .7rem; white-space:pre; overflow:auto; max-height: 40%; }
   .code[hidden] { display:none; }
   .code b { color: var(--_accent); font-weight:600; }
-  @media (max-width: 40em) { .joints { width: 11rem; } .code { max-width: calc(100% - 12.5rem); font-size:.56rem; } }
+  .sheet-head { display:none; }
+  /* Narrow stage (a phone, or a small column): the panels become bottom sheets over the chrome,
+     the pills grow to finger size and wrap onto a second row, and nothing sits over the robot by default. */
+  :host([narrow]) .pill { min-height: 40px; min-width: 40px; font-size:.72rem; padding:.45rem .8rem; }
+  :host([narrow]) .chrome { flex-wrap: wrap; padding:.45rem .5rem; gap:.35rem; }
+  :host([narrow]) .chrome .spacer { display:none; }
+  :host([narrow]) .joints, :host([narrow]) .code { top:auto; right:0; left:0; bottom:0; width:auto; max-width:none; max-height: 52%; z-index:2; border-radius: 14px 14px 0 0; border-bottom:0; padding-bottom: max(.6rem, env(safe-area-inset-bottom)); box-shadow: 0 -8px 30px rgba(0,0,0,.18); }
+  :host([narrow]) .chrome { z-index:1; }
+  /* While a sheet is open the stage slides up so the robot stays in the visible half. */
+  :host([narrow][sheet]) canvas { transform: translateY(-24%); }
+  @media (prefers-reduced-motion: no-preference) { canvas { transition: transform 160ms ease; } }
+  :host([narrow]) .joints { font-size:.72rem; }
+  :host([narrow]) .joint { margin-bottom:.45rem; }
+  :host([narrow]) .joint label { font-size:.66rem; }
+  :host([narrow]) .joint input[type=range] { height: 1.6rem; }
+  :host([narrow]) .code { font-size:.62rem; }
+  :host([narrow]) .sheet-head { display:flex; justify-content:space-between; align-items:center; margin:0 0 .4rem; white-space:normal; font-family: Inter, system-ui, sans-serif; }
+  :host([narrow]) .sheet-head h5 { font-size:.62rem; letter-spacing:.06em; text-transform:uppercase; color: var(--_muted); font-weight:600; }
+  :host([narrow]) .sheet-head h5 { margin:0; }
+  :host([narrow]) .sheet-head button { min-height: 40px; min-width: 40px; padding:.3rem .7rem; border-radius:999px; font-size:.72rem; }
+  :host([narrow]) .joints > h5 { display:none; }
+  @media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
 </style>
 <canvas tabindex="0" aria-label="3D robot viewer"></canvas>
 <div class="poster" part="poster"></div>
@@ -156,7 +177,9 @@ class RobotViewer extends HTMLElement {
       .then((m) => {
         this._entry = m.robots[this.getAttribute("name")] ?? null;
         this._renderPoster();
-        if (this.hasAttribute("autoload")) this._whenVisible(() => this.load());
+        // A phone, a save-data connection or a reduced-motion preference gets the poster: the 10 MB engine
+        // and the meshes download only after the reader presses Load 3D.
+        if (this.hasAttribute("autoload") && !this._preferPoster()) this._whenVisible(() => this.load());
       })
       .catch((e) => this._fail(`Could not read the robot manifest (${e.message}).`));
     this.shadowRoot.addEventListener("click", (e) => {
@@ -164,8 +187,17 @@ class RobotViewer extends HTMLElement {
       if (b) this._action(b.dataset.act, b);
     });
     this.$("canvas").addEventListener("keydown", this._onKey);
-    this._ro = new ResizeObserver(() => this._resize());
+    this._ro = new ResizeObserver(() => { this._syncNarrow(); this._resize(); });
     this._ro.observe(this);
+    this._syncNarrow();
+    this._onFsChange = () => {
+      const on = document.fullscreenElement === this;
+      this.toggleAttribute("fullscreen", on);
+      this.$('[data-act="full"]').setAttribute("aria-pressed", String(on));
+      this._syncNarrow();
+      this._resize();
+    };
+    document.addEventListener("fullscreenchange", this._onFsChange);
     // Material for MkDocs toggles data-md-color-scheme on <body>; recolour the stage when it does.
     this._mo = new MutationObserver(() => this._applyTheme());
     this._mo.observe(document.body, { attributes: true, attributeFilter: ["data-md-color-scheme"] });
@@ -174,8 +206,43 @@ class RobotViewer extends HTMLElement {
   disconnectedCallback() {
     this._ro?.disconnect();
     this._mo?.disconnect();
+    document.removeEventListener("fullscreenchange", this._onFsChange);
+    if (this.hasAttribute("fullscreen-fallback")) this._toggleFallbackFullscreen();
     this.unload();
   }
+
+  /** Under 640 CSS px the stage is "narrow": panels are bottom sheets and pills are finger sized. */
+  _isNarrow() { return (this.clientWidth || this.getBoundingClientRect().width) < 640 || this.hasAttribute("compact"); }
+  _syncNarrow() { this.toggleAttribute("narrow", this._isNarrow()); }
+  _preferPoster() {
+    const mm = (q) => typeof matchMedia === "function" && matchMedia(q).matches;
+    return mm("(max-width: 40em)") || mm("(prefers-reduced-motion: reduce)") || navigator.connection?.saveData === true;
+  }
+  _reducedMotion() { return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches; }
+  _toggleFallbackFullscreen() {
+    const on = !this.hasAttribute("fullscreen-fallback");
+    this.toggleAttribute("fullscreen-fallback", on);
+    document.body.classList.toggle("sr-viewer-fullscreen", on);
+    this.$('[data-act="full"]').setAttribute("aria-pressed", String(on));
+    if (on) {
+      this._onFsKey = (e) => { if (e.key === "Escape") this._toggleFallbackFullscreen(); };
+      document.addEventListener("keydown", this._onFsKey);
+    } else if (this._onFsKey) {
+      document.removeEventListener("keydown", this._onFsKey);
+      this._onFsKey = null;
+    }
+    this._syncNarrow();
+    this._resize();
+  }
+  /** Close whichever bottom sheet is open (the sheet's own close button, narrow stages only). */
+  _closeSheets() {
+    for (const [sel, act] of [[".joints", "joints"], [".code", "code"]]) {
+      const el = this.$(sel);
+      if (!el.hidden) { el.hidden = true; this.$(`[data-act="${act}"]`).setAttribute("aria-pressed", "false"); }
+    }
+    this._syncSheet();
+  }
+  _syncSheet() { this.toggleAttribute("sheet", !this.$(".joints").hidden || !this.$(".code").hidden); }
 
   attributeChangedCallback(n, oldV, newV) {
     if (n === "name" && oldV && oldV !== newV) { this.unload(); this.connectedCallback(); }
@@ -221,6 +288,7 @@ class RobotViewer extends HTMLElement {
   _action(act, btn) {
     switch (act) {
       case "load": this.load(); return;
+      case "close": this._closeSheets(); return;
       case "reset": this.resetPose(); return;
       case "physics":
         this._physics = !this._physics; btn.setAttribute("aria-pressed", String(this._physics));
@@ -228,10 +296,23 @@ class RobotViewer extends HTMLElement {
         return;
       case "collision":
         this._showCollision = !this._showCollision; btn.setAttribute("aria-pressed", String(this._showCollision)); this._applyVisibility(); return;
-      case "joints": { const el = this.$(".joints"); el.hidden = !el.hidden; btn.setAttribute("aria-pressed", String(!el.hidden)); return; }
-      case "code": { const el = this.$(".code"); el.hidden = !el.hidden; btn.setAttribute("aria-pressed", String(!el.hidden)); return; }
+      case "joints": case "code": {
+        const el = this.$(`.${act}`);
+        el.hidden = !el.hidden;
+        btn.setAttribute("aria-pressed", String(!el.hidden));
+        // On a narrow stage the two panels are sheets over the same spot: opening one closes the other.
+        if (!el.hidden && this.hasAttribute("narrow")) {
+          const other = act === "joints" ? "code" : "joints";
+          this.$(`.${other}`).hidden = true;
+          this.$(`[data-act="${other}"]`).setAttribute("aria-pressed", "false");
+        }
+        this._syncSheet();
+        return;
+      }
       case "full":
-        if (document.fullscreenElement === this) document.exitFullscreen(); else this.requestFullscreen?.();
+        if (document.fullscreenElement === this) { document.exitFullscreen(); return; }
+        if (this.requestFullscreen) { this.requestFullscreen().catch(() => this._toggleFallbackFullscreen()); return; }
+        this._toggleFallbackFullscreen();
         return;
     }
   }
@@ -265,12 +346,13 @@ class RobotViewer extends HTMLElement {
       this._clearStatus();
       this.$(".poster").hidden = true;
       this.$(".chrome").hidden = false;
-      const narrow = this.clientWidth < 640 || this.hasAttribute("compact");
+      const narrow = this._isNarrow();
       // Joints open on a wide stage; the code card stays behind its pill so the robot is never covered twice.
       this.$(".joints").hidden = narrow;
       this.$(".code").hidden = true;
       this.$('[data-act="joints"]').setAttribute("aria-pressed", String(!narrow));
       this.$('[data-act="code"]').setAttribute("aria-pressed", "false");
+      this._syncSheet();
       this._state = "ready";
       this._loop();
       this.dispatchEvent(new CustomEvent("robot-loaded", { detail: { name: this._entry.name } }));
@@ -426,7 +508,7 @@ class RobotViewer extends HTMLElement {
     const camera = new THREE.PerspectiveCamera(38, 4 / 3, 0.01, 200);
     camera.up.set(0, 0, 1);
     const controls = new OrbitControls(camera, canvas);
-    controls.enableDamping = true;
+    controls.enableDamping = !this._reducedMotion();
     controls.dampingFactor = 0.08;
     controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
     controls.maxPolarAngle = Math.PI * 0.52;
@@ -647,7 +729,7 @@ class RobotViewer extends HTMLElement {
       const v = d.qpos[qadr];
       rows.push(`<div class="joint"><label for="j${j}"><span>${name}</span><output id="o${j}">${v.toFixed(2)}</output></label><input id="j${j}" type="range" min="${lo}" max="${hi}" step="${(hi - lo) / 400}" value="${v}" data-j="${j}" aria-label="${name}"></div>`);
     }
-    el.innerHTML = `<h5>${this._joints.length} joints</h5>${rows.join("")}`;
+    el.innerHTML = `<div class="sheet-head"><h5>${this._joints.length} joints</h5><button class="pill" data-act="close" aria-label="Close joints">Close</button></div><h5>${this._joints.length} joints</h5>${rows.join("")}`;
     el.oninput = (e) => {
       const inp = e.target.closest("input[data-j]");
       if (!inp) return;
@@ -668,7 +750,7 @@ class RobotViewer extends HTMLElement {
     const body = moved.length
       ? moved.map((jt) => `    <b>"${jt.name}"</b>: ${d.qpos[jt.qadr].toFixed(3)},`).join("\n")
       : `    <span style="opacity:.55"># move a slider</span>`;
-    this.$(".code").innerHTML = `from strands_robots import Robot\n\nrobot = Robot(<b>"${this._entry.name}"</b>)\nrobot.act({\n${body}\n})`;
+    this.$(".code").innerHTML = `<div class="sheet-head"><h5>robot.act</h5><button class="pill" data-act="close" aria-label="Close code">Close</button></div>from strands_robots import Robot\n\nrobot = Robot(<b>"${this._entry.name}"</b>)\nrobot.act({\n${body}\n})`;
   }
 
   resetPose() {
