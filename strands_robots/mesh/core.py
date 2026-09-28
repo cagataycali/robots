@@ -32,6 +32,7 @@ from strands_robots.mesh.session import (
     CAMERA_HZ,
     HEARTBEAT_HZ,
     STATE_HZ,
+    _is_transport_backend,
     current_session,
     get_session,
     hz_from_env,
@@ -3814,11 +3815,13 @@ class Mesh(SensorLoopsMixin):
            also holds the override code (see
            :meth:`_resume_lockout`).
 
-        Returns ``None`` for non-Zenoh transports (bridge / IoT) and
-        when no session is currently open. In that case the safety
-        path falls back to the body-level HMAC binding alone -- the
-        cross-session-forgery defence is Zenoh-specific because only
-        Zenoh exposes a TLS-bound publisher identity.
+        Returns ``None`` under ``STRANDS_MESH_BACKEND=iot`` / ``bridge`` and
+        when no session is currently open. In that case the safety path
+        publishes through the transport's ``put()`` with the body-level HMAC
+        binding alone. The bridge's Zenoh leg does open a session with a zid,
+        but a raw publish on it reaches the LAN only: the MQTT/IoT leg is fed
+        by :meth:`BridgeTransport.put`, so a zid here would keep every e-stop
+        and resume off the cloud side.
 
         Also returns ``None`` if the session module import fails. That arm is
         defence in depth rather than a reachable configuration: this module
@@ -3827,6 +3830,8 @@ class Mesh(SensorLoopsMixin):
         cannot raise. It is kept so a future refactor that drops the
         module-scope import degrades here instead of raising on the safety path.
         """
+        if _is_transport_backend():
+            return None
         try:
             from strands_robots.mesh.session import _current_zenoh_session_directly
 

@@ -50,7 +50,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import halt_failure_detail, telemetry_float, undeclared_verb_error
+from strands_robots.drivers.base import halt_failure_detail, refuse, telemetry_float, undeclared_verb_error
 from strands_robots.utils import boolean_flag_error, finite_number_error, positive_finite_number_error
 
 if TYPE_CHECKING:
@@ -118,11 +118,6 @@ def _declared_scheme(value: str) -> str | None:
     """
     scheme, separator, _ = value.partition("://")
     return scheme.lower() if separator else None
-
-
-def _refuse(reason: str) -> dict[str, Any]:
-    """One refusal envelope, so every refusal has the same shape."""
-    return {"status": "error", "content": [{"text": reason}]}
 
 
 def drive_axis_error(value: object, param: str, context: str) -> str | None:
@@ -549,7 +544,7 @@ class EarthRoverDriver:
         """
         data = self.read_state()
         if not data:
-            return _refuse(
+            return refuse(
                 f"sensors: no telemetry yet - nothing has answered GET {self._base}/data. "
                 "Is the earth-rovers-sdk running, with the rover connected to it?"
             )
@@ -727,15 +722,15 @@ class EarthRoverDriver:
         session = self._session
         if session is None or not self._connected:
             suffix = f" ({self._connect_error})" if self._connect_error else ""
-            return _refuse(f"send_action: not connected - call connect_eagerly() first{suffix}")
+            return refuse(f"send_action: not connected - call connect_eagerly() first{suffix}")
         bad = sorted(set(action) - set(DRIVE_CHANNELS))
         if bad:
-            return _refuse(f"send_action: unknown drive channel(s) {bad}; valid: {list(DRIVE_CHANNELS)}")
+            return refuse(f"send_action: unknown drive channel(s) {bad}; valid: {list(DRIVE_CHANNELS)}")
         for axis in ("linear", "angular"):
             if axis in action and (reason := drive_axis_error(action[axis], axis, "send_action")):
-                return _refuse(reason)
+                return refuse(reason)
         if "lamp" in action and (reason := boolean_flag_error(action["lamp"], "lamp", "send_action")):
-            return _refuse(reason)
+            return refuse(reason)
 
         command: dict[str, float] = {
             "linear": float(action.get("linear", 0.0)),
@@ -746,9 +741,9 @@ class EarthRoverDriver:
         try:
             resp = session.post(f"{self._base}/control", json={"command": command}, timeout=self._timeout)
         except OSError as exc:
-            return _refuse(f"send_action: POST {self._base}/control did not reach the SDK: {exc}")
+            return refuse(f"send_action: POST {self._base}/control did not reach the SDK: {exc}")
         if resp.status_code != 200:
-            return _refuse(f"send_action: /control answered HTTP {resp.status_code}: {resp.text[:200]}")
+            return refuse(f"send_action: /control answered HTTP {resp.status_code}: {resp.text[:200]}")
 
         with self._cache_lock:
             self._last_command = command
@@ -788,9 +783,9 @@ class EarthRoverDriver:
         """
         if duration_s is not None:
             if reason := positive_finite_number_error(duration_s, "duration_s", "move"):
-                return _refuse(reason)
+                return refuse(reason)
             if float(duration_s) > MAX_MOVE_DURATION_S:
-                return _refuse(
+                return refuse(
                     f"move: duration_s is at most {MAX_MOVE_DURATION_S}s, got {duration_s}. A longer "
                     "run belongs to repeated calls, where telemetry is read between legs."
                 )
@@ -871,16 +866,16 @@ class EarthRoverDriver:
             A success envelope, or a refusal naming what was wrong.
         """
         if not isinstance(text, str) or not text.strip():
-            return _refuse(f"speak: text must be a non-empty string, got {text!r}")
+            return refuse(f"speak: text must be a non-empty string, got {text!r}")
         session = self._session
         if session is None or not self._connected:
-            return _refuse("speak: not connected - call connect_eagerly() first")
+            return refuse("speak: not connected - call connect_eagerly() first")
         try:
             resp = session.post(f"{self._base}/speak", json={"text": text}, timeout=self._timeout)
         except OSError as exc:
-            return _refuse(f"speak: POST {self._base}/speak did not reach the SDK: {exc}")
+            return refuse(f"speak: POST {self._base}/speak did not reach the SDK: {exc}")
         if resp.status_code != 200:
-            return _refuse(f"speak: /speak answered HTTP {resp.status_code}: {resp.text[:200]}")
+            return refuse(f"speak: /speak answered HTTP {resp.status_code}: {resp.text[:200]}")
         return {"status": "success", "content": [{"json": {"spoke": text}}]}
 
     # ------------------------------------------------------------------ #
@@ -898,7 +893,7 @@ class EarthRoverDriver:
     ) -> dict[str, Any]:
         """Refuse: no policy provider is wired to the rover yet."""
         del instruction, policy_port, policy_host, policy_provider, duration, policy_kwargs
-        return _refuse(
+        return refuse(
             "start_task: no policy provider is wired to the earthrover yet. A caller with a "
             "built policy drives it by calling send_action on their own timer"
         )
@@ -912,7 +907,7 @@ class EarthRoverDriver:
     ) -> dict[str, Any]:
         """Refuse a host-driven rollout; this driver ships the transport only."""
         del policy_object, instruction, duration, n_steps
-        return _refuse(
+        return refuse(
             "run_policy: this driver sends one twist per call and owns no control loop. "
             'Call send_action on your own timer, or use mode="sim" for a host-driven rollout'
         )
@@ -935,7 +930,7 @@ class EarthRoverDriver:
             told a flag was cleared.
         """
         if not self.is_connected:
-            return _refuse("stop_task: not connected")
+            return refuse("stop_task: not connected")
         return self.send_action({"linear": 0.0, "angular": 0.0})
 
     # ------------------------------------------------------------------ #
@@ -988,22 +983,22 @@ class EarthRoverDriver:
             without a frame, which is a rover with its video session down.
         """
         if camera not in CAMERA_VIEWS:
-            return _refuse(f"capture_frame: camera must be one of {list(CAMERA_VIEWS)}, got {camera!r}")
+            return refuse(f"capture_frame: camera must be one of {list(CAMERA_VIEWS)}, got {camera!r}")
         session = self._session
         if session is None or not self._connected:
-            return _refuse("capture_frame: not connected - call connect_eagerly() first")
+            return refuse("capture_frame: not connected - call connect_eagerly() first")
         try:
             resp = session.get(f"{self._base}/v2/{camera}", timeout=self._timeout)
         except OSError as exc:
-            return _refuse(f"capture_frame: GET {self._base}/v2/{camera} did not reach the SDK: {exc}")
+            return refuse(f"capture_frame: GET {self._base}/v2/{camera} did not reach the SDK: {exc}")
         if resp.status_code != 200:
-            return _refuse(f"capture_frame: /v2/{camera} answered HTTP {resp.status_code}: {resp.text[:200]}")
+            return refuse(f"capture_frame: /v2/{camera} answered HTTP {resp.status_code}: {resp.text[:200]}")
         try:
             b64 = (resp.json() or {}).get(f"{camera}_frame")
         except ValueError:
             b64 = None
         if not b64:
-            return _refuse(
+            return refuse(
                 f"capture_frame: the SDK answered /v2/{camera} without a {camera}_frame - "
                 "the rover's video session is not up"
             )
@@ -1012,7 +1007,7 @@ class EarthRoverDriver:
         try:
             raw = base64.b64decode(b64)
         except (ValueError, TypeError) as exc:
-            return _refuse(f"capture_frame: /v2/{camera} frame is not base64: {exc}")
+            return refuse(f"capture_frame: /v2/{camera} frame is not base64: {exc}")
         return {
             "status": "success",
             "content": [{"json": {"camera": camera, "format": detect_image_format(raw), "b64": b64}}],

@@ -42,7 +42,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import halt_failure_detail, undeclared_verb_error
+from strands_robots.drivers.base import halt_failure_detail, refuse, undeclared_verb_error
 from strands_robots.drivers.robotiq.protocol import (
     DEFAULT_TCP_PORT,
     DEFAULT_UNIT_ID,
@@ -524,20 +524,20 @@ class RobotiqDriver:
             error envelope naming the reason.
         """
         if robot_name is not None and robot_name != self._tool_name:
-            return _refuse(f"send_action: this driver fronts {self._tool_name!r} only, not {robot_name!r}")
+            return refuse(f"send_action: this driver fronts {self._tool_name!r} only, not {robot_name!r}")
         if not self.is_connected or self._client is None:
-            return _refuse("send_action: not connected - call connect_eagerly() first")
+            return refuse("send_action: not connected - call connect_eagerly() first")
 
         normalised = [key for key in _NORMALISED_KEYS if key in action]
         aperture = [key for key in _APERTURE_KEYS if key in action]
         if len(normalised) + len(aperture) > 1:
-            return _refuse(
+            return refuse(
                 f"send_action: {sorted(normalised + aperture)} are two spellings of the same command - "
                 f"pass a closed fraction ({' or '.join(_NORMALISED_KEYS)}) or millimetres "
                 f"({' or '.join(_APERTURE_KEYS)}), not both"
             )
         if not normalised and not aperture:
-            return _refuse(
+            return refuse(
                 f"send_action: nothing to command - none of {sorted(action)} names an aperture; "
                 f"expected one of {sorted(_NORMALISED_KEYS + _APERTURE_KEYS)}"
             )
@@ -545,7 +545,7 @@ class RobotiqDriver:
         key = (normalised or aperture)[0]
         for name in (key, *(m for m in _MODIFIER_KEYS if m in action)):
             if reason := finite_number_error(action[name], name, "send_action"):
-                return _refuse(reason)
+                return refuse(reason)
 
         try:
             counts = (
@@ -557,9 +557,9 @@ class RobotiqDriver:
             force = closed_fraction_to_counts(action["force"]) if "force" in action else self._force
             self._write_command(activate=True, go_to=True, position=counts, speed=speed, force=force)
         except ProtocolError as exc:
-            return _refuse(f"send_action: {exc}")
+            return refuse(f"send_action: {exc}")
         except OSError as exc:
-            return _refuse(f"send_action: writing to the gripper failed: {exc}")
+            return refuse(f"send_action: writing to the gripper failed: {exc}")
 
         return {
             "status": "success",
@@ -585,13 +585,13 @@ class RobotiqDriver:
             envelope naming why the read failed.
         """
         if not self.is_connected:
-            return _refuse("read_status: not connected - call connect_eagerly() first")
+            return refuse("read_status: not connected - call connect_eagerly() first")
         try:
             status = self._read_status_raw()
         except ProtocolError as exc:
-            return _refuse(f"read_status: {exc}")
+            return refuse(f"read_status: {exc}")
         except OSError as exc:
-            return _refuse(f"read_status: reading the gripper failed: {exc}")
+            return refuse(f"read_status: reading the gripper failed: {exc}")
         return {"status": "success", "content": [{"json": _readable(status)}]}
 
     def get_observation(self) -> dict[str, float]:
@@ -629,7 +629,7 @@ class RobotiqDriver:
     ) -> dict[str, Any]:
         """Refuse: see :data:`_NO_POLICY`."""
         del instruction, policy_port, policy_host, policy_provider, duration, policy_kwargs
-        return _refuse(f"start_task: {_NO_POLICY}")
+        return refuse(f"start_task: {_NO_POLICY}")
 
     def run_policy(
         self,
@@ -640,7 +640,7 @@ class RobotiqDriver:
     ) -> dict[str, Any]:
         """Refuse: see :data:`_NO_POLICY`."""
         del policy_object, instruction, duration, n_steps
-        return _refuse(f"run_policy: {_NO_POLICY}")
+        return refuse(f"run_policy: {_NO_POLICY}")
 
     def get_task_status(self) -> dict[str, Any]:
         """Report that no task runs, which is always true for a gripper."""
@@ -653,7 +653,7 @@ class RobotiqDriver:
         try:
             self._write_command(activate=True, go_to=False)
         except (OSError, ProtocolError) as exc:
-            return _refuse(f"stop_task: {exc}")
+            return refuse(f"stop_task: {exc}")
         return {"status": "success", "content": [{"text": f"stop_task: {self._tool_name} fingers halted"}]}
 
     # ------------------------------------------------------------------ #
@@ -701,8 +701,3 @@ def _readable(status: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, enum.Enum):
             rendered[field] = value.name
     return rendered
-
-
-def _refuse(message: str) -> dict[str, Any]:
-    """Return an error envelope carrying ``message``."""
-    return {"status": "error", "content": [{"text": message}]}

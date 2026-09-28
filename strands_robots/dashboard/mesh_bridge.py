@@ -535,18 +535,9 @@ class MeshBridge:
 
         self._lockout = safety_state.Lockout()
         self._lockout_proof: dict[str, float] = {}
-        # Signed safety rail (lazy - see _safety_mesh)
+        # The one Mesh: signed safety rail + commands (lazy - see _safety_mesh)
         self._safety: Any | None = None
         self._safety_lock = threading.Lock()
-
-        # RPC correlation (mirrors Mesh.send)
-        self._pending: dict[str, threading.Event] = {}
-        self._responses: dict[str, dict[str, Any]] = {}
-        # turn_id -> the ONE peer allowed to answer it (mirrors
-        # Mesh._expected_responders): without this, any ACL-authorised peer
-        # observing a turn_id could answer someone else's pending turn.
-        self._expected_responders: dict[str, str] = {}
-        self._rpc_lock = threading.Lock()
 
         # Fleet activity: every command this dashboard issued + safety
         # envelopes seen on the wire. Cheap forensics for "who moved that arm?"
@@ -643,7 +634,6 @@ class MeshBridge:
             sub("strands/*/lidar/**", self._on_lidar),
             sub("strands/safety/estop", self._on_safety),
             sub("strands/safety/resume", self._on_safety),
-            sub(f"strands/{self.peer_id}/response/**", self._on_response),
         ]
         self._endpoints = self._read_endpoints()
         logger.info("MeshBridge online as %s", self.peer_id)
@@ -961,43 +951,13 @@ class MeshBridge:
         self.record_activity("safety", kind, detail=data, ok=True)
         self._emit({"type": "safety", "kind": kind, "data": data})
 
-    def _on_response(self, sample: Any) -> None:
-        data = self._decode(sample)
-        if not data:
-            return
-        turn = data.get("turn_id")
-        if not isinstance(turn, str):
-            return
-        responder = data.get("responder_id")
-        with self._rpc_lock:
-            evt = self._pending.get(turn)
-            if evt is None:
-                return
-            # Point-to-point scope check (mirrors Mesh._on_response): a
-            # response is accepted only from the peer send_cmd addressed.
-            # Without it, any ACL-authorised peer observing a turn_id could
-            # answer someone else's pending turn and have its result taken
-            # for the target's. Legacy peers that omit responder_id are
-            # rejected the same way - an absent identity is not a match.
-            expected = self._expected_responders.get(turn)
-            if expected is not None and responder != expected:
-                logger.warning(
-                    "[mesh_bridge] response for turn %s rejected: responder %r != expected %r",
-                    turn,
-                    responder,
-                    expected,
-                )
-                return
-            self._responses[turn] = data
-            evt.set()
-
     # ------------------------------------------------------------------ Commands (dashboard ->
     # robot).
 
     # ------------------------------------------------------------------ Signed safety rail (A6).
 
     def _safety_mesh(self) -> Any | None:
-        """Lazily start the robot-less Mesh used for signed safety envelopes."""
+        """Lazily start the bridge's robot-less Mesh: signed safety envelopes and every command."""
         with self._safety_lock:
             if self._safety is not None and getattr(self._safety, "alive", False):
                 return self._safety
@@ -1110,77 +1070,42 @@ class MeshBridge:
         *,
         source: str = "api",
     ) -> dict[str, Any]:
-        """Send a command to a peer and wait for its response (blocking)."""
-        from strands_robots.mesh.session import put
+        """Send a command to a peer through :meth:`Mesh.send` and wait for its response.
 
+        The bridge's one :class:`~strands_robots.mesh.core.Mesh` (see
+        :meth:`_safety_mesh`) carries it, so validation, the byte cap, the
+        wait-budget check, responder scoping and the ``response_hijack_rejected``
+        audit record are the SDK's, not a copy. A failure comes back as
+        ``{"ok": False, "error": ...}``.
+        """
         if not self._running:
             return {"error": "mesh offline", "ok": False}
-        # Mesh.send parity, missing from this clone until now (§2.1):
-        # target sanity + client-side validate_command. Receiver-side
-        # _exec_cmd still validates - this turns "the peer refused it" (a
-        # timeout or opaque error narrated as a robot fault) into a
-        # structured local error naming the actual defect.
-        if not isinstance(target, str) or not target:
-            return {"error": "send_cmd: target must be a non-empty string", "ok": False}
-        if "\x00" in target:
-            return {"error": "send_cmd: target may not contain NUL", "ok": False}
-        from strands_robots.mesh import security as _security
-
-        try:
-            cmd = _security.validate_command(cmd)
-        except _security.ValidationError as exc:
-            result = {"ok": False, "error": f"validation: {exc}"}
-            self.record_activity(source, cmd.get("action", "?"), target=target, detail=result, ok=False)
-            return result
-        turn = uuid.uuid4().hex
-        envelope = {
-            "sender_id": self.peer_id,
-            "turn_id": turn,
-            "command": cmd,
-            "timestamp": time.time(),
-        }
-        # The transport silently drops cmd messages over the low-pass cap, so
-        # the caller would otherwise see a bare timeout with nothing to act on.
-        size = len(json.dumps(envelope, default=str).encode())
-        if size > MAX_CMD_BYTES:
-            result = {
-                "ok": False,
-                "error": f"command too large: {size} B > transport cap {MAX_CMD_BYTES} B "
-                "(raise STRANDS_MESH_MAX_CMD_BYTES on every peer, or shrink the payload)",
-            }
-            self.record_activity(source, cmd.get("action", "?"), target=target, detail=result, ok=False)
-            return result
-
-        evt = threading.Event()
-        with self._rpc_lock:
-            self._pending[turn] = evt
-            self._expected_responders[turn] = target
+        mesh = self._safety_mesh()
+        if mesh is None:
+            return {"ok": False, "error": self._rail_unavailable()["error"]}
         started = time.time()
-        try:
-            put(f"strands/{target}/cmd", envelope)
-            if not evt.wait(timeout):
-                result = {"error": f"timeout after {timeout:g}s", "turn_id": turn, "ok": False}
-            else:
-                with self._rpc_lock:
-                    result = self._responses.pop(turn, {"error": "response lost", "ok": False})
-            if not result.get("error") and safety_state.proves_clear(str(cmd.get("action", ""))):
-                with self._peers_lock:
-                    self._lockout_proof[target] = time.time()
-            self.record_activity(
-                source,
-                cmd.get("action", "?"),
-                target=target,
-                detail={"instruction": cmd.get("instruction"), "provider": cmd.get("policy_provider")},
-                ok=command_succeeded(result),
-                result=result,
-                elapsed=time.time() - started,
-            )
-            return result
-        finally:
-            with self._rpc_lock:
-                self._pending.pop(turn, None)
-                self._responses.pop(turn, None)
-                self._expected_responders.pop(turn, None)
+        result: dict[str, Any] = mesh.send(target, cmd, timeout=timeout)
+        status = result.get("status")
+        if status == "timeout":
+            result = {"ok": False, "error": f"timeout after {timeout:g}s"}
+        elif status == "error" and "responder_id" not in result:
+            result = {"ok": False, "error": result.get("error")}
+        action = cmd.get("action", "?") if isinstance(cmd, dict) else "?"
+        if not result.get("error") and safety_state.proves_clear(str(action)):
+            with self._peers_lock:
+                self._lockout_proof[target] = time.time()
+        self.record_activity(
+            source,
+            action,
+            target=target,
+            detail={"instruction": cmd.get("instruction"), "provider": cmd.get("policy_provider")}
+            if isinstance(cmd, dict)
+            else {},
+            ok=command_succeeded(result),
+            result=result,
+            elapsed=time.time() - started,
+        )
+        return result
 
     async def send_cmd_async(
         self,
