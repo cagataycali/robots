@@ -1,6 +1,6 @@
 """The documented native-runtime adapter must apply the seed it is handed.
 
-``docs/reference/policies/kimodo.md`` documents a ``KimodoMotionAgent`` that drives
+``docs/learn/policies/kimodo.md`` documents a ``KimodoMotionAgent`` that drives
 NVIDIA's own ``kimodo`` runtime, because that checkpoint is not published in
 diffusers pipeline layout and so cannot be loaded by the built-in agent. The
 documented adapter is the supported route to the real weights, which makes its
@@ -38,9 +38,10 @@ import pytest
 from strands_robots.policies.kimodo.policy import KimodoMotionAgent
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-_KIMODO_DOC = _REPO_ROOT / "docs" / "reference" / "policies" / "kimodo.md"
-_ADAPTER_HEADING = "## Driving the NVIDIA checkpoint"
+_KIMODO_DOC = _REPO_ROOT / "docs" / "learn" / "policies" / "kimodo.md"
 _ADAPTER_CLASS = "class NativeKimodoAgent:"
+# The page's fences carry an info string (``python`` or ``python title="sketch"``).
+_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
 _FRAME_WIDTH = 7 + 29
 
 
@@ -53,12 +54,15 @@ def documented_adapter_source() -> str:
         its own.
     """
     doc = _KIMODO_DOC.read_text(encoding="utf-8")
-    heading = doc.index(_ADAPTER_HEADING)
-    block = re.search(r"```python\n(.*?)```", doc[heading:], re.DOTALL)
-    assert block is not None, f"{_ADAPTER_HEADING} documents no python block"
-    source = block.group(1)
-    assert _ADAPTER_CLASS in source, f"{_ADAPTER_HEADING} documents no {_ADAPTER_CLASS}"
-    return source[: source.index("sim.run_policy(")]
+    assert "motion_agent" in doc, f"{_KIMODO_DOC.name} no longer names the motion_agent route to the NVIDIA runtime"
+    blocks = [match.group(1) for match in _FENCE.finditer(doc) if _ADAPTER_CLASS in match.group(1)]
+    assert blocks, (
+        f"{_KIMODO_DOC.name} names motion_agent as the route to the NVIDIA checkpoint but no python "
+        f"fence on the page defines {_ADAPTER_CLASS[:-1]}, so the seeding contract of that route is undocumented"
+    )
+    source = blocks[0]
+    cut = source.find("sim.run_policy(")
+    return source if cut < 0 else source[:cut]
 
 
 class _GlobalNoiseStream:
@@ -133,7 +137,7 @@ def _install_runtime_stubs(monkeypatch: pytest.MonkeyPatch, stream: _GlobalNoise
 
 @pytest.fixture
 def documented_agent(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Build the adapter exactly as ``docs/reference/policies/kimodo.md`` writes it."""
+    """Build the adapter exactly as ``docs/learn/policies/kimodo.md`` writes it."""
     _install_runtime_stubs(monkeypatch, _GlobalNoiseStream())
     namespace: dict[str, Any] = {}
     exec(compile(documented_adapter_source(), str(_KIMODO_DOC), "exec"), namespace)  # noqa: S102

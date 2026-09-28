@@ -1,7 +1,7 @@
 """The Microduck render example can reach the scene a skill was trained in.
 
 A shipped Pollen weight and the scene it was trained in are one pair.
-``docs/reference/policies/microduck.md`` carries the skill-to-scene table: five of the nine
+``docs/learn/policies/microduck.md`` carries the skill-to-scene table: five of the nine
 weights run on the scene the registry entry declares, and four do not - ``roller``
 and ``roller_crouch`` need the four passive ankle wheels only ``scene_rollers.xml``
 carries, and ``ball_kick_left`` / ``ball_kick_right`` need the prop only
@@ -56,7 +56,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLE = _REPO_ROOT / "examples" / "microduck" / "render_video.py"
-_DOCS_PAGE = _REPO_ROOT / "docs" / "reference" / "policies" / "microduck.md"
+_DOCS_PAGE = _REPO_ROOT / "docs" / "learn" / "policies" / "microduck.md"
 
 # The scene the registry entry declares. Every other scene the page names is a
 # variant a weight needs, and is what --scene exists to reach.
@@ -73,11 +73,14 @@ def _load_example() -> ModuleType:
 
 
 def _documented_variant_scenes() -> set[str]:
-    """The variant scenes ``docs/reference/policies/microduck.md`` names, derived from the page.
+    """The variant scenes ``docs/learn/policies/microduck.md`` names, derived from the page.
 
     Read from the page rather than restated here, so a tenth weight that needs a
-    new scene fails this guard until the flag's help names it too.
+    new scene fails this guard until the flag's help names it too. A missing page
+    is an empty set, not a collection error: the vacuity cell below reports it.
     """
+    if not _DOCS_PAGE.is_file():
+        return set()
     named = set(re.findall(r"`(scene[A-Za-z0-9_]*\.xml)`", _DOCS_PAGE.read_text(encoding="utf-8")))
     return named - {_DECLARED_SCENE}
 
@@ -262,7 +265,11 @@ class TestTheRuleIsNotVacuous:
     """The derived scene set is read from the page and is not empty."""
 
     def test_the_page_names_at_least_two_variant_scenes(self) -> None:
+        assert _DOCS_PAGE.is_file(), f"{_DOCS_PAGE} is missing"
         documented = _documented_variant_scenes()
 
-        assert len(documented) >= 2, documented
+        assert len(documented) >= 2, (
+            f"{_DOCS_PAGE.name} names {sorted(documented) or 'no'} variant scene(s); the skill-to-scene "
+            "table (roller* on scene_rollers.xml, ball_kick_* on scene_ball.xml) is what this guard reads"
+        )
         assert _DECLARED_SCENE not in documented, documented
