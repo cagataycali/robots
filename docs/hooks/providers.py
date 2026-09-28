@@ -1,6 +1,6 @@
 """mkdocs hook: policy provider tables the docs never type by hand.
 
-Tokens replaced at build time (same shape as ``numbers.py``):
+Tokens replaced at build time (same shape as ``facts.py``):
 
 * ``{{providers:table}}``           one row per provider in
                                     ``strands_robots/registry/policies.json``:

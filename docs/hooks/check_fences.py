@@ -3,9 +3,9 @@
 
 A fence is runnable when its info string is exactly ``python`` (``python
 title="sketch"`` and every other variant is skipped). Each fence runs in a fresh
-interpreter, ``argv[1]`` or ``/Users/cagatay/robots/.venv/bin/python`` by
-default, with ``PYTHONPATH`` set to the repository root so it imports this
-checkout and ``MUJOCO_GL=cgl`` so MuJoCo renders headless on macOS. The timeout
+interpreter, ``argv[1]`` or the repository's ``.venv/bin/python`` (falling back to the
+interpreter running this script), with ``PYTHONPATH`` set to the repository root so it
+imports this checkout and ``MUJOCO_GL=cgl`` so MuJoCo renders headless on macOS. The timeout
 per fence is 120 s.
 
 Prints one row per fence (page, fence index, status, seconds) and exits 1 when
@@ -27,7 +27,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 DOCS = REPO / "docs"
-DEFAULT_PYTHON = "/Users/cagatay/robots/.venv/bin/python"
+DEFAULT_PYTHON = str(REPO / ".venv" / "bin" / "python") if (REPO / ".venv" / "bin" / "python").exists() else sys.executable
 TIMEOUT_S = 120
 FENCE = re.compile(r"^```python[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
 

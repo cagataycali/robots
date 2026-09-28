@@ -1,58 +1,93 @@
-/* strands-robots docs. Paper and dark, one accent, no gradients over text. */
+/* strands-robots docs. Paper and dark, one accent (the Strands green from the mark), no gradients over text. */
 
 :root {
-  --sr-accent: #ff6a00;
-  --sr-accent-soft: rgba(255, 106, 0, 0.12);
   --sr-radius: 12px;
-  --md-primary-fg-color: #1b1b1b;
-  --md-primary-fg-color--light: #3a3a3a;
+  --md-primary-fg-color: #0e1013;
+  --md-primary-fg-color--light: #2a2e35;
   --md-primary-fg-color--dark: #000000;
   --md-accent-fg-color: var(--sr-accent);
   --md-accent-fg-color--transparent: var(--sr-accent-soft);
   --md-typeset-a-color: var(--sr-accent);
+  --md-code-font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* Paper: warm off-white, ink text, the green deepened so it reads as text. */
 [data-md-color-scheme="paper"] {
-  --md-default-bg-color: #faf8f3;
-  --md-default-fg-color: #1b1b1b;
-  --md-default-fg-color--light: #4a4a4a;
-  --md-default-fg-color--lighter: #8a8a8a;
-  --md-default-fg-color--lightest: #e6e2d8;
-  --md-code-bg-color: #f1ede4;
-  --md-code-fg-color: #1b1b1b;
-  --md-typeset-color: #1b1b1b;
-  --md-footer-bg-color: #1b1b1b;
-  --md-footer-bg-color--dark: #111111;
+  --sr-scheme: paper;
+  --sr-accent: #0b8f4c;
+  --sr-accent-bright: #00e56b;
+  --sr-accent-soft: rgba(11, 143, 76, 0.12);
+  --sr-on-accent: #ffffff;
+  --md-default-bg-color: #faf9f6;
+  --md-default-fg-color: #15171a;
+  --md-default-fg-color--light: #45494f;
+  --md-default-fg-color--lighter: #83888f;
+  --md-default-fg-color--lightest: #e7e4dd;
+  --md-code-bg-color: #f1efe9;
+  --md-code-fg-color: #15171a;
+  --md-code-hl-color: rgba(11, 143, 76, 0.18);
+  --md-typeset-color: #15171a;
+  --md-typeset-kbd-color: #f1efe9;
+  --md-footer-bg-color: #0e1013;
+  --md-footer-bg-color--dark: #000000;
+  --sr-fg: #15171a;
   --sr-card-bg: #ffffff;
-  --sr-card-border: #e3ded2;
-  --sr-muted: #6b6760;
-  --sr-chip-bg: #f1ede4;
-  --sr-viewer-bg: #f3f0e9;
+  --sr-card-border: #e6e3dc;
+  --sr-muted: #6b6f76;
+  --sr-chip-bg: #efece5;
+  --sr-btn-bg: #15171a;
+  --sr-btn-fg: #ffffff;
+  --sr-viewer-bg: #eeebe3;
+  --sr-grid-major: #cfc9bc;
+  --sr-grid-minor: #e2ddd2;
 }
 
+/* Dark: graphite, not pure black, so cards and the 3D stage still have a step above the page. */
 [data-md-color-scheme="slate"] {
-  --md-default-bg-color: #111111;
-  --md-default-fg-color: #e8e6e1;
-  --md-default-fg-color--light: #c9c6bf;
-  --md-default-fg-color--lighter: #8f8c85;
-  --md-default-fg-color--lightest: #2a2a2a;
-  --md-code-bg-color: #1a1a1a;
-  --md-code-fg-color: #e8e6e1;
-  --md-typeset-color: #e8e6e1;
-  --md-footer-bg-color: #0a0a0a;
+  --sr-scheme: dark;
+  --sr-accent: #00ff77;
+  --sr-accent-bright: #00ff77;
+  --sr-accent-soft: rgba(0, 255, 119, 0.12);
+  --sr-on-accent: #06210f;
+  --md-default-bg-color: #0b0d10;
+  --md-default-fg-color: #e9ecef;
+  --md-default-fg-color--light: #c3c8cf;
+  --md-default-fg-color--lighter: #8b929c;
+  --md-default-fg-color--lightest: #232830;
+  --md-code-bg-color: #12151a;
+  --md-code-fg-color: #e9ecef;
+  --md-code-hl-color: rgba(0, 255, 119, 0.14);
+  --md-typeset-color: #e9ecef;
+  --md-typeset-kbd-color: #12151a;
+  --md-footer-bg-color: #06080a;
   --md-footer-bg-color--dark: #000000;
-  --sr-card-bg: #171717;
-  --sr-card-border: #2a2a2a;
-  --sr-muted: #8f8c85;
-  --sr-chip-bg: #222222;
-  --sr-viewer-bg: #161616;
+  --md-admonition-bg-color: #12151a;
+  --sr-fg: #e9ecef;
+  --sr-card-bg: #13161b;
+  --sr-card-border: #242a32;
+  --sr-muted: #8b929c;
+  --sr-chip-bg: #1c2128;
+  --sr-btn-bg: #e9ecef;
+  --sr-btn-fg: #0b0d10;
+  --sr-viewer-bg: #1a1e24;
+  --sr-grid-major: #46505c;
+  --sr-grid-minor: #303740;
 }
+
+/* Material's slate theme paints code and hl in its own tokens; keep them on our surfaces. */
+[data-md-color-scheme="slate"] .md-typeset .highlight,
+[data-md-color-scheme="slate"] .md-typeset pre > code { background: var(--md-code-bg-color); }
+[data-md-color-scheme="slate"] .md-typeset .highlight span.filename { background: #0e1114; }
+[data-md-color-scheme="slate"] .md-nav__link--active { color: var(--sr-accent); }
 
 .md-header,
 .md-tabs {
   background-color: var(--md-primary-fg-color);
-  color: #faf8f3;
+  color: #f3f4f6;
 }
+.md-header { border-bottom: 1px solid #1c2027; }
+.md-search__form { background-color: #1a1e25; }
+.md-search__input::placeholder { color: #8b929c; }
 .md-tabs__link--active,
 .md-tabs__link:hover {
   color: var(--sr-accent);
@@ -93,6 +128,7 @@
 .sr-card:hover {
   transform: translateY(-2px);
   border-color: var(--sr-accent);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
 }
 .sr-card h3 { margin: 0 0 0.4rem; font-size: 1.05em; }
 .sr-card h3 a { color: var(--sr-accent); }
@@ -153,10 +189,9 @@
   letter-spacing: 0.02em;
   text-transform: uppercase;
 }
-.sr-chip-sim, .sr-chip--sim { background: rgba(0, 160, 120, 0.14); color: #0a7a5c; }
-.sr-chip-real, .sr-chip--real { background: var(--sr-accent-soft); color: #c24f00; }
-[data-md-color-scheme="slate"] .sr-chip-sim, .sr-chip--sim { color: #3fd0a4; }
-[data-md-color-scheme="slate"] .sr-chip-real, .sr-chip--real { color: #ff9a55; }
+.sr-chip-sim, .sr-chip--sim { background: var(--sr-accent-soft); color: var(--sr-accent); }
+.sr-chip-real, .sr-chip--real { background: rgba(245, 158, 11, 0.16); color: #b45309; }
+[data-md-color-scheme="slate"] .sr-chip-real, [data-md-color-scheme="slate"] .sr-chip--real { color: #fbbf24; }
 
 /* Catalog filter chips */
 .sr-filter { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0 1rem; }
@@ -202,7 +237,7 @@
 }
 .sr-btn--primary { background: var(--md-default-fg-color); color: var(--md-default-bg-color) !important; }
 .sr-btn:hover { border-color: var(--sr-accent); }
-.sr-btn--primary:hover { background: var(--sr-accent); border-color: var(--sr-accent); color: #fff !important; }
+.sr-btn--primary:hover { background: var(--sr-accent); border-color: var(--sr-accent); color: var(--sr-on-accent) !important; }
 .sr-install {
   display: inline-flex;
   align-items: center;

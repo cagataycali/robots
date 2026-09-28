@@ -32,8 +32,8 @@ function loadMujoco() {
 }
 function loadThree() {
   if (!threePromise) {
-    threePromise = Promise.all([import("three"), import("three/addons/controls/OrbitControls.js")]).then(
-      ([THREE, { OrbitControls }]) => ({ THREE, OrbitControls })
+    threePromise = Promise.all([import("three"), import("three/addons/controls/OrbitControls.js"), import("three/addons/environments/RoomEnvironment.js")]).then(
+      ([THREE, { OrbitControls }, { RoomEnvironment }]) => ({ THREE, OrbitControls, RoomEnvironment })
     );
   }
   return threePromise;
@@ -71,12 +71,16 @@ function scanXml(xml) {
   return { includes, models, files, textures, meshdir, texturedir };
 }
 
-/** Join path segments the way MuJoCo does and collapse "." and "..". */
+/** Join path segments the way MuJoCo does and collapse "." and "..". A ".." with nothing
+ *  left to pop is kept, so a meshdir of "../meshes" seen from "xml/" stays "../meshes" as a
+ *  VFS key and resolves to "meshes" once joined with the scene directory for the download. */
 function joinPath(...parts) {
   const out = [];
   for (const seg of parts.filter(Boolean).join("/").split("/")) {
     if (seg === "" || seg === ".") continue;
-    if (seg === "..") out.pop(); else out.push(seg);
+    if (seg === "..") {
+      if (out.length && out[out.length - 1] !== "..") out.pop(); else out.push("..");
+    } else out.push(seg);
   }
   return out.join("/");
 }
@@ -84,34 +88,34 @@ const dirOf = (p) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 
 const TEMPLATE = `
 <style>
-  :host { display:block; position:relative; font-family: Inter, system-ui, sans-serif; color: var(--sr-fg, #1b1b1b); }
+  :host { display:block; position:relative; font-family: Inter, system-ui, sans-serif; color: var(--sr-fg, #15171a); --_card: var(--sr-card-bg, #fff); --_border: var(--sr-card-border, #e3ded2); --_muted: var(--sr-muted, #6b6760); --_accent: var(--sr-accent, #00c46a); --_btn-bg: var(--sr-btn-bg, #15171a); --_btn-fg: var(--sr-btn-fg, #fff); }
   canvas { display:block; width:100%; height:100%; outline:none; }
   .poster, .status { position:absolute; inset:0; display:grid; place-items:center; text-align:center; padding:1rem; }
   .poster[hidden], .status[hidden], .chrome[hidden] { display:none; }
-  .poster img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.55; filter:saturate(.6); }
-  .poster .card, .status .card { position:relative; background: var(--sr-card-bg, #fff); border:1px solid var(--sr-card-border, #e3ded2); border-radius:12px; padding:.9rem 1.1rem; max-width:22rem; box-shadow: 0 8px 30px rgba(0,0,0,.08); }
-  .poster h4, .status h4 { margin:0 0 .25rem; font-size:.95rem; }
-  .poster p, .status p { margin:0 0 .6rem; font-size:.75rem; color: var(--sr-muted, #6b6760); }
-  button { font: inherit; font-size:.75rem; font-weight:600; padding:.45rem .9rem; border-radius:8px; border:1px solid #1b1b1b; background:#1b1b1b; color:#fff; cursor:pointer; }
-  button:hover { border-color:#ff6a00; background:#ff6a00; color:#fff; }
-  .bar { height:4px; border-radius:2px; background: var(--sr-card-border, #e3ded2); overflow:hidden; margin-top:.5rem; }
-  .bar i { display:block; height:100%; width:0; background:#ff6a00; transition: width 120ms linear; }
+  .poster img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.6; }
+  .poster .card, .status .card { position:relative; background: color-mix(in srgb, var(--_card) 94%, transparent); backdrop-filter: blur(8px); border:1px solid var(--_border); border-radius:12px; padding:.9rem 1.1rem; max-width:22rem; box-shadow: 0 8px 30px rgba(0,0,0,.12); }
+  .poster h4, .status h4 { margin:0 0 .25rem; font-size:.95rem; color: var(--sr-fg, #15171a); }
+  .poster p, .status p { margin:0 0 .6rem; font-size:.75rem; color: var(--_muted); }
+  button { font: inherit; font-size:.75rem; font-weight:600; padding:.45rem .9rem; border-radius:8px; border:1px solid var(--_btn-bg); background: var(--_btn-bg); color: var(--_btn-fg); cursor:pointer; }
+  button:hover { border-color: var(--_accent); background: var(--_accent); color: var(--sr-on-accent, #06210f); }
+  .bar { height:4px; border-radius:2px; background: var(--_border); overflow:hidden; margin-top:.5rem; }
+  .bar i { display:block; height:100%; width:0; background: var(--_accent); transition: width 120ms linear; }
   .chrome { position:absolute; left:0; right:0; bottom:0; display:flex; gap:.4rem; align-items:center; padding:.5rem .6rem; pointer-events:none; }
   .chrome > * { pointer-events:auto; }
   .chrome .spacer { flex:1; }
-  .pill { font-size:.65rem; font-weight:500; padding:.3rem .6rem; border-radius:999px; border:1px solid var(--sr-card-border, #c9c6bf); background: var(--sr-card-bg, #fff); color: inherit; cursor:pointer; }
-  .pill[aria-pressed="true"] { border-color:#ff6a00; color:#ff6a00; }
-  .pill:hover { border-color:#ff6a00; background: var(--sr-card-bg, #fff); color:#ff6a00; }
-  .joints { position:absolute; top:.6rem; right:.6rem; width: 15rem; max-height: calc(100% - 3.6rem); overflow:auto; background: color-mix(in srgb, var(--sr-card-bg, #fff) 88%, transparent); backdrop-filter: blur(6px); border:1px solid var(--sr-card-border, #e3ded2); border-radius:10px; padding:.55rem .7rem .5rem; font-size:.68rem; }
+  .pill { font-size:.65rem; font-weight:500; padding:.3rem .6rem; border-radius:999px; border:1px solid var(--_border); background: color-mix(in srgb, var(--_card) 90%, transparent); backdrop-filter: blur(6px); color: var(--sr-fg, #15171a); cursor:pointer; }
+  .pill[aria-pressed="true"] { border-color: var(--_accent); color: var(--_accent); }
+  .pill:hover { border-color: var(--_accent); background: color-mix(in srgb, var(--_card) 90%, transparent); color: var(--_accent); }
+  .joints { position:absolute; top:.6rem; right:.6rem; width: 13.5rem; max-height: calc(100% - 3.6rem); overflow:auto; background: color-mix(in srgb, var(--_card) 88%, transparent); backdrop-filter: blur(8px); border:1px solid var(--_border); border-radius:10px; padding:.55rem .7rem .5rem; font-size:.68rem; scrollbar-width: thin; }
   .joints[hidden] { display:none; }
-  .joints h5 { margin:0 0 .35rem; font-size:.66rem; letter-spacing:.06em; text-transform:uppercase; color: var(--sr-muted, #6b6760); font-weight:600; }
-  .joint { display:grid; gap:.1rem; margin-bottom:.3rem; }
-  .joint label { display:flex; justify-content:space-between; font-family: "JetBrains Mono", ui-monospace, monospace; font-size:.62rem; }
-  .joint label output { color: var(--sr-muted, #6b6760); }
-  .joint input[type=range] { width:100%; accent-color:#ff6a00; margin:0; height: 1rem; }
-  .code { position:absolute; top:.6rem; left:.6rem; max-width: calc(100% - 17rem); font-family: "JetBrains Mono", ui-monospace, monospace; font-size:.62rem; line-height:1.45; background: color-mix(in srgb, var(--sr-card-bg, #fff) 88%, transparent); backdrop-filter: blur(6px); border:1px solid var(--sr-card-border, #e3ded2); border-radius:10px; padding:.5rem .7rem; white-space:pre; overflow:auto; max-height: 40%; }
+  .joints h5 { margin:0 0 .35rem; font-size:.62rem; letter-spacing:.06em; text-transform:uppercase; color: var(--_muted); font-weight:600; }
+  .joint { display:grid; gap:.05rem; margin-bottom:.25rem; }
+  .joint label { display:flex; justify-content:space-between; font-family: "JetBrains Mono", ui-monospace, monospace; font-size:.6rem; color: var(--sr-fg, #15171a); }
+  .joint label output { color: var(--_muted); }
+  .joint input[type=range] { width:100%; accent-color: var(--_accent); margin:0; height: .9rem; }
+  .code { position:absolute; top:.6rem; left:.6rem; max-width: calc(100% - 15.5rem); font-family: "JetBrains Mono", ui-monospace, monospace; font-size:.62rem; line-height:1.45; color: var(--sr-fg, #15171a); background: color-mix(in srgb, var(--_card) 88%, transparent); backdrop-filter: blur(8px); border:1px solid var(--_border); border-radius:10px; padding:.5rem .7rem; white-space:pre; overflow:auto; max-height: 40%; }
   .code[hidden] { display:none; }
-  .code b { color:#ff6a00; font-weight:600; }
+  .code b { color: var(--_accent); font-weight:600; }
   @media (max-width: 40em) { .joints { width: 11rem; } .code { max-width: calc(100% - 12.5rem); font-size:.56rem; } }
 </style>
 <canvas tabindex="0" aria-label="3D robot viewer"></canvas>
@@ -124,7 +128,7 @@ const TEMPLATE = `
   <button class="pill" data-act="collision" aria-pressed="false" title="Show collision geometry">Collision</button>
   <span class="spacer"></span>
   <button class="pill" data-act="joints" aria-pressed="true">Joints</button>
-  <button class="pill" data-act="code" aria-pressed="true">Code</button>
+  <button class="pill" data-act="code" aria-pressed="false">Code</button>
   <button class="pill" data-act="full" title="Fullscreen">Full</button>
 </div>
 `;
@@ -162,10 +166,14 @@ class RobotViewer extends HTMLElement {
     this.$("canvas").addEventListener("keydown", this._onKey);
     this._ro = new ResizeObserver(() => this._resize());
     this._ro.observe(this);
+    // Material for MkDocs toggles data-md-color-scheme on <body>; recolour the stage when it does.
+    this._mo = new MutationObserver(() => this._applyTheme());
+    this._mo.observe(document.body, { attributes: true, attributeFilter: ["data-md-color-scheme"] });
   }
 
   disconnectedCallback() {
     this._ro?.disconnect();
+    this._mo?.disconnect();
     this.unload();
   }
 
@@ -258,10 +266,11 @@ class RobotViewer extends HTMLElement {
       this.$(".poster").hidden = true;
       this.$(".chrome").hidden = false;
       const narrow = this.clientWidth < 640 || this.hasAttribute("compact");
+      // Joints open on a wide stage; the code card stays behind its pill so the robot is never covered twice.
       this.$(".joints").hidden = narrow;
-      this.$(".code").hidden = narrow;
+      this.$(".code").hidden = true;
       this.$('[data-act="joints"]').setAttribute("aria-pressed", String(!narrow));
-      this.$('[data-act="code"]').setAttribute("aria-pressed", String(!narrow));
+      this.$('[data-act="code"]').setAttribute("aria-pressed", "false");
       this._state = "ready";
       this._loop();
       this.dispatchEvent(new CustomEvent("robot-loaded", { detail: { name: this._entry.name } }));
@@ -313,19 +322,21 @@ class RobotViewer extends HTMLElement {
       bytes += buf.length; done += 1; progress(path.split("/").pop());
       return buf;
     };
-    // MJCF path rules, as MuJoCo applies them: a file named by an <include> or a
-    // <model> is relative to the directory of the file that names it; a mesh or
-    // texture is relative to its own file's directory plus that file's compiler
-    // meshdir/texturedir, and an included file inherits the includer's compiler
+    // MJCF path rules, as MuJoCo applies them. An <include> is textual, so every path
+    // it names (further includes, meshes, textures, its own compiler meshdir) is
+    // relative to the directory of the MAIN model file, not of the included file:
+    // ability_hand's hands/abh_right_large.xml says meshdir="./assets" and means
+    // mujoco_xml/assets. A <model> (attach) file is a model of its own, so it starts
+    // a new root at its directory. An included file inherits the includer's compiler
     // dirs when it declares none. VFS keys are the paths MuJoCo will compute,
-    // relative to the main model file's directory.
+    // relative to the main model file's directory; downloads join the scene dir.
     const sceneDir = dirOf(e.scene);
-    const queue = [{ file: joinPath(e.scene.slice(sceneDir ? sceneDir.length + 1 : 0)), meshdir: null, texturedir: null }];
+    const queue = [{ file: joinPath(e.scene.slice(sceneDir ? sceneDir.length + 1 : 0)), root: "", meshdir: null, texturedir: null }];
     const assets = new Set();
     const seen = new Set();
     let sceneXml = null;
     while (queue.length) {
-      const { file, meshdir: pm, texturedir: pt } = queue.shift();
+      const { file, root, meshdir: pm, texturedir: pt } = queue.shift();
       if (seen.has(file)) continue;
       seen.add(file);
       total += 1;
@@ -334,15 +345,14 @@ class RobotViewer extends HTMLElement {
       // The main file is handed to from_xml_string, which registers it in the VFS
       // itself; adding it here too fails on a scene literally named model.xml (rby1).
       if (sceneXml === null) sceneXml = text; else fetched.set(file, buf);
-      const dir = dirOf(file);
       const s = scanXml(text);
       const meshdir = s.meshdir ?? pm, texturedir = s.texturedir ?? pt;
-      for (const inc of s.includes) queue.push({ file: joinPath(dir, inc), meshdir, texturedir });
-      for (const mdl of s.models) queue.push({ file: joinPath(dir, mdl), meshdir: null, texturedir: null });
-      for (const f of s.files) assets.add(joinPath(dir, meshdir, f));
+      for (const inc of s.includes) queue.push({ file: joinPath(root, inc), root, meshdir, texturedir });
+      for (const mdl of s.models) { const f = joinPath(root, mdl); queue.push({ file: f, root: dirOf(f), meshdir: null, texturedir: null }); }
+      for (const f of s.files) assets.add(joinPath(root, meshdir, f));
       // Textures are not sampled by this viewer, so a 1x1 PNG stands in and the
       // (often multi-megabyte) images are never downloaded.
-      for (const tx of s.textures) { const k = joinPath(dir, texturedir, tx); if (!fetched.has(k)) fetched.set(k, PNG_1X1); }
+      for (const tx of s.textures) { const k = joinPath(root, texturedir, tx); if (!fetched.has(k)) fetched.set(k, PNG_1X1); }
     }
     total = seen.size + assets.size;
     progress("");
@@ -395,14 +405,20 @@ class RobotViewer extends HTMLElement {
     return clean(sceneXml);
   }
 
-  _buildScene({ THREE, OrbitControls }) {
+  _buildScene({ THREE, OrbitControls, RoomEnvironment }) {
     const canvas = this.$("canvas");
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.setClearColor(0x000000, 0); // the stage colour is CSS (--sr-viewer-bg), so it follows the theme
     const scene = new THREE.Scene();
+    // A neutral studio environment: specular sheen is what keeps a black robot readable on a dark stage.
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
     const camera = new THREE.PerspectiveCamera(38, 4 / 3, 0.01, 200);
     camera.up.set(0, 0, 1);
     const controls = new OrbitControls(camera, canvas);
@@ -411,23 +427,30 @@ class RobotViewer extends HTMLElement {
     controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
     controls.maxPolarAngle = Math.PI * 0.52;
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0xb8b0a0, 1.4));
-    const key = new THREE.DirectionalLight(0xffffff, 2.2);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x8a8f99, 0.7);
+    scene.add(hemi);
+    const key = new THREE.DirectionalLight(0xffffff, 2.0);
     key.position.set(1.5, -2, 3);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
     key.shadow.bias = -0.0002;
     key.shadow.normalBias = 0.02;
     scene.add(key);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.6);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.7);
     fill.position.set(-2, 1.5, 1.5);
     scene.add(fill);
+    // Rim light from behind and above: separates dark silhouettes from a dark stage.
+    const rim = new THREE.DirectionalLight(0xdfe8ff, 1.1);
+    rim.position.set(-1, 2.5, 2);
+    scene.add(rim);
+    this._lights = { hemi, key, fill, rim };
 
     const mj = this._mujoco, m = this._model;
     const G = mj.mjtGeom;
     const geomMeshes = [];
     const meshCache = new Map();
-    const planeColor = getComputedStyle(this).getPropertyValue("--sr-viewer-bg").trim() || "#f3f0e9";
+    const theme = this._theme();
+    renderer.toneMappingExposure = theme.exposure;
     for (let g = 0; g < m.ngeom; g++) {
       const type = m.geom_type[g];
       const size = [m.geom_size[3 * g], m.geom_size[3 * g + 1], m.geom_size[3 * g + 2]];
@@ -456,14 +479,17 @@ class RobotViewer extends HTMLElement {
       const matid = m.geom_matid[g];
       if (matid >= 0) rgba = [m.mat_rgba[4 * matid], m.mat_rgba[4 * matid + 1], m.mat_rgba[4 * matid + 2], m.mat_rgba[4 * matid + 3]];
       const isPlane = type === G.mjGEOM_PLANE.value;
-      const material = new THREE.MeshStandardMaterial({
-        color: isPlane ? new THREE.Color(planeColor) : new THREE.Color(rgba[0], rgba[1], rgba[2]),
-        roughness: isPlane ? 0.95 : 0.55,
-        metalness: isPlane ? 0 : 0.08,
-        transparent: rgba[3] < 1,
-        opacity: rgba[3],
-        side: isPlane ? THREE.DoubleSide : THREE.FrontSide,
-      });
+      // The floor only catches the shadow; the stage colour behind it is the page's CSS.
+      const material = isPlane
+        ? new THREE.ShadowMaterial({ color: 0x000000, opacity: theme.shadow, transparent: true, side: THREE.DoubleSide })
+        : new THREE.MeshStandardMaterial({
+            color: new THREE.Color(rgba[0], rgba[1], rgba[2]),
+            roughness: 0.5,
+            metalness: 0.1,
+            envMapIntensity: theme.env,
+            transparent: rgba[3] < 1,
+            opacity: rgba[3],
+          });
       const mesh = new THREE.Mesh(geometry, material);
       mesh.castShadow = !isPlane;
       mesh.receiveShadow = true;
@@ -484,9 +510,20 @@ class RobotViewer extends HTMLElement {
     if (bbox.isEmpty()) bbox.set(new THREE.Vector3(-0.5, -0.5, 0), new THREE.Vector3(0.5, 0.5, 1));
     const center = bbox.getCenter(new THREE.Vector3());
     const radius = Math.max(bbox.getSize(new THREE.Vector3()).length() / 2, 0.15);
-    controls.target.copy(center);
-    camera.position.set(center.x + radius * 1.6, center.y - radius * 1.8, center.z + radius * 0.9);
+    // Fit the bounding sphere to the narrower field of view, then slide the target so the
+    // robot sits left of centre, clear of the joints panel.
+    const w = this.clientWidth || 4, h = this.clientHeight || 3;
+    camera.aspect = w / h;
+    const vfov = THREE.MathUtils.degToRad(camera.fov);
+    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
+    const dist = (radius / Math.sin(Math.min(vfov, hfov) / 2)) * (this.hasAttribute("compact") ? 0.92 : 1.08);
+    const dir = new THREE.Vector3(1.0, -1.25, 0.55).normalize();
+    camera.position.copy(center).addScaledVector(dir, dist);
     camera.near = radius / 100; camera.far = radius * 100; camera.updateProjectionMatrix();
+    const right = new THREE.Vector3().crossVectors(dir.clone().negate(), camera.up).normalize();
+    const shift = right.multiplyScalar(w >= 640 && !this.hasAttribute("compact") ? radius * 0.45 : 0);
+    controls.target.copy(center).add(shift);
+    camera.position.add(shift);
     key.shadow.camera.left = key.shadow.camera.bottom = -radius * 1.6;
     key.shadow.camera.right = key.shadow.camera.top = radius * 1.6;
     key.shadow.camera.near = radius * 0.5; key.shadow.camera.far = radius * 8;
@@ -496,15 +533,55 @@ class RobotViewer extends HTMLElement {
     controls.minDistance = radius * 0.5; controls.maxDistance = radius * 12;
     // A faint grid on the floor for depth; hidden when the model has no ground plane.
     if (geomMeshes.some((x) => x.userData.plane)) {
-      const grid = new THREE.GridHelper(Math.max(2, radius * 8), Math.max(8, Math.round(radius * 8 / 0.1)), 0xd8d2c4, 0xe6e1d5);
+      const grid = new THREE.GridHelper(Math.max(2, radius * 8), Math.max(8, Math.round(radius * 8 / 0.1)), theme.gridMajor, theme.gridMinor);
       grid.rotation.x = Math.PI / 2;
       grid.position.z = 0.0015;
-      grid.material.transparent = true; grid.material.opacity = 0.7;
+      grid.material.transparent = true; grid.material.opacity = theme.gridOpacity;
       scene.add(grid);
       this._grid = grid;
     }
     this._applyVisibility();
     this._resize();
+  }
+
+  /** Stage colours from the page theme (CSS custom properties on the host), with paper defaults. */
+  _theme() {
+    const cs = getComputedStyle(this);
+    const v = (name, fallback) => (cs.getPropertyValue(name).trim() || fallback);
+    const dark = v("--sr-scheme", "paper") === "dark";
+    return {
+      dark,
+      gridMajor: v("--sr-grid-major", dark ? "#3d454f" : "#d6d1c5"),
+      gridMinor: v("--sr-grid-minor", dark ? "#2a2f36" : "#e6e1d6"),
+      gridOpacity: dark ? 1.0 : 0.7,
+      shadow: dark ? 0.55 : 0.22,
+      env: dark ? 1.25 : 0.85,
+      exposure: dark ? 1.05 : 0.88,
+    };
+  }
+
+  /** Re-read the theme after a palette toggle and recolour the grid, floor shadow and reflections. */
+  _applyTheme() {
+    if (!this._three) return;
+    const theme = this._theme();
+    const { THREE } = this._three;
+    this._three.renderer.toneMappingExposure = theme.exposure;
+    if (this._grid) {
+      const colors = this._grid.geometry.attributes.color;
+      const major = new THREE.Color(theme.gridMajor), minor = new THREE.Color(theme.gridMinor);
+      // GridHelper stores a colour per vertex: the centre lines get the major colour, every other line the minor one.
+      const n = colors.count, lines = n / 4; // two lines (four vertices) per grid step in each direction
+      for (let i = 0; i < n; i++) {
+        const c = (Math.floor(i / 2) === Math.floor(lines / 2) || Math.floor(i / 2) === Math.floor(lines / 2) + lines) ? major : minor;
+        colors.setXYZ(i, c.r, c.g, c.b);
+      }
+      colors.needsUpdate = true;
+      this._grid.material.opacity = theme.gridOpacity;
+    }
+    for (const mesh of this._three.geomMeshes) {
+      if (mesh.userData.plane) mesh.material.opacity = theme.shadow;
+      else if (mesh.material.envMapIntensity !== undefined) mesh.material.envMapIntensity = theme.env;
+    }
   }
 
   _meshGeometry(THREE, id) {
