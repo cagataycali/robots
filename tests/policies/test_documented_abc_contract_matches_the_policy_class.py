@@ -65,7 +65,12 @@ def _fence_members() -> set[str]:
 
 
 def _fence_abstract() -> set[str]:
-    return set(re.findall(r"@abstractmethod\s*\n(?:\s*@\w+\s*\n)*\s*(?:async\s+)?def\s+(\w+)", _contract_fence()))
+    # One line per decorator, matched without overlapping whitespace classes (py/redos).
+    return set(
+        re.findall(
+            r"@abstractmethod[ \t]*\n(?:[ \t]*@\w+[^\n]*\n)*[ \t]*(?:async[ \t]+)?def[ \t]+(\w+)", _contract_fence()
+        )
+    )
 
 
 def _show_if_no_docstring() -> bool:
