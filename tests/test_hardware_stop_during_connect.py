@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -286,8 +286,25 @@ class TestTheRequestIsLatched:
         rig.robot.stop_task()
         busy.set()
 
-        assert rig.robot._task_state.task_future.cancelled()
+        assert rig.robot._task_state.task_future is None, "a won cancel forgets the future it cancelled"
         assert rig.robot._claim_task("place the cube") is None, "the next task must be admitted"
+        # A stop against the live claim must not re-cancel the dead future
+        # (``cancel()`` on a cancelled future returns True) and free the bus.
+        rig.robot.stop_task()
+        assert rig.robot._claim_task("third task") is not None, "the live claim must still hold the bus"
+        rig.robot._executor.shutdown(wait=True)
+
+    def test_a_new_claim_does_not_inherit_the_previous_tasks_future(self, rig):
+        # A predecessor cancelled while queued, then a synchronous ``execute``
+        # claims the bus without ever writing ``task_future``.
+        stale: Future[None] = Future()
+        stale.cancel()
+        rig.robot._task_state.task_future = stale
+
+        assert rig.robot._claim_task("pick the cube") is None
+        rig.robot.stop_task()
+
+        assert rig.robot._claim_task("place the cube") is not None, "a stale future must not release a live claim"
         rig.robot._executor.shutdown(wait=True)
 
 

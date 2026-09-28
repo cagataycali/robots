@@ -2852,6 +2852,10 @@ class Robot(TeleopMixin, AgentTool):
             # rollout instead erased a stop that landed before the executor
             # picked the job up, and the task then ran to completion.
             self._stop_requested.clear()
+            # A predecessor's future (possibly cancelled - and ``cancel()`` on
+            # a cancelled future returns True again) must never be read by
+            # ``stop_task`` as this task's, or it would release this claim.
+            self._task_state.task_future = None
             self._task_state.instruction = instruction
             self._task_state.status = TaskStatus.CONNECTING
             self._task_state.start_mono = time.monotonic()
@@ -3573,7 +3577,9 @@ class Robot(TeleopMixin, AgentTool):
         # A job still queued behind the single worker is cancelled outright,
         # so ``_drive_claimed_task`` - the claim's only releaser - never runs;
         # release the claim here or every later task is refused as running.
-        if self._task_state.task_future and self._task_state.task_future.cancel():
+        future = self._task_state.task_future
+        if future is not None and future.cancel():
+            self._task_state.task_future = None
             self._release_task()
 
         logger.info(f"Task stopped: {self._task_state.instruction}")
