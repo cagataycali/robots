@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-#: The line mesh.core writes when a probe degrades (core.py ``_warn_read_state_once``).
+#: The line mesh.core writes when a probe degrades (``strands_robots.mesh.core._warn_read_state_once``).
 _PROBE_LINE = re.compile(r"state probe '?\"?hw_joints'?\"?.*?(failed|still failing)", re.I)
 
 # : The recovery line mesh/core emits when the probe works again.

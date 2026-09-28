@@ -9,7 +9,7 @@ the SDK default (/dev/ttyACM0, absent on macOS) produce a confusing error.
 
 Neither SDK tool raises tool_context.interrupt, so the dashboard's
 agent_hitl.MOTION_ACTIONS layer is their ONLY human gate -- registration adds
-those rows (see agent_hitl.py); this module only owns bus safety.
+those rows (see :mod:`strands_robots.dashboard.agent_hitl`); this module only owns bus safety.
 """
 
 from __future__ import annotations

@@ -59,7 +59,7 @@ def build_info(root: str | None = None) -> dict[str, Any]:
     """Cached stamp for this process. Cached because it cannot change without a restart -
     that immutability IS the fact being reported, and /api/health is polled constantly."""
     here = Path(__file__).resolve()
-    # strands_robots/dashboard/build_info.py -> repo root is three parents up.
+    # this module (``strands_robots.dashboard.build_info``) -> repo root is three parents up.
     default_root = here.parents[2]
     return stamp(
         commit=read_commit(root if root is not None else default_root),

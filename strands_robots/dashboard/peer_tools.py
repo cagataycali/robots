@@ -39,7 +39,7 @@ KIND_SKIP = "skip"
 
 #: Sim actions a ``sim_call`` rail refuses: rollouts must ride execute/start, whose
 #: provider/HF-repo/host allowlists would otherwise be bypassed. The proxy
-#: spec must not advertise what the wire will refuse. main's mesh/security.py
+#: spec must not advertise what the wire will refuse. main's ``strands_robots.mesh.security``
 #: has no ``sim_call`` action yet, so the list lives here until the rail lands
 #: and exports it (then import it from there so the two cannot drift).
 SIM_CALL_BLOCKED: frozenset[str] = frozenset({"run_policy", "start_policy", "replay_episode", "eval_policy"})
@@ -48,8 +48,8 @@ _SIM_TYPES = ("sim", "simulation", "mujoco")
 
 #: Peer types that coordinate rather than move: no tool at all. Read off
 #: ``robot_type`` because that is the field the WIRE carries -
-#: ``mesh/core.py`` builds presence as ``{"robot_id", "robot_type": peer_type,
-#: "hostname", "timestamp", ...}`` (core.py:1008) and
+#: ``strands_robots.mesh.core`` builds presence as ``{"robot_id", "robot_type": peer_type,
+#: "hostname", "timestamp", ...}`` (``strands_robots.mesh.core``, the presence builder) and
 #: ``robot_mesh._gateway_mesh()`` joins with ``peer_type="gateway"``, as does
 #: ``mesh_bridge``'s safety peer. Nothing publishes a ``kind`` field: reading
 #: ``presence["kind"]`` skipped nothing at all, so throwaway ``gateway-*``
@@ -70,7 +70,7 @@ def _is_coordinator(peer_id: str, peer: Mapping[str, Any], presence: Mapping[str
     type field still cannot mint a motion tool for something with no hardware:
     the published ``robot_type``, the peer id's own prefix, and the topic
     advertisement (a robot-less ``Mesh`` announces ``topics == ["health"]``
-    only - core.py appends "health" unconditionally and every other topic
+    only - ``strands_robots.mesh.core`` appends "health" unconditionally and every other topic
     needs a hardware attribute).
     """
     robot_type = str(presence.get("robot_type") or "").strip().lower()

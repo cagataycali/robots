@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse
 from strands_robots.dashboard import access, record_crash, record_joints
 from strands_robots.dashboard.dataset_check import _as_int, record_target_verdict
 from strands_robots.dashboard.record_worker import RecordWorker, hardware_backend
-from strands_robots.utils import require_optional
+from strands_robots.utils import refusal_str, require_optional
 
 logger = logging.getLogger(__name__)
 
@@ -506,7 +506,7 @@ def _with_lost_arms(detail: Any, lost: Sequence[str]) -> Any:
         merged["arms_not_restored"] = list(lost)
         merged["hint"] = f"{detail['hint']} {note}" if isinstance(detail.get("hint"), str) else note
         return merged
-    return f"{detail} - {note}" if detail else note
+    return f"{refusal_str(detail)} - {note}" if detail else note
 
 
 def build_router(

@@ -23,7 +23,7 @@ _MESH_ENV: tuple[tuple[str, str], ...] = (
     ("STRANDS_MESH_CAMERA_HZ", "5"),
 )
 
-#: Default zenoh port, mirroring ``mesh/session.py``.
+#: Default zenoh port, mirroring ``strands_robots.mesh.session``.
 DEFAULT_HUB_PORT = 7447
 
 _LIVE_KEYS: frozenset[str] = frozenset({"STRANDS_MESH_CAMERA_HZ", "STRANDS_MESH_MULTICAST"})

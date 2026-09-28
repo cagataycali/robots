@@ -449,7 +449,7 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
             patch["agent"]["system_prompt"] = None
 
     # Endpoint schemes: mtls refuses non-TLS endpoints loudly at session open
-    # (mesh/session.py::_validate_endpoint_schemes). Catch it at the form.
+    # (``strands_robots.mesh.session._validate_endpoint_schemes``). Catch it at the form.
     mesh_patch = patch.get("mesh") or {}
     if mesh_patch.get("connect") or mesh_patch.get("listen"):
         local_dev = os.getenv("STRANDS_MESH_LOCAL_DEV", "") not in ("", "0", "false")

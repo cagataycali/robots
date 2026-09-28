@@ -23,7 +23,7 @@ from typing import Any, cast
 
 from strands_robots.dashboard import bus_claim
 
-from ..utils import non_negative_whole_number_error
+from ..utils import non_negative_whole_number_error, refusal_repr, refusal_str
 from . import arm_roles, camera_liveness
 from . import cameras as camera_facts
 
@@ -31,8 +31,28 @@ logger = logging.getLogger(__name__)
 
 LOG_TAIL_LINES = 200  # ring buffer per managed robot
 
+
+def _settle_seconds(raw: str | None, default: float = 5.0) -> float:
+    """``STRANDS_DASHBOARD_SPAWN_SETTLE_S`` as a finite non-negative span, else *default*.
+
+    ``float`` accepts ``"nan"``, ``"inf"`` and ``"1e999"``; a spawn that waits
+    ``nan`` seconds answers before the child has said anything, and one that
+    waits ``inf`` never answers. Tested through the shared
+    :func:`strands_robots.utils.finite_number_error` domain.
+    """
+    from strands_robots.utils import finite_number_error
+
+    try:
+        value = float(raw) if raw else default
+    except ValueError:
+        return default
+    if finite_number_error(value, "STRANDS_DASHBOARD_SPAWN_SETTLE_S", "dashboard") is not None or value < 0:
+        return default
+    return value
+
+
 # : How long /api/devices/spawn watches a new child before answering.
-SPAWN_SETTLE_S = float(os.environ.get("STRANDS_DASHBOARD_SPAWN_SETTLE_S", "5") or 5)
+SPAWN_SETTLE_S = _settle_seconds(os.environ.get("STRANDS_DASHBOARD_SPAWN_SETTLE_S"))
 
 # Where USB device profiles live.
 DEFAULT_PROFILES_PATH = os.path.join(Path.home(), ".strands_dashboard", "profiles.json")
@@ -41,11 +61,9 @@ DEFAULT_PROFILES_PATH = os.path.join(Path.home(), ".strands_dashboard", "profile
 AUTOSPAWN_POLL_S = 2.0
 AUTOSPAWN_MISSING_POLLS = 2
 
-# VIDs seen on servo-bus USB adapters. Keyword matching (feetech/dynamixel/...)
-# still applies; VIDs catch the generic-description boards.
-SERVO_VIDS = {0x1A86, 0x0403}
-SERVO_KEYWORDS = ("feetech", "dynamixel", "sts3215", "xl430", "xl330", "usb single serial", "ch340", "ch343")
-EXCLUDE_KEYWORDS = ("bluetooth", "debug", "internal", "apple", "modem-phone")
+# Which serial ports are a servo bus is decided in one place,
+# ``strands_robots._serial_discovery.matches_servo_bus`` (vendor ids, name
+# keywords, and the disqualifiers), so the dashboard and the CLI cannot drift.
 
 
 @dataclass
@@ -190,16 +208,11 @@ def scan_serial_ports() -> list[dict[str, Any]]:
         import serial.tools.list_ports
     except ImportError:
         return []
+    from strands_robots._serial_discovery import WCH_CH34X_VID, matches_servo_bus
+
     out: list[dict[str, Any]] = []
     for p in serial.tools.list_ports.comports():
-        desc = (p.description or "").lower()
-        manu = (getattr(p, "manufacturer", None) or "").lower()
-        text = desc + " " + manu
-        if any(k in text for k in EXCLUDE_KEYWORDS):
-            continue
-        vid_match = p.vid in SERVO_VIDS if p.vid else False
-        kw_match = any(k in text for k in SERVO_KEYWORDS)
-        if not (vid_match or kw_match):
+        if not matches_servo_bus(p):
             continue
         # prefer /dev/cu.* on macOS (call-up device, non-blocking open)
         device = p.device
@@ -214,7 +227,9 @@ def scan_serial_ports() -> list[dict[str, Any]]:
                 "vid": f"{p.vid:04x}" if p.vid else None,
                 "pid": f"{p.pid:04x}" if p.pid else None,
                 "serial_number": getattr(p, "serial_number", None),
-                "likely_robot": "so101" if (p.vid == 0x1A86) else None,
+                # The WCH CH34x adapter (the first id the owner lists) is what
+                # ships on the SO-10x arms; FTDI boards could be any bus.
+                "likely_robot": "so101" if (p.vid == WCH_CH34X_VID) else None,
             }
         )
     return out
@@ -947,7 +962,7 @@ def validate_peer_id(peer_id: Any) -> str | None:
         return f"peer_id must be a string, got {type(peer_id).__name__}"
     if not _PEER_ID_RE.match(peer_id):
         return (
-            f"peer_id {peer_id!r} refused: it becomes a zenoh key segment, so it must "
+            f"peer_id {refusal_repr(peer_id)} refused: it becomes a zenoh key segment, so it must "
             f"match [A-Za-z0-9._:-]{{1,64}} - '*' or '/' there rewrites the fleet's "
             f"key space rather than naming a peer"
         )
@@ -997,7 +1012,7 @@ def validate_replay(repo_id: Any, episode: Any, root: Any = None, speed: Any = 1
     except (TypeError, ValueError):
         return {"error": f"speed must be a number, got {type(speed).__name__}"}
     if not math.isfinite(speed_f) or speed_f <= 0:
-        return {"error": f"speed must be a finite positive number (got {speed})"}
+        return {"error": f"speed must be a finite positive number (got {refusal_str(speed)})"}
     if not isinstance(repo_id, str) or not repo_id.strip():
         return {"error": "repo_id required"}
     rid = repo_id.strip()
@@ -1092,7 +1107,7 @@ def camera_option_value_problem(
     # test).
     hint = f" Did you mean {close[0]!r}?" if close and close[0] != given else ""
     return (
-        f"{option}={value!r} is not one of {', '.join(allowed)}.{hint} "
+        f"{option}={refusal_repr(value)} is not one of {', '.join(allowed)}.{hint} "
         f"lerobot refuses the spelling itself, so the child would die at connect"
     )
 
