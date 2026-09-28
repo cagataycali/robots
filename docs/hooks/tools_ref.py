@@ -6,8 +6,8 @@ name, module, first docstring line, and the action values it dispatches on.
 
 Action values come from the source in this order: a ``Literal[...]`` annotation
 on the ``action`` parameter, a module constant named ``_ACTIONS`` (tuple, set or
-dict of string keys), then every ``action == "x"`` / ``action in {...}``
-comparison in the function body. A tool without an ``action`` parameter shows
+dict of string keys) when the body keys it by ``action``, then every
+``action == "x"`` / ``action in {...}`` comparison in the function body. A tool without an ``action`` parameter shows
 its parameter names instead.
 
 Filesystem only: ``ast`` over the source, no ``strands_robots`` import, so the
@@ -186,11 +186,33 @@ def _actions(fn: ast.FunctionDef | ast.AsyncFunctionDef, constants: dict[str, as
     values = _literal_values(action.annotation)
     if values:
         return values
-    if "_ACTIONS" in constants:
+    if "_ACTIONS" in constants and _body_keys_by(fn, "action", "_ACTIONS"):
         values = _resolve(constants["_ACTIONS"], constants)
         if values:
             return values
     return _body_actions(fn, constants)
+
+
+def _body_keys_by(fn: ast.FunctionDef | ast.AsyncFunctionDef, param: str, constant: str) -> bool:
+    """Whether the body relates ``param`` to ``constant``: ``param in constant``, ``constant[param]``, ``constant.get(param)``.
+
+    A module constant named ``_ACTIONS`` is only the action vocabulary when the
+    function keys it by ``action``; a verb table keyed by tool name (g1_actions.py)
+    shares the name and must not be published as the values ``action`` accepts.
+    """
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) and node.left.id == param:
+            if any(isinstance(c, ast.Name) and c.id == constant for c in node.comparators):
+                return True
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == constant:
+            if isinstance(node.slice, ast.Name) and node.slice.id == param:
+                return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get":
+            receiver = node.func.value
+            if isinstance(receiver, ast.Name) and receiver.id == constant and node.args:
+                if isinstance(node.args[0], ast.Name) and node.args[0].id == param:
+                    return True
+    return False
 
 
 def _params(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[str, ...]:
