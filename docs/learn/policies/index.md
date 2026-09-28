@@ -4,15 +4,15 @@ description: The Policy contract, the provider matrix generated from the registr
 
 # Policies
 
-By the end of this page you can name every provider the package ships, build one with `create_policy`, write your own in twenty lines, and swap providers by changing one string. A policy turns an observation into joint targets; the robot, sim or real, does not know which provider produced them.
+By the end of this page you can name every provider the package ships, build one with `create_policy`, write your own in twenty lines, and swap providers by changing one string. A policy turns an observation into joint targets; the robot never knows which provider produced them.
 
 ## The contract
 
 ```python title="strands_robots/policies/base.py (abridged)"
 class Policy(ABC):
-    control_frequency: float | None = None          # set by the runtime before the loop
-    rtc_observed_delay_steps: int | None = None      # set by the runtime before each call
-    reads_instruction: ClassVar[bool] = True         # False = the words never shape the actions
+    control_frequency: float | None = None          # runtime sets it before the loop
+    rtc_observed_delay_steps: int | None = None      # runtime sets it before each call
+    reads_instruction: ClassVar[bool] = True         # False: the words never shape the actions
 
     @abstractmethod
     async def get_actions(self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any) -> list[dict[str, Any]]: ...
@@ -31,27 +31,27 @@ class Policy(ABC):
     def requires_images(self) -> bool: ...            # default True; planners return False
 
     @property
-    def required_bodies(self) -> tuple[str, ...]: ... # default (); a whole-body tracker names its anchor link
+    def required_bodies(self) -> tuple[str, ...]: ... # default (); a whole-body tracker names its anchor
 
     @property
-    def children(self) -> tuple[Policy, ...]: ...     # default (); a wrapper lists the policies it drives
+    def children(self) -> tuple[Policy, ...]: ...     # default (); a wrapper lists what it drives
 
     @property
     @abstractmethod
     def provider_name(self) -> str: ...
 ```
 
-`get_actions` returns one action dict per control tick: joint name to a python `float` (or `list[float]` for a grouped actuator), never an array. The list is the action chunk; the runtime executes it at `control_frequency` and asks again.
+`get_actions` returns one action dict per control tick: joint name to a python `float` (or `list[float]` for a grouped actuator), never an array. The list is the action chunk; the runtime plays it at `control_frequency` and asks again.
 
-Non-VLA providers read their goal from well-known keyword arguments instead of the instruction string: `target_pose` (`[x, y, z, qw, qx, qy, qz]`), `target_joints` (`{name: radians}`), `target_velocity` (`[vx, vy, omega]`), and `world_update` for collision-aware planners. Every provider must ignore keywords it does not know, so one `policy_kwargs` dict can travel across providers.
+Non-VLA providers read their goal from well-known keywords instead of the instruction: `target_pose` (`[x, y, z, qw, qx, qy, qz]`), `target_joints` (`{name: radians}`), `target_velocity` (`[vx, vy, omega]`), and `world_update` for collision-aware planners. Every provider ignores keywords it does not know, so one `policy_kwargs` dict travels across providers.
 
 ## Providers
 
-The table is generated from `strands_robots/registry/policies.json` and `pyproject.toml` at build time. "Also spelled" lists the shorthands and aliases `create_policy` accepts.
+Generated from `strands_robots/registry/policies.json` and `pyproject.toml` at build time. "Also spelled" lists the shorthands `create_policy` accepts.
 
 {{providers:table}}
 
-`composite` and `persistent` are not in the registry but resolve by module name: `CompositePolicy` merges two policies over disjoint joint groups (legs from `wbc`, arms from a manipulation policy); `PersistentPolicy` keeps a provider warm in a worker process.
+`composite` and `persistent` are not in the registry but resolve by module name: `CompositePolicy` merges two policies over disjoint joint groups (legs from `wbc`, arms from a manipulation policy); `PersistentPolicy` keeps a provider warm in a worker.
 
 ## Build one
 
@@ -72,7 +72,7 @@ You should see:
 8 {'shoulder_pan': 0.0, 'elbow_flex': 0.4330127018922193}
 ```
 
-`create_policy` also takes smart strings: a HuggingFace model id resolves to `lerobot_local` (or `groot` / `cosmos3` for the `nvidia` org), `zmq://host:port` to `groot`, `ws://host:port` to `remote`. A misspelled keyword is a `TypeError` before anything downloads. `lerobot_local` and `kimodo` load models with `trust_remote_code=True`; they refuse to build until `STRANDS_TRUST_REMOTE_CODE=1` is set, with refusal code `TRUST_REMOTE_CODE_REQUIRED`.
+`create_policy` also takes smart strings: a HuggingFace model id resolves to `lerobot_local` (or `groot` / `cosmos3` for the `nvidia` org), `zmq://host:port` to `groot`, `ws://host:port` to [`remote`](remote.md). A misspelled keyword is a `TypeError` before anything downloads. `lerobot_local` and `kimodo` load models with `trust_remote_code=True` and refuse to build until `STRANDS_TRUST_REMOTE_CODE=1` is set (refusal code `TRUST_REMOTE_CODE_REQUIRED`).
 
 ## Run one in the simulator
 
@@ -100,11 +100,11 @@ MockPolicy | wave
 Note: MockPolicy does not read the instruction. Its actions - a test motion on every joint - were commanded to the robot whatever the task says; nothing above means the task was performed.
 ```
 
-The last line comes from `reads_instruction = False`: a policy that never reads the words says so in every task report, so an agent cannot relay a test motion as a completed task.
+The last line comes from `reads_instruction = False`: a policy that never reads the words says so in every task report, so an agent cannot relay a test motion as a done task.
 
 ## Swap the policy, keep the robot
 
-Nothing in the robot or scene changes between providers. Register your class once and it is one more string.
+Nothing in the robot or scene changes between providers. Register your class once; it is one more string.
 
 ```python
 from typing import Any
@@ -156,7 +156,7 @@ mock success 0.493
 freeze success 0.501
 ```
 
-The same swap works on hardware: `Robot("so101").run_policy(...)` takes the same `policy_provider` and `policy_config`. See [Agents](../agents.md) for the approval gate a real robot adds in front of it.
+The same swap works on hardware: `Robot("so101", mode="real").start_task(instruction, policy_provider=...)` takes the same provider string, and `run_policy(create_policy(...))` a built object. See [Agents](../agents.md) for the approval gate a real robot adds.
 
 ## Pick a provider
 
