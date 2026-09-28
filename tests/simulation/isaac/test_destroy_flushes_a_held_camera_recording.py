@@ -160,3 +160,22 @@ class TestEncoderAbsentNamesTheLoss:
             held_recording.destroy()
 
         assert list(tmp_path.glob("*.mp4")) == [], "nothing is encoded without an encoder"
+
+
+class TestAFailingEncoderDoesNotAbortTeardown:
+    """An encoder that dies mid-write is warned about; the world is still torn down."""
+
+    @pytest.mark.parametrize(
+        "error",
+        [RuntimeError("no ffmpeg"), ValueError("bad frame"), OSError("[Errno 32] Broken pipe")],
+        ids=lambda e: type(e).__name__,
+    )
+    def test_destroy_returns_success_and_clears_the_world(self, held_recording, monkeypatch, error) -> None:
+        def failing_encode(*_args, **_kwargs):
+            raise error
+
+        monkeypatch.setattr("strands_robots.rendering.video.encode_clip", failing_encode)
+
+        assert held_recording.destroy()["status"] == "success"
+        assert held_recording._world is None and not held_recording._world_created
+        assert held_recording._cams_rec_state is None

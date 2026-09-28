@@ -1994,7 +1994,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             try:
                 encode_clip(frames, state["paths"][cam], fps=state["fps"])
                 encoded[cam] = len(frames)
-            except (RuntimeError, ValueError) as e:
+            except (RuntimeError, ValueError, OSError) as e:
+                # OSError is how imageio-ffmpeg reports an encoder process that
+                # died mid-write; teardown must still run past it.
                 logger.warning(
                     "destroy(): flushing camera recording %r failed for %r -> %s: %s",
                     state["name"],
