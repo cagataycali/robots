@@ -90,7 +90,7 @@ export function calibrationVerdict(
       // should load is a decision about a physical arm's limits, not a typo fix.
       note:
         `${exact.id} was calibrated as a teleoperator (${exact.deviceType}/${exact.model}), and a ` +
-        'robot in real mode loads robots/<type>/<id>.json — lerobot will refuse with "has no ' +
+        'robot in real mode loads robots/{type}/{id}.json — lerobot will refuse with "has no ' +
         'calibration registered" and the arm will report presence with no joints' +
         (usable.length
           ? ` — ids calibrated as robots here: ${usable.join(', ')}`

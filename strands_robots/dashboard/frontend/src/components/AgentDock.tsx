@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useVoice } from '../lib/useVoice'
-import { api, wsUrl, authRefusedRecently } from '../lib/endpoints'
+import { api, wsUrl, authRefusedRecently, noteAuthRefusal } from '../lib/endpoints'
 import { useConfig } from '../lib/useConfig'
 import { sendFailureVerdict, interruptionNotice, bubbleLabel } from '../lib/chatDelivery'
 import { turnAnnouncement } from '../lib/agentAnnounce'
@@ -169,11 +169,15 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
       // the transcript is the product here, so incoming activity reopens it.
       setOpen(true)
     }
-    ws.onclose = (e) => {
+    ws.onclose = ev => {
       wsRef.current = null
       setBusy(false)
+      // 4401 is the dashboard's own "sign in required" close: it goes to the
+      // same door an HTTP 401 opens (AuthGate re-verifies and shows the login),
+      // instead of only a notice in the transcript.
+      if (ev.code === 4401) noteAuthRefusal(401)
       const verdict = interruptionNotice({
-        code: e.code,
+        code: ev.code,
         wasBusy: busyRef.current,
         partialChars: lastAgentRef.current.chars,
         runningTools: lastAgentRef.current.running,

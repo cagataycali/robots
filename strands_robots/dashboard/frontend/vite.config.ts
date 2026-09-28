@@ -24,14 +24,26 @@ export default defineConfig({
     sourcemap: false,
     // Fixed names, so a rebuild overwrites the previous bundle instead of
     // leaving a hashed sibling behind in a directory the build does not empty.
+    // Not minified: the repository grades the shipped `app.js` by reading it
+    // (tests/test_dashboard_static_renders_data_as_text.py and friends), so the
+    // text under `static/` has to be the text a reviewer can read.
+    minify: false,
     rollupOptions: {
       output: {
-        entryFileNames: 'assets/index.js',
-        chunkFileNames: 'assets/[name].js',
+        // Our code is `static/app.js`; third-party code (react, react-dom,
+        // scheduler) is `static/vendor/react.js`, beside the three.js files the
+        // vendor NOTICE already covers. The split is what lets the markup-sink
+        // scan under `static/` read only the code this repository wrote.
+        entryFileNames: 'app.js',
+        chunkFileNames: 'vendor/[name].js',
         assetFileNames: 'assets/[name][extname]',
+        manualChunks(id) {
+          if (id.includes('node_modules')) return 'react'
+          return undefined
+        },
       },
     },
-    chunkSizeWarningLimit: 600,
+    chunkSizeWarningLimit: 1200,
   },
   server: {
     proxy: {

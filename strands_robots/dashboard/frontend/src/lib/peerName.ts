@@ -57,7 +57,7 @@ export function peerNameField(
     return {
       value: null,
       problem: null,
-      note: `unnamed: the server will call it ${family}-${mode}-<clock> — name it now if you want to recognise it later, a peer cannot be renamed while it runs`,
+      note: `unnamed: the server will call it ${family}-${mode}-{clock} — name it now if you want to recognise it later, a peer cannot be renamed while it runs`,
       suggestion: null,
     }
   }
