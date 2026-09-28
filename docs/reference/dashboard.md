@@ -16,7 +16,7 @@ a passkey guards it.
 
 ## The first minute
 
-1. **This machine, no passkey yet.** A browser on the same machine, at
+1. **This machine, no passkey yet.** A browser on this machine, at
    `http://127.0.0.1:8090` or `localhost`, is served; every other caller - a
    proxy or `ssh -L` forward, a foreign `Host` (DNS rebinding), another origin -
    is refused, because none of those is presence at the machine.
@@ -64,16 +64,15 @@ fires both.
 
 ## The Agent tab
 
-Type a sentence; the agent answers with tool calls you can read. Its tools are
+Type a sentence; the agent answers with readable tool calls. Its tools are
 the simulations - list, start, read joints, move, reset, stop, e-stop - through
 the safety object the buttons use, so a latched e-stop refuses the agent as it
-refuses a click, and stopping is never refused.
+refuses a click.
 
 Moving a robot pauses first: `sim_set_joints` raises an interrupt, the page shows
 what a yes would move (`2 - 1.000 rad`), and *Allow once*, *Allow for this
-conversation* or *Refuse* resumes the turn. A conversation-wide yes lives in the
-socket and dies with it; every answer is audited. The model is `STRANDS_MODEL_ID`,
-and the page shows which.
+conversation* or *Refuse* resumes the turn. A conversation-wide yes dies with the
+socket; every answer is audited. The model is `STRANDS_MODEL_ID`.
 
 ## The e-stop
 
@@ -82,10 +81,10 @@ rendering, so the robot stays on screen where it stopped, and the lockout latche
 `locked`. While latched, any route that would move a sim answers `423` - a create
 that overlapped the e-stop and a command already queued included; stopping never
 does. `/api/safety/resume` lifts the lockout only to `unknown`: the next command a
-session accepts is the proof. The same button reads RESUME while latched; its
-label and its action are both read from the lockout the server last reported, so
-a page opened under an e-stop engaged elsewhere shows RESUME. A refused request
-is shown as a message, not painted as an e-stop.
+session accepts is the proof. The same button reads RESUME while latched; label
+and action both come from the lockout the server last reported, so a page opened
+under an e-stop engaged elsewhere shows RESUME. A refused request is a message,
+not painted as an e-stop.
 
 ## The twin follows the real arm
 
@@ -100,7 +99,7 @@ as you left it, and the footer says so. Angles are `(ticks - 2048) · 2π / 4096
 with no calibration applied, labelled `estimate` in the snapshot's `bus` field
 with the raw ticks, read rate and age. A bus that stops answering shows
 **stale**, then **error** with the reason; a pose the model refuses shows
-**refused** with the joint named and clears when the arm comes back in range. A
+**refused** with the joint named and clears when the arm is back in range. A
 port that will not open is a `502` naming it, and nothing is left holding it.
 
 ## Configuration
