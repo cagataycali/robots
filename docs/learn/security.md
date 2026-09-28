@@ -50,6 +50,8 @@ Loopback by default; a non-loopback bind is refused without a passkey or a stati
 
 `~/.strands_robots/mesh_audit.jsonl` (`STRANDS_MESH_AUDIT_DIR`, mode `0600`) is the one trail: every operator verdict (`llm_tool_action`), every e-stop and resume event, every command refused under lockout, every mesh tool refusal. Rows carry a monotonic `seq` and, with `STRANDS_MESH_AUDIT_PSK`, an HMAC-SHA256 `sig`; a degraded write says so in `sig` (`PSK_DEGRADED`, `SIGN_FAILED`, ...) instead of leaving a hole, and `verify_audit_integrity()` reports edited rows, gaps and unsigned rows. Rotation by `STRANDS_MESH_AUDIT_MAX_BYTES` and `STRANDS_MESH_AUDIT_MAX_FILES`.
 
+When the file cannot be written, `log_safety_event` logs `[audit] failed to write` at WARNING and swallows the error: the peer keeps running with the trail off, so monitor that line; nothing stops the peer for you.
+
 ## Reporting
 
 Refusal codes are the stable contract; prose is not. The generated list is [reference/refusal-codes](../reference/refusal-codes.md). Vulnerabilities go to the process in the repository's `SECURITY.md`, linked from [project/security-policy](../project/security-policy.md).

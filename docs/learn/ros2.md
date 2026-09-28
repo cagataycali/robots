@@ -30,7 +30,7 @@ A `publish`, `service_call` or `action_send_goal` aimed at a blocklisted name go
 
 `/cmd_vel`, `/cmd_vel_unstamped`, `/manual_drive`, `/joint_command`, `/joint_trajectory`, `/joint_trajectory_controller/joint_trajectory`, `/emergency_stop`, `/e_stop`, `/motor_enable`, `/enable_motor`, `/disable_motor`, `/vehicle_state`, `/enable_state`, `/navigate_to_pose`, `/follow_path`.
 
-Reads are never gated; `use_rtps`'s `advertise` is not either (it creates a publisher and writes nothing). `STRANDS_ROS2_COMMAND_ALLOW` pre-approves exact names, comma-separated (`*` matches nothing here on purpose); `BYPASS_TOOL_CONSENT=true` lifts the gate with a warning. Each transport consults the gate at one fixed point: after the backend probe (a graph you cannot reach never prompts), after the verb's own arguments are checked, and before the executor lock or the WebSocket dial, so a human deciding holds nothing another caller needs. The whole decision path is on [agents](agents.md).
+Reads are never gated; `use_rtps`'s `advertise` is not either (it creates a publisher and writes nothing). `STRANDS_ROS2_COMMAND_ALLOW` pre-approves names, comma-separated, matched by base name: a bare `/cmd_vel` lifts the gate on `/robot_a/cmd_vel` and every other namespaced `/cmd_vel`, so write `/robot_a/cmd_vel` to scope it (`*` matches nothing here on purpose); `BYPASS_TOOL_CONSENT=true` lifts the gate with a warning. Each transport consults the gate at one fixed point: after the backend probe (a graph you cannot reach never prompts), after the verb's own arguments are checked, and before the executor lock or the WebSocket dial, so a human deciding holds nothing another caller needs. The whole decision path is on [agents](agents.md).
 
 ## A real arm on the graph
 

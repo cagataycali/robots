@@ -56,7 +56,7 @@ Reading and stopping are never gated.
 | `pose_tool` | `move_motor`, `move_multiple`, `incremental_move`, `load_pose`, `reset_to_home` | `STRANDS_POSE_COMMAND_ALLOW` |
 | `serial_tool` | bus writes | `STRANDS_SERIAL_COMMAND_ALLOW` |
 | `use_unitree` | motion RPCs (`loco.SetVelocity`, ...) | `STRANDS_UNITREE_COMMAND_ALLOW` |
-| `use_ros`, `use_rosbridge`, `use_rtps` | `publish`, `service_call`, `action_send_goal` on a blocklisted name (`/cmd_vel`, `/e_stop`, ...) | `STRANDS_ROS2_COMMAND_ALLOW` |
+| `use_ros`, `use_rosbridge`, `use_rtps` | `publish`, `service_call`, `action_send_goal` on a blocklisted name (`/cmd_vel`, `/e_stop`, ...) | `STRANDS_ROS2_COMMAND_ALLOW` (by base name: a bare `/cmd_vel` covers any namespace) |
 | `robot_mesh` | `emergency_stop`, `broadcast`, `tell`, `send`, `stop`, `rpc` | `STRANDS_MESH_HITL_ACTIONS` selects the set |
 
 Values are the verb or target spelling the tool matches (`execute`, `/cmd_vel`, `loco.SetVelocity`), comma-separated; `*` pre-approves every command where the tool honours it. `=1` or `=true` pre-approve nothing; the refusal says so.

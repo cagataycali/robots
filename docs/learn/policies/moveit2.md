@@ -17,9 +17,9 @@ pip install 'strands-robots[moveit2]'    # pyzmq + msgpack; ROS 2 stays in the s
 ```python title="sketch"
 from strands_robots.policies import create_policy
 
-policy = create_policy("moveit2", host="127.0.0.1", port=5556, planning_group="arm")
+policy = create_policy("moveit2", host="127.0.0.1", port=5556, planning_group="panda_arm")   # the compose sidecar's default group, 7 joints
 actions = policy.get_actions_sync(
-    {"observation.state": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+    {"observation.state": [0.0, 0.0, 0.0, -1.5708, 0.0, 1.5708, -0.7853]},   # the Panda ready pose; its zero pose is in collision
     "reach for the red block",
     target_pose=[0.3, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
 )

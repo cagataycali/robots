@@ -5,10 +5,9 @@ MUJOCO_, HF_, ..., then everything else) with: variable, the module that reads
 it, the default the code passes when it is a literal, and a one-line meaning
 taken from the nearest docstring or comment that names the variable. When no
 prose names it the meaning column says "see module".
-A few variables are token lists whose vocabulary lives in a module-level set
-(``STRANDS_MESH_HITL_ACTIONS`` and ``_GATEABLE_ACTIONS``); for those the
-meaning is rendered from the set literal itself (``_SET_MEANINGS``), so the row
-lists every token the code accepts and never an exception's one-liner.
+A few rows are hand-placed (``_NOTES``) because the nearest prose is an
+exception docstring or a lazy resolver's; their numbers and vocabularies are
+still filled from the module's constants, so they cannot drift silently.
 
 How reads are found (``ast`` over the source, no import):
 
@@ -47,18 +46,73 @@ _TOKEN = re.compile(r"^\{\{\s*env_vars\s*\}\}\s*$", re.M)
 _NAME = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
 _PREFIXES = ("STRANDS_MESH_", "STRANDS_", "DEVICE_CONNECT_", "MUJOCO_", "HF_", "ZENOH_", "ROS_", "AWS_")
 _READERS = {"get", "getenv", "setdefault", "pop", "__getitem__"}
-#: variable -> (module, template, constant names). The template's ``{name}``
-#: placeholders are filled with the sorted members of that module-level set
-#: literal (``frozenset({...})`` or ``{...}`` of strings), so the vocabulary the
-#: row shows is the vocabulary the parser accepts.
-_SET_MEANINGS: dict[str, tuple[str, str]] = {
-    "STRANDS_MESH_HITL_ACTIONS": (
+
+
+#: Hand-placed rows for variables whose one-line meaning the source prose gets wrong
+#: (an exception docstring, a lazy resolver's docstring, a read behind a keyword
+#: argument). ``{NAME}`` placeholders are filled from that module's constants: a
+#: set literal becomes its sorted members, a scalar its literal, so the numbers and
+#: vocabularies the row shows are the ones the code binds. ``default`` names the
+#: constant the default column shows when the read itself passes none.
+@dataclass(frozen=True)
+class Note:
+    """One hand-placed row: the module its placeholders resolve in, the meaning, the default constant."""
+
+    module: str
+    meaning: str
+    default: str | None = None
+
+
+_NOTES: dict[str, Note] = {
+    "STRANDS_MESH_HITL_ACTIONS": Note(
         "strands_robots.tools.robot_mesh",
         "Which `robot_mesh` actions wait for operator approval: `all`, `none`, or a "
         "comma-separated subset of {_GATEABLE_ACTIONS}; unset means the default "
         "{_DEFAULT_INTERRUPT_ACTIONS}; an unknown token is refused.",
     ),
+    "STRANDS_MESH_NAMESPACE": Note(
+        "strands_robots.mesh._zenoh_config",
+        "Fleet prefix on every key expression; empty falls back to {DEFAULT_NAMESPACE}. Peers on different "
+        "namespaces connect but exchange no application traffic: the mismatch is silent.",
+        default="DEFAULT_NAMESPACE",
+    ),
+    "STRANDS_MESH_INPUT_VALUE_ABS": Note(
+        "strands_robots.mesh.security",
+        "Per-joint magnitude bound on inbound `act` values, in frame units (default {DEFAULT_INPUT_VALUE_ABS}, "
+        "two full turns in degrees); a smaller unit narrows it, never widens it.",
+        default="DEFAULT_INPUT_VALUE_ABS",
+    ),
+    "STRANDS_MESH_INPUT_SLEW_ABS": Note(
+        "strands_robots.mesh.security",
+        "Per-joint slew bound on inbound `act` values, in frame units per second (default {DEFAULT_INPUT_SLEW_ABS}).",
+        default="DEFAULT_INPUT_SLEW_ABS",
+    ),
+    "STRANDS_GROOT_WIRE_LOG": Note(
+        "strands_robots.policies.groot.policy",
+        "Directory the GR00T wire-payload dumps land in, e.g. `~/groot-wire`; unset means nothing is written.",
+    ),
 }
+
+_ROS_ALLOWLIST_NOTE = (
+    "Comma-separated motion commands the operator pre-approves for `{tool}`, e.g. `/cmd_vel,/navigate_to_pose`. "
+    "Matched by base name: a bare `/cmd_vel` lifts the gate on that command in any namespace, so scope it as "
+    "`/robot_a/cmd_vel`. Reads are never gated; a zero-velocity halt to a gated command is still gated."
+)
+_ACTION_ALLOWLIST_NOTE = (
+    "Comma-separated `{tool}` actions the operator pre-approves, e.g. `{example}`, or `*` for all of them. "
+    "Reads are never gated; only the actions that move or write are."
+)
+_NOTES["STRANDS_ROS2_COMMAND_ALLOW"] = Note("strands_robots._command_gate", _ROS_ALLOWLIST_NOTE.format(tool="use_ros"))
+_NOTES["STRANDS_UNITREE_COMMAND_ALLOW"] = Note(
+    "strands_robots._command_gate",
+    _ROS_ALLOWLIST_NOTE.format(tool="use_unitree").replace("/navigate_to_pose", "/api/sport/request"),
+)
+for _var, _tool, _example in (
+    ("STRANDS_ROBOT_COMMAND_ALLOW", "hardware robot", "execute,start"),
+    ("STRANDS_POSE_COMMAND_ALLOW", "pose_tool", "load_pose,move_motor"),
+    ("STRANDS_SERIAL_COMMAND_ALLOW", "serial_tool", "send,feetech_position"),
+):
+    _NOTES[_var] = Note("strands_robots._command_gate", _ACTION_ALLOWLIST_NOTE.format(tool=_tool, example=_example))
 
 
 @dataclass
@@ -134,18 +188,44 @@ def _string_sets(tree: ast.Module) -> dict[str, tuple[str, ...]]:
     return out
 
 
-def _set_meaning(name: str, by_module: dict[str, tuple[str, ast.Module]]) -> str:
-    """The set-backed meaning for ``name``, or "" when it has none or the set is gone."""
-    if name not in _SET_MEANINGS:
-        return ""
-    module, template = _SET_MEANINGS[name]
-    if module not in by_module:
-        return ""
-    sets = _string_sets(by_module[module][1])
-    wanted = re.findall(r"\{(_?[A-Za-z0-9_]+)\}", template)
-    if any(w not in sets for w in wanted):
-        return ""
-    return template.format(**{w: ", ".join(f"`{m}`" for m in sets[w]) for w in wanted})
+def _scalar_constants(tree: ast.Module) -> dict[str, str]:
+    """Module-level ``NAME = <str|int|float>`` bindings, as their literal text."""
+    out: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign | ast.AnnAssign) and isinstance(node.value, ast.Constant):
+            if isinstance(node.value.value, bool) or not isinstance(node.value.value, str | int | float):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    out[target.id] = (
+                        repr(node.value.value) if isinstance(node.value.value, str) else str(node.value.value)
+                    )
+    return out
+
+
+def _note(name: str, by_module: dict[str, tuple[str, ast.Module]]) -> tuple[str, str | None]:
+    """``(meaning, default)`` from the hand-placed note, or ``("", None)`` when absent or stale."""
+    note = _NOTES.get(name)
+    if note is None or note.module not in by_module:
+        return "", None
+    tree = by_module[note.module][1]
+    sets, scalars = _string_sets(tree), _scalar_constants(tree)
+    values: dict[str, str] = {}
+    for placeholder in re.findall(r"\{(_?[A-Za-z0-9_]+)\}", note.meaning):
+        if placeholder in sets:
+            values[placeholder] = ", ".join(f"`{m}`" for m in sets[placeholder])
+        elif placeholder in scalars:
+            values[placeholder] = f"`{scalars[placeholder]}`"
+        else:
+            log.warning("env_vars hook: note for %s names %s, which %s no longer binds", name, placeholder, note.module)
+            return "", None
+    default = scalars.get(note.default) if note.default else None
+    if note.default and default is None:
+        log.warning(
+            "env_vars hook: note for %s names default %s, which %s no longer binds", name, note.default, note.module
+        )
+    return note.meaning.format(**values), default
 
 
 def _literal(node: ast.expr | None, constants: dict[str, str]) -> str | None:
@@ -181,12 +261,18 @@ class Helper:
     index: int
     prefix: str = ""
     suffix: str = ""
+    param: str = ""
+
+    def key(self, call: ast.Call) -> ast.expr | None:
+        """The argument one call passes for the key parameter, positional or by keyword."""
+        if len(call.args) > self.index:
+            return call.args[self.index]
+        return next((kw.value for kw in call.keywords if kw.arg == self.param), None)
 
     def resolve(self, call: ast.Call, constants: dict[str, str]) -> str | None:
         """The variable one call of this helper reads, when its key argument is literal text."""
-        if len(call.args) <= self.index:
-            return None
-        text = _literal(call.args[self.index], constants)
+        key = self.key(call)
+        text = _literal(key, constants) if key is not None else None
         return None if text is None else self.prefix + text + self.suffix
 
 
@@ -224,7 +310,7 @@ def _template(key: ast.expr, params: list[str], constants: dict[str, str], bound
             prefix += text
         else:
             suffix += text
-    return None if index is None else Helper(index, prefix, suffix)
+    return None if index is None else Helper(index, prefix, suffix, params[index])
 
 
 def _helpers(trees: dict[Path, ast.Module]) -> dict[str, Helper]:
@@ -256,11 +342,12 @@ def _helpers(trees: dict[Path, ast.Module]) -> dict[str, Helper]:
                     found = _template(target[0], params, constants, bound)
                 elif isinstance(node, ast.Call) and _call_name(node) in out:
                     inner = out[_call_name(node)]
-                    found = None
-                    if len(node.args) > inner.index:
-                        found = _template(node.args[inner.index], params, constants, bound)
-                        if found is not None:
-                            found = Helper(found.index, inner.prefix + found.prefix, found.suffix + inner.suffix)
+                    key = inner.key(node)
+                    found = _template(key, params, constants, bound) if key is not None else None
+                    if found is not None:
+                        found = Helper(
+                            found.index, inner.prefix + found.prefix, found.suffix + inner.suffix, found.param
+                        )
                 else:
                     found = None
                 if found is not None:
@@ -347,9 +434,11 @@ def reads() -> dict[str, Read]:
                     record(name, module, _default_text(default))
     by_module = {_module_name(p): (p.read_text(encoding="utf-8"), tree) for p, tree in trees.items()}
     for entry in out.values():
-        from_set = _set_meaning(entry.name, by_module)
-        if from_set:
-            entry.meaning = from_set
+        meaning, default = _note(entry.name, by_module)
+        if default:
+            entry.defaults = {default}
+        if meaning:
+            entry.meaning = meaning
             continue
         candidates = [_meaning(*by_module[m], entry.name) for m in sorted(entry.modules)]
         candidates = [c for c in candidates if c]
