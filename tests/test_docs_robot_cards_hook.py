@@ -1,8 +1,11 @@
-"""docs/hooks/robot_cards.py puts every registered robot on exactly one family page.
+"""docs/hooks/robot_pages.py puts every registered robot on exactly one family page.
 
-The family pages carry ``{{robot_cards:<categories>}}`` tokens instead of hand
-tables; this grader checks the tokens cover every registry category once, and
-that the generated cards reference only renders that exist.
+The catalog (``docs/robots/index.md``) carries one ``{{robot_cards}}`` token and
+each family page (``docs/robots/<family>/index.md``) one ``{{robot_cards:<family>}}``
+token instead of hand tables; this grader checks the tokens cover every registry
+category once, that every robot renders one card and one page of its own with
+its constructor line, and that the generated cards reference only thumbnails
+that exist.
 """
 
 from __future__ import annotations
@@ -13,47 +16,70 @@ from collections import Counter
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
+_ROBOTS = _REPO / "docs" / "robots"
 
 
-def _hook():
-    spec = importlib.util.spec_from_file_location("docs_robot_cards_hook", _REPO / "docs/hooks/robot_cards.py")
+def _hook():  # noqa: ANN202 - the loaded hook module
+    spec = importlib.util.spec_from_file_location("docs_robot_pages_hook", _REPO / "docs/hooks/robot_pages.py")
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
 
 
-def _token_categories(hook) -> Counter[str]:  # noqa: ANN001 - the loaded hook module
-    """Every category named by a ``{{robot_cards:...}}`` token, with its page count.
+def _token_categories(hook) -> tuple[Counter[str], int]:  # noqa: ANN001 - the loaded hook module
+    """Every family named by a ``{{robot_cards:<family>}}`` token, with its page count, and the bare-token count.
 
     Uses the hook's own token pattern rather than a copy of it, so a build that
     stops expanding a token cannot leave this grader counting it.
     """
     seen: Counter[str] = Counter()
-    for page in sorted((_REPO / "docs/robots").glob("*.md")):
-        for match in hook._TOKEN.findall(page.read_text(encoding="utf-8")):
-            seen.update(c.strip() for c in match.split(",") if c.strip())
-    return seen
+    bare = 0
+    for page in sorted(_ROBOTS.rglob("*.md")):
+        for match in hook._TOKEN_CARDS.findall(page.read_text(encoding="utf-8")):
+            if match:
+                seen[match] += 1
+            else:
+                bare += 1
+    return seen, bare
 
 
-def test_every_registry_category_is_carded_on_exactly_one_page() -> None:
+def test_every_registry_category_is_carded_on_exactly_one_family_page() -> None:
     hook = _hook()
     categories = {spec["category"] for spec in hook.registry().values()}
-    seen = _token_categories(hook)
+    seen, bare = _token_categories(hook)
     assert set(seen) == categories, f"tokens {sorted(seen)} vs registry {sorted(categories)}"
-    assert all(n == 1 for n in seen.values()), f"a category is carded twice: {seen}"
+    assert all(n == 1 for n in seen.values()), f"a family is carded twice: {seen}"
+    assert bare == 1, f"the catalog carries the bare {{{{robot_cards}}}} token once, found {bare}"
+    for category in categories:
+        page = _ROBOTS / category / "index.md"
+        assert page.is_file(), f"no family page for {category!r}"
+        assert f"{{{{robot_cards:{category}}}}}" in page.read_text(encoding="utf-8"), page
 
 
-def test_every_robot_renders_one_card() -> None:
+def test_every_robot_renders_one_card_and_one_page() -> None:
     hook = _hook()
-    out = hook.cards(sorted({spec["category"] for spec in hook.registry().values()}))
-    assert out.count('<article class="robot-card"') == len(hook.registry())
+    out = hook.cards(None, "")
+    assert out.count('<article class="sr-robot"') == len(hook.registry())
     for name in hook.registry():
-        assert f'Robot("{name}")' in out
+        assert f'href="robots/{name}/"' in out, f"the {name} card does not link to its page"
+        page = _ROBOTS / f"{name}.md"
+        assert page.is_file(), f"no generated page for {name}"
+        assert f'Robot("{name}")' in page.read_text(encoding="utf-8"), f"{page.name} never shows the constructor line"
 
 
-def test_cards_reference_only_renders_that_exist() -> None:
+def test_family_cards_are_the_family_and_nothing_else() -> None:
     hook = _hook()
-    out = hook.cards(sorted({spec["category"] for spec in hook.registry().values()}))
-    for src in re.findall(r'src="[^"]*?(sim_render_[a-z0-9_]+\.png)"', out):
-        assert (_REPO / "docs/assets" / src).is_file(), src
+    for category in sorted({spec["category"] for spec in hook.registry().values()}):
+        out = hook.cards(category, "")
+        families = set(re.findall(r'data-family="([a-z_]+)"', out))
+        assert families == {category}, f"cards for {category!r} carry {sorted(families)}"
+
+
+def test_cards_reference_only_thumbnails_that_exist() -> None:
+    hook = _hook()
+    out = hook.cards(None, "")
+    sources = re.findall(r'<img src="([^"]+)"', out)
+    assert sources, "no card carries a thumbnail; the guard would prove nothing"
+    for src in sources:
+        assert (_REPO / "docs" / src).is_file(), src
