@@ -28,22 +28,6 @@ from strands_robots._mujoco_gl import (
 
 logger = logging.getLogger(__name__)
 
-# The surface the rest of the MuJoCo package imports from this module. The
-# underscore names are package-internal on purpose: the facade and its mixins
-# source them here so the low-level module stays the single owner, and listing
-# them is what records that they are read elsewhere.
-__all__ = [
-    "_NO_WORLD_MSG",
-    "_can_render",
-    "_ensure_mujoco",
-    "_mujoco_viewer",
-    "capture_stderr_fd",
-    "filter_mujoco_attach_noise",
-    "mj_name_to_id",
-    "pose_qpos_components",
-    "qpos_ceiling_error",
-]
-
 # Canonical "no live world" error message shared by every world-touching
 # MuJoCo facade/mixin method. Defined in this low-level module so the
 # Simulation facade and its mixins (physics, randomization, rendering,
@@ -152,6 +136,16 @@ def _ensure_mujoco() -> "Any":
         except ImportError:
             pass  # best effort: the passive viewer is optional; launch_viewer reports its absence
     return _mujoco
+
+
+def mujoco_viewer() -> Any:
+    """Return the ``mujoco.viewer`` module :func:`_ensure_mujoco` resolved, or ``None``.
+
+    ``None`` before MuJoCo has been loaded, on a headless host, or on a build
+    without the passive viewer; :meth:`Simulation.open_viewer` reports that to
+    the agent rather than importing the private global itself.
+    """
+    return _mujoco_viewer
 
 
 _rendering_available: bool | None = None

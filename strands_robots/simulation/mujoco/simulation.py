@@ -120,6 +120,7 @@ from strands_robots.simulation.mujoco.backend import (
     _ensure_mujoco,
     filter_mujoco_attach_noise,
     mj_name_to_id,
+    mujoco_viewer,
     pose_qpos_components,
     qpos_ceiling_error,
 )
@@ -5930,14 +5931,13 @@ class MuJoCoSimEngine(
         """
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No simulation to view."}]}
-        from strands_robots.simulation.mujoco.backend import _mujoco_viewer
-
-        if _mujoco_viewer is None:
+        viewer = mujoco_viewer()
+        if viewer is None:
             return {"status": "error", "content": [{"text": "mujoco.viewer not available."}]}
         if self._viewer_handle is not None:
             return {"status": "success", "content": [{"text": "Viewer already open."}]}
         try:
-            self._viewer_handle = _mujoco_viewer.launch_passive(self._world._model, self._world._data)
+            self._viewer_handle = viewer.launch_passive(self._world._model, self._world._data)
             return {"status": "success", "content": [{"text": "Interactive viewer opened."}]}
         except Exception as e:
             return {"status": "error", "content": [{"text": f"Viewer failed: {e}"}]}
