@@ -4,6 +4,9 @@ description: curobo plans collision-free joint trajectories in process on a CUDA
 
 # curobo
 
+!!! warning "Deprecated"
+    Removed in 0.7. Use `simulation.motion_primitives` with mink IK in sim, or Isaac cuMotion.
+
 By the end of this page you can hand a motion planner a `target_pose` or `target_joints` goal and stream the resulting collision-free trajectory to an arm in `action_horizon` sized chunks, with no server in between.
 
 ```bash

@@ -4,6 +4,9 @@ description: groot drives NVIDIA GR00T N1.5, N1.6 and N1.7 checkpoints over a ZM
 
 # groot
 
+!!! warning "Deprecated"
+    `model_path=` (in-process GR00T) is removed in 0.7. Service mode stays.
+
 By the end of this page you can point a robot at a running GR00T inference server, map its sensor names onto the model's modality keys, and know when to use `lerobot_local` instead.
 
 ```bash

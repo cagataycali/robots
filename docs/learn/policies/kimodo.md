@@ -4,6 +4,9 @@ description: kimodo samples whole-body Unitree G1 motion from an English prompt 
 
 # kimodo
 
+!!! warning "Deprecated"
+    Removed in 0.7, with no in-tree replacement.
+
 By the end of this page you can turn a sentence such as "a person walking forward with confident strides" into a 29-joint kinematic reference for the Unitree G1, play it in simulation, and know why closing the loop needs a tracker rather than a composite.
 
 ```bash

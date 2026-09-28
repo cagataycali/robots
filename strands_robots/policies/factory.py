@@ -5,6 +5,7 @@ import importlib
 import inspect
 import logging
 import os
+import warnings
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
@@ -138,6 +139,17 @@ class UntrustedRemoteCodeError(RuntimeError):
 # Providers whose HuggingFace model loading path calls ``trust_remote_code=True``.
 # Any provider that downloads and executes code from a model repository
 # **must** be listed here so users are forced to explicitly opt in.
+#: Providers announced for removal in 0.7, each with what replaces it. The
+#: announcement is a warning from :func:`create_policy`, one minor ahead of
+#: the cut, so a caller learns the replacement before the provider is gone.
+_REMOVED_IN_0_7: dict[str, str] = {
+    "curobo": "simulation.motion_primitives with mink IK for a sim reach, or Isaac cuMotion for GPU planning",
+    "moveit2": "a MoveIt goal sent as a ROS 2 action through the use_ros or use_rosbridge tool",
+    "kimodo": "a motion generated offline and replayed as joint targets (nothing in-tree)",
+    "protomotions": "the wbc provider for Unitree G1 whole-body control",
+}
+
+
 _HF_REMOTE_CODE_PROVIDERS: frozenset[str] = frozenset(
     {
         "lerobot_local",
@@ -635,6 +647,10 @@ def create_policy(provider: str, **kwargs) -> Policy:
     Returns:
         Policy instance ready for get_actions().
 
+    Warns:
+        DeprecationWarning: If ``provider`` is in ``_REMOVED_IN_0_7``,
+            naming its replacement.
+
     Raises:
         UntrustedRemoteCodeError: If the provider loads HF models with
             ``trust_remote_code=True`` and ``STRANDS_TRUST_REMOTE_CODE``
@@ -645,6 +661,12 @@ def create_policy(provider: str, **kwargs) -> Policy:
             model is downloaded and no server dialled on a typo.
     """
     canonical, PolicyClass, resolved_kwargs = _resolve_policy_class(provider, **kwargs)
+    if (replacement := _REMOVED_IN_0_7.get(canonical)) is not None:
+        warnings.warn(
+            f"policy provider {canonical!r} is removed in 0.7; instead use {replacement}",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     _check_trust_remote_code(canonical)
     if (kwargs_error := policy_kwargs_error(canonical, PolicyClass, resolved_kwargs)) is not None:
         raise TypeError(kwargs_error)

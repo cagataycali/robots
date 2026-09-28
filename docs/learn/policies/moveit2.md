@@ -4,6 +4,9 @@ description: moveit2 plans through a ROS 2 MoveIt2 sidecar over ZMQ and msgpack,
 
 # moveit2
 
+!!! warning "Deprecated"
+    Removed in 0.7. Send the MoveIt goal as a ROS 2 action through `use_ros` or `use_rosbridge`.
+
 By the end of this page you can plan a collision-free trajectory with MoveIt2 from a Python process that has no ROS 2 sourced, and stream it to an arm.
 
 ```bash
