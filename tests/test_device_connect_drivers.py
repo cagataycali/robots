@@ -102,6 +102,16 @@ class FakeDeviceStatus:
 mock_types.DeviceIdentity = FakeDeviceIdentity
 mock_types.DeviceStatus = FakeDeviceStatus
 
+# ``robot_mesh`` dispatch tests elsewhere in the suite patch
+# ``device_connect_agent_tools.connection.get_connection``, which imports the
+# real package (-> ``device_connect_edge.messaging``). Cache it now, while the
+# real edge is still in sys.modules, so the mock installed below cannot make
+# those tests depend on which file a worker collects first.
+try:
+    import device_connect_agent_tools.connection  # noqa: E402, F401
+except Exception:  # the [device-connect] extra is optional
+    pass
+
 # The swap has one owner (tests/_device_connect_real.py), which records only
 # what is real: were another installing file collected ahead of this one, the
 # edge and integration registered right now would be that file's mocks and the
