@@ -45,8 +45,8 @@ if TYPE_CHECKING:
 # import of it from here would close an import-time cycle (CodeQL
 # ``py/unsafe-cyclic-import`` walks ``TYPE_CHECKING`` blocks too, which is also
 # why ``OnFrame`` is a string annotation on ``evaluate_benchmark`` rather than
-# an import). ``tests/simulation/test_no_import_cycle.py`` pins that this
-# module has no module-level import of ``policy_runner``.
+# an import). The import-cycle pin keeps this module free of a module-level
+# import of ``policy_runner``.
 from strands_robots.simulation.observers import RunPolicyObserver
 from strands_robots.simulation.seeds import MAX_EVAL_SEED, randomization_seed_error
 from strands_robots.simulation.video_config import VideoConfig
