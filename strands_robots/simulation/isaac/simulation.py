@@ -645,8 +645,10 @@ def _physics_view_stale_error(engine: Any, verb: str) -> dict[str, Any] | None:
                     "robot's get_observation() comes back empty. Call reset() first, "
                     f"then {verb}(). Note reset() returns robots to their default pose. "
                     "Only a dynamic body does this: a static add_object or "
-                    "remove_object, add_camera, move_object, add_robot and "
-                    "remove_robot all leave the view intact."
+                    "remove_object, add_camera, remove_camera, move_object and "
+                    "add_robot all leave the view intact. remove_robot deletes an "
+                    "articulation, so it invalidates the view like a dynamic "
+                    "remove_object and needs the same reset()."
                 )
             }
         ],
@@ -1302,8 +1304,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         #
         # ``reset()`` repairs all three. Which mutations invalidate the view was
         # measured rather than assumed: ``add_camera``, ``remove_camera``,
-        # ``move_object``, ``add_robot`` and ``remove_robot`` each left that arm
-        # reporting both its keys, so they do NOT set this flag.
+        # ``move_object`` and ``add_robot`` each left that arm reporting both its
+        # keys, so they do NOT set this flag. ``remove_robot`` DOES set it: it
+        # deletes the robot's articulation prim, and PhysX holds an articulation
+        # in the tensor view exactly as it holds a dynamic object's shape, so the
+        # delete invalidates the view the same way a dynamic ``remove_object`` does.
         #
         # Note when re-measuring: the three PROCEDURAL builders (``so100``,
         # ``panda``, ``unitree_g1``) leave ``_RobotState.articulation`` as
@@ -4454,16 +4459,29 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
     def remove_robot(self, name: str) -> dict[str, Any]:
         """Remove a robot from the simulation.
 
-        Drops the robot's bookkeeping entry and prunes any prims rooted at
-        the robot's prim path from ``self._prim_registry``. The actual USD
-        prim deletion is delegated to :meth:`destroy` / world teardown in
-        Phase 1; only the in-Python registry is updated here.
+        Deletes the robot's USD prim from the stage via
+        ``omni.isaac.core.utils.prims.delete_prim`` -- both ``prim_path`` and
+        the ``actual_prim_path`` the importer relocated it to, when the two
+        differ -- then prunes the in-Python registries (``_robots``,
+        ``_action_controllers``, and any prims rooted at the robot's path in
+        ``_prim_registry``). Before this deleted the prim it left the
+        articulation on the stage: :meth:`add_robot` refuses only a name still
+        in ``_robots``, so a re-add under the removed name stacked a second
+        reference onto the leftover prim, and :meth:`destroy` was the only
+        thing that ever released it -- unlike :meth:`remove_camera` (which
+        deletes its prim) and :meth:`remove_object` (which removes through the
+        scene).
 
         "Rooted at" is judged at the USD path boundary, so a robot whose name
         merely *extends* this one keeps its prim. Prim paths are interpolated
         from the name (``{stage_path}/Robots/{name}``), so with ``arm`` and
         ``arm_left`` both live the two paths share a prefix without one
         containing the other.
+
+        A robot is an articulation -- a dynamic body PhysX holds in its tensor
+        view -- so deleting it invalidates the view the same way removing a
+        dynamic object does. This marks ``_physics_view_stale`` so ``step`` and
+        ``send_action`` refuse until a ``reset()`` rebuilds the view.
 
         Parameters
         ----------
@@ -4474,7 +4492,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         -------
         dict
             Status dict in the standard ``{"status", "content": [{"text"}]}``
-            shape used by mutating methods on this class.
+            shape used by mutating methods on this class. Returns ``error`` if
+            the robot is unknown, or if deleting its prim raised (bookkeeping is
+            left intact for retry, mirroring :meth:`remove_camera`).
         """
         with self._lock:
             if not registered(self._robots, name):
@@ -4483,6 +4503,39 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     "content": [{"text": f"Robot '{name}' not found."}],
                 }
             prim_path = self._robots[name].prim_path
+            # The URDF importer can land the robot at a path other than the one
+            # requested (see ``_RobotState.actual_prim_path``); delete both so a
+            # relocated robot's prim does not survive the removal. ``prim_path``
+            # first, and de-duplicated, so the common case where the two are
+            # equal deletes once.
+            actual_prim_path = self._robots[name].actual_prim_path
+
+            # Delete the USD prim(s) from the stage. Same import shape and
+            # cleanup clause as :meth:`remove_camera`: a transient stage error
+            # returns the structured envelope and leaves bookkeeping intact for
+            # retry. Robots are not added via ``world.scene.add`` here, so the
+            # removal goes through the stage utility rather than
+            # ``world.scene.remove_object``.
+            try:
+                if self._world is not None:
+                    try:
+                        from isaacsim.core.utils.prims import (  # type: ignore[import-not-found]
+                            delete_prim,
+                        )
+                    except ImportError:
+                        from omni.isaac.core.utils.prims import (  # type: ignore[import-not-found]
+                            delete_prim,
+                        )
+
+                    for path in dict.fromkeys((prim_path, actual_prim_path)):
+                        delete_prim(path)
+            except (RuntimeError, ValueError, OSError, AttributeError, TypeError, ImportError) as e:
+                logger.error("Failed to remove robot '%s' (prim=%s): %s", name, prim_path, e)
+                return {
+                    "status": "error",
+                    "content": [{"text": f"Failed to remove robot '{name}': {e}"}],
+                }
+
             # ``/`` is USD's path separator, so it is what separates a
             # descendant prim from a sibling that merely shares a prefix. A bare
             # ``startswith`` test made every robot whose NAME extends this one a
@@ -4502,6 +4555,13 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # A controller closed over this robot's articulation is stale
             # the moment the robot is gone; drop it with the robot.
             self._action_controllers.pop(name, None)
+            # A robot is an articulation, a dynamic body held in PhysX's tensor
+            # view, so deleting its prim invalidates the view outright -- the
+            # same failure ``remove_object`` marks for a dynamic prim (a robot
+            # is never static, so there is no asymmetry to weigh here). Mark the
+            # scene stale so ``step`` / ``send_action`` refuse until ``reset()``
+            # rebuilds the view.
+            self._physics_view_stale = True
             logger.info("Removed robot '%s' (prim=%s)", name, prim_path)
             return {
                 "status": "success",
