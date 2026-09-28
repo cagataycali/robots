@@ -6,20 +6,15 @@ clients opt-in. Three pages tell a reader what it covers, and the membership
 they describe is a fact about ``[project.optional-dependencies]`` rather than
 prose - so it is derivable, and it drifted.
 
-``docs/getting-started/installation.md`` enumerated ``[all]`` as five extras
-(``groot-service`` + ``lerobot`` + ``sim-mujoco`` + ``mesh`` + ``mesh-iot``)
-while the bundle had grown to nineteen. The enumeration was a strict subset, so
-a reader deciding whether ``[all]`` covered the policy they wanted was told it
-did not for fourteen extras it does install - and the code block five lines
-below the table called the same bundle "everything". ``docs/reference/architecture.md``
-called it a "union", which it is not.
-
-The cells now state the count and name the extras ``[all]`` leaves out, because
-that is the actionable half: a reader wants to know what they must still add.
-Every rule here derives its expectation from ``pyproject.toml``, and each
-failure message prints the text the page should carry, so a new extra makes
-these fail with the correction in hand rather than leaving the pages to rot
-again.
+The old ``docs/getting-started/installation.md`` enumerated ``[all]`` as five
+extras while the bundle had grown to nineteen, and the old architecture page
+called it a "union". The new tree generates the extras table on
+``docs/start/install.md`` from ``pyproject.toml`` through
+``docs/hooks/extras.py`` (the ``{{extras:table}}`` token), so the membership
+column can no longer drift; what can still drift is the hand-written purpose
+column of the ``all`` row and any prose that describes the bundle. The page is
+graded as the reader sees it, with the token expanded by the hook, and every
+rule derives its expectation from ``pyproject.toml``.
 
 Deliberately out of scope: *why* a given extra is left out of ``[all]``. The
 excluded set has no single rule - ``[sim-isaac]`` and ``[sim-gs]`` need a GPU
@@ -31,43 +26,57 @@ excluded, never why.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 import tomllib
 from pathlib import Path
 
-import pytest
-
 _ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _ROOT / "pyproject.toml"
-_INSTALL_PAGE = _ROOT / "docs" / "getting-started" / "installation.md"
-_ARCHITECTURE_PAGE = _ROOT / "docs" / "reference" / "architecture.md"
-_INDEX_PAGE = _ROOT / "docs" / "index.md"
+_DOCS = _ROOT / "docs"
+_INSTALL_PAGE = _DOCS / "start" / "install.md"
+_HOOK = _DOCS / "hooks" / "extras.py"
 
 # The bundle is a developer convenience, so its tooling extra is not a
 # capability a reader installs it for; the pages describe capability extras.
 _TOOLING_EXTRAS = frozenset({"dev"})
 
-_ALL_ROW = "| `[all]` |"
+#: The ``all`` row of the extras table: the hook writes ``| `all` |``, a
+#: hand-written row ``| `[all]` |``.
+_ALL_ROW = re.compile(r"^\|\s*`\[?all\]?`\s*\|")
 
 # Words that describe the bundle as complete. ``[all]`` is not, so a page using
 # one of these tells a reader they need no further extra.
-_COMPLETENESS_CLAIMS = ("union", "everything", "every policy", "every extra")
+_COMPLETENESS_CLAIMS = ("union", "everything", "every policy", "every extra", "every runtime extra")
 _NEGATED_CLAIM = re.compile(
     r"not(?:\*\*)?\s+(?:a\s+)?(?:" + "|".join(re.escape(c) for c in _COMPLETENESS_CLAIMS) + r")"
 )
 _EXTRA_IN_TEXT = re.compile(r"`\[([a-z0-9][a-z0-9-]*)\]`")
 
-#: The pages that describe ``[all]``.
-_PAGES = (_INSTALL_PAGE, _ARCHITECTURE_PAGE, _INDEX_PAGE)
 
-#: Counts restated in prose, outside the extras table. installation.md repeats
-#: the bundle's size in the install code block's comment and architecture.md
-#: points at "the N it leaves opt-in"; both are facts the table row already
-#: derives, so both are derivable too.
-_PROSE_COUNTS = {
-    "bundle-size": re.compile(r"the (\d+)-extra bundle"),
-    "opt-in": re.compile(r"the (\d+) it leaves opt-in"),
-}
+def _rendered(page: Path) -> str:
+    """``page`` with the ``{{extras:...}}`` tokens expanded by the shipped hook."""
+    spec = importlib.util.spec_from_file_location("docs_hooks_extras", _HOOK)
+    assert spec is not None and spec.loader is not None
+    module = sys.modules.get(spec.name)
+    if module is None:
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    return module.substitute(page.read_text(encoding="utf-8"), str(page.relative_to(_DOCS)))
+
+
+def _pages_describing_all() -> dict[Path, str]:
+    """Every hand-written page that mentions the bundle, rendered."""
+    out: dict[Path, str] = {}
+    for page in sorted(_DOCS.rglob("*.md")):
+        if _DOCS / "robots" in page.parents:
+            continue
+        text = _rendered(page) if page == _INSTALL_PAGE else page.read_text(encoding="utf-8")
+        if "[all]" in text or any(_ALL_ROW.match(line) for line in text.splitlines()):
+            out[page] = text
+    return out
 
 
 def _extras() -> dict[str, list[str]]:
@@ -107,13 +116,22 @@ def _membership() -> tuple[set[str], set[str], int]:
 
 
 def _row(page: Path) -> str:
-    """The ``[all]`` row of ``page``'s extras table."""
-    text = page.read_text(encoding="utf-8")
-    assert _ALL_ROW in text, f"{page.name} no longer carries an '{_ALL_ROW}' table row"
-    for line in text.splitlines():
-        if line.startswith(_ALL_ROW):
+    """The ``all`` row of ``page``'s rendered extras table."""
+    for line in _rendered(page).splitlines():
+        if _ALL_ROW.match(line):
             return line
-    raise AssertionError(f"{page.name}: '{_ALL_ROW}' found in the page but not at the start of a line")
+    raise AssertionError(f"{page.name} no longer carries an `all` row in its extras table")
+
+
+def _direct_members() -> set[str]:
+    """The extras ``[all]`` names itself, before the closure walk."""
+    return {
+        part.strip()
+        for spec in _extras()["all"]
+        for match in [re.search(r"strands-robots\[([^]]+)\]", str(spec))]
+        if match
+        for part in match.group(1).split(",")
+    }
 
 
 def _extras_named(text: str) -> set[str]:
@@ -122,73 +140,51 @@ def _extras_named(text: str) -> set[str]:
 
 
 class TestThePagesAgreeWithPyproject:
-    """The count and the excluded set both come from ``pyproject.toml``."""
+    """The membership the page shows and the words around it both come from ``pyproject.toml``."""
 
-    @pytest.mark.parametrize("page", [_INSTALL_PAGE, _ARCHITECTURE_PAGE], ids=["installation", "architecture"])
-    def test_the_row_states_the_derived_counts(self, page: Path) -> None:
-        installed, _, declared_total = _membership()
-        row = _row(page)
-        wanted = f"{len(installed)} of the {declared_total} extras"
-        assert wanted in row, (
-            f"{page.name}: the `[all]` row must state {wanted!r}, so a reader is not told the bundle is "
-            f"narrower (or wider) than it is. The row reads:\n  {row}"
-        )
+    def test_the_row_states_the_derived_membership(self) -> None:
+        """The install table's ``all`` row names what the bundle pulls, no more and no less.
 
-    @pytest.mark.parametrize("kind", sorted(_PROSE_COUNTS), ids=sorted(_PROSE_COUNTS))
-    def test_a_count_restated_outside_the_table_agrees_with_it(self, kind: str) -> None:
-        """A page states these counts twice, and only the table row was derived.
-
-        ``installation.md`` repeats the bundle's size in the install code
-        block's comment five lines under the table, and ``architecture.md``
-        points a reader at "the N it leaves opt-in" in that table. Both are the
-        facts the row above already derives, so an ungraded copy is one that
-        drifts - and both had, each by one, because each counted ``[all]``
-        itself while the derivation excludes it.
+        The generated row lists the extras ``[all]`` names directly; a reader
+        deciding whether the bundle covers them reads that cell. It must match
+        pyproject exactly, so the reader is not told the bundle is narrower (or
+        wider) than it is.
         """
-        installed, left_out, _ = _membership()
-        pattern = _PROSE_COUNTS[kind]
-        wanted = {"bundle-size": len(installed), "opt-in": len(left_out)}[kind]
-        found = [
-            (page.name, int(match.group(1)), match.group(0))
-            for page in _PAGES
-            for match in pattern.finditer(page.read_text(encoding="utf-8"))
-        ]
-        assert found, (
-            f"no page states a {kind} count matching {pattern.pattern!r}, so this rule grades nothing. "
-            f"Either a page dropped the wording or the pattern needs updating."
-        )
-        wrong = [f"{name}: {text!r} should state {wanted}" for name, got, text in found if got != wanted]
-        assert not wrong, (
-            f"a count restated outside the extras table must be derived from pyproject.toml too, or the "
-            f"page contradicts its own table: {wrong}"
-        )
-
-    def test_the_install_row_names_every_extra_left_opt_in(self) -> None:
-        _, left_out, _ = _membership()
         row = _row(_INSTALL_PAGE)
         named = _extras_named(row)
-        missing = sorted(left_out - named)
-        assert not missing, (
-            f"installation.md: the `[all]` row must name every extra the bundle leaves opt-in, because that "
-            f"is what a reader still has to install. Unnamed: {missing}. Name them as `[extra]`."
+        direct = _direct_members()
+        assert named == direct, (
+            f"install.md: the `all` row names {sorted(named)} but pyproject's [all] names {sorted(direct)}. The row reads:\n  {row}"
         )
 
-    def test_the_install_row_claims_nothing_it_installs_is_opt_in(self) -> None:
+    def test_the_install_row_names_every_extra_it_installs_directly(self) -> None:
         installed, _, _ = _membership()
         row = _row(_INSTALL_PAGE)
-        wrongly_named = sorted(_extras_named(row) & installed)
+        named = _extras_named(row)
+        missing = sorted(_direct_members() - named)
+        assert not missing, (
+            f"install.md: the `all` row must name every extra the bundle pulls, because that is what a reader "
+            f"gets from one install line. Unnamed: {missing}."
+        )
+        assert named <= installed, f"the row names extras the closure does not reach: {sorted(named - installed)}"
+
+    def test_the_install_row_claims_nothing_it_leaves_opt_in(self) -> None:
+        _, left_out, _ = _membership()
+        row = _row(_INSTALL_PAGE)
+        wrongly_named = sorted(_extras_named(row) & left_out)
         assert not wrongly_named, (
-            f"installation.md: the `[all]` row lists {wrongly_named} as opt-in, but `all` installs them. "
-            f"A reader would add an extra they already have."
+            f"install.md: the `all` row lists {wrongly_named} as installed, but `all` leaves them opt-in. "
+            f"A reader would believe they have an extra they still need to add."
         )
 
     def test_no_page_calls_the_bundle_a_union_or_everything(self) -> None:
         _, left_out, _ = _membership()
         assert left_out, "nothing is left opt-in, so 'union' would be accurate and this rule is vacuous"
-        for page in (_INSTALL_PAGE, _ARCHITECTURE_PAGE, _INDEX_PAGE):
-            text = page.read_text(encoding="utf-8")
+        pages = _pages_describing_all()
+        assert _INSTALL_PAGE in pages, "install.md no longer describes the [all] bundle"
+        for page, text in pages.items():
             for line in text.splitlines():
-                if "strands-robots[all]" not in line and not line.startswith(_ALL_ROW):
+                if "strands-robots[all]" not in line and "[all]" not in line and not _ALL_ROW.match(line):
                     continue
                 # A corrected page says "not a union", so a bare substring test would
                 # report the very wording that fixes this. Drop negated forms first and
@@ -196,7 +192,7 @@ class TestThePagesAgreeWithPyproject:
                 lowered = _NEGATED_CLAIM.sub("", line.lower())
                 for claim in _COMPLETENESS_CLAIMS:
                     assert claim not in lowered, (
-                        f"{page.name}: {claim!r} describes `[all]` as complete, and {len(left_out)} extras "
+                        f"{page.relative_to(_ROOT)}: {claim!r} describes `[all]` as complete, and {len(left_out)} extras "
                         f"stay opt-in ({sorted(left_out)}). The line reads:\n  {line}"
                     )
 
@@ -215,13 +211,7 @@ class TestTheDerivationIsNotVacuous:
 
     def test_the_closure_follows_an_extra_named_two_levels_down(self) -> None:
         extras = _extras()
-        direct = {
-            part.strip()
-            for spec in extras["all"]
-            for match in [re.search(r"strands-robots\[([^]]+)\]", str(spec))]
-            if match
-            for part in match.group(1).split(",")
-        }
+        direct = _direct_members()
         indirect = _closure(extras, "all") - direct
         assert indirect, (
             "every extra `all` installs is named directly by it, so a walk that did not recurse would "
@@ -231,21 +221,23 @@ class TestTheDerivationIsNotVacuous:
 
 
 class TestTheRulesReportAConstructedDrift:
-    """The pages are correct today, so the rules are graded on built exemplars."""
+    """The rules are graded on built exemplars as well as on the shipped page."""
 
-    def test_a_stale_count_is_reported(self) -> None:
-        installed, _, declared_total = _membership()
-        stale = f"| `[all]` | {len(installed) - 1} of the {declared_total} extras - not a union | x |"
-        assert f"{len(installed)} of the {declared_total} extras" not in stale
+    def test_a_row_missing_a_member_is_reported(self) -> None:
+        direct = sorted(_direct_members())
+        stale = "| `all` | " + ", ".join(f"`[{name}]`" for name in direct[1:]) + " | x |"
+        assert _ALL_ROW.match(stale)
+        assert _extras_named(stale) != set(direct)
 
-    def test_an_unnamed_opt_in_extra_is_reported(self) -> None:
+    def test_a_row_naming_an_opt_in_extra_is_reported(self) -> None:
         _, left_out, _ = _membership()
-        row = "| `[all]` | 19 of the 31 extras - not a union | x |"
-        assert sorted(left_out - _extras_named(row)) == sorted(left_out)
+        extra = sorted(left_out)[0]
+        stale = f"| `all` | `[{extra}]` | x |"
+        assert _extras_named(stale) & left_out
 
     def test_a_union_claim_is_reported(self) -> None:
-        stale = "| `[all]` | union | CI / exploration |".lower()
-        assert any(c in _NEGATED_CLAIM.sub("", stale) for c in _COMPLETENESS_CLAIMS)
+        for stale in ("| `[all]` | union | CI / exploration |", "| `all` | `[mesh]` | every runtime extra above |"):
+            assert any(c in _NEGATED_CLAIM.sub("", stale.lower()) for c in _COMPLETENESS_CLAIMS), stale
 
     def test_a_negated_claim_is_not_reported(self) -> None:
         corrected = "| `[all]` | 19 of the 31 extras - **not** a union | x |".lower()
