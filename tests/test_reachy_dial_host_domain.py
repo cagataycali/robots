@@ -4,7 +4,7 @@ The port half of the address this driver dials is held to a shared domain, for
 the reason :mod:`tests.test_reachy_api_port_domain` records: nothing downstream
 refuses it, so an unusable port is reported as an unreachable daemon. ``host`` is
 interpolated into the same expression - ``http://<host>:<api_port>`` in
-:func:`strands_robots.device_connect.reachy_transport.api`, and
+:func:`strands_robots.drivers.reachy_transport.api`, and
 ``ws://<host>:<api_port>/ws/sdk`` in ``WebSocketLink`` - and was held to nothing.
 
 The host half is the stronger case, because it can discard the guarded port:
@@ -132,7 +132,7 @@ class TestWhyTheConstructorOwnsTheDomain:
     @pytest.mark.parametrize("host", ["127.0.0.1/foo", None, 8000], ids=repr)
     def test_the_daemon_url_interpolates_the_host_verbatim(self, monkeypatch, host):
         """``api`` builds ``http://<host>:port/path`` with no coercion."""
-        from strands_robots.device_connect import reachy_transport
+        from strands_robots.drivers import reachy_transport
 
         captured: list[str] = []
 
@@ -146,7 +146,7 @@ class TestWhyTheConstructorOwnsTheDomain:
 
     def test_the_websocket_target_carries_the_same_value(self):
         """The Lite link interpolates the host into its own ``ws://`` target."""
-        from strands_robots.device_connect import reachy_transport
+        from strands_robots.drivers import reachy_transport
 
         assert reachy_transport.WebSocketLink("127.0.0.1/foo", 8000)._host == "127.0.0.1/foo"
 

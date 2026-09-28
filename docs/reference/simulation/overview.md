@@ -78,7 +78,7 @@ overlay `user_robots.json` may declare one for your own robot.
 
 | Action | Key params |
 |--------|-----------|
-| `add_camera` | `name`, `position`, `target`, `fov=60.0`, `width=640`, `height=480` - no `attach_to`/`fovy`/`lookat` |
+| `add_camera` | `name`, `position`, `target`, `fov=60.0` (vertical FOV / `fovy`, the same meaning on every backend), `width=640`, `height=480` - no `attach_to`/`fovy`/`lookat` |
 | `remove_camera` | `name` |
 | `list_cameras` | - every name `render` / `start_recording` accepts: the built-in `"default"` free view first, then model-defined and `add_camera` cameras. Equals `describe()["cameras"]` and matches the Newton backend, so a rollout rig can be enumerated instead of guessed |
 

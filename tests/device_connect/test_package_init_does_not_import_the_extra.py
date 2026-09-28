@@ -52,6 +52,8 @@ import pytest
 
 _MODULE = "strands_robots.device_connect"
 _TRANSPORT_LEAF = f"{_MODULE}.reachy_transport"
+#: Where the leaf lives now; the old spelling above is a one-minor alias of it.
+_MOVED_LEAF = "strands_robots.drivers.reachy_transport"
 
 
 class _BlockDeviceConnectEdge:
@@ -133,7 +135,7 @@ class TestThePackageInitDoesNotImportTheExtra:
         """
         leaf = importlib.import_module(_TRANSPORT_LEAF)
 
-        assert leaf.__name__ == _TRANSPORT_LEAF
+        assert leaf.__name__ == _MOVED_LEAF
         # ``api`` is the entry point the driver imports; asserting on a real
         # public symbol pins the leaf as reachable rather than just importable.
         assert callable(getattr(leaf, "api"))
@@ -152,7 +154,7 @@ class TestThePackageInitDoesNotImportTheExtra:
 
         leaf = module.reachy_transport
 
-        assert leaf.__name__ == _TRANSPORT_LEAF
+        assert leaf.__name__ == _MOVED_LEAF
         assert leaf is sys.modules[_TRANSPORT_LEAF]
 
 

@@ -148,8 +148,8 @@ reason naming the module and the error:
 
 ```python
 >>> Robot("reachy_mini", mode="real").connect_eagerly()
-"cannot import strands_robots.device_connect.reachy_transport: No module named
-'strands_robots.device_connect.reachy_transport'"
+"cannot import strands_robots.drivers.reachy_transport: No module named
+'strands_robots.drivers.reachy_transport'"
 ```
 
 No `pip install` is prescribed, because no install supplies a module that ships in

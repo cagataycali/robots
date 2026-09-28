@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from strands_robots.device_connect import reachy_transport
+from strands_robots.drivers import reachy_transport
 from strands_robots.drivers.reachy import ReachyDriver
 
 

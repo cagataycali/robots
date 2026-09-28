@@ -135,7 +135,7 @@ class _Sim(SimEngine):
     def render(self, camera_name="default", width=None, height=None):  # type: ignore[no-untyped-def]
         return {"image": np.zeros((height or 48, width or 64, 3), dtype=np.uint8)}
 
-    def _maybe_install_wbc_torque_control(self, policy: Any, robot_name: str) -> None:
+    def _maybe_install_action_controller(self, policy: Any, robot_name: str) -> None:
         self.shim_installs += 1
         return None
 

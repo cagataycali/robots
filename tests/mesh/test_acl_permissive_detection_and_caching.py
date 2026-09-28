@@ -589,38 +589,9 @@ def test_zenoh_config_env_var_matrix_documents_three_vars() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_session_prefers_thread_local_auth_mode_over_env() -> None:
-    """When ``Mesh.start`` has stashed ``auth_mode`` on the
-    thread-local, ``get_session()`` MUST honour it for listener-scheme
-    selection rather than re-reading ``STRANDS_MESH_AUTH_MODE`` from
-    ``os.environ``. Without this, the listener endpoint scheme
-    (composed in ``get_session``) and the wire-config block (composed
-    in ``_build_config``) can disagree if the env var flips between the
-    two reads.
-    """
-    import inspect
-
-    from strands_robots.mesh import session as _session
-
-    src = inspect.getsource(_session.get_session)
-    # The thread-local read must precede the resolve_auth_mode fallback
-    # in source order. Both helpers must appear in get_session.
-    assert "_get_thread_auth_mode" in src, (
-        "get_session must consult the thread-local auth_mode stash before "
-        "falling back to resolve_auth_mode (review thread session.py:517)"
-    )
-    # Specifically the conditional fallback shape must be present, not
-    # the bare unconditional resolve_auth_mode read R3 left in place.
-    assert "_stashed_mode if _stashed_mode is not None else resolve_auth_mode()" in src, (
-        "get_session must use the conditional fallback "
-        "_stashed_mode if _stashed_mode is not None else resolve_auth_mode()"
-    )
-
-
 def test_get_zenoh_session_directly_prefers_thread_local_auth_mode_over_env() -> None:
-    """Mirror of the get_session check for the duplicate path
-    ``_get_zenoh_session_directly`` (review thread session.py:517 also
-    notes this site one frame up)."""
+    """The one Zenoh open body, which ``get_session`` delegates to, consults
+    the thread-local ``auth_mode`` stash before ``resolve_auth_mode``."""
     import inspect
 
     from strands_robots.mesh import session as _session
