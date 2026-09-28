@@ -33,6 +33,7 @@ from strands_robots.drivers.feetech import FeetechDriver
 from strands_robots.drivers.feetech.bus import DEFAULT_TIMEOUT_S, SO_ARM_MOTORS, MotorCalibration
 from strands_robots.drivers.feetech.driver import TRANSPORTS
 from strands_robots.drivers.feetech.twin import TWIN_REGISTERS, FeetechTwinBus, twin_endpoint
+from strands_robots.robot import Robot
 
 # ``test_feetech_module_load.py`` drops the feetech modules from ``sys.modules``
 # to prove an import, so a class imported at the top of this module is not the
@@ -249,13 +250,19 @@ class TestConstruction:
         with pytest.raises(ValueError, match="realtime"):
             FeetechDriver(tool_name="so101", transport="twin", sim=engine, realtime="yes")  # type: ignore[arg-type]
 
+    def test_the_twin_without_an_engine_is_refused_naming_the_factory(self) -> None:
+        with pytest.raises(
+            ValueError, match=r"handed; use Robot\('so101', mode='real', driver='strands', transport='twin'\)"
+        ):
+            FeetechDriver(tool_name="so101", transport="twin")
+
     def test_a_robot_without_a_sim_asset_is_refused_by_name(self) -> None:
         with pytest.raises(ValueError, match="needs a simulation asset.*'hope_jr'"):
-            FeetechDriver(tool_name="hope_jr", transport="twin")
+            FeetechDriver(tool_name="hope_jr", transport="twin", sim=_FakeEngine("hope_jr"))
 
     def test_a_tool_name_that_is_not_a_registry_arm_is_refused_with_the_fix(self) -> None:
         with pytest.raises(ValueError, match="'left_arm'.*not one of.*pass tool_name as the arm's registry name"):
-            FeetechDriver(tool_name="left_arm", transport="twin")
+            FeetechDriver(tool_name="left_arm", transport="twin", sim=_FakeEngine("left_arm"))
 
     def test_a_callers_engine_names_the_robot_so_the_tool_name_is_free(self) -> None:
         """``sim=`` carries so100; the agent may still call the tool ``left_arm``."""
@@ -636,7 +643,7 @@ class TestLifecycle:
         # And the same engine can be bound again.
         assert twin.connect_eagerly() is None
 
-    def test_cleanup_destroys_an_engine_the_twin_built(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_the_factory_builds_the_engine_and_hands_it_in(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import strands_robots.simulation as sim_module
 
         built: list[_FakeEngine] = []
@@ -647,27 +654,32 @@ class TestLifecycle:
             return built[-1]
 
         monkeypatch.setattr(sim_module, "create_simulation", _fake_create)
-        driver = FeetechDriver(tool_name="so101", transport="twin")
-        assert driver.sim is None, "built lazily, not at construction"
-        assert driver.connect_eagerly() is None
+        driver = Robot("so101", mode="real", driver="strands", transport="twin", mesh=False)
+        assert isinstance(driver, FeetechDriver)
         assert driver.sim is built[0]
+        assert driver.connect_eagerly() is None
         driver.cleanup()
-        assert built[0].destroyed is True
-        assert driver.sim is None
+        assert built[0].destroyed is False, "the engine outlives a disconnect"
+        assert driver.connect_eagerly() is None
 
-    def test_a_build_failure_is_a_named_reason_not_a_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_a_factory_build_failure_is_named_and_the_engine_destroyed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import strands_robots.simulation as sim_module
 
-        def _boom(backend: str, **kwargs: Any) -> Any:
-            raise ImportError("No module named 'mujoco'")
+        engine = _FakeEngine("so101")
+        engine.create_world = lambda: {"status": "error", "content": [{"text": "no world"}]}  # type: ignore[method-assign]
+        monkeypatch.setattr(sim_module, "create_simulation", lambda *a, **k: engine)
+        with pytest.raises(OSError, match="could not build the so101 twin: no world"):
+            Robot("so101", mode="real", driver="strands", transport="twin", mesh=False)
+        assert engine.destroyed is True
 
-        monkeypatch.setattr(sim_module, "create_simulation", _boom)
-        driver = FeetechDriver(tool_name="so101", transport="twin")
-        reason = driver.connect_eagerly()
-        assert reason == "FeetechTwinBus: could not build the so101 twin (ImportError: No module named 'mujoco')"
-        assert driver.is_connected is False
-        body = asyncio.run(driver.get_status())["content"][0]["json"]
-        assert body["connect_error"] == reason
+    def test_a_constructor_refusal_destroys_the_factory_built_engine(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import strands_robots.simulation as sim_module
+
+        engine = _FakeEngine("so101")
+        monkeypatch.setattr(sim_module, "create_simulation", lambda *a, **k: engine)
+        with pytest.raises(ValueError, match="realtime"):
+            Robot("so101", mode="real", driver="strands", transport="twin", realtime="yes", mesh=False)
+        assert engine.destroyed is True
 
     def test_a_refusal_from_the_model_is_the_drivers_refusal(self, twin, engine) -> None:
         engine.refuse = "No robots in the world."
@@ -704,7 +716,7 @@ class TestLifecycle:
 
     def test_the_twin_bus_own_domain(self) -> None:
         with pytest.raises(ValueError, match="realtime"):
-            FeetechTwinBus("so101", realtime=1)  # type: ignore[arg-type]
+            FeetechTwinBus("so101", sim=_FakeEngine("so101"), realtime=1)  # type: ignore[arg-type]
         bus = FeetechTwinBus("so101", sim=_FakeEngine("so101"))
         assert bus.port == "sim://so101"
         assert bus.is_connected is False

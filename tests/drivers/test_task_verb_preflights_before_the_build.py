@@ -55,6 +55,7 @@ from strands_robots.drivers.ur import URDriver
 from strands_robots.policies import factory as policy_factory
 from strands_robots.policies import register_policy
 from strands_robots.policies.mock import MockPolicy
+from strands_robots.robot import Robot
 from tests.mocks.ur_rtde import FakeRTDE, text_of
 
 #: The message a refusing hook raises, asserted verbatim so the caller is shown
@@ -113,7 +114,8 @@ class _Probe:
 
 def _feetech_probe(monkeypatch: pytest.MonkeyPatch, *, readable: bool) -> _Probe:
     """A Feetech SO-101 over the MuJoCo twin - no serial bus needed."""
-    driver = FeetechDriver(tool_name="so101", transport="twin")
+    driver = Robot("so101", mode="real", driver="strands", transport="twin", mesh=False)
+    assert isinstance(driver, FeetechDriver)
     assert driver.connect_eagerly() is None
     log: list[str] = []
     keys = set(feetech_module.read_joints(driver))
