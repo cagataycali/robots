@@ -9,7 +9,7 @@ description: "Rainbow Robotics RB-Y1A Mobile Manipulator (31-DOF)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">31 joints</span><span class="sr-chip sr-chip-sim">sim</span></p>
 
-You have `rby1` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
+No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
 The model has no public source to stream, so this page has no 3D view; the thumbnail is a local render.
 
@@ -21,10 +21,6 @@ robot = Robot("rby1")
 
 Aliases `Robot()` accepts: `rby1a`, `rainbow_rby1`.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [uynitsuj/rby1_description/models/rby1a/mujoco](https://github.com/uynitsuj/rby1_description/tree/e4c07203aa0a0d1b6b3b39da105cb00a77e2bc72/models/rby1a/mujoco), scene `model.xml`.
 
-Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).
+Back to [Humanoids](humanoid/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

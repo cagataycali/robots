@@ -9,7 +9,7 @@ description: "LeKiwi networked client (drives a remote LeKiwi host over ZMQ)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile_manip">Mobile manipulators</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
 
-You have `lekiwi_client` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("lekiwi_client")` in the default sim mode refuses by name.
+The registry ships no simulation asset for it, so `Robot("lekiwi_client")` in the default sim mode refuses by name.
 
 Real hardware, one call per driver that builds it:
 
@@ -23,8 +23,4 @@ Aliases `Robot()` accepts: `lekiwi_remote`, `lekiwi_net`.
 
 **lerobot.** `Robot("lekiwi_client", mode="real")` builds lerobot's `lekiwi_client` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
-Back to [Mobile manipulators](mobile_manip/index.md) or the [catalog](index.md).
+Back to [Mobile manipulators](mobile_manip/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

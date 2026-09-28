@@ -6,7 +6,7 @@ title: Hands and grippers
 
 # Hands and grippers
 
-End effectors: dexterous hands and parallel grippers. Every `hand` robot in the registry, generated from `robots.json`; each card opens the robot's page with the viewer, the constructor and the hardware facts. The table below the cards is the same list as text.
+End effectors: dexterous hands and parallel grippers.
 
 {{robot_cards:hand}}
 

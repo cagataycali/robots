@@ -9,8 +9,6 @@ description: "Franka Emika Panda (7-DOF + gripper)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
 
-You have `panda` in a MuJoCo world after one line, and the same object on the hardware with `mode="real"`.
-
 <robot-viewer name="panda"></robot-viewer>
 
 ```python
@@ -46,10 +44,6 @@ Checks before it writes:
 - no 1 kHz torque loop: joint motion goes through `panda-py`'s guarded motion generator, which owns the realtime context
 - state is sourced at 1000 Hz and downsampled to `stream_rate_hz`; the stride is reported
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [google-deepmind/mujoco_menagerie/franka_emika_panda](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/franka_emika_panda), scene `scene.xml`.
 
-Back to [Arms](arm/index.md) or the [catalog](index.md).
+Back to [Arms](arm/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

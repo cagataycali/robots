@@ -9,7 +9,7 @@ description: "Toddlerbot 2xM Humanoid (45-DOF)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">45 joints</span><span class="sr-chip sr-chip-sim">sim</span></p>
 
-You have `toddlerbot_2xm` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
+No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
 <robot-viewer name="toddlerbot_2xm"></robot-viewer>
 
@@ -19,10 +19,6 @@ from strands_robots import Robot
 robot = Robot("toddlerbot_2xm")
 ```
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [google-deepmind/mujoco_menagerie/toddlerbot_2xm](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/toddlerbot_2xm), scene `scene.xml`.
 
-Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).
+Back to [Humanoids](humanoid/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

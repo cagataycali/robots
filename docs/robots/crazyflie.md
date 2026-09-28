@@ -9,8 +9,6 @@ description: "Bitcraze Crazyflie 2 Nano-Quadcopter"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="aerial">Aerial</span><span class="sr-chip">1 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
 
-You have `crazyflie` in a MuJoCo world after one line, and the same object on the hardware with `mode="real"`.
-
 <robot-viewer name="crazyflie"></robot-viewer>
 
 ```python
@@ -44,10 +42,6 @@ Checks before it writes:
 - `send_action` returns once the setpoint is latched, not when motion ends
 - stopping and landing are different verbs
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [google-deepmind/mujoco_menagerie/bitcraze_crazyflie_2](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/bitcraze_crazyflie_2), scene `scene.xml`.
 
-Back to [Aerial](aerial/index.md) or the [catalog](index.md).
+Back to [Aerial](aerial/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

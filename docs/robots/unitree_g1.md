@@ -9,8 +9,6 @@ description: "Unitree G1 Humanoid (29-DOF + dexterous hands)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">46 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot, strands</span></p>
 
-You have `unitree_g1` in a MuJoCo world after one line, and the same object on the hardware with `mode="real"`.
-
 <robot-viewer name="unitree_g1"></robot-viewer>
 
 ```python
@@ -49,7 +47,7 @@ Checks before it writes:
 
 ## Policies
 
-Pick a provider from the [policy matrix](../learn/policies/index.md). Providers written for this body: `wbc`, `wbc_gait`, `kimodo`, `protomotions`.
+Providers written for this body: `wbc`, `wbc_gait`, `kimodo`, `protomotions`; the rest are in the [policy matrix](../learn/policies/index.md).
 
 Model: [google-deepmind/mujoco_menagerie/unitree_g1](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_g1), scene `scene.xml`.
 

@@ -9,8 +9,6 @@ description: "Unitree Go2 Quadruped"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">40 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
 
-You have `unitree_go2` in a MuJoCo world after one line, and the same object on the hardware with `mode="real"`.
-
 <robot-viewer name="unitree_go2"></robot-viewer>
 
 ```python
@@ -44,10 +42,6 @@ Checks before it writes:
 - `send_action` refuses under the battery floor
 - `rt/lowcmd` frames are `unitree_go` structs; a `unitree_hg` frame fails CRC and is dropped by the robot
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [google-deepmind/mujoco_menagerie/unitree_go2](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_go2), scene `scene.xml`.
 
-Back to [Mobile bases](mobile/index.md) or the [catalog](index.md).
+Back to [Mobile bases](mobile/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

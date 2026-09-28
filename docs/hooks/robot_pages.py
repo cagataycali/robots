@@ -424,19 +424,16 @@ def robot_page(name: str) -> str:
         _chips(name, spec, cov, entry),
         "",
     ]
-    manual = (spec.get("asset") or {}).get("auto_download", True) is False
-    sim_clause = "once its model is on disk" if manual else "after one line"
     if sim and cov.real:
-        intro = (
-            f'You have `{name}` in a MuJoCo world {sim_clause}, and the same object on the hardware with `mode="real"`.'
-        )
+        intro = ""
     elif sim:
-        intro = f'You have `{name}` in a MuJoCo world {sim_clause}. No driver reaches this robot\'s hardware yet, so `mode="real"` refuses by name.'
+        intro = 'No driver reaches this robot\'s hardware yet, so `mode="real"` refuses by name.'
     elif cov.real:
-        intro = f'You have `{name}` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("{name}")` in the default sim mode refuses by name.'
+        intro = f'The registry ships no simulation asset for it, so `Robot("{name}")` in the default sim mode refuses by name.'
     else:
         intro = f"`{name}` is registered by name and alias, with no simulation asset and no driver at this commit."
-    lines += [intro, ""]
+    if intro:
+        lines += [intro, ""]
     if sim:
         if entry.get("viewer"):
             lines += [f'<robot-viewer name="{name}"></robot-viewer>', ""]
@@ -488,15 +485,15 @@ def robot_page(name: str) -> str:
         ]
     if cov.real or spec.get("hardware"):
         lines += [_hardware_section(name, spec, cov)]
+    matrix = "[policy matrix](../learn/policies/index.md)"
     if cov.policies:
-        pol = "Providers written for this body: " + ", ".join(f"`{p}`" for p in cov.policies) + "."
-    else:
-        pol = "No provider is bound to this body; the generic providers apply."
-    lines += ["## Policies", "", f"Pick a provider from the [policy matrix](../learn/policies/index.md). {pol}", ""]
+        providers = ", ".join(f"`{p}`" for p in cov.policies)
+        lines += ["## Policies", "", f"Providers written for this body: {providers}; the rest are in the {matrix}.", ""]
     model = _model_link(entry.get("base_url"))
     if model:
         lines += [f"Model: {model}, scene `{entry.get('scene')}`.", ""]
-    lines += [f"Back to [{_label(spec['category'])}]({spec['category']}/index.md) or the [catalog](index.md).", ""]
+    back = f"Back to [{_label(spec['category'])}]({spec['category']}/index.md) or the [catalog](index.md)"
+    lines += [back + ("." if cov.policies else f"; the generic providers are in the {matrix}."), ""]
     return "\n".join(lines)
 
 
@@ -513,9 +510,7 @@ def family_page(category: str) -> str:
         "",
         f"# {label}",
         "",
-        f"{sentence} Every `{category}` robot in the registry, generated from `robots.json`; "
-        f"each card opens the robot's page with the viewer, the constructor and the hardware facts. "
-        f"The table below the cards is the same list as text.",
+        sentence,
         "",
         f"{{{{robot_cards:{category}}}}}",
         "",

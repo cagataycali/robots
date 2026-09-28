@@ -9,7 +9,7 @@ description: "Bi-manual reBot B601-DM (dual 6-DOF + gripper, Damiao CAN motors)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="bimanual">Bimanual</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
 
-You have `bi_rebot_b601` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("bi_rebot_b601")` in the default sim mode refuses by name.
+The registry ships no simulation asset for it, so `Robot("bi_rebot_b601")` in the default sim mode refuses by name.
 
 Real hardware, one call per driver that builds it:
 
@@ -28,8 +28,4 @@ Aliases `Robot()` accepts: `bi_rebot_b601_follower`, `dual_rebot_b601`.
 
 **lerobot.** `Robot("bi_rebot_b601", mode="real")` builds lerobot's `bi_rebot_b601_follower` with `pip install 'strands-robots[lerobot]'`; there is no single `port=`; pass `left_arm_config=` and `right_arm_config=`, one `RebotB601FollowerConfig` per arm with its own `port` and `cameras`. The default when `driver=` is not given. Install lerobot from source: the type is not in the PyPI release.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
-Back to [Bimanual](bimanual/index.md) or the [catalog](index.md).
+Back to [Bimanual](bimanual/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

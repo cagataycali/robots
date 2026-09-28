@@ -9,7 +9,7 @@ description: "Unitree H1-2 Humanoid (52-DOF, with hands)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">52 joints</span><span class="sr-chip sr-chip-sim">sim</span></p>
 
-You have `unitree_h1_2` in a MuJoCo world after one line. No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
+No driver reaches this robot's hardware yet, so `mode="real"` refuses by name.
 
 <robot-viewer name="unitree_h1_2"></robot-viewer>
 
@@ -21,10 +21,6 @@ robot = Robot("unitree_h1_2")
 
 Aliases `Robot()` accepts: `h1_2`.
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [unitreerobotics/unitree_ros/robots/h1_2_description](https://github.com/unitreerobotics/unitree_ros/tree/267182b8521c8d6a631bab1fe63836873237a525/robots/h1_2_description), scene `h1_2.xml`.
 
-Back to [Humanoids](humanoid/index.md) or the [catalog](index.md).
+Back to [Humanoids](humanoid/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).

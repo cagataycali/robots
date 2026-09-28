@@ -9,8 +9,6 @@ description: "Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot, strands</span></p>
 
-You have `koch` in a MuJoCo world after one line, and the same object on the hardware with `mode="real"`.
-
 <robot-viewer name="koch"></robot-viewer>
 
 ```python
@@ -47,10 +45,6 @@ Checks before it writes:
 - a reply whose error byte carries an error number is dropped; the hardware-alert bit alone is not
 - `stop` releases torque on every motor and names any that stayed driven
 
-## Policies
-
-Pick a provider from the [policy matrix](../learn/policies/index.md). No provider is bound to this body; the generic providers apply.
-
 Model: [google-deepmind/mujoco_menagerie/low_cost_robot_arm](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/low_cost_robot_arm), scene `scene.xml`.
 
-Back to [Arms](arm/index.md) or the [catalog](index.md).
+Back to [Arms](arm/index.md) or the [catalog](index.md); the generic providers are in the [policy matrix](../learn/policies/index.md).
