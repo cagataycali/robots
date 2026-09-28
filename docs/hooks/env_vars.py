@@ -12,8 +12,14 @@ How reads are found (``ast`` over the source, no import):
    ``os.environ.setdefault("X", ...)`` and ``os.environ.pop("X")`` with a string
    literal, or with a module-level constant that holds one.
 2. Helper wrappers: a function whose body performs one of those reads on one of
-   its own parameters (``def _env_flag(name): ... os.getenv(name)``). Every call
-   to that helper with a string literal counts as a read of that variable.
+   its own parameters (``def _env_flag(name): ... os.getenv(name)``), or passes
+   one of its parameters to another helper (``def _resolve_hz(name, d): ...
+   hz_from_env(name)``), to a fixed point. Every call to a helper with a string
+   key counts as a read of that variable.
+3. Key shapes: a string literal, a module-level string constant, or a
+   concatenation of those (``os.getenv(_ENV + "ENABLED")``).
+4. Receivers: ``os.environ``, a bare ``environ``, or a conditional whose either
+   arm is one (``(env if env is not None else os.environ).get(KEY)``).
 
 ``python3 docs/hooks/env_vars.py`` prints the markdown.
 """
@@ -50,8 +56,12 @@ class Read:
 
 
 def _is_environ(node: ast.expr) -> bool:
-    """``os.environ`` or a bare ``environ`` name."""
-    return (isinstance(node, ast.Attribute) and node.attr == "environ") or (isinstance(node, ast.Name) and node.id == "environ")
+    """``os.environ``, a bare ``environ`` name, or a conditional with one on either arm."""
+    if isinstance(node, ast.IfExp):
+        return _is_environ(node.body) or _is_environ(node.orelse)
+    return (isinstance(node, ast.Attribute) and node.attr == "environ") or (
+        isinstance(node, ast.Name) and node.id == "environ"
+    )
 
 
 def _read_target(node: ast.AST) -> tuple[ast.expr, ast.expr | None] | None:
@@ -75,7 +85,11 @@ def _constants(tree: ast.Module) -> dict[str, str]:
     out: dict[str, str] = {}
     for node in tree.body:
         value = getattr(node, "value", None)
-        if isinstance(node, ast.Assign | ast.AnnAssign) and isinstance(value, ast.Constant) and isinstance(value.value, str):
+        if (
+            isinstance(node, ast.Assign | ast.AnnAssign)
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+        ):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
                 if isinstance(target, ast.Name):
@@ -84,10 +98,15 @@ def _constants(tree: ast.Module) -> dict[str, str]:
 
 
 def _literal(node: ast.expr | None, constants: dict[str, str]) -> str | None:
+    """The key a read names: a literal, a module constant, or a ``+`` chain of those."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     if isinstance(node, ast.Name) and node.id in constants:
         return constants[node.id]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _literal(node.left, constants), _literal(node.right, constants)
+        if left is not None and right is not None:
+            return left + right
     return None
 
 
@@ -99,18 +118,104 @@ def _default_text(node: ast.expr | None) -> str | None:
     return None
 
 
-def _helpers(tree: ast.Module) -> set[str]:
-    """Names of functions that read the environment through one of their parameters."""
-    out: set[str] = set()
-    for fn in ast.walk(tree):
-        if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+def _call_name(node: ast.Call) -> str:
+    func = node.func
+    return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+
+
+@dataclass(frozen=True)
+class Helper:
+    """A function that reads ``prefix + <argument index> + suffix`` from the environment."""
+
+    index: int
+    prefix: str = ""
+    suffix: str = ""
+
+    def resolve(self, call: ast.Call, constants: dict[str, str]) -> str | None:
+        """The variable one call of this helper reads, when its key argument is literal text."""
+        if len(call.args) <= self.index:
+            return None
+        text = _literal(call.args[self.index], constants)
+        return None if text is None else self.prefix + text + self.suffix
+
+
+def _addends(node: ast.expr) -> list[ast.expr]:
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return [*_addends(node.left), *_addends(node.right)]
+    return [node]
+
+
+def _locals_bound_once(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.expr]:
+    """``{name: value}`` for every local the function assigns exactly once."""
+    seen: dict[str, list[ast.expr]] = defaultdict(list)
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            seen[node.targets[0].id].append(node.value)
+    return {name: values[0] for name, values in seen.items() if len(values) == 1}
+
+
+def _template(key: ast.expr, params: list[str], constants: dict[str, str], bound: dict[str, ast.expr]) -> Helper | None:
+    """Read *key* as literal text around exactly one parameter, or None."""
+    if isinstance(key, ast.Name) and key.id in bound and key.id not in params:
+        key = bound[key.id]
+    index: int | None = None
+    prefix = suffix = ""
+    for operand in _addends(key):
+        if isinstance(operand, ast.Name) and operand.id in params:
+            if index is not None:
+                return None
+            index = params.index(operand.id)
             continue
-        params = {a.arg for a in [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]}
-        for node in ast.walk(fn):
-            target = _read_target(node)
-            if target and isinstance(target[0], ast.Name) and target[0].id in params:
-                out.add(fn.name)
-                break
+        text = _literal(operand, constants)
+        if text is None:
+            return None
+        if index is None:
+            prefix += text
+        else:
+            suffix += text
+    return None if index is None else Helper(index, prefix, suffix)
+
+
+def _helpers(trees: dict[Path, ast.Module]) -> dict[str, Helper]:
+    """Functions that read the environment through one of their parameters, as templates.
+
+    Direct readers first (``os.getenv(name)`` or ``var = _ENV + name; os.getenv(var)``
+    on a parameter), then, to a fixed point, functions that hand one of their
+    parameters to a known helper (``_resolve_hz(env_name, default)`` calling
+    ``hz_from_env(env_name)``).
+    """
+    functions = [
+        (fn, _constants(tree))
+        for tree in trees.values()
+        for fn in ast.walk(tree)
+        if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef)
+    ]
+    out: dict[str, Helper] = {}
+    grew = True
+    while grew:
+        grew = False
+        for fn, constants in functions:
+            if fn.name in out:
+                continue
+            params = [a.arg for a in [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]]
+            bound = _locals_bound_once(fn)
+            for node in ast.walk(fn):
+                target = _read_target(node)
+                if target:
+                    found = _template(target[0], params, constants, bound)
+                elif isinstance(node, ast.Call) and _call_name(node) in out:
+                    inner = out[_call_name(node)]
+                    found = None
+                    if len(node.args) > inner.index:
+                        found = _template(node.args[inner.index], params, constants, bound)
+                        if found is not None:
+                            found = Helper(found.index, inner.prefix + found.prefix, found.suffix + inner.suffix)
+                else:
+                    found = None
+                if found is not None:
+                    out[fn.name] = found
+                    grew = True
+                    break
     return out
 
 
@@ -162,9 +267,7 @@ def _meaning(text: str, tree: ast.Module, name: str) -> str:
 def reads() -> dict[str, Read]:
     """Every environment variable read, keyed by name."""
     trees = {path: ast.parse(path.read_text(encoding="utf-8")) for path in sorted(_PKG.rglob("*.py"))}
-    helper_names: set[str] = set()
-    for tree in trees.values():
-        helper_names |= _helpers(tree)
+    helpers = _helpers(trees)
     out: dict[str, Read] = {}
 
     def record(name: str, module: str, default: str | None) -> None:
@@ -185,18 +288,19 @@ def reads() -> dict[str, Read]:
                 if name:
                     record(name, module, _default_text(target[1]))
                 continue
-            if isinstance(node, ast.Call):
-                func = node.func
-                fname = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-                if fname in helper_names and node.args:
-                    name = _literal(node.args[0], constants)
-                    if name:
-                        record(name, module, _default_text(node.args[1] if len(node.args) > 1 else None))
+            if isinstance(node, ast.Call) and _call_name(node) in helpers:
+                helper = helpers[_call_name(node)]
+                name = helper.resolve(node, constants)
+                if name:
+                    default = node.args[helper.index + 1] if len(node.args) > helper.index + 1 else None
+                    record(name, module, _default_text(default))
     by_module = {_module_name(p): (p.read_text(encoding="utf-8"), tree) for p, tree in trees.items()}
     for entry in out.values():
         candidates = [_meaning(*by_module[m], entry.name) for m in sorted(entry.modules)]
         candidates = [c for c in candidates if c]
-        entry.meaning = next((c for c in candidates if c.lstrip("`").startswith(entry.name)), candidates[0] if candidates else "")
+        entry.meaning = next(
+            (c for c in candidates if c.lstrip("`").startswith(entry.name)), candidates[0] if candidates else ""
+        )
     return out
 
 
@@ -237,7 +341,9 @@ def render() -> str:
             if len(e.modules) > 3:
                 modules += f" and {len(e.modules) - 3} more"
             default = ", ".join(_code(d) for d in sorted(e.defaults)) if e.defaults else "unset"
-            meaning = _cell(e.meaning) if e.meaning else f"see {_code(sorted(e.modules)[0].removeprefix('strands_robots.'))}"
+            meaning = (
+                _cell(e.meaning) if e.meaning else f"see {_code(sorted(e.modules)[0].removeprefix('strands_robots.'))}"
+            )
             lines.append(f"| {_code(e.name)} | {modules} | {default} | {meaning} |")
         lines.append("")
     return "\n".join(lines)
