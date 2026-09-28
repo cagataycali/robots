@@ -1,5 +1,7 @@
 """``stop_policy`` answers once the robot is free, so the caller's next action on it is admitted."""
 
+import importlib
+import inspect
 import re
 import threading
 import time
@@ -117,11 +119,37 @@ def test_stop_of_a_blocking_run_policy_has_nothing_to_join(arm):
     assert seen["result"]["status"] == "success"
 
 
-_ROW = re.compile(r"^\| `stop_policy\(", re.MULTILINE)
+_API_PAGE = Path(__file__).resolve().parents[2] / "docs" / "reference" / "api" / "simulation.md"
+#: A mkdocstrings block on the page: ``::: strands_robots.simulation.base.SimEngine``.
+_AUTODOC_BLOCK = re.compile(r"^::: (\S+)", re.MULTILINE)
+
+
+def _stop_policy_entry() -> str:
+    """The ``stop_policy`` entry of the simulation API reference as the reader sees it.
+
+    The old hand-written ``api-reference.md`` row became a mkdocstrings page:
+    ``reference/api/simulation.md`` renders the docstrings of the objects its
+    ``:::`` blocks name. The entry is therefore the page's own prose plus the
+    ``stop_policy`` docstring of every rendered object that has one, and the page
+    must render at least one such object for the rule below to mean anything.
+    """
+    page = _API_PAGE.read_text(encoding="utf-8")
+    docstrings = []
+    for dotted in _AUTODOC_BLOCK.findall(page):
+        module_name, _, attribute = dotted.rpartition(".")
+        try:
+            obj = getattr(importlib.import_module(module_name), attribute)
+        except (ImportError, AttributeError):
+            obj = importlib.import_module(dotted)
+        method = getattr(obj, "stop_policy", None)
+        if method is not None and inspect.getdoc(method):
+            docstrings.append(inspect.getdoc(method))
+    assert docstrings, f"{_API_PAGE.name} renders no object with a stop_policy docstring"
+    return page + "\n" + "\n".join(docstrings)
 
 
 def test_the_api_reference_row_names_the_fields_the_envelope_carries(arm):
-    """The row a caller reads before their first call names every key they get back.
+    """The entry a caller reads before their first call names every key they get back.
 
     The envelope's keys are read off a real stop, not listed by hand: when this
     surface grew ``exited`` the row still documented ``was_running`` alone, so a
@@ -134,16 +162,13 @@ def test_the_api_reference_row_names_the_fields_the_envelope_carries(arm):
     keys = set(_json(arm.stop_policy("so101")))
     assert keys == {"robot", "was_running", "exited"}, keys
 
-    doc = (Path(__file__).resolve().parents[2] / "docs" / "reference" / "api-reference.md").read_text(encoding="utf-8")
-    rows = [line for line in doc.splitlines() if _ROW.match(line)]
-    assert len(rows) == 1, rows  # a broken parse would make the rule below vacuous
-    row = rows[0]
+    row = _stop_policy_entry()
     for key in keys - {"robot"}:
-        assert f"`{key}`" in row, (
-            f"docs/reference/api-reference.md documents stop_policy without naming {key!r}, a key its json "
+        assert f"``{key}``" in row or f"`{key}`" in row, (
+            f"docs/reference/api/simulation.md documents stop_policy without naming {key!r}, a key its json "
             f"block really returns: {row}"
         )
     assert f"{type(arm)._POLICY_STOP_JOIN_TIMEOUT:g} s" in row, (
-        f"the row does not name the real join budget ({type(arm)._POLICY_STOP_JOIN_TIMEOUT}s): {row}"
+        f"the entry does not name the real join budget ({type(arm)._POLICY_STOP_JOIN_TIMEOUT}s): {row}"
     )
     assert "only rollout in flight" in row, row
