@@ -5,9 +5,11 @@ one configures the same file: where it is written (``STRANDS_MESH_AUDIT_DIR``),
 whether records carry a per-record HMAC that lets a verifier reject a forged
 entry (``STRANDS_MESH_AUDIT_PSK``), and the per-file / rotation bounds that
 keep disk use finite (``STRANDS_MESH_AUDIT_MAX_BYTES`` and
-``STRANDS_MESH_AUDIT_MAX_FILES``). ``docs/reference/security/audit-log.md`` documents them together
-under ``## Audit log``. Until this file's companion change, the README
-environment-variable matrix carried a row for ``_DIR`` alone -- so a reader
+``STRANDS_MESH_AUDIT_MAX_FILES``). ``docs/learn/security.md`` documents them together
+under ``## Evidence``, and the generated env-var matrix on
+``docs/reference/configuration.md`` (its ``{{env_vars}}`` token expanded here
+through ``docs/hooks/env_vars.py``) carries one row per variable. Until this
+file's companion change, the matrix carried a row for ``_DIR`` alone -- so a reader
 scanning the matrix for the audit family found one variable of four and not
 the tamper-evidence gate the security page calls "a deliberate posture" or
 the rotation bounds that same page pairs it with.
@@ -17,7 +19,7 @@ population tracks the code rather than a list maintained beside it. A fifth
 ``STRANDS_MESH_AUDIT_*`` path added later is held to the same rule the hour it
 lands. Four properties, plus one keep-the-derivation-honest premise:
 
-- **Every audit variable the module reads has a README matrix row.** This is
+- **Every audit variable the module reads has a matrix row.** This is
   what makes the matrix a single index for the family; a reader scanning the
   matrix section for the audit family should find every knob that configures
   the same file.
@@ -33,15 +35,18 @@ lands. Four properties, plus one keep-the-derivation-honest premise:
 """
 
 import ast
+import importlib.util
 import pathlib
 import re
+import sys
 
 from strands_robots import audit as _audit_module
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "audit.py"
-_PAGE = _ROOT / "docs" / "reference" / "security" / "audit-log.md"
-_README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
+_PAGE = _ROOT / "docs" / "learn" / "security.md"
+_README = _ROOT / "docs" / "reference" / "configuration.md"  # the generated env-var matrix
+_ENV_VARS_HOOK = _ROOT / "docs" / "hooks" / "env_vars.py"
 
 _PREFIX = "STRANDS_MESH_AUDIT_"
 _KNOWN = frozenset(
@@ -83,27 +88,38 @@ def _documented(text: str) -> frozenset[str]:
     return frozenset(re.findall(rf"{_PREFIX}[A-Z_]+", text))
 
 
+def _rendered_matrix() -> str:
+    """``configuration.md`` with ``{{env_vars}}`` expanded by the shipped hook.
+
+    The hook writes names as ``<code>NAME</code>``; the tags are folded to
+    backticks so the row regex below reads the generated table as it would a
+    hand-written one.
+    """
+    source = _README.read_text(encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _ENV_VARS_HOOK)
+    assert spec is not None and spec.loader is not None, _ENV_VARS_HOOK
+    module = sys.modules.get(spec.name)
+    if module is None:
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    rendered = module.on_page_markdown(source, page=None, config=None, files=None)
+    assert rendered != source, "docs/reference/configuration.md carries no {{env_vars}} token for the hook to expand"
+    return re.sub(r"</?code>", "`", rendered)
+
+
 def _readme_matrix_rows() -> frozenset[str]:
-    """Return the ``STRANDS_MESH_AUDIT_*`` names carrying a README matrix row.
+    """Return the ``STRANDS_MESH_AUDIT_*`` names carrying a matrix row.
 
     A mention in prose is not a matrix row: the matrix is a scan index for
     the family, so the rule reads the table.
     """
-    rows = re.findall(
-        rf"^\|\s*`({_PREFIX}[A-Z_]+)`\s*\|",
-        _README.read_text(encoding="utf-8"),
-        re.M,
-    )
-    return frozenset(rows)
+    return frozenset(_readme_matrix_row_order())
 
 
 def _readme_matrix_row_order() -> list[str]:
     """Return the ``STRANDS_MESH_AUDIT_*`` names in the matrix, in order of appearance."""
-    return re.findall(
-        rf"^\|\s*`({_PREFIX}[A-Z_]+)`\s*\|",
-        _README.read_text(encoding="utf-8"),
-        re.M,
-    )
+    return re.findall(rf"^\|\s*`({_PREFIX}[A-Z_]+)`\s*\|", _rendered_matrix(), re.M)
 
 
 def _audit_headings_naming(name: str) -> list[str]:
@@ -153,7 +169,7 @@ class TestEveryAuditVariableIsDocumented:
     def test_the_readme_matrix_names_every_audit_variable(self) -> None:
         missing = sorted(_audit_env_reads() - _readme_matrix_rows())
         assert not missing, (
-            f"the README env-var matrix has no row for {missing}; the audit "
+            f"the configuration.md env-var matrix has no row for {missing}; the audit "
             "family is documented as one channel and the matrix is the scan "
             "index a reader uses to discover the family's knobs"
         )
@@ -161,7 +177,7 @@ class TestEveryAuditVariableIsDocumented:
     def test_the_security_page_names_every_audit_variable(self) -> None:
         missing = sorted(_audit_env_reads() - _documented(_PAGE.read_text(encoding="utf-8")))
         assert not missing, (
-            f"docs/reference/security/audit-log.md names none of {missing}; the audit posture is "
+            f"docs/learn/security.md names none of {missing}; the audit posture is "
             "described there and a variable that shapes it must be nameable"
         )
 
@@ -193,12 +209,12 @@ class TestTheBehaviourThePagesExistToMakeDiscoverable:
     """The prose cannot drift away from what the audit module honours."""
 
     def test_the_psk_read_lives_where_the_page_says_it_does(self) -> None:
-        # docs/reference/security/audit-log.md says: "when set, per-record HMAC is on".
+        # docs/learn/security.md says: "when set, per-record HMAC is on".
         # The module read is the wire between them.  If the read moves or its
         # env name changes, the page's promise no longer resolves.
         assert 'os.getenv("STRANDS_MESH_AUDIT_PSK")' in _MODULE.read_text(encoding="utf-8"), (
             "the audit module no longer reads STRANDS_MESH_AUDIT_PSK by that "
-            "name; docs/reference/security/audit-log.md promises HMAC when the variable is set, "
+            "name; docs/learn/security.md promises HMAC when the variable is set, "
             "and the promise must reach the loader"
         )
 
@@ -206,7 +222,7 @@ class TestTheBehaviourThePagesExistToMakeDiscoverable:
         source = _MODULE.read_text(encoding="utf-8")
         for name in ("STRANDS_MESH_AUDIT_MAX_BYTES", "STRANDS_MESH_AUDIT_MAX_FILES"):
             assert f'os.getenv("{name}")' in source, (
-                f"{name} is no longer read at that name; the README matrix "
+                f"{name} is no longer read at that name; the configuration matrix "
                 "and the security page both promise it, and the promise must "
                 "reach the rotator"
             )
