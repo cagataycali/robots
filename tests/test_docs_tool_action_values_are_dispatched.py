@@ -22,15 +22,25 @@ is worth pinning rather than left to review:
   gets ``Serial error: could not open port`` next, two steps away from
   ``list_ports``, which needs no port.
 
-The rule is one-directional. The table column is "Key actions", so naming a
-subset is correct and omission is never reported; only an action no tool
-dispatches is.
+The rule is one-directional. The tables name key actions, so naming a subset
+is correct and omission is never reported; only an action no tool dispatches
+is.
+
+Two table shapes are read. A hand-written row (```| `tool` | ... `"action"` ...```)
+and the generated tool reference on ``docs/reference/tools.md``, whose
+``{{tools_ref}}`` token ``docs/hooks/tools_ref.py`` expands at build time into
+one row per ``@tool`` with an ``actions or parameters`` column
+(``<code>action</code>, ...``, or ``params: ...`` for a tool without an
+``action``). The generated page is graded as rendered, so a vocabulary the hook
+reads differently from the dispatch branches shows up here.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib.util
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,14 +50,20 @@ import strands_robots
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _TOOLS_DIR = _REPO_ROOT / "strands_robots" / "tools"
+_TOOLS_PAGE = _REPO_ROOT / "docs" / "reference" / "tools.md"
+_TOOLS_HOOK = _REPO_ROOT / "docs" / "hooks" / "tools_ref.py"
 
 # A documented call: ``<tool>(action="<value>"`` anywhere in a page, fenced or
 # inline. The action is the first argument at every documented call site.
 _CALL = re.compile(r"\b([a-z_][a-z0-9_]*)\s*\(\s*action\s*=\s*[\"']([^\"']+)[\"']")
 
-# A tools-table row: ``| `<tool>` | ... `"action"`, `"action"` ... |``.
+# A hand-written tools-table row: ``| `<tool>` | ... `"action"`, `"action"` ... |``.
 _ROW = re.compile(r"^\|\s*`([a-z0-9_]+)`\s*\|(.*?)\|")
 _QUOTED = re.compile(r'`"([^"]+)"`')
+# A generated tool-reference row: ``| <code>tool</code> | <code>module</code> | does | <code>a</code>, <code>b</code> |``
+# or ``... | params: <code>x</code> |`` for a tool that takes no ``action``.
+_GENERATED_ROW = re.compile(r"^\|\s*<code>([a-z0-9_]+)</code>\s*\|[^|]*\|[^|]*\|([^|]*)\|\s*$")
+_CODE = re.compile(r"<code>([^<]+)</code>")
 
 # A page reflow that hides the tables would otherwise report a clean sweep.
 _MINIMUM_CLAIMS = 40
@@ -147,14 +163,38 @@ def _graded_pages() -> list[Path]:
     return sorted(_REPO_ROOT.glob("docs/**/*.md")) + [_REPO_ROOT / "README.md"]
 
 
+def _rendered(page: Path) -> str:
+    """``page`` as the reader sees it: the tool reference has its token expanded by the hook."""
+    text = page.read_text(encoding="utf-8")
+    if page != _TOOLS_PAGE:
+        return text
+    spec = importlib.util.spec_from_file_location("docs_hooks_tools_ref", _TOOLS_HOOK)
+    assert spec is not None and spec.loader is not None
+    module = sys.modules.get(spec.name)
+    if module is None:
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    rendered = module.on_page_markdown(text, page=None, config=None, files=None)
+    assert rendered != text, "docs/reference/tools.md carries no {{tools_ref}} token for the hook to expand"
+    return rendered
+
+
 def _claims_in(text: str, page: str, tools: dict[str, Path]) -> list[_Claim]:
     """The action values ``text`` attributes to a known tool."""
     claims = [_Claim(page, "call", tool, action) for tool, action in _CALL.findall(text) if tool in tools]
     for line in text.splitlines():
         row = _ROW.match(line)
-        if row is None or row.group(1) not in tools:
+        if row is not None and row.group(1) in tools:
+            claims += [_Claim(page, "table", row.group(1), a) for a in _QUOTED.findall(row.group(2))]
             continue
-        claims += [_Claim(page, "table", row.group(1), a) for a in _QUOTED.findall(row.group(2))]
+        generated = _GENERATED_ROW.match(line)
+        if generated is None or generated.group(1) not in tools:
+            continue
+        cell = generated.group(2).strip()
+        if cell.startswith("params:"):
+            continue  # a tool without an ``action`` lists its parameters instead
+        claims += [_Claim(page, "table", generated.group(1), a) for a in _CODE.findall(cell)]
     return claims
 
 
@@ -163,7 +203,7 @@ def _documented_claims(tools: dict[str, Path]) -> list[_Claim]:
     claims: list[_Claim] = []
     for page in _graded_pages():
         rel = page.relative_to(_REPO_ROOT).as_posix()
-        claims += _claims_in(page.read_text(encoding="utf-8"), rel, tools)
+        claims += _claims_in(_rendered(page), rel, tools)
     return claims
 
 
@@ -214,12 +254,26 @@ class TestTheRuleIsOneDirectional:
     """Naming a subset is correct; the column is "Key actions"."""
 
     def test_a_documented_subset_is_not_reported(self) -> None:
-        """A tool may dispatch more actions than any page lists."""
+        """A tool may dispatch more actions than any page lists.
+
+        The generated reference lists every action, so the strict subsets live
+        in the hand-written pages: a Learn page calls one or two actions of a
+        tool that dispatches many. At least one such tool has to exist for the
+        rule to be exercised, and none of its calls may be reported.
+        """
         tools = _tool_modules()
-        claims = [c for c in _documented_claims(tools) if c.tool == "use_ros"]
-        documented = {c.action for c in claims}
-        assert documented < _dispatched_actions(tools["use_ros"]), "premise: a strict subset is documented"
-        assert not _undispatched(claims, tools)
+        by_tool: dict[str, list[_Claim]] = {}
+        for claim in _documented_claims(tools):
+            if claim.kind == "call":
+                by_tool.setdefault(claim.tool, []).append(claim)
+        subsets = {
+            tool: claims
+            for tool, claims in by_tool.items()
+            if {c.action for c in claims} < _dispatched_actions(tools[tool])
+        }
+        assert subsets, "premise: no page documents a strict subset of any tool's actions"
+        for claims in subsets.values():
+            assert not _undispatched(claims, tools)
 
 
 class TestTheGraderIsLoadBearing:
@@ -246,6 +300,16 @@ class TestTheGraderIsLoadBearing:
         planted = _claims_in(row, "planted.md", tools)
         assert {c.kind for c in planted} == {"table"}
         assert [c.action for c in _undispatched(planted, tools)] == ["no_such_action"]
+
+    def test_a_planted_generated_row_is_graded_too(self) -> None:
+        """The generated tool reference's ``actions or parameters`` column is read."""
+        tools = _tool_modules()
+        row = "| <code>pose_tool</code> | <code>tools.pose</code> | Poses. | <code>store_pose</code>, <code>no_such_action</code> |"
+        planted = _claims_in(row, "planted.md", tools)
+        assert {c.kind for c in planted} == {"table"}
+        assert [c.action for c in _undispatched(planted, tools)] == ["no_such_action"]
+        params = "| <code>pose_tool</code> | <code>tools.pose</code> | Poses. | params: <code>robot_id</code> |"
+        assert _claims_in(params, "planted.md", tools) == [], "a parameter list is not an action vocabulary"
 
     def test_a_tool_the_package_does_not_ship_is_not_graded(self) -> None:
         """A same-shaped call to something else degrades to "not graded"."""
