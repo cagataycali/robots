@@ -10,6 +10,7 @@ Output: judge/judge_<model>.jsonl (one row per tick) and judge/JUDGE_TABLES.md.
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import sys
 import time
@@ -62,6 +63,16 @@ def rows_for(arm: str, task: str):
             before = t["distance_after"]
 
 
+def stride_for(model: str) -> int:
+    """JUDGE_STRIDE="multilingual=3,typed-decisions=3" judges every k-th tick of that model (uniform subsample, resumable)."""
+    spec = os.environ.get("JUDGE_STRIDE", "")
+    for part in filter(None, spec.split(",")):
+        name, _, k = part.partition("=")
+        if name.strip() == model:
+            return max(1, int(k))
+    return 1
+
+
 def main(device: str = "cuda") -> None:
     import laya
 
@@ -78,11 +89,12 @@ def main(device: str = "cuda") -> None:
                 r = json.loads(line)
                 done.add((r["arm"], r["task"], r["episode"], r["tick"]))
         per = defaultdict(list)
+        stride = stride_for(model)
         with out.open("a") as fh:
             for arm, task in SOURCES:
-                for row in rows_for(arm, task):
+                for i, row in enumerate(rows_for(arm, task)):
                     key = (arm, task, row["episode"], row["tick"])
-                    if key in done:
+                    if key in done or i % stride:
                         continue
                     t0 = time.perf_counter()
                     res = router.predict(row["state"], QUESTION, model=model)
