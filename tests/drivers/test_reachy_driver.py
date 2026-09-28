@@ -4,7 +4,7 @@ Everything here runs with no Reachy attached and no daemon listening. Two
 doubles stand in, and each is faithful in the one respect the tests depend on:
 
 * The daemon double replaces
-  :func:`strands_robots.device_connect.reachy_transport.api` and returns the
+  :func:`strands_robots.drivers.reachy_transport.api` and returns the
   shape that function really returns - a decoded body, or ``{"error": ...}`` for
   every failure including an unreachable host. That is why the driver has no
   ``try`` around its REST calls, so a double that raised instead would be
@@ -124,7 +124,7 @@ class _DaemonDouble:
         """Answer one REST call, recording it first.
 
         Returns whatever the table holds, unreshaped, because this stands in for
-        :func:`~strands_robots.device_connect.reachy_transport.api` - a list body
+        :func:`~strands_robots.drivers.reachy_transport.api` - a list body
         stays a list, so the driver's own shape judgement is what the tests grade.
         """
         self.calls.append((host, port, path, method))
@@ -340,18 +340,18 @@ class TestTheDaemonProbeDecidesTheConnection:
         assert driver._link is link
 
     def test_a_wireless_without_a_transport_gets_the_websocket_link(self) -> None:
-        from strands_robots.device_connect.reachy_transport import WebSocketLink
+        from strands_robots.drivers.reachy_transport import WebSocketLink
 
         driver = ReachyDriver(port="reachy-a.local", transport=None)
         assert isinstance(driver._build_link(is_lite=False), WebSocketLink)
 
     def test_a_lite_gets_the_websocket_link(self) -> None:
-        from strands_robots.device_connect.reachy_transport import WebSocketLink
+        from strands_robots.drivers.reachy_transport import WebSocketLink
 
         assert isinstance(ReachyDriver(port="h:8000")._build_link(is_lite=True), WebSocketLink)
 
     def test_a_wireless_with_a_transport_gets_the_zenoh_link(self) -> None:
-        from strands_robots.device_connect.reachy_transport import ZenohLink
+        from strands_robots.drivers.reachy_transport import ZenohLink
 
         driver = ReachyDriver(port="h", transport=object())
         assert isinstance(driver._build_link(is_lite=False), ZenohLink)
@@ -660,7 +660,7 @@ class TestActionsReachTheWireInTheDaemonsUnits:
         assert link.commands[0]["antennas_joint_positions"] == pytest.approx([0.0, math.radians(30)])
 
     def test_a_head_axis_becomes_a_four_by_four_pose(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from strands_robots.device_connect.reachy_transport import rpy_to_pose
+        from strands_robots.drivers.reachy_transport import rpy_to_pose
 
         driver, _, link = _connected(monkeypatch)
         assert driver.send_action({"head_pitch": 20.0, "head_z": 15.0})["status"] == "success"
@@ -989,7 +989,7 @@ class TestAnUnimportableTransportIsRefusedByNameRatherThanCrashing:
     """An unimportable transport must be reported, not raised.
 
     Every daemon touch here goes through
-    :mod:`strands_robots.device_connect.reachy_transport`, a stdlib-only leaf
+    :mod:`strands_robots.drivers.reachy_transport`, a stdlib-only leaf
     whose parent package resolves its third-party imports lazily. Nothing an
     extra installs decides whether that import succeeds, so a failure reaching
     these surfaces is a broken install of a module the core distribution ships -

@@ -23,8 +23,8 @@ What the driver actually does:
   answered. The daemon WebSocket serves both **Lite** and **Wireless** hardware
   (verified on daemon 1.10.0). An explicitly supplied Wireless bridge transport
   retains the Zenoh path. Both links come from
-  :mod:`strands_robots.device_connect.reachy_transport`, which the Device
-  Connect driver already ships - this module reuses them rather than growing a
+  :mod:`strands_robots.drivers.reachy_transport`, which the Device
+  Connect driver also uses - this module reuses them rather than growing a
   second daemon client.
 * Runs that link on one background asyncio loop and caches what it delivers.
   ``_imu`` is the head IMU verbatim; ``_pose`` is the head orientation, taken
@@ -155,14 +155,12 @@ _MOVE_LIBRARIES: dict[str, str] = {
 }
 
 #: The module every daemon touch here goes through. It is a leaf that imports
-#: nothing but the standard library, and its parent package
-#: :mod:`strands_robots.device_connect` resolves ``device_connect_edge`` and the
-#: three Device Connect drivers lazily, so importing the leaf executes no
-#: third-party import. Nothing an extra installs can therefore decide whether
+#: nothing but the standard library, and it sits beside this driver in
+#: :mod:`strands_robots.drivers`, so importing it executes no third-party import. Nothing an extra installs can therefore decide whether
 #: this import succeeds: on a stock ``pip install strands-robots`` it does, and a
 #: failure that still reaches :func:`_resolve_transport` is a broken install of a
 #: module the core distribution ships rather than a missing optional dependency.
-_TRANSPORT_MODULE = "strands_robots.device_connect.reachy_transport"
+_TRANSPORT_MODULE = "strands_robots.drivers.reachy_transport"
 
 #: How long :meth:`ReachyDriver._start_link` waits for a link's handshake before
 #: giving up on it. Read back off the module rather than inlined so a caller that
@@ -284,7 +282,7 @@ class ReachyDriver(AgentTool):
             zenoh_prefix: Zenoh key prefix for a Wireless Mini. Defaults to
                 ``tool_name``, so two Minis do not share a key space.
             transport: Zenoh transport for a Wireless Mini, passed through to
-                :class:`~strands_robots.device_connect.reachy_transport.ZenohLink`.
+                :class:`~strands_robots.drivers.reachy_transport.ZenohLink`.
                 ``None`` selects the daemon WebSocket on either hardware variant;
                 supplying a transport keeps the Wireless Zenoh bridge path.
             tts_url: Base URL of a Piper/``tiny-tts`` speech service for
@@ -858,7 +856,7 @@ class ReachyDriver(AgentTool):
 
         A ``start`` that raised, or that outran
         :data:`_LINK_START_TIMEOUT_S`, can still have put the link on the wire:
-        :meth:`~strands_robots.device_connect.reachy_transport.WebSocketLink.start`
+        :meth:`~strands_robots.drivers.reachy_transport.WebSocketLink.start`
         assigns the connected socket before it spawns its read task, and the
         Zenoh link subscribes to its first topic before its second. The link is
         not adopted after such a failure - ``_link`` stays ``None`` so the driver
@@ -1003,7 +1001,7 @@ class ReachyDriver(AgentTool):
         degrees because the envelope is expressed in degrees and because the
         daemon's own RPC surface takes degrees; the wire wants radians for a
         joint and a 4x4 matrix for the head, which
-        :func:`~strands_robots.device_connect.reachy_transport.rpy_to_pose`
+        :func:`~strands_robots.drivers.reachy_transport.rpy_to_pose`
         builds.
 
         Args:
@@ -2122,7 +2120,7 @@ class ReachyDriver(AgentTool):
 
         Returns:
             The decoded body, or ``{"error": ...}`` - the shape
-            :func:`~strands_robots.device_connect.reachy_transport.api` returns
+            :func:`~strands_robots.drivers.reachy_transport.api` returns
             for every failure, which is why no call here needs a ``try``.
 
             A body that decodes to something other than a JSON object is
@@ -2164,7 +2162,7 @@ class ReachyDriver(AgentTool):
 
         ``/api/move/recorded-move-datasets/list/{dataset}`` is declared
         ``-> list[str]`` by the daemon, and
-        :func:`~strands_robots.device_connect.reachy_transport.api` hands the
+        :func:`~strands_robots.drivers.reachy_transport.api` hands the
         decoded body back unreshaped, so a successful catalogue read is a
         ``list`` while every failure is still the ``{"error": ...}`` dict.
 
@@ -2832,7 +2830,7 @@ def _json_kind(body: Any) -> str:
     """Name the JSON type a decoded daemon body arrived as.
 
     Args:
-        body: A value :func:`~strands_robots.device_connect.reachy_transport.api`
+        body: A value :func:`~strands_robots.drivers.reachy_transport.api`
             handed back.
 
     Returns:

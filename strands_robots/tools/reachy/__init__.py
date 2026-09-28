@@ -9,7 +9,7 @@ data can use the daemon socket or an explicitly supplied bridge:
   **Lite** or **Wireless** (daemon 1.10.0), or an explicitly supplied Zenoh
   bridge on Wireless hardware.
 
-Both live in :mod:`strands_robots.device_connect.reachy_transport`, which the
+Both live in :mod:`strands_robots.drivers.reachy_transport`, which the
 Device Connect driver already ships and which
 :class:`~strands_robots.drivers.reachy.ReachyDriver` reuses rather than
 re-implements. The travel envelope the two drivers must agree on is

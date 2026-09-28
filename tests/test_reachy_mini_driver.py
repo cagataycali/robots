@@ -157,7 +157,7 @@ class _RecordingTransport:
 
 def _wireless_driver(rmd):
     """A driver connected over a real ZenohLink onto a recording transport."""
-    from strands_robots.device_connect.reachy_transport import ZenohLink
+    from strands_robots.drivers.reachy_transport import ZenohLink
 
     transport = _RecordingTransport()
     drv = rmd.ReachyMiniDriver(host="h", prefix="reachy_mini")

@@ -515,7 +515,7 @@ def test_playmove_allows_clean_name(monkeypatch):
 
 def test_rest_api_adds_auth_header_when_token_set(monkeypatch):
     monkeypatch.setenv("REACHY_DAEMON_TOKEN", "s3cret")
-    from strands_robots.device_connect import reachy_transport as rt
+    from strands_robots.drivers import reachy_transport as rt
 
     importlib.reload(rt)
     captured = {}
@@ -543,7 +543,7 @@ def test_rest_api_adds_auth_header_when_token_set(monkeypatch):
 
 
 def test_token_helper_reads_env(monkeypatch):
-    from strands_robots.device_connect import reachy_transport as rt
+    from strands_robots.drivers import reachy_transport as rt
 
     importlib.reload(rt)
     assert rt._daemon_auth_token() is None
@@ -557,7 +557,7 @@ def test_token_helper_reads_env(monkeypatch):
 
 def test_tls_disabled_by_default(monkeypatch):
     monkeypatch.delenv("REACHY_DAEMON_TLS", raising=False)
-    from strands_robots.device_connect import reachy_transport as rt
+    from strands_robots.drivers import reachy_transport as rt
 
     importlib.reload(rt)
     assert rt._daemon_use_tls() is False
@@ -566,7 +566,7 @@ def test_tls_disabled_by_default(monkeypatch):
 
 
 def test_tls_enables_secure_schemes(monkeypatch):
-    from strands_robots.device_connect import reachy_transport as rt
+    from strands_robots.drivers import reachy_transport as rt
 
     importlib.reload(rt)
     for spelling in ("1", "true", "TRUE", "yes", "on"):
@@ -579,7 +579,7 @@ def test_tls_enables_secure_schemes(monkeypatch):
 
 def test_rest_api_uses_https_url_when_tls_enabled(monkeypatch):
     monkeypatch.setenv("REACHY_DAEMON_TLS", "true")
-    from strands_robots.device_connect import reachy_transport as rt
+    from strands_robots.drivers import reachy_transport as rt
 
     importlib.reload(rt)
     captured = {}
@@ -612,7 +612,7 @@ def test_tls_verifies_certificate_by_default(monkeypatch):
 
     monkeypatch.setenv("REACHY_DAEMON_TLS", "true")
     monkeypatch.delenv("REACHY_DAEMON_TLS_INSECURE", raising=False)
-    from strands_robots.device_connect import reachy_transport as rt
+    from strands_robots.drivers import reachy_transport as rt
 
     importlib.reload(rt)
     assert rt._daemon_verify_tls() is True
@@ -628,7 +628,7 @@ def test_tls_insecure_skips_verification_with_warning(monkeypatch, caplog):
 
     monkeypatch.setenv("REACHY_DAEMON_TLS", "true")
     monkeypatch.setenv("REACHY_DAEMON_TLS_INSECURE", "true")
-    from strands_robots.device_connect import reachy_transport as rt
+    from strands_robots.drivers import reachy_transport as rt
 
     importlib.reload(rt)  # clears the functools.cache warn-once memo
     assert rt._daemon_verify_tls() is False
@@ -644,7 +644,7 @@ def test_tls_insecure_skips_verification_with_warning(monkeypatch, caplog):
 
 def test_websocket_link_uses_wss_when_tls_enabled(monkeypatch):
     monkeypatch.setenv("REACHY_DAEMON_TLS", "true")
-    from strands_robots.device_connect import reachy_transport as rt
+    from strands_robots.drivers import reachy_transport as rt
 
     importlib.reload(rt)
     captured = {}

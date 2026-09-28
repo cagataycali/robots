@@ -32,7 +32,9 @@ annotation is not a dependency at any point in the run.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import re
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -371,6 +373,25 @@ class TestTheContract:
             if mod.member_of(importer) == "drivers"
             for target in targets
             if mod.member_of(target) == "mesh"
+        )
+        assert offenders == []
+
+    def test_no_driver_names_a_sibling_package_by_string(self) -> None:
+        """A module path handed to ``importlib`` is an import the graph cannot see.
+
+        The Reachy driver resolved its daemon link as
+        ``"strands_robots.device_connect.reachy_transport"``, so a driver depended
+        on the package 0.7 removes while every edge above read clean. Any string
+        constant that is exactly a dotted path into a sibling package counts;
+        prose that merely cites one does not, because it is never the whole
+        constant.
+        """
+        sibling = re.compile(r"strands_robots\.(?:mesh|device_connect)(?:\.\w+)*")
+        offenders = sorted(
+            (path.relative_to(_PACKAGE_ROOT).as_posix(), node.value)
+            for path in (_PACKAGE_ROOT / "drivers").rglob("*.py")
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and sibling.fullmatch(node.value)
         )
         assert offenders == []
 
