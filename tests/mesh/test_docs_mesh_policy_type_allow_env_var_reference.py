@@ -14,14 +14,18 @@ mesh ``execute`` / ``start`` path with :class:`refusal_codes.POLICY_TYPE_NOT_ALL
 the refusal message names this variable as the recourse.
 
 Until this file's companion change, ``STRANDS_MESH_POLICY_TYPE_ALLOW`` was
-named on neither the README environment-variable matrix (which carried 35+
-other ``STRANDS_MESH_*`` rows) nor ``docs/reference/security.md``. The variable is
+named on neither the environment-variable matrix (which carried 35+ other
+``STRANDS_MESH_*`` rows) nor the security page. Today the matrix is the
+generated table on ``docs/reference/configuration.md`` (its ``{{env_vars}}``
+token expanded here through ``docs/hooks/env_vars.py``) and the security page is
+``docs/learn/security.md``, whose "Allowlists on the mesh" section is the graded
+block. The variable is
 referenced 10 times inside ``mesh/security.py`` itself -- one refusal code, one
 regex-charset comment, two class docstrings on the built-in list, one loader,
 one cache key and two ``ValidationError`` messages that name it as the
 recourse -- so an operator who reads the module source finds it, but an
 operator who reads the two documentation surfaces the module points them at
-(the README matrix and ``docs/reference/security.md``) does not. The refusal message
+(the env-var matrix and the security page) does not. The refusal message
 names a variable the two operator-facing pages do not, which is the drift.
 
 The rules below read the module's own ``os.getenv`` / ``os.environ`` literals
@@ -30,7 +34,7 @@ future ``STRANDS_MESH_POLICY_TYPE_ALLOW_*`` sibling (a per-fleet override, a
 scoped grant) is held to the same rule the hour it lands. Five properties,
 plus one keep-the-derivation-honest premise and three behavioural pins:
 
-- **Every policy-type-allowlist variable the module reads has a README matrix
+- **Every policy-type-allowlist variable the module reads has a matrix
   row.** This is what makes the matrix a single index for the family; a
   reader scanning the matrix for the widening knob should find it.
 - **Every one of them is named on the security page.** The prose surface that
@@ -70,19 +74,41 @@ lowercasing normaliser.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import pathlib
 import re
+import sys
 
 from strands_robots.mesh import security as _security
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "security.py"
-_PAGE = _ROOT / "docs" / "reference" / "security" / "commands.md"
-_README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
+_PAGE = _ROOT / "docs" / "learn" / "security.md"
+_README = _ROOT / "docs" / "reference" / "configuration.md"  # the generated env-var matrix
+_ENV_VARS_HOOK = _ROOT / "docs" / "hooks" / "env_vars.py"
 
-_HEADING = "### Policy vocabulary allowlist (policy_type / policy_provider)"
+_HEADING = "## Allowlists on the mesh"
 _PREFIX = "STRANDS_MESH_POLICY_TYPE_ALLOW"
 _KNOWN = frozenset({"STRANDS_MESH_POLICY_TYPE_ALLOW"})
+
+
+def _rendered_matrix() -> str:
+    """``configuration.md`` with ``{{env_vars}}`` expanded by the shipped hook.
+
+    The hook writes names as ``<code>NAME</code>``; the tags are folded to
+    backticks so the rules below can look for ```NAME``` as on a hand-written page.
+    """
+    source = _README.read_text(encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _ENV_VARS_HOOK)
+    assert spec is not None and spec.loader is not None, _ENV_VARS_HOOK
+    module = sys.modules.get(spec.name)
+    if module is None:
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    rendered = module.on_page_markdown(source, page=None, config=None, files=None)
+    assert rendered != source, "docs/reference/configuration.md carries no {{env_vars}} token for the hook to expand"
+    return re.sub(r"</?code>", "`", rendered)
 
 
 def _policy_type_allow_env_reads() -> frozenset[str]:
@@ -133,30 +159,31 @@ def test_the_derivation_finds_the_policy_type_allow_variable_the_module_reads() 
     assert reads == _KNOWN, (
         "The set of STRANDS_MESH_POLICY_TYPE_ALLOW* literals the security module "
         f"reads has drifted from what this guard tracks: reads={sorted(reads)!r}, "
-        f"known={sorted(_KNOWN)!r}. A new sibling means the README matrix, the "
+        f"known={sorted(_KNOWN)!r}. A new sibling means the configuration matrix, the "
         "security page and the behavioural pins below all need to grow to cover it."
     )
 
 
 def test_every_policy_type_allow_variable_the_module_reads_has_a_readme_matrix_row() -> None:
-    """Every ``STRANDS_MESH_POLICY_TYPE_ALLOW*`` env-var read has a README matrix row.
+    """Every ``STRANDS_MESH_POLICY_TYPE_ALLOW*`` env-var read has a configuration matrix row.
 
-    The README carries a single ``STRANDS_MESH_*`` matrix of ~35 rows. Every
-    variable the module reads should be findable from it, or the matrix stops
-    being an index and starts being a subset of the module's env surface.
+    ``docs/reference/configuration.md`` carries the generated ``STRANDS_MESH_*``
+    matrix. Every variable the module reads should be findable from it, or the
+    matrix stops being an index and starts being a subset of the module's env
+    surface.
     """
-    text = _README.read_text(encoding="utf-8")
+    text = _rendered_matrix()
     reads = _policy_type_allow_env_reads()
     missing = [name for name in sorted(reads) if f"`{name}`" not in text]
     assert not missing, (
-        f"README.md does not carry a matrix row naming {missing!r} even though "
-        f"mesh/security.py reads it. The row should sit in the policy family, "
-        "beside `STRANDS_MESH_POLICY_HOST_ALLOW`."
+        f"docs/reference/configuration.md does not carry a matrix row naming {missing!r} even though "
+        f"mesh/security.py reads it. The row is generated by docs/hooks/env_vars.py, so the hook "
+        "is not seeing the read."
     )
 
 
 def test_every_policy_type_allow_variable_the_module_reads_is_named_on_the_security_page() -> None:
-    """Every ``STRANDS_MESH_POLICY_TYPE_ALLOW*`` env-var read is on ``docs/reference/security/commands.md``.
+    """Every ``STRANDS_MESH_POLICY_TYPE_ALLOW*`` env-var read is on ``docs/learn/security.md``.
 
     The security page describes the posture and this variable's whole point is
     a security posture (it is the extension knob for the ``validate_command``
@@ -167,7 +194,7 @@ def test_every_policy_type_allow_variable_the_module_reads_is_named_on_the_secur
     reads = _policy_type_allow_env_reads()
     missing = [name for name in sorted(reads) if f"`{name}`" not in text]
     assert not missing, (
-        f"docs/reference/security/commands.md does not name {missing!r} even though "
+        f"docs/learn/security.md does not name {missing!r} even though "
         f"mesh/security.py reads it. Add it under the '{_HEADING}' section."
     )
 
@@ -184,13 +211,13 @@ def test_the_security_page_names_the_shared_allowlist_invariant() -> None:
     text = _PAGE.read_text(encoding="utf-8")
     section = _extract_section(text, _HEADING)
     assert "policy_provider" in section and "policy_type" in section, (
-        f"The '{_HEADING}' section on docs/reference/security.md does not name both "
+        f"The '{_HEADING}' section on docs/learn/security.md does not name both "
         "`policy_type` and `policy_provider` in the same block. The two share "
         "one allowlist; an operator widening the variable needs to know they "
         "are widening both vocabularies at once."
     )
     assert re.search(r"share\s+one\s+allowlist", section, re.IGNORECASE), (
-        f"The '{_HEADING}' section on docs/reference/security.md does not state that "
+        f"The '{_HEADING}' section on docs/learn/security.md does not state that "
         "`policy_type` and `policy_provider` share one allowlist. That is the "
         "surprising invariant the variable makes visible; without it the "
         "variable name reads as narrower than the gate it widens."
@@ -209,7 +236,7 @@ def test_the_security_page_names_the_charset_rule() -> None:
     text = _PAGE.read_text(encoding="utf-8")
     section = _extract_section(text, _HEADING)
     assert re.search(r"\[a-z\]\[a-z0-9_\]\*|lowercase[- ]identifier", section, re.IGNORECASE), (
-        f"The '{_HEADING}' section on docs/reference/security.md does not name the "
+        f"The '{_HEADING}' section on docs/learn/security.md does not name the "
         "`^[a-z][a-z0-9_]*$` charset rule the loader validates each entry "
         "against. Without it, an operator whose malformed entry drops has no "
         "signal from the documentation that the drop was the loader's charset "
@@ -231,7 +258,7 @@ def test_the_security_page_warns_against_routing_around_a_registry_omission() ->
     text = _PAGE.read_text(encoding="utf-8")
     section = _extract_section(text, _HEADING)
     assert "registry" in section.lower(), (
-        f"The '{_HEADING}' section on docs/reference/security.md does not mention the "
+        f"The '{_HEADING}' section on docs/learn/security.md does not mention the "
         "registry. Widening this variable to admit a spelling that belongs in "
         "`_REGISTRY_POLICY_PROVIDERS` / `registry/policies.json` is the "
         "anti-pattern the sync-guard exists to catch; the section has to "
