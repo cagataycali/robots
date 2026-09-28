@@ -1214,6 +1214,9 @@ class DeviceManager:
     def __init__(self, profiles_path: str | None = None) -> None:
         self.robots: dict[str, ManagedRobot] = {}
         self._lock = threading.Lock()
+        # Concurrency contract: ``robots`` is mutated (spawn/despawn) under ``_lock`` on worker
+        # threads; readers on the event loop (bridge snapshot, /api/fleet) iterate a GIL-atomic
+        # ``list(...)`` copy so a despawn mid-poll cannot raise "dictionary changed size".
         self._camera_cache: list[dict[str, Any]] = []
         self._camera_cache_t = 0.0
         # : index -> stderr from the last failed probe, and index -> last known : geometry.
@@ -1237,7 +1240,7 @@ class DeviceManager:
     def _claimed_camera_indices(self) -> dict[int, str]:
         """OpenCV indices owned by LIVE managed robots -> peer_id."""
         claimed: dict[int, str] = {}
-        for m in self.robots.values():
+        for m in list(self.robots.values()):
             if not m.alive():
                 continue
             for cfg in (m.cameras or {}).values():
@@ -1329,7 +1332,7 @@ class DeviceManager:
                     "returncode": m.process.poll() if m.process is not None else None,
                     "started_at": m.started_at,
                 }
-                for m in self.robots.values()
+                for m in list(self.robots.values())
             ]
 
     def devices(
@@ -1399,7 +1402,7 @@ class DeviceManager:
                     "cameras": dict(m.cameras or {}),
                     **roles.get(m.port, {}),
                 }
-                for peer_id, m in self.robots.items()
+                for peer_id, m in list(self.robots.items())
             },
         }
 
@@ -1427,7 +1430,7 @@ class DeviceManager:
         # Imported here, not at module top, so the device roster stands on its own.
         from . import joint_silence
 
-        for peer_id, m in self.robots.items():
+        for peer_id, m in list(self.robots.items()):
             names = requested_camera_names(m.cameras)
             if names:
                 out.setdefault(peer_id, {})["cameras_requested"] = names
@@ -1452,7 +1455,7 @@ class DeviceManager:
         """Leader/follower role facts for every managed peer, keyed by peer id."""
         serials = self._port_serials()
         out: dict[str, dict[str, Any]] = {}
-        for peer_id, m in self.robots.items():
+        for peer_id, m in list(self.robots.items()):
             serial = serials.get(m.port or "")
             fields = self._role_fields(self.profiles.get(serial) if serial else None)
             if fields:
@@ -1587,7 +1590,7 @@ class DeviceManager:
 
     def port_owner(self, port: str) -> str | None:
         """peer_id of the LIVE managed child holding this serial port, if any."""
-        for m in self.robots.values():
+        for m in list(self.robots.values()):
             if m.alive() and m.port and str(m.port) == str(port):
                 return m.peer_id
         return None
