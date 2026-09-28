@@ -137,9 +137,12 @@ def env_entry_error(key: str, value: str, *, allowed_keys: frozenset[str] | None
             return f"env key {key!r} is not one this route may write - allowed: {', '.join(sorted(allowed_keys))}"
     elif not env_key_allowed(key):
         return f"env key {key!r} is not dashboard-managed - allowed: {', '.join(sorted(ALLOWED_ENV_KEYS))}"
-    if any(ord(ch) < 0x20 for ch in value):
+    if any(ord(ch) < 0x20 for ch in value) or value.splitlines() != [value]:
         # a newline in a VALUE writes a second variable on its own line,
         # defeating any key allow-list - so control chars are refused outright.
+        # The read-back path parses with str.splitlines(), which also breaks on
+        # U+0085, U+2028 and U+2029 (none below 0x20), so the gate is the same
+        # predicate the parser uses: the value must survive splitlines() whole.
         return f"env value for {key} contains control characters"
     if len(value) > ENV_VALUE_MAX_LEN:
         return f"env value for {key} exceeds {ENV_VALUE_MAX_LEN} characters"
