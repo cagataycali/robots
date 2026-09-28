@@ -2359,8 +2359,10 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                         # registry reads as what it is - no latched wrenches.
                         if getattr(self, "_applied_wrenches", None):
                             self._reapply_wrenches()
-                        self._world.step(render=render)
-                        self._sim_time += self._config.physics_dt
+                        self._world.step(render=False)
+                        if render:
+                            self._render_world()
+                        self._sim_time = self._world_clock()
                         self._step_count += 1
                 remaining -= batch
 
@@ -2410,6 +2412,44 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         self._sim_time = 0.0
         self._step_count = 0
         self._contact_epoch += 1
+
+    def _world_clock(self) -> float:
+        """The simulated time the World has integrated to, in seconds.
+
+        Read off ``World.current_time`` - Isaac's own physics clock - rather than
+        accumulated from a constant, so ``_sim_time`` cannot drift from the physics
+        it drives. A rendering ``World.step(render=True)`` runs Kit's ``app.update()``
+        and integrates a whole ``rendering_dt`` (four ``physics_dt`` substeps at the
+        defaults), and a ``create_world(timestep=)`` override changes the advance too;
+        crediting a fixed ``config.physics_dt`` per tick under-reported the first case
+        and over-reported the second. Falls back to a constant-``physics_dt``
+        accumulation when the runtime does not expose the clock (the stubbed worlds
+        the unit tests build), where every tick advances exactly one ``physics_dt``.
+        """
+        current = getattr(self._world, "current_time", None)
+        if current is not None:
+            try:
+                return float(current)
+            except (TypeError, ValueError):
+                pass
+        return self._sim_time + float(self._config.physics_dt)
+
+    def _render_world(self) -> None:
+        """Refresh the renderer for one frame WITHOUT advancing physics.
+
+        A rendering ``World.step(render=True)`` steps physics by a whole
+        ``rendering_dt`` (Kit's ``app.update()`` substeps ``physics_dt`` inside it),
+        so folding the frame into the physics tick made one ``step()`` advance four
+        physics steps while ``_sim_time`` and ``physics_timestep()`` still counted
+        one. Stepping physics ONCE (``render=False``) and refreshing the frame here
+        keeps one ``step()`` equal to one ``physics_dt`` in every render mode, which
+        is the invariant ``PolicyRunner`` sizes its substeps against. ``World.render``
+        is absent on the stubbed worlds unit tests build; there is nothing to refresh
+        then, so the call is skipped.
+        """
+        render = getattr(self._world, "render", None)
+        if callable(render):
+            render()
 
     def get_state(self) -> dict[str, Any]:
         """Get full simulation state summary.
@@ -5282,13 +5322,23 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
     def physics_timestep(self) -> float | None:
         """Return the fixed physics integration timestep in seconds.
 
-        Isaac's ``World`` steps at :attr:`IsaacConfig.physics_dt`.
+        Reads the dt the ``World`` is actually integrating (via
+        :func:`_resolved_physics_dt`) rather than echoing :attr:`IsaacConfig.physics_dt`,
+        so a ``create_world(timestep=)`` override - honoured by ``World`` but never
+        written back to the config - is reported here too. Falls back to the config
+        value when there is no world yet or the runtime does not expose the reader.
         Reporting it lets :class:`PolicyRunner` derive the physics substeps
         per control step (``round(1 / control_frequency / physics_dt)``) so
         a PD position-servo arm tracks each action's target for the full
         control period -- without this override the base class returned
         ``None`` and every applied action got a single ~8 ms step (#1812).
+        A rendering ``step()`` advances exactly one of these (physics is stepped
+        once with the frame refreshed separately by :meth:`_render_world`), so the
+        substep count stays correct in every render mode.
         """
+        resolved = _resolved_physics_dt(getattr(self, "_world", None))
+        if resolved is not None:
+            return resolved
         return float(self._config.physics_dt)
 
     def install_action_controller(self, robot_name: str, controller: Any) -> dict[str, Any]:
@@ -5692,8 +5742,10 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 # not, because it advances no time.
                 if getattr(self, "_applied_wrenches", None):
                     self._reapply_wrenches()
-                self._world.step(render=bool(render_on and last))
-                self._sim_time += self._config.physics_dt
+                self._world.step(render=False)
+                if render_on and last:
+                    self._render_world()
+                self._sim_time = self._world_clock()
                 self._step_count += 1
 
         if unresolved:
@@ -9616,14 +9668,18 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 self._world.step(render=True)
 
     def _converge_render(self, n: int = 8) -> None:
-        """Render ``n`` ticks while HOLDING the robots at their current pose.
+        """Render ``n`` ticks WITHOUT advancing physics, holding each robot's pose.
 
-        ``world.step(render=True)`` advances physics every tick, so a
-        kinematic arm keeps drifting (gravity / settling) while we try
-        to converge the DLSS temporal upscaler -> the moving target
-        leaves a faint ghost. Re-asserting each robot's joint positions
-        (and zeroing velocities) before every render freezes the pose
-        so DLSS converges on a single, static image.
+        This is the idle pump path (``run_pump_forever`` -> ``pump`` step 2), whose
+        job is to let the DLSS temporal upscaler converge on a still scene between
+        episodes - not to advance the world. It used to call ``world.step(render=True)``,
+        which integrates a whole ``rendering_dt`` of physics per tick, so the idle
+        preview silently ran the simulation forward (and, keying its cache on the
+        step count that never moved, ``get_contacts`` could serve a pre-tick answer
+        after it). Refreshing the frame with :meth:`_render_world` advances no
+        physics, so nothing drifts; re-asserting each robot's joint positions (and
+        zeroing velocities) is kept as a cheap guard that a mid-render dynamic add
+        cannot leave a robot mispose.
         """
         if not self._world_created or self._world is None:
             return
@@ -9673,7 +9729,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                                 pass
                     except (RuntimeError, ValueError, AttributeError, TypeError):
                         pass
-            self._world.step(render=True)
+            self._render_world()
 
     def _grab_frame(self, cname: str, cam: Any) -> Any:
         """Capture ``cam`` as an RGB uint8 array at the camera's requested output size.

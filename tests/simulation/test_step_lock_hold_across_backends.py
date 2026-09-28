@@ -202,6 +202,7 @@ def _isaac_stub(lock: CountingLock, tick: Any = None, batch: int | None = None) 
         _pump_running=False,
     )
     stub._marshal_main_thread_affine = lambda name, fn: IsaacSimulation._marshal_main_thread_affine(stub, name, fn)
+    stub._world_clock = lambda: IsaacSimulation._world_clock(stub)
     return stub, calls
 
 
