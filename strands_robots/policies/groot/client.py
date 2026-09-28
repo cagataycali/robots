@@ -345,7 +345,7 @@ class Gr00tInferenceClient:
         try:
             self.socket.close()
         except Exception:
-            pass
+            pass  # best effort: a socket that is already gone is what reconnect() wants
         self._init_socket()
 
     def ping(self) -> bool:

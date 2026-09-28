@@ -106,9 +106,11 @@ export default function SimTab({ onClose }: { onClose: () => void }) {
   }
 
   const toggleEstop = async () => {
-    const action = lockout?.state === 'locked' ? 'resume' : 'estop'
+    // Two literal routes, not a template: the server publishes /api/safety/estop and /resume, and
+    // lib/darkFeatures can only find a literal in openapi.json.
+    const route = lockout?.state === 'locked' ? '/api/safety/resume' : '/api/safety/estop'
     try {
-      setLockout((await post<{ lockout: SimLockout }>(`/api/safety/${action}`)).lockout)
+      setLockout((await post<{ lockout: SimLockout }>(route)).lockout)
       setMsg(null)
     } catch (e) { await failed(e) }
   }
