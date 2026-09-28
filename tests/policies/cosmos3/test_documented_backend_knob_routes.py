@@ -20,15 +20,22 @@ without touching this file.
 The pages' Python fences are graded the same way in the other direction: every
 keyword they pass must be accepted by the call's own receiver.
 
-Two pages document one policy - the provider page and the in-process backend
-page it points at, which carries the safety-checker route and the diffusers
-worked examples - so they are read as one document. The rule graded is about
-the instruction a reader follows, not about which page carries it.
+One page documents the policy now, ``learn/policies/cosmos3.md``; the old
+provider and in-process backend pages both redirect there. Its constructor
+table is the ``{{providers:kwargs:cosmos3}}`` token that ``docs/hooks/providers.py``
+expands at build time, so the page is read through that hook, and every keyword
+the table names is an instruction to the reader as much as a ``pass `kw=` ``
+sentence is. The worked example reaches the policy through the registry route
+(``sim.run_policy(policy_provider="cosmos3", policy_config={...})``), so each
+``policy_config`` key is graded through ``build_policy_kwargs``: a key that
+route drops is exactly the silent failure described above.
 """
 
 import ast
+import importlib.util
 import inspect
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -39,13 +46,13 @@ from strands_robots.policies.cosmos3 import Cosmos3DiffusersBackend, Cosmos3Poli
 from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient
 from strands_robots.policies.cosmos3.embodiments import get_embodiment
 from strands_robots.registry import build_policy_kwargs
+from strands_robots.simulation import create_simulation
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_DOCS = (
-    _REPO_ROOT / "docs" / "reference" / "policies" / "cosmos3.md",
-    _REPO_ROOT / "docs" / "reference" / "policies" / "cosmos3-diffusers.md",
-)
+_DOCS = (_REPO_ROOT / "docs" / "learn" / "policies" / "cosmos3.md",)
 _DOC_NAMES = " + ".join(p.name for p in _DOCS)
+_PROVIDERS_HOOK = _REPO_ROOT / "docs" / "hooks" / "providers.py"
+_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.S)
 
 # Classes the page can name as the receiver of a documented keyword.
 _RECEIVERS: dict[str, type] = {
@@ -59,9 +66,22 @@ _MINIMUM_INSTRUCTIONS = 1
 _MINIMUM_FENCE_KEYWORDS = 15
 
 
+def _providers_hook() -> Any:
+    """Load ``docs/hooks/providers.py`` from its file, the way mkdocs does."""
+    spec = importlib.util.spec_from_file_location("docs_providers_hook_cosmos3", _PROVIDERS_HOOK)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _page() -> str:
-    """Return the cosmos3 pages as one document."""
-    return "\n".join(p.read_text(encoding="utf-8") for p in _DOCS)
+    """Return the cosmos3 page as the build renders it (providers tokens expanded)."""
+    hook = _providers_hook()
+    rendered = "\n".join(hook.substitute(p.read_text(encoding="utf-8"), p.name) for p in _DOCS)
+    assert "{{providers:" not in rendered, f"the providers hook left a token unexpanded on {_DOC_NAMES}"
+    return rendered
 
 
 def _named_receivers(page: str) -> dict[str, type]:
@@ -78,11 +98,29 @@ def _params(cls: type) -> set[str]:
 
 
 def _instructed_keywords(page: str) -> set[str]:
-    """Keywords the prose tells the reader to pass or set."""
+    """Keywords the page tells the reader to pass or set.
+
+    Three shapes count: a ``pass `kw=` `` or ``set `kw=` `` sentence, a
+    backticked ``kw="value"`` the prose hands the reader, and a row of the
+    Constructor keywords table (``| `kw` | type | default |``).
+    """
     found: set[str] = set()
-    for pattern in (r"(?:pass|set)\s+`([a-z_][a-z0-9_]*)\s*=", r"\(`([a-z_][a-z0-9_]*)\s*=[^`]*`"):
+    for pattern in (
+        r"(?:pass|set)\s+`([a-z_][a-z0-9_]*)\s*=",
+        r"\(`([a-z_][a-z0-9_]*)\s*=[^`]*`",
+        r"`([a-z_][a-z0-9_]*)=[^`]+`",
+    ):
         found |= set(re.findall(pattern, page))
+    found |= _table_keywords(page)
     return found
+
+
+def _table_keywords(page: str) -> set[str]:
+    """Keyword names the Constructor keywords table lists."""
+    section = re.search(r"## Constructor keywords\n(.*?)(?:\n## |\Z)", page, re.S)
+    if section is None:
+        return set()
+    return set(re.findall(r"^\| `([a-z_][a-z0-9_]*)` \|", section.group(1), re.M))
 
 
 def _listed_backend_knobs(page: str) -> set[str]:
@@ -96,7 +134,7 @@ def _listed_backend_knobs(page: str) -> set[str]:
 def _fence_keywords(page: str) -> dict[str, set[str]]:
     """Keyword arguments each Python fence passes, grouped by the call's receiver."""
     per_call: dict[str, set[str]] = {}
-    for block in re.findall(r"```python\n(.*?)```", page, re.S):
+    for block in _FENCE.findall(page):
         try:
             tree = ast.parse(block)
         except SyntaxError:  # a fence may be an excerpt
@@ -108,6 +146,31 @@ def _fence_keywords(page: str) -> dict[str, set[str]]:
                     if keyword.arg:
                         per_call.setdefault(target, set()).add(keyword.arg)
     return per_call
+
+
+def _registry_route_configs(page: str) -> list[dict[str, Any]]:
+    """Every ``policy_config`` literal a fence hands to ``policy_provider="cosmos3"``."""
+    configs: list[dict[str, Any]] = []
+    for block in _FENCE.findall(page):
+        try:
+            tree = ast.parse(block)
+        except SyntaxError:  # a fence may be an excerpt
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            keywords = {k.arg: k.value for k in node.keywords if k.arg}
+            provider = keywords.get("policy_provider")
+            config = keywords.get("policy_config")
+            if isinstance(provider, ast.Constant) and provider.value == "cosmos3" and isinstance(config, ast.Dict):
+                configs.append(ast.literal_eval(config))
+    return configs
+
+
+def _sim_receiver(target: str) -> Any:
+    """The bound method a ``sim.<name>(...)`` fence call reaches on the MuJoCo engine."""
+    engine = create_simulation("mujoco", mesh=False)
+    return getattr(type(engine), target.split(".", 1)[1])
 
 
 class TestTheDocumentedKnobsNameAReachableReceiver:
@@ -131,6 +194,18 @@ class TestTheDocumentedKnobsNameAReachableReceiver:
             "Name the class the keyword belongs to, or promote the keyword."
         )
 
+    def test_the_constructor_table_is_on_the_page_and_agrees_with_the_signature(self) -> None:
+        """The generated table is what the reader passes; it must match ``Cosmos3Policy``."""
+        source = "\n".join(p.read_text(encoding="utf-8") for p in _DOCS)
+        assert "{{providers:kwargs:cosmos3}}" in source, f"{_DOC_NAMES} must carry the constructor table token"
+        listed = _table_keywords(_page())
+        accepted = _params(Cosmos3Policy)
+        assert listed, f"the Constructor keywords table on {_DOC_NAMES} rendered no rows"
+        assert listed == accepted, (
+            f"{_DOC_NAMES} constructor table lists {sorted(listed ^ accepted)} differently from "
+            "inspect.signature(Cosmos3Policy); docs/hooks/providers.py read the wrong __init__"
+        )
+
     def test_the_grader_reports_a_planted_instruction(self) -> None:
         """A clean sweep means the page is right, not that the grader accepts anything."""
         planted = _page() + "\nInstall it and pass `not_a_parameter_of_anything=True` to enable it.\n"
@@ -146,11 +221,19 @@ class TestTheDocumentedKnobsNameAReachableReceiver:
 class TestTheInstructionRoundTrips:
     """Applying the page's instruction to the receiver it names reaches the backend."""
 
-    def test_the_safety_checker_flag_reaches_the_policy_through_the_documented_route(self) -> None:
+    def test_a_backend_knob_reaches_the_policy_through_the_object_route_the_page_names(self) -> None:
+        """The page carries backend knobs on ``diffusers_backend``, not on the JSON route.
+
+        The constructor table names ``diffusers_backend`` typed as
+        ``Cosmos3DiffusersBackend``; a knob that class declares and the policy
+        does not (``enable_safety_checker``) must reach the running backend
+        through that object.
+        """
         page = _page()
-        assert "enable_safety_checker=True" in page, "premise: the page still instructs this flag"
-        named = _named_receivers(page)
-        owners = [cls for cls in named.values() if "enable_safety_checker" in _params(cls)]
+        assert "diffusers_backend" in _table_keywords(page), f"premise: {_DOC_NAMES} no longer names the object route"
+        assert "Cosmos3DiffusersBackend" in page, f"premise: {_DOC_NAMES} no longer names the backend class"
+        assert "enable_safety_checker" not in _params(Cosmos3Policy), "the knob moved onto the policy; regrade"
+        owners = [cls for cls in _named_receivers(page).values() if "enable_safety_checker" in _params(cls)]
         assert owners, "the page names no receiver that declares enable_safety_checker"
 
         backend = Cosmos3DiffusersBackend(
@@ -189,17 +272,34 @@ class TestThePolicySurfaceIsUnchanged:
         offenders: list[str] = []
         for target, keywords in per_call.items():
             cls: type | None = None
+            accepted: set[str]
             if target.startswith("create_policy") or target == "Cosmos3Policy":
                 cls = Cosmos3Policy
             elif target in _RECEIVERS:
                 cls = _RECEIVERS[target]
-            if cls is None:
+            if cls is not None:
+                accepted = _params(cls)
+            elif target.startswith("sim."):
+                accepted = set(inspect.signature(_sim_receiver(target)).parameters) - {"self"}
+            elif target == "create_simulation":
+                accepted = set(inspect.signature(create_simulation).parameters) | {"mesh"}
+            else:
                 continue
-            accepted = _params(cls)
             graded += len(keywords)
             offenders += [f"{target}({k}=)" for k in sorted(keywords) if k not in accepted]
         assert graded >= _MINIMUM_FENCE_KEYWORDS, f"premise: graded only {graded} fenced keywords in {_DOC_NAMES}"
         assert not offenders, f"{_DOC_NAMES} passes keywords its own receiver refuses: {offenders}"
+
+    def test_every_policy_config_key_survives_the_registry_route(self) -> None:
+        """The worked example's ``policy_config`` must not carry a key the route drops."""
+        configs = _registry_route_configs(_page())
+        assert configs, f'premise: {_DOC_NAMES} has no policy_provider="cosmos3" fence with a policy_config'
+        for config in configs:
+            built = build_policy_kwargs("cosmos3", **config)
+            dropped = sorted(set(config) - set(built))
+            assert not dropped, f"{_DOC_NAMES} passes policy_config keys the registry route drops: {dropped}"
+            refused = sorted(set(config) - _params(Cosmos3Policy))
+            assert not refused, f"{_DOC_NAMES} passes policy_config keys Cosmos3Policy refuses: {refused}"
 
     def test_the_forwarded_subset_still_reaches_the_backend(self) -> None:
         """``model`` and ``mode`` are the knobs the policy itself carries."""
