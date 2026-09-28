@@ -40,7 +40,7 @@ The first passkey closes the third door. Its enrollment must present `STRANDS_DA
 
 ## The e-stop button
 
-`POST /api/safety/estop` stops every sim session in this process and locks; every route that would move a sim answers `423` until it clears. `POST /api/safety/resume` sets the state to `unknown` on purpose: a resume is a request, not proof; the first command a session accepts is, and only then does `GET /api/safety` say `clear`. The signed fleet stop ([safety and e-stop](mesh/safety-and-estop.md)) is a separate rail; one reaching this process engages the same lockout.
+`POST /api/safety/estop` stops every sim session in this process and locks; every route that would move a sim answers `423` until it clears. `POST /api/safety/resume` sets the state to `unknown` on purpose: a resume is a request, not proof; the first command a session accepts is, and only then does `GET /api/safety` say `clear`. The signed fleet stop ([safety and e-stop](mesh/safety-and-estop.md)) is a separate rail; its verdict is `fleet` in that answer.
 
 ## The agent in the browser
 

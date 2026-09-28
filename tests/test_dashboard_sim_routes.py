@@ -468,6 +468,17 @@ class TestEstop:
         assert client.get("/api/safety").json()["lockout"]["state"] == "clear", "an accepted command is the proof"
         assert snap["state"] == "running"
 
+    def test_the_sim_estop_names_what_it_locked_and_leaves_the_fleet_verdict_alone(self, client):
+        """The sim rail stops this process's sessions; mesh peers answer only the signed fleet e-stop."""
+        locked = client.post("/api/safety/estop").json()["lockout"]
+        assert "simulation" in locked["reason"] and "the fleet" not in locked["reason"], locked["reason"]
+        status = client.get("/api/safety").json()
+        assert status["lockout"]["state"] == "locked" and "simulation" in status["scope"]
+        assert status["fleet"] == client.app.state.bridge._lockout.as_fields()
+        assert status["fleet"]["state"] != "locked", "a sim e-stop was reported as a fleet lockout"
+        resumed = client.post("/api/safety/resume").json()["lockout"]["reason"]
+        assert "peer" not in resumed.split(";")[0], resumed
+
     def test_an_estop_reaches_a_session_whose_engine_is_still_building(self, fake_factory):
         """The window an e-stop exists for: Start pressed, engine not built yet, then E-STOP.
 
