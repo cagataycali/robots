@@ -30,8 +30,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from strands_robots._pacing import Ticker
 from strands_robots.bus_access import motor_norm_modes, write_action
-from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.security import (
     ValidationError,
     as_wire_timestamp,
@@ -393,7 +393,7 @@ class InputPublisher:
     def _publish_loop(self) -> None:
         """Read the leader device and publish one input frame per tick.
 
-        Paced by :class:`~strands_robots.mesh.pacing.Ticker`. This loop is one of
+        Paced by :class:`~strands_robots._pacing.Ticker`. This loop is one of
         two that already did the deadline arithmetic by hand -- it measured its own
         body with ``perf_counter`` and waited ``period - elapsed`` -- so unlike the
         state, camera and sensor loops it was already achieving its requested rate

@@ -15,7 +15,7 @@ That remedy was first written as a hand-maintained roster, and issue #3105
 records the second-order failure: a grader added later is absent from a hand
 list *by default*, and its absence is silent in the reassuring direction. A
 branch cited a green preflight over a roster of seven while the required check
-went red on ``tests/test_mesh_pacing_ticker.py``, which walks the installed
+went red on ``tests/test_pacing_ticker.py``, which walks the installed
 package and was never named. The preflight could not have said otherwise - it
 never collected the file that failed.
 
@@ -104,7 +104,7 @@ _NAMED_BY_ISSUES: frozenset[str] = frozenset(
         "tests/test_dependency_audit.py",
         "tests/tools/test_agent_tool_parameter_descriptions.py",
         "tests/test_parameter_deletes_precede_the_body_they_narrow.py",
-        "tests/test_mesh_pacing_ticker.py",
+        "tests/test_pacing_ticker.py",
         "tests/test_except_tuples_state_their_real_scope.py",
     }
 )
