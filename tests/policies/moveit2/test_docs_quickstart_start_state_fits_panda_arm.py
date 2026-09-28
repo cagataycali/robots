@@ -1,8 +1,9 @@
-"""The moveit2.md Quickstart must send panda_arm a start state it can plan from.
+"""The moveit2 page's client fence must send panda_arm a start state it can plan from.
 
-The page's Install section brings the reference sidecar up on planning group
-``panda_arm`` and the Quickstart dials it with ``observation.state`` as the
-start configuration. The sidecar reads that vector in order onto the group's
+``docs/learn/policies/moveit2.md`` brings the reference sidecar up on planning
+group ``panda_arm`` (``docker compose up``; the compose file defaults
+``PLANNING_GROUP`` to ``panda_arm``) and its ``get_actions_sync`` fence dials it
+with ``observation.state`` as the start configuration. The sidecar reads that vector in order onto the group's
 active joints and refuses one with fewer values than the group plans over
 (``_start_state`` in ``server/zmq_node.py``: ``joint_state carries 6 values but
 planning group 'panda_arm' plans over 7 joints``), which the client raises as
@@ -11,7 +12,9 @@ pose is a start state in collision, so the values must be the model's home
 keyframe, not zeros.
 
 This reads every ``get_actions_sync`` fence on the page whose policy names
-``planning_group="panda_arm"`` and grades the state vector it sends.
+``planning_group="panda_arm"`` and grades the state vector it sends, whether the
+observation is passed as ``observation_dict=`` or as the first positional
+argument. Fences carry an info string (``python title="sketch"``).
 """
 
 from __future__ import annotations
@@ -22,8 +25,8 @@ from pathlib import Path
 
 import strands_robots
 
-_PAGE = Path(strands_robots.__file__).resolve().parent.parent / "docs" / "reference" / "policies" / "moveit2.md"
-_PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+_PAGE = Path(strands_robots.__file__).resolve().parent.parent / "docs" / "learn" / "policies" / "moveit2.md"
+_PYTHON_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
 # moveit_resources_panda_moveit_config: panda_arm is panda_joint1..panda_joint7.
 _PANDA_ARM_JOINTS = 7
 # The Panda's home keyframe, the start state the page's In-simulation fence uses.
@@ -64,6 +67,8 @@ def _panda_arm_start_states() -> list[list[float]]:
             if _call_name(call) != "get_actions_sync":
                 continue
             obs = _keyword(call, "observation_dict")
+            if obs is None and call.args:
+                obs = call.args[0]
             if not isinstance(obs, ast.Dict):
                 continue
             for key, value in zip(obs.keys, obs.values, strict=True):
@@ -73,7 +78,10 @@ def _panda_arm_start_states() -> list[list[float]]:
 
 
 def test_page_has_a_panda_arm_quickstart() -> None:
-    assert _panda_arm_start_states(), "moveit2.md has no panda_arm get_actions_sync fence to grade"
+    assert _panda_arm_start_states(), (
+        'moveit2.md has no get_actions_sync fence that names planning_group="panda_arm", the group the '
+        "sidecar it starts (docker compose, PLANNING_GROUP defaults to panda_arm) plans over"
+    )
 
 
 def test_quickstart_start_state_is_as_wide_as_panda_arm() -> None:

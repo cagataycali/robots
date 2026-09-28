@@ -18,7 +18,9 @@ widening what a resolver accepts later cannot silently invalidate the guard.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -45,17 +47,41 @@ _MINIMUM_DOCUMENTED_ROWS = 2
 
 _BACKTICKED = re.compile(r"`([^`]+)`")
 
+# The configuration reference is a ``{{env_vars}}`` token that
+# ``docs/hooks/env_vars.py`` expands at build time from the package's own reads,
+# so its rows exist only in the rendered page.
+_CONFIGURATION_PAGE = _REPO_ROOT / "docs" / "reference" / "configuration.md"
+_ENV_VARS_HOOK = _REPO_ROOT / "docs" / "hooks" / "env_vars.py"
+
+
+def _page_text(doc: Path) -> str:
+    """A page as a reader sees it: the configuration reference rendered through its hook."""
+    source = doc.read_text(encoding="utf-8")
+    if doc != _CONFIGURATION_PAGE:
+        return source
+    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _ENV_VARS_HOOK)
+    assert spec is not None and spec.loader is not None
+    module = sys.modules.get(spec.name) or importlib.util.module_from_spec(spec)
+    if spec.name not in sys.modules:
+        sys.modules[spec.name] = module  # dataclasses in the hook resolve their module here
+        spec.loader.exec_module(module)
+    rendered = module.on_page_markdown(source, page=None, config=None, files=None)
+    assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"
+    return rendered.replace("<code>", "`").replace("</code>", "`")
+
 
 def _documented_rows() -> list[tuple[str, str, int, str]]:
     """Return every markdown table row that documents a path-valued variable.
 
     A variable is matched when its backticked name appears in the row's first
     cell, so a row that bundles a companion variable into the same cell (the
-    README documents this variable alongside its ``_MAX_CALLS`` companion) is
-    graded rather than skipped.
+    README documented this variable alongside its ``_MAX_CALLS`` companion) is
+    graded rather than skipped. The description is every cell after the name
+    except a ``read in`` column (the generated reference names the module that
+    reads the variable there), so the default and meaning columns are both read.
 
     Returns:
-        A list of ``(env_var, relative_path, line_number, description_cell)``
+        A list of ``(env_var, relative_path, line_number, description_cells)``
         tuples.
     """
     docs = [_REPO_ROOT / "README.md", *sorted((_REPO_ROOT / "docs").rglob("*.md"))]
@@ -63,16 +89,23 @@ def _documented_rows() -> list[tuple[str, str, int, str]]:
     for doc in docs:
         if not doc.exists():
             continue
-        for lineno, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
+        header: list[str] = []
+        for lineno, line in enumerate(_page_text(doc).splitlines(), 1):
             stripped = line.strip()
             if not stripped.startswith("|") or not stripped.endswith("|"):
+                header = []
                 continue
             cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-            if len(cells) < 3:
+            if not header:
+                header = [cell.lower() for cell in cells]
                 continue
+            if len(cells) < 3 or set("".join(cells)) <= set(":-"):
+                continue
+            skipped = {i for i, name in enumerate(header) if name == "read in"}
             for env in _PATH_VALUED:
                 if f"`{env}`" in cells[0]:
-                    rows.append((env, str(doc.relative_to(_REPO_ROOT)), lineno, cells[1]))
+                    description = " ".join(cell for i, cell in enumerate(cells) if i > 0 and i not in skipped)
+                    rows.append((env, str(doc.relative_to(_REPO_ROOT)), lineno, description))
     return rows
 
 
@@ -97,6 +130,10 @@ def _advertised_values(description: str) -> list[str]:
         if any(char.isalpha() for char in tok) and tok == tok.upper():
             continue
         if "/" not in tok and "." in tok:
+            continue
+        # The generated reference shows an empty default as ``''``; it is not
+        # a value offered to the reader.
+        if tok in {"''", '""'}:
             continue
         values.append(tok)
     return values

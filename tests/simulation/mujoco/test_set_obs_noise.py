@@ -230,8 +230,7 @@ def test_sub_pixel_camera_jitter_is_a_noop(sim):
 #: believes the reset clears the noise records noisy states while believing
 #: they are clean - nothing in the result says otherwise.
 _LIFETIME_SURFACES = (
-    "docs/reference/simulation/domain-randomization.md",
-    "docs/reference/simulation/newton-scenes.md",
+    "docs/learn/simulation/randomization.md",
     "examples/12_domain_randomization.py",
     "strands_robots/simulation/mujoco/randomization.py",
     "strands_robots/simulation/newton/randomization.py",
@@ -270,6 +269,24 @@ def test_no_surface_ends_the_noise_at_a_reset(surface):
     assert "reset" not in named, (
         f"{surface} ends the noise at a reset, which a reset measurably does not do; the terminator is {_TERMINATOR!r}"
     )
+
+
+def test_the_newton_page_does_not_end_the_noise_at_a_reset():
+    """The Newton page documents ``set_obs_noise`` by deferring to the shared page.
+
+    It says the call mirrors the MuJoCo signature and behaves the same, so the
+    lifetime is stated once, on ``learn/simulation/randomization.md``. It may
+    restate the terminator, but whatever it says about when the noise stops has
+    to agree with the measurement above.
+    """
+    path = pathlib.Path(__file__).resolve().parents[3] / "docs" / "learn" / "simulation" / "newton.md"
+    text = path.read_text(encoding="utf-8")
+    assert "set_obs_noise" in text, "premise: the Newton page still documents set_obs_noise"
+    named = _named_terminators(text)
+    assert named or "behaves the same" in text, (
+        "the Newton page neither says when the noise stops nor defers to the MuJoCo behaviour"
+    )
+    assert "reset" not in named, f"the Newton page ends the noise at a reset; the terminator is {_TERMINATOR!r}"
 
 
 def test_a_surface_naming_the_wrong_terminator_is_reported():
