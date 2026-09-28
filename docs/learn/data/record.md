@@ -15,6 +15,8 @@ print(sim.stop_recording())              # flushes the last episode to parquet, 
 print(sim.verify_dataset_episodes(expected=5))
 ```
 
+The mock does not read the instruction (`reads_instruction = False`), and every task report says so: `Note: MockPolicy does not read the instruction`. The five episodes are sinusoid test motions labelled "reach the cube"; the task label describes the intent, not the motion. Swap in a real provider or a teleoperator before training on what you record.
+
 ## Where it goes
 
 `repo_id` is a Hub-shaped name, `org/name`. `root=` overrides the directory; otherwise the dataset lands under `$HF_LEROBOT_HOME/<repo_id>` (default `~/.cache/huggingface/lerobot/<repo_id>`). `resolve_dataset_dir(repo_id, root)` is the one function every layer uses to answer "which directory", so the recorder, the rollout runner and `replay_episode` agree.

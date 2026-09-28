@@ -67,7 +67,7 @@ judge(f"Label every episode of the dataset at {root}. Sample four frames each, w
 | tool | returns |
 |---|---|
 | `load_episode(root, episode)` | frame count, features, whether a verdict and a label exist yet |
-| `sample_frames(root, episode, n_frames=4, include_images=False)` | evenly spaced frames: `observation.state` vectors and timestamps always, decoded camera images when asked, plus `rms_state_jerk` over the episode so a text-only judge can ground `jerky_motion` |
+| `sample_frames(root, episode, n_frames=4, include_images=False)` | evenly spaced frames: `observation.state` vectors and timestamps always, one decoded image per camera per sampled frame (every camera, in sorted key order; there is no camera selector) when asked, plus `rms_state_jerk` over the episode so a text-only judge can ground `jerky_motion` |
 | `read_predicate_verdict(root, episode)` | the authoritative deterministic verdict |
 | `write_label(root, episode, quality, failure_mode=None, note="", success_opinion=None, judge_model="")` | the judge block, through `annotate_episode` |
 

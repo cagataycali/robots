@@ -73,7 +73,7 @@ pip install 'strands-robots[rl]'    # torch + gymnasium + [sim-mujoco]
 
 | provider | class | family | own fields |
 |---|---|---|---|
-| `ppo` | `PpoTrainer` | on-policy, GAE, clipped surrogate | `rollout_steps`, `num_envs`, `gamma`, `lam`, `clip_param`, `num_learning_epochs`, `num_mini_batches`, `entropy_coef`, `value_loss_coef`, `max_grad_norm`, `init_noise_std`, `normalize_advantage` |
+| `ppo` | `PpoTrainer` | on-policy, GAE, clipped surrogate | `gamma`, `lam`, `clip_param`, `num_learning_epochs`, `num_mini_batches`, `entropy_coef`, `value_loss_coef`, `max_grad_norm`, `init_noise_std`, `normalize_advantage` |
 | `fast_sac` | `FastSacTrainer` | off-policy, replay buffer, entropy temperature | `buffer_size`, `batch_size`, `learning_starts`, `gradient_steps`, `tau`, `autotune_alpha`, `init_alpha`, `alpha_lr`, `target_entropy` |
 | `fast_td3` | `FastTd3Trainer` | off-policy, twin critics, delayed actor | the SAC buffer fields plus `policy_delay`, `exploration_noise_std`, `target_noise_std`, `target_noise_clip` |
 
@@ -87,7 +87,7 @@ Extends `TrainSpec` (so `output_dir`, `learning_rate`, `seed` and the rest are t
 |---|---|---|
 | `env_factory` | required | all; a zero-arg callable returning a fresh `SimEnv` |
 | `total_timesteps` | `100_000` | all |
-| `rollout_steps` | `24` | ppo |
+| `rollout_steps` | `24` | all |
 | `num_envs` | `1` | ppo (`>1` wraps `VecSimEnv`); fast_sac and fast_td3 refuse anything but `1` |
 | `actor_obs_keys`, `critic_obs_keys` | `[]` (from the env) | all |
 | `gamma` | `0.99` | all |
