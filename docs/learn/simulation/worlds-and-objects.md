@@ -48,7 +48,7 @@ Ground height at (1.0000, 0.0000) = 0.0240m
 
 ## The world
 
-`create_world(timestep=None, gravity=None, ground_plane=True, terrain=None, difficulty=1.0)` builds a `SimWorld`: `robots`, `objects`, `cameras`, `timestep` (0.002 s), `gravity`, `terrain`, `status`, `sim_time`, `step_count`. `reset()` restores every robot's spawn pose (`keyframe` spawns included) and every object's original position; `destroy()` drops the world.
+`create_world(timestep=None, gravity=None, ground_plane=True, terrain=None, difficulty=1.0)` builds a `SimWorld`: `robots`, `objects`, `cameras`, `timestep` (0.002 s), `gravity`, `terrain`, `status`, `sim_time`, `step_count`. `reset()` restores every robot's spawn pose (`keyframe` included) and every object's position; `destroy()` drops the world.
 
 ## Objects
 
@@ -69,7 +69,7 @@ A short vector is refused, not padded: padding would compile a different object 
 
 ## Cameras
 
-`add_camera(name, position, target, fov=60, width, height, parent_body=None)`. World-frame by default. With `parent_body` the camera rides a body and `position` and `target` are in that body's frame; both are required then, since the world-frame defaults would put a wrist camera 1.7 m away. `mujoco` and `newton` support it; `isaac` refuses `parent_body` and names the world-frame alternative. A name is a bare token (`wrist`, `front_cam`, `cam-2`), optionally scoped to one robot (`arm0/wrist_cam`); a space (`a b`), a dot (`wrist.rgb`) or `..` is refused with `status="error"` and the scene continues without the camera, so read the status. Every camera appears in `get_observation` as an `(H, W, 3)` array under its name; the policy pages explain [which names a model expects](../policies/lerobot-local.md).
+`add_camera(name, position, target, fov=60, width, height, parent_body=None)`; `fov` is vertical on every backend. World-frame by default. With `parent_body` the camera rides a body and `position` and `target` are in that body's frame; both are required then, since the world-frame defaults would put a wrist camera 1.7 m away. `mujoco` and `newton` support it; `isaac` refuses `parent_body` and names the world-frame alternative. A name is a bare token (`wrist`, `front_cam`, `cam-2`), optionally scoped to one robot (`arm0/wrist_cam`); a space (`a b`), a dot (`wrist.rgb`) or `..` is refused with `status="error"` and the scene continues without the camera, so read the status. Every camera appears in `get_observation` as an `(H, W, 3)` array under its name; the policy pages explain [which names a model expects](../policies/lerobot-local.md).
 
 ## Task objects
 
@@ -77,11 +77,11 @@ Three MJCF assets ship in `strands_robots/simulation/task_objects/`: `hinged_car
 
 ## Scene editing
 
-`patch_scene_mjcf(ops)` edits the live `MjSpec` atomically with `add_body`, `add_geom`, `add_site`, `set_body_pos`, `set_body_quat`, `delete_body`. Each op accepts only the keys it reads; a misspelled key is refused with a close match, because every field has a default and a typo would otherwise apply it and report success. `pos` is three finite numbers, `quat` four, `rgba` three or four. `replace_scene_mjcf(xml)` swaps the whole model, `load_scene(path)` starts from a file, `export_xml(path)` writes the current one. `SpecBuilder` in `mujoco/spec_builder.py` is the lower-level builder these use.
+`patch_scene_mjcf(ops)` edits the live `MjSpec` atomically with `add_body`, `add_geom`, `add_site`, `set_body_pos`, `set_body_quat`, `delete_body`. Each op accepts only the keys it reads; a misspelled key is refused with a close match, since every field has a default and a typo would otherwise report success. `pos` is three finite numbers, `quat` four, `rgba` three or four. `replace_scene_mjcf(xml)` swaps the whole model, `load_scene(path)` starts from a file, `export_xml(path)` writes the current one. `SpecBuilder` in `mujoco/spec_builder.py` is the lower-level builder these use.
 
 ## Meshes and materials
 
-`add_object(shape="mesh", mesh_path="part.stl", mass=0.2)` registers the file as a MuJoCo mesh asset (`spec.add_mesh`), so any format MuJoCo's compiler reads works; a mesh `size` is a per-axis scale on Newton only; MuJoCo and Isaac ignore it and report success (#2300); the file's own units set the extent. Robot meshes come from `robot_descriptions` and the bundled menagerie tree through `strands_robots.simulation.model_registry` (`resolve_model`, `register_urdf`, `list_available_models`). Isaac converts MJCF and meshes into USD (`isaac/mjcf_assets.py`, `isaac/mesh_assets.py`).
+`add_object(shape="mesh", mesh_path="part.stl", mass=0.2)` registers the file as a MuJoCo mesh asset (`spec.add_mesh`), so any format MuJoCo's compiler reads works; a mesh `size` scales per axis on Newton only; MuJoCo and Isaac ignore it and report success (#2300); the file's own units set the extent. Robot meshes come from `robot_descriptions` and the bundled menagerie tree through `strands_robots.simulation.model_registry` (`resolve_model`, `register_urdf`, `list_available_models`). Isaac converts MJCF and meshes into USD (`isaac/mjcf_assets.py`, `isaac/mesh_assets.py`).
 
 ## Terrain
 

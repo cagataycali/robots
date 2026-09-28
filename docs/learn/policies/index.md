@@ -4,16 +4,17 @@ description: The Policy contract, the provider matrix generated from the registr
 
 # Policies
 
-By the end of this page you can name every provider the package ships, build one with `create_policy`, write your own in twenty lines, and swap providers by changing one string. A policy turns an observation into joint targets.
+By the end of this page you can name every provider the package ships, build one with `create_policy`, write your own in twenty lines, and swap providers by changing one string.
 
 ## The contract
 
 ```python title="strands_robots/policies/base.py (abridged)"
 class Policy(ABC):
-    control_frequency: float | None = None          # runtime sets it before the loop
+    control_frequency: float | None = None          # set by the runtime before the loop
     rtc_observed_delay_steps: int | None = None      # runtime sets it before each call
-    reads_instruction: ClassVar[bool] = True         # False: the words never shape the actions
-    instruction_free_actions: ClassVar[str | None] = None   # what a non-reader's actions are, for the task notice
+    reads_instruction: ClassVar[bool] = True         # False: the words never shape actions
+    instruction_free_actions: ClassVar[str | None] = None   # what a non-reader's actions are
+    requires_action_controller: ClassVar[str | None] = None # a controller the engine must install, else it refuses
 
     @abstractmethod
     async def get_actions(self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any) -> list[dict[str, Any]]: ...
@@ -42,11 +43,11 @@ class Policy(ABC):
     def provider_name(self) -> str: ...
 ```
 
-The fence is abridged; `execution_horizon`, `instruction_free_actions`, `is_chunk_emitting`, `set_control_frequency` and `set_rtc_observed_delay` are on the [API reference](../../reference/api/policies.md).
+The fence is abridged; `execution_horizon`, `is_chunk_emitting`, `set_control_frequency` and `set_rtc_observed_delay` are on the [API reference](../../reference/api/policies.md).
 
 `get_actions` returns one action dict per control tick, joint name to a python `float` (or `list[float]` for a grouped actuator), never an array; the list is the chunk the runtime plays at `control_frequency` before asking again.
 
-Non-VLA providers read their goal from keywords instead of the instruction: `target_pose` (`[x, y, z, qw, qx, qy, qz]`), `target_joints` (`{name: radians}`), `target_velocity` (`[vx, vy, omega]`), and `world_update` for collision-aware planners. Providers ignore keywords they do not know, so one `policy_kwargs` dict travels.
+Non-VLA providers read their goal from keywords instead of the instruction: `target_pose` (`[x, y, z, qw, qx, qy, qz]`), `target_joints` (`{name: radians}`), `target_velocity` (`[vx, vy, omega]`), and `world_update` for collision-aware planners. Providers ignore unknown keywords, so one `policy_kwargs` dict travels.
 
 ## Providers
 

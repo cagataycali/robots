@@ -47,7 +47,7 @@ sim.destroy()
 | fixed base | robots import with the root welded by default (`fixed_base=True` on the internal robot record) |
 | cameras | prims under the stage camera scope; `add_camera(parent_body=...)` is refused with the world-frame alternative named |
 | physics rate | `physics_dt` and `rendering_dt` are separate clocks |
-| WBC | cannot install the MuJoCo torque shim; a `wbc` rollout refuses unless `wbc_install_torque_control=False` on a torque-actuated scene |
+| WBC | cannot install the MuJoCo torque shim; a policy declaring `requires_action_controller` (`wbc`) is refused rather than rolled out without it |
 | motion primitives | its own implementation in `isaac/motion_primitives.py` |
 | randomization | `IsaacRandomizationMixin`, same `randomize` / `set_obs_noise` names |
 
