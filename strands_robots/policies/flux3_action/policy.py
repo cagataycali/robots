@@ -31,7 +31,7 @@ import numpy as np
 
 from strands_robots.policies._state_keys import observation_joint_keys
 from strands_robots.policies.base import Policy
-from strands_robots.utils import require_optional
+from strands_robots.utils import name_list_error, require_optional
 
 from .units import (
     SO101_JOINT_LABELS,
@@ -212,7 +212,15 @@ class Flux3ActionPolicy(Policy):
     # -- Policy contract --------------------------------------------------
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
-        """Remember the robot's joint key order; six keys map onto the SO-101 joints."""
+        """Remember the robot's joint key order; six keys map onto the SO-101 joints.
+
+        Raises:
+            ValueError: if ``robot_state_keys`` is not an ordered list of distinct
+                non-blank names (:func:`~strands_robots.utils.name_list_error`);
+                a bare string would otherwise bind one joint per character.
+        """
+        if error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys"):
+            raise ValueError(error)
         self.robot_state_keys = list(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:
@@ -333,6 +341,9 @@ class Flux3ActionPolicy(Policy):
         return {divmod(int(n), 10) for n in re.findall(r"\bsm_(\d+)\b", out)}
 
     def _joint_state(self, observation: dict[str, Any]) -> tuple[list[str], list[float]]:
+        missing = [k for k in self.robot_state_keys if k not in observation]
+        if missing:
+            raise KeyError(f"flux3_action: robot_state_keys name joints absent from the observation: {missing}")
         keys = observation_joint_keys(observation, self.robot_state_keys)
         if len(keys) != 6:
             raise ValueError(

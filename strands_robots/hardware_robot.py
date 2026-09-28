@@ -3695,6 +3695,16 @@ class Robot(TeleopMixin, AgentTool):
                             ),
                             "default": 30.0,
                         },
+                        "policy_config": {
+                            "type": "object",
+                            "description": (
+                                "execute/start: provider kwargs forwarded to create_policy, the same "
+                                "dict the sim tool takes (lerobot_local: pretrained_name_or_path, "
+                                "device; flux3_action: model_id, revision, camera_map; groot: "
+                                "api_token). Unknown keys are the provider's own refusal."
+                            ),
+                            "additionalProperties": True,
+                        },
                     },
                     "required": ["action"],
                 }
@@ -3889,6 +3899,33 @@ class Robot(TeleopMixin, AgentTool):
                 duration = input_data.get("duration", 30.0)
                 method = "execute_task" if action == "execute" else "start_task"
 
+                # The checkpoint lives in ``policy_config`` (the sim tool's dict of
+                # the same name). Without it the hardware tool could only name a
+                # provider, so lerobot_local / flux3_action were unrunnable from an
+                # agent turn while the mesh dispatch forwarded the same kwargs.
+                policy_config = input_data.get("policy_config") or {}
+                if not isinstance(policy_config, dict) or any(not isinstance(k, str) for k in policy_config):
+                    bad = {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": f"policy_config must be an object of provider kwargs, got {type(policy_config).__name__}"
+                            }
+                        ],
+                    }
+                    yield ToolResultEvent(self._make_tool_result(tool_use_id, bad))
+                    return
+                reserved = {"instruction", "policy_port", "policy_host", "policy_provider", "duration"}
+                if clash := sorted(reserved & set(policy_config)):
+                    bad = {
+                        "status": "error",
+                        "content": [
+                            {"text": f"policy_config repeats tool arguments {clash}; pass them at the top level"}
+                        ],
+                    }
+                    yield ToolResultEvent(self._make_tool_result(tool_use_id, bad))
+                    return
+
                 # Only ``instruction`` is judged here; whether a port is needed is
                 # the named provider's call, which the preflight below asks.
                 if not instruction:
@@ -3905,6 +3942,7 @@ class Robot(TeleopMixin, AgentTool):
                     builds_policy=True,
                     policy_provider=policy_provider,
                     policy_port=policy_port,
+                    policy_kwargs=policy_config,
                 ):
                     yield ToolResultEvent(self._make_tool_result(tool_use_id, err))
                     return
@@ -3926,7 +3964,7 @@ class Robot(TeleopMixin, AgentTool):
                     return
 
                 dispatch = self._execute_task_sync if action == "execute" else self.start_task
-                result = dispatch(instruction, policy_port, policy_host, policy_provider, duration)
+                result = dispatch(instruction, policy_port, policy_host, policy_provider, duration, **policy_config)
                 yield ToolResultEvent(self._make_tool_result(tool_use_id, result))
 
             elif action == "status":
