@@ -373,6 +373,12 @@ class FeetechBus:
             every motor on this bus.
     """
 
+    #: How refusals name this bus, the wire it opens, and why pyserial is needed.
+    #: A bus on another servo family overrides the three with the units above.
+    NAME: str = "FeetechBus"
+    WIRE: str = "the SCS bus"
+    PURPOSE: str = "the Feetech SCS serial bus"
+
     def __init__(
         self,
         port: str | None,
@@ -419,17 +425,17 @@ class FeetechBus:
             record = calibration.get(name)
             if record is None:
                 raise ValueError(
-                    f"FeetechBus: no calibration for {name!r}; the records cover {sorted(calibration)} "
+                    f"{self.NAME}: no calibration for {name!r}; the records cover {sorted(calibration)} "
                     f"and this bus carries {sorted(self.motors)}"
                 )
             if record.id != spec.motor_id:
                 raise ValueError(
-                    f"FeetechBus: the calibration for {name!r} measured servo id {record.id}, but this "
+                    f"{self.NAME}: the calibration for {name!r} measured servo id {record.id}, but this "
                     f"bus drives id {spec.motor_id} by that name - one of the two is a different arm"
                 )
             if record.range_min >= record.range_max:
                 raise ValueError(
-                    f"FeetechBus: the calibration for {name!r} spans no travel "
+                    f"{self.NAME}: the calibration for {name!r} spans no travel "
                     f"(range_min={record.range_min}, range_max={record.range_max}); a joint whose "
                     "positive direction is reversed says so with drive_mode, not by swapping the two"
                 )
@@ -444,7 +450,7 @@ class FeetechBus:
         """Return one motor's spec and record, or raise naming the bus's motors."""
         spec = self.motors.get(name)
         if spec is None:
-            raise ValueError(f"FeetechBus: unknown motor {name!r}; this bus carries {sorted(self.motors)}")
+            raise ValueError(f"{self.NAME}: unknown motor {name!r}; this bus carries {sorted(self.motors)}")
         return spec, self.calibration[name]
 
     def to_value(self, name: str, counts: int) -> float:
@@ -501,12 +507,12 @@ class FeetechBus:
             counts = int(value * spec.resolution / 360.0 + middle)
         else:
             if not 0.0 <= value <= 100.0:
-                raise ValueError(f"FeetechBus: {name} target {value} is outside 0..100 percent open")
+                raise ValueError(f"{self.NAME}: {name} target {value} is outside 0..100 percent open")
             percent = 100.0 - value if record.drive_mode else value
             counts = int(percent / 100.0 * (record.range_max - record.range_min) + record.range_min)
         if not 0 <= counts <= spec.resolution:
             raise ValueError(
-                f"FeetechBus: {name} target {value} is outside the travel the encoder can hold: "
+                f"{self.NAME}: {name} target {value} is outside the travel the encoder can hold: "
                 f"it maps to {counts} counts, and the servo reports 0..{spec.resolution}"
             )
         return counts
@@ -560,12 +566,8 @@ class FeetechBus:
         if self.is_connected:
             return
         if not self.port:
-            raise ValueError("FeetechBus: no port configured; pass port= to open the SCS bus")
-        serial = require_optional(
-            "serial",
-            pip_install="pyserial",
-            purpose="the Feetech SCS serial bus",
-        )
+            raise ValueError(f"{self.NAME}: no port configured; pass port= to open {self.WIRE}")
+        serial = require_optional("serial", pip_install="pyserial", purpose=self.PURPOSE)
         self._conn = serial.Serial(self.port, self.baud_rate, timeout=self.timeout)  # type: ignore[attr-defined]
 
     def disconnect(self) -> None:
@@ -577,7 +579,7 @@ class FeetechBus:
     def _require_open(self, what: str) -> Any:
         """Return the open connection, or raise naming what was attempted."""
         if not self.is_connected:
-            raise RuntimeError(f"FeetechBus: {what} needs an open bus; call connect() first (port={self.port!r})")
+            raise RuntimeError(f"{self.NAME}: {what} needs an open bus; call connect() first (port={self.port!r})")
         return self._conn
 
     # ------------------------------------------------------------------ #
@@ -692,22 +694,32 @@ class FeetechBus:
                 or a value is outside the joint's range.
             RuntimeError: When the bus is not open.
         """
+        conn, counts = self._goal_counts(targets)
+        motor_data = [(motor_id, encode_word(value)) for motor_id, value in counts]
+        conn.write(sync_write_packet(Register.GOAL_POSITION, _REGISTER_WIDTH, motor_data))
+
+    def _goal_counts(self, targets: dict[str, float]) -> tuple[Any, list[tuple[int, int]]]:
+        """Grade ``targets`` and turn them into ``(servo id, counts)``, before any byte is framed.
+
+        Raises:
+            ValueError: As :meth:`write_goal_positions`.
+            RuntimeError: When the bus is not open.
+        """
         if not targets:
-            raise ValueError("FeetechBus: no targets to write")
+            raise ValueError(f"{self.NAME}: no targets to write")
         conn = self._require_open("writing goal positions")
-        motor_data: list[tuple[int, bytes]] = []
+        counts: list[tuple[int, int]] = []
         for name, value in targets.items():
             spec, _record = self._calibrated(name)
             if isinstance(value, bool) or not isinstance(value, numbers.Real):
                 raise ValueError(
-                    f"FeetechBus: {name} target must be a finite number, got {type(value).__name__}: {value!r}"
+                    f"{self.NAME}: {name} target must be a finite number, got {type(value).__name__}: {value!r}"
                 )
             number = float(value)
             if not math.isfinite(number):
-                raise ValueError(f"FeetechBus: {name} target must be finite, got {value!r}")
-            counts = self.to_counts(name, number)
-            motor_data.append((spec.motor_id, encode_word(counts)))
-        conn.write(sync_write_packet(Register.GOAL_POSITION, _REGISTER_WIDTH, motor_data))
+                raise ValueError(f"{self.NAME}: {name} target must be finite, got {value!r}")
+            counts.append((spec.motor_id, self.to_counts(name, number)))
+        return conn, counts
 
     def set_torque(self, enabled: bool) -> list[str]:
         """Energize or release every motor, returning the ones that failed.

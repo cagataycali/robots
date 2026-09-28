@@ -30,6 +30,11 @@ _TOKEN = re.compile(r"\{\{\s*drivers_table\s*\}\}")
 #: ``docs/learn/hardware/``.
 _FAMILY: dict[str, tuple[str, str, str]] = {
     "strands_robots.drivers.feetech.driver": ("serial (Feetech SCS bus)", "`pip install pyserial`", "feetech-arms.md"),
+    "strands_robots.drivers.dynamixel.driver": (
+        "serial (Dynamixel Protocol 2.0)",
+        "`pip install pyserial`",
+        "feetech-arms.md",
+    ),
     "strands_robots.drivers.franka.driver": ("ethernet (FCI, libfranka)", "`panda-py`, vendor wheel", "franka.md"),
     "strands_robots.drivers.g1": ("DDS (CycloneDDS)", "`[ros2]` + `unitree_sdk2_python`", "unitree.md"),
     "strands_robots.drivers.go2": ("DDS (CycloneDDS)", "`[ros2]` + `unitree_sdk2_python`", "unitree.md"),

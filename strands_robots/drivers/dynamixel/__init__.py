@@ -1,4 +1,4 @@
-"""Native Dynamixel Protocol 2.0 codec for Koch / ViperX / WidowX / Aloha.
+"""Native Dynamixel Protocol 2.0 driver, bus and codec.
 
 :mod:`strands_robots.drivers.dynamixel.protocol` is the Protocol 2.0 wire
 format: pure functions, no I/O, verifiable byte-for-byte against
@@ -7,13 +7,14 @@ format: pure functions, no I/O, verifiable byte-for-byte against
 of XL330 / XM430 / XM540 motors, and register 0 (``MODEL_NUMBER``) is what
 discriminates them on the wire, so :func:`decode_model_number` lives here.
 
-There is no native driver yet: nothing opens the serial port, so
-``Robot("koch", mode="real", driver="strands")`` is refused by name. Koch moves
-through lerobot today (``driver="lerobot"`` with ``pip install
-'lerobot[dynamixel]'``); the driver registers here once a bus writes goal
-positions.
+:class:`~strands_robots.drivers.dynamixel.driver.DynamixelDriver` drives koch
+over :class:`~strands_robots.drivers.dynamixel.bus.DynamixelBus`:
+``Robot("koch", mode="real", driver="strands", port=...)``. The other five arms
+are refused by name until each has a verified motor map.
 """
 
+from strands_robots.drivers.dynamixel.bus import KOCH_MOTORS, DynamixelBus
+from strands_robots.drivers.dynamixel.driver import DynamixelDriver
 from strands_robots.drivers.dynamixel.protocol import (
     CONTROL_TABLE,
     Instruction,
@@ -21,15 +22,24 @@ from strands_robots.drivers.dynamixel.protocol import (
     checksum,
     decode_model_number,
     parse_status_packet,
+    parse_status_stream,
+    sync_read_packet,
     sync_write_packet,
+    write_packet,
 )
 
 __all__ = [
     "CONTROL_TABLE",
+    "KOCH_MOTORS",
+    "DynamixelBus",
+    "DynamixelDriver",
     "Instruction",
     "build_packet",
     "checksum",
     "decode_model_number",
     "parse_status_packet",
+    "parse_status_stream",
+    "sync_read_packet",
     "sync_write_packet",
+    "write_packet",
 ]

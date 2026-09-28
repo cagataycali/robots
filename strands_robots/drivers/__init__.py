@@ -48,10 +48,10 @@ from strands_robots.drivers.registry import (
 #:
 #: A driver is listed only once it can move the robots it names: a registered
 #: driver whose every write refuses would hand back a robot that builds and
-#: cannot move. The Dynamixel codec (:mod:`strands_robots.drivers.dynamixel`)
-#: ships without a driver until its serial bus lands.
+#: cannot move.
 _SHIPPED_DRIVERS: tuple[tuple[str, str, tuple[str, ...] | str], ...] = (
     ("strands_robots.drivers.feetech.driver", "FeetechDriver", "SUPPORTED_ROBOTS"),
+    ("strands_robots.drivers.dynamixel.driver", "DynamixelDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.franka.driver", "FrankaDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.g1", "G1Driver", ("g1", "unitree_g1")),
     ("strands_robots.drivers.go2", "Go2Driver", "SUPPORTED_ROBOTS"),

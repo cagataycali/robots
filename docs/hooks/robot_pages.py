@@ -75,6 +75,20 @@ DRIVERS: dict[str, dict[str, object]] = {
             '`transport="twin"` answers the same verbs from the arm\'s MuJoCo model',
         ),
     },
+    "DynamixelDriver": {
+        "module": "strands_robots/drivers/dynamixel/driver.py",
+        "link": "Dynamixel Protocol 2.0 serial bus",
+        "port": 'serial device of the U2D2 or bus adapter, for example `"/dev/ttyUSB0"`',
+        "example": '"/dev/ttyUSB0"',
+        "sdk": "`pyserial` (`pip install pyserial`); calibration file from `lerobot-calibrate` (`koch_follower`)",
+        "kwargs": "`baud_rate=1_000_000`, `calibration=<path or records>`, `motor_ids=()`, `timeout=1.0`",
+        "units": "degrees per joint, `gripper` in percent open; keys `shoulder_pan` or `shoulder_pan.pos`",
+        "checks": (
+            "the arm keeps the operating modes `lerobot-calibrate` wrote; the driver does not rewrite EEPROM",
+            "a reply whose error byte carries an error number is dropped; the hardware-alert bit alone is not",
+            "`stop` releases torque on every motor and names any that stayed driven",
+        ),
+    },
     "FrankaDriver": {
         "module": "strands_robots/drivers/franka/driver.py",
         "link": "Franka Control Interface (FCI) through `panda-py`",

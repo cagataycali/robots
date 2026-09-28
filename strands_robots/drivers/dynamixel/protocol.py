@@ -48,7 +48,7 @@ scope 1) so this module can be imported on any host in CI.
 from __future__ import annotations
 
 import enum
-from typing import Final
+from typing import Final, cast
 
 # ---------------------------------------------------------------------------
 # Framing constants. Named because two of them look confusingly interchangeable
@@ -296,18 +296,13 @@ def build_packet(servo_id: int, instruction: Instruction, params: bytes = b"") -
     length = len(params) + 3  # INST + params + CRC(2). LEN is INST-inclusive.
     if length > 0xFFFF:
         raise ValueError(f"build_packet: params too long ({len(params)} bytes) for the 16-bit length field")
-    body = (
-        bytes(
-            [
-                servo_id,
-                length & 0xFF,
-                (length >> 8) & 0xFF,
-                int(instruction),
-            ]
-        )
-        + params
-    )
-    frame = HEADER + body
+    return _frame(servo_id, instruction, params)
+
+
+def _frame(servo_id: int, instruction: Instruction, params: bytes) -> bytes:
+    """Frame an already-graded packet: header, ID, LEN, INST, params, stuffing, CRC."""
+    length = len(params) + 3  # INST + params + CRC(2). LEN is INST-inclusive.
+    frame = HEADER + bytes([servo_id, length & 0xFF, (length >> 8) & 0xFF, int(instruction)]) + params
     # Escape any reserved run BEFORE the CRC: the CRC covers the stuffed frame,
     # and _stuff rewrites LEN to count the inserted bytes.
     frame = _stuff(frame)
@@ -397,20 +392,64 @@ def sync_write_packet(register_address: int, data_length: int, entries: list[tup
     length = len(params) + 3  # INST + params + CRC(2)
     if length > 0xFFFF:
         raise ValueError(f"sync_write_packet: parameter block too long ({len(params)} bytes)")
-    body = bytes(
-        [
-            BROADCAST_ID,
-            length & 0xFF,
-            (length >> 8) & 0xFF,
-            int(Instruction.SYNC_WRITE),
-        ]
-    ) + bytes(params)
-    frame = HEADER + body
-    # Escape any reserved run BEFORE the CRC: the CRC covers the stuffed frame,
-    # and _stuff rewrites LEN to count the inserted bytes.
-    frame = _stuff(frame)
-    crc = checksum(frame)
-    return frame + bytes([crc & 0xFF, (crc >> 8) & 0xFF])
+    return _frame(BROADCAST_ID, Instruction.SYNC_WRITE, bytes(params))
+
+
+def write_packet(servo_id: int, register_address: int, data: bytes) -> bytes:
+    """Return a unicast ``WRITE`` of ``data`` at ``register_address``; the servo acks it.
+
+    Raises:
+        ValueError: As :func:`build_packet`, or ``data`` is not the width
+            :data:`CONTROL_TABLE` declares for a register it names.
+    """
+    listed = _REGISTER_AT.get(register_address)
+    if listed is not None and len(data) != listed[1]:
+        raise ValueError(f"write_packet: {listed[0]} is {listed[1]} bytes wide, got {len(data)}")
+    return build_packet(servo_id, Instruction.WRITE, register_address.to_bytes(2, "little") + data)
+
+
+def sync_read_packet(register_address: int, data_length: int, servo_ids: list[int]) -> bytes:
+    """Return a ``SYNC_READ`` asking every ID in ``servo_ids`` for ``data_length`` bytes at ``register_address``.
+
+    A broadcast that IS answered: each listed servo replies with one status
+    packet, in list order, which :func:`parse_status_stream` frames.
+
+    Raises:
+        ValueError: ``servo_ids`` is empty or names an ID outside ``0..0xFC``.
+    """
+    if not servo_ids or any(not 0 <= i <= MAX_UNICAST_ID for i in servo_ids):
+        raise ValueError(f"sync_read_packet: servo_ids must be non-empty IDs in 0..{MAX_UNICAST_ID}; got {servo_ids}")
+    params = register_address.to_bytes(2, "little") + data_length.to_bytes(2, "little") + bytes(servo_ids)
+    return _frame(BROADCAST_ID, Instruction.SYNC_READ, params)
+
+
+def parse_status_stream(raw: bytes, servo_ids: list[int], data_length: int) -> dict[int, bytes]:
+    """Frame a reply stream into ``servo id -> params``, keeping only the replies that verify.
+
+    A reply verifies when its CRC matches, it names a servo in ``servo_ids``,
+    it carries exactly ``data_length`` param bytes, and its ``ERR`` byte reports
+    no error number. Bit 7 of ``ERR`` is the hardware-alert flag - the servo
+    still executed the instruction - so only bits 0-6 refuse a reply. Anything
+    else in the stream (the host's own echo on a half-duplex line, a truncated
+    frame) is skipped rather than raised, so one bad servo cannot cost the arm.
+    """
+    wanted = set(servo_ids)
+    out: dict[int, bytes] = {}
+    start = raw.find(HEADER)
+    while start != -1 and start + 7 <= len(raw):
+        end = start + 7 + (raw[start + 5] | (raw[start + 6] << 8))
+        try:
+            reply = parse_status_packet(raw[start:end]) if end <= len(raw) else None
+        except ValueError:
+            reply = None
+        if reply is None:
+            start = raw.find(HEADER, start + 1)
+            continue
+        params, servo_id, err = cast(bytes, reply["params"]), cast(int, reply["servo_id"]), cast(int, reply["err"])
+        if reply["crc_ok"] and servo_id in wanted and len(params) == data_length and not err & 0x7F:
+            out.setdefault(servo_id, params)
+        start = raw.find(HEADER, end)
+    return out
 
 
 def parse_status_packet(frame: bytes) -> dict[str, object]:

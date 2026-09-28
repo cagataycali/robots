@@ -91,4 +91,4 @@ arm.cleanup()
 
 ## Koch and other Dynamixel arms
 
-`koch` resolves to lerobot's `koch_follower`; there is no native Dynamixel driver at this commit (the codec in `drivers/dynamixel/protocol.py` ships without a bus). `Robot("koch", mode="real", port=...)` works through lerobot with `[lerobot]` installed.
+`Robot("koch", mode="real", driver="strands", port=...)` builds `DynamixelDriver`: the verbs, units and refusals above over a Protocol 2.0 bus, with the `koch_follower` calibration file. Without `driver=`, koch resolves to lerobot's `koch_follower`. The ViperX, WidowX and ALOHA arms have no verified motor map and are refused.

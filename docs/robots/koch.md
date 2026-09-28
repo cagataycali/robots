@@ -7,7 +7,7 @@ description: "Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel)"
 
 # Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
+<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot, strands</span></p>
 
 You have `koch` in a MuJoCo world after one line, and the same object on the hardware with `mode="real"`.
 
@@ -23,6 +23,7 @@ Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("koch", mode="real", port="/dev/ttyACM0")  # lerobot koch_follower
+robot = Robot("koch", mode="real", driver="strands", port="/dev/ttyUSB0")  # DynamixelDriver
 ```
 
 Aliases `Robot()` accepts: `koch_follower`, `koch_v1.1`, `low_cost_robot_arm`.
@@ -30,6 +31,21 @@ Aliases `Robot()` accepts: `koch_follower`, `koch_v1.1`, `low_cost_robot_arm`.
 ## Hardware
 
 **lerobot.** `Robot("koch", mode="real")` builds lerobot's `koch_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
+
+**`DynamixelDriver`** (selected with `driver="strands"`) speaks Dynamixel Protocol 2.0 serial bus. Source: `strands_robots/drivers/dynamixel/driver.py`.
+
+| | |
+|---|---|
+| `port=` | serial device of the U2D2 or bus adapter, for example `"/dev/ttyUSB0"` |
+| SDK | `pyserial` (`pip install pyserial`); calibration file from `lerobot-calibrate` (`koch_follower`) |
+| Other kwargs | `baud_rate=1_000_000`, `calibration=<path or records>`, `motor_ids=()`, `timeout=1.0` |
+| Action keys | degrees per joint, `gripper` in percent open; keys `shoulder_pan` or `shoulder_pan.pos` |
+
+Checks before it writes:
+
+- the arm keeps the operating modes `lerobot-calibrate` wrote; the driver does not rewrite EEPROM
+- a reply whose error byte carries an error number is dropped; the hardware-alert bit alone is not
+- `stop` releases torque on every motor and names any that stayed driven
 
 ## Policies
 

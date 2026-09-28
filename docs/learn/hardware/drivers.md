@@ -7,7 +7,7 @@ from strands_robots.drivers import list_native_drivers, list_driver_coverage
 
 print(list_native_drivers()["so101"])            # FeetechDriver
 print(list_driver_coverage()["so101"])           # ('lerobot', 'strands')
-print(list_driver_coverage()["koch"])            # ('lerobot',)
+print(list_driver_coverage()["omx"])             # ('lerobot',)
 print(list_driver_coverage()["ability_hand"])    # ()
 ```
 
