@@ -6159,7 +6159,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # to that, so constructing a bare ``Ticker(...)`` here is a suite failure
         # rather than one leaked descriptor pair per rollout.
         try:
-            from strands_robots.mesh.pacing import Ticker
+            from strands_robots._pacing import Ticker
 
             with Ticker(1.0 / control_frequency) as ticker:
                 while step_count < total_steps:

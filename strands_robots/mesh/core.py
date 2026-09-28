@@ -23,10 +23,10 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from strands_robots._mesh_switch import mesh_env_request
+from strands_robots._pacing import Ticker
 from strands_robots.audit import log_safety_event
 from strands_robots.bus_access import joint_read_source, read_joints, read_observation
 from strands_robots.mesh import security as _security
-from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.sensors import SensorLoopsMixin
 from strands_robots.mesh.session import (
     CAMERA_HZ,
@@ -244,7 +244,7 @@ MAX_DEGRADED_DETAIL_LEN: int = 256
 
 #: Total budget for joining the sensor loops :meth:`Mesh.start` launched, spent
 #: across all of them rather than per loop: the loops wind down in parallel and
-#: notice the stop within 10ms (:class:`~strands_robots.mesh.pacing.Ticker`), so
+#: notice the stop within 10ms (:class:`~strands_robots._pacing.Ticker`), so
 #: a per-loop budget would let one wedged driver read cost nine times this. Named
 #: so the docstring, the WARNING and the tests read one value. Matches
 #: :data:`strands_robots.mesh.input._INPUT_JOIN_TIMEOUT_S` and
@@ -1258,7 +1258,7 @@ class Mesh(SensorLoopsMixin):
     def _heartbeat_loop(self) -> None:
         """Announce this peer and prune stale ones at ``HEARTBEAT_HZ``.
 
-        Paced by :class:`~strands_robots.mesh.pacing.Ticker`, and the stakes here
+        Paced by :class:`~strands_robots._pacing.Ticker`, and the stakes here
         are the smallest of the converted loops -- worth saying rather than
         borrowing the camera loop's severity. ``HEARTBEAT_HZ`` is 2.0 and the tick
         body is cheap, so the period the old ``Event.wait`` added the work to was
@@ -1345,7 +1345,7 @@ class Mesh(SensorLoopsMixin):
     def _state_loop(self) -> None:
         """Publish this peer's state at ``STATE_HZ``.
 
-        Paced by :class:`~strands_robots.mesh.pacing.Ticker` rather than by
+        Paced by :class:`~strands_robots._pacing.Ticker` rather than by
         ``self._stop_event.wait(period)``, which is a delay where a rate needs a
         deadline: the time :meth:`_read_state` spends on the serial bus was added
         to the period instead of being subtracted from it, so the loop published

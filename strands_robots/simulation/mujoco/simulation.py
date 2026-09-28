@@ -7463,11 +7463,9 @@ class MuJoCoSimEngine(
         # socketpair, so releasing it is the language's job rather than this
         # loop's to remember. Every paced loop in the package is held to that, so
         # constructing a bare ``Ticker(...)`` here is a suite failure rather than
-        # one leaked descriptor pair per rollout. Local import: the mesh
-        # package __init__ pulls the fleet stack, the same reason ``init_mesh``
-        # is imported at its point of use in this module.
+        # one leaked descriptor pair per rollout.
         try:
-            from strands_robots.mesh.pacing import Ticker
+            from strands_robots._pacing import Ticker
 
             with Ticker(1.0 / control_frequency) as ticker:
                 while step_count < total_steps:

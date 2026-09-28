@@ -56,7 +56,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from strands_robots.mesh.pacing import Ticker
+from strands_robots._pacing import Ticker
 
 logger = logging.getLogger(__name__)
 
