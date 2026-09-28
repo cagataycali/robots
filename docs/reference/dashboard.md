@@ -60,7 +60,7 @@ saying whether the path exists.
 `/api/mesh/safety/estop` is the signed fleet stop, whose answer says how many
 peers replied and which did not (`responses_received`, `peers_not_stopped`), so
 a stop that reached nobody never reads like one that reached everyone. The page
-fires both when the mesh is online.
+fires both.
 
 ## The Agent tab
 
@@ -69,11 +69,11 @@ the simulations - list, start, read joints, move, reset, stop, e-stop - through
 the safety object the buttons use, so a latched e-stop refuses the agent as it
 refuses a click, and stopping is never refused.
 
-Moving a robot pauses first. `sim_set_joints` raises an interrupt before it runs,
-the page shows what a yes would move (`2 - 1.000 rad`), and *Allow once*, *Allow
-for this conversation* or *Refuse* resumes the same turn. A conversation-wide yes
-lives in the socket and dies with it; every answer is audited. The model is the
-one named by `STRANDS_MODEL_ID`, and the page shows which it is.
+Moving a robot pauses first: `sim_set_joints` raises an interrupt, the page shows
+what a yes would move (`2 - 1.000 rad`), and *Allow once*, *Allow for this
+conversation* or *Refuse* resumes the turn. A conversation-wide yes lives in the
+socket and dies with it; every answer is audited. The model is `STRANDS_MODEL_ID`,
+and the page shows which.
 
 ## The e-stop
 
@@ -115,7 +115,7 @@ port that will not open is a `502` naming it, and nothing is left holding it.
 | `DASHBOARD_ENV_FILE` | `.env` | the file Settings writes env keys to |
 | `DASHBOARD_JOBS_FILE` | `$TMPDIR/strands_dashboard/train_jobs.json` | the training job ledger |
 | `STRANDS_MODEL_ID` | the SDK default | which Bedrock model the Agent tab talks to |
-| `STRANDS_MESH` | on | `false` keeps this process off the mesh; Fleet shows the registry only |
+| `STRANDS_MESH` | `true` (the dashboard opts in; robot children inherit it) | `false` is the kill switch: no bridge, no children, Fleet shows the registry only |
 | `HF_LEROBOT_HOME` | `~/.cache/huggingface/lerobot` | the dataset home every record / replay / label path sits under |
 | `HF_HUB_CACHE` | the Hub default | where checkpoint search finds cached Hub snapshots |
 | `STRANDS_ROBOTS_DATA_DIRS` | unset | extra dataset roots, colon separated, admitted next to the home |
