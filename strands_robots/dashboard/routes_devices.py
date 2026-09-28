@@ -34,6 +34,8 @@ from strands_robots.dashboard.device_manager import (
     DeviceManager,
     respawn_payload,
     validate_cameras,
+    validate_motor_model,
+    validate_port,
     validate_spawn,
 )
 
@@ -153,6 +155,10 @@ async def arm_role(
 ) -> dict[str, Any]:
     """Measure whether the arm on ``port`` is a leader or a follower, and remember it."""
     dm = _devices(request)
+    # Both strings reach a child's argv; a bad shape is the caller's error (422), not a bus fault.
+    for problem in (validate_port(port), validate_motor_model(model)):
+        if problem is not None:
+            raise HTTPException(422, problem)
     try:
         # Measures AND remembers (keyed by USB serial, never by /dev name - the OS reassigns those).
         return cast("dict[str, Any]", await asyncio.to_thread(dm.measure_arm_role, port, model))

@@ -682,6 +682,10 @@ def respawn_payload(profile: Mapping[str, Any] | None, port: str) -> dict[str, A
                 + "), so it cannot be spawned as it stands - use the form above"
             )
         }
+    if (bad_port := validate_port(port)) is not None:
+        return {"error": bad_port}
+    if (bad_rid := validate_robot_id(profile.get("robot_id") or None)) is not None:
+        return {"error": f"the saved profile for this board carries a bad calibration id: {bad_rid}"}
     payload: dict[str, Any] = {
         "robot_name": robot_name,
         "mode": str(profile.get("mode") or "real"),
@@ -970,6 +974,68 @@ def validate_peer_id(peer_id: Any) -> str | None:
     return None
 
 
+#: A serial device path, as the calibration wizard already requires it: under ``/dev/``, no
+#: whitespace, no ``..`` segment, and only path characters. A port is the highest-privilege
+#: input here - it names the device a child process opens and WRITES handshake bytes to, and it
+#: reaches ``lsof`` argv - so its shape is checked before any subprocess or bus probe.
+_PORT_RE = re.compile(r"^/dev/[A-Za-z0-9._/-]{1,200}\Z")
+
+#: One path segment (letters, digits, . _ : -), no leading dot: the same ``_SEGMENT`` the
+#: calibration wizard applies to a lerobot id, because a robot_id IS a file name in the child
+#: (``calibration/robots/<type>/<id>.json``) and an ``is_file`` probe on this side.
+_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}\Z")
+
+#: A lerobot motor-table name (``sts3215``, ``scs0009``, ``xl330-m288``...): it is handed to a
+#: child on argv and looked up in a table, so it is a closed charset, not free text.
+_MOTOR_MODEL_RE = re.compile(r"^[a-z0-9_-]{1,32}\Z")
+
+#: What a camera NAME may look like. It becomes an observation key, a dataset feature key and
+#: a thumbnail FILE NAME (``<episode>_<camera>.jpg``), so a slash or ``..`` in it is a write
+#: outside the thumbnail directory, not a camera.
+_CAMERA_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}\Z")
+
+
+def validate_port(port: Any) -> str | None:
+    """Refusal reason for a caller-supplied serial port path, or None if it is one."""
+    if not isinstance(port, str):
+        return f"port must be a string, got {type(port).__name__}"
+    text = port.strip()
+    if not text or text != port or any(c.isspace() for c in text):
+        return f"port {refusal_repr(port)} refused: a serial device path has no whitespace"
+    if not _PORT_RE.match(text) or "/../" in text or text.endswith("/..") or text.startswith("/dev/-"):
+        return (
+            f"port {refusal_repr(port)} refused: it names the device a robot process opens and writes to, "
+            f"so it must be a path under /dev/ (letters, digits, . _ / -), like /dev/ttyACM0 or "
+            f"/dev/serial/by-id/usb-..."
+        )
+    return None
+
+
+def validate_robot_id(robot_id: Any) -> str | None:
+    """Refusal reason for a caller-supplied lerobot calibration id, or None if acceptable."""
+    if robot_id is None:
+        return None
+    if not isinstance(robot_id, str):
+        return f"robot_id must be a string, got {type(robot_id).__name__}"
+    if not _SEGMENT_RE.match(robot_id) or robot_id.startswith("."):
+        return (
+            f"robot_id {refusal_repr(robot_id)} refused: lerobot uses it as a FILE NAME "
+            f"(calibration/robots/<type>/<id>.json), so it must be one path segment "
+            f"(letters, digits, . _ : -) that does not start with a dot"
+        )
+    return None
+
+
+def validate_motor_model(model: Any) -> str | None:
+    """Refusal reason for a caller-supplied motor model name, or None if acceptable."""
+    if not isinstance(model, str) or not _MOTOR_MODEL_RE.match(model):
+        return (
+            f"model {refusal_repr(model)} refused: a lerobot motor table name is lowercase letters, "
+            f"digits, _ or - (sts3215, scs0009, xl330-m288...)"
+        )
+    return None
+
+
 def validate_spawn(robot_name: Any, mode: Any) -> tuple[str, str] | dict[str, str]:
     """Normalise and check what a spawn was asked for, BEFORE any process exists. Returns
     ``(robot_name, mode)`` or an ``{"error": ...}`` dict.
@@ -1143,6 +1209,13 @@ def validate_cameras(cameras: Any) -> dict[str, str] | None:
     for name, cfg in cameras.items():
         if not isinstance(name, str) or not name.strip():
             return {"error": f"camera name {name!r} must be a non-empty string (top/wrist/main...)"}
+        if not _CAMERA_NAME_RE.match(name):
+            return {
+                "error": (
+                    f"camera name {refusal_repr(name)} refused: it becomes an observation key and a "
+                    f"thumbnail file name, so it must match [A-Za-z0-9._-]{{1,64}} (top, wrist_left, cam0...)"
+                )
+            }
         if not isinstance(cfg, dict):
             return {
                 "error": (
@@ -1614,6 +1687,12 @@ class DeviceManager:
         """Measure a Feetech bus's supply voltage and say which arm role it is. READS ONLY -
         Present_Voltage (register 62, one byte, read-only in lerobot's Feetech table).
         """
+        # Shape first: both strings reach a child's argv and the port is the path that child
+        # opens and transmits read-request packets to.
+        if (bad := validate_port(port)) is not None:
+            raise ValueError(bad)
+        if (bad := validate_motor_model(motor_model)) is not None:
+            raise ValueError(bad)
         owner = self.port_owner(port)
         if owner is not None:
             raise PermissionError(
@@ -1743,6 +1822,13 @@ class DeviceManager:
 
         if mode == "real" and not port:
             return {"error": "port required for mode=real"}
+        # The port reaches lsof argv (bus_claim) and is the path the child opens and writes
+        # handshake bytes to; robot_id is a file name in the child. Both are shape-checked
+        # here, before any subprocess, the way calibration_run.cli_args already does.
+        if port is not None and (bad_port := validate_port(port)) is not None:
+            return {"error": bad_port}
+        if (bad_rid := validate_robot_id(robot_id)) is not None:
+            return {"error": bad_rid}
         peer_id = peer_id or self._unique_peer_id(f"{robot_name}-{mode}-{int(time.time()) % 10000}")
         with self._lock:
             if (_live := registry_entry(self.robots, peer_id)) is not None and _live.alive():
