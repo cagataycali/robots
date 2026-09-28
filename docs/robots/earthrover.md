@@ -11,7 +11,7 @@ description: "EarthRover Mini Plus (mobile outdoor navigation)"
 
 You have `earthrover` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("earthrover")` in the default sim mode refuses by name.
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("earthrover", mode="real", port="/dev/ttyACM0")  # lerobot earthrover_mini_plus
@@ -22,7 +22,7 @@ Aliases `Robot()` accepts: `earth_rover`, `earthrover_mini_plus`, `frodobots`.
 
 ## Hardware
 
-**lerobot.** `Robot("earthrover", mode="real")` builds lerobot's `earthrover_mini_plus` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device and `cameras=` the lerobot camera dict. This is the default when `driver=` is not given.
+**lerobot.** `Robot("earthrover", mode="real")` builds lerobot's `earthrover_mini_plus` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
 **`EarthRoverDriver`** (selected with `driver="strands"`) speaks HTTP to the vendor `earth-rovers-sdk`. Source: `strands_robots/drivers/earthrover.py`.
 
@@ -33,7 +33,7 @@ Aliases `Robot()` accepts: `earth_rover`, `earthrover_mini_plus`, `frodobots`.
 | Other kwargs | `timeout_s=10.0`, `turn_sign=1.0` |
 | Action keys | `linear`, `angular`, `lamp`, each normalised to `[-1, 1]` |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - `POST /control` carries one twist frame; `GET /data` is the telemetry snapshot; `GET /v2/front` and `/v2/rear` are the cameras
 - `turn_sign=-1.0` corrects a rover observed turning the wrong way, at the call site

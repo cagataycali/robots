@@ -11,7 +11,7 @@ description: "Bi-manual OpenArm (dual-arm coordination)"
 
 You have `bi_openarm` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("bi_openarm")` in the default sim mode refuses by name.
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 from lerobot.robots.openarm_follower.config_openarm_follower import OpenArmFollowerConfig
@@ -25,7 +25,7 @@ Aliases `Robot()` accepts: `bi_openarm_follower`, `dual_openarm`, `openarm_biman
 
 ## Hardware
 
-**lerobot.** `Robot("bi_openarm", mode="real")` builds lerobot's `bi_openarm_follower` with `pip install 'strands-robots[lerobot]'`; the config declares no `port=`; pass `left_arm_config=` and `right_arm_config=`, one `OpenArmFollowerConfig` per arm with its own `port` and `cameras`, and `cameras=` for cameras attached to neither arm. This is the default when `driver=` is not given.
+**lerobot.** `Robot("bi_openarm", mode="real")` builds lerobot's `bi_openarm_follower` with `pip install 'strands-robots[lerobot]'`; there is no single `port=`; pass `left_arm_config=` and `right_arm_config=`, one `OpenArmFollowerConfig` per arm with its own `port` and `cameras`. The default when `driver=` is not given.
 
 ## Policies
 

@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("booster_t1")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("booster_t1", mode="real", port="192.168.10.102")  # BoosterDriver
@@ -36,7 +36,7 @@ robot = Robot("booster_t1", mode="real", port="192.168.10.102")  # BoosterDriver
 | Other kwargs | `domain_id=0`, `robot_name=None`, `cmd_type="parallel"` |
 | Action keys | the eight upper-body joints only; head and legs through `rotate_head` and `move` |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - `send_action` refuses until `enable_upper_body()` has handed the upper body to the host
 - every non-upper-body slot is sent `q=0, kp=0, kd=0` so the onboard controller keeps the legs

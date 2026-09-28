@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("koch")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("koch", mode="real", port="/dev/ttyACM0")  # lerobot koch_follower
@@ -29,7 +29,7 @@ Aliases `Robot()` accepts: `koch_follower`, `koch_v1.1`, `low_cost_robot_arm`.
 
 ## Hardware
 
-**lerobot.** `Robot("koch", mode="real")` builds lerobot's `koch_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device and `cameras=` the lerobot camera dict. This is the default when `driver=` is not given.
+**lerobot.** `Robot("koch", mode="real")` builds lerobot's `koch_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
 ## Policies
 

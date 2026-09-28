@@ -13,7 +13,7 @@ You have `google_robot` in a MuJoCo world once its model is on disk. No driver r
 
 <robot-viewer name="google_robot"></robot-viewer>
 
-The model is not fetched for you (`auto_download: false` in the registry): place `google_robot/robot.xml` under `~/.strands_robots/assets/` (or `$STRANDS_ASSETS_DIR`) first, or the call refuses with "model file is not on disk".
+The model is not fetched for you (`auto_download: false`): place `google_robot/robot.xml` under `~/.strands_robots/assets/` (or `$STRANDS_ASSETS_DIR`) first, or the call refuses with "model file is not on disk".
 
 ```python title="sketch"
 from strands_robots import Robot

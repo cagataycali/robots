@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("yahboom_m3pro")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("yahboom_m3pro", mode="real", port="192.168.1.50:9090")  # YahboomM3ProDriver
@@ -40,7 +40,7 @@ Gripper actuator `gripper`: closed at the low end of travel, open at the high en
 | Other kwargs | `transport="rosbridge"`, `"ros2"` or `"twin"`; `timeout_s=5.0`, `joint_signs=(1.0,)*5`, `move_time_ms=1500` |
 | Action keys | `arm1.pos .. arm5.pos` and `gripper.pos` in radians (the model's vocabulary), converted to servo degrees at the wire; base twists in SI |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - every `/cmd_vel` write passes the operator gate: approved by the agent's operator or pre-approved with `STRANDS_ROS2_COMMAND_ALLOW=/cmd_vel`
 - the firmware zeroes the base after 200 to 500 ms without a message, so a held move is a 10 Hz stream and an explicit zero

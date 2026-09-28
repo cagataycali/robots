@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("crazyflie")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("crazyflie", mode="real", port="radio://0/80/2M/E7E7E7E7E7")  # CrazyflieDriver
@@ -38,7 +38,7 @@ Aliases `Robot()` accepts: `cf2`, `bitcraze_crazyflie`.
 | Other kwargs | `setpoint_hz=20` |
 | Action keys | twists in SI (`wz` in rad/s, converted to the wire's degrees per second in one place) |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - a setpoint is a subscription: the driver re-sends the last accepted setpoint at `setpoint_hz` because the firmware cuts thrust when the stream goes quiet
 - `send_action` returns once the setpoint is latched, not when motion ends

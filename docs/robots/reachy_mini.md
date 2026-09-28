@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("reachy_mini")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("reachy_mini", mode="real", port="reachy-mini.local:8000")  # ReachyDriver
@@ -38,7 +38,7 @@ Aliases `Robot()` accepts: `pollen_reachy_mini`, `reachy`, `reachy-mini`, `reach
 | Other kwargs | `api_port=8000`, `media_port=8443`, `tts_url=None` |
 | Action keys | head pose and antennas inside the shared envelope; a write outside it is refused naming the limit |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - `connect_eagerly` probes `GET /api/daemon/status`, which also reports Lite or Wireless hardware
 - `_imu`, `_pose` and `_battery` are cached from the daemon link and published by the mesh when present

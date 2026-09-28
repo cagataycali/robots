@@ -339,15 +339,15 @@ def _hardware_section(name: str, spec: dict, cov) -> str:  # noqa: ANN001
     hardware = spec.get("hardware") or {}
     if cov.lerobot_type:
         source = " Install lerobot from source: the type is not in the PyPI release." if hardware.get("requires_lerobot_from_source") else ""
-        default = " This is the default when `driver=` is not given." if cov.default_driver == "lerobot" else ""
+        default = " The default when `driver=` is not given." if cov.default_driver == "lerobot" else ""
         if cov.lerobot_type in BIMANUAL_ARM_CONFIG:
             cls = BIMANUAL_ARM_CONFIG[cov.lerobot_type][1]
             wiring = (
-                f"the config declares no `port=`; pass `left_arm_config=` and `right_arm_config=`, one `{cls}` per arm "
-                f"with its own `port` and `cameras`, and `cameras=` for cameras attached to neither arm."
+                f"there is no single `port=`; pass `left_arm_config=` and `right_arm_config=`, one `{cls}` per arm "
+                f"with its own `port` and `cameras`."
             )
         else:
-            wiring = "`port=` is the serial device and `cameras=` the lerobot camera dict."
+            wiring = "`port=` is the serial device, `cameras=` the lerobot camera dict."
         out.append(
             f"**lerobot.** `Robot(\"{name}\", mode=\"real\")` builds lerobot's `{cov.lerobot_type}` "
             f"with `pip install 'strands-robots[lerobot]'`; {wiring}{default}{source}"
@@ -365,7 +365,7 @@ def _hardware_section(name: str, spec: dict, cov) -> str:  # noqa: ANN001
         out.append(f"| Other kwargs | {facts['kwargs']} |")
         out.append(f"| Action keys | {facts['units']} |")
         out.append("")
-        out.append("What the driver checks before it writes:")
+        out.append("Checks before it writes:")
         out.append("")
         for check in facts["checks"]:  # type: ignore[union-attr]
             out.append(f"- {check}")
@@ -416,9 +416,9 @@ def robot_page(name: str) -> str:
         if asset.get("auto_download", True) is False:
             placement = f"{asset['dir']}/{asset['model_xml']}"
             lines += [
-                "The model is not fetched for you (`auto_download: false` in the registry): place "
-                f"`{placement}` under `~/.strands_robots/assets/` (or `$STRANDS_ASSETS_DIR`) first, "
-                "or the call refuses with \"model file is not on disk\".",
+                f"The model is not fetched for you (`auto_download: false`): place `{placement}` under "
+                "`~/.strands_robots/assets/` (or `$STRANDS_ASSETS_DIR`) first, or the call refuses with "
+                "\"model file is not on disk\".",
                 "",
                 '```python title="sketch"',
                 "from strands_robots import Robot",
@@ -431,7 +431,7 @@ def robot_page(name: str) -> str:
             lines += ["```python", "from strands_robots import Robot", "", f'robot = Robot("{name}")', "```", ""]
     if cov.real:
         lines += [
-            "Real hardware, one call per driver that builds it (needs the robot on the wire):",
+            "Real hardware, one call per driver that builds it:",
             "",
             '```python title="sketch"',
             *_real_fences(name, spec, cov),
@@ -476,9 +476,9 @@ def family_page(category: str) -> str:
         "",
         f"# {label}",
         "",
-        f"{sentence} Every `{category}` robot in the registry is below, generated from `robots.json`; "
-        f"each card opens the robot's own page with the viewer, the one-line constructor and the hardware facts. "
-        f"The table under the cards is the same list as text.",
+        f"{sentence} Every `{category}` robot in the registry, generated from `robots.json`; "
+        f"each card opens the robot's page with the viewer, the constructor and the hardware facts. "
+        f"The table below the cards is the same list as text.",
         "",
         f"{{{{robot_cards:{category}}}}}",
         "",

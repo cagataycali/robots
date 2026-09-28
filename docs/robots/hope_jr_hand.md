@@ -11,7 +11,7 @@ description: "HopeJR Hand (dexterous anthropomorphic hand, Feetech)"
 
 You have `hope_jr_hand` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("hope_jr_hand")` in the default sim mode refuses by name.
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("hope_jr_hand", mode="real", port="/dev/ttyACM0")  # lerobot hope_jr_hand
@@ -21,7 +21,7 @@ Aliases `Robot()` accepts: `hopejr_hand`, `hope_junior_hand`.
 
 ## Hardware
 
-**lerobot.** `Robot("hope_jr_hand", mode="real")` builds lerobot's `hope_jr_hand` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device and `cameras=` the lerobot camera dict. This is the default when `driver=` is not given.
+**lerobot.** `Robot("hope_jr_hand", mode="real")` builds lerobot's `hope_jr_hand` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
 ## Policies
 

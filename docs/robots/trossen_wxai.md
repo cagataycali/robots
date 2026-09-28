@@ -13,7 +13,7 @@ You have `trossen_wxai` in a MuJoCo world once its model is on disk. No driver r
 
 <robot-viewer name="trossen_wxai"></robot-viewer>
 
-The model is not fetched for you (`auto_download: false` in the registry): place `trossen_wxai/trossen_ai_bimanual.xml` under `~/.strands_robots/assets/` (or `$STRANDS_ASSETS_DIR`) first, or the call refuses with "model file is not on disk".
+The model is not fetched for you (`auto_download: false`): place `trossen_wxai/trossen_ai_bimanual.xml` under `~/.strands_robots/assets/` (or `$STRANDS_ASSETS_DIR`) first, or the call refuses with "model file is not on disk".
 
 ```python title="sketch"
 from strands_robots import Robot

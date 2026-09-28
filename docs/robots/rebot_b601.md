@@ -11,7 +11,7 @@ description: "Seeed Studio reBot B601-DM (6-DOF + gripper, Damiao CAN motors)"
 
 You have `rebot_b601` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("rebot_b601")` in the default sim mode refuses by name.
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("rebot_b601", mode="real", port="/dev/ttyACM0")  # lerobot rebot_b601_follower
@@ -22,7 +22,7 @@ Aliases `Robot()` accepts: `rebot_b601_follower`, `seeed_rebot_b601`, `b601_dm`.
 
 ## Hardware
 
-**lerobot.** `Robot("rebot_b601", mode="real")` builds lerobot's `rebot_b601_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device and `cameras=` the lerobot camera dict. This is the default when `driver=` is not given. Install lerobot from source: the type is not in the PyPI release.
+**lerobot.** `Robot("rebot_b601", mode="real")` builds lerobot's `rebot_b601_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given. Install lerobot from source: the type is not in the PyPI release.
 
 ## Policies
 

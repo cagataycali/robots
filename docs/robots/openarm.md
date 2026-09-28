@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("openarm")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("openarm", mode="real", port="/dev/ttyACM0")  # lerobot openarm_follower
@@ -29,7 +29,7 @@ Aliases `Robot()` accepts: `enactic_openarm`, `open_arm`, `openarm_v10`.
 
 ## Hardware
 
-**lerobot.** `Robot("openarm", mode="real")` builds lerobot's `openarm_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device and `cameras=` the lerobot camera dict. This is the default when `driver=` is not given.
+**lerobot.** `Robot("openarm", mode="real")` builds lerobot's `openarm_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
 ## Policies
 

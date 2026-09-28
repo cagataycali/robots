@@ -11,7 +11,7 @@ description: "LeKiwi networked client (drives a remote LeKiwi host over ZMQ)"
 
 You have `lekiwi_client` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("lekiwi_client")` in the default sim mode refuses by name.
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("lekiwi_client", mode="real", port="/dev/ttyACM0")  # lerobot lekiwi_client
@@ -21,7 +21,7 @@ Aliases `Robot()` accepts: `lekiwi_remote`, `lekiwi_net`.
 
 ## Hardware
 
-**lerobot.** `Robot("lekiwi_client", mode="real")` builds lerobot's `lekiwi_client` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device and `cameras=` the lerobot camera dict. This is the default when `driver=` is not given.
+**lerobot.** `Robot("lekiwi_client", mode="real")` builds lerobot's `lekiwi_client` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
 ## Policies
 

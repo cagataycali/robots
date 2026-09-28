@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("microduck")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("microduck", mode="real", port="ssh://radxa@microduck.local")  # MicroduckDriver
@@ -38,7 +38,7 @@ Aliases `Robot()` accepts: `micro_duck`, `pollen_microduck`.
 | Other kwargs | `api_version=31`, `timeout=5.0`, `subscribe_hz=None` |
 | Action keys | intents: `robot.move` (twist), `robot.head`, `robot.pose`, `robot.do` (skills), `robot.enable`/`robot.relax` |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - `robotd` exposes no per-joint write, so `run_policy` and `start_task` refuse and name the intent path; the on-robot policy is the same `alpha_walking.onnx` the sim runs
 - continuous intents go as JSON-RPC notifications; discrete ones wait for a reply

@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("open_duck_mini")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("open_duck_mini", mode="real", driver="strands", port="/dev/ttyACM0")  # FeetechDriver
@@ -38,7 +38,7 @@ Aliases `Robot()` accepts: `bdx`, `mini_bdx`, `open_duck`, `open_duck_mini_v2`, 
 | Other kwargs | `baud_rate=1_000_000`, `calibration=<path or records>`, `motor_ids=()`, `timeout=1.0`, `transport="serial"` or `"twin"` |
 | Action keys | degrees per joint, `gripper` in percent open; keys `shoulder_pan` or `shoulder_pan.pos` |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - the bus opens the port and discovers the servo ids on connect
 - without `calibration=` the driver reads and commands the servo's full travel, not the arm's measured travel; `get_status` reports `calibration_source`

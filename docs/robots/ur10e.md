@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("ur10e")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("ur10e", mode="real", driver="strands", port="192.168.1.10")  # URDriver
@@ -36,7 +36,7 @@ robot = Robot("ur10e", mode="real", driver="strands", port="192.168.1.10")  # UR
 | Other kwargs | `model=None`, `control_frequency=125.0`, `rtde_frequency=None` |
 | Action keys | radians, `shoulder_pan_joint .. wrist_3_joint`, the order the MuJoCo assets and the RTDE wire share |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - the receive interface opens first: a controller in `PROTECTIVE_STOP` accepts a connection and performs no motion
 - `send_action` maps onto `servoJ`, gated on the controller mode and on the size of the step

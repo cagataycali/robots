@@ -11,7 +11,7 @@ description: "Bimanual SO-ARM follower (2x SO-100/SO-101, 6-DOF each, Feetech ST
 
 You have `bi_so_follower` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("bi_so_follower")` in the default sim mode refuses by name.
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 from lerobot.robots.so_follower.config_so_follower import SOFollowerConfig
@@ -25,7 +25,7 @@ Aliases `Robot()` accepts: `bi_so100`, `bi_so101`.
 
 ## Hardware
 
-**lerobot.** `Robot("bi_so_follower", mode="real")` builds lerobot's `bi_so_follower` with `pip install 'strands-robots[lerobot]'`; the config declares no `port=`; pass `left_arm_config=` and `right_arm_config=`, one `SOFollowerConfig` per arm with its own `port` and `cameras`, and `cameras=` for cameras attached to neither arm. This is the default when `driver=` is not given.
+**lerobot.** `Robot("bi_so_follower", mode="real")` builds lerobot's `bi_so_follower` with `pip install 'strands-robots[lerobot]'`; there is no single `port=`; pass `left_arm_config=` and `right_arm_config=`, one `SOFollowerConfig` per arm with its own `port` and `cameras`. The default when `driver=` is not given.
 
 ## Policies
 

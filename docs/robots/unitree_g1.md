@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("unitree_g1")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("unitree_g1", mode="real", driver="lerobot", port="/dev/ttyACM0")  # lerobot unitree_g1
@@ -30,7 +30,7 @@ Aliases `Robot()` accepts: `g1`, `g1_wbc`, `real_g1_relative_eef_relative_joints
 
 ## Hardware
 
-**lerobot.** `Robot("unitree_g1", mode="real")` builds lerobot's `unitree_g1` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device and `cameras=` the lerobot camera dict.
+**lerobot.** `Robot("unitree_g1", mode="real")` builds lerobot's `unitree_g1` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict.
 
 **`G1Driver`** (the default for this robot) speaks CycloneDDS through `unitree_sdk2py`. Source: `strands_robots/drivers/g1.py`.
 
@@ -41,7 +41,7 @@ Aliases `Robot()` accepts: `g1`, `g1_wbc`, `real_g1_relative_eef_relative_joints
 | Other kwargs | `network_interface="eth0"`, `battery_floor_pct=15.0` |
 | Action keys | radians, keyed by the 29 joint names of the `unitree_g1` model |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - `send_action` refuses unless the high-level FSM id is one of `500`, `501`, `801` (`HANDSHAKE_FSMS`)
 - `send_action` refuses under the battery floor, as a separate refusal

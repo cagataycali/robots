@@ -11,7 +11,7 @@ description: "HopeJR Arm (high-DOF anthropomorphic arm, Feetech)"
 
 You have `hope_jr` on its hardware after one line. The registry ships no simulation asset for it, so `Robot("hope_jr")` in the default sim mode refuses by name.
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("hope_jr", mode="real", port="/dev/ttyACM0")  # lerobot hope_jr_arm
@@ -20,7 +20,7 @@ robot = Robot("hope_jr", mode="real", driver="strands", port="/dev/ttyACM0")  # 
 
 ## Hardware
 
-**lerobot.** `Robot("hope_jr", mode="real")` builds lerobot's `hope_jr_arm` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device and `cameras=` the lerobot camera dict. This is the default when `driver=` is not given.
+**lerobot.** `Robot("hope_jr", mode="real")` builds lerobot's `hope_jr_arm` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
 **`FeetechDriver`** (selected with `driver="strands"`) speaks Feetech STS/SMS serial bus. Source: `strands_robots/drivers/feetech/driver.py`.
 
@@ -31,7 +31,7 @@ robot = Robot("hope_jr", mode="real", driver="strands", port="/dev/ttyACM0")  # 
 | Other kwargs | `baud_rate=1_000_000`, `calibration=<path or records>`, `motor_ids=()`, `timeout=1.0`, `transport="serial"` or `"twin"` |
 | Action keys | degrees per joint, `gripper` in percent open; keys `shoulder_pan` or `shoulder_pan.pos` |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - the bus opens the port and discovers the servo ids on connect
 - without `calibration=` the driver reads and commands the servo's full travel, not the arm's measured travel; `get_status` reports `calibration_source`

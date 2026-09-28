@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("unitree_go2")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("unitree_go2", mode="real", port="192.168.123.161", network_interface="eth0")  # Go2Driver
@@ -38,7 +38,7 @@ Aliases `Robot()` accepts: `go2`.
 | Other kwargs | `network_interface="eth0"`, `battery_floor_pct=15.0` |
 | Action keys | radians, keyed by joint name (`GO2_JOINT_INDEX`); an index is never accepted, because the SDK's leg order differs from the model's |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - `send_action` refuses until `release_sport_mode()` has confirmed the onboard sport service is released
 - `send_action` refuses under the battery floor

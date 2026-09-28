@@ -6,7 +6,7 @@ title: Arms
 
 # Arms
 
-Fixed-base manipulators, from desk servos to industrial cells. Every `arm` robot in the registry is below, generated from `robots.json`; each card opens the robot's own page with the viewer, the one-line constructor and the hardware facts. The table under the cards is the same list as text.
+Fixed-base manipulators, from desk servos to industrial cells. Every `arm` robot in the registry, generated from `robots.json`; each card opens the robot's page with the viewer, the constructor and the hardware facts. The table below the cards is the same list as text.
 
 {{robot_cards:arm}}
 

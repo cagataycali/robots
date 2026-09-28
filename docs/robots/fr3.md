@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("fr3")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("fr3", mode="real", driver="strands", port="172.16.0.2")  # FrankaDriver
@@ -38,7 +38,7 @@ Aliases `Robot()` accepts: `franka_fr3`.
 | Other kwargs | `speed_factor=0.2`, `stream_rate_hz=30.0` |
 | Action keys | radians; Panda joints `joint1..joint7`, FR3 `fr3_joint1..`, FR3 v2 `fr3v2_joint1..`, the names the arm's own MuJoCo asset uses |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - a motion command is refused unless the driver is connected, every joint named belongs to this arm, every value is finite, and all seven joints are given
 - no 1 kHz torque loop: joint motion goes through `panda-py`'s guarded motion generator, which owns the realtime context

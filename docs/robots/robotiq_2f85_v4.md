@@ -19,7 +19,7 @@ from strands_robots import Robot
 robot = Robot("robotiq_2f85_v4")
 ```
 
-Real hardware, one call per driver that builds it (needs the robot on the wire):
+Real hardware, one call per driver that builds it:
 
 ```python title="sketch"
 robot = Robot("robotiq_2f85_v4", mode="real", port="192.168.1.11")  # RobotiqDriver
@@ -36,7 +36,7 @@ robot = Robot("robotiq_2f85_v4", mode="real", port="192.168.1.11")  # RobotiqDri
 | Other kwargs | `tcp_port=502`, `unit_id=9` (often `0` behind a UR controller), `stroke_mm=85.0`, `speed=1.0`, `force=1.0` |
 | Action keys | `gripper` or `gripper.pos` as a closed fraction 0.0 to 1.0, or `position`/`aperture_mm` in millimetres |
 
-What the driver checks before it writes:
+Checks before it writes:
 
 - `connect_eagerly` activates the gripper and waits for `gSTA == ACTIVE`; a 2F-85 ignores every position command until then
 - `send_action` refuses while the gripper is not activated
