@@ -13,7 +13,7 @@ Prerequisites
 1. Sim + recorder + the FLUX 3 Action inference library (git-only, hence the
    empty ``flux3`` extra) and NATTEN for your torch/CUDA build:
 
-     pip install -e '.[sim-mujoco,lerobot]'
+     pip install 'strands-robots[sim-mujoco,lerobot]'
      pip install 'flux-action[encoders] @ git+https://github.com/black-forest-labs/flux-action'
      pip install natten==0.21.6 -f https://whl.natten.org   # pick the wheel for your torch+cu
 
@@ -122,7 +122,7 @@ def main() -> int:
     try:
         from strands_robots import Robot
     except ImportError as e:
-        print(f"Missing deps: {e}\nInstall: pip install -e '.[sim-mujoco,lerobot]'")
+        print(f"Missing deps: {e}\nInstall: pip install 'strands-robots[sim-mujoco,lerobot]'")
         return 2
 
     recording = args.record or args.episodes > 1
