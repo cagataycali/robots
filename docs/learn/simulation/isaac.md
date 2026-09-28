@@ -58,3 +58,4 @@ sim.destroy()
 - Python 3.12 only, an RTX-class GPU, and a multi-gigabyte install. There is no CPU fallback; `is_available()` tells you why before anything is built.
 - Wrist cameras that ride with the arm are a MuJoCo and Newton feature. On Isaac, place the camera in world coordinates.
 - Rendering is slower per frame than MuJoCo's offscreen path and faster per batch; the backend is for fidelity and scale, not for the inner loop of a unit test.
+- `remove_robot` deletes the articulation prim from the stage, and like a dynamic `remove_object` it invalidates the tensor view: `step()` and `send_action()` refuse until the next `reset()` rebuilds it. Build the scene and reset before posing anything.
