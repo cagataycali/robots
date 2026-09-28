@@ -124,9 +124,32 @@ def _default_recorder_factory(backend: Any) -> Callable[..., Any]:
         from strands_robots.dataset_recorder import DatasetRecorder
 
         extra = backend.recorder_kwargs() if hasattr(backend, "recorder_kwargs") else {}
-        return DatasetRecorder.create(repo_id=repo_id, fps=fps, task=task, **extra)
+        return DatasetRecorder.create(repo_id=_contained_repo_id(repo_id), fps=fps, task=task, **extra)
 
     return make
+
+
+def _contained_repo_id(repo_id: str) -> str:
+    """The id the recorder is handed: read back from the directory contained to the dataset home.
+
+    This factory is the dashboard's one door into ``DatasetRecorder.create``, and the dashboard's
+    contract is narrower than the recorder's: only an ``owner/name`` id that lands under
+    ``$HF_LEROBOT_HOME`` records (the record route refuses a path id before it gets here). The
+    recorder itself accepts a path as an id by design, so the containment has to be stated on this
+    side of the call. :func:`~strands_robots.dataset_source.hub_dataset_dir` joins the id onto the
+    home, folds it with ``normpath`` and refuses anything that does not start with the home; the
+    id passed on is that directory relative to the home, which is the same text as ``repo_id`` for
+    every id that passed :func:`dataset_id_error`.
+
+    Raises:
+        ValueError: :data:`~strands_robots.dataset_source.HUB_ID_OUTSIDE_HOME` for an id that would
+            leave the home (unreachable through the record route, which refuses it first).
+    """
+    from strands_robots.dataset_source import _lerobot_home, hub_dataset_dir
+
+    home = os.path.normpath(str(_lerobot_home()))
+    contained = hub_dataset_dir(repo_id)
+    return os.path.relpath(str(contained), home).replace(os.sep, "/")
 
 
 def lerobot_refusal(purpose: str = "recording teleop datasets") -> HTTPException | None:
