@@ -1,9 +1,9 @@
 """The published coverage matrix is the live driver-coverage join.
 
-``docs/hooks/coverage_matrix.py`` renders the catalog's "Drivable for real"
-table at build time, so the page cannot go stale the way a hand-maintained
-coverage list does: a robot that gains a native driver still reads as a gap
-until someone re-runs the join by hand. What the hook *can* do is disagree with
+``docs/hooks/coverage.py`` renders the catalog's "Coverage" block (a per-family
+summary, then one row per robot) at build time, so the page cannot go stale the
+way a hand-maintained coverage list does: a robot that gains a native driver
+still reads as a gap until someone re-runs the join by hand. What the hook *can* do is disagree with
 the package, because it reads both registries out of the source with
 :mod:`ast` and :mod:`json` - the docs environment installs mkdocs alone and
 cannot import ``strands_robots`` - while a caller is answered by
@@ -32,18 +32,24 @@ _TOKEN = "{{coverage_matrix}}"
 #: A hook that published nothing must not read as a clean sweep.
 _MINIMUM_ROBOTS = 70
 
-#: One rendered row: the robot, its category, then the three coverage cells.
-_ROW = re.compile(r"^\| `(?P<robot>[a-z0-9_]+)` \| (?P<category>\w+) \| (?P<cells>.*) \|$", re.M)
-_TOTAL = re.compile(r"^\| \*\*Total\*\* \| \*\*(\d+)\*\* \| \*\*(\d+)\*\* \| \*\*(\d+)\*\* \| \*\*(\d+)\*\* \|$", re.M)
+#: One rendered row: the robot (linked to its page), its family, then the
+#: four coverage cells (lerobot type, native driver, sim asset dir, policies).
+_ROW = re.compile(
+    r"^\| \[`(?P<robot>[a-z0-9_]+)`\]\((?P=robot)\.md\) \| `(?P<category>\w+)` \| (?P<cells>.*) \|$", re.M
+)
+#: The summary's Total row: robots, sim, lerobot, native, no driver.
+_TOTAL = re.compile(
+    r"^\| \*\*Total\*\* \| \*\*(\d+)\*\* \| \*\*(\d+)\*\* \| \*\*(\d+)\*\* \| \*\*(\d+)\*\* \| \*\*(\d+)\*\* \|$", re.M
+)
 _CODE = re.compile(r"`([^`]+)`")
 
 
 def _hook():
     """The hook module, loaded from the docs tree the build loads it from."""
-    name = "docs_coverage_matrix_hook"
+    name = "docs_coverage_hook"
     if name in sys.modules:
         return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, _REPO / "docs/hooks/coverage_matrix.py")
+    spec = importlib.util.spec_from_file_location(name, _REPO / "docs/hooks/coverage.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module  # the hook's dataclass resolves its module by name
@@ -58,13 +64,13 @@ def _span(cell: str) -> str | None:
 
 
 def _published() -> dict[str, dict[str, str | None]]:
-    """The rendered matrix, as robot name -> its lerobot, native and asset cells."""
+    """The rendered matrix, as robot name -> its lerobot, native, asset and policies cells."""
     out: dict[str, dict[str, str | None]] = {}
     for match in _ROW.finditer(_hook().render()):
         cells = [cell.strip() for cell in match.group("cells").split("|")]
-        assert len(cells) == 3, f"{match.group('robot')} row has {len(cells)} coverage cells, expected 3"
-        lerobot, native, asset = (_span(cell) for cell in cells)
-        out[match.group("robot")] = {"lerobot": lerobot, "native": native, "asset": asset}
+        assert len(cells) == 4, f"{match.group('robot')} row has {len(cells)} coverage cells, expected 4"
+        lerobot, native, asset = (_span(cell) for cell in cells[:3])
+        out[match.group("robot")] = {"lerobot": lerobot, "native": native, "asset": asset, "policies": cells[3]}
     return out
 
 
@@ -72,6 +78,17 @@ def _registry() -> dict[str, dict]:
     """The built-in robot registry, read the way the hook reads it."""
     path = _REPO / "strands_robots" / "registry" / "robots.json"
     return json.loads(path.read_text(encoding="utf-8"))["robots"]
+
+
+def _live_coverage() -> dict[str, tuple[str, ...]]:
+    """The live join over the built-in registry only.
+
+    ``list_driver_coverage`` also reports robots the caller registered in
+    ``~/.strands_robots/user_robots.json``; the published matrix documents the
+    package, so those are the caller's rows, not the docs'.
+    """
+    shipped = _registry()
+    return {name: drivers for name, drivers in list_driver_coverage().items() if name in shipped}
 
 
 def test_every_registered_robot_has_exactly_one_row() -> None:
@@ -91,12 +108,12 @@ def test_the_published_join_is_the_live_join() -> None:
         )
         for robot, cells in _published().items()
     }
-    assert published == list_driver_coverage()
+    assert published == _live_coverage()
 
 
 def test_every_native_cell_names_the_class_registered_for_that_robot() -> None:
     published = {robot: cells["native"] for robot, cells in _published().items() if cells["native"]}
-    assert published == list_native_drivers()
+    assert published == {name: cls for name, cls in list_native_drivers().items() if name in _registry()}
 
 
 def test_every_lerobot_cell_is_the_type_the_registry_declares() -> None:
@@ -107,22 +124,44 @@ def test_every_lerobot_cell_is_the_type_the_registry_declares() -> None:
 
 
 def test_the_summary_totals_count_the_same_join() -> None:
-    coverage = list_driver_coverage()
+    coverage = _live_coverage()
     total = _TOTAL.search(_hook().render())
     assert total is not None, "the generated block carries no Total row"
-    robots, lerobot, native, neither = (int(group) for group in total.groups())
-    assert (robots, lerobot, native, neither) == (
+    robots, sim, lerobot, native, neither = (int(group) for group in total.groups())
+    assert (robots, sim, lerobot, native, neither) == (
         len(coverage),
+        sum(1 for spec in _registry().values() if spec.get("asset")),
         sum("lerobot" in drivers for drivers in coverage.values()),
         sum("strands" in drivers for drivers in coverage.values()),
         sum(not drivers for drivers in coverage.values()),
     )
 
 
+def test_every_sim_asset_cell_is_the_directory_the_registry_declares() -> None:
+    registry = _registry()
+    published = {robot: cells["asset"] for robot, cells in _published().items()}
+    declared = {name: (spec.get("asset") or {}).get("dir") for name, spec in registry.items()}
+    assert published == declared
+
+
+def test_every_body_bound_policy_is_a_registered_provider_with_a_live_witness() -> None:
+    """The policies column names providers from policies.json whose witness literal is still in the source."""
+    hook = _hook()
+    assert hook.check_witnesses() == [], "coverage.py carries a stale embodiment witness"
+    providers = set(
+        json.loads((_REPO / "strands_robots/registry/policies.json").read_text(encoding="utf-8"))["providers"]
+    )
+    for robot, cells in _published().items():
+        named = _CODE.findall(cells["policies"] or "")
+        assert set(named) <= providers, f"{robot} row names providers the registry lacks: {set(named) - providers}"
+    bound = {robot for robot, cells in _published().items() if _CODE.findall(cells["policies"] or "")}
+    assert bound == {robot for _p, robots, _m, _l in hook.EMBODIMENT_WITNESSES for robot in robots}
+
+
 def test_the_catalog_page_carries_the_token_and_names_the_generator() -> None:
     page = _PAGE.read_text(encoding="utf-8")
     assert _TOKEN in page, f"{_PAGE.name} does not spell {_TOKEN} - the hook renders nothing"
-    assert "docs/hooks/coverage_matrix.py" in page, (
+    assert "docs/hooks/coverage.py" in page, (
         f"{_PAGE.name} carries a generated table without saying which hook writes it"
     )
     rendered = _hook().substitute(page, str(_PAGE))

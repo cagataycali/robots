@@ -2,14 +2,16 @@
 
 ``RLCheckpointPolicy`` binds ``actor_obs_keys`` by name and refuses an
 observation that omits one (``"observation omits actor_obs_keys the ppo
-checkpoint was trained on"``). ``docs/reference/training/rl.md`` trains through a
-``make_env`` that builds ``Robot("so100")``, whose joints are ``Elbow`` and
-friends; the SO-101's are ``1``..``6``. So the ``run_policy`` fence on that page
-and its twin on ``docs/reference/policies/rl.md`` can only run on the robot ``make_env``
-constructed - any other name is refused before the first action.
+checkpoint was trained on"``). ``docs/learn/training/rl.md`` trains through a
+``make_env`` that adds one robot to the world (``sim.add_robot("so101")``,
+whose joints are ``1``..``6``; the SO-100's are ``Elbow`` and friends), and
+``docs/learn/policies/rl.md`` repeats that ``make_env`` before its
+``run_policy(policy_provider="rl")`` fence. So a deploy fence can only run on
+the robot ``make_env`` constructed: any other name is refused before the first
+action.
 
-This reads the robot ``make_env`` constructs off the training page and grades
-every ``policy_provider="rl"`` deploy fence on both pages against it.
+This reads the robot every ``make_env`` constructs off both pages, checks the
+two agree, and grades every ``policy_provider="rl"`` deploy fence against it.
 """
 
 from __future__ import annotations
@@ -23,9 +25,10 @@ import pytest
 import strands_robots
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
-_TRAINING_PAGE = _REPO_ROOT / "docs" / "reference" / "training" / "rl.md"
-_DEPLOY_PAGES = (_TRAINING_PAGE, _REPO_ROOT / "docs" / "reference" / "policies" / "rl.md")
-_PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+_TRAINING_PAGE = _REPO_ROOT / "docs" / "learn" / "training" / "rl.md"
+_PROVIDER_PAGE = _REPO_ROOT / "docs" / "learn" / "policies" / "rl.md"
+_PAGES = (_TRAINING_PAGE, _PROVIDER_PAGE)
+_PYTHON_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
 
 
 def _parsed_fences(page: Path) -> list[ast.Module]:
@@ -39,9 +42,10 @@ def _parsed_fences(page: Path) -> list[ast.Module]:
 
 
 def _is_robot_call(node: ast.Call) -> bool:
+    """``Robot("name")`` or ``sim.add_robot("name")``: both put a named robot in the loop."""
     func = node.func
     name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-    return name == "Robot"
+    return name in {"Robot", "add_robot"}
 
 
 def _robot_name(node: ast.Call) -> str | None:
@@ -57,14 +61,14 @@ def _keyword(node: ast.Call, name: str) -> str | None:
     return None
 
 
-def _trained_robot() -> str:
-    for tree in _parsed_fences(_TRAINING_PAGE):
+def _trained_robot(page: Path) -> str:
+    for tree in _parsed_fences(page):
         for fn in ast.walk(tree):
             if isinstance(fn, ast.FunctionDef) and fn.name == "make_env":
                 for call in ast.walk(fn):
                     if isinstance(call, ast.Call) and _is_robot_call(call) and _robot_name(call):
                         return _robot_name(call)  # type: ignore[return-value]
-    raise AssertionError("docs/reference/training/rl.md defines make_env building Robot('<name>')")
+    raise AssertionError(f"{page.relative_to(_REPO_ROOT)} defines make_env that puts a named robot in the world")
 
 
 def _rl_deploy_fences(page: Path) -> list[ast.Module]:
@@ -82,13 +86,19 @@ def _rl_deploy_fences(page: Path) -> list[ast.Module]:
     return fences
 
 
-@pytest.mark.parametrize("page", _DEPLOY_PAGES, ids=lambda p: p.relative_to(_REPO_ROOT).as_posix())
-def test_rl_deploy_fence_names_the_robot_make_env_trained_on(page: Path) -> None:
-    trained = _trained_robot()
-    fences = _rl_deploy_fences(page)
-    assert fences, f"{page.name} carries a run_policy(policy_provider='rl') fence"
+def test_both_pages_train_on_the_same_robot() -> None:
+    trained = {page.relative_to(_REPO_ROOT).as_posix(): _trained_robot(page) for page in _PAGES}
+    assert len(set(trained.values())) == 1, f"the training and provider pages train on different robots: {trained}"
 
-    for tree in fences:
+
+def test_the_provider_page_carries_the_deploy_fence() -> None:
+    assert _rl_deploy_fences(_PROVIDER_PAGE), "learn/policies/rl.md carries a run_policy(policy_provider='rl') fence"
+
+
+@pytest.mark.parametrize("page", _PAGES, ids=lambda p: p.relative_to(_REPO_ROOT).as_posix())
+def test_rl_deploy_fence_names_the_robot_make_env_trained_on(page: Path) -> None:
+    trained = _trained_robot(_TRAINING_PAGE)
+    for tree in _rl_deploy_fences(page):
         named: dict[str, str | None] = {}
         for call in ast.walk(tree):
             if not isinstance(call, ast.Call):
@@ -102,4 +112,4 @@ def test_rl_deploy_fence_names_the_robot_make_env_trained_on(page: Path) -> None
             f"deploy fence rolls the {trained}-trained checkpoint out on another robot: {wrong}; "
             f"RLCheckpointPolicy refuses an observation that omits the trained actor_obs_keys"
         )
-        assert "Robot(...)" in named, "the deploy fence constructs the Robot it calls run_policy on"
+        assert "Robot(...)" in named, "the deploy fence puts the robot it calls run_policy on into the world"

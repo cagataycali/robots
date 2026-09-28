@@ -35,7 +35,10 @@ import strands_robots
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 
-_PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+# A fence may carry attributes after the language (```python title="sketch"),
+# and the generated robot pages use them, so anything up to the newline is
+# allowed after ``python``.
+_PYTHON_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
 
 # Modules whose public callables are graded. ``strands_robots.tools`` is walked
 # so every ``@tool`` entry point is included under its own name.

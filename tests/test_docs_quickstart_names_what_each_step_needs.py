@@ -1,27 +1,28 @@
-"""The quickstart's "what you need" line matches what its steps actually do.
+"""The Start pages' "what you need" claims match what their fences actually do.
 
-The line read "Steps 1 and 3-real need hardware; step 2 needs a GPU. Everything
-else runs in sim." It accounted for two of the five steps of the whole-loop
-block and was wrong about two more, in the same way each time: a step that needs
-something the page never installs was covered by "everything else".
+The old quickstart closed a five-step whole-loop block with "Steps 1 and 3-real
+need hardware; step 2 needs a GPU. Everything else runs in sim." It accounted
+for two of the five steps and was wrong about two more in the same way each
+time: a step that needed something the page never installed (the ``[mesh]``
+extra for step 4, a sourced ROS 2 distro for step 5) was covered by
+"everything else".
 
-* Step 5 is ``Simulation(ros2_bridge=True)``. ``rclpy`` is not published on
-  PyPI - it ships with a system ROS 2 install - so on a machine with no sourced
-  distro the constructor raises ``ImportError`` naming
-  ``source /opt/ros/<distro>/setup.bash``.
-* Step 4 is ``follower.mesh.tell(peer, ...)`` with ``peer`` read off
-  ``follower.mesh.peers[0]["peer_id"]`` (two lines since the call grew its
-  policy kwargs; the cell pins both, not one spelling of them). The
-  mesh transport comes from the ``[mesh]`` extra (``eclipse-zenoh``), which the
-  install command at the top of the page does not pull in, and the mesh also
-  declines to start until a posture is chosen (``STRANDS_MESH_LOCAL_DEV`` or an
-  ACL file). Missing either, the mesh stays off, so ``mesh.peers`` is empty and
-  ``peers[0]`` raises ``IndexError``.
+The Start section is five pages now, and the claims moved with it:
 
-These cells pin the sentence to all three of the things it claims: the steps it
-describes are still the ones in the code block, the install line it points at
-really does leave the mesh out, and the refusal it quotes is the one the library
-raises.
+* ``start/index.md``: "Every ``python`` fence on these pages ran against this
+  commit on a laptop with no GPU. Fences that need an arm on USB are marked
+  ``sketch``."
+* ``start/first-robot.md``: "No hardware, no GPU."
+* ``start/first-agent.md``: "The sim fences run without a model. The two fences
+  that call ``agent("...")`` need a model provider."
+* ``start/install.md`` gives the install line, ``strands-robots[sim-mujoco]``.
+
+These cells pin each sentence to the fences it describes: a fence that opens a
+serial port is a ``sketch`` and a ``sketch`` opens one; the install line the
+pages give really does leave the mesh out, so no un-flagged fence on them may
+start one or a ROS 2 bridge; the count of model-calling fences is the count the
+sentence states; and the ``rclpy`` refusal ``learn/ros2.md`` describes is the one
+the library raises.
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ import pytest
 from tests._blocked_module import blocked
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-QUICKSTART = REPO_ROOT / "docs" / "getting-started" / "quickstart.md"
+START = REPO_ROOT / "docs" / "start"
+ROS2_PAGE = REPO_ROOT / "docs" / "learn" / "ros2.md"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 #: Reaching the ``rclpy`` probe means constructing a simulation, which needs the
@@ -44,57 +46,85 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 #: passes for the wrong reason.
 _HAS_MUJOCO = importlib.util.find_spec("mujoco") is not None
 
-
-def _quickstart() -> str:
-    return QUICKSTART.read_text(encoding="utf-8")
-
-
-def _needs_line() -> str:
-    """The closing "what you need" paragraph, below the whole-loop block."""
-    match = re.search(r"Steps 1 and 3-real need hardware;.*?\n\n", _quickstart(), re.DOTALL)
-    assert match, "the quickstart lost its 'what you need' paragraph"
-    return match.group(0)
+_FENCE = re.compile(r"```python([^\n]*)\n(.*?)```", re.DOTALL)
+_SERIAL_PORT = re.compile(r"/dev/tty|COM\d")
 
 
-def _numbered_steps() -> dict[int, str]:
-    """Map each ``# <n>.`` step of the whole-loop block to its own source lines.
-
-    Scoped to that one fenced block, and split on the numbered comments inside
-    it, so a cell below is about *that step*: a snippet that moved to another
-    step - or into the prose - would still satisfy a search over the whole page.
-    """
-    blocks: list[str] = []
-    current: list[str] = []
-    in_fence = False
-    for raw in _quickstart().splitlines():
-        if raw.lstrip().startswith("```"):
-            if in_fence:
-                blocks.append("\n".join(current))
-                current = []
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            current.append(raw)
-    loop = [b for b in blocks if "# 1. TELEOPERATE" in b]
-    assert len(loop) == 1, "the quickstart lost its single whole-loop code block"
-
-    steps: dict[int, list[str]] = {}
-    number: int | None = None
-    for line in loop[0].splitlines():
-        heading = re.match(r"# (\d+)\. ", line)
-        if heading:
-            number = int(heading.group(1))
-            steps[number] = []
-        if number is not None:
-            steps[number].append(line)
-    return {n: "\n".join(lines) for n, lines in steps.items()}
+def _start_pages() -> list[Path]:
+    pages = sorted(START.glob("*.md"))
+    assert len(pages) >= 5, f"the Start section holds {len(pages)} pages, expected the five the index lists"
+    return pages
 
 
-def _extras_the_page_installs() -> list[str]:
-    """The extras named by the page's own ``pip install`` command."""
-    installs = re.findall(r'strands-robots\[([a-z0-9,-]+)\]"', _quickstart())
-    assert installs, "the quickstart lost its install command"
-    return installs[0].split(",")
+def _fences(page: Path) -> list[tuple[bool, str]]:
+    """Every python fence on ``page`` as ``(is_sketch, source)``."""
+    return [("sketch" in attrs, body) for attrs, body in _FENCE.findall(page.read_text(encoding="utf-8"))]
+
+
+def _needs_hardware(body: str) -> bool:
+    """A fence needs an arm on USB when it opens a serial port for a real robot."""
+    return 'mode="real"' in body and bool(_SERIAL_PORT.search(body)) and "mock=True" not in body
+
+
+def test_the_index_makes_the_sketch_promise() -> None:
+    text = (START / "index.md").read_text(encoding="utf-8")
+    assert "no GPU" in text, "start/index.md lost the 'no GPU' claim about its fences"
+    assert "marked `sketch`" in text, "start/index.md lost the promise that hardware fences are marked sketch"
+
+
+def test_every_fence_that_opens_a_serial_port_is_a_sketch() -> None:
+    """The index's promise, one direction: hardware fences carry the mark."""
+    unmarked = [
+        f"{page.name}: {body.strip().splitlines()[0]}"
+        for page in _start_pages()
+        for is_sketch, body in _fences(page)
+        if _needs_hardware(body) and not is_sketch
+    ]
+    assert not unmarked, "fences that need an arm on USB but are not marked sketch:\n" + "\n".join(unmarked)
+
+
+def test_every_sketch_opens_a_serial_port() -> None:
+    """The other direction: the mark is not spent on fences a laptop can run."""
+    sketches = [(page.name, body) for page in _start_pages() for is_sketch, body in _fences(page) if is_sketch]
+    assert sketches, "no Start page carries a sketch fence, so the promise describes nothing"
+    idle = [f"{name}: {body.strip().splitlines()[0]}" for name, body in sketches if not _needs_hardware(body)]
+    assert not idle, "sketch fences that do not open a serial port:\n" + "\n".join(idle)
+
+
+def test_first_robot_needs_no_hardware_and_no_gpu() -> None:
+    """The page says "No hardware, no GPU"; its fences must agree."""
+    page = START / "first-robot.md"
+    assert "No hardware, no GPU" in page.read_text(encoding="utf-8")
+    fences = _fences(page)
+    assert fences, "first-robot.md carries no python fence"
+    for is_sketch, body in fences:
+        assert not is_sketch and 'mode="real"' not in body, "first-robot.md drives a real robot"
+        assert not _SERIAL_PORT.search(body), "first-robot.md opens a serial port"
+        assert "cuda" not in body.lower() and "device=" not in body, "first-robot.md reaches for a GPU"
+
+
+def test_first_agent_counts_the_fences_that_need_a_model() -> None:
+    """ "The two fences that call ``agent("...")`` need a model provider" is a count, so count."""
+    text = (START / "first-agent.md").read_text(encoding="utf-8")
+    sentence = re.search(r"The (\w+) fences that call `agent\(\"\.\.\.\"\)` need a model provider", text)
+    assert sentence, "first-agent.md lost the sentence naming which fences need a model"
+    words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+    stated = words[sentence.group(1).lower()]
+    calling = [body for _, body in _fences(START / "first-agent.md") if re.search(r"\bagent\(\s*\"", body)]
+    assert len(calling) == stated, f"the page says {stated} fences call agent(...) but {len(calling)} do"
+    silent = [body for _, body in _fences(START / "first-agent.md") if body not in calling]
+    for body in silent:
+        assert "agent(" not in body.replace("Agent(", ""), "a fence the sentence calls model-free calls the agent"
+
+
+def _extras_the_pages_install() -> set[str]:
+    """The extras named by the Start pages' own ``pip install`` commands."""
+    installs: set[str] = set()
+    for page in _start_pages():
+        for match in re.findall(r'pip install "strands-robots\[([a-z0-9,-]+)\]"', page.read_text(encoding="utf-8")):
+            installs |= set(match.split(","))
+    assert installs, "the Start pages lost their install command"
+    return installs
 
 
 def _requirements(extra: str, seen: frozenset[str] = frozenset()) -> set[str]:
@@ -112,69 +142,47 @@ def _requirements(extra: str, seen: frozenset[str] = frozenset()) -> set[str]:
     return out
 
 
-@pytest.mark.parametrize(
-    ("step", "snippet"),
-    [
-        (4, 'follower.mesh.peers[0]["peer_id"]'),
-        (4, "follower.mesh.tell(peer,"),
-        (5, "Simulation(ros2_bridge=True)"),
-    ],
-)
-def test_the_needs_line_describes_the_steps_that_are_there(step: int, snippet: str) -> None:
-    """Steps 4 and 5 are still the mesh call and the ROS 2 bridge.
+def test_every_extra_the_pages_install_exists() -> None:
+    extras = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["optional-dependencies"]
+    unknown = _extras_the_pages_install() - set(extras)
+    assert not unknown, f"the Start pages install extras pyproject.toml does not define: {sorted(unknown)}"
 
-    Step 4 is pinned to its two halves - the ``peers[0]`` read that raises
-    ``IndexError`` with the mesh off, and the ``tell`` it feeds - rather than
-    to one line joining them: the call carries policy kwargs now, so the page
-    splits it, and a cell that pinned the joined spelling went red the moment
-    a sibling change split it, while the sentence it guards stayed true.
+
+def test_the_install_the_pages_give_does_not_provide_the_mesh() -> None:
+    """The install commands really do leave ``eclipse-zenoh`` out.
+
+    This is what makes a mesh step a requirement to state rather than a detail:
+    a reader who ran the command on the install page has no mesh transport.
     """
-    assert snippet in _numbered_steps()[step]
-
-
-@pytest.mark.parametrize(
-    "requirement",
-    [
-        # Step 4: the extra that carries the transport, and the step it belongs to.
-        "step 4",
-        "[mesh]",
-        # Step 5: the distro, and the package that is not on PyPI.
-        "step 5",
-        "ros 2",
-        "rclpy",
-    ],
-)
-def test_the_needs_line_names_what_steps_4_and_5_need(requirement: str) -> None:
-    """Each step that needs more than a CPU is named, with what it needs.
-
-    One requirement per case so a line that drops just one of them reports which.
-    """
-    assert requirement in _needs_line().lower()
-
-
-def test_the_needs_line_no_longer_covers_those_steps_with_everything_else() -> None:
-    """The claim that hid them is gone, not merely qualified."""
-    assert "everything else runs in sim" not in _needs_line().lower()
-
-
-def test_the_install_the_page_gives_does_not_provide_the_mesh() -> None:
-    """The page's own install command really does leave ``eclipse-zenoh`` out.
-
-    This is what makes step 4 a requirement to state rather than a detail: a
-    reader who ran the command at the top of the page has no mesh transport.
-    """
-    installed = {dep for extra in _extras_the_page_installs() for dep in _requirements(extra)}
-
+    installed = {dep for extra in _extras_the_pages_install() for dep in _requirements(extra)}
     assert not any(dep.startswith("eclipse-zenoh") for dep in installed), installed
     assert any(dep.startswith("eclipse-zenoh") for dep in _requirements("mesh"))
 
 
+def test_no_start_fence_needs_what_the_install_line_leaves_out() -> None:
+    """No un-flagged fence starts the mesh or a ROS 2 bridge the install line cannot supply."""
+    offenders = [
+        f"{page.name}: {body.strip().splitlines()[0]}"
+        for page in _start_pages()
+        for is_sketch, body in _fences(page)
+        if not is_sketch and re.search(r"mesh=True|\.mesh\.|ros2_bridge=True", body)
+    ]
+    assert not offenders, "Start fences that need [mesh] or a ROS 2 distro without saying so:\n" + "\n".join(offenders)
+
+
+def test_the_ros2_page_names_the_distro_and_the_missing_wheel() -> None:
+    """``learn/ros2.md`` now carries the claim the quickstart used to: rclpy is a distro, not a wheel."""
+    text = ROS2_PAGE.read_text(encoding="utf-8")
+    assert "setup.bash" in text, "learn/ros2.md no longer tells the reader to source a distro"
+    assert "not on PyPI" in text, "learn/ros2.md no longer says rclpy is not on PyPI"
+
+
 @pytest.mark.skipif(not _HAS_MUJOCO, reason="the sim backend is needed to reach the rclpy probe")
-def test_the_bridge_raises_the_import_error_the_line_describes() -> None:
+def test_the_bridge_raises_the_import_error_the_page_describes() -> None:
     """Without ``rclpy`` the bridge refuses, naming the shell command to run.
 
     The absence is established rather than assumed, so this holds on a host with
-    a ROS 2 distro sourced too - where the alternative is a cell that skips, or
+    a ROS 2 distro sourced too, where the alternative is a cell that skips, or
     one that builds a live node on the domain it meant to grade.
     """
     from strands_robots.simulation import Simulation
@@ -183,3 +191,4 @@ def test_the_bridge_raises_the_import_error_the_line_describes() -> None:
         Simulation(ros2_bridge=True)
 
     assert "setup.bash" in str(refusal.value)
+    assert "PyPI" in str(refusal.value)

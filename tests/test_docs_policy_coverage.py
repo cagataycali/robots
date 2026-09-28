@@ -1,12 +1,13 @@
-"""Repo hygiene: the policy overview table lists exactly the registered providers.
+"""Repo hygiene: the policy matrix lists exactly the registered providers.
 
-``docs/reference/policies/overview.md`` is the entry point for choosing a
-``policy_provider``. Its "Providers" table is the human-facing catalogue of what
-``create_policy("<name>")`` accepts. If a provider is added to
-``strands_robots/registry/policies.json`` but not to the table (or vice versa),
-the docs silently drift and users - and agent LLMs reading the docs - never
-discover the provider. This guard ties the table to the JSON registry so the
-two can never disagree.
+``docs/learn/policies/index.md`` is the entry point for choosing a
+``policy_provider``. Its "Providers" section is the human-facing catalogue of
+what ``create_policy("<name>")`` accepts. The table is no longer typed: the page
+carries a ``{{providers:table}}`` token that ``docs/hooks/providers.py`` expands
+at build time from ``strands_robots/registry/policies.json``. This guard renders
+the section through that hook and ties the result to the JSON registry, so a
+provider added to the registry but dropped by the hook (or a stale row the hook
+keeps emitting) cannot ship, and the page keeps carrying the token at all.
 
 The registry is read directly from ``policies.json`` (not via
 ``list_providers()``) because ``list_providers()`` also returns providers
@@ -18,18 +19,29 @@ overview table documents. This mirrors ``_registered_providers()`` in the
 companion guard.
 
 Companion guard: ``tests/test_docs_policy_nav_coverage.py`` ties the registry to
-the mkdocs nav (one page per provider). This file ties it to the overview table.
+the mkdocs nav (one page per provider). This file ties it to the matrix.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-OVERVIEW_MD = REPO_ROOT / "docs" / "reference" / "policies" / "overview.md"
+OVERVIEW_MD = REPO_ROOT / "docs" / "learn" / "policies" / "index.md"
 POLICIES_JSON = REPO_ROOT / "strands_robots" / "registry" / "policies.json"
+PROVIDERS_HOOK = REPO_ROOT / "docs" / "hooks" / "providers.py"
+
+
+def _rendered_overview() -> str:
+    """The page as the build sees it: ``{{providers:*}}`` tokens expanded by the hook."""
+    spec = importlib.util.spec_from_file_location("docs_providers_hook", PROVIDERS_HOOK)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module.substitute(OVERVIEW_MD.read_text(encoding="utf-8"), "learn/policies/index.md")
 
 
 def _registered_providers() -> set[str]:
@@ -49,11 +61,11 @@ def _table_providers() -> set[str]:
     page cannot leak in. Provider names are the backtick-wrapped token in the
     first column (they may be wrapped in a markdown link, e.g. ``[`mock`](...)``).
     """
-    text = OVERVIEW_MD.read_text(encoding="utf-8")
+    text = _rendered_overview()
 
     # Isolate the "## Providers" section (up to the next top-level "## ").
     match = re.search(r"\n## Providers\b(.*?)(?:\n## |\Z)", text, re.DOTALL)
-    assert match, "overview.md is missing a '## Providers' section"
+    assert match, "learn/policies/index.md is missing a '## Providers' section"
     section = match.group(1)
 
     providers: set[str] = set()
@@ -66,12 +78,19 @@ def _table_providers() -> set[str]:
             continue
         first = cells[0]
         # Skip the header and the |---| separator rows.
-        if first in {"Provider", ""} or set(first) <= {"-", ":"}:
+        if first in {"Provider", "provider", ""} or set(first) <= {"-", ":"}:
             continue
         name = re.search(r"`([a-z0-9_]+)`", first)
         if name:
             providers.add(name.group(1))
     return providers
+
+
+def test_overview_carries_the_generated_table_token() -> None:
+    """The page delegates the table to the hook instead of typing rows."""
+    source = OVERVIEW_MD.read_text(encoding="utf-8")
+    assert "{{providers:table}}" in source, "learn/policies/index.md must carry the {{providers:table}} token"
+    assert "{{providers:table}}" not in _rendered_overview(), "the providers hook left the token unexpanded"
 
 
 def test_overview_table_matches_registered_providers() -> None:
@@ -83,12 +102,12 @@ def test_overview_table_matches_registered_providers() -> None:
     stale_in_docs = sorted(documented - registered)
 
     assert not missing_from_docs and not stale_in_docs, (
-        "docs/reference/policies/overview.md Providers table is out of sync with "
+        "docs/learn/policies/index.md Providers table is out of sync with "
         "strands_robots/registry/policies.json.\n"
         f"  Registered but missing from the table: {missing_from_docs}\n"
         f"  In the table but not registered:       {stale_in_docs}\n"
-        "Update the table (name, class, install extra, when-to-use) so it "
-        "matches the registry."
+        "The table is generated by docs/hooks/providers.py; fix the hook or the "
+        "registry so the two agree."
     )
 
 
@@ -96,6 +115,6 @@ def test_overview_has_discovery_snippet() -> None:
     """Overview keeps a runnable ``list_providers()`` snippet for ground-truthing."""
     text = OVERVIEW_MD.read_text(encoding="utf-8")
     assert "list_providers" in text, (
-        "overview.md must show a runnable list_providers() snippet so users can "
+        "learn/policies/index.md must show a runnable list_providers() snippet so users can "
         "always ground-truth the available providers against the registry."
     )
