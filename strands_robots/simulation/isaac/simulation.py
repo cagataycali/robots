@@ -9715,9 +9715,10 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         desc["methods"].update(
             {
                 "add_camera": (
-                    "(name='default', position=None, target=None, width=None, "
-                    "height=None, fov=60.0) -> dict  # register an RTX camera "
-                    "(rendered frames ride get_observation and recordings)"
+                    "(name='default', position=None, target=None, fov=60.0, "
+                    "width=None, height=None, parent_body=None) -> dict  # register "
+                    "an RTX camera (rendered frames ride get_observation and "
+                    "recordings); parent_body mounts it on a moving link"
                 ),
                 "remove_camera": "(name: str) -> dict  # remove a registered RTX camera",
                 "start_recording": (

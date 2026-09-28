@@ -2712,7 +2712,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 "close_viewer": "() -> dict  (close the interactive viewer)",
                 "randomize": (
                     "(randomize_colors=True, randomize_lighting=True, randomize_physics=False, "
-                    "mass_range=(0.5, 2.0), friction_range=(0.5, 1.5), color_range=(0.1, 1.0), "
+                    "color_range=(0.1, 1.0), friction_range=(0.5, 1.5), mass_range=(0.5, 2.0), "
                     "seed=None) -> dict (domain randomization; json block carries applied multipliers)"
                 ),
                 "set_obs_noise": (
