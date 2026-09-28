@@ -479,10 +479,11 @@ _ALLOWLIST_DOCS: tuple[str, ...] = (
 
 # The pages of the new tree that document driving a blocked surface. The three
 # per-transport integration pages were merged into one ROS 2 page; the generated
-# page of a ROS-driven robot (``docs/robots/yahboom_m3pro.md`` shows ``/cmd_vel``)
-# is the surface a variable-keyed list cannot reach.
+# driver facts of a ROS-driven robot (``YahboomM3ProDriver`` names ``/cmd_vel``,
+# rendered by ``{{driver_facts}}`` on the drivers page) are the surface a
+# variable-keyed list cannot reach.
 _TRANSPORT_PAGES: frozenset[str] = frozenset({"docs/learn/ros2.md"})
-_GENERATED_PAGES_DIR = "docs/robots/"
+_GENERATED_DRIVER_FACTS = "docs/learn/hardware/drivers.md"
 
 # A clause that names the halt and denies that it is gated claims an exemption.
 _HALT_PHRASES: tuple[str, ...] = ("zero-velocity", "zero velocity", "zero `twist`", "halt", "stop()")
@@ -508,22 +509,34 @@ def _surface_text(name: str) -> str:
     ``docs/reference/configuration.md`` is a ``{{env_vars}}`` token that
     ``docs/hooks/env_vars.py`` expands at build time from the package's own
     reads, so it is rendered through that hook and its ``<code>`` folded to the
-    backticks a hand-written row uses. Every other page is read as written.
+    backticks a hand-written row uses. The drivers page's ``{{driver_facts}}``
+    is rendered through ``docs/hooks/robot_pages.py`` the same way. Every other
+    page is read as written.
     """
     path = _repo_root() / name
     source = path.read_text(encoding="utf-8")
+    if name == _GENERATED_DRIVER_FACTS:
+        module = _load_hook("robot_pages.py", "docs_robot_pages_hook")
+        rendered = module.substitute(source, prefix="")
+        assert rendered != source, "drivers.md carries no {{driver_facts}} token for the hook to expand"
+        return rendered
     if name != "docs/reference/configuration.md":
         return source
-    hook = _repo_root() / "docs" / "hooks" / "env_vars.py"
-    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", hook)
+    module = _load_hook("env_vars.py", "docs_hooks_env_vars")
+    rendered = module.on_page_markdown(source, page=None, config=None, files=None)
+    assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"
+    return rendered.replace("<code>", "`").replace("</code>", "`")
+
+
+def _load_hook(filename: str, module_name: str) -> Any:
+    """A ``docs/hooks`` module, loaded by path once: the docs venv is not the test venv."""
+    spec = importlib.util.spec_from_file_location(module_name, _repo_root() / "docs" / "hooks" / filename)
     assert spec is not None and spec.loader is not None
     module = sys.modules.get(spec.name) or importlib.util.module_from_spec(spec)
     if spec.name not in sys.modules:
         sys.modules[spec.name] = module  # dataclasses in the hook resolve their module here
         spec.loader.exec_module(module)
-    rendered = module.on_page_markdown(source, page=None, config=None, files=None)
-    assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"
-    return rendered.replace("<code>", "`").replace("</code>", "`")
+    return module
 
 
 def _readme_allow_row() -> str:
@@ -766,9 +779,9 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
         assert scanned - set(_ALLOWLIST_DOCS), (
             "the derived set is no wider than the allowlist pages, so deriving it buys nothing"
         )
-        assert any(name.startswith(_GENERATED_PAGES_DIR) for name in scanned), (
-            "no generated robot page names a blocked surface, so the scan no longer reaches the "
-            "pages a variable-keyed list cannot"
+        assert _GENERATED_DRIVER_FACTS in scanned, (
+            "the generated driver facts name no blocked surface, so the scan no longer reaches the "
+            "text a variable-keyed list cannot"
         )
 
     def test_the_documented_read_exemption_is_real(self, monkeypatch: pytest.MonkeyPatch) -> None:
