@@ -11,15 +11,17 @@ This test guards against regression - if someone reintroduces a
 real runtime cycle inside strands_robots, the suite goes red.
 
 Hoisting bought that runtime guarantee at a static cost, and the guards below pin
-the cost. ``policy_runner`` still closes an AST-visible cycle back to ``base``
-(it imports ``SimEngine`` under ``TYPE_CHECKING``), so CodeQL's
-``py/unsafe-cyclic-import`` reports one error-severity finding for *each symbol*
-named on ``base.py``'s module-level import from it - two are open on ``main``, and
-a third symbol would be a third finding. The module-level symbol surface is
-therefore frozen here, and anything ``base.py`` newly needs from ``policy_runner``
-is reached with a deferred import instead. That is the convention both directions
-of this pair already use: ``policy_runner`` defers ``randomization_seed_error``
-and ``MAX_EVAL_SEED`` from ``base`` at three sites. A deferred import cannot
+that the cost is gone. ``policy_runner`` still closes an AST-visible cycle back to
+``base`` (it imports ``SimEngine`` under ``TYPE_CHECKING``), so CodeQL's
+``py/unsafe-cyclic-import`` reported one error-severity finding for *each symbol*
+named on ``base.py``'s module-level import from it - two were open on ``main``.
+That import is gone: ``VideoConfig`` moved to ``simulation.video_config``, below
+both modules, and ``PolicyRunner`` is reached with a deferred import inside the
+methods that construct one. The module-level symbol surface is therefore frozen
+at empty, and anything ``base.py`` newly needs from ``policy_runner`` is reached
+with a deferred import instead. That is the convention both directions of this
+pair use: ``policy_runner`` defers ``randomization_seed_error`` and
+``MAX_EVAL_SEED`` from ``base`` at three sites. A deferred import cannot
 reintroduce the runtime cycle the first test forbids, because that test excludes
 function-local imports from the graph by construction.
 """
@@ -193,10 +195,16 @@ def test_no_runtime_import_cycles():
     assert cycles == [], "runtime cycles detected:\n" + "\n".join("  " + " -> ".join(c) + " -> " + c[0] for c in cycles)
 
 
-# Each symbol on base.py's module-level import from policy_runner is its own
-# py/unsafe-cyclic-import finding, so the surface is frozen at the two that
-# predate this guard. Reach anything else with a deferred import.
-FROZEN_MODULE_LEVEL_SYMBOLS = ["PolicyRunner", "VideoConfig"]
+# base.py has NO module-level import from policy_runner. Every symbol on such an
+# import used to be its own py/unsafe-cyclic-import finding (policy_runner imports
+# SimEngine back from base under TYPE_CHECKING, which CodeQL counts as an
+# import-time edge), so the two that predated this guard - PolicyRunner and
+# VideoConfig - were the two error-severity alerts open on main. VideoConfig now
+# lives in ``simulation.video_config``, below both modules, and PolicyRunner is
+# reached with a deferred import inside the methods that construct one. The
+# surface is therefore frozen at empty: anything base.py newly needs from
+# policy_runner is reached with a deferred import too.
+FROZEN_MODULE_LEVEL_SYMBOLS: list[str] = []
 
 _POLICY_RUNNER = "strands_robots.simulation.policy_runner"
 
@@ -218,8 +226,25 @@ def _module_level_policy_runner_imports(src: str) -> list[list[str]]:
     ]
 
 
-def test_base_module_level_import_of_policy_runner_names_only_the_frozen_symbols():
-    """base.py may not grow the module-level import that closes the static cycle.
+def _type_checking_policy_runner_imports(src: str) -> list[list[str]]:
+    """Symbols ``src`` imports from policy_runner inside ``if TYPE_CHECKING:``.
+
+    CodeQL's cyclic-import queries do not distinguish a ``TYPE_CHECKING`` block
+    from the module body, so an import there closes the same static cycle a
+    module-level one does; the guard below refuses both.
+    """
+    tree = ast.parse(src)
+    found: list[list[str]] = []
+    for node in ast.walk(tree):
+        if not _is_in_type_checking(tree, node):
+            continue
+        if isinstance(node, ast.ImportFrom) and node.module == _POLICY_RUNNER:
+            found.append([alias.name for alias in node.names])
+    return found
+
+
+def test_base_has_no_module_level_import_of_policy_runner():
+    """base.py may not regrow the import that closed the static cycle.
 
     Replaces an assertion that counted the import *statements* in base.py and
     required exactly one. That count was a proxy for "no runtime cycle" and it
@@ -227,57 +252,62 @@ def test_base_module_level_import_of_policy_runner_names_only_the_frozen_symbols
     satisfied by one statement naming any number of symbols - each of which is
     its own finding - and it is violated by a deferred import, which cannot
     cause a runtime cycle at all. What decides whether a finding appears is
-    which symbols ride on the module-level statement, so that is what is pinned.
-    The original intent is unaffected: ``test_no_runtime_import_cycles`` above
-    enforces it directly, over every module, excluding deferred imports.
+    which symbols ride on a module-level (or ``TYPE_CHECKING``) statement, so
+    that is what is pinned - at empty. The original intent is unaffected:
+    ``test_no_runtime_import_cycles`` above enforces it directly, over every
+    module, excluding deferred imports.
     """
     base_src = (PKG / "simulation/base.py").read_text()
     statements = _module_level_policy_runner_imports(base_src)
-
-    # Non-vacuity: the import this guard is about must still be there to find.
-    assert len(statements) == 1, (
-        f"expected exactly 1 module-level import of {_POLICY_RUNNER} in base.py, found {len(statements)}: {statements}"
-    )
-    assert statements[0] == FROZEN_MODULE_LEVEL_SYMBOLS, (
-        f"base.py imports {statements[0]} from policy_runner at module level; the "
-        f"frozen surface is {FROZEN_MODULE_LEVEL_SYMBOLS}. Each name here is its own "
+    assert statements == [], (
+        f"base.py imports {statements} from {_POLICY_RUNNER} at module level; the frozen "
+        f"surface is {FROZEN_MODULE_LEVEL_SYMBOLS}. Each name there is its own "
         "error-severity py/unsafe-cyclic-import finding, because policy_runner imports "
-        "SimEngine back from base under TYPE_CHECKING. Reach the new symbol with a "
-        "deferred import inside the function that needs it - the convention "
-        "policy_runner already uses in the other direction."
+        "SimEngine back from base under TYPE_CHECKING. Reach the symbol with a deferred "
+        "import inside the function that needs it - the convention both directions of "
+        "this pair use - or move the type below both modules, as VideoConfig was."
     )
+    assert _type_checking_policy_runner_imports(base_src) == [], (
+        "base.py imports from policy_runner under TYPE_CHECKING; CodeQL counts that as an "
+        "import-time edge, so it reopens the finding a module-level import would"
+    )
+
+    # Non-vacuity: the deferred imports the guard steers people towards must exist,
+    # and the type that left must be reachable from below both modules.
+    assert base_src.count(_SUPERSEDED_PROXY) >= 1, "base.py no longer reaches policy_runner at all"
+    assert "from strands_robots.simulation.video_config import VideoConfig" in base_src
 
 
 def test_an_added_symbol_is_detected_where_the_statement_count_was_blind():
-    """A third symbol must fail this guard - the superseded count cannot see it.
+    """A module-level symbol must fail this guard - the superseded count cannot see it.
 
-    This is the regression the guard exists for: adding a name to the frozen
-    line ships another error-severity finding while leaving the number of import
-    statements at one. Both halves are asserted, so the reason this replaced a
-    statement count is recorded as a measurement rather than as a claim.
+    This is the regression the guard exists for: a module-level import ships an
+    error-severity finding per name while leaving the number of import
+    statements at a value the old proxy accepted. Both halves are asserted, so
+    the reason this replaced a statement count is recorded as a measurement
+    rather than as a claim.
     """
     base_src = (PKG / "simulation/base.py").read_text()
-    planted = base_src.replace(
-        f"from {_POLICY_RUNNER} import PolicyRunner, VideoConfig",
-        f"from {_POLICY_RUNNER} import OnFrame, PolicyRunner, VideoConfig",
-        1,
-    )
-    assert planted != base_src, "planting failed - the frozen import line was not found"
+    marker = "from strands_robots.simulation.video_config import VideoConfig\n"
+    planted = base_src.replace(marker, marker + f"from {_POLICY_RUNNER} import OnFrame, PolicyRunner\n", 1)
+    assert planted != base_src, "planting failed - the video_config import line was not found"
 
-    # The superseded proxy is blind to it: still exactly one statement.
-    assert planted.count(_SUPERSEDED_PROXY) == base_src.count(_SUPERSEDED_PROXY) == 1
+    # The superseded proxy is blind to the *kind* of import: it counts one more
+    # statement, exactly as it would for a harmless deferred one.
+    assert planted.count(_SUPERSEDED_PROXY) == base_src.count(_SUPERSEDED_PROXY) + 1
 
     # The symbol-set guard is not.
-    assert _module_level_policy_runner_imports(planted) == [["OnFrame", "PolicyRunner", "VideoConfig"]], (
-        "the scanner did not see the planted third symbol"
+    assert _module_level_policy_runner_imports(planted) == [["OnFrame", "PolicyRunner"]], (
+        "the scanner did not see the planted module-level import"
     )
 
 
 def test_a_deferred_import_is_not_part_of_the_module_level_surface():
     """A deferred import must be invisible here - it is the prescribed escape hatch.
 
-    The superseded count rejected one (it saw two statements), which is why it
-    also forbade the deferred imports policy_runner uses in the other direction.
+    The superseded count rejected one (it saw another statement), which is why
+    it also forbade the deferred imports policy_runner uses in the other
+    direction, and the ones base.py now uses in this one.
     """
     base_src = (PKG / "simulation/base.py").read_text()
     planted = (
@@ -289,7 +319,7 @@ def test_a_deferred_import_is_not_part_of_the_module_level_surface():
     ast.parse(planted)  # the planted source must still be valid Python
 
     # The superseded proxy counted this as a violation; the surface check does not.
-    assert planted.count(_SUPERSEDED_PROXY) == 2
-    assert _module_level_policy_runner_imports(planted) == [FROZEN_MODULE_LEVEL_SYMBOLS], (
+    assert planted.count(_SUPERSEDED_PROXY) == base_src.count(_SUPERSEDED_PROXY) + 1
+    assert _module_level_policy_runner_imports(planted) == FROZEN_MODULE_LEVEL_SYMBOLS == [], (
         "a deferred import leaked into the module-level surface"
     )

@@ -37,23 +37,18 @@ if TYPE_CHECKING:
     from strands_robots.policies import Policy
     from strands_robots.rendering import CameraParams
 
-# PolicyRunner and VideoConfig are used by run_policy / replay / eval_policy.
-# We could defer these with inline lazy imports (and historically did), but
-# ``simulation.policy_runner`` only imports `SimEngine` from base under
-# TYPE_CHECKING so
-# the runtime cycle doesn't actually exist. Keep the imports at module level
-# to break the AST-visible cycle that static analysers flag.
-#
-# Note (#191): we deliberately do NOT import ``OnFrame`` here, even under
-# ``TYPE_CHECKING`` - CodeQL's ``py/unsafe-cyclic-import`` rule walks
-# ``TYPE_CHECKING`` blocks too and would flag the static cycle (
-# ``simulation.policy_runner`` imports SimEngine from base under TYPE_CHECKING,
-# so importing OnFrame from policy_runner here closes the loop in the
-# AST). Instead, we reference ``OnFrame`` in the ``evaluate_benchmark``
-# signature as a *string* annotation; ``from __future__ import
-# annotations`` (already in effect) makes that a no-op at runtime.
+# ``VideoConfig`` lives in ``simulation.video_config``, below both this module
+# and ``simulation.policy_runner``, so it can be named here at module level.
+# ``PolicyRunner`` itself is imported inside the four methods that construct
+# one (``run_policy``, ``replay``, ``eval_policy``, ``evaluate_benchmark``):
+# ``policy_runner`` needs ``SimEngine`` as an annotation, so a module-level
+# import of it from here would close an import-time cycle (CodeQL
+# ``py/unsafe-cyclic-import`` walks ``TYPE_CHECKING`` blocks too, which is also
+# why ``OnFrame`` is a string annotation on ``evaluate_benchmark`` rather than
+# an import). ``tests/simulation/test_no_import_cycle.py`` pins that this
+# module has no module-level import of ``policy_runner``.
 from strands_robots.simulation.observers import RunPolicyObserver
-from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
+from strands_robots.simulation.video_config import VideoConfig
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
     boolean_flag_error,
@@ -3634,6 +3629,8 @@ class SimEngine(ABC):
                 ],
             }
 
+        from strands_robots.simulation.policy_runner import PolicyRunner
+
         try:
             runner = PolicyRunner(self)
 
@@ -3697,7 +3694,6 @@ class SimEngine(ABC):
             # episodes. Replaces the brittle manual
             # ``for _ in range(n): run_policy(); save_episode(); reset()`` loop.
             return self._run_episodes(
-                runner,
                 robot_name,
                 policy,
                 instruction=instruction,
@@ -4073,7 +4069,6 @@ class SimEngine(ABC):
 
     def _run_episodes(
         self,
-        runner: PolicyRunner,
         robot_name: str,
         policy: Policy,
         *,
@@ -4112,6 +4107,9 @@ class SimEngine(ABC):
         predicate hit (or budget), and its dataset episode is flushed with
         exactly the frames captured up to that stop.
         """
+        from strands_robots.simulation.policy_runner import PolicyRunner
+
+        runner = PolicyRunner(self)
         episodes: list[dict[str, Any]] = []
         episodes_saved = 0
         total_steps = 0
@@ -5153,6 +5151,7 @@ class SimEngine(ABC):
         Override per backend for optimised replay (e.g. direct ctrl
         writes) only when measured necessary.
         """
+        from strands_robots.simulation.policy_runner import PolicyRunner
 
         return PolicyRunner(self).replay(
             repo_id,
@@ -5564,6 +5563,8 @@ class SimEngine(ABC):
         )
         if controller_refusal is not None:
             return {"status": "error", "content": [{"text": controller_refusal}]}
+
+        from strands_robots.simulation.policy_runner import PolicyRunner
 
         try:
             result = PolicyRunner(self).evaluate(
@@ -5999,6 +6000,8 @@ class SimEngine(ABC):
         )
         if controller_refusal is not None:
             return {"status": "error", "content": [{"text": controller_refusal}]}
+
+        from strands_robots.simulation.policy_runner import PolicyRunner
 
         try:
             result = PolicyRunner(self).evaluate(
