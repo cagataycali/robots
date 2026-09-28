@@ -248,6 +248,16 @@ class TestAnUnreadableRobotIsNotAVerdict:
         assert _ObservingPolicy.seen_keys == [], _ObservingPolicy.seen_keys
 
 
+class TestTheVerbAnnouncesItsRemoval:
+    """#3818 removes ``start_task(policy_provider=)`` in 0.8; 0.6 names the replacement."""
+
+    def test_the_warning_names_run_policy_and_points_at_the_caller(self, probe: _Probe) -> None:
+        with pytest.warns(DeprecationWarning, match=r"start_task\(policy_provider=\) is removed in 0\.8") as record:
+            assert probe.start_task(policy_provider="mock") == ROLLED_OUT
+        assert "run_policy(policy_object=" in str(record[0].message)
+        assert record[0].filename == __file__, record[0].filename
+
+
 class TestTheSeamHasNoOptionalEscape:
     """A driver cannot acquire this build without acquiring the check.
 

@@ -32,7 +32,7 @@ A UR controller does not refuse the way a servo bus does: it accepts the registe
 
 ## Rollouts
 
-`run_policy(policy)` rolls a caller-built policy at `control_frequency`; `start_task(instruction, ...)` builds one from the provider registry and runs the same `PolicyRollout` on a background thread. `get_task_status()` reports the live snapshot, `stop_task()` halts the loop. Both share the rollout class with the Feetech driver rather than copying it.
+`run_policy(policy)` rolls a caller-built policy at `control_frequency`; `start_task(instruction, ...)`, removed in 0.8, builds one from the provider registry on a background thread. `get_task_status()` reports the live snapshot, `stop_task()` halts the loop. Both share the rollout class with the Feetech driver rather than copying it.
 
 ## Deliberately absent
 

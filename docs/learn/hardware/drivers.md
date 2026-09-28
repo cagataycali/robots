@@ -39,7 +39,7 @@ A native driver is anything with these members (`HardwareDriver` is a `runtime_c
 |---|---|
 | `tool_name`, `tool_type`, `tool_spec`, `stream` | the Strands `AgentTool` surface, so `Agent(tools=[robot])` works |
 | `send_action(action, robot_name=None)` | one command, keyed by this driver's joint names; returns a status envelope |
-| `start_task(instruction, ...)`, `run_policy(policy, ...)`, `get_task_status()`, `stop_task()` | the policy rollout path |
+| `start_task(instruction, ...)` (removed 0.8), `run_policy(policy, ...)`, `get_task_status()`, `stop_task()` | the policy rollout path |
 | `get_status()` (async), `stop()` (async) | health and de-energise |
 | `cleanup()` | release the transport |
 

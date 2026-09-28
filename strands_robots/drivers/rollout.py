@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import threading
 import time
+import warnings
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -65,7 +66,18 @@ def policy_from_provider(
         ``(policy, None)`` once built, or ``(None, reason)`` - a refusal, never
         a raise: these verbs are reached as agent tools, where an exception is
         not something the caller can handle.
+
+    Warns:
+        DeprecationWarning: Always. A driver that builds its own policy is
+            removed in 0.8 (#3818): build it with ``create_policy`` and hand it
+            to ``run_policy``.
     """
+    warnings.warn(
+        f"{verb}(policy_provider=) is removed in 0.8; build the policy with "
+        "strands_robots.policies.create_policy(...) and pass it to run_policy(policy_object=...)",
+        DeprecationWarning,
+        stacklevel=3,
+    )
     from strands_robots.policies import create_policy, preflight_reason  # noqa: PLC0415 - policies import drivers
 
     if reason := policy_requires_error(provider, kwargs, verb, consequence):
