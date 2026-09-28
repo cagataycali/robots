@@ -62,6 +62,9 @@ def main() -> int:
         for name in names:
             t0 = time.monotonic()
             try:
+                # A fresh document per robot: the WASM heap is not returned between models
+                # and a long sweep otherwise ends in "Could not allocate memory".
+                page.goto(args.site, wait_until="load")
                 page.evaluate(MOUNT, name)
                 page.wait_for_function(READY, timeout=180_000)
                 if page.evaluate("document.querySelector('robot-viewer')._state") != "ready":

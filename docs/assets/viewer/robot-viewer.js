@@ -322,14 +322,17 @@ class RobotViewer extends HTMLElement {
       bytes += buf.length; done += 1; progress(path.split("/").pop());
       return buf;
     };
-    // MJCF path rules, as MuJoCo applies them. An <include> is textual, so every path
-    // it names (further includes, meshes, textures, its own compiler meshdir) is
-    // relative to the directory of the MAIN model file, not of the included file:
-    // ability_hand's hands/abh_right_large.xml says meshdir="./assets" and means
-    // mujoco_xml/assets. A <model> (attach) file is a model of its own, so it starts
-    // a new root at its directory. An included file inherits the includer's compiler
-    // dirs when it declares none. VFS keys are the paths MuJoCo will compute,
-    // relative to the main model file's directory; downloads join the scene dir.
+    // MJCF path rules, as MuJoCo applies them (checked against models that load from
+    // disk): the file named by an <include> or a <model> is relative to the directory
+    // of the file that names it; a compiler meshdir/texturedir is relative to the MAIN
+    // model file's directory even when an included file declares it (ability_hand:
+    // hands/abh_right_large.xml says meshdir="./assets" and means mujoco_xml/assets);
+    // an asset with no meshdir is relative to its own file's directory (lekiwi:
+    // lekiwi/lekiwi.xml names meshes/base_plate.stl and means lekiwi/meshes). A
+    // <model> is a model of its own, so it starts a new root at its directory, and an
+    // included file inherits the includer's compiler dirs when it declares none. VFS
+    // keys are the paths MuJoCo will compute, relative to the main model file's
+    // directory; downloads join the scene dir.
     const sceneDir = dirOf(e.scene);
     const queue = [{ file: joinPath(e.scene.slice(sceneDir ? sceneDir.length + 1 : 0)), root: "", meshdir: null, texturedir: null }];
     const assets = new Set();
@@ -345,14 +348,15 @@ class RobotViewer extends HTMLElement {
       // The main file is handed to from_xml_string, which registers it in the VFS
       // itself; adding it here too fails on a scene literally named model.xml (rby1).
       if (sceneXml === null) sceneXml = text; else fetched.set(file, buf);
+      const dir = dirOf(file);
       const s = scanXml(text);
       const meshdir = s.meshdir ?? pm, texturedir = s.texturedir ?? pt;
-      for (const inc of s.includes) queue.push({ file: joinPath(root, inc), root, meshdir, texturedir });
-      for (const mdl of s.models) { const f = joinPath(root, mdl); queue.push({ file: f, root: dirOf(f), meshdir: null, texturedir: null }); }
-      for (const f of s.files) assets.add(joinPath(root, meshdir, f));
+      for (const inc of s.includes) queue.push({ file: joinPath(dir, inc), root, meshdir, texturedir });
+      for (const mdl of s.models) { const f = joinPath(dir, mdl); queue.push({ file: f, root: dirOf(f), meshdir: null, texturedir: null }); }
+      for (const f of s.files) assets.add(meshdir ? joinPath(root, meshdir, f) : joinPath(dir, f));
       // Textures are not sampled by this viewer, so a 1x1 PNG stands in and the
       // (often multi-megabyte) images are never downloaded.
-      for (const tx of s.textures) { const k = joinPath(root, texturedir, tx); if (!fetched.has(k)) fetched.set(k, PNG_1X1); }
+      for (const tx of s.textures) { const k = texturedir ? joinPath(root, texturedir, tx) : joinPath(dir, tx); if (!fetched.has(k)) fetched.set(k, PNG_1X1); }
     }
     total = seen.size + assets.size;
     progress("");
