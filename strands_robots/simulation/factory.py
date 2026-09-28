@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import warnings
 from collections.abc import Callable
 from importlib.metadata import entry_points
 from typing import Any
@@ -57,6 +58,15 @@ _BUILTIN_BACKENDS: dict[str, tuple[str, str]] = {
         "strands_robots.simulation.isaac.simulation",
         "IsaacSimulation",
     ),
+}
+
+#: Built-in backends announced to leave this package in 0.7, each with what
+#: replaces it. The announcement is a warning from :func:`create_simulation`,
+#: one minor ahead of the move, so a caller learns the install line first.
+_SIM_EXTRAS_URL = "git+https://github.com/cagataycali/strands-robots-sim-extras"
+_MOVED_OUT_IN_0_7: dict[str, str] = {
+    backend: f"pip install 'strands-robots-sim-extras[{backend}] @ {_SIM_EXTRAS_URL}'"
+    for backend in ("isaac", "newton")
 }
 
 _BUILTIN_ALIASES: dict[str, str] = {
@@ -400,5 +410,12 @@ def create_simulation(
     canonical = _resolve_name(backend)
     logger.info("Creating simulation: %s (resolved from %r)", canonical, backend)
 
+    if (replacement := _MOVED_OUT_IN_0_7.get(canonical)) is not None:
+        warnings.warn(
+            f"simulation backend {canonical!r} moves out of strands-robots in 0.7 to the "
+            f"strands-robots-sim-extras plugin, under the same name; instead run {replacement}",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     BackendClass = _import_backend_class(canonical)
     return BackendClass(**kwargs)

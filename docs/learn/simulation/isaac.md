@@ -4,6 +4,9 @@ description: The Isaac Sim backend: what it needs, how to construct it, USD and 
 
 # Isaac Sim
 
+!!! warning "Deprecated"
+    Moves out in 0.7 to the `strands-robots-sim-extras` plugin, same backend name: `pip install 'strands-robots-sim-extras[isaac] @ git+https://github.com/cagataycali/strands-robots-sim-extras'`.
+
 By the end of this page you know exactly what the `isaac` backend requires, how to construct it, and which MuJoCo habits do not carry over.
 
 ```bash
@@ -50,8 +53,6 @@ sim.destroy()
 | WBC | cannot install the MuJoCo torque shim; a policy declaring `requires_action_controller` (`wbc`) is refused rather than rolled out without it |
 | motion primitives | its own implementation in `isaac/motion_primitives.py` |
 | randomization | `IsaacRandomizationMixin`, same `randomize` / `set_obs_noise` names |
-
-`docs-old/reference/simulation/isaac-parity.md` tracked what matched and what did not at the time of writing; the table above is what the code says at this commit.
 
 ## Limits
 
