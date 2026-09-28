@@ -33,13 +33,57 @@ from strands_robots.policies._state_keys import observation_joint_keys
 from strands_robots.policies.base import Policy
 from strands_robots.utils import require_optional
 
-from .units import SO101_JOINT_LABELS, SO101_SIM_GRIPPER_RANGE_RAD, SO101_SIM_JOINT_OFFSETS_DEG, UnitAdapter
+from .units import (
+    SO101_JOINT_LABELS,
+    SO101_SIM_GRIPPER_RANGE_RAD,
+    SO101_SIM_JOINT_OFFSETS_DEG,
+    SO101_SIM_JOINT_SIGNS,
+    UnitAdapter,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_CHECKPOINT = "black-forest-labs/flux-3-action-so101"
 _MODES = ("queued", "chunk")
 _CAMERA_ROLES = ("scene", "wrist")
+
+
+def _forward_natten_backend_to_neighborhood_calls() -> None:
+    """Make ``flux_action``'s chosen NATTEN backend reach the neighborhood kernels.
+
+    ``flux_action.models.video_vae._attend`` passes its backend choice as
+    ``attention_kwargs={"backend": ...}``. NATTEN only reads ``attention_kwargs``
+    on the dense path (window covering the whole input); a genuine neighborhood
+    window ignores it and auto-selects ``cutlass-fna`` whenever the compute
+    capability is >= 6.0, even when the installed library carries no kernel image
+    for it (Jetson Thor sm_110). This shim forwards ``attention_kwargs["backend"]``
+    as the explicit ``backend=`` argument of ``na2d`` / ``na3d`` inside the
+    ``video_vae`` module only, so ``F3_NATTEN_BACKEND=flex-fna`` actually applies.
+    Idempotent; a no-op when ``flux_action`` is absent.
+    """
+    try:
+        import flux_action.models.video_vae as video_vae
+        from natten import functional as natten_functional
+    except ImportError:
+        return
+    if getattr(video_vae, "_strands_natten_backend_forwarded", False):
+        return
+
+    def _forwarding(fn: Any) -> Any:
+        def call(
+            *args: Any, attention_kwargs: dict[str, Any] | None = None, backend: str | None = None, **kwargs: Any
+        ) -> Any:
+            chosen = (attention_kwargs or {}).get("backend")
+            if backend is None and isinstance(chosen, str) and chosen.endswith("-fna"):
+                backend = chosen
+            return fn(*args, attention_kwargs=attention_kwargs, backend=backend, **kwargs)
+
+        call.__name__ = fn.__name__
+        return call
+
+    video_vae.na2d = _forwarding(natten_functional.na2d)
+    video_vae.na3d = _forwarding(natten_functional.na3d)
+    video_vae._strands_natten_backend_forwarded = True
 
 
 class Flux3ActionPolicy(Policy):
@@ -71,6 +115,14 @@ class Flux3ActionPolicy(Policy):
         task: Default instruction when the caller passes an empty one.
         warn_outside_training_range: Log once when the converted state leaves the
             checkpoint's ``state`` q01/q99 window, a cheap unit / calibration check.
+        natten_backend: NATTEN attention backend for the video VAE
+            (``blackwell-fna`` | ``hopper-fna`` | ``cutlass-fna`` | ``flex-fna``).
+            ``None`` honours ``$F3_NATTEN_BACKEND`` when set, otherwise probes the
+            GPU: when the installed ``natten`` library carries no kernel image for
+            this device's compute capability (Jetson Thor sm_110 with the
+            published wheels, which cover sm_75..sm_120 but skip sm_110) it selects
+            ``flex-fna``, the pure-torch fallback, instead of letting NATTEN crash
+            with ``no kernel image is available`` mid-rollout.
     """
 
     provider_name: ClassVar[str] = "flux3_action"
@@ -84,13 +136,14 @@ class Flux3ActionPolicy(Policy):
         device: str = "cuda",
         camera_map: dict[str, str] | None = None,
         joint_units: str = "rad",
-        joint_signs: tuple[float, float, float, float, float] | list[float] = (1.0, 1.0, 1.0, 1.0, 1.0),
+        joint_signs: tuple[float, float, float, float, float] | list[float] = SO101_SIM_JOINT_SIGNS,
         joint_offsets_deg: tuple[float, float, float, float, float] | list[float] = SO101_SIM_JOINT_OFFSETS_DEG,
         gripper_range: tuple[float, float] | list[float] = SO101_SIM_GRIPPER_RANGE_RAD,
         mode: str = "queued",
         execute_steps: int = 32,
         task: str = "",
         warn_outside_training_range: bool = True,
+        natten_backend: str | None = None,
         **kwargs: Any,
     ) -> None:
         if mode not in _MODES:
@@ -124,14 +177,15 @@ class Flux3ActionPolicy(Policy):
         self.tick_ms: list[float] = []
         self.inference_ms: list[float] = []
 
-        self._torch = require_optional(
-            "torch", extra="flux3", hint="FLUX 3 Action needs torch with CUDA; install with the flux3 extra."
-        )
+        self._torch = require_optional("torch", extra="flux3", purpose="FLUX 3 Action inference (CUDA)")
         require_optional(
             "flux_action",
             extra="flux3",
-            hint="pip install 'flux-action @ git+https://github.com/black-forest-labs/flux-action' (and natten).",
+            pip_install="flux-action @ git+https://github.com/black-forest-labs/flux-action",
+            purpose="FLUX 3 Action inference (plus natten from whl.natten.org)",
         )
+        self.natten_backend = self._select_natten_backend(natten_backend)
+        _forward_natten_backend_to_neighborhood_calls()
         from flux_action.inference.so101 import load_policy
 
         t0 = time.perf_counter()
@@ -223,6 +277,60 @@ class Flux3ActionPolicy(Policy):
         return [dict(zip(keys, self.units.model_to_robot(row.tolist()), strict=True)) for row in rows]
 
     # -- helpers ----------------------------------------------------------
+
+    _NATTEN_BACKENDS = ("blackwell-fna", "hopper-fna", "cutlass-fna", "flex-fna")
+
+    def _select_natten_backend(self, requested: str | None) -> str | None:
+        """Pick the NATTEN backend once, before the model loads, and export it.
+
+        ``flux_action`` reads ``$F3_NATTEN_BACKEND`` at first attention call; setting
+        it here keeps the choice explicit and visible in the process environment.
+        """
+        import os
+
+        if requested is not None:
+            if requested not in self._NATTEN_BACKENDS:
+                raise ValueError(f"natten_backend must be one of {self._NATTEN_BACKENDS}, got {requested!r}")
+            os.environ["F3_NATTEN_BACKEND"] = requested
+            return requested
+        if os.environ.get("F3_NATTEN_BACKEND"):
+            return os.environ["F3_NATTEN_BACKEND"]
+        torch = self._torch
+        if not str(self.device).startswith("cuda") or not torch.cuda.is_available():
+            return None
+        major, minor = torch.cuda.get_device_capability(torch.device(self.device))
+        if (major, minor) in self._natten_kernel_arches():
+            return None  # let flux_action probe the compiled CUTLASS kernels
+        os.environ["F3_NATTEN_BACKEND"] = "flex-fna"
+        logger.info(
+            "flux3_action: natten has no kernel image for sm_%d%d (%s); using the flex-fna torch fallback",
+            major,
+            minor,
+            torch.cuda.get_device_name(torch.device(self.device)),
+        )
+        return "flex-fna"
+
+    @staticmethod
+    def _natten_kernel_arches() -> set[tuple[int, int]]:
+        """Compute capabilities baked into the installed ``libnatten`` (empty when unknown)."""
+        import glob
+        import re
+        import shutil
+        import subprocess
+
+        try:
+            import natten
+        except ImportError:
+            return set()
+        cuobjdump = shutil.which("cuobjdump")
+        libs = glob.glob(f"{natten.__path__[0]}/libnatten*.so")
+        if not cuobjdump or not libs:
+            return set()
+        try:
+            out = subprocess.run([cuobjdump, "--list-elf", libs[0]], capture_output=True, text=True, timeout=30).stdout
+        except (OSError, subprocess.SubprocessError):
+            return set()
+        return {divmod(int(n), 10) for n in re.findall(r"\bsm_(\d+)\b", out)}
 
     def _joint_state(self, observation: dict[str, Any]) -> tuple[list[str], list[float]]:
         keys = observation_joint_keys(observation, self.robot_state_keys)

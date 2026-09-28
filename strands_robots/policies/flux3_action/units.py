@@ -43,6 +43,29 @@ SO101_SIM_GRIPPER_RANGE_RAD: tuple[float, float] = (-0.17453292519943295, 1.7453
 # lift ~ +100 deg and elbow ~ +90 deg, hence +90 on both.
 SO101_SIM_JOINT_OFFSETS_DEG: tuple[float, float, float, float, float] = (0.0, 90.0, 90.0, 0.0, 0.0)
 
+# Joint directions of the MuJoCo ``so101`` model relative to the checkpoint frame.
+# Derived from forward kinematics of ``so101_new_calib.xml`` at qpos = 0: the upper
+# arm stands vertical and the forearm points horizontally forward (a 90 degree
+# elbow). ``shoulder_lift`` +30 deg moves the gripper FORWARD and DOWN, so the real
+# arm's rest posture (upper arm folded BACK, lerobot ``shoulder_lift`` ~ 190) is the
+# model's -100 deg: lerobot = 90 - model, i.e. sign -1 with the +90 offset.
+# ``elbow_flex`` +30 folds the forearm down and back toward the upper arm, matching
+# lerobot's folded-at-rest ~ 180 = model +90: sign +1, offset +90. The other joints
+# keep sign +1, offset 0; roll's zero is not pinned by the checkpoint statistics.
+SO101_SIM_JOINT_SIGNS: tuple[float, float, float, float, float] = (1.0, -1.0, 1.0, 1.0, 1.0)
+
+# A folded rest posture for the MuJoCo model in RADIANS, chosen so its image in the
+# checkpoint frame ((0, 184, 175, 70, 0) deg + gripper 5 %) sits where the SO-101
+# community episodes start (rest ~ (0, 190, 180, 70, 0, 0), inside q01..q99).
+SO101_SIM_REST_QPOS_RAD: tuple[float, float, float, float, float, float] = (
+    0.0,
+    math.radians(-94.0),
+    math.radians(85.0),
+    math.radians(70.0),
+    0.0,
+    -0.17453292519943295 + 0.05 * (1.7453292519943295 + 0.17453292519943295),
+)
+
 _DEG_PER_RAD = 180.0 / math.pi
 
 
@@ -54,7 +77,8 @@ class UnitAdapter:
         joint_units: ``"rad"`` when the robot reports radians (MuJoCo), ``"deg"`` when it
             already reports degrees (lerobot hardware with ``use_degrees``).
         joint_signs: per-arm-joint direction (+1 or -1) applied before the offset, for a
-            model whose joint axis points the other way. Five values.
+            model whose joint axis points the other way. Five values; defaults to
+            :data:`SO101_SIM_JOINT_SIGNS` (MuJoCo ``so101``).
         joint_offsets_deg: additive per-arm-joint offset in degrees applied AFTER the
             rad->deg conversion and the sign, so a model whose zero differs from the
             checkpoint's calibration zero can be aligned explicitly. Five values (arm
@@ -64,7 +88,7 @@ class UnitAdapter:
     """
 
     joint_units: str = "rad"
-    joint_signs: tuple[float, float, float, float, float] = (1.0, 1.0, 1.0, 1.0, 1.0)
+    joint_signs: tuple[float, float, float, float, float] = SO101_SIM_JOINT_SIGNS
     joint_offsets_deg: tuple[float, float, float, float, float] = SO101_SIM_JOINT_OFFSETS_DEG
     gripper_range: tuple[float, float] = SO101_SIM_GRIPPER_RANGE_RAD
 
@@ -108,4 +132,11 @@ class UnitAdapter:
         return [*arm, q]
 
 
-__all__ = ["SO101_JOINT_LABELS", "SO101_SIM_GRIPPER_RANGE_RAD", "SO101_SIM_JOINT_OFFSETS_DEG", "UnitAdapter"]
+__all__ = [
+    "SO101_JOINT_LABELS",
+    "SO101_SIM_GRIPPER_RANGE_RAD",
+    "SO101_SIM_JOINT_OFFSETS_DEG",
+    "SO101_SIM_JOINT_SIGNS",
+    "SO101_SIM_REST_QPOS_RAD",
+    "UnitAdapter",
+]
