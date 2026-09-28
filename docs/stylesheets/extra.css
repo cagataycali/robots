@@ -116,10 +116,11 @@
 .md-typeset table:not([class]) { font-size: 0.72rem; }
 .md-typeset .md-typeset__scrollwrap { max-width: 100%; }
 /* Generated tables scroll sideways inside their wrapper; an identifier is never broken mid-word to fit a phone. */
-.md-typeset table:not([class]) code { white-space: nowrap; word-break: normal; }
+.md-typeset table:not([class]) td > code:only-child { white-space: nowrap; word-break: normal; }
 @media (max-width: 60em) {
-  .md-typeset table:not([class]) th, .md-typeset table:not([class]) td { min-width: 6rem; }
-  .md-typeset table:not([class]) th:last-child, .md-typeset table:not([class]) td:last-child { min-width: 14rem; }
+  /* Without a floor the prose column collapses to its longest word once the identifier columns take their width. */
+  .md-typeset table:not([class]):has(th:nth-child(3)) th, .md-typeset table:not([class]):has(th:nth-child(3)) td { min-width: 4rem; }
+  .md-typeset table:not([class]):has(th:nth-child(3)) th:last-child, .md-typeset table:not([class]):has(th:nth-child(3)) td:last-child { min-width: 18rem; }
 }
 .md-typeset table:not([class]) th { font-weight: 600; }
 
