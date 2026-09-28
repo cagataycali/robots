@@ -1,24 +1,23 @@
-"""The RL pages must cover every trainer that ships and every field it reads.
+"""The RL page must cover every trainer that ships and every field it reads.
 
-``strands_robots.training.rl`` ships three trainers - ``ppo``, ``fast_sac`` and
-``fast_td3`` - and ``create_trainer`` resolves all three. Two surfaces name the
-third one already (``docs/getting-started/installation.md`` advertises
-``FastTd3Trainer`` under the ``[rl]`` extra, and ``docs/reference/policies/rl.md``
-describes "the three backends"), so a training page that documents two of them
-is drift, not scope: a reader who follows the install line has no page for the
+``strands_robots.training.rl`` ships three trainers, ``ppo``, ``fast_sac`` and
+``fast_td3``, and ``create_trainer`` resolves all three. ``docs/learn/training/rl.md``
+is the one page for all of them: a Trainers table with one row per provider and
+an ``RLTrainSpec`` table with a "read by" column. Its predecessor documented two
+trainers of three, so a reader who followed the install line had no page for the
 trainer it installed, and no domain for the four fields only that trainer reads
 (``policy_delay``, ``exploration_noise_std``, ``target_noise_std``,
 ``target_noise_clip``).
 
 Three rules, each graded against the tree rather than a copied roster:
 
-1. every trainer registered under ``training.rl`` has a row in the hub page's
-   component table and a section of its own;
+1. every trainer registered under ``training.rl`` has a row in the Trainers
+   table naming its provider string, its class and its own fields;
 2. every RL-only ``RLTrainSpec`` field a trainer *reads* is named somewhere on
-   the reference page, so it is discoverable at all;
-3. a reference row's "Graded by" cell names every trainer that reads the field
-   it keys. ``both`` cannot: with three trainers it is a count that does not say
-   which two, and it stood on rows every trainer reads.
+   the page, so it is discoverable at all;
+3. an ``RLTrainSpec`` row's "read by" cell names every trainer that reads the
+   field it keys. ``both`` cannot: with three trainers it is a count that does
+   not say which two, and it stood on rows every trainer reads.
 """
 
 from __future__ import annotations
@@ -36,8 +35,7 @@ from strands_robots.training.rl import RLTrainSpec
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _RL_PACKAGE = _REPO_ROOT / "strands_robots" / "training" / "rl"
-_HUB = _REPO_ROOT / "docs" / "reference" / "training" / "rl.md"
-_REFERENCE = _REPO_ROOT / "docs" / "reference" / "training" / "rl-reference.md"
+_PAGE = _REPO_ROOT / "docs" / "learn" / "training" / "rl.md"
 
 #: Trainer name -> the class the hub page must name, and the backend module it
 #: lives in. Read back from ``create_trainer`` below, so a fourth trainer fails
@@ -48,15 +46,24 @@ _TRAINERS = {
     "fast_td3": ("FastTd3Trainer", "fast_td3"),
 }
 
-#: How the reference's "Graded by" cell spells a set of trainers. A collective
-#: spelling that names no trainer at all ("each backend") is a wildcard: the row
-#: says the domain is per-backend and the domain column carries the detail.
+#: How the "read by" cell spells a set of trainers. A collective spelling that
+#: names no trainer at all ("each backend") is a wildcard: the row says the
+#: domain is per-backend and the field column carries the detail. Spellings are
+#: matched as whole words so ``all`` does not match ``callable``.
 _COLLECTIVE = {
+    "all": frozenset(_TRAINERS),
     "all three": frozenset(_TRAINERS),
     "off-policy": frozenset({"fast_sac", "fast_td3"}),
 }
 _WILDCARD = ("each backend", "the backend that reads it")
-_NAMED = {"PPO": "ppo", "FastSAC": "fast_sac", "FastTD3": "fast_td3"}
+_NAMED = {
+    "ppo": "ppo",
+    "fast_sac": "fast_sac",
+    "fast_td3": "fast_td3",
+    "PPO": "ppo",
+    "FastSAC": "fast_sac",
+    "FastTD3": "fast_td3",
+}
 
 
 def _rl_only_fields() -> frozenset[str]:
@@ -91,10 +98,20 @@ def _spec_reads() -> dict[str, frozenset[str]]:
     return {field: frozenset(owners) for field, owners in reads.items()}
 
 
+def _section(heading: str) -> str:
+    """The page's ``## <heading>`` section, up to the next heading."""
+    text = _PAGE.read_text(encoding="utf-8")
+    start = text.find(f"\n## {heading}")
+    assert start != -1, f"{_PAGE.name} has no '## {heading}' section"
+    rest = text[start + 1 :]
+    end = rest.find("\n## ", 1)
+    return rest if end == -1 else rest[:end]
+
+
 def _reference_rows() -> list[tuple[frozenset[str], str]]:
-    """The reference's field table as ``(fields keyed by the row, graded-by cell)``."""
+    """The ``RLTrainSpec`` table as ``(fields keyed by the row, read-by cell)``."""
     rows: list[tuple[frozenset[str], str]] = []
-    for line in _REFERENCE.read_text(encoding="utf-8").splitlines():
+    for line in _section("RLTrainSpec").splitlines():
         if not line.startswith("| `"):
             continue
         cells = [cell.strip() for cell in line.split("|")[1:-1]]
@@ -105,14 +122,22 @@ def _reference_rows() -> list[tuple[frozenset[str], str]]:
     return rows
 
 
+def _says(cell: str, spelling: str) -> bool:
+    return re.search(rf"(?<![\w-]){re.escape(spelling)}(?![\w-])", cell) is not None
+
+
 def _graded_by(cell: str) -> frozenset[str] | None:
-    """The trainers a "Graded by" cell names, or ``None`` when it is a wildcard."""
+    """The trainers a "read by" cell names, or ``None`` when it is a wildcard.
+
+    A cell may attribute several fields positionally (``all; ppo``); the union
+    is what the row promises, and every field keyed by the row is held to it.
+    """
     if any(spelling in cell for spelling in _WILDCARD):
         return None
     for spelling, trainers in _COLLECTIVE.items():
-        if spelling in cell:
+        if _says(cell, spelling):
             return trainers
-    return frozenset(name for spelling, name in _NAMED.items() if spelling in cell)
+    return frozenset(name for spelling, name in _NAMED.items() if _says(cell, spelling))
 
 
 def test_create_trainer_resolves_exactly_the_documented_roster() -> None:
@@ -134,32 +159,38 @@ def test_create_trainer_resolves_exactly_the_documented_roster() -> None:
 
 
 @pytest.mark.parametrize(("trainer", "class_name"), [(n, c) for n, (c, _) in _TRAINERS.items()])
-def test_the_hub_page_documents_every_shipped_trainer(trainer: str, class_name: str) -> None:
-    """A trainer with no table row and no section is one the install line sells blind."""
-    page = _HUB.read_text(encoding="utf-8")
-    table_rows = [line for line in page.splitlines() if line.startswith("| [`") or line.startswith("| `")]
-    assert any(f"`{class_name}`" in row for row in table_rows), (
-        f"{class_name} (create_trainer({trainer!r})) has no row in the component table of {_HUB.name}"
-    )
-    headings = {line.lstrip("# ").strip().lower() for line in page.splitlines() if line.startswith("## ")}
-    assert any(class_name.lower().replace("trainer", "") in heading.replace(" ", "") for heading in headings), (
-        f"{class_name} has no section in {_HUB.name}; headings are {sorted(headings)}"
-    )
-    assert f'create_trainer("{trainer}")' in page, f"{_HUB.name} never spells create_trainer({trainer!r})"
+def test_the_page_documents_every_shipped_trainer(trainer: str, class_name: str) -> None:
+    """A trainer with no Trainers row is one the install line sells blind.
+
+    The row must key the provider string ``create_trainer`` resolves, name the
+    class, and list the fields only that trainer reads, so the reader can go
+    from the install line to the string to the knobs without another page.
+    """
+    table_rows = [line for line in _section("Trainers").splitlines() if line.startswith("| `")]
+    row = next((line for line in table_rows if line.startswith(f"| `{trainer}` |")), None)
+    assert row is not None, f"create_trainer({trainer!r}) has no row in the Trainers table of {_PAGE.name}"
+    assert f"`{class_name}`" in row, f"the {trainer!r} row does not name {class_name}"
+    own = {field for field, readers in _spec_reads().items() if readers == {trainer}}
+    cells = [cell.strip() for cell in row.split("|")[1:-1]]
+    assert len(cells) >= 4, f"the {trainer!r} row has no 'own fields' cell: {row}"
+    listed = set(re.findall(r"`([a-z_]+)`", cells[3]))
+    missing = sorted(own - listed)
+    assert not missing, f"the {trainer!r} row's own-fields cell omits {missing}, which only {class_name} reads"
+    assert "create_trainer(" in _PAGE.read_text(encoding="utf-8"), f"{_PAGE.name} never shows create_trainer(...)"
 
 
-def test_every_field_a_trainer_reads_is_named_on_the_reference_page() -> None:
-    """A field with no mention anywhere on the reference page cannot be discovered."""
+def test_every_field_a_trainer_reads_is_named_on_the_page() -> None:
+    """A field with no mention anywhere on the page cannot be discovered."""
     reads = _spec_reads()
     assert len(reads) >= 25, f"harvest went thin: only {len(reads)} RL-only fields read"
-    reference = _REFERENCE.read_text(encoding="utf-8")
+    reference = _PAGE.read_text(encoding="utf-8")
     missing = sorted(field for field in reads if f"`{field}`" not in reference)
-    assert not missing, f"{_REFERENCE.name} names none of {missing}, read by " + ", ".join(
+    assert not missing, f"{_PAGE.name} names none of {missing}, read by " + ", ".join(
         f"{field} ({', '.join(sorted(reads[field]))})" for field in missing
     )
 
 
-def test_every_reference_row_names_the_trainers_that_read_its_fields() -> None:
+def test_every_spec_row_names_the_trainers_that_read_its_fields() -> None:
     """An attribution narrower than the readers sends a caller to the wrong domain."""
     reads = _spec_reads()
     rows = _reference_rows()
@@ -178,19 +209,25 @@ def test_every_reference_row_names_the_trainers_that_read_its_fields() -> None:
             if not readers <= named:
                 wrong.append(f"{field}: read by {sorted(readers)}, graded by {cell!r} -> {sorted(named)}")
     assert graded_any >= 10, f"no attribution was graded ({graded_any} field/row pairs)"
-    assert not wrong, "reference rows attribute a field to fewer trainers than read it:\n" + "\n".join(wrong)
+    assert not wrong, "RLTrainSpec rows attribute a field to fewer trainers than read it:\n" + "\n".join(wrong)
 
 
 @pytest.mark.parametrize(
     ("cell", "expected"),
     [
         ("all three", frozenset(_TRAINERS)),
+        ("all", frozenset(_TRAINERS)),
+        ("all; a zero-arg callable returning a fresh `SimEnv`", frozenset(_TRAINERS)),
         ("off-policy", frozenset({"fast_sac", "fast_td3"})),
+        ("ppo", frozenset({"ppo"})),
+        ("fast_sac, fast_td3", frozenset({"fast_sac", "fast_td3"})),
+        ("all; ppo", frozenset(_TRAINERS)),
         ("PPO", frozenset({"ppo"})),
         ("FastSAC", frozenset({"fast_sac"})),
         ("FastTD3", frozenset({"fast_td3"})),
         ("each backend", None),
         ("the backend that reads it", None),
+        ("a callable", frozenset()),  # 'all' inside 'callable' names nobody
         ("both", frozenset()),  # names no trainer, so it can satisfy no reader
     ],
 )
