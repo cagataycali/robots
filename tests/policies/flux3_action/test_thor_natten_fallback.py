@@ -77,3 +77,32 @@ def test_shim_is_a_no_op_without_flux_action(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setitem(sys.modules, "flux_action.models", None)
     monkeypatch.setitem(sys.modules, "flux_action.models.video_vae", None)
     module._forward_natten_backend_to_neighborhood_calls()  # must not raise
+
+
+def test_construction_does_not_load_the_checkpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fails before the fix: ``create_policy("flux3_action")`` pulled 3.9B parameters onto the GPU.
+
+    A name-only construction (the trust-gate control grader does exactly that for every
+    provider) must stay cheap; the weights arrive on ``load()`` / first ``reset()``.
+    """
+    calls: list[str] = []
+    so101 = types.ModuleType("flux_action.inference.so101")
+
+    def load_policy(name: str, revision: str | None = None) -> object:  # noqa: ARG001
+        calls.append(name)
+        raise RuntimeError("load_policy must not run at construction")
+
+    so101.load_policy = load_policy  # type: ignore[attr-defined]
+    for name in ("flux_action", "flux_action.inference", "flux_action.models", "flux_action.models.video_vae"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    monkeypatch.setitem(sys.modules, "flux_action.inference.so101", so101)
+    # No torch, no natten: the optional imports and the shim are stood in for, so
+    # the test runs on a box without either and never touches a GPU.
+    monkeypatch.setattr(module, "require_optional", lambda name, **kwargs: types.ModuleType(name))
+    monkeypatch.setattr(module, "_forward_natten_backend_to_neighborhood_calls", lambda: None)
+    monkeypatch.setattr(module.Flux3ActionPolicy, "_select_natten_backend", lambda self, override: "flex-fna")
+    policy = module.Flux3ActionPolicy(device="cpu")
+    assert not policy.loaded and policy.load_s is None and calls == []
+    with pytest.raises(RuntimeError, match="must not run at construction"):
+        policy.load()
+    assert calls == [module.DEFAULT_CHECKPOINT]

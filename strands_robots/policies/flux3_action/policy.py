@@ -197,22 +197,48 @@ class Flux3ActionPolicy(Policy):
         )
         self.natten_backend = self._select_natten_backend(natten_backend)
         _forward_natten_backend_to_neighborhood_calls()
+        # The 3.9B-parameter checkpoint is loaded lazily: constructing the provider
+        # (``create_policy("flux3_action")``) stays cheap, and the weights arrive on
+        # :meth:`load`, the first :meth:`reset` or the first :meth:`get_actions`.
+        # Same shape as ``lerobot_local``, which also constructs without loading.
+        self._policy: Any = None
+        self.load_s: float | None = None
+        self.n_obs_steps: int | None = None
+        self.chunk_size: int | None = None
+        self.n_action_steps: int | None = None
+        self.fps: int | None = None
+        self._state_window: tuple[list[float], list[float]] | None = None
+
+    @property
+    def loaded(self) -> bool:
+        """Whether the checkpoint is resident (``load`` ran)."""
+        return self._policy is not None
+
+    def load(self) -> None:
+        """Load the checkpoint onto ``device``; idempotent.
+
+        Called by :meth:`reset` and :meth:`get_actions` when needed, so callers only
+        need it to pay the load cost up front (``load_s`` records the wall time).
+        """
+        if self._policy is not None:
+            return
         from flux_action.inference.so101 import load_policy
 
         t0 = time.perf_counter()
-        self._policy = load_policy(pretrained_name_or_path, revision=revision).to(device)
-        self._policy.eval()
+        policy = load_policy(self.pretrained_name_or_path, revision=self.revision).to(self.device)
+        policy.eval()
         self.load_s = time.perf_counter() - t0
-        cfg = self._policy.config
+        cfg = policy.config
         self.n_obs_steps = int(cfg.n_obs_steps)
         self.chunk_size = int(cfg.chunk_size)
         self.n_action_steps = int(cfg.n_action_steps)
         self.fps = int(cfg.fps)
+        self._policy = policy
         self._state_window = self._training_state_window()
         logger.info(
             "flux3_action: loaded %s on %s in %.1fs (history %d, chunk %d, execute %d, %d Hz)",
-            pretrained_name_or_path,
-            device,
+            self.pretrained_name_or_path,
+            self.device,
             self.load_s,
             self.n_obs_steps,
             self.chunk_size,
@@ -241,6 +267,7 @@ class Flux3ActionPolicy(Policy):
     def reset(self, seed: int | None = None) -> None:
         """Clear the observation history and the action queue; starts a new episode."""
         super().reset(seed)
+        self.load()
         self._policy.reset()
         self._current_instruction = None
         if seed is not None:
@@ -276,6 +303,7 @@ class Flux3ActionPolicy(Policy):
             ``[{joint: target}]`` - one dict in ``"queued"`` mode, ``execute_steps``
             dicts in ``"chunk"`` mode.
         """
+        self.load()
         text = instruction or self.task
         if self._current_instruction is not None and text != self._current_instruction:
             self._policy.reset()
