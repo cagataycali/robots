@@ -22,7 +22,7 @@ so a non-numeric value raised a ``ValueError`` straight through the structured
 ``{"status": "error"}`` tool-result contract every ``AgentTool`` handler owes its
 caller, and ``nan``/``inf``/``0``/``>= 180`` registered a camera the RTX pipeline
 cannot use: ``_create_camera_prim`` derives
-``focal_length = horizontal_aperture / (2 * tan(radians(fov) / 2))``, which
+``focal_length = vertical_aperture / (2 * tan(radians(fov) / 2))``, which
 raises ``ZeroDivisionError`` for ``0`` - a type absent from that try block's
 except tuple, so it escapes ``add_camera`` - and yields ``nan`` (for ``nan``) or
 7.3e-16 mm (for ``180``), both of which ``set_focal_length`` accepts.
