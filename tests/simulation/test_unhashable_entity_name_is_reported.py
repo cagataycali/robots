@@ -340,7 +340,6 @@ def _isaac_engine() -> Any:
     # not stand in the way of the name resolution under test.
     engine._world = None
     engine._action_controllers = {}
-    engine._cam_out_size = {}
     engine._cams_rec_state = None
     engine._main_tid = threading.get_ident()
     return engine
@@ -467,7 +466,6 @@ _REGISTRY_ATTRS = frozenset(
         "_cameras",
         "_policy_threads",
         "_action_controllers",
-        "_cam_out_size",
     }
 )
 

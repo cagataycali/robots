@@ -19,12 +19,11 @@ reads cannot catch and which AGENTS.md forbids widening to ``except Exception``.
 Three surfaces performed such a read or write with no gate, and none of them
 advances ``_sim_time``, so the sibling sweep could not see any of them:
 
-* ``pump`` step 3 - refreshes the joint cache for every robot. This is the worst
-  placement in the backend: it runs on the MAIN thread and ``run_pump_forever``
-  wraps it in ``try`` / ``finally`` with **no** ``except``, so one escape ends the
-  loop and takes the app down, and the hang wedges a live UI session. It now skips
-  the refresh and keeps the last good cache, logging once rather than per ~50 ms
-  tick.
+* ``send_action`` (its ``_send_impl`` write-and-step) - applies the articulation
+  action and steps the world. It is now marshalled onto the owning thread like
+  ``step`` and re-checks the gate per batch, so a stale view is refused before the
+  ``apply_action`` / ``world.step`` rather than hanging or raising against an
+  invalidated view.
 * ``_converge_render`` - reads and then WRITES (``set_joint_positions`` plus
   ``set_joint_velocities``), ``max(1, n)`` times per call, reached from pump's step
   2 on the default idle preview path. It now drops the pose-hold and keeps
@@ -36,7 +35,7 @@ advances ``_sim_time``, so the sibling sweep could not see any of them:
 
 The trigger is ordinary shipped usage rather than an engineered race: a worker
 thread's ``remove_object``, or ``load_scene``'s per-episode reload, invalidates the
-view and the very next pump tick performs the read.
+view and the very next tensor touch on the owning thread performs the read.
 
 The sweep at the bottom is keyed on the articulation operation rather than on the
 clock, so it answers for this second axis the way the sibling answers for the first.
@@ -157,9 +156,6 @@ def _engine(*, stale: bool, raises: bool = False) -> Any:
     engine._pump_stale_warned = False
     engine._action_q = queue.Queue()
     engine._main_jobs = queue.Queue()
-    engine._joint_cache = {}
-    engine._frame_cache = {}
-    engine._pump_cameras = False
     engine._idle_converge = 3
     robot = _RobotState(name="arm", prim_path="/World/Robots/arm", joint_names=["j0", "j1"])
     robot.articulation = _Articulation(raises=raises)
@@ -169,93 +165,6 @@ def _engine(*, stale: bool, raises: bool = False) -> Any:
 
 def _text(result: dict[str, Any]) -> str:
     return " ".join(block.get("text", "") for block in result.get("content", []))
-
-
-class TestPumpDoesNotReadAStaleView:
-    """The headline. Pre-fix this read ran on every tick of the main-thread loop."""
-
-    def test_the_joint_read_is_not_attempted(self) -> None:
-        engine = _engine(stale=True)
-
-        engine.pump(render=False)
-
-        assert engine._robots["arm"].articulation.reads == 0
-
-    def test_a_live_view_is_still_read(self) -> None:
-        """Control: the cache refresh is the pump's job and still happens."""
-        engine = _engine(stale=False)
-
-        engine.pump(render=False)
-
-        assert engine._robots["arm"].articulation.reads == 1
-        assert engine._joint_cache["arm"] == {"j0": 0.25, "j1": 0.5}
-
-    def test_the_last_good_cache_survives(self) -> None:
-        """Skipping is not clearing: a consumer reading the cache gets the last
-        answer that was true rather than an empty dict it cannot tell from a robot
-        with no joints."""
-        engine = _engine(stale=False)
-        engine.pump(render=False)
-        good = dict(engine._joint_cache["arm"])
-
-        engine._physics_view_stale = True
-        engine.pump(render=False)
-
-        assert engine._joint_cache["arm"] == good
-
-    def test_the_backend_refusal_does_not_escape_the_pump(self) -> None:
-        """The failure mode, end to end. ``run_pump_forever`` wraps ``pump`` in
-        ``try`` / ``finally`` with no ``except``, so an escape here ends the loop -
-        and this exception is a bare ``Exception``, which the pump's own narrow
-        handler cannot catch. Not attempting the read is what makes it unreachable.
-        """
-        engine = _engine(stale=True, raises=True)
-
-        engine.pump(render=False)  # must not raise
-
-        assert engine._robots["arm"].articulation.reads == 0
-
-    def test_the_premise_that_no_handler_would_have_caught_it(self) -> None:
-        """Why the gate is the fix rather than a wider ``except``: the class the
-        backend raises is outside every handler tuple around these reads, and
-        AGENTS.md forbids widening to ``except Exception``."""
-        assert not issubclass(Exception, (RuntimeError, ValueError, AttributeError, TypeError, KeyError, IndexError))
-
-    def test_it_is_reported_once_not_once_per_tick(self, caplog: pytest.LogCaptureFixture) -> None:
-        """``run_pump_forever`` pumps every ~50 ms, so an unlatched warning writes
-        thousands of identical lines while the view stays stale."""
-        engine = _engine(stale=True)
-
-        with caplog.at_level(logging.WARNING):
-            for _ in range(5):
-                engine.pump(render=False)
-
-        stale_records = [r for r in caplog.records if "tensor view no longer covers" in r.getMessage()]
-        assert len(stale_records) == 1, f"expected one warning over five ticks, got {len(stale_records)}"
-
-    def test_the_report_names_the_remedy(self, caplog: pytest.LogCaptureFixture) -> None:
-        engine = _engine(stale=True)
-
-        with caplog.at_level(logging.WARNING):
-            engine.pump(render=False)
-
-        text = " ".join(r.getMessage() for r in caplog.records)
-        assert "reset()" in text
-        assert "pump()" in text
-
-    def test_the_latch_clears_when_the_view_is_rebuilt(self, caplog: pytest.LogCaptureFixture) -> None:
-        """So a SECOND staleness is reported rather than swallowed by the first
-        one's latch."""
-        engine = _engine(stale=True)
-        engine.pump(render=False)
-        engine._physics_view_stale = False
-        engine.pump(render=False)
-        engine._physics_view_stale = True
-
-        with caplog.at_level(logging.WARNING):
-            engine.pump(render=False)
-
-        assert [r for r in caplog.records if "tensor view no longer covers" in r.getMessage()]
 
 
 class TestConvergeRenderDropsThePoseHoldAndKeepsRendering:
@@ -636,7 +545,7 @@ class TestEveryArticulationTouchConsultsTheGate:
         """
         self._touching_scopes()
 
-        for name in ("pump", "_converge_render", "_apply"):
+        for name in ("_send_impl", "_converge_render", "_apply"):
             assert name in self._gated, f"{name} no longer consults the gate"
             assert name not in self._COVERED_ELSEWHERE, f"{name} was exempted rather than gated"
 

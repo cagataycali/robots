@@ -165,25 +165,16 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = ()
 #: one, so these are the inversions that survive: a module that reaches up from
 #: inside a function body, once, on first call.
 #:
-#: Sanctioned, and staying: ``_hitl_audit`` writes the operator's answer through
-#: the mesh safety log. Each is pinned individually in
-#: ``tests/test_import_layers_are_a_dag.py``.
+#: Each is pinned individually in ``tests/test_import_layers_are_a_dag.py``.
 #:
 #: Every entry is an inversion the code forces. An inversion that only the
 #: placement forced belongs in :data:`LAYERS` instead, and
 #: :func:`misplaced_members` refuses it here.
 #:
-#: The cuts left here reach up from a driver: ``drivers.ur`` builds a policy,
-#: and the twin transports (``drivers.feetech.twin``,
-#: ``drivers.yahboom_m3pro_twin``) build the MuJoCo engine they step through
-#: ``simulation.create_simulation`` - deferred to the first ``connect`` rather
-#: than imported, and taken from the simulation package rather than the driver
-#: factory, which imports the driver registry and would close a cycle around
-#: the driver each one twins.
+#: The cut left here reaches up from a driver: ``drivers.rollout`` builds a
+#: policy from a provider name.
 KNOWN_DEFERRED_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.drivers.rollout", "strands_robots.policies"),
-    ("strands_robots.drivers.feetech.twin", "strands_robots.simulation"),
-    ("strands_robots.drivers.yahboom_m3pro_twin", "strands_robots.simulation"),
 )
 
 

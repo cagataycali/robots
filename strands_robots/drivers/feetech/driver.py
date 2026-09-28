@@ -160,9 +160,9 @@ class FeetechDriver:
       a robot in :data:`SUPPORTED_ROBOTS` with a simulation asset - refused by
       name otherwise (``hope_jr`` has no asset) - unless ``sim=`` hands in an
       engine already carrying the arm, whose robot then names the entry.
-    * ``sim`` - ``twin`` only: a built sim engine (what ``Robot("so101",
-      mode="sim")`` returns). ``None`` builds one on first connect; the driver
-      destroys an engine it built and leaves a caller's alone.
+    * ``sim`` - ``twin`` only, and required there: a built sim engine carrying
+      the arm (what ``Robot("so101", mode="sim")`` returns). ``Robot(...,
+      transport="twin")`` builds it; the driver never destroys it.
     * ``realtime`` - ``twin`` only: step the model at wall-clock speed so a
       viewer sees the motion as the arm would make it. Default ``False``.
     """
@@ -260,6 +260,12 @@ class FeetechDriver:
             raise ValueError(f"{context}: transport must be one of {list(TRANSPORTS)}, got {transport!r}")
         if sim is not None and transport != "twin":
             raise ValueError(f"{context}: sim= is the twin transport's engine; pass transport='twin' with it")
+        if sim is None and transport == "twin":
+            raise ValueError(
+                f"{context}: transport='twin' steps an engine it is handed; use "
+                f"Robot({tool_name!r}, mode='real', driver='strands', transport='twin'), which builds it, "
+                "or pass sim= an engine carrying the arm"
+            )
         if (reason := boolean_flag_error(realtime, "realtime", context)) is not None:
             raise ValueError(reason)
         self._transport: str = transport
@@ -800,19 +806,17 @@ class FeetechDriver:
 # shared library, because the shape is small and the tests grade against the
 # literal envelope.
 # ---------------------------------------------------------------------------
-def _twin_robot(tool_name: str, sim: Any | None, context: str) -> str:
+def _twin_robot(tool_name: str, sim: Any, context: str) -> str:
     """Name the registry robot the twin models, or refuse.
 
-    The factory builds a driver as ``driver_cls(tool_name=<canonical>, ...)``
-    and forwards nothing else that names the robot, so the honest source is
-    ``tool_name`` resolved through the registry - unless ``sim`` already
-    carries a robot, in which case that robot is the model and its name is the
-    entry. A ``tool_name`` a caller chose (``"left_arm"``) resolves to nothing
-    and is refused with the fix.
+    The robot ``sim`` carries is the model and its name is the entry; an
+    engine carrying none falls back to ``tool_name`` resolved through the
+    registry, and a ``tool_name`` a caller chose (``"left_arm"``) resolves to
+    nothing and is refused with the fix.
 
     Args:
         tool_name: The driver's tool name.
-        sim: The caller's engine, or ``None``.
+        sim: The caller's engine.
         context: The constructor's context for the refusal.
 
     Returns:
@@ -823,11 +827,8 @@ def _twin_robot(tool_name: str, sim: Any | None, context: str) -> str:
     """
     from strands_robots.registry import has_sim, resolve_name  # noqa: PLC0415 - the registry is not a driver import
 
-    candidate = tool_name
-    if sim is not None:
-        names = [str(name) for name in (sim.list_robots() or [])] if hasattr(sim, "list_robots") else []
-        if names:
-            candidate = names[0]
+    names = [str(name) for name in (sim.list_robots() or [])] if hasattr(sim, "list_robots") else []
+    candidate = names[0] if names else tool_name
     canonical = resolve_name(candidate)
     if canonical not in SUPPORTED_ROBOTS:
         raise ValueError(

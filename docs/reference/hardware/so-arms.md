@@ -120,12 +120,12 @@ from strands import Agent
 from strands_robots import Robot
 
 arm = Robot("so101", mode="real", driver="strands", transport="twin")   # FeetechDriver, model at the far end
-arm.connect_eagerly()                                                    # builds the model; None, or a reason
+arm.connect_eagerly()                                                    # binds the model; None, or a reason
 
 Agent(tools=[arm])("read the joints, then move the gripper to 30 percent open")
 
 arm.sim.render(width=640, height=480)                                    # the engine is one attribute away
-arm.cleanup()                                                            # destroys an engine the driver built
+arm.cleanup()                                                            # halts; the engine outlives it
 ```
 
 `driver="strands"` is spelled because the SO arms' registry entries declare no
