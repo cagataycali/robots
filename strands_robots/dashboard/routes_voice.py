@@ -41,7 +41,7 @@ async def voice_socket(ws: WebSocket) -> None:
         return
     await ws.accept()
     try:
-        # voice.py imports the bidi surface lazily, so importing the module proves nothing;
+        # ``strands_robots.dashboard.voice`` imports the bidi surface lazily, so importing it proves nothing;
         # probe the SDK surface here so a [dashboard]-only install is told what it lacks.
         import strands.experimental.bidi  # noqa: F401
 
