@@ -17,7 +17,7 @@ export STRANDS_TRUST_REMOTE_CODE=1             # required: models load with trus
 
 `LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory, so the policy type is read from the model's `config.json` and any class LeRobot registers works without a change here. The model's processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations and unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the exact number of steps consumed during inference, and the policy blends the next chunk onto the seam.
 
-Build it by name or by smart string; a HuggingFace id that is not in the `nvidia` org resolves here.
+Build it by name or smart string; a non-`nvidia` HuggingFace id resolves here.
 
 ```python title="sketch"
 from strands_robots.policies import create_policy
@@ -98,16 +98,10 @@ result = sim.run_policy(
 print(result["status"])
 ```
 
-On a real arm the same bag goes through the robot's agent tool. `Robot("so101",
-mode="real", port=...)` exposes `execute` and `start` with a `policy_config`
-object, so an agent names the checkpoint the way it does in sim; the operator's
-approval prompt names it too (`policy lerobot_local built in this process, no
-server, checkpoint pretrained_name_or_path lerobot/smolvla_base`). Host and port
-are not allowed inside the bag - they are `policy_host` and `policy_port`, so the
-prompt describes the server the arm will actually dial.
+A real arm's tool takes it as `policy_config`; host/port stay `policy_host`/`policy_port`:
 
-```json title="the tool input an agent sends"
-{"action": "execute", "instruction": "pick up the cube", "policy_provider": "lerobot_local",
+```json
+{"action": "execute", "policy_provider": "lerobot_local",
  "policy_config": {"pretrained_name_or_path": "lerobot/smolvla_base", "embodiment": "so101_real"}}
 ```
 
