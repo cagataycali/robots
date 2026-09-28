@@ -65,10 +65,11 @@ def _fence_members() -> set[str]:
 
 
 def _fence_abstract() -> set[str]:
-    # One line per decorator, matched without overlapping whitespace classes (py/redos).
+    # One line per decorator: each repetition is "@", the rest of the line, and its
+    # newline, so no two alternatives can consume the same text (py/redos).
     return set(
         re.findall(
-            r"@abstractmethod[ \t]*\n(?:[ \t]*@\w+[^\n]*\n)*[ \t]*(?:async[ \t]+)?def[ \t]+(\w+)", _contract_fence()
+            r"@abstractmethod[ \t]*\n(?:[ \t]*@[^\n]*\n)*[ \t]*(?:async[ \t]+)?def[ \t]+(\w+)", _contract_fence()
         )
     )
 
