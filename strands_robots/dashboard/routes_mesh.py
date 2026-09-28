@@ -204,9 +204,9 @@ async def fleet(request: Request, mode: str = "all", _: dict = Depends(access.re
     if mode not in LIST_ROBOTS_MODES:
         raise HTTPException(400, f"mode must be one of {', '.join(LIST_ROBOTS_MODES)}")
     robots = registry_robots(mode)
-    # ``mesh.status`` is the contract the pre-SPA route published ("on" | "off",
-    # graded by tests/test_dashboard_sim_routes.py::TestFleet); the bridge's
-    # richer ``mesh_info()`` rides along under the same key.
+    # ``mesh.status`` is the contract the pre-SPA route published ("on" | "off"):
+    # a client reads that one key to learn whether peers can be listed at all.
+    # The bridge's richer ``mesh_info()`` rides along under the same key.
     posture = mesh_peers()
     mesh_info = dict(snapshot.get("mesh") or {})
     mesh_info["status"] = "on" if (mesh_info.get("online") or posture["status"] == "on") else "off"
