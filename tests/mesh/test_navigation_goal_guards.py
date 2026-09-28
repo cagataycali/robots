@@ -29,8 +29,8 @@ from typing import Any
 
 import pytest
 
-import strands_robots.mesh.ros_bridge as ros_mod
-from strands_robots.mesh import RosBridgedRobot
+import strands_robots.drivers.ros.ros_bridge as ros_mod
+from strands_robots.drivers.ros import RosBridgedRobot
 from strands_robots.utils import finite_number_error, positive_finite_number_error
 from tests.mesh._transport_stand_in import Transport, stands_in_for
 from tests.mesh.test_bridge_read_timeout_domain import UNUSABLE_TIMEOUTS

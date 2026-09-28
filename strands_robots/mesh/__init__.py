@@ -31,19 +31,18 @@ mutate the registry itself reaches ``strands_robots.mesh.core``, where it is
 defined; this package re-exports the public surface only.
 """
 
+import importlib
+import importlib.abc
+import importlib.util
+import sys
+import warnings
+from importlib.machinery import ModuleSpec
+from types import ModuleType
+from typing import Any
+
 from strands_robots.audit import log_safety_event
-from strands_robots.mesh._mobile_base import (
-    ActionCapable,
-    MobileBaseRobot,
-    ServiceCapable,
-    Transport,
-)
-from strands_robots.mesh.ackermann_robot import AckermannRosRobot
 from strands_robots.mesh.core import Mesh, get_local_robots, init_mesh
 from strands_robots.mesh.input import InputPublisher, InputReceiver
-from strands_robots.mesh.ros_bridge import RosBridgedRobot
-from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
-from strands_robots.mesh.rtps_robot import RtpsRobot
 from strands_robots.mesh.session import (
     clear_peers,
     current_session,
@@ -56,19 +55,65 @@ from strands_robots.mesh.session import (
     update_peer,
 )
 
+#: The ROS 2 mobile-base drivers this package held before they moved to
+#: :mod:`strands_robots.drivers.ros` under the same module stems, by public name
+#: -> stem. The names and the old module paths both resolve, with a
+#: :class:`DeprecationWarning`, until 0.7.
+_MOVED_TO_DRIVERS: dict[str, str] = {
+    "ActionCapable": "_mobile_base",
+    "MobileBaseRobot": "_mobile_base",
+    "ServiceCapable": "_mobile_base",
+    "Transport": "_mobile_base",
+    "AckermannRosRobot": "ackermann_robot",
+    "RosBridgedRobot": "ros_bridge",
+    "RosbridgeRobot": "rosbridge_robot",
+    "RtpsRobot": "rtps_robot",
+}
+_DRIVERS_ROS = "strands_robots.drivers.ros"
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve a moved ROS mobile-base name from :mod:`strands_robots.drivers.ros`, with a warning."""
+    stem = _MOVED_TO_DRIVERS.get(name)
+    if stem is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    warnings.warn(
+        f"strands_robots.mesh.{name} moved to {_DRIVERS_ROS} and is removed from strands_robots.mesh in 0.7",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return getattr(importlib.import_module(f"{_DRIVERS_ROS}.{stem}"), name)
+
+
+class _MovedModule(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Answer ``import strands_robots.mesh.<stem>`` with the moved driver module itself."""
+
+    def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> ModuleSpec | None:
+        stem = fullname.removeprefix(f"{__name__}.")
+        if stem == fullname or stem not in _MOVED_TO_DRIVERS.values():
+            return None
+        return importlib.util.spec_from_loader(fullname, self)
+
+    def create_module(self, spec: ModuleSpec) -> ModuleType:
+        stem = spec.name.removeprefix(f"{__name__}.")
+        warnings.warn(
+            f"{spec.name} moved to {_DRIVERS_ROS}.{stem} and is removed in 0.7", DeprecationWarning, stacklevel=2
+        )
+        return importlib.import_module(f"{_DRIVERS_ROS}.{stem}")
+
+    def exec_module(self, module: ModuleType) -> None:
+        """The module is the moved one, already executed."""
+
+
+if not any(type(finder).__qualname__ == _MovedModule.__qualname__ for finder in sys.meta_path):  # a reload adds none
+    sys.meta_path.append(_MovedModule())
+
+
 __all__ = [
     # Core types
-    "AckermannRosRobot",
     "Mesh",
     "InputPublisher",
     "InputReceiver",
-    "MobileBaseRobot",
-    "Transport",
-    "ServiceCapable",
-    "ActionCapable",
-    "RosBridgedRobot",
-    "RosbridgeRobot",
-    "RtpsRobot",
     # Factory & registry
     "init_mesh",
     "get_local_robots",

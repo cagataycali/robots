@@ -1,9 +1,9 @@
 """Every mesh bridge forwards a call its transport would accept.
 
-A bridge owns no transport state: :class:`~strands_robots.mesh.RosBridgedRobot`,
-:class:`~strands_robots.mesh.RosbridgeRobot`,
-:class:`~strands_robots.mesh.ackermann_robot.AckermannRosRobot` and
-:class:`~strands_robots.mesh.RtpsRobot` each resolve ``ros_action``,
+A bridge owns no transport state: :class:`~strands_robots.drivers.ros.RosBridgedRobot`,
+:class:`~strands_robots.drivers.ros.RosbridgeRobot`,
+:class:`~strands_robots.drivers.ros.ackermann_robot.AckermannRosRobot` and
+:class:`~strands_robots.drivers.ros.RtpsRobot` each resolve ``ros_action``,
 ``rosbridge_action`` or ``rtps_action`` through their own module and hand it the
 whole command. Every test of that forwarding replaces the symbol with a recorder,
 and a recorder that takes ``**kwargs`` accepts calls the transport would refuse:
@@ -29,7 +29,7 @@ from typing import Any
 
 import pytest
 
-import strands_robots.mesh as mesh_pkg
+import strands_robots.drivers.ros as ros_pkg
 from strands_robots.ros import ros_action
 from strands_robots.rosbridge import rosbridge_action
 from strands_robots.rtps.participant import rtps_action
@@ -42,7 +42,7 @@ _TRANSPORTS: dict[str, Any] = {
     "rtps_action": rtps_action,
 }
 
-_MESH_DIR = Path(mesh_pkg.__file__).resolve().parent
+_ROS_DIR = Path(ros_pkg.__file__).resolve().parent
 
 #: The forwards in the tree when this was written: publish/echo/service_call/
 #: action_send_goal on the ROS 2 bridge, publish plus two echoes on rosbridge,
@@ -73,7 +73,7 @@ def _forward_sites() -> list[_Forward]:
         One :class:`_Forward` per call site, in file and line order.
     """
     found: list[_Forward] = []
-    for path in sorted(_MESH_DIR.glob("*.py")):
+    for path in sorted(_ROS_DIR.glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         imported = {
             alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) for alias in node.names
@@ -138,14 +138,14 @@ class TestTheStandInHasTheShapeOfTheTransport:
     """A forward built at runtime is refused by the recorder the tests install."""
 
     def test_an_argument_the_transport_has_no_parameter_for_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        stand_in = stands_in_for(monkeypatch, mesh_pkg.rtps_robot, "rtps_action")
+        stand_in = stands_in_for(monkeypatch, ros_pkg.rtps_robot, "rtps_action")
         with pytest.raises(TypeError):
             stand_in(action="publish", topic="/cmd_vel", qos=1, gate=lambda _target: None)
         assert stand_in.calls == [], "a call the transport would refuse is not a call that happened"
 
     def test_a_forward_without_the_operator_gate_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No transport defaults the gate, so a forward that omits it raises."""
-        stand_in = stands_in_for(monkeypatch, mesh_pkg.ros_bridge, "ros_action")
+        stand_in = stands_in_for(monkeypatch, ros_pkg.ros_bridge, "ros_action")
         with pytest.raises(TypeError):
             stand_in(action="echo", topic="/odom", count=1, timeout=5.0)
 
@@ -155,16 +155,16 @@ class TestTheStandInHasTheShapeOfTheTransport:
         Taking the previous one's own ``(*args, **kwargs)`` would make every
         later probe accept anything, and record it under ``kwargs``.
         """
-        first = stands_in_for(monkeypatch, mesh_pkg.rtps_robot, "rtps_action")
-        second = stands_in_for(monkeypatch, mesh_pkg.rtps_robot, "rtps_action")
+        first = stands_in_for(monkeypatch, ros_pkg.rtps_robot, "rtps_action")
+        second = stands_in_for(monkeypatch, ros_pkg.rtps_robot, "rtps_action")
         assert second.target is first.target is rtps_action
         with pytest.raises(TypeError):
             second(action="advertise", topic="/cmd_vel", qos=1, gate=lambda _target: None)
 
     def test_the_wire_view_drops_the_operator_decision(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A gate is a fresh closure per call, and nothing in it reaches the robot."""
-        stand_in = stands_in_for(monkeypatch, mesh_pkg.rtps_robot, "rtps_action")
-        robot = mesh_pkg.RtpsRobot("rover", "/cmd_vel")
+        stand_in = stands_in_for(monkeypatch, ros_pkg.rtps_robot, "rtps_action")
+        robot = ros_pkg.RtpsRobot("rover", "/cmd_vel")
         assert robot.drive(linear=0.5)["status"] == "success"
         (recorded,) = stand_in.calls
         assert OFF_THE_WIRE & set(recorded), "the gate is part of what the bridge forwards"
