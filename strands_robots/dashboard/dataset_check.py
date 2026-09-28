@@ -29,7 +29,7 @@ OUTSIDE_DATASET_HOME = {
 #: reads an absolute, ``./``-prefixed or slash-less id as a literal directory, so those shapes would
 #: turn a dataset name into a write path; each segment starts with an alphanumeric, which also rules
 #: out ``.`` and ``..``.
-_DATASET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+_DATASET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
 def dataset_id_is_a_path(dataset: str) -> bool:
