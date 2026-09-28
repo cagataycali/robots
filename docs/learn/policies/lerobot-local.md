@@ -98,6 +98,19 @@ result = sim.run_policy(
 print(result["status"])
 ```
 
+On a real arm the same bag goes through the robot's agent tool. `Robot("so101",
+mode="real", port=...)` exposes `execute` and `start` with a `policy_config`
+object, so an agent names the checkpoint the way it does in sim; the operator's
+approval prompt names it too (`policy lerobot_local built in this process, no
+server, checkpoint pretrained_name_or_path lerobot/smolvla_base`). Host and port
+are not allowed inside the bag - they are `policy_host` and `policy_port`, so the
+prompt describes the server the arm will actually dial.
+
+```json title="the tool input an agent sends"
+{"action": "execute", "instruction": "pick up the cube", "policy_provider": "lerobot_local",
+ "policy_config": {"pretrained_name_or_path": "lerobot/smolvla_base", "embodiment": "so101_real"}}
+```
+
 ## Limits
 
 - Torch and the model share this process. One interpreter cannot hold `lerobot` (`transformers>=5`) and NVIDIA's Isaac-GR00T (`transformers==4.57.3`); for GR00T in process use `policy_type="groot"` here, or the [groot](groot.md) service.
