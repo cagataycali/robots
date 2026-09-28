@@ -372,7 +372,7 @@ class TestEachConstructionFormHandlesAMisspelledKnobAsDocumented:
         assert KimodoPolicy(config={"diffusion_steps": 25}).config.diffusion_steps == 25
 
     def test_the_page_no_longer_claims_a_typo_is_never_ignored(self) -> None:
-        page = _DOCS_ROOT / "reference" / "policies" / "kimodo.md"
+        page = _DOCS_ROOT / "learn" / "policies" / "kimodo.md"
 
         assert "instead of being silently ignored" not in page.read_text(encoding="utf-8"), (
             f"{page.name} claims a misspelled knob is never silently ignored, "
@@ -380,7 +380,7 @@ class TestEachConstructionFormHandlesAMisspelledKnobAsDocumented:
         )
 
     def test_the_page_names_the_reader_that_drops_the_key(self) -> None:
-        page = _DOCS_ROOT / "reference" / "policies" / "kimodo.md"
+        page = _DOCS_ROOT / "learn" / "policies" / "kimodo.md"
 
         assert "KimodoConfig.from_dict" in page.read_text(encoding="utf-8"), (
             f"{page.name} does not name the reader that drops an unrecognised key"
