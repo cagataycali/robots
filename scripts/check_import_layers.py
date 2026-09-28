@@ -98,6 +98,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "_mesh_switch",
             "_motion_grants",
             "_mujoco_gl",
+            "_pacing",
             "_path_validation",
             "_serial_discovery",
             "audit",

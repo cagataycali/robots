@@ -355,6 +355,25 @@ class TestTheContract:
         ]
         assert offenders == []
 
+    def test_no_driver_imports_the_mesh(self, graph: Any) -> None:
+        """Drivers and the mesh are siblings: a driver loads no mesh module.
+
+        Loop pacing was the one shared need, and reaching it through
+        ``strands_robots.mesh`` ran the mesh package's ``__init__`` - a dozen
+        session, security and ROS-bridge modules - for every driver import.
+        Graded across all three import kinds, since a deferred import is the
+        same dependency on first call.
+        """
+        offenders = sorted(
+            (importer, target)
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            if mod.member_of(importer) == "drivers"
+            for target in targets
+            if mod.member_of(target) == "mesh"
+        )
+        assert offenders == []
+
     def test_no_unitree_driver_reaches_into_the_g1_verb_package(self, graph: Any) -> None:
         """The DDS transport three drivers share is theirs, not a verb package's.
 

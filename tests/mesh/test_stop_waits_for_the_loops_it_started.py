@@ -3,7 +3,7 @@
 :meth:`~strands_robots.mesh.core.Mesh.start` launches nine background loops
 (heartbeat, state, and the seven :class:`~strands_robots.mesh.sensors.SensorLoopsMixin`
 loops), collecting them on a roster; ten with camera publishing enabled. Each is
-paced by a :class:`~strands_robots.mesh.pacing.Ticker` on a shared stop event, so
+paced by a :class:`~strands_robots._pacing.Ticker` on a shared stop event, so
 each notices a stop within 10ms of the *next* tick boundary - but a tick already
 inside ``publish()`` when the flag flipped is not interrupted by it.
 

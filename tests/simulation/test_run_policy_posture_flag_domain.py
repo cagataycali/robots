@@ -57,7 +57,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-import strands_robots.mesh.pacing as pacing_mod
+import strands_robots._pacing as pacing_mod
 import strands_robots.tools.run_policy as rp_mod
 from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import boolean_flag_error
