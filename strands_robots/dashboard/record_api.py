@@ -84,6 +84,22 @@ def _contained_dataset_dir(dataset: str) -> str | None:
     return candidate
 
 
+def _contained_dataset_id(dataset: str) -> str | None:
+    """The id the recorder receives: the contained directory, read back relative to the home.
+
+    Same text as the body field for every id that passed :func:`dataset_id_error`, but derived
+    from the directory :func:`_contained_dataset_dir` already checked rather than from the request
+    string, so what is forwarded to ``DatasetRecorder.create`` is the checked value itself.
+    """
+    from strands_robots.dataset_source import _lerobot_home
+
+    contained = _contained_dataset_dir(dataset)
+    if contained is None:
+        return None
+    home = os.path.realpath(os.path.expanduser(str(_lerobot_home())))
+    return os.path.relpath(contained, home).replace(os.sep, "/")
+
+
 def _under_dataset_home(dataset: str) -> bool:
     """Whether the directory this id resolves to sits under ``$HF_LEROBOT_HOME`` (the home itself counts)."""
     return not (dataset or "").strip() or _contained_dataset_dir(dataset) is not None
@@ -274,6 +290,11 @@ class RecordController:
             bad_id = dataset_id_error(dataset)
             if bad_id:
                 raise HTTPException(422, bad_id)
+            # From here on the id is the checked one, not the body string.
+            contained_id = _contained_dataset_id(dataset)
+            if contained_id is None:
+                raise HTTPException(400, OUTSIDE_DATASET_HOME)
+            dataset = contained_id
             bad = record_target_verdict(dataset, **_target_facts(dataset))
             if bad:
                 raise HTTPException(409 if dataset.strip() else 422, bad)
