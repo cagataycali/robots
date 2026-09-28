@@ -16,11 +16,14 @@ were that one, both measured on ``982013eeb``:
    list that have no lerobot type either. A reader could not tell the ``?`` rows
    from a registry defect, nor find the 11 missing arms at all.
 
-2. ``docs/getting-started/robot-factory.md`` taught the join with a worked
-   result, ``coverage["panda"]`` as the empty tuple that is the driver gap. The
-   Franka driver shipped in 0.5.2 and ``coverage["panda"]`` reads
-   ``('strands',)``, so the page's own example of a sim-only robot is one of the
-   robots its native driver can build.
+2. The old ``docs/getting-started/robot-factory.md`` taught the join with a
+   worked result, ``coverage["panda"]`` as the empty tuple that is the driver
+   gap. The Franka driver shipped in 0.5.2 and ``coverage["panda"]`` reads
+   ``('strands',)``, so the page's own example of a sim-only robot was one of the
+   robots its native driver can build. The join is taught on
+   ``docs/learn/hardware/drivers.md`` now, as
+   ``print(list_driver_coverage()["so101"])   # ('lerobot', 'strands')`` lines
+   whose trailing comment is the stated result.
 
 Both cells read the surface and compare it with the live join, so the numbers
 stay derived: a driver registered tomorrow widens both sides at once.
@@ -41,12 +44,14 @@ from strands_robots.drivers import list_driver_coverage
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLE = _REPO_ROOT / "examples" / "registry" / "lerobot_hardware_catalog.py"
-_PAGE = _REPO_ROOT / "docs" / "getting-started" / "robot-factory.md"
+_PAGE = _REPO_ROOT / "docs" / "learn" / "hardware" / "drivers.md"
 
-#: The worked result the page states: the expression line, then its output as a
-#: comment. Read as one claim because neither half means anything alone.
-_DOCUMENTED_CLAIM = re.compile(r"^(?P<expression>coverage\[.*\])\n#\s*(?P<result>\(.*\))\s*$", re.M)
-_CLAIMED_ROBOT = re.compile(r'coverage\["([a-z0-9_]+)"\]')
+#: The worked result the page states: a ``list_driver_coverage()[robot]`` read
+#: with its output as the trailing comment. Read as one claim because neither
+#: half means anything alone.
+_DOCUMENTED_CLAIM = re.compile(
+    r'^.*list_driver_coverage\(\)\["(?P<robot>[a-z0-9_]+)"\].*#\s*(?P<result>\(.*\))\s*$', re.M
+)
 
 #: Floors, so a reflow or a rename reports a shrunken sweep rather than a pass.
 _MINIMUM_CATALOGUED = 30
@@ -90,13 +95,10 @@ def _printed_catalogue() -> dict[str, set[str]]:
 
 
 def documented_claims(text: str) -> list[tuple[str, tuple[str, ...]]]:
-    """The ``coverage[robot]`` results ``text`` states, as (robot, tuple) pairs."""
-    match = _DOCUMENTED_CLAIM.search(text)
-    assert match is not None, "the page states no worked coverage result"
-    robots = _CLAIMED_ROBOT.findall(match.group("expression"))
-    results = ast.literal_eval(match.group("result"))
-    assert len(robots) == len(results), f"{len(robots)} robots against {len(results)} results"
-    return list(zip(robots, results, strict=True))
+    """The ``list_driver_coverage()[robot]`` results ``text`` states, as (robot, tuple) pairs."""
+    claims = [(m.group("robot"), ast.literal_eval(m.group("result"))) for m in _DOCUMENTED_CLAIM.finditer(text)]
+    assert claims, "the page states no worked coverage result"
+    return claims
 
 
 class TestTheCatalogPublishesTheJoin:
@@ -171,7 +173,10 @@ class TestTheGradersAreLoadBearing:
 
     def test_a_stale_documented_result_is_reported(self) -> None:
         """A tuple the join contradicts is caught; the ones it agrees with are not."""
-        claims = documented_claims("coverage[\"so101\"], coverage[\"panda\"]\n# (('lerobot', 'strands'), ())\n")
+        claims = documented_claims(
+            "print(list_driver_coverage()[\"so101\"])   # ('lerobot', 'strands')\n"
+            'print(list_driver_coverage()["panda"])   # ()\n'
+        )
         live = list_driver_coverage()
         assert [robot for robot, result in claims if live[robot] != result] == ["panda"]
 
