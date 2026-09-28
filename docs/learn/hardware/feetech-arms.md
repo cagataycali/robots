@@ -45,7 +45,7 @@ The native driver's six motors, in wire order:
 `serial_tool` reads and pings without approval; only `send`, `send_read`, `feetech_position` and `feetech_velocity` are gated.
 
 ```python title="sketch"
-from strands_robots.tools import serial_tool
+from strands_robots import serial_tool
 
 serial_tool(action="list_ports")
 serial_tool(action="feetech_ping", port="/dev/ttyACM0", motor_id=1)

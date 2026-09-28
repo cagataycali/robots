@@ -108,8 +108,32 @@ def table() -> str:
     return "\n".join(rows)
 
 
+def _module_constants(tree: ast.Module, depth: int = 0) -> dict[str, ast.expr]:
+    """Module-level ``NAME = <literal>`` bindings, following ``from x import NAME`` one hop into the package."""
+    out: dict[str, ast.expr] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign | ast.AnnAssign) and isinstance(node.value, ast.Constant):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            out.update({t.id: node.value for t in targets if isinstance(t, ast.Name)})
+        elif isinstance(node, ast.ImportFrom) and node.module and depth == 0 and node.level == 0:
+            path = _PKG.parent / Path(*node.module.split("."))
+            path = path.with_suffix(".py") if path.with_suffix(".py").exists() else path / "__init__.py"
+            if not path.exists():
+                continue
+            imported = _module_constants(ast.parse(path.read_text(encoding="utf-8")), depth + 1)
+            for alias in node.names:
+                if alias.name in imported:
+                    out[alias.asname or alias.name] = imported[alias.name]
+    return out
+
+
 def _class_init(module: str, cls: str) -> tuple[ast.FunctionDef | None, list[str]]:
-    """Locate ``cls.__init__`` under ``module`` (a package dir or a .py file)."""
+    """Locate ``cls.__init__`` under ``module`` (a package dir or a .py file).
+
+    A keyword default that is a bare name (``timeout=DEFAULT_TIMEOUT``) is replaced by
+    the literal the module binds that name to, so the table states the value, not
+    the constant's name.
+    """
     root = _PKG.parent / Path(*module.split("."))
     files = [root.with_suffix(".py")] if root.with_suffix(".py").exists() else sorted(root.rglob("*.py"))
     for path in files:
@@ -119,9 +143,17 @@ def _class_init(module: str, cls: str) -> tuple[ast.FunctionDef | None, list[str
                 bases = [ast.unparse(b) for b in node.bases]
                 for item in node.body:
                     if isinstance(item, ast.FunctionDef) and item.name == "__init__":
+                        constants = _module_constants(tree)
+                        args = item.args
+                        args.defaults = [_resolved(d, constants) for d in args.defaults]
+                        args.kw_defaults = [None if d is None else _resolved(d, constants) for d in args.kw_defaults]
                         return item, bases
                 return None, bases
     return None, []
+
+
+def _resolved(default: ast.expr, constants: dict[str, ast.expr]) -> ast.expr:
+    return constants.get(default.id, default) if isinstance(default, ast.Name) else default
 
 
 def kwargs_table(name: str) -> str:

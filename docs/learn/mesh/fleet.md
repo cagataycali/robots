@@ -46,7 +46,7 @@ Three allowlists guard what an `execute` may name: `STRANDS_MESH_POLICY_TYPE_ALL
 
 ```python title="sketch"
 from strands import Agent
-from strands_robots.tools import robot_mesh
+from strands_robots import robot_mesh
 
 agent = Agent(tools=[robot_mesh])
 agent("Which robots are online? Ask arm-b to wave for two seconds with the mock policy.")

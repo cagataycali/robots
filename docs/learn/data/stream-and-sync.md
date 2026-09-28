@@ -7,7 +7,7 @@ Both directions need the `[lerobot]` extra (lerobot 0.6.1 or newer for bucket st
 ```python title="sketch"
 from strands_robots.streaming_dataset import stream_dataset
 
-reader = stream_dataset("you/so101_reach", episodes=[0, 1], shuffle=False)
+reader = stream_dataset("you/so101_reach", episodes=[0, 1], buffer_size=1)   # buffer_size=1 is what delivers capture order; shuffle=False alone still reorders through the reservoir
 for frame in reader:                            # dicts: observation.state, action, observation.images.front, timestamp
     print(frame["action"])
     break

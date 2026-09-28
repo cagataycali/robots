@@ -4,7 +4,7 @@ At the end of this page you know the three ways an agent or a `Robot` reaches a 
 
 ```python title="sketch"
 from strands import Agent
-from strands_robots.tools import use_ros, use_rosbridge, use_rtps
+from strands_robots import use_ros, use_rosbridge, use_rtps
 
 agent = Agent(tools=[use_rtps])                  # no ROS install needed on this machine
 agent("List the topics on the graph, then echo /odom once.")

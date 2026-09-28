@@ -14,6 +14,8 @@
 
 ## Engine contract
 
+`stop_policy` returns a `json` block with `robot`, `was_running` and `exited`; `exited` is null when there was no worker to join, and an empty name means the only rollout in flight. The MuJoCo engine waits 1 s (`MuJoCoSimulation._POLICY_STOP_JOIN_TIMEOUT`) for the worker to exit before reporting.
+
 ::: strands_robots.simulation.base.SimEngine
     options:
       heading_level: 3

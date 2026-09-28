@@ -30,6 +30,8 @@ policy = create_policy("lerobot/act_so101", embodiment="so101")   # same thing
 
 {{providers:kwargs:lerobot_local}}
 
+The remedy for inert normalization has two halves: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and `state_units` / `action_units` (`degrees` or `radians`) say which unit they were recorded in. `so100` and `so101` declare `state_units='degrees'`, which is correct only against degree-recorded stats; a checkpoint whose stats are in radians needs the unit half beside the stats half.
+
 The registry marks `pretrained_name_or_path` as required for `run_policy`. `actions_per_step` left at `1` is auto-raised to the model's trained `n_action_steps`; pass a value above 1 to pin it. `cache_model=True` keeps loaded weights across policies in this process; `clear_model_cache()` and `list_cached_models()` in `strands_robots.policies.lerobot_local` manage that cache.
 
 ## Embodiments

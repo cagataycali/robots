@@ -46,7 +46,7 @@ The real robot tool exposes `list_cameras` and `render` next to `execute`. Neith
 `lerobot_camera` is the agent-facing tool for the camera side of a rig, independent of any robot. It needs `[lerobot]`:
 
 ```python title="sketch"
-from strands_robots.tools import lerobot_camera
+from strands_robots import lerobot_camera
 
 lerobot_camera(action="discover")                                       # OpenCV and RealSense devices
 lerobot_camera(action="test", camera_id=0, fps=30)                      # frame rate and latency
