@@ -1,6 +1,6 @@
 """A bare Microduck weight name resolves to Pollen's Hub repository.
 
-``docs/reference/policies/microduck.md`` said the shipped weights "ship in Pollen's
+``docs/learn/policies/microduck.md`` said the shipped weights "ship in Pollen's
 ``microduck`` repository under ``policies/*.onnx``", and every example under
 ``examples/microduck/`` defaulted ``--onnx`` to ``../microduck/policies/...``.
 Pollen removed that directory upstream ("policies/ leaves the repository"); the
@@ -40,7 +40,7 @@ from strands_robots.policies.microduck import (
 from strands_robots.policies.microduck import policy as policy_module
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_PAGE = _REPO_ROOT / "docs" / "reference" / "policies" / "microduck.md"
+_PAGE = _REPO_ROOT / "docs" / "learn" / "policies" / "microduck.md"
 _EXAMPLES = sorted((_REPO_ROOT / "examples" / "microduck").glob("*.py"))
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
@@ -202,9 +202,7 @@ class TestNothingShippedSendsAReaderToTheGoneLayout:
     def test_the_docs_page_names_the_hub_repository_and_not_the_old_directory(self) -> None:
         text = _PAGE.read_text(encoding="utf-8")
         assert MICRODUCK_POLICIES_HF_REPO in text
-        assert not _GONE.search(text), (
-            "docs/reference/policies/microduck.md still points at Pollen's removed policies/ dir"
-        )
+        assert not _GONE.search(text), "docs/learn/policies/microduck.md still points at Pollen's removed policies/ dir"
 
     @pytest.mark.parametrize("example", _EXAMPLES, ids=lambda p: p.name)
     def test_no_example_defaults_to_the_old_directory(self, example: Path) -> None:
