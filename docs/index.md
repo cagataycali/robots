@@ -15,8 +15,9 @@ template_class: sr-home
 <span class="sr-install">pip install "strands-robots[sim-mujoco]"</span>
 </div>
 </div>
-<div markdown>
+<div class="sr-hero__stage" markdown>
 <robot-viewer name="so101" autoload></robot-viewer>
+<label class="sr-pick">Try another robot <select data-robot-pick aria-label="Choose the robot shown in the viewer"><option value="so101">so101</option></select></label>
 </div>
 </div>
 
