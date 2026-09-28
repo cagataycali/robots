@@ -29,6 +29,7 @@ import contextlib
 import inspect
 import logging
 import re
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ from fastapi.staticfiles import StaticFiles
 
 from strands_robots.dashboard import (
     access,
+    build_info,
     fleet,
     log_redaction,
     routes_agent,
@@ -116,7 +118,15 @@ def create_app() -> FastAPI:
     )
 
     @app.exception_handler(HTTPException)
-    async def _http_error(_: Request, exc: HTTPException) -> JSONResponse:
+    async def _http_error(request: Request, exc: HTTPException) -> JSONResponse:
+        if exc.status_code == 401:
+            # A refused credential is a fact about the network the dashboard sits on;
+            # /api/health reports the tally so the page can say "someone is knocking".
+            tally = getattr(request.app.state, "refusals", None)
+            if tally is not None:
+                tally.record(
+                    client=(request.client.host if request.client else "?"), path=request.url.path, now=time.time()
+                )
         # One shape for every refusal so the UI has one place to render them.
         return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
 
@@ -130,8 +140,25 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     @app.get("/api/health")
-    async def health() -> dict[str, Any]:
-        return {"ok": True, "version": _version(), "service": "strands-robots dashboard"}
+    async def health(request: Request) -> dict[str, Any]:
+        # Public by design (the LAN hint and the login screen poll it before any sign-in), so the
+        # refusal block names WHO is being refused only to a caller who is signed in.
+        now = time.time()
+        out: dict[str, Any] = {
+            "ok": True,
+            "status": "ok",
+            "version": _version(),
+            "service": "strands-robots dashboard",
+            "build": build_info.build_info(),
+            "t": now,
+        }
+        tally = getattr(app.state, "refusals", None)
+        if tally is not None:
+            trusted = access.session_claims(request) is not None or access.open_posture(request)
+            summary = tally.summary(now, detailed=trusted)
+            if summary is not None:
+                out["refused_handshakes"] = summary
+        return out
 
     app.state.startup_hooks = []
     app.state.shutdown_hooks = []
