@@ -7915,7 +7915,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         try:
             camera.set_vertical_aperture(vertical_aperture_mm)
         except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+            pass  # best effort: some Camera builds derive it from the render aspect and expose no setter
         camera.set_focal_length(focal_length_mm)
 
         # Enable the depth annotator on the RTX render product. Isaac
@@ -8355,7 +8355,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         try:
             articulation._strands_actual_prim_path = prim_path  # type: ignore[attr-defined]
         except (AttributeError, TypeError):
-            pass
+            pass  # best effort: a slotted or proxied articulation cannot carry the note; add_robot falls back to prim_path
 
         # Step 4: position. The USD's authored pose is the default; only
         # call set_world_pose when the caller actually wanted a non-default
@@ -8447,7 +8447,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 URDFImporterConfig,
             )
         except ImportError:
-            URDFImporter = URDFImporterConfig = None  # noqa: N806
+            # Not a 6.0 build, or a partial one that bound the importer and
+            # then failed on its config: the importer name is the gate below,
+            # so clearing it alone sends both cases to the legacy ``_urdf``
+            # interfaces (the config name is still None from the line above).
+            URDFImporter = None  # noqa: N806
 
         if URDFImporter is not None and URDFImporterConfig is not None:
             # Isaac Sim 6.0 high-level API: build a config, point it at the URDF,
@@ -8485,7 +8489,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 try:
                     importer.config = cfg
                 except (AttributeError, TypeError):
-                    pass
+                    pass  # best effort: a read-only ``config`` means the constructor already took it
             # Isaac Sim 6.0 ``import_urdf()`` converts URDF -> USD on disk and
             # returns the USD path (NOT a live-stage prim path). Reference that
             # USD onto the live stage at our prim_path, then wrap that prim as an
@@ -9813,9 +9817,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                             try:
                                 r.articulation.set_joint_velocities(np.zeros_like(qa))
                             except (RuntimeError, ValueError, AttributeError, TypeError):
-                                pass
+                                pass  # best effort: an articulation without a velocity view still holds its pose
                     except (RuntimeError, ValueError, AttributeError, TypeError):
-                        pass
+                        pass  # best effort: a view that went stale under us is rebuilt by the next reset
             self._render_world()
 
     def describe(self) -> dict[str, Any]:

@@ -83,6 +83,7 @@ if TYPE_CHECKING:
 
 from strands_robots.simulation.models import TrajectoryStep
 from strands_robots.simulation.safe_output import validate_output_path, video_sandbox_args
+from strands_robots.simulation.seeds import MAX_EVAL_SEED, randomization_seed_error
 from strands_robots.simulation.video_config import VideoConfig
 
 logger = logging.getLogger(__name__)
@@ -144,12 +145,6 @@ def set_eval_seed(seed: int) -> None:
     installs that don't have torch (e.g. ``policy_provider="mock"``
     smoke tests).
     """
-    # Local import: ``simulation.base`` imports this module at module level, so
-    # reaching the
-    # shared domain from here has to stay deferred - the same convention this
-    # module already uses for simulation.benchmark / .recording / .predicates.
-    from strands_robots.simulation.base import MAX_EVAL_SEED, randomization_seed_error
-
     # This is public API (exported via ``__all__``) and documented for standalone
     # callers, so the bound is enforced where it is owned rather than only at the
     # facades one layer up: NumPy's own "Seed must be between 0 and 2**32 - 1"
@@ -170,7 +165,7 @@ def set_eval_seed(seed: int) -> None:
 
         _np.random.seed(seed)
     except ImportError:
-        pass
+        pass  # optional: no numpy, nothing of it to seed
     try:
         import torch as _torch
 
@@ -180,7 +175,7 @@ def set_eval_seed(seed: int) -> None:
         _torch.backends.cudnn.deterministic = True
         _torch.backends.cudnn.benchmark = False
     except ImportError:
-        pass
+        pass  # optional: no torch, nothing of it to seed
 
 
 # Hook signature: called every control step after send_action.
@@ -1969,12 +1964,6 @@ class PolicyRunner:
         # structured envelope to read a refusal from. Same shared rule as
         # SimEngine._validate_seed, raised rather than returned because raising
         # is this layer's contract.
-        # Local import: ``simulation.base`` imports PolicyRunner at module level, so
-        # reaching the shared domain from here has to stay deferred - the
-        # same convention this module already uses for
-        # simulation.benchmark / simulation.recording / simulation.predicates.
-        from strands_robots.simulation.base import MAX_EVAL_SEED, randomization_seed_error
-
         if seed_error := randomization_seed_error(seed, "PolicyRunner.run", max_seed=MAX_EVAL_SEED):
             raise ValueError(seed_error)
         # Same shared domain the facade one layer up enforces, raised rather
@@ -3846,12 +3835,6 @@ class PolicyRunner:
         """
         # Refuse before any frame reaches the engine's open recording.
         self._reject_recording_rate_mismatch(control_frequency, "PolicyRunner.evaluate")
-        # Local import: ``simulation.base`` imports PolicyRunner at module level, so
-        # reaching the shared domain from here has to stay deferred - the
-        # same convention this module already uses for
-        # simulation.benchmark / simulation.recording / simulation.predicates.
-        from strands_robots.simulation.base import MAX_EVAL_SEED, randomization_seed_error
-
         if seed_error := randomization_seed_error(seed, "PolicyRunner.evaluate", max_seed=MAX_EVAL_SEED):
             raise ValueError(seed_error)
         # Same shared domain the facade one layer up enforces, raised rather

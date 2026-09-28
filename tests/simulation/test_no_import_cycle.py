@@ -19,11 +19,11 @@ That import is gone: ``VideoConfig`` moved to ``simulation.video_config``, below
 both modules, and ``PolicyRunner`` is reached with a deferred import inside the
 methods that construct one. The module-level symbol surface is therefore frozen
 at empty, and anything ``base.py`` newly needs from ``policy_runner`` is reached
-with a deferred import instead. That is the convention both directions of this
-pair use: ``policy_runner`` defers ``randomization_seed_error`` and
-``MAX_EVAL_SEED`` from ``base`` at three sites. A deferred import cannot
-reintroduce the runtime cycle the first test forbids, because that test excludes
-function-local imports from the graph by construction.
+with a deferred import instead (``policy_runner`` still reaches ``SimEngine``
+that way for one structural check; its seed-domain imports moved down to
+``simulation.seeds`` with the type). A deferred import cannot reintroduce the
+runtime cycle the first test forbids, because that test excludes function-local
+imports from the graph by construction.
 """
 
 from __future__ import annotations

@@ -28,6 +28,22 @@ from strands_robots._mujoco_gl import (
 
 logger = logging.getLogger(__name__)
 
+# The surface the rest of the MuJoCo package imports from this module. The
+# underscore names are package-internal on purpose: the facade and its mixins
+# source them here so the low-level module stays the single owner, and listing
+# them is what records that they are read elsewhere.
+__all__ = [
+    "_NO_WORLD_MSG",
+    "_can_render",
+    "_ensure_mujoco",
+    "_mujoco_viewer",
+    "capture_stderr_fd",
+    "filter_mujoco_attach_noise",
+    "mj_name_to_id",
+    "pose_qpos_components",
+    "qpos_ceiling_error",
+]
+
 # Canonical "no live world" error message shared by every world-touching
 # MuJoCo facade/mixin method. Defined in this low-level module so the
 # Simulation facade and its mixins (physics, randomization, rendering,
@@ -134,7 +150,7 @@ def _ensure_mujoco() -> "Any":
 
             _mujoco_viewer = viewer
         except ImportError:
-            pass
+            pass  # best effort: the passive viewer is optional; launch_viewer reports its absence
     return _mujoco
 
 
@@ -381,13 +397,13 @@ def _can_render() -> bool:
     # mj.Renderer() will use GLFW which triggers a C-level abort (SIGABRT).
     # Skip the probe entirely - rendering is impossible anyway.
     if _is_headless() and not os.environ.get("MUJOCO_GL"):
-        _rendering_available = False
         logger.warning(
             "Headless environment without EGL/OSMesa - rendering disabled. "
             "Physics and joint observations will still work. "
             "Install libegl1-mesa-dev or libosmesa6-dev for camera rendering."
         )
-        return False
+        _rendering_available = False
+        return _rendering_available
 
     # Probe rendering in a subprocess to survive C-level aborts (SIGABRT).
     # On some CI environments, libEGL.so.1 is loadable but non-functional -

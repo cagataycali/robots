@@ -6,7 +6,7 @@ import logging
 import os
 import threading
 import weakref
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -450,14 +450,17 @@ class RenderingMixin:
         _lock: Any  # threading.RLock from Simulation
 
         # Provided by RandomizationMixin (set_obs_noise); render() applies
-        # camera jitter through it. Stub so mypy accepts the cross-mixin call.
-        def _maybe_jitter_frame(self, frame: Any) -> Any: ...
+        # camera jitter through it. Declared as an attribute rather than a stub
+        # method so mypy accepts the cross-mixin call while the class body
+        # defines no attribute of that name: this mixin precedes
+        # RandomizationMixin in MuJoCoSimEngine's bases, and a stub method here
+        # would read as the definition that wins the MRO.
+        _maybe_jitter_frame: Callable[[Any], Any]
 
         # Provided by ManipulationMixin (attach_bodies mode="kinematic");
-        # _apply_sim_action re-pins carried bodies after each substep. Stub so
-        # mypy accepts the cross-mixin call.
-        def _apply_kinematic_attachments(self) -> None:
-            """Provided by ``ManipulationMixin``; declared here for type-checkers."""
+        # _apply_sim_action re-pins carried bodies after each substep. Declared
+        # for the same reason as above.
+        _apply_kinematic_attachments: Callable[[], None]
 
     def _validate_render_dims(self, width: int, height: int, context: str) -> dict[str, Any] | None:
         """reject non-positive render dims; convert MuJoCo's framebuffer
@@ -566,7 +569,7 @@ class RenderingMixin:
                 try:
                     renderers[oldest_key].close()
                 except Exception:
-                    pass
+                    logger.debug("renderer %r did not close cleanly on eviction", oldest_key, exc_info=True)
                 del renderers[oldest_key]
             renderer = mj.Renderer(self._world._model, height=height, width=width)
             # Registered after the build: mujoco's EGL display hook exists by

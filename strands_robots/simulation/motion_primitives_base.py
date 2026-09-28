@@ -117,6 +117,20 @@ def _quat_angle_error(target_wxyz: Any, actual_wxyz: Any) -> float:
     return float(2.0 * math.acos(min(1.0, dot)))
 
 
+# The surface the backend mixins import from this module. The underscore names
+# are package-internal on purpose: the Isaac mixin reuses the same hints,
+# restart budget and helpers so the two backends refuse and converge alike.
+__all__ = [
+    "JOINT_LIMIT_MARGIN_FRACTION",
+    "MotionPrimitivesCore",
+    "OBSTRUCTION_MAX_CONTACTS",
+    "_GRIPPER_HINTS",
+    "_IK_RESTART_SEEDS",
+    "_WRIST_HINTS",
+    "_err",
+    "_quat_angle_error",
+]
+
 OBSTRUCTION_MAX_CONTACTS = 3
 """Contacts named in a not-reached ``move_to`` refusal; the total is still reported."""
 

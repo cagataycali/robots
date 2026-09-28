@@ -5824,7 +5824,7 @@ class MuJoCoSimEngine(
                 try:
                     r.close()
                 except Exception:
-                    pass
+                    logger.debug("renderer did not close cleanly on teardown", exc_info=True)
             renderers.clear()
         # Forget the model marker so the next _get_renderer() rebuilds fresh.
         if hasattr(tls, "model"):
@@ -5947,7 +5947,7 @@ class MuJoCoSimEngine(
             try:
                 self._viewer_handle.close()
             except Exception:
-                pass
+                logger.debug("passive viewer did not close cleanly", exc_info=True)
             self._viewer_handle = None
 
     def close_viewer(self) -> dict[str, Any]:
