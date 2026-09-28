@@ -114,6 +114,13 @@
 .md-typeset code { border-radius: 4px; }
 .md-typeset pre > code { border-radius: 8px; }
 .md-typeset table:not([class]) { font-size: 0.72rem; }
+.md-typeset .md-typeset__scrollwrap { max-width: 100%; }
+/* Generated tables scroll sideways inside their wrapper; an identifier is never broken mid-word to fit a phone. */
+.md-typeset table:not([class]) code { white-space: nowrap; word-break: normal; }
+@media (max-width: 60em) {
+  .md-typeset table:not([class]) th, .md-typeset table:not([class]) td { min-width: 6rem; }
+  .md-typeset table:not([class]) th:last-child, .md-typeset table:not([class]) td:last-child { min-width: 14rem; }
+}
 .md-typeset table:not([class]) th { font-weight: 600; }
 
 /* Cards */
@@ -208,6 +215,10 @@
   cursor: pointer;
 }
 .sr-filter button[aria-pressed="true"], .sr-filter-btn[aria-pressed="true"] { border-color: var(--sr-accent); color: var(--sr-accent); }
+@media (pointer: coarse) {
+  .sr-filter button, .sr-filter-btn { min-height: 40px; padding: 0.45rem 0.9rem; }
+  .sr-btn { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+}
 
 /* Landing */
 .sr-home > h1:first-of-type { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
@@ -263,9 +274,25 @@
 .sr-proof span { color: var(--sr-muted); font-size: 0.72rem; }
 .sr-home .md-typeset h2 { margin-top: 2.6rem; }
 @media (max-width: 60em) {
-  .sr-hero { grid-template-columns: 1fr; gap: 1.5rem; }
-  .sr-hero__title { font-size: 2.2rem; }
-  .sr-proof { grid-template-columns: 1fr; }
+  .sr-hero { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; margin: 1rem 0 2rem; }
+  .sr-hero > * { min-width: 0; }
+  .sr-hero__title { font-size: clamp(1.9rem, 8.5vw, 2.6rem); overflow-wrap: anywhere; }
+  .sr-hero__lead { font-size: 0.95rem; }
+}
+@media (max-width: 40em) {
+  .sr-proof { grid-template-columns: 1fr; gap: 0.8rem; margin-bottom: 2rem; }
+  .sr-proof strong { font-size: 1.5rem; }
+  .sr-hero__actions .sr-btn { flex: 1 1 0; text-align: center; }
+  .sr-install { flex: 1 1 100%; max-width: 100%; font-size: 0.7rem; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .sr-install::-webkit-scrollbar { display: none; }
+  .sr-grid { grid-template-columns: minmax(0, 1fr); gap: 0.8rem; }
+  .sr-robots { grid-template-columns: minmax(0, 1fr); }
+  .md-typeset h1 { font-size: 1.8em; overflow-wrap: anywhere; }
+  .md-typeset h2 { font-size: 1.3em; margin-top: 1.8em; }
+}
+@media (min-width: 40.0625em) and (max-width: 60em) {
+  .sr-robots { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sr-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* Viewer chrome */
@@ -282,13 +309,24 @@ robot-viewer {
   touch-action: none;
 }
 robot-viewer[fullscreen] { aspect-ratio: auto; height: 100%; border-radius: 0; margin: 0; }
+robot-viewer[fullscreen-fallback] { position: fixed; inset: 0; z-index: 1000; aspect-ratio: auto; width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; border: 0; margin: 0; }
+body.sr-viewer-fullscreen { overflow: hidden; }
 .sr-hero robot-viewer { margin: 0; aspect-ratio: 1 / 1; }
+@media (max-width: 40em) {
+  robot-viewer { aspect-ratio: 4 / 5; }
+  .sr-hero robot-viewer { aspect-ratio: 1 / 1; }
+}
 
 /* Side-by-side fences */
-.sr-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-@media (max-width: 60em) { .sr-pair { grid-template-columns: 1fr; } }
+.sr-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+.sr-pair > * { min-width: 0; }
+@media (max-width: 60em) { .sr-pair { grid-template-columns: minmax(0, 1fr); } }
 
 /* Images lazy and bounded */
 .md-typeset img { max-width: 100%; border-radius: 8px; }
 
-@media (prefers-reduced-motion: reduce) { .sr-card, .sr-robot { transition: none; } .sr-card:hover, .sr-robot:hover { transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .sr-card, .sr-robot, .sr-btn { transition: none; }
+  .sr-card:hover, .sr-robot:hover { transform: none; }
+  html { scroll-behavior: auto; }
+}
