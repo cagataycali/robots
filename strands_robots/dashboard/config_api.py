@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sys
+import threading
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,11 @@ from strands_robots.dashboard.argv_exposure import argv_token_notice
 logger = logging.getLogger(__name__)
 
 ENV_FILE = Path(os.getenv("DASHBOARD_ENV_FILE", ".env")).expanduser()
+
+#: One writer at a time for the file that holds the operator's credentials. ``apply`` runs
+#: in a worker thread per request, so two tabs saving at once would otherwise each
+#: read-modify-write their own copy and the loser's keys would silently revert.
+_ENV_FILE_LOCK = threading.Lock()
 
 SECRET_RX = re.compile(r"(KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|BEARER|API_?KEY)", re.I)
 
@@ -56,16 +62,64 @@ def is_secret(key: str) -> bool:
     return bool(SECRET_RX.search(key))
 
 
-# : .env is read by every process the dashboard spawns, so an unrestricted : upsert is
-# configuration -> code execution (PATH=/tmp/evil hijacks python/ : ffmpeg for every child).
-ALLOWED_ENV_PREFIXES: tuple[str, ...] = ("STRANDS_", "DASHBOARD_", "VOICE_", "HF_")
-ALLOWED_ENV_KEYS = frozenset(INTERESTING_ENV)
+# .env is read by every process the dashboard spawns, so an unrestricted upsert is
+# configuration -> code execution (PATH=/tmp/evil hijacks python/ffmpeg for every child).
+# The set is CLOSED, not a prefix: a prefix (``STRANDS_*``) admitted the very keys the
+# other defenses stand on - the containment homes, the auth switch, the standing motion
+# grant, the remote-code opt-in - so holding a session became holding every gate.
+#: Keys the page may show and edit. Add a key here only if a client changing it
+#: cannot move a containment home, weaken auth or consent, or opt code execution in.
+ALLOWED_ENV_KEYS: frozenset[str] = frozenset(
+    (
+        *INTERESTING_ENV,
+        "STRANDS_MODEL_ID",
+        "AWS_DEFAULT_REGION",
+        "OPENAI_BASE_URL",
+        "VOICE_PROVIDER",
+        "VOICE_NAME",
+        "DASHBOARD_VOICE_PROMPT",
+        "STRANDS_DASH_RECORD_CRUMB",
+    )
+)
+#: Never dashboard-managed, whatever the allowlist says later: each of these is a gate
+#: some other route reads live from ``os.environ``. Kept as a second fence so that adding
+#: a key above by mistake still cannot open one of them.
+GATE_BEARING_ENV_PREFIXES: tuple[str, ...] = (
+    "STRANDS_DASH_AUTH_",
+    "STRANDS_MESH_AUTH",
+    "STRANDS_MESH_MTLS",
+    "STRANDS_MESH_INSECURE",
+)
+GATE_BEARING_ENV_KEYS: frozenset[str] = frozenset(
+    {
+        "STRANDS_DASH_AGENT_PHYSICAL_MOTION",
+        "STRANDS_DASH_TASK_REQUIRES_CONFIRM",
+        "STRANDS_TRUST_REMOTE_CODE",
+        "HF_LEROBOT_HOME",
+        "HF_HOME",
+        "HF_HUB_CACHE",
+        "STRANDS_TRAIN_OUTPUT_DIR",
+        "STRANDS_ROBOTS_DATA_DIRS",
+        "DASHBOARD_ENV_FILE",
+        "DASHBOARD_AUTH_TOKEN",
+        "BYPASS_TOOL_CONSENT",
+        "PATH",
+        "PYTHONPATH",
+        "LD_PRELOAD",
+        "DYLD_INSERT_LIBRARIES",
+    }
+)
 ENV_VALUE_MAX_LEN = 4096
+
+
+def env_key_gate_bearing(key: str) -> bool:
+    """Whether a key is one of the gates this process reads live - never page-writable."""
+    return key in GATE_BEARING_ENV_KEYS or key.startswith(GATE_BEARING_ENV_PREFIXES)
 
 
 def env_key_allowed(key: str) -> bool:
     """Whether the page may read or write this env key at all."""
-    return key in ALLOWED_ENV_KEYS or key.startswith(ALLOWED_ENV_PREFIXES)
+    return key in ALLOWED_ENV_KEYS and not env_key_gate_bearing(key)
 
 
 def env_entry_error(key: str, value: str) -> str | None:
@@ -73,10 +127,7 @@ def env_entry_error(key: str, value: str) -> str | None:
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key or ""):
         return f"invalid env key {key!r}"
     if not env_key_allowed(key):
-        return (
-            f"env key {key!r} is not dashboard-managed - allowed: "
-            f"{', '.join(ALLOWED_ENV_PREFIXES)}* and {', '.join(sorted(ALLOWED_ENV_KEYS))}"
-        )
+        return f"env key {key!r} is not dashboard-managed - allowed: {', '.join(sorted(ALLOWED_ENV_KEYS))}"
     if any(ord(ch) < 0x20 for ch in value):
         # a newline in a VALUE writes a second variable on its own line,
         # defeating any key allow-list - so control chars are refused outright.
@@ -125,6 +176,36 @@ def read_env_file() -> dict[str, str]:
     return out
 
 
+def _write_env_durably(lines: Sequence[str]) -> None:
+    """Replace the env file in one step: a ``0600`` tempfile beside it, fsync, ``os.replace``.
+
+    ``write_text`` truncates in place, so a crash mid-write left a well-formed but shorter
+    file and the credentials were simply gone; and the file was world-readable between the
+    write and the ``chmod``. The tempfile is created ``0600`` so no reader ever sees more.
+    Caller holds ``_ENV_FILE_LOCK``.
+    """
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ENV_FILE.with_name(f".{ENV_FILE.name}.{os.getpid()}.tmp")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + ("\n" if lines else ""))
+            fh.flush()
+            os.fsync(fh.fileno())
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass  # best effort: a filesystem that refuses modes (some mounts) still holds the file
+        os.replace(tmp, ENV_FILE)
+    finally:
+        # a failed write must not leave a half file next to the real one
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass  # the tempfile is already gone or unremovable; nothing else to do
+
+
 def upsert_env_file(updates: dict[str, str]) -> list[str]:
     """Order-preserving upsert into the env file. Returns the keys written."""
     if not updates:
@@ -133,25 +214,21 @@ def upsert_env_file(updates: dict[str, str]) -> list[str]:
         problem = env_entry_error(str(key), str(value))
         if problem:
             raise ValueError(problem)
-    lines: list[str] = []
-    if ENV_FILE.exists():
-        lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
-    remaining = dict(updates)
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        key = stripped.partition("=")[0].strip()
-        if key in remaining:
-            lines[i] = f"{key}={remaining.pop(key)}"
-    for key, value in remaining.items():
-        lines.append(f"{key}={value}")
-    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    try:
-        os.chmod(ENV_FILE, 0o600)
-    except OSError:
-        pass  # best effort: a filesystem that refuses modes (some mounts) still holds the file
+    with _ENV_FILE_LOCK:
+        lines: list[str] = []
+        if ENV_FILE.exists():
+            lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
+        remaining = dict(updates)
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key = stripped.partition("=")[0].strip()
+            if key in remaining:
+                lines[i] = f"{key}={remaining.pop(key)}"
+        for key, value in remaining.items():
+            lines.append(f"{key}={value}")
+        _write_env_durably(lines)
     return list(updates)
 
 
@@ -174,24 +251,23 @@ def delete_env_keys(keys: Sequence[str]) -> list[str]:
     """Remove keys from the env file, order-preserving. Returns those removed."""
     wanted = [str(k).strip() for k in keys]
     allowed = [k for k in wanted if not env_entry_error(k, "")]
-    if not allowed or not ENV_FILE.exists():
+    if not allowed:
         return []
-    kept: list[str] = []
-    removed: list[str] = []
-    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            key = stripped.partition("=")[0].strip()
-            if key in allowed:
-                removed.append(key)
-                continue
-        kept.append(line)
-    if removed:
-        ENV_FILE.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
-        try:
-            os.chmod(ENV_FILE, 0o600)
-        except OSError:
-            pass  # best effort, as above
+    with _ENV_FILE_LOCK:
+        if not ENV_FILE.exists():
+            return []
+        kept: list[str] = []
+        removed: list[str] = []
+        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                key = stripped.partition("=")[0].strip()
+                if key in allowed:
+                    removed.append(key)
+                    continue
+            kept.append(line)
+        if removed:
+            _write_env_durably(kept)
     return removed
 
 
@@ -238,6 +314,7 @@ def env_view() -> list[dict[str, Any]]:
                 "set": bool(raw),
                 "in_file": in_file,
                 "shadowed": shadowed,
+                "editable": env_key_allowed(key),
             }
         )
     return rows
