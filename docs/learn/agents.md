@@ -33,7 +33,7 @@ print(sorted(agent.tool_names))            # ['pose_tool', 'robot_mesh', 'so101_
 | `run_policy` / `train_policy` | build a policy from any provider, run or train it | no |
 | `pose_tool` | named poses and joint moves on a Feetech arm | motion verbs |
 | `serial_tool` | raw servo bus reads and writes | writes |
-| `robot_mesh` | the fleet: `peers`, `tell`, `send`, `broadcast`, `emergency_stop` ([fleet](mesh/fleet.md)) | six actuating actions |
+| `robot_mesh` | the fleet: read with `peers`, `status`, `inbox`; act with `tell`, `send`, `rpc`, `stop`, `broadcast`, `emergency_stop` ([fleet](mesh/fleet.md)) | the six actuating actions by default |
 | `use_ros`, `use_rosbridge`, `use_rtps` | a ROS 2 graph, three transports ([ROS 2](ros2.md)) | blocklisted surfaces |
 | `use_unitree` and `g1_*` | Unitree G1 locomotion and arm verbs ([unitree](hardware/unitree.md)) | motion RPCs |
 | `reachy_*` | Reachy Mini head, antennas, sound ([reachy](hardware/reachy-mini.md)) | no |

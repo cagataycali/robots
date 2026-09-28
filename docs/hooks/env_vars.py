@@ -5,6 +5,10 @@ MUJOCO_, HF_, ..., then everything else) with: variable, the module that reads
 it, the default the code passes when it is a literal, and a one-line meaning
 taken from the nearest docstring or comment that names the variable. When no
 prose names it the meaning column says "see module".
+A few variables are token lists whose vocabulary lives in a module-level set
+(``STRANDS_MESH_HITL_ACTIONS`` and ``_GATEABLE_ACTIONS``); for those the
+meaning is rendered from the set literal itself (``_SET_MEANINGS``), so the row
+lists every token the code accepts and never an exception's one-liner.
 
 How reads are found (``ast`` over the source, no import):
 
@@ -43,6 +47,18 @@ _TOKEN = re.compile(r"^\{\{\s*env_vars\s*\}\}\s*$", re.M)
 _NAME = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
 _PREFIXES = ("STRANDS_MESH_", "STRANDS_", "DEVICE_CONNECT_", "MUJOCO_", "HF_", "ZENOH_", "ROS_", "AWS_")
 _READERS = {"get", "getenv", "setdefault", "pop", "__getitem__"}
+#: variable -> (module, template, constant names). The template's ``{name}``
+#: placeholders are filled with the sorted members of that module-level set
+#: literal (``frozenset({...})`` or ``{...}`` of strings), so the vocabulary the
+#: row shows is the vocabulary the parser accepts.
+_SET_MEANINGS: dict[str, tuple[str, str]] = {
+    "STRANDS_MESH_HITL_ACTIONS": (
+        "strands_robots.tools.robot_mesh",
+        "Which `robot_mesh` actions wait for operator approval: `all`, `none`, or a "
+        "comma-separated subset of {_GATEABLE_ACTIONS}; unset means the default "
+        "{_DEFAULT_INTERRUPT_ACTIONS}; an unknown token is refused.",
+    ),
+}
 
 
 @dataclass
@@ -95,6 +111,41 @@ def _constants(tree: ast.Module) -> dict[str, str]:
                 if isinstance(target, ast.Name):
                     out[target.id] = value.value
     return out
+
+
+def _string_sets(tree: ast.Module) -> dict[str, tuple[str, ...]]:
+    """Module-level ``NAME = frozenset({...})`` / ``NAME = {...}`` of string literals, sorted."""
+    out: dict[str, tuple[str, ...]] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign | ast.AnnAssign):
+            continue
+        value = node.value
+        if isinstance(value, ast.Call) and _call_name(value) in {"frozenset", "set"} and len(value.args) == 1:
+            value = value.args[0]
+        if not isinstance(value, ast.Set | ast.List | ast.Tuple):
+            continue
+        members = [e.value for e in value.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+        if len(members) != len(value.elts):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                out[target.id] = tuple(sorted(members))
+    return out
+
+
+def _set_meaning(name: str, by_module: dict[str, tuple[str, ast.Module]]) -> str:
+    """The set-backed meaning for ``name``, or "" when it has none or the set is gone."""
+    if name not in _SET_MEANINGS:
+        return ""
+    module, template = _SET_MEANINGS[name]
+    if module not in by_module:
+        return ""
+    sets = _string_sets(by_module[module][1])
+    wanted = re.findall(r"\{(_?[A-Za-z0-9_]+)\}", template)
+    if any(w not in sets for w in wanted):
+        return ""
+    return template.format(**{w: ", ".join(f"`{m}`" for m in sets[w]) for w in wanted})
 
 
 def _literal(node: ast.expr | None, constants: dict[str, str]) -> str | None:
@@ -296,6 +347,10 @@ def reads() -> dict[str, Read]:
                     record(name, module, _default_text(default))
     by_module = {_module_name(p): (p.read_text(encoding="utf-8"), tree) for p, tree in trees.items()}
     for entry in out.values():
+        from_set = _set_meaning(entry.name, by_module)
+        if from_set:
+            entry.meaning = from_set
+            continue
         candidates = [_meaning(*by_module[m], entry.name) for m in sorted(entry.modules)]
         candidates = [c for c in candidates if c]
         entry.meaning = next(
