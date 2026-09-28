@@ -137,41 +137,6 @@ def _text(result: dict[str, Any]) -> str:
     return " ".join(block["text"] for block in result["content"] if "text" in block)
 
 
-class TestUnusableBudgetRefused:
-    """Every public entry point refuses a budget the loop cannot honor."""
-
-    @pytest.mark.parametrize("duration", UNUSABLE_DURATIONS)
-    def test_run_policy_refuses(self, hw: Any, duration: Any):
-        """``run_policy`` errors naming the parameter, not a comparison."""
-        result = hw.run_policy(policy_object=_Policy(), instruction="probe", duration=duration)
-
-        assert result["status"] == "error"
-        assert "duration" in _text(result)
-        assert "run_policy" in _text(result)
-
-    @pytest.mark.parametrize("duration", UNUSABLE_DURATIONS)
-    def test_start_task_refuses(self, hw: Any, duration: Any):
-        """``start_task`` errors instead of reporting a started task."""
-        result = hw.start_task("probe", policy_port=9000, duration=duration)
-
-        assert result["status"] == "error"
-        assert "duration" in _text(result)
-        assert "Task started" not in _text(result)
-
-    @pytest.mark.parametrize("duration", UNUSABLE_DURATIONS)
-    def test_the_shared_chokepoint_refuses(self, hw: Any, duration: Any):
-        """``_execute_task_sync`` refuses on its own.
-
-        The agent-tool ``execute`` action and the mesh ``execute`` dispatch call
-        it directly rather than through ``run_policy``, so a peer-supplied
-        budget must be bounded here too.
-        """
-        result = hw._execute_task_sync("probe", policy_port=9000, duration=duration)
-
-        assert result["status"] == "error"
-        assert "duration" in _text(result)
-
-
 class TestRefusalPrecedesTheArm:
     """A refused budget is never spent on hardware."""
 

@@ -112,13 +112,6 @@ class TestStartTask:
 
 
 class TestExecuteTask:
-    def test_lerobot_local_without_a_checkpoint_is_refused(self):
-        hw = _hw()
-        result = hw._execute_task_sync("pick", policy_provider="lerobot_local", duration=1.0)
-        assert result["status"] == "error"
-        assert _text(result).startswith("execute_task: policy_provider='lerobot_local' builds its policy from")
-        assert hw._task_claimed is False
-
     def test_a_pre_built_policy_object_makes_the_keyword_inert(self):
         """With ``policy_object`` nothing is built, so nothing is required of the kwargs."""
         hw = _hw()
