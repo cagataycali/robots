@@ -696,7 +696,7 @@ class SessionManager:
                 # so this probe exists only to surface a denial.
                 psutil.Process(pid).is_running()
             except psutil.NoSuchProcess:
-                pass
+                pass  # expected: the process finished between the listing and this probe
             except psutil.AccessDenied:
                 logger.warning(
                     "Session '%s' (PID %s) exists but cannot be inspected; "

@@ -1245,7 +1245,7 @@ class LerobotLocalPolicy(Policy):
                 Florence2LanguageConfig.forced_bos_token_id = None
                 logger.debug("Patched Florence2LanguageConfig.forced_bos_token_id for XVLA compat")
         except ImportError:
-            pass
+            pass  # best effort: no Florence2 in this transformers, nothing to patch
 
         logger.info("Loading %s...", self.pretrained_name_or_path)
         # ``load_time_s`` is a duration, so it is measured on a clock that

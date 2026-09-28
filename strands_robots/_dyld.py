@@ -47,6 +47,7 @@ from __future__ import annotations
 import glob
 import os
 import sys
+from typing import cast
 
 _GUARD_ENV = "_STRANDS_ROBOTS_DYLD_REEXEC"
 _OPT_OUT_ENV = "STRANDS_ROBOTS_NO_DYLD_SHIM"
@@ -200,8 +201,10 @@ def video_decode_hint() -> str | None:
 #: Memo for :func:`quiet_video_backend` - the answer cannot change within a
 #: process (dyld reads its search path once, at launch), and the probe that
 #: produces it is the expensive import this function exists to do only once.
-_quiet_backend: str | None = None
-_quiet_backend_probed: bool = False
+#: One memo, three states: ``_UNPROBED`` until the first call, then the answer
+#: (``"pyav"`` or ``None``); a separate "probed" flag was the same fact twice.
+_UNPROBED: object = object()
+_quiet_backend: str | None | object = _UNPROBED
 
 
 def quiet_video_backend() -> str | None:
@@ -228,12 +231,12 @@ def quiet_video_backend() -> str | None:
     Returns:
         ``"pyav"`` when torchcodec is installed but cannot load, else ``None``.
     """
-    global _quiet_backend, _quiet_backend_probed
-    if _quiet_backend_probed:
-        return _quiet_backend
-    _quiet_backend_probed = True
+    global _quiet_backend
+    if _quiet_backend is not _UNPROBED:
+        return cast("str | None", _quiet_backend)
     if not _torchcodec_installed():
-        return None
+        _quiet_backend = None
+        return _quiet_backend
     import contextlib
     import importlib
     import io
@@ -273,4 +276,5 @@ def quiet_video_backend() -> str | None:
         )
         _quiet_backend = "pyav"
         return _quiet_backend
-    return None
+    _quiet_backend = None
+    return _quiet_backend
