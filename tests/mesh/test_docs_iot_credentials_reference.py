@@ -1,7 +1,7 @@
 """Grade the AWS IoT credential reference against the transport's env surface.
 
-``docs/reference/security.md`` owns the cross-network fleet section, and that section is
-where an operator configures the AWS IoT Core path. Three properties are graded
+``docs/learn/mesh/bridges.md`` owns the cross-network fleet story, and its "The IoT
+trust model" section is where an operator configures the AWS IoT Core path. Three properties are graded
 here, each derived from the package rather than from a list kept beside it, so a
 variable added later is graded on arrival:
 
@@ -41,7 +41,7 @@ import pytest
 import strands_robots
 
 _PACKAGE = pathlib.Path(strands_robots.__file__).parent
-_PAGE = _PACKAGE.parent / "docs" / "reference" / "security" / "mesh.md"
+_PAGE = _PACKAGE.parent / "docs" / "learn" / "mesh" / "bridges.md"
 
 #: The module that owns the AWS IoT broker link. Its variables configure one
 #: channel, so the reference documents them together.
@@ -50,9 +50,9 @@ _TRANSPORT = _PACKAGE / "mesh" / "transport" / "iot_transport.py"
 #: The credential prefix this reference covers.
 _CREDENTIAL = re.compile(r"STRANDS_IOT_[A-Z0-9_]*")
 
-#: A documented bullet's variable: ``- `VAR` - ...`` or ``- `VAR=value` - ...``,
-#: which is how every environment variable on this page is already written.
-_BULLET_VAR = re.compile(r"^-\s+`([A-Z][A-Z0-9_]*)(?:=[^`]*)?`")
+#: A documented row's variable: ``| `VAR` | ...`` or ``| `VAR=value` | ...``, the
+#: first cell of the variable tables this page writes under each heading.
+_BULLET_VAR = re.compile(r"^\|\s*`([A-Z][A-Z0-9_]*)(?:=[^`]*)?`\s*\|")
 
 #: Floors so a scan that silently reads nothing fails instead of passing.
 _MINIMUM_CREDENTIALS = 3
@@ -117,7 +117,8 @@ def _documented_bullets(page: str) -> dict[str, str]:
         page: The markdown source to read.
 
     Returns:
-        ``{"VAR": "heading text"}`` for every bullet naming a variable.
+        ``{"VAR": "heading text"}`` for every table row whose first cell names a
+        variable.
     """
     bullets: dict[str, str] = {}
     heading = ""
@@ -143,7 +144,7 @@ def _credential_sections(page: str) -> dict[str, str]:
 
 @pytest.fixture
 def page() -> str:
-    """The shipped security reference."""
+    """The shipped mesh bridges page, which owns the IoT link."""
     return _PAGE.read_text(encoding="utf-8")
 
 
@@ -160,12 +161,12 @@ class TestTheScanReachesTheSurface:
         )
 
     def test_the_page_documents_variables_as_bullets(self, page: str) -> None:
-        """The bullet form is how this page already writes its variables."""
+        """The variable-in-first-cell row is how this page writes its variables."""
         bullets = _documented_bullets(page)
         assert len(bullets) >= _MINIMUM_DOCUMENTED_BULLETS, (
             f"expected at least {_MINIMUM_DOCUMENTED_BULLETS} documented variables "
             f"on {_PAGE.name}, parsed {sorted(bullets)}. A parser that matches no "
-            "bullet cannot tell a documented variable from an omitted one."
+            "row cannot tell a documented variable from an omitted one."
         )
 
     def test_the_provisioner_hands_out_credentials(self) -> None:
@@ -184,7 +185,7 @@ class TestTheReferenceCoversTheCredentials:
         """A credential the transport reads but the page omits is unreachable config."""
         missing = sorted(_credentials_read() - set(_documented_bullets(page)))
         assert not missing, (
-            f"docs/reference/security/mesh.md documents no bullet for IoT credentials the transport "
+            f"docs/learn/mesh/bridges.md documents no row for IoT credentials the transport "
             f"reads: {missing}. Both the iot and bridge backends construct "
             "IotMqttTransport with no arguments, so a variable the code honours and "
             "the page omits is the whole of a setting the operator cannot find - "
@@ -196,7 +197,7 @@ class TestTheReferenceCoversTheCredentials:
         missing = sorted(_provisioner_exports() - set(_documented_bullets(page)))
         assert not missing, (
             f"ProvisionedThing.env_vars tells an operator to export {missing}, which "
-            "docs/reference/security/mesh.md does not explain. The provisioner's export list is the "
+            "docs/learn/mesh/bridges.md does not explain. The provisioner's export list is the "
             "package's own answer to what must be set, so the page has to name it."
         )
 
