@@ -55,10 +55,14 @@ refusal names as its own remedy - and ``STRANDS_TRAIN_RDZV_TIMEOUT_S`` /
 ``STRANDS_TRAIN_LOCAL_ADDR``, the two bounds on an elastic launch's rendezvous.
 A ``Name`` bound anywhere else (a parameter, a local) still names nothing a
 page could spell and is not graded. A page is any of ``README.md`` and
-``docs/**/*.md``: ``docs/reference/security/mesh.md`` already owns the AWS IoT credentials
-and the mesh TLS material, graded by their own reference tests, and this test
-does not move them. It also honours the README's shorthand for a family of
-sibling names (```STRANDS_MESH_POSE_HZ`, `_IMU_HZ`, ...``) - a suffix counts
+``docs/**/*.md``, read as the reader sees it: ``docs/reference/configuration.md``
+is a generated table, its ``{{env_vars}}`` token expanded at build time by
+``docs/hooks/env_vars.py`` from its own AST walk over the package, so this test
+expands the token through that hook before grading. The two walks differ on
+purpose: the hook lists what it can see, this test knows the resolver, alias
+and prefix shapes below, and a name only this walk sees is a name the generated
+reference silently omits. It also honours the README's shorthand for a family
+of sibling names (```STRANDS_MESH_POSE_HZ`, `_IMU_HZ`, ...``) - a suffix counts
 only when a documented full name shares its prefix, so a bare suffix with no
 sibling documents nothing.
 
@@ -118,6 +122,9 @@ import strands_robots
 PACKAGE = Path(strands_robots.__file__).parent
 REPO_ROOT = PACKAGE.parent
 PAGES = (REPO_ROOT / "README.md", *sorted((REPO_ROOT / "docs").rglob("*.md")))
+#: The generated configuration reference and the hook that fills its token.
+CONFIGURATION_PAGE = REPO_ROOT / "docs" / "reference" / "configuration.md"
+ENV_VARS_HOOK = REPO_ROOT / "docs" / "hooks" / "env_vars.py"
 
 #: Variables another project or the operating system defines. This package
 #: reads them, so their own documentation is the reference and a page here need
@@ -496,8 +503,29 @@ def documented_names(pages: dict[str, str]) -> set[str]:
     return names
 
 
+def _render_configuration(source: str) -> str:
+    """``configuration.md`` with ``{{env_vars}}`` expanded by the shipped hook."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", ENV_VARS_HOOK)
+    assert spec is not None and spec.loader is not None
+    module = sys.modules.get(spec.name)
+    if module is None:
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    rendered = module.on_page_markdown(source, page=None, config=None, files=None)
+    assert rendered != source, "docs/reference/configuration.md carries no {{env_vars}} token for the hook to expand"
+    # the hook writes names as <code>NAME</code>; strip the tags so the name regex sees whole tokens
+    return re.sub(r"</?code>", "`", rendered)
+
+
 def _load_pages() -> dict[str, str]:
-    return {str(page.relative_to(REPO_ROOT)): page.read_text(encoding="utf-8") for page in PAGES}
+    pages = {str(page.relative_to(REPO_ROOT)): page.read_text(encoding="utf-8") for page in PAGES}
+    key = str(CONFIGURATION_PAGE.relative_to(REPO_ROOT))
+    assert key in pages, "docs/reference/configuration.md is gone; the generated env var reference has moved"
+    pages[key] = _render_configuration(pages[key])
+    return pages
 
 
 def test_every_environment_variable_the_package_reads_is_documented() -> None:
@@ -519,8 +547,9 @@ def test_every_environment_variable_the_package_reads_is_documented() -> None:
         f"{len(undocumented)} environment variable(s) the package reads appear in no page under "
         f"README.md or docs/:\n"
         + "\n".join(f"  {name}  read at {', '.join(read[name])}" for name in undocumented)
-        + "\nAdd a row to the README's 'Environment variables' table (or the docs page that owns "
-        "the subsystem) naming the variable, what it selects, and its default."
+        + "\nThe generated table on docs/reference/configuration.md comes from docs/hooks/env_vars.py; "
+        "a name listed here is one that walk does not see (a resolver, alias or prefix read). Teach the "
+        "hook that shape, or name the variable on the page that owns the subsystem."
     )
 
 
