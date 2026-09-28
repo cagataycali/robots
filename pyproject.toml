@@ -850,9 +850,9 @@ constraint-dependencies = [
     "setuptools>=83.0.0",
     # GHSA-xrqw-3rrv-vx5w (HIGH, transformers < 5.10.0) is floored the same
     # way (override-dependencies, since lerobot[transformers-dep] caps < 5.6.0).
-    # GHSA-rrmf-rvhw-rf47 (LOW, torch <= 2.12.1) still waits on lerobot 0.6.1's
-    # torch < 2.12.0 / torchvision < 0.27.0 caps; this package never calls
-    # torch.jit.script, the vulnerable entry point.
+    # GHSA-rrmf-rvhw-rf47 (LOW, torch <= 2.12.1, torch.jit.script memory
+    # corruption) is floored there too, with the torchvision and torchcodec
+    # releases built against that torch.
     # GHSA-hxp9-w8x3-p566 (MEDIUM): permessage-deflate bypasses
     # maxMessagePayloadSize, < 26.7.1 (under roslibpy).
     "autobahn>=26.7.1",
@@ -880,6 +880,17 @@ override-dependencies = [
     # the caps.
     "setuptools>=83.0.0",
     "transformers>=5.10.0",
+    # SECURITY: GHSA-rrmf-rvhw-rf47 (torch <= 2.12.1, memory corruption in
+    # torch.jit.script; strands_robots never calls it). lerobot 0.6.1 caps
+    # torch < 2.12.0 and torchvision < 0.27.0, so the same override lifts the
+    # three wheels that must move together (torchvision and torchcodec are
+    # built against one torch). Verified 2026-09-28 on torch 2.14.0 /
+    # torchvision 0.29.0 / torchcodec 0.16.0: SmolVLA and ACT rollouts, and
+    # record -> LeRobotDataset read-back (torchcodec decode) -> replay, all
+    # pass on macOS arm64. Drop when lerobot lifts the caps.
+    "torch>=2.13.0",
+    "torchvision>=0.28.0",
+    "torchcodec>=0.13.0",
 ]
 
 # Auto-select the right PyTorch wheel for the host accelerator. On NVIDIA
