@@ -90,7 +90,6 @@ def _engine() -> IsaacSimulation:
     engine._objects = {}
     engine._cameras = {}
     engine._prim_registry = []
-    engine._cam_out_size = {}
     engine._camera_warmup_steps = 0
     engine._sim_time = 0.0
     engine._step_count = 0
@@ -129,7 +128,6 @@ def _assert_refused(engine: IsaacSimulation, result: dict, needle: str = "") -> 
     assert needle in result["content"][0]["text"], result
     assert engine._cameras == {}
     assert engine._prim_registry == []
-    assert engine._cam_out_size == {}
     # The stage was never touched: validation runs ahead of the one call that
     # would create the USD prim.
     assert engine.prim_calls == []  # type: ignore[attr-defined]

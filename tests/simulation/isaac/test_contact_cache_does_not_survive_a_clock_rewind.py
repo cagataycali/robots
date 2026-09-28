@@ -73,8 +73,6 @@ def _engine() -> Any:
     engine._obs_noise = {}
     engine._obs_noise_rng = None
     engine._dr_base = {}
-    engine._frame_cache = {}
-    engine._joint_cache = {}
     engine._sim_time = 0.0
     engine._step_count = 0
     engine._revive_articulations_after_reset = lambda: None  # type: ignore[method-assign]

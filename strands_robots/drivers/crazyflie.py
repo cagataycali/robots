@@ -98,8 +98,8 @@ import threading
 from collections.abc import AsyncGenerator, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots._pacing import Ticker
 from strands_robots.drivers.base import halt_failure_detail, refuse, undeclared_verb_error
-from strands_robots.mesh.pacing import Ticker
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
@@ -1235,7 +1235,7 @@ class CrazyflieDriver:
         stream goes quiet, so this loop is what turns a single ``send_action``
         into sustained motion.
 
-        Paced by :class:`~strands_robots.mesh.pacing.Ticker` rather than by
+        Paced by :class:`~strands_robots._pacing.Ticker` rather than by
         ``self._repeater_stop.wait(period)``, for the reason that module records:
         a ``wait(period)`` is a delay where a rate needs a deadline, so the time
         the radio spends on a CRTP write is *added* to the period instead of

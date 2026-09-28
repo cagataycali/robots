@@ -35,10 +35,10 @@ The second line is the first line. For every driver that has a twin:
 | tool spec | the driver's | **identical** |
 | `send_action` keys and units | the driver's (degrees, percent, m/s ...) | **identical** - converted to the model's radians *inside the twin*, never by the caller |
 | refusals (out of range, not connected, unknown verb) | the driver's | **identical** - graded before the far end is reached |
-| `connect_eagerly()` | proves the bus / graph / SDK answers | proves the model built; returns a named reason when it cannot |
+| `connect_eagerly()` | proves the bus / graph / SDK answers | binds the driver to the model; returns a named reason when it cannot |
 | `get_observation()` | what the hardware reports | the model's joint state, in the driver's units |
 | operator gate | consulted for blocklisted surfaces | **not consulted** - the gate is a statement about a physical surface, and the twin has none |
-| `cleanup()` | a halt, then release | a halt, then destroy an engine the twin built (never one the caller handed in) |
+| `cleanup()` | a halt, then release | a halt; the engine is the caller's and outlives it |
 | a target the model clamps | n/a | **reported** on the reply and logged, never silent |
 
 `Robot("<name>", mode="sim")` stays what it is - the physics engine for
@@ -128,13 +128,13 @@ the decisions:
   write while off is refused. A write steps one bus read period (`timeout`).
   A count the calibration admits but the stops do not is clamped to the
   model's travel and reported on the reply (`note`) and in the log.
-- **Building.** `Robot("so101", mode="real", driver="strands", transport="twin")`
-  builds the engine on `connect_eagerly()` (at the asset's zero pose - the
-  SO-101 declares no keyframe) and returns a named reason when MuJoCo or the
-  asset is missing; `driver="strands"` is spelled because the SO arms' registry
-  entries declare no `hardware.driver`. `transport="twin"` is refused for a
-  `tool_name` with no simulation asset (`hope_jr`); an entry with no
-  `joint_labels` (`lekiwi`) is refused at `connect`.
+- **Building.** `Robot("so101", mode="real", driver="strands",
+  transport="twin")` builds the engine (at the asset's zero pose - the SO-101
+  declares no keyframe) and raises when MuJoCo or the asset is
+  missing; a bare `FeetechDriver(transport="twin")` without `sim=` is refused
+  naming that call. `transport="twin"` is refused for a `tool_name` with no
+  simulation asset (`hope_jr`); an entry with no `joint_labels` (`lekiwi`) is
+  refused at `connect`.
 
 ## Acceptance, per family
 

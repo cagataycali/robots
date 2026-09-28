@@ -33,8 +33,8 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from strands_robots._pacing import Ticker
 from strands_robots.drivers.base import policy_step
-from strands_robots.mesh.pacing import Ticker
 from strands_robots.registry.policies import policy_requires_error
 
 
@@ -97,7 +97,7 @@ def policy_from_provider(
 
 
 class PolicyRollout:
-    """One policy rollout on its own thread, paced by :class:`~strands_robots.mesh.pacing.Ticker`.
+    """One policy rollout on its own thread, paced by :class:`~strands_robots._pacing.Ticker`.
 
     Holds the loop's counters and exit reason so a driver's ``get_task_status``
     has one snapshot to report, whether the loop is running, finished its budget
