@@ -263,7 +263,7 @@ def _own_clause(sentence: str, knob: str) -> str:
 
     From the knob's mention to the next mention of another ``STRANDS_MESH_``
     variable, or the end of the sentence. A sentence that names both bounds
-    (``... older than \`A\` ..., and more than \`B\` ahead ...``) is thereby
+    (``... older than A ..., and more than B ahead ...``) is thereby
     read once per bound, and a cross-reference to the sibling bound is not
     mistaken for a claim about this one.
     """
@@ -283,9 +283,7 @@ def _documented_direction(knob: str) -> str:
     one; a page saying both would leave the operator to guess.
     """
     sentences = _safety_page_sentences(knob)
-    directions = {
-        m.group(1).removesuffix(" of") for s in sentences for m in _DIRECTION.finditer(_own_clause(s, knob))
-    }
+    directions = {m.group(1).removesuffix(" of") for s in sentences for m in _DIRECTION.finditer(_own_clause(s, knob))}
     assert directions, (
         f"the safety page names {knob} but never says whether it catches a receiver 'ahead of' or "
         f"'behind' the operator, so the direction it claims cannot be read: {sentences}"
