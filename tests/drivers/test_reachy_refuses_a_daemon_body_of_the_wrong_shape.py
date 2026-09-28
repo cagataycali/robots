@@ -1,6 +1,6 @@
 """A Reachy daemon body is read as the JSON shape it arrived as, or refused.
 
-:func:`~strands_robots.device_connect.reachy_transport.api` hands the decoded
+:func:`~strands_robots.drivers.reachy_transport.api` hands the decoded
 body back unreshaped - ``json.loads`` decodes any JSON value, not only an
 object - so what a caller receives is whatever the daemon, or an interposed
 proxy, answered with. The rule for that is written down in this transport's
@@ -41,7 +41,7 @@ from typing import Any
 import pytest
 
 import strands_robots.drivers.reachy as reachy_mod
-from strands_robots.device_connect import reachy_transport
+from strands_robots.drivers import reachy_transport
 from strands_robots.drivers.reachy import ReachyDriver
 
 #: A Lite status body: the variant flag the driver reads. A Lite needs no Zenoh
@@ -120,7 +120,7 @@ def _object_door_daemon(body: Any) -> _Daemon:
 
 def _install(monkeypatch: pytest.MonkeyPatch, daemon: _Daemon) -> ReachyDriver:
     """Build an unconnected driver wired to ``daemon`` and a no-op link."""
-    monkeypatch.setattr("strands_robots.device_connect.reachy_transport.api", daemon)
+    monkeypatch.setattr("strands_robots.drivers.reachy_transport.api", daemon)
     monkeypatch.setattr(ReachyDriver, "_build_link", lambda self, *, is_lite: _Link())
     return ReachyDriver(tool_name="reachy_mini", port="reachy-a.local")
 

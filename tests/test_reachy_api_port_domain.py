@@ -3,7 +3,7 @@
 The driver is a public export documented with a constructor example, and its
 ``api_port`` is the only thing that addresses the Reachy Mini daemon. It is
 interpolated verbatim into two targets the module builds itself - the REST URL
-in :func:`strands_robots.device_connect.reachy_transport.api` and the Lite
+in :func:`strands_robots.drivers.reachy_transport.api` and the Lite
 WebSocket target in ``WebSocketLink`` - and nothing downstream refuses it:
 
 * ``api`` reports every failure as an ``{"error": ...}`` result rather than
@@ -163,7 +163,7 @@ class TestWhyTheConstructorOwnsTheDomain:
     @pytest.mark.parametrize("port", [99999, True, 2.7, None, float("nan")], ids=repr)
     def test_the_daemon_url_interpolates_the_port_verbatim(self, monkeypatch, port):
         """``api`` builds ``http://host:<port>/path`` with no coercion."""
-        from strands_robots.device_connect import reachy_transport
+        from strands_robots.drivers import reachy_transport
 
         captured: list[str] = []
 
@@ -178,14 +178,14 @@ class TestWhyTheConstructorOwnsTheDomain:
     @pytest.mark.parametrize("port", [99999, True, None], ids=repr)
     def test_the_websocket_target_interpolates_the_port_verbatim(self, port):
         """The Lite link carries the same value into its ``ws://`` target."""
-        from strands_robots.device_connect import reachy_transport
+        from strands_robots.drivers import reachy_transport
 
         link = reachy_transport.WebSocketLink("bot.local", port)
         assert link._port is port
 
     def test_api_reports_a_failure_as_a_result_rather_than_raising(self, monkeypatch):
         """So no exception from an unusable port can reach the caller."""
-        from strands_robots.device_connect import reachy_transport
+        from strands_robots.drivers import reachy_transport
 
         def refuse(req, body=None, timeout=None, **kwargs):
             raise urllib.error.URLError("connection refused")

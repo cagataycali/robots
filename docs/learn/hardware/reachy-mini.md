@@ -20,7 +20,7 @@ mini.send_action({"antenna_right": 30.0, "antenna_left": 30.0})
 | REST `:8000` | `/api/daemon/status` (reachability, variant), recorded moves, motion stop | `connect_eagerly` probes it first |
 | real-time | six Stewart leg positions, head IMU, battery | a WebSocket to the daemon (daemon 1.10.0, Lite and Wireless), or an explicitly supplied Zenoh bridge (`zenoh_prefix=`, `transport=`) on Wireless |
 
-Both come from `strands_robots.device_connect.reachy_transport`; the driver runs them on one background asyncio loop and caches what arrives. `_imu` is the head IMU verbatim, `_pose` is the head orientation from that IMU (the IMU is in the head), `_battery` when the status payload carries one. No lidar, no forward kinematics of the platform: the legs are cached as legs (`_joints`) and the head orientation comes from the sensor, not from a model this repo does not have.
+Both come from `strands_robots.drivers.reachy_transport`; the driver runs them on one background asyncio loop and caches what arrives. `_imu` is the head IMU verbatim, `_pose` is the head orientation from that IMU (the IMU is in the head), `_battery` when the status payload carries one. No lidar, no forward kinematics of the platform: the legs are cached as legs (`_joints`) and the head orientation comes from the sensor, not from a model this repo does not have.
 
 ## The envelope
 
