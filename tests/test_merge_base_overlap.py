@@ -1284,14 +1284,42 @@ def test_the_sweep_budget_is_the_graders_budget() -> None:
     source text the grader runs.
     """
     tree = ast.parse(_GRADER_PATH.read_text(encoding="utf-8"))
-    budgets = [
-        node.value.value
+    assignments = [
+        node.value
         for node in tree.body
-        if isinstance(node, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id == "_BUDGET" for target in node.targets)
-        and isinstance(node.value, ast.Constant)
+        if isinstance(node, ast.AnnAssign | ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "_BUDGET" for target in _targets(node))
+        and node.value is not None
     ]
-    assert budgets == [check.DOCS_WORD_BUDGET]
+    assert len(assignments) == 1, "the grader binds _BUDGET once"
+    assert [_budget_value(assignments[0])] == [check.DOCS_WORD_BUDGET], (
+        f"the grader's per-page budget is {_budget_value(assignments[0])} words and the sweep's copy "
+        f"(scripts/check_merge_base_overlap.py DOCS_WORD_BUDGET) is {check.DOCS_WORD_BUDGET}; pin them equal"
+    )
+
+
+def _targets(node: ast.AnnAssign | ast.Assign) -> list[ast.expr]:
+    return [node.target] if isinstance(node, ast.AnnAssign) else list(node.targets)
+
+
+def _budget_value(value: ast.expr) -> int:
+    """The number ``_BUDGET`` is bound to: a literal, or the docs hook's ``LIMIT`` it reads.
+
+    The grader binds ``_BUDGET: int = _hook().LIMIT`` so the build-time hook
+    (``docs/hooks/word_budget.py``) owns the number; this resolves the same
+    attribute from the same file rather than trusting a copy.
+    """
+    if isinstance(value, ast.Constant) and isinstance(value.value, int):
+        return value.value
+    assert isinstance(value, ast.Attribute) and value.attr == "LIMIT", ast.unparse(value)
+    hook_path = _REPO_ROOT / "docs" / "hooks" / "word_budget.py"
+    spec = importlib.util.spec_from_file_location("docs_word_budget_hook_overlap", hook_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    limit = module.LIMIT
+    assert isinstance(limit, int)
+    return limit
 
 
 @pytest.mark.parametrize(
