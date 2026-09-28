@@ -27,6 +27,11 @@ router = APIRouter(prefix="/api", tags=["consent"])
 _RESPAWN_NOTE = "A robot already running was started with the old environment - respawn it, then retry."
 
 
+def _write_grant_patch(patch: dict[str, str]) -> list[str]:
+    """Write a grant/revoke patch to ``.env`` through the consent allowlist, not the page one."""
+    return config_api.upsert_env_file(patch, allowed_keys=consent.GRANT_ENV_KEYS)
+
+
 def _request_from(body: Any) -> consent.ConsentRequest:
     if not isinstance(body, dict):
         raise HTTPException(400, "body must be a JSON object")
@@ -63,11 +68,13 @@ async def post_consent(request: Request, who: dict = Depends(access.require_sess
             "note": f"nothing to change - this is already allowed here. {_RESPAWN_NOTE}",
             "respawn_required": True,
         }
+    # The grant variables are gate-bearing by design, so the page allowlist refuses them;
+    # this route writes through its own closed set, derived from the refusal contract.
     for key, value in patch.items():
-        problem = config_api.env_entry_error(key, value)
+        problem = config_api.env_entry_error(key, value, allowed_keys=consent.GRANT_ENV_KEYS)
         if problem:
             raise HTTPException(422, problem)
-    written = await asyncio.to_thread(config_api.upsert_env_file, patch)
+    written = await asyncio.to_thread(_write_grant_patch, patch)
     os.environ.update(patch)
     try:  # the mesh caches its parsed allowlist per value, so re-read it
         from strands_robots.mesh import security as _mesh_security
@@ -100,12 +107,30 @@ async def revoke_consent(request: Request, who: dict = Depends(access.require_se
             "scope": req.scope,
             "note": "nothing to revoke - this machine does not grant that (an org-wide entry may still cover it).",
         }
-    written = await asyncio.to_thread(config_api.upsert_env_file, patch)
+    for key, value in patch.items():
+        problem = config_api.env_entry_error(key, value, allowed_keys=consent.GRANT_ENV_KEYS)
+        if problem:
+            raise HTTPException(422, problem)
+    # The live process FIRST: a revocation must take effect here even if the file write
+    # fails afterwards, so a standing hardware-motion grant can never outlive the click.
     for key, value in patch.items():
         if value:
             os.environ[key] = value
         else:
             os.environ.pop(key, None)
+    try:
+        written = await asyncio.to_thread(_write_grant_patch, patch)
+    except (OSError, ValueError) as exc:
+        _audit(request, req.scope, f"revoked in this process; .env not updated: {exc}")
+        raise HTTPException(
+            500,
+            {
+                "error": f"revoked for this process, but the .env file could not be updated: {exc}",
+                "revoked": True,
+                "env_written": [],
+                "scope": req.scope,
+            },
+        ) from exc
     _audit(request, req.scope, "revoked")
     return {
         "revoked": True,

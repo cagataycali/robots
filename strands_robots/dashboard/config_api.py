@@ -122,11 +122,20 @@ def env_key_allowed(key: str) -> bool:
     return key in ALLOWED_ENV_KEYS and not env_key_gate_bearing(key)
 
 
-def env_entry_error(key: str, value: str) -> str | None:
-    """Why this key/value pair must not reach the env file, or None if fine."""
+def env_entry_error(key: str, value: str, *, allowed_keys: frozenset[str] | None = None) -> str | None:
+    """Why this key/value pair must not reach the env file, or None if fine.
+
+    ``allowed_keys`` replaces the page allowlist for a caller that owns its own closed
+    set - the consent routes, whose grant variables are gate-bearing on purpose and so
+    are refused on the general ``/api/config`` surface. It is a replacement, not an
+    extension: a key must be in the given set, exactly.
+    """
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key or ""):
         return f"invalid env key {key!r}"
-    if not env_key_allowed(key):
+    if allowed_keys is not None:
+        if key not in allowed_keys:
+            return f"env key {key!r} is not one this route may write - allowed: {', '.join(sorted(allowed_keys))}"
+    elif not env_key_allowed(key):
         return f"env key {key!r} is not dashboard-managed - allowed: {', '.join(sorted(ALLOWED_ENV_KEYS))}"
     if any(ord(ch) < 0x20 for ch in value):
         # a newline in a VALUE writes a second variable on its own line,
@@ -206,12 +215,16 @@ def _write_env_durably(lines: Sequence[str]) -> None:
                 pass  # the tempfile is already gone or unremovable; nothing else to do
 
 
-def upsert_env_file(updates: dict[str, str]) -> list[str]:
-    """Order-preserving upsert into the env file. Returns the keys written."""
+def upsert_env_file(updates: dict[str, str], *, allowed_keys: frozenset[str] | None = None) -> list[str]:
+    """Order-preserving upsert into the env file. Returns the keys written.
+
+    ``allowed_keys`` is the caller's own closed set (see :func:`env_entry_error`); without
+    it the page allowlist applies.
+    """
     if not updates:
         return []
     for key, value in updates.items():
-        problem = env_entry_error(str(key), str(value))
+        problem = env_entry_error(str(key), str(value), allowed_keys=allowed_keys)
         if problem:
             raise ValueError(problem)
     with _ENV_FILE_LOCK:
