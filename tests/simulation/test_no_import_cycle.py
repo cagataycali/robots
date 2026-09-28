@@ -233,13 +233,23 @@ def _type_checking_policy_runner_imports(src: str) -> list[list[str]]:
     from the module body, so an import there closes the same static cycle a
     module-level one does; the guard below refuses both.
     """
-    tree = ast.parse(src)
+    # One pass: find each ``if TYPE_CHECKING:`` block, then read the imports
+    # inside it. Asking ``_is_in_type_checking`` per node walks the whole tree
+    # once per node - quadratic over base.py's 6.8k lines, 66 s on a laptop and
+    # past the 120 s test timeout on a loaded runner.
     found: list[list[str]] = []
-    for node in ast.walk(tree):
-        if not _is_in_type_checking(tree, node):
+    for block in ast.walk(ast.parse(src)):
+        if not isinstance(block, ast.If):
             continue
-        if isinstance(node, ast.ImportFrom) and node.module == _POLICY_RUNNER:
-            found.append([alias.name for alias in node.names])
+        test = block.test
+        if not (
+            (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING")
+            or (isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING")
+        ):
+            continue
+        for node in ast.walk(block):
+            if isinstance(node, ast.ImportFrom) and node.module == _POLICY_RUNNER:
+                found.append([alias.name for alias in node.names])
     return found
 
 
