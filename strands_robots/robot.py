@@ -700,6 +700,16 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         agent = Agent(tools=[robot])
         agent("Pick up the red cube")
     """
+    if not isinstance(name, str):
+        # Refused here, at the door, with the wording the empty string gets: the
+        # name reaches ``normalize_robot_name``'s ``.lower()`` before any other
+        # check, so ``Robot(None)`` used to escape as an ``AttributeError`` and
+        # ``Robot(b"so101")`` as a ``TypeError`` from a regex, neither of which
+        # names what to pass instead.
+        raise ValueError(
+            f"Invalid robot name {name!r} ({type(name).__name__}): a robot name is a string. "
+            "Pass a registered name (see ``list_robots()``) or supply ``urdf_path=``."
+        )
     canonical = resolve_name(name)
     _validate_known_robot(canonical, name, urdf_path)
 
