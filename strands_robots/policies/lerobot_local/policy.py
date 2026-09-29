@@ -1184,7 +1184,11 @@ class LerobotLocalPolicy(Policy):
             Tuple of (input_ids, attention_mask) tensors, or None if no tokenizer.
         """
         tokenizer = self._resolve_tokenizer()
-        if tokenizer is None or not instruction:
+        # An adopted pipeline tokenizer tokenizes whatever task string the
+        # checkpoint's own preprocessor would have seen, an empty one included:
+        # pi0 / pi05 read ``observation.language.tokens`` unconditionally, so the
+        # ``run_policy`` default ``instruction=""`` must still produce tokens.
+        if tokenizer is None or (not instruction and not self._pipeline_tokenized):
             return None
 
         encoded = tokenizer(
@@ -3446,8 +3450,9 @@ class LerobotLocalPolicy(Policy):
         # VLA models that use language tokenization expect language tokens as part
         # of the observation batch. We only inject if the model declares
         # language-related input features (tokenizer_name, vlm_model_name).
-        if instruction and "observation.language.tokens" not in batch and self._needs_language_tokens():
-            result = self._tokenize_instruction(instruction)
+        wants_tokens = bool(instruction) or self._pipeline_tokenized
+        if wants_tokens and "observation.language.tokens" not in batch and self._needs_language_tokens():
+            result = self._tokenize_instruction(instruction or "")
             if result is not None:
                 tokens, mask = result
                 batch["observation.language.tokens"] = tokens

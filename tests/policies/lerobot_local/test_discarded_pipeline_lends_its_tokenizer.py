@@ -18,6 +18,8 @@ import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import torch
+
 from strands_robots.policies.lerobot_local.embodiment import EmbodimentMap
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
@@ -129,6 +131,43 @@ class TestTheFallbackKeepsTheTokenizer:
         assert pol._tokenizer is None
         assert pol._needs_language_tokens() is False
         assert pol._tokenizer_max_length == 48
+
+
+class TestTheAdoptedTokenizerRunsOnTheDefaultInstruction:
+    """``run_policy`` defaults to ``instruction=""``; pi0 / pi05 still need language tokens."""
+
+    def _adopted(self, monkeypatch) -> tuple[LerobotLocalPolicy, MagicMock]:
+        tokenizer = MagicMock(name="paligemma_tokenizer")
+        tokenizer.return_value = {
+            "input_ids": torch.zeros((1, 4), dtype=torch.long),
+            "attention_mask": torch.ones((1, 4)),
+        }
+        bridge = _bridge_with_steps([_tokenizer_step(tokenizer)])
+        _patch_from_pretrained(monkeypatch, bridge)
+        pol = _make_policy(embodiment=_six_key_embodiment())
+        pol._load_processor_bridge()
+        assert pol._pipeline_tokenized is True
+        return pol, tokenizer
+
+    def test_an_empty_instruction_is_still_tokenized(self, monkeypatch):
+        pol, tokenizer = self._adopted(monkeypatch)
+        assert pol._tokenize_instruction("") is not None
+        assert tokenizer.call_args.args == ("",)
+
+    def test_the_batch_carries_language_tokens_for_the_default_instruction(self, monkeypatch):
+        pol, _ = self._adopted(monkeypatch)
+        image = torch.zeros((1, 3, 8, 8))
+        passthrough = lambda obs, batch: {**batch, "observation.images.base_0_rgb": image}  # noqa: E731
+        monkeypatch.setattr(pol, "_build_batch_from_strands_format", passthrough)
+        monkeypatch.setattr(pol, "_build_batch_from_lerobot_format", passthrough)
+        batch = pol._build_observation_batch({"observation.state": torch.zeros(6)}, "")
+        assert batch["observation.language.tokens"].shape == (1, 4)
+        assert batch["observation.language.attention_mask"].dtype == torch.bool
+
+    def test_without_an_adopted_tokenizer_an_empty_instruction_adds_nothing(self):
+        pol = _make_policy(embodiment=None)
+        pol._processor_bridge = None
+        assert pol._tokenize_instruction("") is None
 
 
 class TestStateWidthAdaptationWarnsOnce:
