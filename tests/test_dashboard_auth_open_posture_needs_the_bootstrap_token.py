@@ -23,6 +23,7 @@ else's page), and the posture still closes on its own once a passkey exists.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -33,7 +34,7 @@ from tests._dashboard_connection import STRANGER, connection
 
 
 @pytest.fixture()
-def fresh_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def fresh_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """No passkey, no static token, no env override: the posture the finding is about."""
     monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
     monkeypatch.delenv("STRANDS_DASH_AUTH_ENABLED", raising=False)
@@ -96,7 +97,9 @@ class TestTheProofAdmitsOnlyFromThisMachinesOwnBrowser:
         request = connection(peer=peer, path="/api/whoami", **_bearer(_local_token(fresh_install)))
         assert access.caller(request) == {"via": "loopback"}
 
-    def test_the_configured_token_admits_a_local_peer(self, fresh_install: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_the_configured_token_admits_a_local_peer(
+        self, fresh_install: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", "configured-by-the-operator")
         request = connection(path="/api/whoami", **_bearer("configured-by-the-operator"))
         assert access.caller(request) == {"via": "loopback"}
