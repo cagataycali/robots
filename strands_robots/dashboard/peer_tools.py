@@ -22,6 +22,7 @@ Everything above the wire is a PURE rule in this module, tested without a mesh.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
@@ -608,7 +609,10 @@ def build_peer_tools(
                         )
                         return
             try:
-                res = send_cmd(self._peer_id, cmd, timeout=30.0, source="agent")
+                # Off the event loop: the send blocks until the peer answers (a
+                # render, a move_to) and the agent socket's keepalive must keep
+                # flowing meanwhile.
+                res = await asyncio.to_thread(send_cmd, self._peer_id, cmd, timeout=30.0, source="agent")
             except Exception as exc:  # noqa: BLE001 - the wire's failure IS the result
                 fail = f"mesh send to '{self._peer_id}' failed: {exc}"
                 if staleness_note:
@@ -622,6 +626,12 @@ def build_peer_tools(
                 )
                 return
             res = res if isinstance(res, dict) else {"result": res}
+            # The bridge hands back the wire envelope; the peer's answer is its
+            # ``result``. A dispatch answer with a status and content (the
+            # simulation tool's own envelope) is what the model should read.
+            inner = res.get("result")
+            if res.get("type") == "response" and isinstance(inner, dict) and not res.get("error"):
+                res = inner
             status = str(res.get("status") or ("error" if res.get("error") else "success"))
             content = res.get("content")
             if not isinstance(content, list):

@@ -171,6 +171,41 @@ def test_an_image_the_peer_sent_base64_reaches_the_model_as_bytes() -> None:
     assert "could not be decoded" in result["content"][2]["text"]
 
 
+def _stream(tool: Any, tool_input: dict[str, Any]) -> dict[str, Any]:
+    async def _run() -> list[Any]:
+        return [event async for event in tool.stream({"toolUseId": "t1", "input": tool_input}, {})]
+
+    [event] = asyncio.run(_run())
+    return event.tool_result if hasattr(event, "tool_result") else event["tool_result"]
+
+
+def test_the_peers_answer_inside_the_wire_envelope_is_what_the_model_reads() -> None:
+    envelope = {
+        "type": "response",
+        "responder_id": "so101-sim-1",
+        "turn_id": "t",
+        "result": {"status": "success", "content": [{"text": "'red_cube' added"}]},
+        "timestamp": 1.0,
+    }
+    [tool] = peer_tools.build_peer_tools({"so101-sim-1__so101": SIM_PEER}, lambda *a, **k: dict(envelope))
+    result = _stream(tool, {"action": "list_objects"})
+    assert result["status"] == "success"
+    assert result["content"] == [{"text": "'red_cube' added"}]
+
+    refused = {
+        "type": "response",
+        "responder_id": "so101-sim-1",
+        "result": {"status": "error", "content": [{"text": "no"}]},
+    }
+    [tool] = peer_tools.build_peer_tools({"so101-sim-1__so101": SIM_PEER}, lambda *a, **k: dict(refused))
+    assert _stream(tool, {"action": "list_objects"})["status"] == "error"
+
+    offline = {"ok": False, "error": "mesh offline"}
+    [tool] = peer_tools.build_peer_tools({"so101-sim-1__so101": SIM_PEER}, lambda *a, **k: dict(offline))
+    result = _stream(tool, {"action": "list_objects"})
+    assert result["status"] == "error" and "mesh offline" in result["content"][0]["text"]
+
+
 # ────────────────────────────────────────────── the console ────────────────
 
 
