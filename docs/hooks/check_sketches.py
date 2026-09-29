@@ -62,6 +62,24 @@ CLI_LINE = re.compile(r"(?:^|&&|;|\|)\s*(?:python(?:3)?\s+-m\s+strands_robots|st
 # Attributes the factory attaches to the instance it returns (robot.py _attach_mesh and
 # _attach_device_connect); no class declares them.
 FACTORY_ATTACHED = frozenset({"mesh", "peer_id", "run"})
+# pip / uv flags that take the next token as their value (never a distribution name).
+_PIP_FLAGS_WITH_VALUE = frozenset(
+    {
+        "--extra-index-url",
+        "--index-url",
+        "--index",
+        "--index-strategy",
+        "--find-links",
+        "-f",
+        "--python",
+        "-r",
+        "--requirement",
+        "-c",
+        "--constraint",
+    }
+)
+# Hub organisations that stand for "yours" in a fence a reader fills in.
+PLACEHOLDER_ORGS = frozenset({"you", "your-org", "your_org", "me", "user", "org"})
 # A factory call whose bound name is followed to a surface class.
 CONSTRUCTORS = ("Robot", "create_simulation", "create_policy", "create_trainer", "Agent", "Mesh")
 
@@ -644,7 +662,8 @@ class Checker:
                     value = keyword.value.value
                     if isinstance(value, str) and HUB_ID.match(value) and not value.startswith((".", "/", "~")):
                         self.hub_ids.setdefault(value, set()).add(f"{fence.rel} #{fence.index}")
-                        if self.online and not _hub_exists(value):
+                        placeholder = value.split("/")[0] in PLACEHOLDER_ORGS
+                        if self.online and not placeholder and not _hub_exists(value):
                             self._find(
                                 fence,
                                 "hub",
@@ -687,7 +706,7 @@ class Checker:
             if skip_next:
                 skip_next = False
                 continue
-            if token in ("--extra-index-url", "--index-url", "--python", "-r", "--requirement", "-c", "--constraint"):
+            if token in _PIP_FLAGS_WITH_VALUE:
                 skip_next = True
                 continue
             if (

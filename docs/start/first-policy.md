@@ -48,7 +48,7 @@ The timing line is yours; on the Apple laptop GPU that produced this output each
 
 ## The same call on the real arm
 
-Swap `mode` and the camera dict; keep the checkpoint and the `embodiment`. The lerobot driver opens the cameras, and `embodiment="so101"` binds the arm's `shoulder_pan.pos` keys the same way it binds the sim's joints:
+Swap `mode`, the camera dict and the checkpoint: a pretraining checkpoint has no SO-101 statistics, so the real arm gets one fine-tuned on an SO-101, and the shipped `embodiment="so101"` binds its `shoulder_pan.pos` keys and converts the units:
 
 ```python title="sketch"
 import os
@@ -66,7 +66,7 @@ print(result["content"][0]["text"])
 robot.cleanup()
 ```
 
-`run_policy` on hardware takes a policy built with `create_policy` and blocks until `duration` elapses, `n_steps` actions were applied, or `stop_task()` is called; `start_task(instruction, policy_provider="lerobot_local", pretrained_name_or_path=..., embodiment=...)` is the non-blocking form. Both refuse while another rollout holds the bus, and after `cleanup()`. The checkpoint named here was trained on a real SO-101, so its statistics carry the arm's units: use one like it, or [your own](../learn/training/lerobot.md), on a real arm.
+`run_policy` on hardware takes a policy built with `create_policy` and blocks until `duration` elapses, `n_steps` actions were applied, or `stop_task()` is called; `start_task(instruction, policy_provider="lerobot_local", pretrained_name_or_path=..., embodiment=...)` is the non-blocking form. Both refuse while another rollout holds the bus, and after `cleanup()`. On a real arm use this checkpoint or [your own](../learn/training/lerobot.md).
 
 ## Behind the gate
 
