@@ -78,14 +78,14 @@ def test_the_first_mesh_still_warns(monkeypatch, caplog):
 
 
 def test_a_set_code_keeps_the_banner_silent(monkeypatch, caplog):
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "1234")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "code-1234567890abcdef")
     monkeypatch.setenv("STRANDS_MESH_MULTICAST", "false")
     _run_start(_make_mesh("coded"), caplog)
     assert _messages(caplog, _OVERRIDE_MARKER) == []
 
 
 def test_multicast_banner_is_also_once_per_process(monkeypatch, caplog):
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "1234")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "code-1234567890abcdef")
     monkeypatch.setenv("STRANDS_MESH_MULTICAST", "true")
     _run_start(_make_mesh("mc-a"), caplog)
     _run_start(_make_mesh("mc-b"), caplog)

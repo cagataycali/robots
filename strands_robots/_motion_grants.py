@@ -38,13 +38,19 @@ answer is filed under.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import threading
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
+
+from strands_robots.utils import refusal_repr, refusal_str
 
 __all__ = [
     "DETAIL_FIELDS",
     "DIRECT_SERIAL_TOOLS",
+    "calibration_identity",
     "consume_grant",
     "deposit_grant",
     "grant_key",
@@ -75,7 +81,18 @@ DIRECT_SERIAL_TOOLS: frozenset[str] = frozenset({"pose_tool", "serial_tool"})
 #: ``device_name`` are the whole payload of the mesh ``teleop_receive`` verb,
 #: which leader the robot will follow: a yes for one leader must not be
 #: spendable by another.
+#:
+#: ``calibration`` comes first because it is the frame every number after it is
+#: read in: the file decides where a degree target puts the joint, and a bus
+#: given none commands the servo's full rotation instead of the arm's measured
+#: travel. ``pose_tool`` handed it to the gate under a comment saying the
+#: operator approves both together, while this roster left it out, so a yes for
+#: ``position=30`` under one arm's file was spendable under another's, or under
+#: no file at all. :func:`grant_key` binds the CONTENT of the file too, through
+#: :func:`calibration_identity`, so an absent calibration is an explicit
+#: identity rather than a missing field.
 DETAIL_FIELDS = (
+    "calibration",
     "pose_name",
     "motor_name",
     "motor_id",
@@ -113,6 +130,37 @@ def motion_fields(tool_input: Mapping[str, Any]) -> tuple[str, ...]:
         for key in DETAIL_FIELDS
         if tool_input.get(key) is not None and tool_input.get(key) != ""
     )
+
+
+def calibration_identity(value: Any) -> str:
+    """What a grant records about the calibration a motion was approved under.
+
+    ``"none"`` when the call carries no calibration: that is the servo's full
+    rotation, a real and different frame of reference, so it is named rather
+    than left out. A path is identified by the content of the file it names
+    (``sha256:<16 hex>``), so a symlink or a relative spelling of the same file
+    spends the same grant, and a path that cannot be read is its own identity
+    (the tool refuses it anyway; the grant must not be spendable by the file
+    that appears there later). An inline record is hashed canonically.
+
+    Args:
+        value: The ``calibration`` field as the gate saw it.
+
+    Returns:
+        A short string that is equal exactly when the frame of reference is.
+    """
+    if value is None or value == "":
+        return "none"
+    if isinstance(value, Mapping):
+        canonical = json.dumps(value, sort_keys=True, default=str).encode("utf-8")
+        return "sha256:" + hashlib.sha256(canonical).hexdigest()[:16]
+    if isinstance(value, (str, Path)):
+        try:
+            data = Path(value).expanduser().read_bytes()
+        except (OSError, ValueError):
+            return f"unreadable:{refusal_str(str(value))}"
+        return "sha256:" + hashlib.sha256(data).hexdigest()[:16]
+    return f"other:{refusal_repr(value)}"
 
 
 def resolve_target(
@@ -177,8 +225,10 @@ def grant_key(tool_name: str, tool_input: Mapping[str, Any] | None) -> str:
 
     So the parts are the facts the gate resolves, read the same way it reads
     them: the tool, the action as the gate matched it (stripped), the target
-    :func:`resolve_target` resolved, the instruction, and the call's own motion
-    fields. A per-build binding is not consulted, and does not need to be: a
+    :func:`resolve_target` resolved, the instruction, the identity of the
+    calibration the numbers are read in (:func:`calibration_identity`, so a
+    yes under one arm's file is not spendable under another's or under none),
+    and the call's own motion fields. A per-build binding is not consulted, and does not need to be: a
     bound proxy tool IS its peer, so ``tool_name`` already names the robot.
 
     Args:
@@ -197,7 +247,12 @@ def grant_key(tool_name: str, tool_input: Mapping[str, Any] | None) -> str:
             str(tool_input.get("action") or "").strip(),
             resolve_target(tool_name, tool_input, None),
             str(tool_input.get("instruction") or tool_input.get("message") or ""),
-            *motion_fields(tool_input),
+            # The frame of reference, by CONTENT. The detail line shows the path
+            # the model wrote; the key binds what the file says, so a symlink or
+            # a relative spelling of the same file spends the same grant and a
+            # different file, or none, does not.
+            f"calibration={calibration_identity(tool_input.get('calibration'))}",
+            *(field for field in motion_fields(tool_input) if not field.startswith("calibration=")),
         )
     )
 

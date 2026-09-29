@@ -145,12 +145,13 @@ class TestTheCloneActuallyHappens:
                 scope = target.rsplit("/", 1)[0]
                 assert scope in defined, f"cloned into {target} whose scope {scope} was never defined"
 
-    def test_the_spacing_reaches_the_cloner(self, cloner) -> None:
+    def test_the_spacing_reaches_the_clone_poses(self, cloner) -> None:
         engine = _engine()
 
         assert engine.replicate(4, spacing=2.75)["status"] == "success"
 
-        assert cloner.instances[0].spacing == pytest.approx(2.75)
+        positions = cloner.instances[0].clones[0]["positions"]
+        assert [list(p) for p in positions] == [[2.75, 0.0, 0.0], [0.0, 2.75, 0.0], [2.75, 2.75, 0.0]]
 
     def test_the_report_counts_the_prims_that_appeared(self, cloner) -> None:
         """Not the number it was handed: the stub's whole defect was echoing back
@@ -445,3 +446,56 @@ class TestTheStaleClonerNameIsGone:
         source = inspect.getsource(IsaacSimulation.replicate)
         assert "from isaacsim.core.cloner import" in source
         assert "import omni.isaac.cloner" not in source
+
+
+class TestEveryEnvironmentGetsItsOwnCell:
+    """``GridCloner`` laid out a grid for the N-1 clones, centred on the origin,
+    while the source stayed at the origin as env_0. Measured on one L40S (Isaac
+    Sim 6.1, so100, ``replicate(4, spacing=1.5)``): env bases at x = 0 (source),
+    1.5, 0.0, -1.5, so env_2 sat on env_0 to 1e-7 m, and the inter-environment
+    collision filter hid it. Each clone root was also moved TO its cell, so a cube
+    authored at (0.3, 0.3, 0.02) cloned into the ground at its cell's origin."""
+
+    @pytest.mark.parametrize("n", [2, 3, 4, 5, 9, 16, 17])
+    def test_no_two_environments_share_a_cell_and_env_0_stays_put(self, cloner, n: int) -> None:
+        result = _engine().replicate(n, spacing=1.5)
+
+        origins = _payload(result)["env_origins"]
+        assert origins[0] == [0.0, 0.0, 0.0]
+        assert len({tuple(o) for o in origins}) == n
+        placed = [tuple(p) for p in cloner.instances[0].clones[0]["positions"]]
+        assert placed == [tuple(o) for o in origins[1:]]
+        # Neighbours are at least one spacing apart.
+        for i, a in enumerate(origins):
+            for b in origins[i + 1 :]:
+                assert math.dist(a, b) >= 1.5 - 1e-9
+
+    def test_a_clone_keeps_its_source_pose_plus_its_environment_offset(self, cloner, monkeypatch) -> None:
+        import strands_robots.simulation.isaac.simulation as sim_module
+
+        poses = {
+            "/World/Robots/arm": ([0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]),
+            "/World/Objects/cube": ([0.3, 0.3, 0.02], [0.7071, 0.0, 0.0, 0.7071]),
+        }
+        monkeypatch.setattr(sim_module, "_prim_world_pose", lambda stage, path: poses[path])
+
+        assert _engine(objects=True).replicate(4, spacing=1.5)["status"] == "success"
+
+        calls = {call["source_prim_path"]: call for call in cloner.instances[0].clones}
+        cube = calls["/World/Objects/cube"]
+        assert [[round(v, 6) for v in p] for p in cube["positions"]] == [
+            [1.8, 0.3, 0.02],
+            [0.3, 1.8, 0.02],
+            [1.8, 1.8, 0.02],
+        ]
+        assert all(list(q) == [0.7071, 0.0, 0.0, 0.7071] for q in cube["orientations"])
+        assert [list(p) for p in calls["/World/Robots/arm"]["positions"]] == [[1.5, 0, 0], [0, 1.5, 0], [1.5, 1.5, 0]]
+
+    def test_an_unreadable_source_pose_is_identity(self) -> None:
+        import strands_robots.simulation.isaac.simulation as sim_module
+
+        class _Stage:
+            def GetPrimAtPath(self, path: str) -> None:  # noqa: N802 - USD API spelling
+                return None
+
+        assert sim_module._prim_world_pose(_Stage(), "/World/x") == ([0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0])
