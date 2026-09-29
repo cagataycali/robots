@@ -482,9 +482,21 @@ class MjlabEngine(MjlabRecordingMixin, SimEngine):
             self._ensure_built()
             import torch
 
+            # mjlab's Scene.reset() only clears actuator state; restoring the
+            # spawn pose is the job of the RL env's reset events. Do it here
+            # the same way (default root state + env origins, default joints).
+            self._scene.reset()
+            origins = self._scene.env_origins
+            for ent in self._scene.entities.values():
+                d = ent.data
+                if not ent.is_fixed_base and d.default_root_state is not None:
+                    root = d.default_root_state.clone()
+                    root[:, 0:3] += origins
+                    ent.write_root_state_to_sim(root)
+                if ent.is_articulated and d.default_joint_pos is not None and d.default_joint_pos.shape[-1] > 0:
+                    ent.write_joint_state_to_sim(d.default_joint_pos.clone(), torch.zeros_like(d.default_joint_pos))
             self._sim.data.qvel[:] = 0.0
             self._sim.data.ctrl[:] = 0.0
-            self._scene.reset()
             self._sim.forward()
             self._scene.update(self._timestep or self._default_timestep)
             self._pending_ctrl.clear()

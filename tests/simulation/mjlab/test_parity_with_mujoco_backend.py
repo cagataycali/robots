@@ -142,6 +142,42 @@ def test_unitree_g1_free_base_parity_settle():
     assert base_err < 0.005, f"max base position error {base_err:.4f} m"
 
 
+def test_reset_restores_spawn_pose_after_a_fall():
+    """mjlab's Scene.reset() only clears actuator state; the engine must write the
+    spawn root + joint pose itself (found by the G1 sim-to-sim eval: episodes
+    2..N started face-down)."""
+    classic, mjl = _pair("unitree_g1")
+    try:
+        spawn_c = classic.get_observation("unitree_g1", skip_images=True)
+        spawn_m = mjl.get_observation("unitree_g1", skip_images=True)
+
+        def collapse(k: int, n: int):
+            return [1.5] * n  # fold every joint: the kp=500 servos topple the humanoid
+
+        a = _rollout(classic, "unitree_g1", collapse, n_control=100, substeps=10)
+        b = _rollout(mjl, "unitree_g1", collapse, n_control=100, substeps=10)
+        nj = 29
+        assert a[-1, nj + 2] < 0.6 and b[-1, nj + 2] < 0.6, "2 s of folded joints should drop the pelvis"
+        assert classic.reset()["status"] == "success"
+        assert mjl.reset()["status"] == "success"
+        rc = classic.get_observation("unitree_g1", skip_images=True)
+        rm = mjl.get_observation("unitree_g1", skip_images=True)
+    finally:
+        classic.destroy()
+        mjl.destroy()
+    for name, spawn, after in (("classic", spawn_c, rc), ("mjlab", spawn_m, rm)):
+        assert np.allclose(after["base_pos"], spawn["base_pos"], atol=5e-3), (
+            name,
+            spawn["base_pos"],
+            after["base_pos"],
+        )
+        assert np.allclose(after["base_quat"], spawn["base_quat"], atol=1e-6), name
+        for j in ("left_knee_joint", "right_knee_joint", "left_hip_pitch_joint"):
+            assert after[j] == pytest.approx(spawn[j], abs=1e-6), (name, j)
+            assert after[j + ".vel"] == pytest.approx(0.0, abs=1e-6), (name, j)
+    assert np.allclose(rm["base_pos"], rc["base_pos"], atol=5e-3)
+
+
 def test_num_envs_batch_shapes_and_world_zero_is_the_contract():
     os.environ.setdefault("MUJOCO_GL", "egl")
     import torch
