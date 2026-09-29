@@ -75,7 +75,7 @@ def sim():
 class TestFailFastOnTotalUnresolved:
     def test_raises_within_probe_window_when_all_keys_unresolved(self, sim):
         """100% unresolved keys -> error within the first 3 steps, not at end."""
-        policy = _FixedKeysPolicy({"shoulder_pan": 0.5})  # no such actuator on so101
+        policy = _FixedKeysPolicy({"joint_0": 0.5})  # no such actuator, joint or label on so101
         result = sim.run_policy(
             robot_name="so101",
             policy_object=policy,
@@ -86,7 +86,7 @@ class TestFailFastOnTotalUnresolved:
         assert result["status"] == "error", result
         text = result["content"][0]["text"]
         # The error must name the offending keys and point at the fix.
-        assert "shoulder_pan" in text
+        assert "joint_0" in text
         assert "get_features" in text
         # Crucially: it bailed in the probe window, it did NOT run all 50 steps.
         json_block = next((c["json"] for c in result["content"] if isinstance(c, dict) and "json" in c), None)

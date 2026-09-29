@@ -77,7 +77,7 @@ What each call did:
 
 Every method returns the same envelope: `status` and a `content` list of `text`, `json` or `image` blocks. That envelope is what an agent reads when the same object is mounted as a tool, so what you print here is what the model would see.
 
-A key the robot does not have is not silently dropped. `send_action({"shoulder_pan": 0.5})` on this model returns `status="error"` and names the valid keys.
+A label works as a key: `send_action({"shoulder_pan": 0.5})` writes joint `1`. A key the robot does not have is not silently dropped: it returns `status="error"` naming the valid keys and labels.
 
 ## Add an object
 
