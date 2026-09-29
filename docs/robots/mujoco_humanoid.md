@@ -1,11 +1,11 @@
 ---
 title: mujoco_humanoid
-description: "MuJoCo Humanoid (21-DOF reference model from the MuJoCo repository)"
+description: "MuJoCo Humanoid (21-DOF reference model)"
 ---
 
 <!-- generated: docs/hooks/robot_pages.py -->
 
-# MuJoCo Humanoid (21-DOF reference model from the MuJoCo repository)
+# MuJoCo Humanoid (21-DOF reference model)
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">22 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
 

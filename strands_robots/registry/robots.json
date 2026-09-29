@@ -757,7 +757,7 @@
       }
     },
     "mujoco_humanoid": {
-      "description": "MuJoCo Humanoid (21-DOF reference model from the MuJoCo repository)",
+      "description": "MuJoCo Humanoid (21-DOF reference model)",
       "category": "humanoid",
       "joints": 22,
       "asset": {

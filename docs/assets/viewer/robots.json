@@ -720,7 +720,7 @@
    ],
    "base_url": "https://cdn.jsdelivr.net/gh/google-deepmind/mujoco@ad0dc0de5e10a075a2c65be629e9a8d557d383a6/model/humanoid/",
    "category": "humanoid",
-   "description": "MuJoCo Humanoid (21-DOF reference model from the MuJoCo repository)",
+   "description": "MuJoCo Humanoid (21-DOF reference model)",
    "driver": null,
    "joints": 22,
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco/ad0dc0de5e10a075a2c65be629e9a8d557d383a6/model/humanoid/",
