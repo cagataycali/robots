@@ -1,183 +1,98 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" width="1000" height="560" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
-  <defs>
-    <linearGradient id="ax" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#00FF77"/>
-      <stop offset="0.5" stop-color="#22D3EE"/>
-      <stop offset="1" stop-color="#00FF77"/>
-      <animateTransform attributeName="gradientTransform" type="translate"
-        values="-0.3 0; 0.3 0; -0.3 0" dur="8s" repeatCount="indefinite"/>
-    </linearGradient>
-    <linearGradient id="axTitle" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#7CFFB0"/>
-      <stop offset="0.5" stop-color="#00FF77"/>
-      <stop offset="1" stop-color="#22D3EE"/>
-      <animateTransform attributeName="gradientTransform" type="translate"
-        values="-0.4 0; 0.4 0; -0.4 0" dur="9s" repeatCount="indefinite"/>
-    </linearGradient>
-    <radialGradient id="glowG" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#00FF77" stop-opacity="0.5"/>
-      <stop offset="1" stop-color="#00FF77" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="glowC" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#22D3EE" stop-opacity="0.5"/>
-      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-
-  <rect x="6" y="6" width="988" height="548" rx="26" fill="#0a0a0a"/>
-  <rect x="6" y="6" width="988" height="548" rx="26" fill="none" stroke="url(#ax)" stroke-opacity="0.25" stroke-width="1.5"/>
-  <!-- animated mesh / network background (soft depth, matches hero) -->
-  <g opacity="0.5">
-    <circle cx="170" cy="120" r="150" fill="url(#glowG)" opacity="0.22"><animateTransform attributeName="transform" type="translate" values="0 0; 38 28; 0 0" dur="22s" repeatCount="indefinite"/></circle>
-    <circle cx="850" cy="450" r="155" fill="url(#glowC)" opacity="0.20"><animateTransform attributeName="transform" type="translate" values="0 0; -38 -30; 0 0" dur="26s" repeatCount="indefinite"/></circle>
-    <line x1="200" y1="67" x2="166" y2="86" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="6s" begin="0.0s" repeatCount="indefinite"/></line>
-    <line x1="200" y1="67" x2="223" y2="69" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="7s" begin="0.6s" repeatCount="indefinite"/></line>
-    <line x1="39" y1="41" x2="27" y2="38" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="8s" begin="1.2s" repeatCount="indefinite"/></line>
-    <line x1="39" y1="41" x2="166" y2="86" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="9s" begin="1.8s" repeatCount="indefinite"/></line>
-    <line x1="161" y1="191" x2="96" y2="224" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="10s" begin="2.4s" repeatCount="indefinite"/></line>
-    <line x1="161" y1="191" x2="222" y2="193" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="11s" begin="0.0s" repeatCount="indefinite"/></line>
-    <line x1="161" y1="191" x2="161" y2="169" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="12s" begin="0.6s" repeatCount="indefinite"/></line>
-    <line x1="27" y1="38" x2="166" y2="86" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="6s" begin="1.2s" repeatCount="indefinite"/></line>
-    <line x1="169" y1="114" x2="166" y2="86" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="7s" begin="1.8s" repeatCount="indefinite"/></line>
-    <line x1="169" y1="114" x2="161" y2="169" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="8s" begin="2.4s" repeatCount="indefinite"/></line>
-    <line x1="96" y1="224" x2="161" y2="169" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="9s" begin="0.0s" repeatCount="indefinite"/></line>
-    <line x1="166" y1="86" x2="223" y2="69" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="10s" begin="0.6s" repeatCount="indefinite"/></line>
-    <line x1="223" y1="69" x2="288" y2="82" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="11s" begin="1.2s" repeatCount="indefinite"/></line>
-    <line x1="223" y1="69" x2="310" y2="111" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="12s" begin="1.8s" repeatCount="indefinite"/></line>
-    <line x1="288" y1="82" x2="310" y2="111" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="6s" begin="2.4s" repeatCount="indefinite"/></line>
-    <line x1="982" y1="551" x2="892" y2="496" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="7s" begin="0.0s" repeatCount="indefinite"/></line>
-    <line x1="982" y1="551" x2="856" y2="495" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="8s" begin="0.6s" repeatCount="indefinite"/></line>
-    <line x1="828" y1="474" x2="840" y2="474" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="9s" begin="1.2s" repeatCount="indefinite"/></line>
-    <line x1="828" y1="474" x2="859" y2="384" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="10s" begin="1.8s" repeatCount="indefinite"/></line>
-    <line x1="828" y1="474" x2="741" y2="465" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="11s" begin="2.4s" repeatCount="indefinite"/></line>
-    <line x1="828" y1="474" x2="848" y2="486" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="12s" begin="0.0s" repeatCount="indefinite"/></line>
-    <line x1="840" y1="474" x2="859" y2="384" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="6s" begin="0.6s" repeatCount="indefinite"/></line>
-    <line x1="840" y1="474" x2="741" y2="465" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="7s" begin="1.2s" repeatCount="indefinite"/></line>
-    <line x1="840" y1="474" x2="856" y2="495" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="8s" begin="1.8s" repeatCount="indefinite"/></line>
-    <line x1="840" y1="474" x2="848" y2="486" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="9s" begin="2.4s" repeatCount="indefinite"/></line>
-    <line x1="892" y1="496" x2="856" y2="495" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="10s" begin="0.0s" repeatCount="indefinite"/></line>
-    <line x1="892" y1="496" x2="848" y2="486" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="11s" begin="0.6s" repeatCount="indefinite"/></line>
-    <line x1="741" y1="465" x2="721" y2="310" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="12s" begin="1.2s" repeatCount="indefinite"/></line>
-    <line x1="856" y1="495" x2="848" y2="486" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="6s" begin="1.8s" repeatCount="indefinite"/></line>
-    <line x1="856" y1="495" x2="792" y2="583" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="7s" begin="2.4s" repeatCount="indefinite"/></line>
-    <line x1="848" y1="486" x2="792" y2="583" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="8s" begin="0.0s" repeatCount="indefinite"/></line>
-    <line x1="222" y1="193" x2="161" y2="169" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="9s" begin="0.6s" repeatCount="indefinite"/></line>
-    <line x1="740" y1="150" x2="656" y2="88" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="10s" begin="1.2s" repeatCount="indefinite"/></line>
-    <line x1="740" y1="150" x2="721" y2="310" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="11s" begin="1.8s" repeatCount="indefinite"/></line>
-    <line x1="597" y1="373" x2="553" y2="221" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="12s" begin="2.4s" repeatCount="indefinite"/></line>
-    <line x1="597" y1="373" x2="721" y2="310" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="6s" begin="0.0s" repeatCount="indefinite"/></line>
-    <line x1="656" y1="88" x2="572" y2="135" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="7s" begin="0.6s" repeatCount="indefinite"/></line>
-    <line x1="656" y1="88" x2="537" y2="89" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="8s" begin="1.2s" repeatCount="indefinite"/></line>
-    <line x1="553" y1="221" x2="572" y2="135" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="9s" begin="1.8s" repeatCount="indefinite"/></line>
-    <line x1="553" y1="221" x2="537" y2="89" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="10s" begin="2.4s" repeatCount="indefinite"/></line>
-    <line x1="572" y1="135" x2="537" y2="89" stroke="url(#ax)" stroke-width="0.7" stroke-opacity="0.16"><animate attributeName="stroke-opacity" values="0.04;0.28;0.04" dur="11s" begin="0.0s" repeatCount="indefinite"/></line>
-    <circle cx="200" cy="67" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="6s" begin="0.0s" repeatCount="indefinite"/></circle>
-    <circle cx="39" cy="41" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="7s" begin="0.5s" repeatCount="indefinite"/></circle>
-    <circle cx="161" cy="191" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="8s" begin="1.0s" repeatCount="indefinite"/></circle>
-    <circle cx="27" cy="38" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="9s" begin="1.5s" repeatCount="indefinite"/></circle>
-    <circle cx="169" cy="114" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="10s" begin="2.0s" repeatCount="indefinite"/></circle>
-    <circle cx="96" cy="224" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="11s" begin="2.5s" repeatCount="indefinite"/></circle>
-    <circle cx="166" cy="86" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="12s" begin="0.0s" repeatCount="indefinite"/></circle>
-    <circle cx="223" cy="69" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="6s" begin="0.5s" repeatCount="indefinite"/></circle>
-    <circle cx="288" cy="82" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="7s" begin="1.0s" repeatCount="indefinite"/></circle>
-    <circle cx="982" cy="551" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="8s" begin="1.5s" repeatCount="indefinite"/></circle>
-    <circle cx="828" cy="474" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="9s" begin="2.0s" repeatCount="indefinite"/></circle>
-    <circle cx="840" cy="474" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="10s" begin="2.5s" repeatCount="indefinite"/></circle>
-    <circle cx="859" cy="384" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="11s" begin="0.0s" repeatCount="indefinite"/></circle>
-    <circle cx="892" cy="496" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="12s" begin="0.5s" repeatCount="indefinite"/></circle>
-    <circle cx="741" cy="465" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="6s" begin="1.0s" repeatCount="indefinite"/></circle>
-    <circle cx="856" cy="495" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="7s" begin="1.5s" repeatCount="indefinite"/></circle>
-    <circle cx="848" cy="486" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="8s" begin="2.0s" repeatCount="indefinite"/></circle>
-    <circle cx="792" cy="583" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="9s" begin="2.5s" repeatCount="indefinite"/></circle>
-    <circle cx="222" cy="193" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="10s" begin="0.0s" repeatCount="indefinite"/></circle>
-    <circle cx="740" cy="150" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="11s" begin="0.5s" repeatCount="indefinite"/></circle>
-    <circle cx="161" cy="169" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="12s" begin="1.0s" repeatCount="indefinite"/></circle>
-    <circle cx="597" cy="373" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="6s" begin="1.5s" repeatCount="indefinite"/></circle>
-    <circle cx="656" cy="88" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="7s" begin="2.0s" repeatCount="indefinite"/></circle>
-    <circle cx="310" cy="111" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="8s" begin="2.5s" repeatCount="indefinite"/></circle>
-    <circle cx="553" cy="221" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="9s" begin="0.0s" repeatCount="indefinite"/></circle>
-    <circle cx="721" cy="310" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="10s" begin="0.5s" repeatCount="indefinite"/></circle>
-    <circle cx="572" cy="135" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="11s" begin="1.0s" repeatCount="indefinite"/></circle>
-    <circle cx="537" cy="89" r="1.7" fill="#00FF77" opacity="0.5"><animate attributeName="opacity" values="0.12;0.6;0.12" dur="12s" begin="1.5s" repeatCount="indefinite"/></circle>
-  </g>
-
-  <text x="500" y="52" text-anchor="middle" font-size="24" font-weight="700" fill="url(#axTitle)" letter-spacing="-0.5">How strands-robots is layered</text>
-  <text x="500" y="78" text-anchor="middle" font-size="13" fill="#8a8f99">one Python API &#183; one AgentTool &#183; pluggable backends &#183; sim or real</text>
-
-  <!-- Layer 1: Agent / API -->
-  <g>
-    <rect x="80" y="104" width="840" height="74" rx="16" fill="#13161a" stroke="url(#ax)" stroke-width="1.5"/>
-    <text x="104" y="134" font-size="16" font-weight="700" fill="#ffffff">Strands Agent</text>
-    <text x="104" y="156" font-size="12" fill="#8a8f99">Robot(name) factory &#183; natural-language goals &#183; @tool dispatch</text>
-    <g font-size="11.5" font-weight="600" fill="#cfd3da">
-      <rect x="560" y="120" width="100" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#00FF77" stroke-opacity="0.4"/><text x="610" y="145" text-anchor="middle">run_policy</text>
-      <rect x="668" y="120" width="100" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#00FF77" stroke-opacity="0.4"/><text x="718" y="145" text-anchor="middle">teleoperate</text>
-      <rect x="776" y="120" width="120" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#00FF77" stroke-opacity="0.4"/><text x="836" y="145" text-anchor="middle">record dataset</text>
-    </g>
-  </g>
-
-  <!-- Layer 2: Policy providers -->
-  <g>
-    <rect x="80" y="206" width="840" height="74" rx="16" fill="#13161a" stroke="url(#ax)" stroke-width="1.5"/>
-    <text x="104" y="236" font-size="16" font-weight="700" fill="#ffffff">Policy providers</text>
-    <text x="104" y="258" font-size="12" fill="#8a8f99">create_policy(provider) &#183; async get_actions(obs, instruction)</text>
-    <g font-size="11.5" font-weight="600" fill="#cfd3da">
-      <rect x="452" y="222" width="88" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#22D3EE" stroke-opacity="0.4"/><text x="496" y="247" text-anchor="middle">Cosmos 3</text>
-      <rect x="546" y="222" width="99" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#22D3EE" stroke-opacity="0.4"/><text x="596" y="247" text-anchor="middle">MolmoAct2</text>
-      <rect x="651" y="222" width="111" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#22D3EE" stroke-opacity="0.4"/><text x="706" y="247" text-anchor="middle">GR00T N1.7</text>
-      <rect x="768" y="222" width="64" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#22D3EE" stroke-opacity="0.4"/><text x="800" y="247" text-anchor="middle">Pi0.6</text>
-      <rect x="838" y="222" width="66" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#22D3EE" stroke-opacity="0.4"/><text x="871" y="247" text-anchor="middle">Curobo</text>
-    </g>
-  </g>
-
-  <!-- Layer 3: Simulation backend -->
-  <g>
-    <rect x="80" y="308" width="840" height="74" rx="16" fill="#13161a" stroke="url(#ax)" stroke-width="1.5"/>
-    <text x="104" y="338" font-size="16" font-weight="700" fill="#ffffff">Backends</text>
-    <text x="104" y="360" font-size="12" fill="#8a8f99">SimEngine ABC &#183; step / observe / act &#183; register_backend()</text>
-    <g font-size="11.5" font-weight="600" fill="#cfd3da">
-      <rect x="560" y="324" width="120" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#00FF77" stroke-opacity="0.4"/><text x="620" y="349" text-anchor="middle">MuJoCo (EGL)</text>
-      <rect x="688" y="324" width="100" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#00FF77" stroke-opacity="0.4"/><text x="738" y="349" text-anchor="middle">LeRobot HW</text>
-      <rect x="796" y="324" width="100" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#00FF77" stroke-opacity="0.4"/><text x="846" y="349" text-anchor="middle">Mesh fleet</text>
-    </g>
-  </g>
-
-  <!-- Layer 4: Robots -->
-  <g>
-    <rect x="80" y="410" width="840" height="74" rx="16" fill="#13161a" stroke="url(#ax)" stroke-width="1.5"/>
-    <text x="104" y="440" font-size="16" font-weight="700" fill="#ffffff">70+ robots</text>
-    <text x="104" y="462" font-size="12" fill="#8a8f99">registry/robots.json &#183; arms &#183; hands &#183; humanoids &#183; mobile</text>
-    <g font-size="11.5" font-weight="600" fill="#cfd3da">
-      <rect x="470" y="426" width="86" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#22D3EE" stroke-opacity="0.4"/><text x="513" y="451" text-anchor="middle">SO-101</text>
-      <rect x="564" y="426" width="78" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#22D3EE" stroke-opacity="0.4"/><text x="603" y="451" text-anchor="middle">Franka</text>
-      <rect x="650" y="426" width="78" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#22D3EE" stroke-opacity="0.4"/><text x="689" y="451" text-anchor="middle">ALOHA</text>
-      <rect x="736" y="426" width="92" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#22D3EE" stroke-opacity="0.4"/><text x="782" y="451" text-anchor="middle">Unitree G1</text>
-      <rect x="836" y="426" width="60" height="40" rx="10" fill="#ffffff" fill-opacity="0.05" stroke="#22D3EE" stroke-opacity="0.4"/><text x="866" y="451" text-anchor="middle">UR5e</text>
-    </g>
-  </g>
-
-  <!-- left spine: action lanes (green, downward) -->
-  <g stroke="url(#ax)" stroke-opacity="0.32" stroke-width="2" stroke-dasharray="6 8">
-    <line x1="180" y1="178" x2="180" y2="206"><animate attributeName="stroke-dashoffset" values="28;0" dur="1s" repeatCount="indefinite"/></line>
-    <line x1="180" y1="280" x2="180" y2="308"><animate attributeName="stroke-dashoffset" values="28;0" dur="1s" repeatCount="indefinite"/></line>
-    <line x1="180" y1="382" x2="180" y2="410"><animate attributeName="stroke-dashoffset" values="28;0" dur="1s" repeatCount="indefinite"/></line>
-  </g>
-  <g>
-    <circle r="3.6" fill="#00FF77"><animateMotion dur="3s" begin="0.0s" repeatCount="indefinite" path="M162,116 L162,474"/><animate attributeName="opacity" values="0;1;1;0" dur="3s" begin="0.0s" repeatCount="indefinite"/></circle>
-    <circle r="3.6" fill="#00FF77"><animateMotion dur="3s" begin="1.0s" repeatCount="indefinite" path="M180,116 L180,474"/><animate attributeName="opacity" values="0;1;1;0" dur="3s" begin="1.0s" repeatCount="indefinite"/></circle>
-    <circle r="3.6" fill="#00FF77"><animateMotion dur="3s" begin="2.0s" repeatCount="indefinite" path="M198,116 L198,474"/><animate attributeName="opacity" values="0;1;1;0" dur="3s" begin="2.0s" repeatCount="indefinite"/></circle>
-  </g>
-  <!-- right spine: observation lanes (cyan, upward) -->
-  <g stroke="url(#ax)" stroke-opacity="0.32" stroke-width="2" stroke-dasharray="6 8">
-    <line x1="860" y1="410" x2="860" y2="382"><animate attributeName="stroke-dashoffset" values="0;28" dur="1s" repeatCount="indefinite"/></line>
-    <line x1="860" y1="308" x2="860" y2="280"><animate attributeName="stroke-dashoffset" values="0;28" dur="1s" repeatCount="indefinite"/></line>
-    <line x1="860" y1="206" x2="860" y2="178"><animate attributeName="stroke-dashoffset" values="0;28" dur="1s" repeatCount="indefinite"/></line>
-  </g>
-  <g>
-    <circle r="3.6" fill="#22D3EE"><animateMotion dur="3s" begin="0.5s" repeatCount="indefinite" path="M842,474 L842,116"/><animate attributeName="opacity" values="0;1;1;0" dur="3s" begin="0.5s" repeatCount="indefinite"/></circle>
-    <circle r="3.6" fill="#22D3EE"><animateMotion dur="3s" begin="1.5s" repeatCount="indefinite" path="M860,474 L860,116"/><animate attributeName="opacity" values="0;1;1;0" dur="3s" begin="1.5s" repeatCount="indefinite"/></circle>
-    <circle r="3.6" fill="#22D3EE"><animateMotion dur="3s" begin="2.5s" repeatCount="indefinite" path="M878,474 L878,116"/><animate attributeName="opacity" values="0;1;1;0" dur="3s" begin="2.5s" repeatCount="indefinite"/></circle>
-  </g>
-  <text x="150" y="510" font-size="11" font-weight="700" fill="#00FF77" letter-spacing="1">ACTIONS &#8595;</text>
-  <text x="822" y="510" font-size="11" font-weight="700" fill="#22D3EE" letter-spacing="1">&#8593; OBSERVATIONS</text>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 560" width="1200" height="560" role="img" aria-labelledby="t">
+<title id="t">How strands-robots is layered: a Strands Agent, policies, backends and robots. Actions flow down, observations flow up; sim and hardware share every layer above them.</title>
+<style>
+@font-face{font-family:'JetBrains Mono';font-weight:500;font-display:block;src:url(data:font/woff2;base64,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) format('woff2');}
+@font-face{font-family:'JetBrains Mono';font-weight:600;font-display:block;src:url(data:font/woff2;base64,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) format('woff2');}
+@font-face{font-family:'Space Grotesk';font-weight:400;font-display:block;src:url(data:font/woff2;base64,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) format('woff2');}
+:root{
+  --bg:#000; --fg:#fff; --accent:#00cc60; --headline:#00cc60;
+  --muted:#999696; --lead:#b6b6b6; --card-border:#fff; --ring:rgba(255,255,255,.28); --wire:rgba(255,255,255,.55);
+  --dot:#00cc60; --dot-alpha:.42;
+  --term-bg:#28292a; --term-head:#3d3c3c; --term-fg:#d9d9d9; --term-ln:#999696; --term-line:rgba(255,255,255,.08);
+  --kw:#ff70eb; --str:#00cc60; --cm:#999696;
+  --real:#f6bc00; --red:#f7414c; --chip-fg:#b6b6b6; --chip-border:#3d3c3c;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#fff; --fg:#000; --accent:#007a3d; --headline:#000;
+    --muted:#767373; --lead:#3d3c3c; --card-border:#000; --ring:rgba(0,0,0,.22); --wire:rgba(0,0,0,.5);
+    --dot:#9fd9b0; --dot-alpha:.75;
+    --term-bg:#f4f4f4; --term-head:#e5e5e5; --term-fg:#28292a; --term-ln:#999696; --term-line:rgba(0,0,0,.06);
+    --kw:#b3009e; --str:#007a3d; --cm:#767373;
+    --real:#946e00; --red:#c8323c; --chip-fg:#3d3c3c; --chip-border:#999696;
+  }
+}
+.bg{fill:var(--bg)}
+.mono{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-weight:500}
+.grot{font-family:'Space Grotesk',system-ui,-apple-system,'Segoe UI',sans-serif;font-weight:400}
+.fg{fill:var(--fg)} .accent{fill:var(--accent)} .muted{fill:var(--muted)} .lead{fill:var(--lead)}
+.wm{fill:var(--accent)} .headline{fill:var(--headline)}
+.halftone{opacity:var(--dot-alpha)} #dots circle{fill:var(--dot)}
+.term-bg{fill:var(--term-bg)} .term-head{fill:var(--term-head)} .term-line{fill:var(--term-line)}
+.term-file{fill:var(--muted)} .term-ln{fill:var(--term-ln)}
+.term .fg{fill:var(--term-fg)} .kw{fill:var(--kw)} .str{fill:var(--str)} .cm{fill:var(--cm)}
+.dot-red{fill:#f7414c} .dot-yellow{fill:#f6bc00} .dot-green{fill:#00cc60}
+.cursor{fill:var(--accent);animation:blink 1.1s steps(2,start) infinite}
+.code-line{opacity:0;animation:appear .01s linear forwards}
+.card{fill:var(--bg);stroke:var(--card-border);stroke-width:1.5}
+.rail{stroke:var(--wire);stroke-width:1.5;stroke-dasharray:3 5;fill:none}
+.rail-arrow{fill:var(--wire)}
+.marker{fill:var(--accent)}
+.rule{fill:var(--ring)}
+.pill rect{fill:none;stroke-width:1.2} .pill text{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-weight:500}
+.chip-sim rect{stroke:var(--accent)} .chip-sim text{fill:var(--accent)}
+.chip-real rect{stroke:var(--real)} .chip-real text{fill:var(--real)}
+.chip-red rect{stroke:var(--red)} .chip-red text{fill:var(--red)}
+.chip-fg rect{stroke:var(--chip-border)} .chip-fg text{fill:var(--chip-fg)}
+@keyframes appear{to{opacity:1}}
+@keyframes blink{to{visibility:hidden}}
+@media (prefers-reduced-motion: reduce){
+  .code-line{animation:none;opacity:1} .cursor{animation:none} .marker{display:none}
+}
+</style>
+<defs>
+<pattern id="dots" width="12" height="12" patternUnits="userSpaceOnUse"><circle cx="6" cy="6" r="1.1"/></pattern>
+<linearGradient id="fadeg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="1"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<mask id="fade" maskUnits="userSpaceOnUse" x="40" y="16" width="1120" height="220"><rect x="40" y="16" width="1120" height="220" rx="40" fill="url(#fadeg)"/></mask>
+</defs>
+<rect class="bg" width="1200" height="560"/>
+<rect class="halftone" x="40" y="16" width="1120" height="220" rx="40" fill="url(#dots)" mask="url(#fade)"/>
+<text class="mono fg" x="600.0" y="64" font-size="26" font-weight="600" letter-spacing="1" text-anchor="middle">How strands-robots is layered</text>
+<text class="grot lead" x="600.0" y="92" font-size="15" text-anchor="middle">One Python API. One tool per robot. Policies and backends plug in; sim and hardware share every layer above them.</text>
+<rect class="card" x="150" y="124" width="900" height="82" rx="14"/>
+<text class="mono fg" x="174" y="158" font-size="16.5" font-weight="600">Strands Agent</text>
+<text class="grot muted" x="174" y="182" font-size="12.5">Agent(tools=[robot]): natural-language goals, one tool per robot, operator approval before real motion</text>
+<g class="pill chip-fg"><rect x="688.7" y="136.0" width="104.8" height="26" rx="13.0"/><text x="699.7" y="153.1" font-size="11.5">Robot() tool</text></g><g class="pill chip-fg"><rect x="801.5" y="136.0" width="91.0" height="26" rx="13.0"/><text x="812.5" y="153.1" font-size="11.5">robot_mesh</text></g><g class="pill chip-fg"><rect x="900.5" y="136.0" width="125.5" height="26" rx="13.0"/><text x="911.5" y="153.1" font-size="11.5">simulation tool</text></g>
+<line class="rail" x1="220" y1="206" x2="220" y2="226"/>
+<path class="rail-arrow" transform="translate(220 225)" d="M -4 -6 L 0 0 L 4 -6 Z"/>
+<line class="rail" x1="980" y1="206" x2="980" y2="226"/>
+<path class="rail-arrow" transform="translate(980 207)" d="M -4 6 L 0 0 L 4 6 Z"/>
+<rect class="card" x="150" y="226" width="900" height="82" rx="14"/>
+<text class="mono fg" x="174" y="260" font-size="16.5" font-weight="600">Policies</text>
+<text class="grot muted" x="174" y="284" font-size="12.5">Policy ABC: observation in, action chunk out. create_policy(provider) picks the model or the planner</text>
+<g class="pill chip-fg"><rect x="472.1" y="238.0" width="91.0" height="26" rx="13.0"/><text x="483.1" y="255.1" font-size="11.5">GR00T N1.7</text></g><g class="pill chip-fg"><rect x="571.1" y="238.0" width="77.2" height="26" rx="13.0"/><text x="582.1" y="255.1" font-size="11.5">Cosmos 3</text></g><g class="pill chip-fg"><rect x="656.3" y="238.0" width="70.3" height="26" rx="13.0"/><text x="667.3" y="255.1" font-size="11.5">LeRobot</text></g><g class="pill chip-fg"><rect x="734.6" y="238.0" width="84.1" height="26" rx="13.0"/><text x="745.6" y="255.1" font-size="11.5">MolmoAct2</text></g><g class="pill chip-fg"><rect x="826.7" y="238.0" width="42.7" height="26" rx="13.0"/><text x="837.7" y="255.1" font-size="11.5">WBC</text></g><g class="pill chip-fg"><rect x="877.4" y="238.0" width="63.4" height="26" rx="13.0"/><text x="888.4" y="255.1" font-size="11.5">cuRobo</text></g><g class="pill chip-fg"><rect x="948.8" y="238.0" width="77.2" height="26" rx="13.0"/><text x="959.8" y="255.1" font-size="11.5">scripted</text></g>
+<line class="rail" x1="220" y1="308" x2="220" y2="328"/>
+<path class="rail-arrow" transform="translate(220 327)" d="M -4 -6 L 0 0 L 4 -6 Z"/>
+<line class="rail" x1="980" y1="308" x2="980" y2="328"/>
+<path class="rail-arrow" transform="translate(980 309)" d="M -4 6 L 0 0 L 4 6 Z"/>
+<rect class="card" x="150" y="328" width="900" height="82" rx="14"/>
+<text class="mono fg" x="174" y="362" font-size="16.5" font-weight="600">Backends</text>
+<text class="grot muted" x="174" y="386" font-size="12.5">SimEngine ABC or a hardware driver: the same send_action, the same observation, mode decides which</text>
+<g class="pill chip-sim"><rect x="621.8" y="340.0" width="63.4" height="26" rx="13.0"/><text x="632.8" y="357.1" font-size="11.5">MuJoCo</text></g><g class="pill chip-sim"><rect x="693.2" y="340.0" width="63.4" height="26" rx="13.0"/><text x="704.2" y="357.1" font-size="11.5">Newton</text></g><g class="pill chip-sim"><rect x="764.6" y="340.0" width="56.5" height="26" rx="13.0"/><text x="775.6" y="357.1" font-size="11.5">Isaac</text></g><g class="pill chip-real"><rect x="829.1" y="340.0" width="118.6" height="26" rx="13.0"/><text x="840.1" y="357.1" font-size="11.5">native drivers</text></g><g class="pill chip-real"><rect x="955.7" y="340.0" width="70.3" height="26" rx="13.0"/><text x="966.7" y="357.1" font-size="11.5">lerobot</text></g>
+<line class="rail" x1="220" y1="410" x2="220" y2="430"/>
+<path class="rail-arrow" transform="translate(220 429)" d="M -4 -6 L 0 0 L 4 -6 Z"/>
+<line class="rail" x1="980" y1="410" x2="980" y2="430"/>
+<path class="rail-arrow" transform="translate(980 411)" d="M -4 6 L 0 0 L 4 6 Z"/>
+<rect class="card" x="150" y="430" width="900" height="82" rx="14"/>
+<text class="mono fg" x="174" y="464" font-size="16.5" font-weight="600">Robots</text>
+<text class="grot muted" x="174" y="488" font-size="12.5">registry/robots.json: arms, hands, bimanual rigs, humanoids, quadrupeds, mobile bases; assets download on first use</text>
+<g class="pill chip-fg"><rect x="681.5" y="442.0" width="56.5" height="26" rx="13.0"/><text x="692.5" y="459.1" font-size="11.5">so101</text></g><g class="pill chip-fg"><rect x="746.0" y="442.0" width="63.4" height="26" rx="13.0"/><text x="757.0" y="459.1" font-size="11.5">franka</text></g><g class="pill chip-fg"><rect x="817.4" y="442.0" width="56.5" height="26" rx="13.0"/><text x="828.4" y="459.1" font-size="11.5">aloha</text></g><g class="pill chip-fg"><rect x="881.9" y="442.0" width="35.8" height="26" rx="13.0"/><text x="892.9" y="459.1" font-size="11.5">g1</text></g><g class="pill chip-fg"><rect x="925.7" y="442.0" width="42.7" height="26" rx="13.0"/><text x="936.7" y="459.1" font-size="11.5">go2</text></g><g class="pill chip-fg"><rect x="976.4" y="442.0" width="49.6" height="26" rx="13.0"/><text x="987.4" y="459.1" font-size="11.5">ur5e</text></g>
+<path id="rail-down" class="rail" d="M 96 136 L 96 500"/>
+<path class="rail-arrow" transform="translate(96 501)" d="M -4 -7 L 0 0 L 4 -7 Z"/>
+<text class="mono muted" x="96" y="120" font-size="11.5" text-anchor="middle" letter-spacing="1.5">actions</text>
+<circle class="marker" r="5"><animateMotion dur="4.5s" repeatCount="indefinite"><mpath xlink:href="#rail-down"/></animateMotion></circle>
+<path id="rail-up" class="rail" d="M 1104 500 L 1104 136"/>
+<path class="rail-arrow" transform="translate(1104 135)" d="M -4 7 L 0 0 L 4 7 Z"/>
+<text class="mono muted" x="1104" y="528" font-size="11.5" text-anchor="middle" letter-spacing="1.5">observations</text>
+<circle class="marker" r="5"><animateMotion dur="4.5s" begin="2.25s" repeatCount="indefinite"><mpath xlink:href="#rail-up"/></animateMotion></circle>
 </svg>
