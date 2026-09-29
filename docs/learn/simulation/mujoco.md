@@ -18,7 +18,7 @@ export MUJOCO_GL=cgl                       # macOS. Linux without a display: egl
 ```python
 from strands_robots.simulation import create_simulation
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("so101")
 sim.add_object(name="cube", shape="box", size=[0.03, 0.03, 0.03], position=[0.25, 0.0, 0.15])

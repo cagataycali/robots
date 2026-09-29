@@ -1,3 +1,7 @@
+---
+description: An SO-100 or SO-101 on a serial port: which of two drivers talks to it, what units a command takes, how to check the bus.
+---
+
 # Feetech arms
 
 At the end of this page an SO-100 or SO-101 (and the LeKiwi it rides on) is open on a serial port, you know which of the two drivers is talking to it, what units a command takes, and how to check the bus before you trust a policy with it. Koch arms are Dynamixel and appear here only to say where they go.
@@ -21,7 +25,7 @@ arm = Robot("so101", mode="real", driver="strands", port="/dev/ttyACM0")   # nat
 |---|---|---|
 | class | `hardware_robot.Robot` around lerobot `so101_follower` | `drivers.feetech.FeetechDriver` |
 | needs | `pip install 'strands-robots[lerobot]'` | `pip install pyserial` |
-| units in `send_action` | lerobot's normalised `<joint>.pos` | degrees; `gripper` is percent open |
+| units in `send_action` | degrees (`so101_follower` sets `use_degrees=True`); `gripper.pos` 0 to 100 | degrees; `gripper` is percent open |
 | keys | `shoulder_pan.pos` | `shoulder_pan` or `shoulder_pan.pos`, one per motor |
 | policy rollout | yes (`execute`, `start`) | yes, `PolicyRollout` at `control_frequency` 30 Hz |
 | cameras | `cameras={...}` opened by lerobot | not read (`reads_cameras` is not set) |

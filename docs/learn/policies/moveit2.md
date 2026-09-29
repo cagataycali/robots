@@ -60,7 +60,7 @@ cd strands_robots/policies/moveit2/server && docker compose up
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("panda")
 result = sim.run_policy(

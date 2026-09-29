@@ -10,7 +10,7 @@ By the end of this page you can build a scene from primitives, an articulated ca
 from strands_robots.simulation import create_simulation
 from strands_robots.simulation.task_objects import list_task_objects, task_object_path
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world(terrain="stairs", difficulty=0.5)
 sim.add_robot("so101", position=[0.0, 0.0, 0.0])
 sim.add_object(name="cube", shape="box", size=[0.03, 0.03, 0.03], position=[0.25, 0.0, 0.2], color=[1, 0, 0, 1])

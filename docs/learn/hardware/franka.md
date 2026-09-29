@@ -1,3 +1,7 @@
+---
+description: A Panda or FR3 accepts joint-space motion through the Franka Control Interface: the joint names this package uses and what libfranka keeps.
+---
+
 # Franka Panda and FR3
 
 At the end of this page a Franka Emika Panda or a Franka Research 3 accepts joint-space motion from `Robot("panda", mode="real")` through the Franka Control Interface, you know the joint names this package uses for each arm and why, and you know which things the driver leaves to libfranka on purpose.

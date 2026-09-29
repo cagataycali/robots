@@ -1,3 +1,7 @@
+---
+description: How Robot(name, mode="real") picks its driver, which native drivers ship and over which wire, and the contract a driver implements.
+---
+
 # Drivers
 
 At the end of this page you know how `Robot(name, mode="real")` picks the code that talks to your robot, which of the {{n:native_drivers}} native drivers ship in the package and over which wire each one speaks, and what a driver must implement so the agent, the mesh and the teleop loop can use it.
@@ -15,9 +19,9 @@ print(list_driver_coverage()["ability_hand"])    # ()
 
 | `driver=` | builds | for |
 |---|---|---|
-| `"lerobot"` (the default, `DEFAULT_DRIVER`) | `strands_robots.hardware_robot.Robot` around a lerobot robot class | any robot whose registry entry has `hardware.lerobot_type` (`so101_follower`, `koch_follower`, `lekiwi`, `bi_so_follower`, ...) |
+| `"lerobot"` (`DEFAULT_DRIVER`, what `auto` falls back to) | `strands_robots.hardware_robot.Robot` around a lerobot robot class | any robot whose registry entry has `hardware.lerobot_type` (`so101_follower`, `koch_follower`, `lekiwi`, `bi_so_follower`, ...) |
 | `"strands"` | the native driver class registered for the robot | the robots in the table below |
-| `"auto"` (default value) | the registry's `hardware.driver` if set, else lerobot | everything |
+| `"auto"` (the default) | the registry's `hardware.driver` if set, else lerobot | everything |
 
 Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"` in the registry, so a bare `Robot("unitree_go2", mode="real", port="192.168.123.161")` builds the native driver. `panda` and `ur5e` have native drivers but no `hardware` block, so they resolve to lerobot until you ask: `Robot("ur5e", mode="real", driver="strands", port="192.168.1.10")`. Asking for `driver="strands"` on a robot with no native driver is refused by name, never served the lerobot path quietly.
 
@@ -41,7 +45,7 @@ A native driver is anything with these members (`HardwareDriver` is a `runtime_c
 |---|---|
 | `tool_name`, `tool_type`, `tool_spec`, `stream` | the Strands `AgentTool` surface, so `Agent(tools=[robot])` works |
 | `send_action(action, robot_name=None)` | one command, keyed by this driver's joint names; returns a status envelope |
-| `start_task(instruction, ...)` (removed 0.8), `run_policy(policy, ...)`, `get_task_status()`, `stop_task()` | the policy rollout path |
+| `run_policy(policy, ...)`, `get_task_status()`, `stop_task()`; `start_task(instruction, policy_provider=...)` builds the policy in the driver and is removed in 0.8 | the policy rollout path |
 | `get_status()` (async), `stop()` (async) | health and de-energise |
 | `cleanup()` | release the transport |
 

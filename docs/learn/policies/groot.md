@@ -56,7 +56,7 @@ Needs a GR00T server listening. The `gr00t_inference` tool starts NVIDIA's conta
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("so101")
 sim.add_camera(name="front", position=[0.22, 0.025, 0.6], target=[0.22, 0.025, 0])

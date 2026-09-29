@@ -1,3 +1,7 @@
+---
+description: A UR5e or UR10e streams joint setpoints over RTDE: the two gates every write passes and how a policy rollout runs on it.
+---
+
 # Universal Robots e-Series
 
 At the end of this page a UR5e or UR10e streams joint setpoints from `Robot("ur5e", mode="real")` over RTDE, you know the two gates every write passes, and you know how a policy rollout runs on it.

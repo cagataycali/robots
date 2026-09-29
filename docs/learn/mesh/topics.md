@@ -1,3 +1,7 @@
+---
+description: Every mesh topic by its exact key, how often each is published and which variable changes that, which topics the bridge sends to the cloud.
+---
+
 # Topics
 
 At the end of this page you can read any mesh topic by its exact key, know how often each one is published and which environment variable changes that, and know which topics the bridge sends to the cloud.

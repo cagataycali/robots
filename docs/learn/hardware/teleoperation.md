@@ -1,3 +1,7 @@
+---
+description: A leader arm, a gamepad or any get_action() object drives a follower at a fixed rate, with a speed bound that refuses glitch frames.
+---
+
 # Teleoperation
 
 At the end of this page a leader arm, a gamepad or any object with a `get_action()` drives a follower, in simulation or on hardware, at a fixed rate, with a per-joint speed bound that refuses glitch frames instead of clamping them, and optionally mirrored to remote followers over the mesh.

@@ -49,7 +49,7 @@ python -m cosmos_framework.scripts.action_policy_server_robolab --checkpoint-pat
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot(name="arm", data_config="franka")
 sim.add_object(name="cube", shape="box", size=[0.02, 0.02, 0.02], position=[0.5, 0.0, 0.02])

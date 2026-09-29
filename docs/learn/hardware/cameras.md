@@ -1,3 +1,7 @@
+---
+description: Attach cameras to a real robot for policies and recordings, read a frame from an agent, discover devices, mirror the camera in simulation.
+---
+
 # Cameras
 
 At the end of this page you can attach cameras to a real robot so a policy and a recording see them, read one frame from an agent without moving anything, discover what is plugged in, and add the equivalent virtual camera to a simulation so the same policy runs on both.

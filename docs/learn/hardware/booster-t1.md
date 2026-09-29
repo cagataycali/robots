@@ -1,3 +1,7 @@
+---
+description: A Booster T1 takes upper-body joint targets and locomotion twists from Robot("booster_t1", mode="real"); legs never get stiffness.
+---
+
 # Booster T1
 
 At the end of this page a Booster Robotics T1 humanoid takes upper-body joint targets and locomotion twists from `Robot("booster_t1", mode="real")`, and you know why the driver will never let you put stiffness on a leg.

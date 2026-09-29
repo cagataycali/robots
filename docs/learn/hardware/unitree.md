@@ -1,3 +1,7 @@
+---
+description: Install the Unitree SDK the way that works, reach a G1 or Go2 over CycloneDDS, and the gate each driver enforces before a motor frame.
+---
+
 # Unitree G1 and Go2
 
 At the end of this page the vendor SDK is installed the one way that works, `Robot("g1", mode="real")` or `Robot("unitree_go2", mode="real")` reaches the robot over CycloneDDS, you know which safety gate each driver enforces before it writes a motor frame, and which agent verbs sit on top.

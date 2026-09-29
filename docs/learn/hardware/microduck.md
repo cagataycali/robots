@@ -1,3 +1,7 @@
+---
+description: A Microduck walks on intents from Robot("microduck", mode="real"); no per-joint write, and the same walking policy as in simulation.
+---
+
 # Microduck
 
 At the end of this page a Pollen Robotics Microduck walks on intents from `Robot("microduck", mode="real")`, you know why there is no per-joint write on this robot, and you know that the walking policy running on the duck is byte for byte the one you run in simulation.

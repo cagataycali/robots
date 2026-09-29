@@ -50,7 +50,7 @@ from strands_robots.training.rl import RLTrainSpec, SimEnv
 
 
 def make_env() -> SimEnv:
-    sim = create_simulation("mujoco", mesh=False)
+    sim = create_simulation("mujoco")
     sim.create_world()
     sim.add_robot("so101")
     return SimEnv(sim, actor_obs_keys=["1", "2", "3", "4", "5", "6"], reward_terms=[_joint_progress("1", 0.5)], max_episode_steps=50, action_scale=0.15)
@@ -60,7 +60,7 @@ spec = RLTrainSpec(env_factory=make_env, output_dir=tempfile.mkdtemp(), total_ti
 result = create_trainer("ppo").train(spec)
 print(result.status, sorted(os.listdir(result.checkpoint_dir)))
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("so101")
 out = sim.run_policy(robot_name="so101", policy_provider="rl", policy_config={"checkpoint_dir": result.checkpoint_dir}, n_steps=20, control_frequency=50.0)

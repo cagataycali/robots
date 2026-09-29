@@ -1,3 +1,7 @@
+---
+description: List peers, ask one for its state, hand one a task, fan a command out, subscribe to topics; the same from an agent with approvals.
+---
+
 # Fleet
 
 At the end of this page you can list the peers on a mesh, ask one for its state, hand one a policy task, fan a command out to all of them, subscribe to a peer's topics, and do the same from an agent through the `robot_mesh` tool with its approvals in place.

@@ -53,7 +53,7 @@ Needs a CUDA GPU and cuRobo installed. The sim's Panda joint names are `joint1..
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("panda")
 result = sim.run_policy(

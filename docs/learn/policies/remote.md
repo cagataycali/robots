@@ -19,7 +19,7 @@ from strands_robots.inference import PolicyServer
 from strands_robots.simulation import create_simulation
 
 server = PolicyServer(policy_provider="mock", port=0).start()   # port=0 asks the OS for a free port
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("so101")
 result = sim.run_policy(

@@ -1,3 +1,7 @@
+---
+description: Presence, commands and safety events reach AWS IoT Core over MQTT5 with per-robot X.509 identities while joint state stays on the LAN.
+---
+
 # Bridges
 
 At the end of this page your fleet's presence, commands and safety events reach AWS IoT Core over MQTT5 with per-robot X.509 identities while joint state and camera frames stay on the LAN, and you know how to write the ACL that separates operators from robots on the Zenoh side.

@@ -115,7 +115,7 @@ class HoldPolicy(Policy):
 
 register_policy("hold", lambda: HoldPolicy, aliases=["freeze"])
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("so101")
 for provider, config in (("mock", None), ("freeze", {"angle": 0.5})):

@@ -16,7 +16,7 @@ from strands_robots.training.rl import RLTrainSpec, SimEnv, load_deployable_acto
 
 
 def make_env() -> SimEnv:
-    sim = create_simulation("mujoco", mesh=False)
+    sim = create_simulation("mujoco")
     sim.create_world()
     sim.add_robot("so101")
     return SimEnv(

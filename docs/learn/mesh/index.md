@@ -1,3 +1,7 @@
+---
+description: Two robots in one process see each other on the mesh; three switches decide whether it is on, how it is secured, which wire.
+---
+
 # Mesh
 
 At the end of this page two robots in one process see each other on the mesh, one asks the other for its status and hands it a task, and you know the three switches that decide whether the mesh is on, how it is secured, and which wire it rides.

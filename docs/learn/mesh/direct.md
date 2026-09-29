@@ -1,3 +1,7 @@
+---
+description: An operator's command reaches one robot as an AWS IoT Core direct message, the reply comes back the same way, offline is one round trip.
+---
+
 # Direct messaging
 
 At the end of this page an operator's command reaches one robot as an [AWS IoT Core direct message](https://docs.aws.amazon.com/iot/latest/developerguide/direct-messaging.html), the reply comes back the same way, and an offline robot is reported in one round trip.

@@ -1,3 +1,7 @@
+---
+description: A Reachy Mini answers Robot("reachy_mini", mode="real") over its daemon: four axes, an envelope that refuses the rest, the reachy_* verbs.
+---
+
 # Reachy Mini
 
 At the end of this page a Pollen Robotics Reachy Mini (Lite or Wireless) answers `Robot("reachy_mini", mode="real")` over its daemon, you know the four axes it accepts and the envelope that refuses the rest, and an agent has the `reachy_*` verbs for looking, expressing and listening.

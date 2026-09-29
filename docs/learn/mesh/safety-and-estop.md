@@ -1,3 +1,7 @@
+---
+description: What one emergency_stop() does to every robot it reaches, why the fleet stays stopped, what a resume must prove, and where it is logged.
+---
+
 # Safety and e-stop
 
 At the end of this page you know what one `emergency_stop()` does to every robot it can reach, why a stopped fleet stays stopped until an operator with the override code says otherwise, what a resume must prove, and where every one of those events is written down.

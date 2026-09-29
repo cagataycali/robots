@@ -48,7 +48,7 @@ Needs the extra, the environment gate, a CUDA GPU and a first-use download.
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("g1")
 result = sim.run_policy(

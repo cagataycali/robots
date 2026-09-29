@@ -1,3 +1,7 @@
+---
+description: One calibration file gives every joint reading and commanded degree the same meaning here, in lerobot and in recorded datasets.
+---
+
 # Calibration
 
 At the end of this page every joint reading and every commanded degree on a serial arm means the same thing in this package, in lerobot and in your recorded datasets, because all three read one calibration file, and you know what the package does when that file is missing.
