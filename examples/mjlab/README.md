@@ -20,6 +20,8 @@ export MUJOCO_GL=egl
 | 02 | [`02_every_arm_one_night.py`](02_every_arm_one_night.py) | One reach recipe on every arm in the registry: build, train, export ONNX, evaluate on classic MuJoCo, one table |
 | 03 | [`03_humanoid_beyond_velocity.py`](03_humanoid_beyond_velocity.py) | G1 on rough terrain and get-up, evaluated in the native mjlab play env and sim-to-sim on classic MuJoCo |
 | 04 | [`04_extreme_domain_randomisation.py`](04_extreme_domain_randomisation.py) | Per-world physics randomisation pushed to the edge, judged on a perturbation grid the policy never saw |
+| 05 | [`05_curriculum_goal_box.py`](05_curriculum_goal_box.py) | Per-world curriculum: each world grows its own goal box (1x to 3x) as it succeeds; does it beat a fixed box at equal iterations |
+| 06 | [`06_agent_trains_a_fleet.py`](06_agent_trains_a_fleet.py) | A Strands agent with train_policy / evaluate_policy / write_leaderboard tools trains three arms on its own and writes the leaderboard |
 | 07 | [`07_dataset_factory.py`](07_dataset_factory.py) | LeRobot v3 episodes per hour from 1,024 worlds with a scripted expert and with a trained actor |
 
 Helper scripts from the backend lane live next to them (`sim2sim_reach.py`,
@@ -79,6 +81,14 @@ Results follow (running).
 ## 04 Extreme domain randomisation
 
 Results follow (running).
+
+## 05 Curriculum goal box
+
+Results follow (queued).
+
+## 06 Agent trains a fleet
+
+Results follow (queued).
 
 ## 07 Dataset factory
 
