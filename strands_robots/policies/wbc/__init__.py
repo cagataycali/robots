@@ -29,6 +29,7 @@ from strands_robots.policies.wbc.gait import (
 )
 from strands_robots.policies.wbc.policy import WBC_G1_ALL_JOINTS, WBC_G1_LEG_WAIST_JOINTS, WBCPolicy
 from strands_robots.policies.wbc.sim_control import (
+    PDTorquePolicy,
     WBCTorqueController,
     install_wbc_torque_control,
     wbc_uses_position_servo,
@@ -44,6 +45,7 @@ __all__ = [
     "GAIT_COMMAND_DIM",
     "WBC_G1_LEG_WAIST_JOINTS",
     "WBC_G1_ALL_JOINTS",
+    "PDTorquePolicy",
     "WBCTorqueController",
     "install_wbc_torque_control",
     "wbc_uses_position_servo",

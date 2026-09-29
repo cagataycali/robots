@@ -225,6 +225,8 @@ class WBCPolicy(Policy):
             or the resolved config dimensions are inconsistent.
     """
 
+    #: Opts in to the MuJoCo PD-to-torque shim auto-install (see sim_control.PDTorquePolicy).
+    pd_torque_shim: ClassVar[bool] = True
     requires_action_controller: ClassVar[str | None] = (
         "it emits joint-position targets the scene's position servos override, and "
         "the torque shim that corrects them (WBCTorqueController applies SONIC's "

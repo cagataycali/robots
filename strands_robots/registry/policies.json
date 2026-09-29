@@ -193,6 +193,29 @@
         "sonic"
       ]
     },
+    "holosoma": {
+      "module": "strands_robots.policies.holosoma",
+      "class": "HolosomaPolicy",
+      "description": "Amazon FAR Holosoma whole-body locomotion for the Unitree G1 (in-process, ONNX, Apache-2.0 weights)",
+      "requires": [],
+      "config_keys": [
+        "checkpoint",
+        "algorithm",
+        "config",
+        "target_velocity",
+        "driven_joints",
+        "arm_observation",
+        "allow_missing_models"
+      ],
+      "defaults": {
+        "algorithm": "fastsac",
+        "driven_joints": "all",
+        "arm_observation": "live"
+      },
+      "shorthands": [
+        "holosoma"
+      ]
+    },
     "wbc_gait": {
       "module": "strands_robots.policies.wbc",
       "class": "WBCGaitPolicy",
