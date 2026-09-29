@@ -111,7 +111,7 @@ GATE_BEARING_ENV_KEYS: frozenset[str] = frozenset(
 )
 ENV_VALUE_MAX_LEN = 4096
 
-#: Settings keys that ARE credentials. ``settings.py`` maps each to an env spelling that
+#: Settings keys that ARE credentials. :mod:`~strands_robots.dashboard.settings` maps each to an env spelling that
 #: ``GATE_BEARING_ENV_KEYS`` refuses on the ``env`` half of the same request body, and the
 #: settings half reached the identical value with no check at all: any admitted session,
 #: the pre-enrolment loopback posture included, could write ``security.auth_token`` to disk,
