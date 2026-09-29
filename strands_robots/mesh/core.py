@@ -556,6 +556,113 @@ def _sensor_present(robot: Any, *attrs: str) -> bool:
     return False
 
 
+#: Headroom added to the receiver's cmd period when the sender paces two
+#: publishes apart, so clock jitter on either side cannot land the second one
+#: inside the dropped window.
+CMD_PACE_MARGIN_S: float = 0.01
+
+#: Per-image cap for a ``sim_call`` result on the wire: the camera topic's own
+#: default cap (``STRANDS_MESH_MAX_CAMERA_BYTES``), so a render travels the way
+#: a frame does. Over it, the block is replaced by a sentence naming the size.
+SIM_CALL_MAX_IMAGE_BYTES: int = 1024 * 1024
+
+#: Cap on one text block of a ``sim_call`` result on the wire (an exported XML
+#: can run to megabytes); the tail is dropped and the cut is named.
+SIM_CALL_MAX_TEXT_CHARS: int = 256 * 1024
+
+
+def _wire_tool_target(robot: Any) -> tuple[Any, str | None]:
+    """The object that serves a peer's advertised tool, and the robot it binds.
+
+    A Simulation peer serves its own :meth:`wire_tool_spec`; a child SimRobot
+    peer (``<sim>__<robot>``) serves its parent's with ``robot_name`` bound to
+    itself. Anything else (hardware, a policy-only robot) advertises no tool
+    surface and ``(None, None)`` comes back.
+    """
+    parent = getattr(robot, "_sim_parent", None)
+    if parent is not None and callable(getattr(parent, "wire_tool_spec", None)):
+        return parent, getattr(robot, "name", None)
+    if callable(getattr(robot, "wire_tool_spec", None)):
+        return robot, None
+    return None, None
+
+
+def _wire_tool_spec_of(robot: Any) -> dict[str, Any] | None:
+    """The served spec a peer advertises, or ``None``; never raises."""
+    try:
+        target, _ = _wire_tool_target(robot)
+        if target is None:
+            return None
+        spec = target.wire_tool_spec()
+    except Exception:
+        logger.debug("wire_tool_spec not read from robot", exc_info=True)
+        return None
+    return spec if isinstance(spec, dict) else None
+
+
+def _wire_tool_spec_hash(spec: dict[str, Any]) -> str:
+    """sha256 of the canonical JSON (sorted keys, no whitespace); what presence carries."""
+    encoded = json.dumps(spec, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _wire_safe_result(result: Any) -> dict[str, Any]:
+    """The simulation tool's envelope with every block JSON-encodable.
+
+    An ``image`` block carries raw PNG bytes (the Bedrock shape); on the wire
+    they become ``{"format", "base64", "bytes_len"}`` under the same ``image``
+    key, or a text sentence when the image is over
+    :data:`SIM_CALL_MAX_IMAGE_BYTES`. Text blocks are cut at
+    :data:`SIM_CALL_MAX_TEXT_CHARS`. Anything else the encoder cannot carry is
+    rendered with ``str``.
+    """
+    if not isinstance(result, dict):
+        return {"result": result}
+    out = dict(result)
+    content = out.get("content")
+    if isinstance(content, list):
+        blocks: list[Any] = []
+        for block in content:
+            blocks.append(_wire_safe_block(block))
+        out["content"] = blocks
+    try:
+        json.dumps(out)
+    except (TypeError, ValueError):
+        out = json.loads(json.dumps(out, default=str))
+    return out
+
+
+def _wire_safe_block(block: Any) -> Any:
+    if not isinstance(block, dict):
+        return block
+    image = block.get("image")
+    if isinstance(image, dict):
+        source = image.get("source") or {}
+        raw = source.get("bytes") if isinstance(source, dict) else None
+        if isinstance(raw, (bytes, bytearray)):
+            if len(raw) > SIM_CALL_MAX_IMAGE_BYTES:
+                return {
+                    "text": (
+                        f"[image {image.get('format', 'png')} of {len(raw)} bytes not carried: over the "
+                        f"{SIM_CALL_MAX_IMAGE_BYTES}-byte wire cap; render at a smaller width/height or "
+                        "watch the peer's camera topic]"
+                    )
+                }
+            return {
+                "image": {
+                    "format": image.get("format", "png"),
+                    "base64": base64.b64encode(bytes(raw)).decode("ascii"),
+                    "bytes_len": len(raw),
+                }
+            }
+        return block
+    text = block.get("text")
+    if isinstance(text, str) and len(text) > SIM_CALL_MAX_TEXT_CHARS:
+        cut = len(text) - SIM_CALL_MAX_TEXT_CHARS
+        return {"text": text[:SIM_CALL_MAX_TEXT_CHARS] + f"\n[... {cut} more characters not carried over the wire]"}
+    return block
+
+
 def _responder_segment(key: str, me: str) -> str | None:
     """The ``<responder>`` of ``strands/<me>/response/<responder>/<turn>``, or ``None``.
 
@@ -614,6 +721,11 @@ class Mesh(SensorLoopsMixin):
         # D1: this is what _on_response uses to reject a forged
         # response from a peer that wasn't the original target.
         self._rpc_lock = threading.Lock()
+        # Outbound cmd/broadcast publishes are paced under the receiver's rate
+        # cap (see :meth:`_pace_cmd_publish`); one slot for every target,
+        # because the downsampling rule counts per link, not per key.
+        self._cmd_pace_lock = threading.Lock()
+        self._last_cmd_publish_mono: float | None = None
         self._pending: dict[str, threading.Event] = {}
         self._responses: dict[str, list[dict[str, Any]]] = {}
         self._expected_responders: dict[str, str] = {}
@@ -1257,6 +1369,12 @@ class Mesh(SensorLoopsMixin):
                 payload["action_keys"] = list(action_features.keys())
         except Exception:
             logger.debug("presence: action features not read from robot", exc_info=True)
+
+        # The tool this peer serves over the mesh, by hash only (presence stays
+        # small); ``describe_tool`` returns the spec itself.
+        spec = _wire_tool_spec_of(r)
+        if spec is not None:
+            payload["tool_spec_hash"] = _wire_tool_spec_hash(spec)
 
         try:
             world = getattr(r, "_world", None)
@@ -1913,7 +2031,14 @@ class Mesh(SensorLoopsMixin):
                         frame = frame.astype(np.uint8)
 
                 if have_cv2:
-                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    # Frames arrive RGB (MuJoCo's renderer, lerobot's cameras);
+                    # cv2 encodes what it is given as BGR, so without this swap
+                    # every card showed a red cube as blue and a blue sky as
+                    # brown.
+                    to_encode = frame
+                    if len(shape) == 3 and shape[2] == 3:
+                        to_encode = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    ok, buf = cv2.imencode(".jpg", to_encode, [cv2.IMWRITE_JPEG_QUALITY, 80])
                     if not ok:
                         continue
                     encoded = base64.b64encode(buf.tobytes()).decode("ascii")
@@ -2249,7 +2374,7 @@ class Mesh(SensorLoopsMixin):
         # turn_id; the fallback exists only so a malformed envelope doesn't
         # crash dispatch).
         _action = cmd.get("action", "status") if isinstance(cmd, dict) else "status"
-        _READONLY = {"status", "state", "features"}
+        _READONLY = {"status", "state", "features", "describe_tool"}
         if _action not in _READONLY:
             _now_mono = time.monotonic()
             _key = (sender, turn)
@@ -2328,6 +2453,10 @@ class Mesh(SensorLoopsMixin):
             if _action not in _READONLY:
                 refused = isinstance(result, dict) and ("error" in result or _reports_failure_to_stop(result))
                 payload: dict[str, Any] = {"sender": sender, "turn_id": turn, "action": _action}
+                if _action == "sim_call":
+                    payload["sim_action"] = cmd.get("sim_action")
+                if _action == "call":
+                    payload["function"] = cmd.get("function")
                 if refused:
                     # A tool-envelope refusal (``{"status": "error", "content":
                     # [...]}``) carries no ``error`` key: name the shape that
@@ -2716,6 +2845,12 @@ class Mesh(SensorLoopsMixin):
                 )
         if action == "set_joints":
             return self._dispatch_set_joints(cmd)
+        if action == "sim_call":
+            return self._dispatch_sim_call(cmd)
+        if action == "call":
+            return self._dispatch_call(cmd)
+        if action == "describe_tool":
+            return self._dispatch_describe_tool()
         if action == "step" and hasattr(r, "step"):
             return dict(r.step(cmd.get("steps", 1)))
         if action == "reset" and hasattr(r, "reset"):
@@ -2795,6 +2930,89 @@ class Mesh(SensorLoopsMixin):
             params["robot_name"] = robot_name
         result = target._dispatch_action("set_joint_positions", params)
         return dict(result) if isinstance(result, dict) else {"result": result}
+
+    def _dispatch_sim_call(self, cmd: dict[str, Any]) -> dict[str, Any]:
+        """``sim_call``: the alias ``call`` keeps for its first callers.
+
+        ``{"action": "sim_call", "sim_action": X, "params": P}`` is served as
+        ``{"action": "call", "function": X, "params": P}``; ``validate_command``
+        has already refused the denied names with the peer's wording, so the
+        two answer byte for byte alike.
+        """
+        target, _ = _wire_tool_target(self.robot)
+        if target is None:
+            return {
+                "error": (
+                    "sim_call is a simulation-only action; a real robot is driven through "
+                    "execute/start, which ask the operator first"
+                )
+            }
+        return self._dispatch_call({"action": "call", "function": cmd.get("sim_action"), "params": cmd.get("params")})
+
+    def _dispatch_describe_tool(self) -> dict[str, Any]:
+        """``describe_tool``: the spec this peer advertises, with its hash.
+
+        A peer with no wire tool surface (real hardware, a policy-only robot)
+        answers ``spec: null`` and says so; its verbs are the mesh actions.
+        """
+        r = self.robot
+        tool_name = getattr(r, "tool_name_str", None)
+        spec = _wire_tool_spec_of(r)
+        if spec is None:
+            return {
+                "tool_name": tool_name,
+                "tool_spec_hash": None,
+                "spec": None,
+                "note": "this peer advertises no tool surface over the mesh; its verbs are the mesh actions",
+            }
+        return {"tool_name": tool_name, "tool_spec_hash": _wire_tool_spec_hash(spec), "spec": spec}
+
+    def _dispatch_call(self, cmd: dict[str, Any]) -> dict[str, Any]:
+        """``call``: one function of the tool this peer ADVERTISES.
+
+        The wire has bounded the shape (identifier names, 64 KiB params); the
+        peer decides the rest against its own :meth:`wire_tool_spec`: a
+        function outside the served set is refused with the spec's reason
+        (``denied``) or as unknown, a param the function does not list is
+        refused by name. A child SimRobot peer serves its parent's tool with
+        ``robot_name`` bound to itself when the function takes one and the
+        caller named none; a peer with no tool surface (real hardware) refuses,
+        real motion stays on ``execute`` / ``start`` with the operator gate.
+        The call then goes through the tool's own ``__call__``: the same alias
+        rewriting, signature validation, lock and refusal wording an in-process
+        agent gets. The result is made wire-safe by :func:`_wire_safe_result`.
+        """
+        target, bound_robot = _wire_tool_target(self.robot)
+        if target is None:
+            return {
+                "error": (
+                    "call is served by peers that advertise a tool surface (a simulation); a real robot "
+                    "is driven through execute/start, which ask the operator first"
+                )
+            }
+        spec = _wire_tool_spec_of(self.robot) or {}
+        functions = spec.get("functions") or {}
+        function = str(cmd.get("function") or "")
+        params: dict[str, Any] = dict(cmd.get("params") or {})
+        if function not in functions:
+            reason = (spec.get("denied") or {}).get(function)
+            if reason:
+                return {"error": f"{function!r} is not served over the mesh: {reason}."}
+            return {"error": f"{function!r} is not a function this peer advertises; ask describe_tool for the list"}
+        accepted = functions[function].get("params") or {}
+        unknown = sorted(key for key in params if key not in accepted)
+        if unknown:
+            names = ", ".join(repr(key) for key in unknown)
+            return {
+                "error": (
+                    f"{function!r} on this peer does not take {names}; its params are "
+                    f"{', '.join(sorted(accepted)) or 'none'}"
+                )
+            }
+        if bound_robot and "robot_name" not in params and "robot_name" in accepted:
+            params["robot_name"] = bound_robot
+        result = target(action=function, **params)
+        return _wire_safe_result(result)
 
     # allowlist is derived from the registry (see
     # ``strands_robots.mesh.security``), so a locomotion peer can be told to
@@ -3487,6 +3705,38 @@ class Mesh(SensorLoopsMixin):
             "Shrink world_update/instruction or raise the cap on BOTH peers."
         )
 
+    def _pace_cmd_publish(self) -> None:
+        """Hold a cmd/broadcast publish until the receiver's rate cap admits it.
+
+        Every peer's transport carries an ingress ``downsampling`` rule on
+        ``**/cmd`` and ``**/broadcast`` at ``STRANDS_MESH_CMD_RATE_HZ`` (20 Hz
+        by default): a command arriving sooner than one period after the
+        previous one on the same link is dropped before any parser runs, so
+        the sender waits out its whole timeout for an answer that was never
+        going to come. An agent that issues two tool calls at once did exactly
+        that (the second of two ``sim_call`` reads timed out at 30 s while the
+        peer was idle). The sender therefore spaces its own publishes one
+        period plus :data:`CMD_PACE_MARGIN_S` apart, across every target,
+        because the rule counts per link. The wait rides ``_stop_event`` so a
+        stopping mesh does not hold a caller.
+        """
+        lock = getattr(self, "_cmd_pace_lock", None)
+        if lock is None:
+            return
+        try:
+            from strands_robots.mesh._zenoh_config import cmd_rate_hz
+
+            period = 1.0 / cmd_rate_hz()
+        except ImportError:
+            return
+        with lock:
+            last = self._last_cmd_publish_mono
+            if last is not None:
+                wait = last + period + CMD_PACE_MARGIN_S - time.monotonic()
+                if wait > 0:
+                    self._stop_event.wait(timeout=wait)
+            self._last_cmd_publish_mono = time.monotonic()
+
     def send(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
         """Send a command to a single peer and return the first response.
 
@@ -3586,6 +3836,7 @@ class Mesh(SensorLoopsMixin):
             # (AWS IoT Core Direct Messaging); an offline target answers here
             # in one round trip instead of after the whole budget. Every other
             # outcome keeps the publish the Zenoh path has always done.
+            self._pace_cmd_publish()
             direct, delivery = self._send_cmd_direct(target, turn, msg, timeout)
             if direct == "offline":
                 return {"status": "error", "error": "peer offline (iot 404)", "peer": target, "delivery": delivery}
@@ -3788,6 +4039,7 @@ class Mesh(SensorLoopsMixin):
                 self._expected_responders.pop(turn, None)
             return []
         try:
+            self._pace_cmd_publish()
             self.publish("strands/broadcast", msg)
             # A broadcast has no single expected responder, so collect acks for
             # the FULL window. ``event`` fires on the FIRST response

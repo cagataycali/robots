@@ -232,7 +232,7 @@ def test_delete_credential_removes_one_of_two(monkeypatch):
     auth.finish_registration(request, begun["challenge_id"], {"id": bytes_to_base64url(other)})
 
     out = auth.delete_credential(CRED_ID_B64)
-    assert out == {"ok": True, "removed": CRED_ID_B64, "remaining": 1}
+    assert out == {"ok": True, "removed": CRED_ID_B64, "remaining": 1, "sessions_ended": True}
     (cred,) = auth._load()["credentials"]
     assert cred["name"] == "backup"
 

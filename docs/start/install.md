@@ -39,7 +39,7 @@ To fetch models ahead of time, or on a machine that will go offline, call the do
 from strands_robots import download_assets
 
 report = download_assets(action="status")
-print(report["content"][0]["text"][:200])
+print("\n".join(report["content"][0]["text"].splitlines()[:3]))
 ```
 
 You should see a count, then one line per robot with a model to fetch, `[ok]` when its files are present and `[--]` when they are not:
