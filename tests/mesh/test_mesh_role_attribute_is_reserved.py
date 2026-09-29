@@ -45,11 +45,10 @@ def iot_client() -> Any:
     iot.create_thing.return_value = {"thingArn": "arn:aws:iot:us-west-2:1:thing/t"}
     iot.get_policy.side_effect = _NotFound("absent")
     iot.create_policy.return_value = {"policyArn": "arn:aws:iot:us-west-2:1:policy/p"}
-    iot.create_keys_and_certificate.return_value = {
+    iot.create_certificate_from_csr.return_value = {
         "certificateArn": "arn:aws:iot:us-west-2:1:cert/c",
         "certificateId": "c",
         "certificatePem": "PEM",
-        "keyPair": {"PrivateKey": "KEY"},
     }
     iot.list_thing_principals.return_value = {"principals": []}
     iot.describe_endpoint.return_value = {"endpointAddress": "x.iot.us-west-2.amazonaws.com"}

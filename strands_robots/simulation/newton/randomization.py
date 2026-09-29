@@ -2,8 +2,9 @@
 
 Mixed into :class:`~strands_robots.simulation.newton.simulation.NewtonSimEngine`.
 Mirrors the MuJoCo backend's ``randomize`` contract (same keyword names and
-defaults for the axes Newton supports) and adds ``set_obs_noise`` for additive
-Gaussian sensor noise on joint encoders and camera frames -- the pieces a
+defaults for the axes Newton supports); ``set_obs_noise`` (additive
+Gaussian sensor noise on joint encoders and camera frames) comes from the
+shared :class:`~strands_robots.simulation.obs_noise.ObservationNoiseMixin` - the pieces a
 sim2real workflow needs so datasets collected on the GPU backend do not overfit
 to the default physics constants.
 
@@ -31,16 +32,16 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots.simulation.base import (
-    finite_non_negative_error,
     randomization_range_error,
     randomization_seed_error,
     unknown_kwargs_error,
 )
+from strands_robots.simulation.obs_noise import ObservationNoiseMixin
 from strands_robots.utils import boolean_flag_error
 
 logger = logging.getLogger(__name__)
 
-# Parameter names ``randomize`` / ``set_obs_noise`` accept. Both declare
+# Parameter names ``randomize`` accepts. It declares
 # ``**kwargs`` to match the ``**kwargs``-typed SimEngine base signature, and
 # ``randomize`` reads ``randomize_positions`` out of it for the MuJoCo-parity
 # error below - but nothing else there is used, so any other keyword is a caller
@@ -59,15 +60,9 @@ _RANDOMIZE_PARAMS: tuple[str, ...] = (
     "mass_range",
     "seed",
 )
-_OBS_NOISE_PARAMS: tuple[str, ...] = (
-    "joint_pos_std",
-    "joint_vel_std",
-    "camera_jitter_px",
-    "seed",
-)
 
 
-class DomainRandomizationMixin:
+class DomainRandomizationMixin(ObservationNoiseMixin):
     """Domain randomization + sensor-noise hooks for ``NewtonSimEngine``."""
 
     if TYPE_CHECKING:
@@ -80,9 +75,6 @@ class DomainRandomizationMixin:
         _dr: dict[str, Any] | None
         _dr_applied: dict[str, Any] | None
         _dr_light_dir: tuple[float, float, float] | None
-        # Sensor-noise state.
-        _obs_noise: dict[str, float] | None
-        _obs_noise_rng: np.random.Generator | None
 
         def _rebuild(self) -> None: ...
 
@@ -306,158 +298,3 @@ class DomainRandomizationMixin:
         self._dr_applied = applied
 
     # Sensor noise
-
-    def set_obs_noise(
-        self,
-        joint_pos_std: float = 0.0,
-        joint_vel_std: float = 0.0,
-        camera_jitter_px: float = 0.0,
-        seed: int | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Configure additive Gaussian sensor noise on observations.
-
-        Models real-encoder / real-camera measurement noise so policies trained
-        on Newton data do not assume noise-free sensing. Once set, the noise is
-        applied on every :meth:`get_observation` / :meth:`get_robot_state` and
-        every rendered camera frame until reconfigured. Pass all-zero std to
-        disable.
-
-        Args:
-            joint_pos_std: Std (radians) of Gaussian noise added to joint
-                positions in ``get_observation`` and ``get_robot_state``.
-            joint_vel_std: Std (rad/s) of Gaussian noise added to joint
-                velocities in ``get_robot_state``.
-            camera_jitter_px: Max integer pixel shift applied to rendered
-                frames (uniform in ``[-px, px]`` per axis).
-            seed: Optional seed for a reproducible noise stream; a non-negative
-                integer, or None for fresh entropy.
-            **kwargs: Declared only to match the ``**kwargs``-typed
-                ``SimEngine.set_obs_noise`` signature; nothing is forwarded, so
-                any keyword arriving here is rejected with an error naming the
-                valid parameters rather than reporting an all-zero (no-op) noise
-                configuration as success.
-
-        Returns:
-            Status dict echoing the configured noise, or an error dict when a
-            keyword is unknown or a value is negative or non-finite.
-        """
-        if kwargs_error := unknown_kwargs_error("set_obs_noise", kwargs, _OBS_NOISE_PARAMS):
-            return kwargs_error
-        for label, value in (
-            ("joint_pos_std", joint_pos_std),
-            ("joint_vel_std", joint_vel_std),
-            ("camera_jitter_px", camera_jitter_px),
-        ):
-            if msg := finite_non_negative_error(value, label, "set_obs_noise"):
-                return {"status": "error", "content": [{"text": msg}]}
-        # See the note in ``randomize``: the seed only reaches ``default_rng``
-        # below, and on the noise path an unusable one would raise on the first
-        # observation drawn rather than at this call.
-        if msg := randomization_seed_error(seed, "set_obs_noise"):
-            return {"status": "error", "content": [{"text": msg}]}
-
-        with self._lock:
-            self._obs_noise = {
-                "joint_pos_std": float(joint_pos_std),
-                "joint_vel_std": float(joint_vel_std),
-                "camera_jitter_px": float(camera_jitter_px),
-            }
-            self._obs_noise_rng = np.random.default_rng(seed)
-        return {
-            "status": "success",
-            "content": [
-                {
-                    "text": (
-                        f"Sensor noise: joint_pos_std={joint_pos_std}, "
-                        f"joint_vel_std={joint_vel_std}, camera_jitter_px={camera_jitter_px}"
-                    )
-                }
-            ],
-        }
-
-    def _apply_joint_noise(self, obs: dict[str, float]) -> dict[str, float]:
-        """Return ``obs`` with Gaussian noise added to each joint scalar.
-
-        The observation's joint block holds a position per joint and its
-        velocity companion under ``<joint>.vel``. They are separate quantities
-        with separate stds - ``joint_pos_std`` (radians) for the positions,
-        ``joint_vel_std`` (rad/s) for the ``.vel`` entries - so a position std
-        is never spent on a velocity, matching the MuJoCo backend's
-        ``_apply_obs_noise``. A no-op (returns the input unchanged) when
-        neither std is positive.
-
-        The split is not optional: this used to apply ``joint_pos_std`` to every
-        entry it was handed, which was correct only while the dict held nothing
-        but positions - and it meant the ``joint_vel_std`` that
-        :meth:`set_obs_noise` has accepted and documented all along configured a
-        channel that did not exist.
-
-        Args:
-            obs: Mapping of joint name to position (radians) and
-                ``<joint>.vel`` to velocity (rad/s).
-
-        Returns:
-            New mapping with noise applied, or the original when disabled.
-        """
-        cfg = self._obs_noise or {}
-        pos_std = cfg.get("joint_pos_std", 0.0)
-        vel_std = cfg.get("joint_vel_std", 0.0)
-        rng = self._obs_noise_rng
-        if rng is None or (pos_std <= 0 and vel_std <= 0) or not obs:
-            return obs
-        out: dict[str, float] = {}
-        for k, v in obs.items():
-            std = vel_std if k.endswith(".vel") else pos_std
-            out[k] = float(v) + (float(rng.normal(0.0, std)) if std > 0 else 0.0)
-        return out
-
-    def _apply_state_noise(self, state: dict[str, dict[str, float]]) -> dict[str, dict[str, float]]:
-        """Return ``state`` with Gaussian noise added to positions and velocities.
-
-        Used by :meth:`NewtonSimEngine.get_robot_state`, whose entries are
-        ``{joint: {"position": p, "velocity": v}}``. Position noise uses
-        ``joint_pos_std`` and velocity noise uses ``joint_vel_std`` from
-        :meth:`set_obs_noise`. A no-op when neither std is positive.
-
-        Args:
-            state: Per-joint ``{"position", "velocity"}`` mapping.
-
-        Returns:
-            New mapping with noise applied, or the original when disabled.
-        """
-        cfg = self._obs_noise or {}
-        pos_std = cfg.get("joint_pos_std", 0.0)
-        vel_std = cfg.get("joint_vel_std", 0.0)
-        rng = self._obs_noise_rng
-        if rng is None or (pos_std <= 0 and vel_std <= 0) or not state:
-            return state
-        out: dict[str, dict[str, float]] = {}
-        for jname, vals in state.items():
-            pos = vals["position"] + (float(rng.normal(0.0, pos_std)) if pos_std > 0 else 0.0)
-            vel = vals["velocity"] + (float(rng.normal(0.0, vel_std)) if vel_std > 0 else 0.0)
-            out[jname] = {"position": pos, "velocity": vel}
-        return out
-
-    def _maybe_jitter_frame(self, frame: np.ndarray) -> np.ndarray:
-        """Return ``frame`` shifted by a random integer pixel offset.
-
-        Applies ``camera_jitter_px`` configured via :meth:`set_obs_noise` by
-        rolling the image along both axes. A no-op when jitter is disabled.
-
-        Args:
-            frame: ``(H, W, 3)`` uint8 RGB array.
-
-        Returns:
-            Jittered array (a rolled view/copy), or the original when disabled.
-        """
-        px = (self._obs_noise or {}).get("camera_jitter_px", 0.0)
-        rng = self._obs_noise_rng
-        if px <= 0 or rng is None or frame.ndim < 2:
-            return frame
-        max_shift = int(px)
-        if max_shift < 1:
-            return frame
-        dy = int(rng.integers(-max_shift, max_shift + 1))
-        dx = int(rng.integers(-max_shift, max_shift + 1))
-        return np.roll(frame, shift=(dy, dx), axis=(0, 1))
