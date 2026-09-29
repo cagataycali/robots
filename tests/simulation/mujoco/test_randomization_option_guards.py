@@ -243,6 +243,10 @@ class TestBackendGuardParity:
     ``TestSeedRefusalOnBothEntryPoints`` and its sibling guard classes, which
     reach the guards on a pure-Python host with neither Newton nor Warp
     installed.
+
+    ``set_obs_noise`` is not read here: no backend defines one, they all inherit
+    ``ObservationNoiseMixin``, and ``tests/simulation/test_observation_noise.py``
+    pins both that and the mixin's refusals.
     """
 
     _GUARD_NAMES = {"randomization_range_error", "finite_non_negative_error", "randomization_seed_error"}
@@ -270,12 +274,6 @@ class TestBackendGuardParity:
         for module_path in self._modules():
             called = self._called_guards(module_path, "randomize")
             assert "randomization_range_error" in called, module_path
-            assert "randomization_seed_error" in called, module_path
-
-    def test_every_backend_set_obs_noise_validates_amplitudes_and_seed(self):
-        for module_path in self._modules():
-            called = self._called_guards(module_path, "set_obs_noise")
-            assert "finite_non_negative_error" in called, module_path
             assert "randomization_seed_error" in called, module_path
 
     def test_no_backend_keeps_a_private_copy_of_the_range_rule(self):

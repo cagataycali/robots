@@ -49,7 +49,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from strands_robots._mesh_switch import mesh_env_request
-from strands_robots._serial_discovery import scan_serial_devices
+from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.drivers import (
     constructor_keywords,
     driver_choice_error,
@@ -428,6 +428,25 @@ def _build_native_driver(
             f"Unknown kwarg(s) for {canonical!r} on driver='strands': {unknown}. "
             f"{driver_cls.__name__} accepts: {list(accepted)}. (If this is a typo, fix it.)"
         )
+
+    # A serial driver with no port has nothing to open, and the lerobot path
+    # refuses that at construction with this host's serial devices named; the
+    # native path returned a driver that refused only at the first bus action,
+    # in other words (#4152). Same sentence, same scan, same moment. The twin
+    # transport steps an engine instead of a bus, so it is exempt; drivers that
+    # speak to a host (franka) or declare no ``port`` are not serial and are
+    # left to their own domain checks.
+    transports = tuple(getattr(driver_cls, "TRANSPORTS", ()) or ())
+    if "serial" in transports and kwargs.get("transport", "serial") != "twin" and "port" in accepted:
+        port = kwargs.get("port")
+        if not isinstance(port, str) or not port.strip():
+            raise ValueError(
+                f"Failed to construct {driver_cls.__name__} for {canonical!r}: missing required "
+                f"parameter(s) ['port'], which the caller supplies -- e.g. "
+                f"Robot({tool_name or canonical!r}, mode='real', driver='strands', port=...). "
+                f"{describe_serial_candidates(scan_serial_devices())} A port path is a position on the "
+                "bus, not an identity: it can change when the device is replugged, while the usb id does not."
+            )
 
     # The twin transport steps an engine that is built here, one layer above the
     # driver, so no driver imports the simulation package.

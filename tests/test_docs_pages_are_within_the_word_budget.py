@@ -64,10 +64,13 @@ _BUDGET: int = _hook().LIMIT
 #: policy) and a generated "Policies verified on this robot" section on every robot
 #: page, each row carrying the source of its numbers (docs/hooks/data/checkpoints.json).
 #: Then lowered to 49,002 when the robot pages' chips became one {{robot_chips:<name>}} token the hook expands (798 words the chips no longer repeat).
-#: Then raised to 56,158 for the 81 robot_descriptions URDF robots: one generated page
+#: Raised to 49,508 when the mesh gained its direct messaging page (one new page under
+#: learn/mesh, a variable row and a sentence on the pages that point at it, and the `iot`
+#: verbs on the command line page).
+#: Then raised to 56,642 for the 81 robot_descriptions URDF robots: one generated page
 #: each (64 words of template plus the 22-word "Policies verified" section every robot
 #: page now carries) and the learn page that explains the loader once.
-_SITE_BUDGET = 56_158
+_SITE_BUDGET = 56_642
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

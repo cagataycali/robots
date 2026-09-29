@@ -614,12 +614,18 @@ mesh = [
 #   * awsiotsdk (high-level MQTT5 + mTLS client builder)
 #   * awscrt    (low-level CRT runtime; pulled in by awsiotsdk but pinned
 #                here for transitive predictability)
-#   * boto3     (used for IoT control-plane provisioning + S3 frame upload)
+#   * boto3     (used for IoT control-plane provisioning + S3 frame upload,
+#                and the SigV4 leg of AWS IoT Core Direct Messaging)
+#   * botocore  (boto3 pins it 1:1; floored explicitly because the floor is
+#                about ITS service model: 1.43.17 is the first release whose
+#                iot-data model carries SendDirectMessage. An older pair
+#                raises ParamValidation-free AttributeError on the call.)
 mesh-iot = [
     "strands-robots[mesh]",
     "awsiotsdk>=1.21.0,<2.0.0",
     "awscrt>=0.20.0,<1.0.0",
-    "boto3>=1.34.0,<2.0.0",
+    "boto3>=1.43.17,<2.0.0",
+    "botocore>=1.43.17,<2.0.0",
 ]
 # Device Connect - device-aware networking layer (discovery, RPC, events,
 # safety). The primary transport in server mode; when this extra is not

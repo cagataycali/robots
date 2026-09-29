@@ -4984,6 +4984,31 @@ class SimEngine(ABC):
         """
         return {}
 
+    def policy_result(self, robot_name: str) -> dict[str, Any] | None:
+        """The envelope the last asynchronous rollout on ``robot_name`` ended with.
+
+        :meth:`start_policy` returns "Policy started" and nothing else, so the
+        report :meth:`run_policy` would have returned (steps, action health,
+        ``video_path``, the per-episode list) reached no caller once the
+        worker finished; :meth:`stop_policy` after natural completion answered
+        "Was not running" with no report either (#4162). A backend that keeps a
+        worker table records the finished envelope, success or error, where
+        :meth:`_rollouts_ended_in_error` records the failure reason, and
+        answers here; the default is ``None`` for a backend whose
+        :meth:`start_policy` is the synchronous default (its caller already
+        holds the result).
+
+        Args:
+            robot_name: The robot the rollout was started on.
+
+        Returns:
+            The ``run_policy`` envelope of the most recent completed rollout on
+            that robot, or ``None`` when none has completed, when the rollout
+            is still in flight, or when the backend keeps no record. A later
+            rollout on the same robot replaces the entry once it completes.
+        """
+        return None
+
     def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
         """Refuse ``action_name`` while a rollout another thread drives holds the robot.
 

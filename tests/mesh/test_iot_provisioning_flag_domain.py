@@ -123,13 +123,12 @@ class _RecordingIot:
     def list_thing_principals(self, **_kw: Any) -> dict[str, list[str]]:
         return {"principals": []}
 
-    def create_keys_and_certificate(self, **_kw: Any) -> dict[str, Any]:
+    def create_certificate_from_csr(self, **_kw: Any) -> dict[str, Any]:
         self.issued_certs += 1
         return {
             "certificateArn": "arn:aws:iot:us-west-2:1:cert/abc",
             "certificateId": "abc",
             "certificatePem": "PEM",
-            "keyPair": {"PrivateKey": "KEY"},
         }
 
     def attach_policy(self, policyName: str, target: str) -> None:  # noqa: N803
