@@ -354,7 +354,7 @@ def _urdf_entry(norm: str) -> dict[str, Any] | None:
         except ImportError:  # pragma: no cover - urdf_descriptions_module already needed the package
             pass
     entry: dict[str, Any] = {
-        "description": f"{norm} (robot_descriptions:{module_name}, URDF compiled to MJCF by strands_robots)",
+        "description": f"{norm} ({' '.join(sorted(tags)) or 'robot'} URDF from robot_descriptions)",
         "category": recorded.get("category") or category_for_tags(tags),
         "discovered": True,
         "source": URDF_SOURCE_TYPE,

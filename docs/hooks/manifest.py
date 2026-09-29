@@ -1,7 +1,8 @@
 """mkdocs hook: the viewer manifest, generated from the robot registry.
 
 ``docs/assets/viewer/robots.json`` is written at every build from
-``strands_robots/registry/robots.json``. The browser viewer reads it to know,
+``strands_robots/registry/robots.json`` and the URDF tail in ``urdf_robots.json``
+(merged by ``registry_view.py``). The browser viewer reads it to know,
 for each robot, where its MJCF and meshes stream from (jsDelivr in front of the
 model's public git repo, pinned to a commit), which scene file to load, and what
 the catalog card should say. Nothing about a robot is typed twice.
@@ -11,8 +12,10 @@ Filesystem only: no ``strands_robots`` import.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
+import sys
 from pathlib import Path
 
 log = logging.getLogger("mkdocs.hooks.manifest")
@@ -51,6 +54,13 @@ _SCENE_OVERRIDES: dict[str, str] = {"aero_hand": "scene_right.xml"}
 _VIEWER_UNSUPPORTED: dict[str, str] = {
     "rby1": "its MJCF includes the same file twice with merge=true, which the WebAssembly build refuses",
 }
+
+#: Shown for a robot_descriptions URDF robot: its MJCF is compiled by the loader
+#: on the user's machine, so there is nothing pinned upstream for the browser to load.
+_URDF_VIEWER_NOTE = (
+    "compiled from its robot_descriptions URDF on first use; the meshes are converted "
+    "locally, so there is no upstream MJCF to stream and the thumbnail is a local render"
+)
 
 #: Robots whose registry entry names a ``robot_descriptions`` module instead of a
 #: menagerie directory. robot_descriptions pins each repository to a commit; these
@@ -130,11 +140,14 @@ def _raw_url(base: str | None) -> str | None:
 
 def build_manifest() -> dict:
     """Derive the manifest; pure function of the registry and docs/assets."""
-    robots = json.loads(_REGISTRY.read_text(encoding="utf-8"))["robots"]
+    robots = _registry_view().merged()
     out: dict[str, dict] = {}
     for name, spec in robots.items():
         asset = spec.get("asset") or {}
-        base = _base_url(name, asset) if asset else None
+        urdf = spec.get("source") == "urdf"
+        # A URDF robot's MJCF exists only where the loader wrote it: nothing
+        # upstream serves it, so the browser gets the local thumbnail.
+        base = _base_url(name, asset) if asset and not urdf else None
         thumb = _DOCS / "assets" / "img" / "robots" / f"{name}.webp"
         entry = {
             "name": name,
@@ -144,7 +157,8 @@ def build_manifest() -> dict:
             "aliases": list(spec.get("aliases", ())),
             "sim": bool(asset),
             "viewer": bool(base) and name not in _VIEWER_UNSUPPORTED,
-            "viewer_note": _VIEWER_UNSUPPORTED.get(name),
+            "viewer_note": _URDF_VIEWER_NOTE if urdf and asset else _VIEWER_UNSUPPORTED.get(name),
+            "source": spec.get("source", "curated"),
             "real": bool(spec.get("hardware")),
             "driver": (spec.get("hardware") or {}).get("driver"),
             "base_url": base,
@@ -175,3 +189,16 @@ if __name__ == "__main__":
     _OUT.parent.mkdir(parents=True, exist_ok=True)
     _OUT.write_text(json.dumps(m, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     print(f"{len(m['robots'])} robots, {sum(1 for r in m['robots'].values() if r['viewer'])} renderable -> {_OUT}")
+
+
+def _registry_view():  # noqa: ANN202 - a sibling hook module, loaded by path like the others
+    """``docs/hooks/registry_view.py``: robots.json merged with the URDF long tail."""
+    name = "docs_hooks_registry_view"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "registry_view.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
