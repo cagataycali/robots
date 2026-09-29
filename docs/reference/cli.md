@@ -77,8 +77,8 @@ strands-robots iot teardown so101-arm-01
 | verb | effect |
 |---|---|
 | `provision-robot THING [--no-estop-publish]` | Thing, CSR certificate with `CN=THING`, `strands-robot` policy (or `strands-robot-no-estop`) |
-| `provision-operator THING` | the same with the `strands-operator` policy |
-| `reprovision THING` | rotate the certificate in place: new key and CSR certificate attached and activated first, then the old certificates deactivated, detached and deleted; the Thing, its attributes and its policy attachments are kept. Ends the MQTT session a running peer holds on the old certificate, so restart that peer |
+| `provision-operator THING` | the same, `strands-operator` policy |
+| `reprovision THING` | rotate the certificate: the new one is active before the old ones are deleted; the Thing, its attributes and policies stay. A running peer's MQTT session ends, so restart it |
 | `teardown THING` | delete the Thing, its certificates and the local files |
 
-Every verb takes `--region` and `--cert-dir` (default `~/.strands_robots/iot`) and prints the `export` lines a process needs. `reprovision` is how a robot provisioned before the CSR default (certificate CN `AWS IoT Certificate`) gains the direct-reply grant ([direct messaging](../learn/mesh/direct.md)).
+Every verb takes `--region` and `--cert-dir` (default `~/.strands_robots/iot`) and prints the `export` lines. `reprovision` is how a robot provisioned before the CSR default (certificate CN `AWS IoT Certificate`) gains the direct-reply grant ([direct messaging](../learn/mesh/direct.md)).

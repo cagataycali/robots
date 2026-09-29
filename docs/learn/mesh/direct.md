@@ -1,10 +1,10 @@
 # Direct messaging
 
-At the end of this page a command from an operator reaches one robot as an [AWS IoT Core direct message](https://docs.aws.amazon.com/iot/latest/developerguide/direct-messaging.html), the reply comes back the same way, and a robot that is offline is reported in one round trip.
+At the end of this page an operator's command reaches one robot as an [AWS IoT Core direct message](https://docs.aws.amazon.com/iot/latest/developerguide/direct-messaging.html), the reply comes back the same way, and an offline robot is reported in one round trip.
 
 ## What changes
 
-On the `iot` and `bridge` backends, `Mesh.send` makes one HTTPS call that delivers the command to the one connected client it names, with confirmation (QoS 1 and the robot's PUBACK). The robot replies with a direct message on the `responseTopic` it received. Neither side needs a subscription for it; a robot that is not connected answers `peer offline (iot 404)` at once instead of after the caller's timeout. Measured 2026-09-29 in us-west-2: round trip p50 220 ms, offline verdict under 300 ms. `broadcast`, presence, state and safety stay publish/subscribe, and the `cmd` and `response/**` subscriptions stay, so an older peer is still heard.
+On the `iot` and `bridge` backends, `Mesh.send` makes one HTTPS call that delivers the command to the client it names, with confirmation (QoS 1 and the robot's PUBACK). The robot replies with a direct message on the `responseTopic` it received. No subscription is needed; a robot that is not connected answers `peer offline (iot 404)` at once instead of after the caller's timeout. Measured 2026-09-29 in us-west-2: round trip p50 220 ms, offline verdict under 300 ms. `broadcast`, presence, state and safety stay publish/subscribe, and the `cmd` and `response/**` subscriptions stay, so an older peer is still heard.
 
 ## Grants
 

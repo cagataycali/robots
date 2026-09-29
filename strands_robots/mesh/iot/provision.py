@@ -146,6 +146,11 @@ class ProvisionedThing:
             ``${iot:Certificate.Subject.CommonName}`` (an HTTPS call carries
             no MQTT connection for ``${iot:Connection.Thing.ThingName}`` to
             resolve from).
+        stale_certificates: Certificate ids attached to the Thing before
+            this run that could NOT be removed (a deactivate, detach or
+            delete failed). Each stays an active credential until an operator
+            removes it; the WARNING logged for each names the command. Empty
+            when the rotation was clean.
     """
 
     thing_name: str
@@ -159,11 +164,6 @@ class ProvisionedThing:
     policy_name: str
     region: str
     subject_cn: str = ""
-    #: Certificate ids that were attached to the Thing before this run and
-    #: could NOT be removed (a deactivate, detach or delete failed). Each is
-    #: still an active credential for the Thing until an operator removes it;
-    #: the WARNING logged for each names the command. Empty when the rotation
-    #: was clean.
     stale_certificates: tuple[str, ...] = ()
 
     def env_vars(self) -> dict[str, str]:
