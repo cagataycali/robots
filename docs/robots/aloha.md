@@ -19,7 +19,7 @@ robot = Robot("aloha")
 
 Aliases: `agibot_dual_arm`, `agibot_dual_arm_dexhand`, `agibot_dual_arm_full`, `agibot_dual_arm_gripper`, `agibot_genie1`, `galaxea_r1_pro`.
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 

@@ -25,7 +25,7 @@ robot = Robot("ur10e", mode="real", driver="strands", port="192.168.1.10")  # UR
 
 **`URDriver`** (selected with `driver="strands"`) speaks RTDE through `ur_rtde`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#urdriver).
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 

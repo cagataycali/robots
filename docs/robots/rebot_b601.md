@@ -22,6 +22,6 @@ Aliases: `rebot_b601_follower`, `seeed_rebot_b601`, `b601_dm`.
 
 **lerobot.** `Robot("rebot_b601", mode="real")` builds lerobot's `rebot_b601_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given. Install lerobot from source: the type is not in the PyPI release.
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.

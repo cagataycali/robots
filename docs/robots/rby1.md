@@ -19,7 +19,7 @@ robot = Robot("rby1")
 
 Aliases: `rby1a`, `rainbow_rby1`.
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 

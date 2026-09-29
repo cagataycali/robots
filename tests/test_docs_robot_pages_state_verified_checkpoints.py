@@ -35,7 +35,7 @@ REGISTRY = REPO / "strands_robots" / "registry" / "robots.json"
 
 _REQUIRED = ("checkpoint", "kind", "provider", "where", "result", "source")
 _SOURCE_SHAPE = re.compile(r"#\d{3,}|check_fences\.py|\.py\b|\.log\b|PR #\d+", re.I)
-_HEADING = "## Policies that ran on this robot"
+_HEADING = "## Policies verified on this robot"
 _NONE_LINE = "No checkpoint verified on this robot yet."
 
 

@@ -15,7 +15,7 @@ Two jobs, both filesystem only (no ``strands_robots`` import):
    ``{{driver_facts}}`` (every native driver's facts, rendered once on the
    drivers page that each robot page links to).
 
-The "Policies that ran on this robot" section is read from
+The "Policies verified on this robot" section is read from
 ``docs/hooks/data/checkpoints.json``: one row per checkpoint that was run on the
 robot first-hand, each with the script or public artifact that produced its
 numbers in ``source``. A robot without rows states that no checkpoint has been
@@ -292,7 +292,7 @@ def checkpoints() -> dict[str, list[dict[str, str]]]:
 
 def _policies_section(name: str, cov) -> str:  # noqa: ANN001
     """The section that says which checkpoints ran on this robot, or that none did."""
-    out: list[str] = ["## Policies that ran on this robot", ""]
+    out: list[str] = ["## Policies verified on this robot", ""]
     rows = checkpoints().get(name, ())
     if rows:
         out += ["| Checkpoint | Provider | Where | What happened |", "|---|---|---|---|"]

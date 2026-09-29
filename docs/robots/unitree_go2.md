@@ -27,7 +27,7 @@ Aliases: `go2`.
 
 **`Go2Driver`** (the default for this robot) speaks CycloneDDS through `unitree_sdk2py`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#go2driver).
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 | Checkpoint | Provider | Where | What happened |
 |---|---|---|---|

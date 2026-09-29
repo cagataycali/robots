@@ -30,7 +30,7 @@ Aliases: `g1`, `g1_wbc`, `real_g1_relative_eef_relative_joints`, `unitree_g1_ful
 
 **`G1Driver`** (the default for this robot) speaks CycloneDDS through `unitree_sdk2py`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#g1driver).
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 | Checkpoint | Provider | Where | What happened |
 |---|---|---|---|

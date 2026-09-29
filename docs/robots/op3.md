@@ -19,7 +19,7 @@ robot = Robot("op3")
 
 Aliases: `robotis_op3`.
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 

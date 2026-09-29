@@ -30,7 +30,7 @@ Aliases: `koch_follower`, `koch_v1.1`, `low_cost_robot_arm`.
 
 **`DynamixelDriver`** (selected with `driver="strands"`) speaks Dynamixel Protocol 2.0 serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#dynamixeldriver).
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 

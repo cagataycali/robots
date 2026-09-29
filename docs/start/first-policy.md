@@ -1,10 +1,12 @@
 ---
-description: One run_policy call runs a Hugging Face Hub checkpoint on the simulated SO-101, then the same call on the real one, behind the operator gate.
+description: One run_policy call runs a learned policy from the Hugging Face Hub on the simulated SO-101, then the same call on the real one, behind the operator gate.
 ---
 
-# First policy on the real arm
+# First learned policy
 
 At the end of this page a vision-language-action model from the Hugging Face Hub has driven the simulated SO-101 from its cameras, you have the same call for the physical arm, and you have watched an agent stop at the approval gate with the checkpoint named in the question it asks. The sim fences run on a laptop with no GPU; the first one downloads about 865 MB the first time.
+
+The page uses a vision-language-action checkpoint because the SO-101 has several; the same shape, one provider name and one `policy_config`, runs a world foundation model through [cosmos3](../learn/policies/cosmos3.md) or a whole-body controller through [wbc](../learn/policies/wbc.md).
 
 ## Run SmolVLA in the simulator
 

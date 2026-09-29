@@ -25,7 +25,7 @@ robot = Robot("booster_t1", mode="real", port="192.168.10.102")  # BoosterDriver
 
 **`BoosterDriver`** (the default for this robot) speaks Booster SDK (`booster_robotics_sdk_python`, DDS): [port, SDK, kwargs and checks](../learn/hardware/drivers.md#boosterdriver).
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 

@@ -26,6 +26,6 @@ Aliases: `bi_rebot_b601_follower`, `dual_rebot_b601`.
 
 **lerobot.** `Robot("bi_rebot_b601", mode="real")` builds lerobot's `bi_rebot_b601_follower` with `pip install 'strands-robots[lerobot]'`; there is no single `port=`; pass `left_arm_config=` and `right_arm_config=`, one `RebotB601FollowerConfig` per arm with its own `port` and `cameras`. The default when `driver=` is not given. Install lerobot from source: the type is not in the PyPI release.
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.

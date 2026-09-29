@@ -6,7 +6,7 @@ description: Each page answers one workflow question and ends with something tha
 
 ## Policies
 
-- [Policies](policies/index.md): which VLAs run where, the three known gaps, the provider matrix and one page per provider; [lerobot_local](policies/lerobot-local.md) runs a Hub checkpoint in process.
+- [Policies](policies/index.md): which learned policies run where, the three known gaps, the provider matrix and one page per provider; [lerobot_local](policies/lerobot-local.md) runs a Hub checkpoint in process.
 
 ## Agents, simulation, training
 

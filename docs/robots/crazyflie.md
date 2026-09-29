@@ -27,7 +27,7 @@ Aliases: `cf2`, `bitcraze_crazyflie`.
 
 **`CrazyflieDriver`** (the default for this robot) speaks CRTP over a Crazyradio through `cflib`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#crazyfliedriver).
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 

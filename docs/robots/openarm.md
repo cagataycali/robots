@@ -27,7 +27,7 @@ Aliases: `enactic_openarm`, `open_arm`, `openarm_v10`.
 
 **lerobot.** `Robot("openarm", mode="real")` builds lerobot's `openarm_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 

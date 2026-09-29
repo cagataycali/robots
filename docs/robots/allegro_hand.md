@@ -19,7 +19,7 @@ robot = Robot("allegro_hand")
 
 Aliases: `wonik_allegro`.
 
-## Policies that ran on this robot
+## Policies verified on this robot
 
 No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 

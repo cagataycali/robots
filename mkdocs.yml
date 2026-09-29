@@ -65,8 +65,8 @@ extra:
   agent_prompt: >-
     Walk me through https://strands-labs.github.io/robots/start/ one page at a time. Install
     strands-robots with the sim-mujoco extra in a Python 3.12 virtual environment, move the
-    simulated SO-101 from the First robot page, run the Hub checkpoint on it from the First
-    policy page, then hand it to a Strands Agent from the First agent page. Ask whether I have a
+    simulated SO-101 from the First robot page, run a Hub checkpoint on it from the First
+    learned policy page, then hand it to a Strands Agent from the First agent page. Ask whether I have a
     physical SO-101 on USB before the First real arm page, and run strands-robots doctor if any
     step fails.
   social:
