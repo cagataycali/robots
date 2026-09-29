@@ -361,6 +361,12 @@ class MjlabEngine(MjlabRecordingMixin, SimEngine):
             sim_kwargs["nconmax"] = int(self._nconmax)
         if self._njmax is not None:
             sim_kwargs["njmax"] = int(self._njmax)
+        elif any(r.free_base for r in self._robots.values()):
+            # mjlab's default njmax (from the compiled model's own nefc) is sized
+            # for a robot standing on its feet; a floating-base robot that falls
+            # or a fallen humanoid on the plane needs a few times more rows
+            # (measured: G1 collapsing hits 70 rows, default overflowed at ~48).
+            sim_kwargs["njmax"] = 8 * max(1, model.nv)
         sim = Simulation(num_envs=self.num_envs, cfg=SimulationCfg(**sim_kwargs), model=model, device=self.device)
         scene.initialize(sim.mj_model, sim.model, sim.data)
         scene.reset()
@@ -728,17 +734,17 @@ class MjlabEngine(MjlabRecordingMixin, SimEngine):
             ent = self._scene[robot_name]
             spec = self._robots[robot_name]
             jp, jv = ent.data.joint_pos, ent.data.joint_vel
-            joints = [j for j in spec.joint_names if j in ent.joint_names]
             out: dict[str, Any] = {}
             for i, j in enumerate(ent.joint_names):
                 out[j] = jp[:, i]
                 out[f"{j}.vel"] = jv[:, i]
             if spec.free_base:
+                # Same frames as the classic backend's free-joint block
+                # (mujoco/rendering.py): lin vel WORLD, ang vel BODY (IMU gyro).
                 out["base_pos"] = ent.data.root_link_pos_w
                 out["base_quat"] = ent.data.root_link_quat_w
                 out["base_lin_vel"] = ent.data.root_link_lin_vel_w
-                out["base_ang_vel"] = ent.data.root_link_ang_vel_w
-            del joints
+                out["base_ang_vel"] = ent.data.root_link_ang_vel_b
             return out
 
     def get_observation(self, robot_name: str | None = None, *, skip_images: bool = False) -> dict[str, Any]:

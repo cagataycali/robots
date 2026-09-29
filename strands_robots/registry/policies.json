@@ -315,6 +315,28 @@
         "microduck_walk",
         "microduck_stand"
       ]
+    },
+    "rsl_rl_onnx": {
+      "module": "strands_robots.policies.rsl_rl_onnx",
+      "class": "RslRlOnnxPolicy",
+      "description": "Deterministic rollout of an rsl_rl actor exported to ONNX by mjlab (metadata-driven observation rebuild; JointPositionAction decode)",
+      "requires": [
+        "onnxruntime"
+      ],
+      "config_keys": [
+        "onnx_path",
+        "command",
+        "robot",
+        "ee_site",
+        "target"
+      ],
+      "defaults": {
+        "ee_site": "gripper"
+      },
+      "shorthands": [
+        "rsl_rl_onnx",
+        "mjlab_onnx"
+      ]
     }
   }
 }
