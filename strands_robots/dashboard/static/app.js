@@ -1403,38 +1403,59 @@ function quietNotice(ids, dead = []) {
   const headline = quiet.length === 1 ? `${quiet[0]} started but never joined the fleet` : `${quiet.length} robots you started never joined the fleet`;
   return { headline, detail, count: quiet.length };
 }
-function StrandsMark({ size = 22, title }) {
+function StrandsMark({ height = 18, title }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "svg",
     {
-      className: "mark",
-      width: size * 290 / 463,
-      height: size,
-      viewBox: "0 0 290 463",
-      fill: "none",
+      className: "mark wordmark",
+      height,
+      width: height * 1512 / 217,
+      viewBox: "0 0 1512 217",
+      fill: "currentColor",
       xmlns: "http://www.w3.org/2000/svg",
       role: title ? "img" : void 0,
       "aria-label": title,
       "aria-hidden": title ? void 0 : true,
       focusable: "false",
       children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "path",
-          {
-            className: "mark-back",
-            d: "M97.2902 52.7884C85.0674 49.1667 72.2234 56.1389 68.6017 68.3616C64.9801 80.5843 71.9524 93.4283 84.1749 97.0501L235.117 139.775C245.223 142.769 246.357 156.628 236.874 161.226L32.546 260.291C-14.9439 283.316 -9.16107 352.74 41.4835 367.591L189.551 411.009L190.125 411.169C202.183 414.376 214.665 407.396 218.196 395.355C221.784 383.122 214.774 370.296 202.541 366.709L54.4738 323.291C44.3447 320.321 43.1879 306.436 52.6857 301.831L257.014 202.766C304.432 179.776 298.758 110.483 248.233 95.512L97.2902 52.7884Z"
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "path",
-          {
-            className: "mark-front",
-            d: "M259.147 0.981812C271.389 -2.57498 284.197 4.46571 287.754 16.7074C291.311 28.9492 284.27 41.757 272.028 45.3138L71.1727 103.671C40.7142 112.521 37.1976 154.262 65.7459 168.083L241.343 253.093C307.872 285.302 299.794 382.546 228.862 403.336L30.4041 461.502C18.1707 465.088 5.34708 458.078 1.76153 445.844C-1.8239 433.611 5.18637 420.787 17.4197 417.202L215.878 359.035C246.277 350.125 249.739 308.449 221.226 294.645L45.6297 209.635C-20.9834 177.386 -12.7772 79.9893 58.2928 59.3402L259.147 0.981812Z"
-          }
-        )
+        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { transform: "translate(0 0)", d: "M30.2558 216.833V186.914H0V148.926H36.9794V179.182H121.023V127.075H30.2558V97.1548H0V29.9197H30.2558V0H127.747V29.9197H158.339V67.5714H121.023V37.9879H36.9794V89.759H127.747V119.006H158.339V186.914H127.747V216.833H30.2558Z" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { transform: "translate(30 0)", d: "M252.894 216.833V37.9879H229.361V67.5714H192.382V29.9197H222.638V0H320.129V29.9197H350.721V67.5714H313.405V37.9879H289.873V216.833H252.894Z" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { transform: "translate(60 0)", d: "M377.87 216.833V29.9197H408.125V0H505.617V29.9197H536.208V127.075H505.617V156.994H490.825V179.182H520.744V216.833H484.101V186.914H453.509V156.994H414.849V216.833H377.87ZM414.849 119.006H498.893V37.9879H414.849V119.006Z" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { transform: "translate(90 0)", d: "M576.818 216.833V59.5031H607.073V29.9197H637.329V0H674.309V29.9197H704.564V59.5031H735.156V216.833H697.841V156.994H613.797V216.833H576.818ZM613.797 119.006H697.841V67.5714H667.921V37.9879H643.717V67.5714H613.797V119.006Z" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { transform: "translate(120 0)", d: "M775.765 216.833V0H812.745V29.9197H842.664V59.5031H873.256V148.926H896.789V0H934.104V216.833H896.789V186.914H866.869V156.994H836.277V67.5714H812.745V216.833H775.765Z" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { transform: "translate(150 0)", d: "M974.713 216.833V0H1072.2V29.9197H1102.46V59.5031H1133.05V156.994H1102.46V186.914H1072.2V216.833H974.713ZM1011.69 179.182H1065.82V148.926H1095.74V67.5714H1065.82V37.9879H1011.69V179.182Z" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { transform: "translate(180 0)", d: "M1203.92 216.833V186.914H1173.66V148.926H1210.64V179.182H1294.68V127.075H1203.92V97.1548H1173.66V29.9197H1203.92V0H1301.41V29.9197H1332V67.5714H1294.68V37.9879H1210.64V89.759H1301.41V119.006H1332V186.914H1301.41V216.833H1203.92Z" })
       ]
     }
   );
+}
+const SCHEME_KEY = "strands-dash-scheme";
+function storedScheme(storage = localStorage) {
+  const v = storage.getItem(SCHEME_KEY);
+  return v === "paper" || v === "dark" ? v : null;
+}
+function systemScheme(matches = window.matchMedia("(prefers-color-scheme: dark)").matches) {
+  return matches ? "dark" : "paper";
+}
+function effectiveScheme(stored, system) {
+  return stored ?? system;
+}
+function nextScheme(current) {
+  return current === "dark" ? "paper" : "dark";
+}
+function applyScheme(scheme, root = document.documentElement) {
+  if (scheme) root.dataset.scheme = scheme;
+  else delete root.dataset.scheme;
+}
+function chooseScheme(scheme, storage = localStorage) {
+  storage.setItem(SCHEME_KEY, scheme);
+  applyScheme(scheme);
+}
+function initScheme() {
+  try {
+    applyScheme(storedScheme());
+  } catch {
+  }
 }
 function FleetBar({
   conn,
@@ -1465,9 +1486,9 @@ function FleetBar({
   const rec = recordNavFlag(recordMock);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "fleetbar", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "brand", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "logo", children: /* @__PURE__ */ jsxRuntimeExports.jsx(StrandsMark, { size: 26, title: "Strands Agents" }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("a", { className: "logo", href: "https://strandsagents.com/", title: "Strands Agents", "aria-label": "Strands Agents", children: /* @__PURE__ */ jsxRuntimeExports.jsx(StrandsMark, { height: 18, title: "Strands Agents" }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { children: "strands robots" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "project", children: "/robots" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sub", title: `API: ${backendLabel()}`, children: [
           dashboardId || "fleet cockpit",
           /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "backend", children: [
@@ -1550,6 +1571,7 @@ Open devices for the exit status and the last output.`,
           children: "? help"
         }
       ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(SchemeToggle, {}),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "peers", children: [
         peerCount,
         " peer",
@@ -1566,6 +1588,31 @@ Open devices for the exit status and the last output.`,
       )
     ] })
   ] });
+}
+function SchemeToggle() {
+  const [scheme, setScheme] = reactExports.useState(() => effectiveScheme(storedScheme(), systemScheme()));
+  reactExports.useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const follow = (e) => {
+      if (!storedScheme()) setScheme(systemScheme(e.matches));
+    };
+    mq.addEventListener("change", follow);
+    return () => mq.removeEventListener("change", follow);
+  }, []);
+  const to = nextScheme(scheme);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "button",
+    {
+      className: "chip scheme",
+      onClick: () => {
+        chooseScheme(to);
+        setScheme(to);
+      },
+      title: `switch to the ${to} scheme`,
+      "aria-label": `colour scheme: ${scheme}. Switch to ${to}`,
+      children: scheme === "dark" ? "◐ dark" : "◑ paper"
+    }
+  );
 }
 function emptySession() {
   return {
@@ -13261,13 +13308,13 @@ function AuthGate({ children }) {
   }
   if (mode === "checking") {
     return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "authgate", role: "status", "aria-live": "polite", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "authcard", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(StrandsMark, { size: 40 }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(StrandsMark, { height: 26, title: "Strands Agents" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "dim", children: "checking access…" })
     ] }) });
   }
   const noWebauthn = (mode === "enroll" || mode === "login") && !webauthnReady();
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "authgate", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "authcard", role: "dialog", "aria-labelledby": "authgate-title", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(StrandsMark, { size: 40 }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(StrandsMark, { height: 26, title: "Strands Agents" }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "authhost", children: [
       "strands robots · ",
       window.location.host
@@ -13786,6 +13833,7 @@ function App() {
   const key = reactExports.useSyncExternalStore(subscribeAuth, backendKey);
   return /* @__PURE__ */ jsxRuntimeExports.jsx(ConfigProvider, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(AuthGate, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(Dashboard, {}) }) }, key);
 }
+initScheme();
 ReactDOM.createRoot(document.getElementById("root")).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(React.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })
 );
