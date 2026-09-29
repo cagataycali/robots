@@ -46,8 +46,9 @@ class TestActions:
     def test_list(self):
         res = train_policy(action="list")
         assert res["status"] == "success"
-        for p in ("mock", "lerobot_local", "groot", "cosmos3"):
+        for p in ("mock", "lerobot_local", "cosmos3", "sagemaker"):
             assert p in _text(res)
+        assert "groot" not in _text(res)
 
     def test_validate_clean(self, dataset_root, tmp_path):
         res = train_policy(
@@ -170,18 +171,19 @@ class TestProviderRouting:
         assert res["status"] == "error"
         assert "not LeRobot-native" in _text(res)
 
-    def test_groot_requires_embodiment(self, dataset_root, tmp_path):
+    def test_the_removed_groot_provider_is_refused_with_its_sentence(self, dataset_root, tmp_path):
+        """``create_trainer("groot")`` refuses like ``create_policy`` does: one sentence, no reroute."""
         res = train_policy(
             action="validate",
             provider="groot",
             dataset_root=dataset_root,
-            base_model="nvidia/GR00T-N1.5-3B",
+            base_model="nvidia/GR00T-N1.7-3B",
             output_dir=str(tmp_path / "o"),
             steps=10,
-            extra={"groot_root": "/tmp"},  # missing launch script -> also errors, but embodiment first
         )
         assert res["status"] == "error"
-        assert "embodiment is required" in _text(res)
+        assert "policy_provider 'groot' was removed in 1.0" in _text(res)
+        assert "lerobot_local(policy_type='groot')" in _text(res)
 
 
 class TestInputSafety:
