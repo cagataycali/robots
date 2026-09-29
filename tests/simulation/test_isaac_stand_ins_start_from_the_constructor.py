@@ -47,7 +47,9 @@ def restated_defaults(source: str) -> list[str]:
     found = []
     for node in ast.walk(ast.parse(source)):
         body = getattr(node, "body", None)
-        for i, stmt in enumerate(body if isinstance(body, list) else []):
+        if not isinstance(body, list):
+            continue
+        for i, stmt in enumerate(body):
             if not (isinstance(stmt, ast.Assign) and isinstance(stmt.targets[0], ast.Name)):
                 continue
             if ast.get_source_segment(source, stmt.value) != _SKELETON:
