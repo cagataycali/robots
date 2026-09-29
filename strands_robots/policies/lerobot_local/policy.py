@@ -713,6 +713,9 @@ class LerobotLocalPolicy(Policy):
         # features, so the bridge was discarded (see _load_processor_bridge).
         self._embodiment_config_failed = False
         self._tokenizer: Any = None
+        # True once a discarded pipeline's TokenizerProcessorStep lent its
+        # tokenizer to the raw flow (see _adopt_pipeline_tokenizer).
+        self._pipeline_tokenized = False
         # Refused where the caller's value arrives, and before any checkpoint is
         # downloaded: the tokenizer reads this as a slice bound over the encoded
         # instruction, so ``0`` (or ``False``) hands a language-conditioned VLA
@@ -817,6 +820,13 @@ class LerobotLocalPolicy(Policy):
         # their model index, and the degradation is surfaced rather than
         # silent (mirrors _resolve_state_order's all-missing guard).
         self._state_missing_keys_warned: bool = False
+        # Warn at most once per policy when the state vector is zero-padded or
+        # truncated to the model's declared observation.state width. The
+        # adaptation happens on EVERY inference, and a line per tick buried the
+        # rest of the log (a pi0_base rollout on a 6-DOF arm logged it 40+
+        # times in ten seconds); the width does not change within a policy, so
+        # one line says everything the rest would.
+        self._state_dim_adapt_warned: bool = False
         # Warn at most once per policy when relative-action RTC re-anchoring is
         # enabled but the leftover cannot be converted to absolute coordinates.
         # The consequence is the one _resolve_rtc_rebase_steps warns about for a
@@ -1067,6 +1077,50 @@ class LerobotLocalPolicy(Policy):
 
     # Tokenizer resolution (VLA language token injection)
 
+    def _adopt_pipeline_tokenizer(self, bridge: Any) -> None:
+        """Keep a discarded pipeline's tokenizer so the raw flow can still tokenize.
+
+        LeRobot's ``TokenizerProcessorStep`` owns the tokenizer for the
+        PaliGemma-based policies (pi0, pi05): their ``config`` carries neither
+        ``tokenizer_name`` nor ``vlm_model_name``, so :meth:`_resolve_tokenizer`
+        finds nothing and :meth:`_needs_language_tokens` answers False, yet
+        ``predict_action_chunk`` reads ``observation.language.tokens``
+        unconditionally. The step is read for its live tokenizer, max length
+        and padding side; a pipeline without such a step leaves the policy as
+        it was. Called right before the bridge reference is dropped.
+
+        Args:
+            bridge: The :class:`ProcessorBridge` about to be discarded.
+        """
+        if bridge is None:
+            return
+        # ``ProcessorBridge.preprocessor_steps`` is a property returning the
+        # step list; a fake may expose it as a method, so both shapes are read.
+        steps = getattr(bridge, "preprocessor_steps", None)
+        if callable(steps):
+            steps = steps()
+        for step in steps or ():
+            # ``input_tokenizer`` is the loaded object (set in __post_init__ from
+            # ``tokenizer`` or ``tokenizer_name``); ``tokenizer`` is only set when
+            # the step was built from an object.
+            tokenizer = getattr(step, "input_tokenizer", None) or getattr(step, "tokenizer", None)
+            if tokenizer is None or not callable(tokenizer):
+                continue
+            self._tokenizer = tokenizer
+            max_length = getattr(step, "max_length", None)
+            if isinstance(max_length, int) and max_length > 0:
+                self._tokenizer_max_length = max_length
+            padding_side = getattr(step, "padding_side", None)
+            if padding_side in ("left", "right"):
+                self._tokenizer_padding_side = padding_side
+            self._pipeline_tokenized = True
+            logger.info(
+                "lerobot_local: kept the pipeline's tokenizer (%s, max_length=%d) for the raw obs/action flow",
+                getattr(step, "tokenizer_name", None) or type(tokenizer).__name__,
+                self._tokenizer_max_length,
+            )
+            return
+
     def _resolve_tokenizer(self) -> Any | None:
         """Resolve and cache the tokenizer for VLA language token injection.
 
@@ -1162,8 +1216,9 @@ class LerobotLocalPolicy(Policy):
             return True
         if any("language" in key for key in self._input_features):
             return True
-
-        return False
+        # The checkpoint's own pipeline tokenized the instruction, so the model
+        # reads language tokens whatever its config declares (pi0 / pi05).
+        return self._pipeline_tokenized
 
     # Model loading
 
@@ -1427,6 +1482,14 @@ class LerobotLocalPolicy(Policy):
                         self.pretrained_name_or_path or "<model>",
                         exc,
                     )
+                    # The raw flow has to tokenize the instruction itself, and for a
+                    # checkpoint whose config names no tokenizer (pi0 / pi05 carry
+                    # the PaliGemma tokenizer only as a pipeline step) the only
+                    # place that knowledge exists is the pipeline being discarded.
+                    # Keep the step's tokenizer, or the fallback hands the model a
+                    # batch without ``observation.language.tokens`` and it dies
+                    # with a KeyError at the first inference.
+                    self._adopt_pipeline_tokenizer(self._processor_bridge)
                     self._processor_bridge = None
                     self._embodiment_config_failed = True
             else:
@@ -3155,6 +3218,13 @@ class LerobotLocalPolicy(Policy):
                 self._state_missing_keys_warned = True
         return values
 
+    def _warn_state_dim_adapted(self, message: str, *args: Any) -> None:
+        """Log a state-width adaptation once per policy (see ``_state_dim_adapt_warned``)."""
+        if self._state_dim_adapt_warned:
+            return
+        self._state_dim_adapt_warned = True
+        logger.warning(message, *args)
+
     def _to_lerobot_observation(self, observation_dict: dict[str, Any]) -> dict[str, Any]:
         """Remap a strands-native observation to LeRobot feature keys.
 
@@ -3321,20 +3391,25 @@ class LerobotLocalPolicy(Policy):
                 else len(state_vals)
             )
             if len(state_vals) > expected_dim:
-                logger.warning(
+                self._warn_state_dim_adapted(
                     "State dim %d > model expects %d - truncating (preprocess path).",
                     len(state_vals),
                     expected_dim,
                 )
                 state_vals = state_vals[:expected_dim]
             elif len(state_vals) < expected_dim:
-                logger.warning(
+                self._warn_state_dim_adapted(
                     "State dim %d < model expects %d - zero-padding (preprocess path).",
                     len(state_vals),
                     expected_dim,
                 )
                 state_vals = state_vals + [0.0] * (expected_dim - len(state_vals))
-            out["observation.state"] = np.asarray(state_vals, dtype=np.float32)
+            # A tensor, as lerobot's own inference helper hands its pipeline
+            # (``prepare_observation_for_inference``) and as the declarative
+            # ``strands_pack_state`` step packs it: pipeline steps are written
+            # against tensors - pi05's prepare-state step calls ``.cpu()`` on
+            # the state and died on the ndarray this path used to build.
+            out["observation.state"] = torch.as_tensor(state_vals, dtype=torch.float32)
 
         # 3) Preserve task/instruction passthrough.
         if "task" in observation_dict:
@@ -3713,7 +3788,7 @@ class LerobotLocalPolicy(Policy):
             if state_feature:
                 expected_dim = state_feature.shape[0] if hasattr(state_feature, "shape") else len(state_values)
                 if len(state_values) > expected_dim:
-                    logger.warning(
+                    self._warn_state_dim_adapted(
                         "State dim %d > model expects %d - truncating to first %d values. "
                         "Check that robot_state_keys matches your robot's actual joint count.",
                         len(state_values),
@@ -3722,7 +3797,7 @@ class LerobotLocalPolicy(Policy):
                     )
                     state_values = state_values[:expected_dim]
                 elif len(state_values) < expected_dim:
-                    logger.warning(
+                    self._warn_state_dim_adapted(
                         "State dim %d < model expects %d - zero-padding with %d zeros. "
                         "Check that robot_state_keys matches your robot's actual joint count.",
                         len(state_values),
