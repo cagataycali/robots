@@ -600,7 +600,9 @@
    "viewer_note": null
   },
   "kinova_gen3": {
-   "aliases": [],
+   "aliases": [
+    "gen3"
+   ],
    "base_url": "https://cdn.jsdelivr.net/gh/google-deepmind/mujoco_menagerie@c96a32d28fb5da84da38c1da4d749e7a13212855/kinova_gen3/",
    "category": "arm",
    "description": "Kinova Gen3 (7-DOF lightweight)",
@@ -643,13 +645,15 @@
   },
   "kuka_iiwa": {
    "aliases": [
+    "iiwa",
+    "iiwa14",
     "kuka_iiwa_14"
    ],
    "base_url": "https://cdn.jsdelivr.net/gh/google-deepmind/mujoco_menagerie@c96a32d28fb5da84da38c1da4d749e7a13212855/kuka_iiwa_14/",
    "category": "arm",
    "description": "KUKA LBR iiwa 14 (7-DOF collaborative)",
    "driver": null,
-   "joints": 11,
+   "joints": 7,
    "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco_menagerie/c96a32d28fb5da84da38c1da4d749e7a13212855/kuka_iiwa_14/",
    "model": "iiwa14.xml",
    "name": "kuka_iiwa",
@@ -741,6 +745,28 @@
    "scene": "scene.xml",
    "sim": true,
    "thumbnail": "assets/img/robots/microduck.webp",
+   "viewer": true,
+   "viewer_note": null
+  },
+  "mujoco_humanoid": {
+   "aliases": [
+    "humanoid",
+    "mjc_humanoid"
+   ],
+   "base_url": "https://cdn.jsdelivr.net/gh/google-deepmind/mujoco@ad0dc0de5e10a075a2c65be629e9a8d557d383a6/model/humanoid/",
+   "category": "humanoid",
+   "description": "MuJoCo Humanoid (21-DOF reference model)",
+   "driver": null,
+   "joints": 22,
+   "lfs_url": "https://media.githubusercontent.com/media/google-deepmind/mujoco/ad0dc0de5e10a075a2c65be629e9a8d557d383a6/model/humanoid/",
+   "model": "humanoid.xml",
+   "name": "mujoco_humanoid",
+   "palette": null,
+   "raw_url": "https://raw.githubusercontent.com/google-deepmind/mujoco/ad0dc0de5e10a075a2c65be629e9a8d557d383a6/model/humanoid/",
+   "real": false,
+   "scene": "humanoid.xml",
+   "sim": true,
+   "thumbnail": "assets/img/robots/mujoco_humanoid.webp",
    "viewer": true,
    "viewer_note": null
   },
@@ -1259,8 +1285,10 @@
   },
   "tiago_dual": {
    "aliases": [
+    "pal_tiago_dual",
+    "tiago",
     "tiago++",
-    "pal_tiago_dual"
+    "tiago_pp"
    ],
    "base_url": "https://cdn.jsdelivr.net/gh/google-deepmind/mujoco_menagerie@c96a32d28fb5da84da38c1da4d749e7a13212855/pal_tiago_dual/",
    "category": "mobile_manip",
