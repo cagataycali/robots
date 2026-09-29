@@ -7,7 +7,7 @@ description: "EarthRover Mini Plus (mobile outdoor navigation)"
 
 # EarthRover Mini Plus (mobile outdoor navigation)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot, strands</span></p>
+{{robot_chips:earthrover}}
 
 The registry ships no simulation asset for it, so `Robot("earthrover")` in the default sim mode refuses by name.
 

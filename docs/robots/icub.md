@@ -7,7 +7,7 @@ description: "icub (humanoid URDF from robot_descriptions)"
 
 # icub (humanoid URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">32 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:icub}}
 
 URDF from [robotology/icub-models@v1.25.0](https://github.com/robotology/icub-models/tree/v1.25.0), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 32 position actuators, floating base.
 

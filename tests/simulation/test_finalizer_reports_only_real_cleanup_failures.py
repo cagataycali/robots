@@ -44,6 +44,7 @@ import pytest
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
+from tests.simulation._isaac_engine import isaac_engine
 
 _BASE_LOGGER = "strands_robots.simulation.base"
 _CLEANUP_WARNING = "Cleanup error during __del__"
@@ -315,9 +316,8 @@ class TestIsaacReprNeverHidesAFailure:
         informative repr rather than the partial-construction one - is asserted
         directly now, rather than inferred from one field's value.
         """
-        engine = IsaacSimulation.__new__(IsaacSimulation)
+        engine = isaac_engine()
         engine._config = type("_Cfg", (), {"num_envs": 4, "device": "cpu", "headless": True})()
-        engine._world_created = False
         engine._num_envs_active = 4
 
         text = repr(engine)
@@ -333,9 +333,8 @@ class TestIsaacReprNeverHidesAFailure:
         the test above requires - a skeleton holding its config rendered as
         "partially constructed", losing information exactly where a traceback needs
         it."""
-        engine = IsaacSimulation.__new__(IsaacSimulation)
+        engine = isaac_engine()
         engine._config = type("_Cfg", (), {"num_envs": 4, "device": "cpu", "headless": True})()
-        engine._world_created = False
 
         text = repr(engine)
 

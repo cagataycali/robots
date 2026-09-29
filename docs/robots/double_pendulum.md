@@ -7,7 +7,7 @@ description: "double_pendulum (educational URDF from robot_descriptions)"
 
 # double_pendulum (educational URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">2 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:double_pendulum}}
 
 URDF from [Gepetto/example-robot-data@d0d9098](https://github.com/Gepetto/example-robot-data/tree/d0d9098d752014aec3725b07766962acf06c5418), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 2 position actuators, fixed base.
 

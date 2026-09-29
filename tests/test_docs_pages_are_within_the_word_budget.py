@@ -63,10 +63,11 @@ _BUDGET: int = _hook().LIMIT
 #: look that learned policies run on real robots: a new Start page (First learned
 #: policy) and a generated "Policies verified on this robot" section on every robot
 #: page, each row carrying the source of its numbers (docs/hooks/data/checkpoints.json).
-#: Then raised to 57,704 for the 81 robot_descriptions URDF robots: one generated page
+#: Then lowered to 49,002 when the robot pages' chips became one {{robot_chips:<name>}} token the hook expands (798 words the chips no longer repeat).
+#: Then raised to 56,158 for the 81 robot_descriptions URDF robots: one generated page
 #: each (64 words of template plus the 22-word "Policies verified" section every robot
 #: page now carries) and the learn page that explains the loader once.
-_SITE_BUDGET = 57_704
+_SITE_BUDGET = 56_158
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

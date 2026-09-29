@@ -2165,7 +2165,10 @@ class TestToLerobotObservation:
         # Insertion order deliberately differs from robot_state_keys order.
         out = policy._to_lerobot_observation({"c": 3.0, "a": 1.0, "b": 2.0})
         np.testing.assert_allclose(out["observation.state"], [1.0, 2.0, 3.0])
-        assert out["observation.state"].dtype == np.float32
+        # A float32 TENSOR, the shape lerobot's pipeline steps are written
+        # against (pi05's prepare-state step calls ``.cpu()`` on it).
+        assert isinstance(out["observation.state"], torch.Tensor)
+        assert out["observation.state"].dtype == torch.float32
 
     def test_state_falls_back_to_observation_keys_when_names_mismatch(self):
         """If no robot_state_keys are present in obs, use the obs's own scalars."""

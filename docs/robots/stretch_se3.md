@@ -7,7 +7,7 @@ description: "stretch_se3 (mobile_manipulator URDF from robot_descriptions)"
 
 # stretch_se3 (mobile_manipulator URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile_manip">Mobile manipulators</span><span class="sr-chip">14 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:stretch_se3}}
 
 URDF from [hello-robot/stretch_urdf@1b7cbbc](https://github.com/hello-robot/stretch_urdf/tree/1b7cbbce808c25465017ce0a53a4173fcf97b11c), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 14 position actuators, floating base.
 

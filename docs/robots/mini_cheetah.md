@@ -7,7 +7,7 @@ description: "mini_cheetah (quadruped URDF from robot_descriptions)"
 
 # mini_cheetah (quadruped URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">12 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:mini_cheetah}}
 
 URDF from [Derek-TH-Wang/mini_cheetah_urdf@1988bce](https://github.com/Derek-TH-Wang/mini_cheetah_urdf/tree/1988bceb26e81f28594a16e7d5e6abe5cbb27ace), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 12 position actuators, floating base.
 

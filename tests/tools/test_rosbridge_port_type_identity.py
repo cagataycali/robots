@@ -39,7 +39,7 @@ import pytest
 
 import strands_robots.rosbridge as transport_mod
 import strands_robots.tools.use_rosbridge as rb_mod
-from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
+from strands_robots.drivers.ros.rosbridge_robot import RosbridgeRobot
 from strands_robots.utils import tcp_port_error
 
 use_rosbridge = rb_mod.use_rosbridge

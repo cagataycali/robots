@@ -7,7 +7,7 @@ description: "Wonik Allegro Hand (16-DOF dexterous)"
 
 # Wonik Allegro Hand (16-DOF dexterous)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip">16 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:allegro_hand}}
 
 <robot-viewer name="allegro_hand"></robot-viewer>
 

@@ -9,11 +9,12 @@ Two jobs, both filesystem only (no ``strands_robots`` import):
    when the registry is unchanged. The output is committed: the nav names the
    files, graders can grep them, and a reviewer sees the diff a registry change
    makes.
-2. ``on_page_markdown`` substitutes three tokens: ``{{robot_cards}}`` (every
-   robot as a card), ``{{robot_cards:<family>}}`` (one family) and
-   ``{{robot_family_table:<family>}}`` (the family's rows as a table) and
-   ``{{driver_facts}}`` (every native driver's facts, rendered once on the
-   drivers page that each robot page links to).
+2. ``on_page_markdown`` substitutes the tokens: ``{{robot_cards}}`` (every
+   robot as a card), ``{{robot_cards:<family>}}`` (one family),
+   ``{{robot_family_table:<family>}}`` (the family's rows as a table),
+   ``{{robot_chips:<name>}}`` (one robot page's family, joints, sim, real and
+   driver chips) and ``{{driver_facts}}`` (every native driver's facts, rendered
+   once on the drivers page that each robot page links to).
 
 The "Policies verified on this robot" section is read from
 ``docs/hooks/data/checkpoints.json``: one row per checkpoint that was run on the
@@ -52,6 +53,7 @@ _CDN = "https://cdn.jsdelivr.net/gh/"
 _TOKEN_CARDS = re.compile(r"^\{\{\s*robot_cards(?::([a-z_]+))?\s*\}\}\s*$", re.M)
 _TOKEN_TABLE = re.compile(r"^\{\{\s*robot_family_table:([a-z_]+)\s*\}\}\s*$", re.M)
 _TOKEN_FACTS = re.compile(r"^\{\{\s*driver_facts\s*\}\}\s*$", re.M)
+_TOKEN_CHIPS = re.compile(r"^\{\{\s*robot_chips:([A-Za-z0-9_.-]+)\s*\}\}\s*$", re.M)
 
 _GENERATED = "<!-- generated: docs/hooks/robot_pages.py -->"
 
@@ -360,6 +362,11 @@ def _chips(name: str, spec: dict, cov, entry: dict) -> str:  # noqa: ANN001
     return '<p class="sr-chips">' + "".join(parts) + "</p>"
 
 
+def chips(name: str) -> str:
+    """One robot page's chips as HTML, what ``{{robot_chips:<name>}}`` renders to."""
+    return _chips(name, registry()[name], _load_coverage().row(name), manifest().get(name, {}))
+
+
 # lerobot's bimanual configs declare no ``port``: each takes ``left_arm_config`` and
 # ``right_arm_config``, one single-arm config per side. (module, class) per lerobot type.
 BIMANUAL_ARM_CONFIG: dict[str, tuple[str, str]] = {
@@ -495,7 +502,7 @@ def robot_page(name: str) -> str:
         "",
         f"# {description}",
         "",
-        _chips(name, spec, cov, entry),
+        f"{{{{robot_chips:{name}}}}}",
         "",
     ]
     if sim:
@@ -691,9 +698,10 @@ def family_table(category: str, link_prefix: str = "") -> str:
 
 
 def substitute(markdown: str, prefix: str, link_prefix: str = "") -> str:
-    """Expand the robot cards and family table tokens in ``markdown``."""
+    """Expand the robot cards, chips, driver facts and family table tokens in ``markdown``."""
     markdown = _TOKEN_CARDS.sub(lambda m: cards(m.group(1), prefix), markdown)
     markdown = _TOKEN_FACTS.sub(lambda _m: driver_facts(), markdown)
+    markdown = _TOKEN_CHIPS.sub(lambda m: chips(m.group(1)), markdown)
     return _TOKEN_TABLE.sub(lambda m: family_table(m.group(1), link_prefix), markdown)
 
 
@@ -721,13 +729,6 @@ def on_page_markdown(markdown: str, page, config, files) -> str:  # noqa: ANN001
     return substitute(markdown, _site_prefix(page, config), link_prefix)
 
 
-if __name__ == "__main__":
-    paths, n = generate()
-    print(f"{len(paths)} pages, {n} changed")
-    for p in paths:
-        print(p.relative_to(_REPO))
-
-
 def _registry_view():  # noqa: ANN202 - a sibling hook module, loaded by path like the others
     """``docs/hooks/registry_view.py``: robots.json merged with the URDF long tail."""
     name = "docs_hooks_registry_view"
@@ -739,3 +740,10 @@ def _registry_view():  # noqa: ANN202 - a sibling hook module, loaded by path li
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+if __name__ == "__main__":
+    paths, n = generate()
+    print(f"{len(paths)} pages, {n} changed")
+    for p in paths:
+        print(p.relative_to(_REPO))

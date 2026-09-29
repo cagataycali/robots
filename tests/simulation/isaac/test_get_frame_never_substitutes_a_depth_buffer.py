@@ -45,7 +45,6 @@ on GPU.
 
 from __future__ import annotations
 
-import threading
 import types
 from typing import Any
 
@@ -59,6 +58,7 @@ from strands_robots.simulation.isaac.simulation import (  # noqa: E402
     IsaacSimulation,
     _CameraState,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 #: A well-formed RTX frame pair for a 4x3 camera.
 _RGB = np.zeros((3, 4, 3), dtype=np.uint8)
@@ -79,13 +79,10 @@ class _Handle:
 
 
 def _engine(rgba: Any = None, depth: Any = _DEPTH, *, render_mode: str = "rtx_realtime") -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
     engine._config = IsaacConfig(render_mode=render_mode, headless=False)
     engine._world = types.SimpleNamespace()
     engine._world_created = True
-    engine._robots = {}
-    engine._objects = {}
     rgba = np.dstack([_RGB, np.full((3, 4, 1), 255, dtype=np.uint8)]) if rgba is None else rgba
     engine._cameras = {"cam": _CameraState(name="cam", prim_path="/World/Cameras/cam", width=4, height=3)}
     engine._cameras["cam"].handle = _Handle(rgba, depth)

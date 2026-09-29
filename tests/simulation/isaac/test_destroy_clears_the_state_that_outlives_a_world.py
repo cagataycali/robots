@@ -32,7 +32,6 @@ and mask whatever the test was actually about.
 
 from __future__ import annotations
 
-import threading
 import types
 from typing import Any
 
@@ -40,8 +39,8 @@ import pytest
 
 pytest.importorskip("strands_robots.simulation.isaac")
 
-from strands_robots.simulation.isaac.config import IsaacConfig  # noqa: E402
 from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 #: The state that must not outlive a world, and a non-empty value for each.
 PER_WORLD_STATE: dict[str, dict[str, Any]] = {
@@ -53,22 +52,9 @@ PER_WORLD_STATE: dict[str, dict[str, Any]] = {
 
 def _engine() -> Any:
     """A torn-down-able engine seeded with per-world state in every registry."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world_created = True
     engine._world = types.SimpleNamespace(stop=lambda: None, clear_instance=lambda: None)
-    engine._robots = {}
-    engine._cameras = {}
-    engine._objects = {}
-    engine._prim_registry = []
-    engine._action_controllers = {}
-    engine._cams_rec_state = None
-    engine._recording_state_dict = {}
-    engine._num_envs_active = 1
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._replicated = False
     for name, value in PER_WORLD_STATE.items():
         setattr(engine, name, dict(value))
     engine._obs_noise_rng = object()

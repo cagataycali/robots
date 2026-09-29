@@ -24,8 +24,8 @@ from typing import Any
 
 import pytest
 
-from strands_robots.mesh import MobileBaseRobot, RosBridgedRobot, RtpsRobot
-from strands_robots.mesh._mobile_base import positive_finite
+from strands_robots.drivers.ros import MobileBaseRobot, RosBridgedRobot, RtpsRobot
+from strands_robots.drivers.ros._mobile_base import positive_finite
 from strands_robots.utils import positive_finite_number_error
 
 _OK: dict[str, Any] = {"status": "success", "content": [{"text": "ok"}]}
@@ -551,8 +551,8 @@ def _shipped_transports() -> list[tuple[type, Any]]:
     reachable from its module fails this file instead of quietly leaving the
     matrix below.
     """
-    from strands_robots.mesh.ros_bridge import _UseRosTransport
-    from strands_robots.mesh.rtps_robot import _RtpsTransport
+    from strands_robots.drivers.ros.ros_bridge import _UseRosTransport
+    from strands_robots.drivers.ros.rtps_robot import _RtpsTransport
     from strands_robots.tools.use_ros import use_ros
     from strands_robots.tools.use_rtps import use_rtps
 

@@ -7,7 +7,7 @@ description: "simple_humanoid (educational humanoid URDF from robot_descriptions
 
 # simple_humanoid (educational humanoid URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">29 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:simple_humanoid}}
 
 URDF from [laas/simple_humanoid_description@4e859ae](https://github.com/laas/simple_humanoid_description/tree/4e859aed7df3c29954c9cca2a1ecb94069f7cfce), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 29 position actuators, floating base.
 

@@ -7,7 +7,7 @@ description: "ROBOTIS OP3 Humanoid (20-DOF)"
 
 # ROBOTIS OP3 Humanoid (20-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">21 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:op3}}
 
 <robot-viewer name="op3"></robot-viewer>
 

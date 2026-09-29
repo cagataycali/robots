@@ -7,7 +7,7 @@ description: "baxter (dual_arm URDF from robot_descriptions)"
 
 # baxter (dual_arm URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="bimanual">Bimanual</span><span class="sr-chip">15 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:baxter}}
 
 URDF from [RethinkRobotics/baxter_common@6c4b0f3](https://github.com/RethinkRobotics/baxter_common/tree/6c4b0f375fe4e356a3b12df26ef7c0d5e58df86e), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 15 position actuators, fixed base.
 

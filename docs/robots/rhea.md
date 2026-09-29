@@ -7,7 +7,7 @@ description: "rhea (biped URDF from robot_descriptions)"
 
 # rhea (biped URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">6 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:rhea}}
 
 URDF from [G-Levine/rhea_description@1dc0f1a](https://github.com/G-Levine/rhea_description/tree/1dc0f1abcf51b5d8a8f7ff8a548399ff0df1414f), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 6 position actuators, floating base.
 

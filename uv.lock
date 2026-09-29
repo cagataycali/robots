@@ -4718,9 +4718,9 @@ requires-dist = [
     { name = "warp-lang", marker = "extra == 'sim-newton'", specifier = ">=1.14.0,<2.0.0" },
     { name = "webauthn", marker = "extra == 'all'", specifier = ">=2.0,<4.0" },
     { name = "webauthn", marker = "extra == 'dashboard'", specifier = ">=2.0,<4.0" },
-    { name = "websockets", marker = "extra == 'all'", specifier = ">=17.0" },
-    { name = "websockets", marker = "extra == 'cosmos3-service'", specifier = ">=17.0" },
-    { name = "websockets", marker = "extra == 'inference'", specifier = ">=17.0" },
+    { name = "websockets", marker = "extra == 'all'", specifier = ">=17.1" },
+    { name = "websockets", marker = "extra == 'cosmos3-service'", specifier = ">=17.1" },
+    { name = "websockets", marker = "extra == 'inference'", specifier = ">=17.1" },
     { name = "xacrodoc", marker = "extra == 'all'", specifier = ">=2.0.0,<3.0.0" },
     { name = "xacrodoc", marker = "extra == 'sim-urdf'", specifier = ">=2.0.0,<3.0.0" },
 ]

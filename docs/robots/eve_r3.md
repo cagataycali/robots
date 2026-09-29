@@ -7,7 +7,7 @@ description: "eve_r3 (mobile_manipulator URDF from robot_descriptions)"
 
 # eve_r3 (mobile_manipulator URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile_manip">Mobile manipulators</span></p>
+{{robot_chips:eve_r3}}
 
 The loader could not compile this description at this commit: upstream clone failed or URDF_PATH missing after import:   stderr: 'fatal: repository 'https://github.com/Halodi/halodi-robot-models.git/' not found'. `Robot("eve_r3")` refuses with that sentence.
 

@@ -7,7 +7,7 @@ description: "laikago (quadruped URDF from robot_descriptions)"
 
 # laikago (quadruped URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">12 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:laikago}}
 
 URDF from [unitreerobotics/unitree_mujoco@f3300ff](https://github.com/unitreerobotics/unitree_mujoco/tree/f3300ff1bf0ab9efbea0162717353480d9b05d73), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 12 position actuators, floating base.
 

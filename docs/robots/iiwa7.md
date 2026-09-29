@@ -7,7 +7,7 @@ description: "iiwa7 (arm URDF from robot_descriptions)"
 
 # iiwa7 (arm URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:iiwa7}}
 
 URDF from [facebookresearch/differentiable-robot-model@d7bd1b3](https://github.com/facebookresearch/differentiable-robot-model/tree/d7bd1b3b8ef1d6dabe9b68474a622185c510e112), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 7 position actuators, fixed base.
 

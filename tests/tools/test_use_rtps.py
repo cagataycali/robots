@@ -2,7 +2,7 @@
 
 ``use_rtps`` is the agent envelope over a pure-RTPS ROS 2 participant on
 cyclonedds (:mod:`strands_robots.rtps.participant`, which
-:class:`~strands_robots.mesh.rtps_robot.RtpsRobot` publishes through as well).
+:class:`~strands_robots.drivers.ros.rtps_robot.RtpsRobot` publishes through as well).
 These tests are hermetic: they neither require nor reject an installed
 cyclonedds / ROS 2 -- the backend's ``available`` probe and its writer/reader
 factories are monkeypatched, so every action-dispatch branch, the agent-input

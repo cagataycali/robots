@@ -7,7 +7,7 @@ description: "valkyrie (humanoid URDF from robot_descriptions)"
 
 # valkyrie (humanoid URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">59 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:valkyrie}}
 
 URDF from [gkjohnson/nasa-urdf-robots@54cdeb1](https://github.com/gkjohnson/nasa-urdf-robots/tree/54cdeb1dbfb529b79ae3185a53e24fce26e1b74b), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 59 position actuators, floating base.
 

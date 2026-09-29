@@ -7,7 +7,7 @@ description: "berkeley_humanoid (humanoid URDF from robot_descriptions)"
 
 # berkeley_humanoid (humanoid URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">12 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:berkeley_humanoid}}
 
 URDF from [HybridRobotics/berkeley_humanoid_description@d0d13d3](https://github.com/HybridRobotics/berkeley_humanoid_description/tree/d0d13d3f81d795480e25ed1910eaf83d5f0a1d0b), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 12 position actuators, floating base.
 

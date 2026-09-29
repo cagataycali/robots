@@ -7,7 +7,7 @@ description: "xarm6 (arm URDF from robot_descriptions)"
 
 # xarm6 (arm URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">6 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:xarm6}}
 
 URDF from [xArm-Developer/xarm_ros2@5bb832f](https://github.com/xArm-Developer/xarm_ros2/tree/5bb832f72ca665f1236a9d8ed1c3a82f308db489), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 6 position actuators, fixed base.
 

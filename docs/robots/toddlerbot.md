@@ -7,7 +7,7 @@ description: "toddlerbot (humanoid URDF from robot_descriptions)"
 
 # toddlerbot (humanoid URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">30 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:toddlerbot}}
 
 URDF from [hshi74/toddlerbot@067f9dc](https://github.com/hshi74/toddlerbot/tree/067f9dc4f50143e36334877b9395b9c5c29ee30c), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 30 position actuators, floating base.
 

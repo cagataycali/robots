@@ -41,7 +41,7 @@ import pytest
 
 import strands_robots.rtps.idl as idl_mod
 import strands_robots.rtps.participant as participant_mod
-from strands_robots.mesh import RtpsRobot
+from strands_robots.drivers.ros import RtpsRobot
 
 _TWIST = "geometry_msgs/msg/Twist"
 # In the bundle, and the wrong shape for a velocity: a robot declaring it

@@ -41,11 +41,13 @@ MOUNT = """(n) => {
   const v = document.createElement("robot-viewer");
   v.setAttribute("name", n);
   v.setAttribute("compact", "");
+  v._orbitStopped = true; // no idle orbit: every thumbnail shares one azimuth
   v.style.cssText = "width:800px;height:600px;display:block;position:fixed;top:0;left:0;z-index:99999;border:0;border-radius:0;margin:0;background:transparent";
   document.body.prepend(v);
   v.load();
 }"""
-READY = "() => ['ready', 'error'].includes(document.querySelector('robot-viewer')?._state)"
+# Ready means arrived: the camera flight and the wake-up tween have landed on the rest pose.
+READY = """() => { const v = document.querySelector('robot-viewer'); return v?._state === 'error' || (v?._state === 'ready' && !v._flight && !v._wakeTween); }"""
 HIDE = """() => { const v = document.querySelector('robot-viewer'); for (const s of ['.joints', '.code', '.chrome']) v.shadowRoot.querySelector(s).hidden = true; if (v._grid) v._grid.visible = false; }"""
 
 

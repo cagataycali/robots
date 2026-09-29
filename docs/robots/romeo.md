@@ -7,7 +7,7 @@ description: "romeo (humanoid URDF from robot_descriptions)"
 
 # romeo (humanoid URDF from robot_descriptions)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">61 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:romeo}}
 
 URDF from [ros-aldebaran/romeo_robot@0.1.5](https://github.com/ros-aldebaran/romeo_robot/tree/0.1.5), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 61 position actuators, floating base.
 

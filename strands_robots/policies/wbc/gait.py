@@ -363,6 +363,22 @@ class WBCGaitPolicy(WBCPolicy):
         """Registry key for this provider (``"wbc_gait"``)."""
         return "wbc_gait"
 
+    @staticmethod
+    def _checkpoint_not_found_message(checkpoint: str | None, main_path: str | None) -> str:
+        """Name the gait-clock weights this variant loads, not the non-gait pair the base names."""
+        hint = (
+            "No gait-clock weights are bundled. This variant loads one policy.onnx whose input is "
+            "[batch, 570] and output [batch, 15]; the "
+            "GR00T-WholeBodyControl-Balance.onnx / -Walk.onnx pair is the non-gait 516-wide family "
+            "(use provider 'wbc' for it) and is refused here by shape."
+        )
+        if checkpoint is None:
+            return f"WBCGaitPolicy requires a checkpoint but none was provided. {hint}"
+        return (
+            f"WBCGaitPolicy ONNX checkpoint not found (resolved: {main_path!r}). "
+            f"Pass checkpoint='/path/to/dir' containing policy.onnx or a direct .onnx path. {hint}"
+        )
+
     def _resolve_config(self, config: str | dict[str, Any] | WBCConfig | None, checkpoint: str | None) -> WBCConfig:
         """Resolve the config, defaulting to (and enforcing) the gait layout.
 
