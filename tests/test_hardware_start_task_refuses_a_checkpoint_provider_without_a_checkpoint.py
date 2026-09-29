@@ -13,15 +13,13 @@ port is judged.
 from __future__ import annotations
 
 import re
-import threading
 from pathlib import Path
 
 import pytest
 
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState
 from strands_robots.registry.policies import get_policy_provider, list_policy_providers
-from tests._daemon_executor import DaemonThreadExecutor
+from tests._hardware_robot import hardware_robot_on
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
 #: The pages that carry the quickstart's record, train, run story now: the old
@@ -47,18 +45,7 @@ class _Arm:
 
 
 def _hw() -> HwRobot:
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "so101"
-    hw.data_config = None
-    hw._task_state = RobotTaskState()
-    hw._executor = DaemonThreadExecutor(max_workers=1, thread_name_prefix="t")
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
-    hw.mesh = None
-    hw.peer_id = None
-    hw.robot = _Arm()
+    hw = hardware_robot_on(_Arm(), tool_name="so101")
     return hw
 
 

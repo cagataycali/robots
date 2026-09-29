@@ -38,16 +38,15 @@ import asyncio
 import concurrent.futures
 import gc
 import inspect
-import threading
 import warnings
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
 
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState, TaskStatus
+from strands_robots.hardware_robot import TaskStatus
+from tests._hardware_robot import hardware_robot_on
 from tests.test_hardware_control_loop_rate_guard import _FakeArm
 
 # The horizon here is the step cap, not the clock. ``n_steps`` ends the loop at
@@ -65,21 +64,7 @@ _DURATION = 10.0
 @pytest.fixture
 def hw() -> Iterator[Any]:
     """A ``Robot`` wired to an in-memory arm and a stubbed connect path."""
-    robot = HwRobot.__new__(HwRobot)
-    robot.tool_name_str = "test_arm"
-    robot.action_horizon = 1
-    robot.data_config = None
-    robot.control_frequency = 50.0
-    robot.action_sleep_time = 1.0 / 50.0
-    robot._task_state = RobotTaskState()
-    robot._executor = ThreadPoolExecutor(max_workers=1)
-    robot._shutdown_event = threading.Event()
-    robot._stop_requested = threading.Event()
-    robot._task_admission = threading.Lock()
-    robot._task_claimed = False
-    robot.mesh = None
-    robot.peer_id = None
-    robot.robot = _FakeArm()
+    robot = hardware_robot_on(_FakeArm(), tool_name="test_arm", action_horizon=1)
 
     async def _connected() -> tuple[bool, str]:
         return (True, "")

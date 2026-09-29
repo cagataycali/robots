@@ -537,7 +537,7 @@ class FrankaDriver:
                     ],
                 }
         elif action == "status":
-            envelope = {"status": "success", "content": [{"json": await self.get_status()}]}
+            envelope = await self.get_status()  # already the envelope (#4151)
         elif action == "stop":
             envelope = self.stop_task()
         else:

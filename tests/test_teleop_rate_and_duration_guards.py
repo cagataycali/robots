@@ -29,18 +29,15 @@ refused rate must leave a live stream alone rather than stopping it first.
 from __future__ import annotations
 
 import math
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import numpy as np
 import pytest
 
-from strands_robots.hardware_robot import Robot as HardwareRobot
-from strands_robots.hardware_robot import RobotTaskState
 from strands_robots.mesh.input import InputPublisher
 from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import positive_finite_number_error
+from tests._hardware_robot import hardware_robot_on
 from tests.test_teleop import FakeHost, FakePublishHost, FakeTeleop, _spin_until
 
 #: Values no rate or time span can be built from. ``True`` is included because
@@ -214,16 +211,9 @@ class _LivePublisher:
 
 def _hardware_robot() -> Any:
     """A hardware ``Robot`` carrying only the teleop state the guard reads."""
-    hw = HardwareRobot.__new__(HardwareRobot)
-    hw.tool_name_str = "rate_guard_arm"
+    hw = hardware_robot_on(object(), tool_name="rate_guard_arm")
     hw.mesh = _FakeMesh()
     hw.peer_id = "leader-1"
-    hw.robot = object()
-    hw._task_state = RobotTaskState()
-    hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rate_guard")
-    hw._shutdown_event = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
     return hw
 
 

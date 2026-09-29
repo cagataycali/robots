@@ -376,10 +376,9 @@ class FeetechDriver:
         tool_use_id = tool_use.get("toolUseId", "")
         action = (tool_use.get("input") or {}).get("action", "status")
         if action == "status":
-            envelope = {
-                "status": "success",
-                "content": [{"json": await self.get_status()}],
-            }
+            # ``get_status`` already returns the envelope; wrapping it again put the
+            # fields at content[0].json.content[0].json (#4151).
+            envelope = await self.get_status()
         elif action == "sensors":
             envelope = self._read_joints_envelope()
         elif action == "move_to":

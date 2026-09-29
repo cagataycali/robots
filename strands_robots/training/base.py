@@ -201,6 +201,12 @@ class Trainer(ABC):
     the run, not the syntax that fetched it.
     """
 
+    #: Whether a run reads a dataset. The ``train_policy`` tool refuses a spec
+    #: with no data source for a trainer that does; a provider whose runs build
+    #: their own environments (``isaaclab``) sets this ``False`` so the agent can
+    #: reach it without naming a dataset it would never read.
+    requires_dataset: bool = True
+
     @property
     @abstractmethod
     def provider_name(self) -> str:

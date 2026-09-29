@@ -29,4 +29,8 @@ Gripper actuator `gripper`: closed at the low end of travel, open at the high en
 
 **`YahboomM3ProDriver`** (the default for this robot) speaks the robot's ROS 2 graph, over rosbridge or in-process `rclpy`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#yahboomm3prodriver).
 
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
+
 Model: [dimwael/yahboom_m3pro_description/mjcf](https://github.com/dimwael/yahboom_m3pro_description/tree/bdac682e57a8eeaf7b18eece44bfbfc54de98e8a/mjcf), scene `scene.xml`.

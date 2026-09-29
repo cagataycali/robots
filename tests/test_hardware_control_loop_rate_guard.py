@@ -26,15 +26,14 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import numpy as np
 import pytest
 
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState
 from strands_robots.simulation.base import SimEngine
+from tests._hardware_robot import hardware_robot_on
 
 # Rates the loop cannot honor. ``0`` makes the period undefined; a negative or
 # ``inf`` rate collapses it to a value ``asyncio.sleep`` returns from
@@ -194,21 +193,8 @@ class TestPeriodIsTheOnlyThrottle:
         Returns:
             The number of actions that reached the arm.
         """
-        hw = HwRobot.__new__(HwRobot)
-        hw.tool_name_str = "test_arm"
-        hw.action_horizon = 1
-        hw.data_config = None
-        hw.control_frequency = 50.0
+        hw = hardware_robot_on(_FakeArm(), tool_name="test_arm", action_horizon=1)
         hw.action_sleep_time = period
-        hw._task_state = RobotTaskState()
-        hw._executor = ThreadPoolExecutor(max_workers=1)
-        hw._shutdown_event = threading.Event()
-        hw._stop_requested = threading.Event()
-        hw._task_admission = threading.Lock()
-        hw._task_claimed = False
-        hw.mesh = None
-        hw.peer_id = None
-        hw.robot = _FakeArm()
 
         class _Policy:
             supports_rtc = False

@@ -17,15 +17,13 @@ network case rather than imitated.
 from __future__ import annotations
 
 import asyncio
-import threading
 from typing import Any
 
 import pytest
 from lerobot.robots.reachy2 import Reachy2RobotConfig
 
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState
-from tests._daemon_executor import DaemonThreadExecutor
+from tests._hardware_robot import hardware_robot_on
 
 
 class _NotConnected(Exception):
@@ -95,18 +93,7 @@ class _Device:
 
 
 def _hw(arm: _Arm | _Device) -> HwRobot:
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "so101"
-    hw.data_config = None
-    hw._task_state = RobotTaskState()
-    hw._executor = DaemonThreadExecutor(max_workers=1, thread_name_prefix="t")
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
-    hw.mesh = None
-    hw.peer_id = None
-    hw.robot = arm
+    hw = hardware_robot_on(arm, tool_name="so101")
     return hw
 
 

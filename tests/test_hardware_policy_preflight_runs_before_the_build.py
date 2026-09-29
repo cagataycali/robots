@@ -30,17 +30,15 @@ Four rules, driven through the real rollout dispatch on an in-memory arm:
 
 from __future__ import annotations
 
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
 
-from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState, TaskStatus
+from strands_robots.hardware_robot import TaskStatus
 from strands_robots.policies import factory as policy_factory
 from strands_robots.policies import register_policy
 from strands_robots.policies.mock import MockPolicy
+from tests._hardware_robot import hardware_robot_on
 
 _CAMERA = "front"
 _REFUSAL = "preflight: image feature 'observation.images.wrist_image' has no camera to feed it"
@@ -124,21 +122,7 @@ def hw(monkeypatch: pytest.MonkeyPatch) -> Any:
     built: list[Any] = []
 
     def construct(*, readable: bool = True) -> tuple[Any, list[str]]:
-        robot = HwRobot.__new__(HwRobot)
-        robot.tool_name_str = "test_arm"
-        robot.action_horizon = 1
-        robot.data_config = None
-        robot.control_frequency = 50.0
-        robot.action_sleep_time = 1.0 / 50.0
-        robot._task_state = RobotTaskState()
-        robot._executor = ThreadPoolExecutor(max_workers=1)
-        robot._shutdown_event = threading.Event()
-        robot._stop_requested = threading.Event()
-        robot._task_admission = threading.Lock()
-        robot._task_claimed = False
-        robot.mesh = None
-        robot.peer_id = None
-        robot.robot = _Arm(log, readable=readable)
+        robot = hardware_robot_on(_Arm(log, readable=readable), tool_name="test_arm", action_horizon=1)
 
         async def _connected() -> tuple[bool, str]:
             return (True, "")

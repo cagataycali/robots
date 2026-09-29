@@ -41,7 +41,10 @@
 `strands-robots` gives a [Strands Agent](https://github.com/strands-agents/harness-sdk)
 hands. One `Robot()` call returns a **MuJoCo simulation** (default: no GPU, no
 hardware) or a **real robot** - same code, same natural-language control, same
-opt-in peer-to-peer **mesh**.
+opt-in peer-to-peer **mesh**. Learned policies from the Hugging Face Hub, from
+vision-language-action models to world foundation models and whole-body
+controllers, run through the same `run_policy` call in the simulator and on
+the physical robot.
 
 ```python
 from strands import Agent
