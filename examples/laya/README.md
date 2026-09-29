@@ -17,6 +17,10 @@ pip install "strands-robots[sim-mujoco,laya]"
 MUJOCO_GL=egl python examples/laya/laya_gated_rollout.py
 ```
 
-Research findings (Jetson AGX Thor, 2026-09-28) are in the lane report; the short version: zero-shot Laya is a
-usable calibrated *gate* over a proposal generator (H2) and fast enough for 10 Hz ticks with a 5-question
-profile (H3), but not a controller on its own (H1).
+Research findings (Jetson AGX Thor, 2026-09-28, MuJoCo so101, 20 episodes per arm x task) live in the private HF
+dataset `cagataydev/laya-so101-mujoco-20260928` (`REPORT.md`, `FINDINGS.md`). The short version: zero-shot Laya is
+NOT a controller (H1: every checkpoint 0/20, none beats a random primitive, each emits one primitive per checkpoint and
+task text), NOT a calibrated gate (H2: judging 12,855 scripted and random proposals, AUROC 0.48-0.53, ECE 0.10-0.51),
+and fast enough only on an idle GPU (H3: 17-27 ms per question, 55-105 ms for ten; CPU 2-7 s). The reusable parts are
+the primitive vocabulary, the scripted/random baselines, the judge and the `confidence_gate` seam, which need a
+checkpoint fine-tuned on (state, primitive) pairs before a second try.
