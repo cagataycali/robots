@@ -40,7 +40,9 @@ class TestTheRefusal:
         result = arm._policy_port_error(None, "execute_task", "moveit2")
         assert result is not None and result["status"] == "error"
         text = _text(result)
-        assert text.startswith("execute_task: policy_port is required - policy_provider 'moveit2' dials a policy server")
+        assert text.startswith(
+            "execute_task: policy_port is required - policy_provider 'moveit2' dials a policy server"
+        )
 
     def test_no_provider_is_called_the_default_in_the_port_refusal(self, arm) -> None:
         """The default builds in process, so no port refusal can be about a default."""

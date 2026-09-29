@@ -3691,9 +3691,9 @@ class Robot(TeleopMixin, AgentTool):
                 "Motion: execute (blocking), start (async), status, stop. execute/start pause for "
                 "operator approval before the arm moves (a headless script pre-approves with "
                 f"{COMMAND_ALLOW_ENV}=execute,start) and run for at most duration seconds (default 30). "
-                "They need instruction; the default provider lerobot_local builds in process from "
-                "pretrained_name_or_path in policy_config, mock is a test motion that ignores the "
-                "instruction, and moveit2 dials a server so it also needs policy_port. No set_joint_positions/move_to "
+                "They need instruction; the default provider lerobot_local builds in process and needs "
+                "pretrained_name_or_path in policy_config, mock ignores the instruction (test motion), "
+                "and moveit2 dials a server so it needs policy_port. No set_joint_positions/move_to "
                 "here: to read the arm call get_state, never execute."
             ),
             "inputSchema": {
