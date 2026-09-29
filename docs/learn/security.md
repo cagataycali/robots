@@ -22,7 +22,7 @@ The posture in one sentence: an agent may read anything; a command that can move
 
 ## The operator gate
 
-Every path from a model to an actuator ends in `gate_motion`: allowlist variable, then `BYPASS_TOOL_CONSENT=true` (a WARNING), then a Strands interrupt the operator answers out of band, failing closed when nobody can be asked. Reading is never gated. Stopping is never gated. The operator's reply never reaches the model; it goes to the audit log. The verb tables and the exact refusal text are on [agents](agents.md).
+Every policy rollout, ROS command, serial write and pose move a model asks for ends in `gate_motion`; [the operator gate](agents.md#the-operator-gate) gives the decision order, the verb tables, the refusal text and the one path not gated yet (the native drivers' `move_to`). Reading and stopping are never gated. The operator's reply never reaches the model; it goes to the audit log.
 
 The gate lives at the package root because six tools and the hardware `Robot` call it; the ROS blocklist is one set for three transports because it describes a physical surface; a refusal names the value that would pre-approve the call (`STRANDS_POSE_COMMAND_ALLOW=move_motor`), never `=true`.
 
