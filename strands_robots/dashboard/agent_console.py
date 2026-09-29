@@ -27,7 +27,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,9 +48,14 @@ sim_set_joints, sim_reset, sim_stop) render in the Sim tab. Fleet robots are pee
 and appear as cards on the dashboard: `fleet` lists them with their state, `spawn_robot` creates a new
 simulated robot as a mesh peer (its card appears within seconds), `despawn_robot` removes one, and
 each peer is also a tool named after it (dashes become underscores) whose actions are what that peer
-accepts: status, state, set_joints (target_joints, radians), reset, step, stop, and execute/start for
-policy rollouts. When the operator says "create a robot", use spawn_robot. When they name a robot,
-use that robot's own tool. Joint positions are radians unless the peer's state says otherwise; joints
+accepts: status, state, set_joints (target_joints, radians), reset, step, stop, execute/start for
+policy rollouts, and on a simulation peer every published action of the simulation tool as well
+(add_object, list_objects, move_object, add_camera, render, get_robot_state, move_to, set_gripper and
+the rest of its enum), called with the action's own parameters as fields. spawn_robot returns the new
+peer's tool names and they are callable in the same turn. When the operator says "create a robot",
+use spawn_robot. When they name a robot, use that robot's own tool. To put something into a robot's
+world, use that robot's tool with the simulation action (a cube is add_object with name, shape,
+size, color, position). Joint positions are radians unless the peer's state says otherwise; joints
 are addressed by name or by 1-based index as strings. A move you request may be put to the operator
 first; if they decline, say so and stop. Never work around a refusal or an e-stop."""
 
@@ -316,8 +321,17 @@ def peer_summary(peer_id: str, peer: Mapping[str, Any]) -> dict[str, Any]:
     return row
 
 
-def build_fleet_tools(bridge: Any, devices: Any | None) -> list[Any]:
-    """The fleet tools: list the mesh, create a sim robot on it, remove one. Bridge-less = none."""
+def build_fleet_tools(
+    bridge: Any, devices: Any | None, on_spawned: Callable[[list[str]], list[str]] | None = None
+) -> list[Any]:
+    """The fleet tools: list the mesh, create a sim robot on it, remove one. Bridge-less = none.
+
+    ``on_spawned(peer_ids)`` is called by ``spawn_robot`` once the new peer is on the
+    mesh, with the ids seen; it returns the tool names now callable. The console passes
+    its :meth:`Console.adopt`, so a spawned peer's tool is in the live agent's registry
+    before ``spawn_robot`` returns and the same turn can use it. Without it the names are
+    predicted and usable on the next turn.
+    """
     if bridge is None:
         return []
 
@@ -352,8 +366,9 @@ def build_fleet_tools(bridge: Any, devices: Any | None) -> list[Any]:
             peer_id: optional mesh name for it (letters, digits, - _ .); default <robot>-sim-<n>.
 
         Returns the peer id, the child peer that publishes its joints (<peer>__<robot>) and the
-        tool names the agent can use for them on the next turn. Simulation only: a real robot needs
-        a serial port and is started from the Devices panel.
+        tool names the agent can use for them, callable in this same turn (add a cube with the
+        child's tool: action=add_object). Simulation only: a real robot needs a serial port and is
+        started from the Devices panel.
         """
         if devices is None:
             raise RuntimeError("this dashboard has no device manager, so it cannot start robot processes")
@@ -373,13 +388,21 @@ def build_fleet_tools(bridge: Any, devices: Any | None) -> list[Any]:
             time.sleep(SPAWN_POLL_S)
         from strands_robots.dashboard.peer_tools import sanitize_tool_name
 
+        adopted: list[str] = []
+        if seen and on_spawned is not None:
+            try:
+                adopted = list(on_spawned(seen))
+            except Exception:  # noqa: BLE001 - the spawn succeeded; the tools arrive next turn instead
+                logger.warning("spawn_robot: could not register the new peer's tools mid-turn", exc_info=True)
+                adopted = []
         out = {
             **result,
             "peer_id": pid,
             "on_mesh": seen,
-            "tools": [sanitize_tool_name(p) for p in seen],
+            "tools": adopted or [sanitize_tool_name(p) for p in seen],
             "note": (
-                "the robot's card is on the dashboard now; its joints publish on the child peer"
+                "the robot's card is on the dashboard now; its joints publish on the child peer; "
+                + ("its tools are callable now, in this turn" if adopted else "its tools are callable next turn")
                 if seen
                 else f"the process started but no presence arrived within {SPAWN_PRESENCE_TIMEOUT_S:g}s; "
                 "call fleet again in a moment"
@@ -442,6 +465,7 @@ class Console:
         self._bridge = bridge
         self._devices = devices
         self._signature: frozenset[tuple[str, str]] = frozenset()
+        self._hook: Any | None = None
         self.agent = self._build(messages=None)
 
     def _peers(self) -> dict[str, Any]:
@@ -462,20 +486,20 @@ class Console:
 
         tools: list[Any] = build_tools(self._safety)
         hooks: list[Any] = [MotionGate(self.grants)]
+        self._hook = None
         if self._bridge is not None:
             peers = self._peers()
             self._signature = fleet_signature(peers)
             bridge = self._bridge
             proxies = build_peer_tools(peers, bridge.send_cmd, peer_state=lambda pid: bridge.peers.get(pid))
-            tools.extend(build_fleet_tools(bridge, self._devices))
+            tools.extend(build_fleet_tools(bridge, self._devices, on_spawned=self.adopt))
             tools.extend(proxies)
-            hooks.append(
-                MotionInterruptHook(
-                    peers_snapshot=lambda: bridge.peers,
-                    proxy_motion=motion_actions_for(proxies),
-                    proxy_targets={t.tool_name: t.peer_id for t in proxies},
-                )
+            self._hook = MotionInterruptHook(
+                peers_snapshot=lambda: bridge.peers,
+                proxy_motion=motion_actions_for(proxies),
+                proxy_targets={t.tool_name: t.peer_id for t in proxies},
             )
+            hooks.append(self._hook)
         return Agent(
             model=self._model,
             messages=messages,
@@ -484,6 +508,41 @@ class Console:
             system_prompt=SYSTEM_PROMPT,
             callback_handler=None,
         )
+
+    def adopt(self, peer_ids: list[str]) -> list[str]:
+        """Register the proxies for *peer_ids* into the LIVE agent, mid-turn. Returns their tool names.
+
+        The SDK reads the registry's tool specs before every model call, so a
+        tool registered while a turn runs is offered on that turn's next call:
+        ``spawn_robot`` hands the model the new robot instead of "next turn".
+        The fleet signature grows with them so the next turn does not rebuild
+        for a change already applied; the motion hook learns the new proxies the
+        way ``_build`` taught it the first ones (a spawned peer is a sim, so it
+        adds no motion row, and a real peer would).
+        """
+        if self._bridge is None:
+            return []
+        from strands_robots.dashboard.peer_tools import build_peer_tools, fleet_signature, motion_actions_for
+
+        bridge = self._bridge
+        peers = {pid: p for pid, p in self._peers().items() if pid in set(peer_ids)}
+        if not peers:
+            return []
+        registry: Any = getattr(self.agent, "tool_registry", None)
+        held = set(self.tool_names())
+        proxies = build_peer_tools(peers, bridge.send_cmd, peer_state=lambda pid: bridge.peers.get(pid))
+        names: list[str] = []
+        for proxy in proxies:
+            if proxy.tool_name in held or registry is None:
+                names.append(proxy.tool_name)
+                continue
+            registry.register_tool(proxy)
+            names.append(proxy.tool_name)
+        if self._hook is not None:
+            self._hook.adopt(motion_actions_for(proxies), {t.tool_name: t.peer_id for t in proxies})
+        self._signature = self._signature | fleet_signature(peers)
+        logger.info("console: adopted %d peer tool(s) mid-turn: %s", len(names), ", ".join(names))
+        return names
 
     def tool_names(self) -> list[str]:
         """The tools the agent holds right now."""

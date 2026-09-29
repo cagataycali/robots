@@ -129,6 +129,11 @@ def attach(app: FastAPI) -> None:
             app.state.mesh_online = False
             app.state.mesh_error = f"{type(exc).__name__}: {exc}"
             logger.warning("mesh session not started: %s", app.state.mesh_error)
+        else:
+            # ``start`` answers False with the reason on the bridge (a refused
+            # session, no zenoh, the kill switch); the fleet route reports it.
+            if not app.state.mesh_online:
+                app.state.mesh_error = getattr(app.state.bridge, "start_error", None)
 
     async def _stop() -> None:
         await asyncio.to_thread(app.state.bridge.stop)

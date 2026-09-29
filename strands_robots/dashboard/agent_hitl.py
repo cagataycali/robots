@@ -170,6 +170,11 @@ class MotionInterruptHook(HookProvider):
         """Subscribe the motion gate to every tool call the agent is about to make."""
         registry.add_callback(BeforeToolCallEvent, self._gate)
 
+    def adopt(self, proxy_motion: Mapping[str, frozenset[str]], proxy_targets: Mapping[str, str]) -> None:
+        """Learn proxies registered after construction, so a peer adopted mid-turn is gated like the rest."""
+        self._proxy_motion.update(proxy_motion)
+        self._proxy_targets.update(proxy_targets)
+
     def _gate(self, event: BeforeToolCallEvent) -> None:
         tool_use = event.tool_use or {}
         name = str(tool_use.get("name") or "")
