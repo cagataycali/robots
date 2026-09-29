@@ -664,11 +664,11 @@ def _spy_exec(m: Mesh) -> tuple[list[dict[str, Any]], list[threading.Thread], th
     done = threading.Event()
     real = m._exec_cmd
 
-    def _wrapped(data: dict[str, Any]) -> None:
+    def _wrapped(data: dict[str, Any], reply_to: str | None = None) -> None:
         seen.append(data)
         threads.append(threading.current_thread())
         try:
-            real(data)
+            real(data, reply_to=reply_to)
         finally:
             done.set()
 

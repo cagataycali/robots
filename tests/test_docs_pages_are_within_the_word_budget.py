@@ -63,12 +63,14 @@ _BUDGET: int = _hook().LIMIT
 #: policy) and a generated "Policies verified on this robot" section on every robot
 #: page, each row carrying the source of its numbers (docs/hooks/data/checkpoints.json).
 #: Then lowered to 49,002 when the robot pages' chips became one {{robot_chips:<name>}} token the hook expands (798 words the chips no longer repeat).
-#: Raised to 49,553 for the mjlab backend page (a fourth SimEngine backend:
+#: Raised to 49,508 when the mesh gained its direct messaging page (one new page under
+#: learn/mesh, a variable row and a sentence on the pages that point at it, and the `iot`
+#: verbs on the command line page).
+#: Raised to 50,058 for the mjlab backend page (a fourth SimEngine backend:
 #: learn/simulation/mjlab.md, its row on the simulation index and the rsl_rl_onnx
 #: section on learn/policies/rl.md, 550 words together), the ONE convention
-#: exception of that change; the remaining word is what main's own tree already
-#: stood over its ceiling by at d57fbe90a (#4250 did not bank it).
-_SITE_BUDGET = 49_553
+#: exception of that change.
+_SITE_BUDGET = 50_058
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

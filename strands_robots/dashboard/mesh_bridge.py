@@ -1122,10 +1122,18 @@ class MeshBridge:
         started = time.time()
         result: dict[str, Any] = mesh.send(target, cmd, timeout=timeout)
         status = result.get("status")
+        # How the command travelled, when the transport can say (AWS IoT
+        # direct messaging): a peer that took the command and is slow reads
+        # differently from one that never got it or is gone. An offline
+        # verdict arrives as ``status == "error"`` in one round trip and is
+        # already reported without waiting the timeout out.
+        delivery = result.get("delivery")
         if status == "timeout":
             result = {"ok": False, "error": f"timeout after {timeout:g}s"}
         elif status == "error" and "responder_id" not in result:
             result = {"ok": False, "error": result.get("error")}
+        if isinstance(delivery, dict) and "delivery" not in result:
+            result["delivery"] = delivery
         action = cmd.get("action", "?") if isinstance(cmd, dict) else "?"
         if not result.get("error") and safety_state.proves_clear(str(action)):
             with self._peers_lock:

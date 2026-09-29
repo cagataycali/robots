@@ -49,6 +49,7 @@ from strands_robots.mesh.session import (
 from strands_robots.mesh.session import (
     get_peers as _session_get_peers,
 )
+from strands_robots.mesh.transport.base import DirectSender
 from strands_robots.utils import partial_construction_repr, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
@@ -555,6 +556,19 @@ def _sensor_present(robot: Any, *attrs: str) -> bool:
     return False
 
 
+def _responder_segment(key: str, me: str) -> str | None:
+    """The ``<responder>`` of ``strands/<me>/response/<responder>/<turn>``, or ``None``.
+
+    ``None`` for the legacy three-segment shape ``strands/<me>/response/<turn>``
+    (no responder segment to check) and for any key that is not this peer's
+    response prefix at all.
+    """
+    parts = key.split("/")
+    if len(parts) != 5 or parts[0] != "strands" or parts[1] != me or parts[2] != "response":
+        return None
+    return parts[3]
+
+
 class Mesh(SensorLoopsMixin):
     """Peer-to-peer mesh component embedded in a single Robot or Simulation.
 
@@ -603,6 +617,16 @@ class Mesh(SensorLoopsMixin):
         self._pending: dict[str, threading.Event] = {}
         self._responses: dict[str, list[dict[str, Any]]] = {}
         self._expected_responders: dict[str, str] = {}
+        # The transport, when it can address ONE peer without a subscription
+        # on its side (AWS IoT Core Direct Messaging). Decided once in
+        # ``start()``: ``isinstance(session, DirectSender)`` and the
+        # STRANDS_MESH_IOT_DIRECT switch. ``None`` means every point-to-point
+        # message goes through ``publish`` exactly as before; the Zenoh path
+        # never sets it. ``_direct_fallback_logged`` keeps the once-per-peer
+        # WARNING for a 403 fallback from repeating on every command.
+        self._direct: DirectSender | None = None
+        self._direct_fallback_logged: set[str] = set()
+        self._direct_fallback_generation = -1
 
         # User subscribe state
         self.inbox: dict[str, list[tuple[str, dict[str, Any]]]] = {}
@@ -888,6 +912,7 @@ class Mesh(SensorLoopsMixin):
                 return
 
             self._has_session_ref = True
+            self._direct = self._select_direct_sender(session)
 
             declared: list[Any] = []
             try:
@@ -1083,6 +1108,13 @@ class Mesh(SensorLoopsMixin):
             self._pending.clear()
             self._responses.clear()
 
+        # Reset rather than cleared: stop() is also the fail-soft path for a
+        # Mesh whose __init__ never finished (the lifecycle tests drive it
+        # through object.__new__), so the attribute may not exist yet.
+        self._direct = None
+        self._direct_fallback_logged = set()
+        self._direct_fallback_generation = -1
+
         if self._has_session_ref:
             release_session()
             self._has_session_ref = False
@@ -1258,6 +1290,14 @@ class Mesh(SensorLoopsMixin):
             available_topics.append("health")
         if available_topics:
             payload["topics"] = available_topics
+
+        # The MQTT client id this peer answers direct messages under, when it
+        # has an IoT leg. A sender that gets 404 for that exact id knows the
+        # peer is gone; a peer that publishes none (Zenoh only, or a client id
+        # unlike its peer id) is still reached over publish/subscribe.
+        thing = getattr(self._direct, "thing_name", None)
+        if isinstance(thing, str) and thing:
+            payload["iot_client_id"] = thing
 
         return payload
 
@@ -1927,14 +1967,136 @@ class Mesh(SensorLoopsMixin):
         sender_id = data.get("sender_id", "")
         if sender_id == self.peer_id:
             return
+        # A command that arrived as an AWS IoT direct message names the
+        # sender's reply address in the MQTT5 Response Topic. A zenoh.Sample
+        # has no such attribute, so the default keeps the computed reply key.
+        reply_to = getattr(sample, "response_topic", None)
         threading.Thread(
             target=self._exec_cmd,
             args=(data,),
+            kwargs={"reply_to": reply_to} if isinstance(reply_to, str) else {},
             name=f"mesh-exec-{self.peer_id}",
             daemon=True,
         ).start()
 
-    def _exec_cmd(self, data: dict[str, Any]) -> None:
+    def _select_direct_sender(self, session: Any) -> DirectSender | None:
+        """Return *session* as a :class:`DirectSender` when direct messaging applies.
+
+        Zenoh sessions are never one. An IoT or bridge transport is one unless
+        ``STRANDS_MESH_IOT_DIRECT=0`` (resolved by the transport module, which
+        owns the switch and its domain report). Decided once per ``start()``.
+        """
+        # The capability has to be declared by the transport's CLASS, not by
+        # an attribute that happens to be set on one instance: the mesh test
+        # suite drives ``start()`` against mocked and hand-built sessions, and
+        # a stand-in that grew a ``send_direct`` attribute by accident would
+        # otherwise route every command through a path Zenoh does not have.
+        if not isinstance(session, DirectSender) or not callable(getattr(type(session), "send_direct", None)):
+            return None
+        from strands_robots.mesh.transport.iot_transport import direct_messaging_enabled
+
+        if not direct_messaging_enabled():
+            logger.info("[mesh] %s: direct messaging switched off; commands go over publish/subscribe", self.peer_id)
+            return None
+        return session
+
+    def _direct_reply_key(self, sender: str, turn: str, reply_to: str | None) -> str | None:
+        """Validate the reply address a direct command carried, or return ``None``.
+
+        The address must be exactly ``strands/{sender}/response/{self.peer_id}/{turn}``
+        with the validated ``sender`` and this peer's id: a sender cannot steer a
+        robot's reply to another operator's topic or to another robot's response
+        segment. The IoT policy refuses that too; this is defence in depth and
+        the reason a mismatch is a WARNING and not a silent fallback.
+        """
+        if reply_to is None or self._direct is None or not sender:
+            return None
+        pattern = rf"strands/{re.escape(sender)}/response/{re.escape(self.peer_id)}/[0-9a-f]{{32}}\Z"
+        if re.fullmatch(pattern, reply_to) and reply_to.rsplit("/", 1)[1] == turn:
+            return reply_to
+        logger.warning(
+            "[mesh] %s: response topic %r from %s does not name strands/%s/response/%s/%s; replying on the computed key",
+            self.peer_id,
+            reply_to,
+            sender,
+            sender,
+            self.peer_id,
+            turn,
+        )
+        return None
+
+    #: Budget for one direct reply: the confirmation window the broker waits
+    #: for the sender's PUBACK plus the HTTPS round trip. A reply is worth
+    #: confirming (D4: motion commands are exactly where a receipt matters), and
+    #: a sender that does not acknowledge inside this gets the reply published
+    #: on the key it still subscribes to, so the wait is bounded and no reply is
+    #: lost to a QoS 0 leg reading as a command that never executed.
+    REPLY_DIRECT_BUDGET_S = 3.0
+
+    def _reply(self, sender: str, turn: str, rkey: str, payload: dict[str, Any], direct_key: str | None) -> None:
+        """Send one command response: direct to *sender* when it asked for that, else publish.
+
+        The direct reply is confirmed (QoS 1 and the sender's PUBACK) within
+        :data:`REPLY_DIRECT_BUDGET_S`, the same way the command came in. One
+        that is not delivered falls back to ``publish`` on ``rkey`` in the same
+        call, which the sender still subscribes to.
+        """
+        if direct_key is not None and self._direct is not None:
+            result = self._direct.send_direct(
+                sender, direct_key, payload, confirm=True, timeout=self.REPLY_DIRECT_BUDGET_S, correlation=turn
+            )
+            if result.delivered:
+                return
+            self._note_direct_fallback(sender, result.reason, result.detail, leg="reply")
+        self.publish(rkey, payload)
+
+    def _note_direct_fallback(self, peer: str, reason: str, detail: str, leg: str = "command") -> None:
+        """Log why a direct send to *peer* fell back to publish: once per peer for 403, debug otherwise.
+
+        The 403 hint depends on which leg was refused. A refused *reply* means
+        THIS peer's identity has no ``AllowDirectResponseToAnyOperator`` grant:
+        its certificate predates the CSR default (CN ``AWS IoT Certificate``)
+        or its policy predates the statement; re-running ``provision_robot``
+        fixes both. A refused *command* means this peer's OPERATOR policy has no
+        ``AllowDirectCommandToAnyRobot``; re-running ``provision_operator``
+        publishes the current document.
+        """
+        if reason == "forbidden":
+            # Follow the transport's connection: after a reconnect (which is
+            # when a re-provisioned policy takes effect) the warning may fire
+            # again, and after a reprovision that fixed it, it stays quiet.
+            generation = int(getattr(self._direct, "connection_generation", 0))
+            if generation != self._direct_fallback_generation:
+                self._direct_fallback_generation = generation
+                self._direct_fallback_logged = set()
+            if peer not in self._direct_fallback_logged:
+                self._direct_fallback_logged.add(peer)
+                if leg == "reply":
+                    hint = (
+                        "this robot may not send direct replies: its certificate predates the CSR default "
+                        "(CN must equal the Thing name) or its policy predates AllowDirectResponseToAnyOperator; "
+                        "re-run provision_robot for it"
+                    )
+                else:
+                    hint = (
+                        "this operator's policy has no AllowDirectCommandToAnyRobot grant; re-run "
+                        "provision_operator to publish the current document"
+                    )
+                logger.warning(
+                    "[mesh] %s: direct %s to %s refused by policy (%s); using publish/subscribe for this peer "
+                    "until reconnect. %s.",
+                    self.peer_id,
+                    leg,
+                    peer,
+                    detail or "403",
+                    hint,
+                )
+            return
+        logger.debug(
+            "[mesh] %s: direct %s to %s not delivered (%s %s); publishing", self.peer_id, leg, peer, reason, detail
+        )
+
+    def _exec_cmd(self, data: dict[str, Any], reply_to: str | None = None) -> None:
         sender = data.get("sender_id", "")
         # full 128-bit fallback. Pre-fix, an inbound command without
         # turn_id triggered a 32-bit hex which was birthday-colliding under
@@ -2010,6 +2172,11 @@ class Mesh(SensorLoopsMixin):
         # with ``response/**`` so the extra segment matches. Operator
         # prefix (``{sender}``) is unchanged so routing is preserved.
         rkey = f"strands/{sender}/response/{self.peer_id}/{turn}" if sender else None
+        direct_key = self._direct_reply_key(sender, turn, reply_to) if rkey is not None else None
+
+        def reply(key: str, payload: dict[str, Any]) -> None:
+            self._reply(sender, turn, key, payload, direct_key)
+
         if cmd is None or not isinstance(cmd, dict):
             # route non-dict envelope rejection
             # through the same audit + wire-response path as
@@ -2024,7 +2191,7 @@ class Mesh(SensorLoopsMixin):
                 type(cmd).__name__,
             )
             if rkey is not None:
-                self.publish(
+                reply(
                     rkey,
                     {
                         "type": "error",
@@ -2051,7 +2218,7 @@ class Mesh(SensorLoopsMixin):
         except _security.ValidationError as exc:
             logger.warning("[mesh] %s: rejected invalid cmd from %s: %s", self.peer_id, sender, exc)
             if rkey is not None:
-                self.publish(
+                reply(
                     rkey,
                     {
                         "type": "error",
@@ -2114,7 +2281,7 @@ class Mesh(SensorLoopsMixin):
                     _action,
                 )
                 if rkey is not None:
-                    self.publish(
+                    reply(
                         rkey,
                         {
                             "type": "error",
@@ -2130,7 +2297,7 @@ class Mesh(SensorLoopsMixin):
         try:
             result = self._dispatch(cmd)
             if rkey is not None:
-                self.publish(
+                reply(
                     rkey,
                     {
                         "type": "response",
@@ -2175,7 +2342,7 @@ class Mesh(SensorLoopsMixin):
             # a structured error on the response topic and audit it.
             logger.warning("[mesh] %s: rejected during lockout from %s", self.peer_id, sender)
             if rkey is not None:
-                self.publish(
+                reply(
                     rkey,
                     {
                         "type": "error",
@@ -2224,7 +2391,7 @@ class Mesh(SensorLoopsMixin):
                 exc_info=True,
             )
             if rkey is not None:
-                self.publish(
+                reply(
                     rkey,
                     {
                         "type": "error",
@@ -2261,11 +2428,17 @@ class Mesh(SensorLoopsMixin):
         # ``stop`` is admitted too: it only ever de-energizes, and a second
         # e-stop arriving while the lockout is already engaged must still halt
         # a rollout the first one missed rather than be "rejected".
-        if self._estop_lockout.is_set() and action not in ("status", "resume", "stop"):
+        if self._estop_lockout.is_set() and action not in ("status", "resume", "stop", "ping"):
             raise _security.LockoutError("command rejected")
 
         if action == "resume":
             return self._resume_lockout(cmd.get("override_code", ""))
+
+        if action == "ping":
+            # Reachability only: nothing on the robot is read or moved, so it
+            # is also answered under an e-stop lockout (a locked robot is
+            # still a reachable one). :meth:`ping` measures the round trip.
+            return {"pong": True, "peer_id": self.peer_id, "t": time.time()}
 
         if action == "status":
             if hasattr(r, "get_task_status"):
@@ -2789,6 +2962,28 @@ class Mesh(SensorLoopsMixin):
         if not isinstance(turn, str):
             return
         responder = data.get("responder_id")
+        # The topic binds the responder too: ``strands/<me>/response/<responder>/<turn>``
+        # is the segment the IoT policy scopes a robot's publish and direct reply
+        # to (``${...ThingName}`` / ``${...CommonName}``), while ``responder_id``
+        # is whatever the payload says. Accepting the payload alone let a peer
+        # authorised for its own segment claim another robot's identity in the
+        # body. A response on the shorter legacy shape (no responder segment)
+        # is judged on the payload as before.
+        topic_responder = _responder_segment(str(getattr(sample, "key_expr", "")), self.peer_id)
+        if topic_responder is not None and topic_responder != responder:
+            logger.warning(
+                "[mesh] %s: dropped response on turn %s -- topic names responder %r but the payload "
+                "says responder_id=%r (possible response spoof)",
+                self.peer_id,
+                turn[:12],
+                topic_responder,
+                responder,
+            )
+            self._audit_local(
+                "response_hijack_rejected",
+                {"turn_prefix": turn[:12], "responder_id": responder, "topic_responder": topic_responder},
+            )
+            return
         with self._rpc_lock:
             event = self._pending.get(turn)
             if event is None:
@@ -3378,15 +3573,162 @@ class Mesh(SensorLoopsMixin):
                 self._responses.pop(turn, None)
                 self._expected_responders.pop(turn, None)
             return {"status": "error", "error": size_problem}
+        # One deadline for the whole call: the direct delivery (its
+        # confirmation window and socket timeouts) and the wait for the
+        # response both draw on it, so ``timeout`` is a budget and not a
+        # floor. Before this, a confirmed send followed by a fresh
+        # ``event.wait(timeout)`` made a 0.5 s budget last 1.5 s and the
+        # default 30 s last 40 s.
+        deadline = time.monotonic() + timeout
+        delivery: dict[str, Any] | None = None
         try:
-            self.publish(f"strands/{target}/cmd", msg)
+            # Point-to-point first when the transport can address the target
+            # (AWS IoT Core Direct Messaging); an offline target answers here
+            # in one round trip instead of after the whole budget. Every other
+            # outcome keeps the publish the Zenoh path has always done.
+            direct, delivery = self._send_cmd_direct(target, turn, msg, timeout)
+            if direct == "offline":
+                return {"status": "error", "error": "peer offline (iot 404)", "peer": target, "delivery": delivery}
+            if direct != "delivered":
+                self.publish(f"strands/{target}/cmd", msg)
+            # What is left of the budget after the delivery leg.
+            timeout = max(0.0, deadline - time.monotonic())
             event.wait(timeout=timeout)
         finally:
             with self._rpc_lock:
                 resps = self._responses.pop(turn, [])
                 self._pending.pop(turn, None)
                 self._expected_responders.pop(turn, None)
-        return resps[0] if resps else {"status": "timeout"}
+        out = resps[0] if resps else {"status": "timeout"}
+        if delivery is not None:
+            # Only when a direct transport was in play: a Zenoh envelope is
+            # byte for byte what it was. With it a caller can tell a robot
+            # that took the command and is slow (delivered, then timeout) from
+            # one that never got it (published, then timeout).
+            out = {**out, "delivery": delivery}
+        return out
+
+    def _send_cmd_direct(
+        self, target: str, turn: str, msg: dict[str, Any], timeout: float
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Try to deliver one :meth:`send` command to *target* alone.
+
+        With a :class:`DirectSender` transport the command goes to *target*
+        with confirmation (QoS 1 and the target's PUBACK, waited for by the
+        broker up to ``min(timeout, 10)`` whole seconds), a Response Topic of
+        ``strands/{self.peer_id}/response/{target}/{turn}`` and the turn as
+        Correlation Data.
+
+        Returns:
+            ``(verdict, delivery)``. The verdict is ``"delivered"`` when the
+            target acknowledged it (the caller then waits for the response as
+            before); ``"offline"`` when the target is not connected (the caller
+            answers at once instead of spending its budget, 30 s today against
+            about 80 ms); ``"publish"`` in every other case: no DirectSender,
+            ``STRANDS_MESH_IOT_DIRECT=0``, a target already known to be
+            forbidden, or a ``forbidden`` (reported once per peer),
+            ``throttled``, ``unconfirmed``, ``error`` or ``unavailable`` result
+            for this call. ``delivery`` is the verdict for the caller,
+            ``{"via": "direct"|"publish", "confirmed": bool, "latency_ms": float, "reason": str}``,
+            or ``None`` when no direct transport is in play (Zenoh).
+        """
+        direct = self._direct
+        if direct is None:
+            return "publish", None
+        if self._direct_known_forbidden(direct, target):
+            return "publish", {"via": "publish", "confirmed": False, "latency_ms": 0.0, "reason": "forbidden"}
+        result = direct.send_direct(
+            target,
+            f"strands/{target}/cmd",
+            msg,
+            confirm=True,
+            # The transport derives the broker's confirmation window (1 to 10
+            # whole seconds) and its socket timeouts from this budget.
+            timeout=float(timeout),
+            response_key=f"strands/{self.peer_id}/response/{target}/{turn}",
+            correlation=turn,
+        )
+        latency = round(result.latency_ms, 1)
+        if result.delivered:
+            return "delivered", {"via": "direct", "confirmed": True, "latency_ms": latency, "reason": ""}
+        fallback = {"via": "publish", "confirmed": False, "latency_ms": latency, "reason": result.reason}
+        if result.reason == "offline":
+            if self._offline_verdict_is_final(target):
+                return "offline", {"via": "direct", "confirmed": False, "latency_ms": latency, "reason": "offline"}
+            logger.debug(
+                "[mesh] %s: no IoT client %r is connected, but the peer may still be reachable over "
+                "publish/subscribe; publishing",
+                self.peer_id,
+                target,
+            )
+            return "publish", fallback
+        self._note_direct_fallback(target, result.reason, result.detail)
+        return "publish", fallback
+
+    def _offline_verdict_is_final(self, target: str) -> bool:
+        """Whether a 404 from the broker means *target* cannot be reached at all.
+
+        The broker answers 404 when no client with id *target* is connected to
+        AWS IoT. That settles it in two cases: the target's last presence
+        declared ``iot_client_id == target`` (so that very session is the one
+        that is gone; presence lingers for a few seconds after a peer leaves),
+        or nobody has heard from the target at all on the pure ``iot`` backend
+        (where every peer has an IoT session). Otherwise the send falls back
+        to publish exactly as ``main`` did: on ``bridge`` an unknown target may
+        be a LAN peer that lives on Zenoh alone, and a peer whose MQTT client
+        id is not its peer id (the ``robot_mesh`` gateway) still answers a
+        publish on ``strands/{target}/cmd``.
+        """
+        from strands_robots.mesh.transport.factory import current_backend
+
+        peer = _session_get_peer(target)
+        if peer is not None:
+            return peer.get("iot_client_id") == target
+        return current_backend() == "iot"
+
+    @staticmethod
+    def _direct_known_forbidden(direct: DirectSender, target: str) -> bool:
+        """True when the transport already saw a 403 for *target* on this connection."""
+        memo = getattr(direct, "direct_forbidden", None)
+        return bool(memo(target)) if callable(memo) else False
+
+    def ping(self, target: str, timeout: float = 2.0) -> dict[str, Any]:
+        """Is *target* reachable, and how fast: one ``ping`` command and its round trip.
+
+        The command is ``{"action": "ping"}``, answered by the peer's mesh layer
+        with an empty result (no robot method is reached, and it is answered
+        under an e-stop lockout too). With a direct transport (AWS IoT Core
+        Direct Messaging) the command is delivered to *target* alone with
+        confirmation and an unreachable peer is reported in one round trip;
+        over Zenoh the command is published and the answer is whoever holds
+        that peer id.
+
+        Args:
+            target: The peer id.
+            timeout: Budget for the whole round trip, seconds.
+
+        Returns:
+            ``{"status": "ok", "latency_ms": float, "via": "direct"|"publish", "confirmed": bool}``
+            when the peer answered; ``{"status": "offline", "latency_ms": float,
+            "via": "direct", "reason": "offline"}`` when the broker knows the peer
+            is gone; ``{"status": "timeout", "latency_ms": float, "via": ...}``
+            when nothing answered inside *timeout*; or ``send``'s own
+            ``{"status": "error", ...}`` envelope for a refused precondition.
+        """
+        started = time.monotonic()
+        out = self.send(target, {"action": "ping"}, timeout=timeout)
+        latency = round((time.monotonic() - started) * 1000.0, 1)
+        delivery = out.get("delivery") if isinstance(out, dict) else None
+        via = str(delivery.get("via", "publish")) if isinstance(delivery, dict) else "publish"
+        confirmed = bool(delivery.get("confirmed", False)) if isinstance(delivery, dict) else False
+        result = out.get("result")
+        if out.get("type") == "response" and isinstance(result, dict) and result.get("pong") is True:
+            return {"status": "ok", "latency_ms": latency, "via": via, "confirmed": confirmed}
+        if _reports_failure_to_stop(out) and out.get("error") == "peer offline (iot 404)":
+            return {"status": "offline", "latency_ms": latency, "via": "direct", "reason": "offline"}
+        if out.get("status") == "timeout":
+            return {"status": "timeout", "latency_ms": latency, "via": via, "confirmed": confirmed}
+        return out
 
     def broadcast(self, cmd: dict[str, Any], timeout: float = 5.0) -> list[dict[str, Any]]:
         """Broadcast a command to every peer and return all responses.

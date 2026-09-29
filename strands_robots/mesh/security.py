@@ -485,6 +485,9 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
         # ``resume`` clears the emergency-stop lockout; the only action
         # other than ``status`` permitted while the lockout is engaged.
         "resume",
+        # ``ping`` is answered by the mesh layer itself with an empty result,
+        # no robot method is reached: the round trip is the answer.
+        "ping",
     }
 )
 
