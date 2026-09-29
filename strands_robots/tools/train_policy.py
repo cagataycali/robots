@@ -18,6 +18,7 @@ convention (structured fields live in a ``{"json": ...}`` content block).
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from strands.tools.decorator import tool
@@ -27,7 +28,10 @@ from strands_robots.training import TrainSpec, create_trainer, list_trainers
 logger = logging.getLogger(__name__)
 
 #: The actions ``train_policy`` answers, in the order its docstring lists them.
-_ACTIONS: tuple[str, ...] = ("train", "validate", "status", "export", "list")
+_ACTIONS: tuple[str, ...] = ("train", "validate", "status", "stop", "play", "export", "list")
+
+#: ``extra`` keys ``action="play"`` reads, and the keyword each becomes.
+_PLAY_EXTRA_KEYS: tuple[str, ...] = ("num_envs", "video_length", "timeout_s", "wait")
 
 
 def _ok(text: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -118,6 +122,17 @@ def train_policy(
             - ``"train"``    : validate + launch training (default).
             - ``"validate"`` : pure preflight only; report problems, launch nothing.
             - ``"status"``   : "RUNNING != learning" verdict for a job (needs ``job_id``).
+                               Prefer ``metrics['success_rate']`` / ``task_metrics``
+                               over reward when a task reports them; a failed
+                               run names its cause in ``metrics['failure']``.
+            - ``"stop"``     : stop a running job, keeping its checkpoints
+                               (needs ``job_id``; ``isaaclab``).
+            - ``"play"``     : play a finished job's latest checkpoint back and
+                               record a video, with the physics it trained on
+                               (needs ``job_id``; ``isaaclab``; ``extra`` may set
+                               ``num_envs``, ``video_length``, ``timeout_s``,
+                               ``wait``). Poll the returned ``job_id`` with
+                               ``status``; ``metrics['video']`` is the clip.
             - ``"export"``   : produce a loadable artifact from a checkpoint
                                (needs ``output_dir``; uses the run's last checkpoint).
             - ``"list"``     : list available training providers.
@@ -198,7 +213,7 @@ def train_policy(
             ``num_envs``, ``physics`` (``"newton_mjwarp"`` / ``"isaacsim_physx"``),
             ``wait`` (block until the run ends), ``timeout_s``; ``steps`` is the
             PPO iteration count and ``status`` polls the returned ``job_id``.
-        job_id: Job identifier for ``action="status"``.
+        job_id: Job identifier for ``action="status"``, ``"stop"`` and ``"play"``.
 
     Returns:
         Canonical Strands result ``{status, content:[...]}`` (no sibling keys).
@@ -241,18 +256,31 @@ def train_policy(
         if action == "list":
             return _ok("Available training providers:\n  " + "\n  ".join(list_trainers()))
 
-        if action == "status":
+        if action in ("status", "stop", "play"):
             if not job_id:
-                return _err("action='status' requires job_id")
+                return _err(f"action='{action}' requires job_id")
             trainer = create_trainer(provider)
-            res = trainer.status(job_id)
+            if action == "play":
+                unknown = sorted(str(k) for k in (extra or {}) if k not in _PLAY_EXTRA_KEYS)
+                if unknown:
+                    return _err(
+                        f"action='play' does not read extra key(s) {unknown}; accepted: {list(_PLAY_EXTRA_KEYS)}"
+                    )
+                res = trainer.play(job_id, **(extra or {}))
+            elif action == "status":
+                res = trainer.status(job_id)
+            else:
+                res = trainer.stop(job_id)
             return {
                 "status": "success" if res.status != "error" else "error",
                 "content": [
-                    {"text": f"[{provider}] job {job_id}: {res.status}\n{res.message}\nmetrics: {res.metrics}"},
+                    {
+                        "text": f"[{provider}] job {res.job_id or job_id}: {res.status}\n{res.message}\nmetrics: {res.metrics}"
+                    },
                     {
                         "json": {
-                            "job_id": job_id,
+                            # A playback is its own job: poll the id it returns.
+                            "job_id": res.job_id or job_id,
                             "provider": provider,
                             "status": res.status,
                             "checkpoint_dir": res.checkpoint_dir,
@@ -316,8 +344,15 @@ def train_policy(
             if not ckpt:
                 return _err(f"no checkpoint found under {output_dir} to export")
             exported = trainer.export(spec, ckpt)
+            # An RL actor (policy.pt + policy_meta.json) loads through the "rl"
+            # provider; every other artifact is a model id create_policy resolves.
+            load = (
+                f"create_policy('rl', checkpoint_dir='{exported}')"
+                if os.path.isfile(os.path.join(str(exported), "policy_meta.json"))
+                else f"create_policy('{exported}')"
+            )
             return _ok(
-                f"[{provider}] exported loadable artifact:\n{exported}\nLoad it with: create_policy('{exported}')",
+                f"[{provider}] exported loadable artifact:\n{exported}\nLoad it with: {load}",
                 data={"provider": provider, "exported_model": exported},
             )
 

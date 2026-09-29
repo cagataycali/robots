@@ -82,6 +82,26 @@ def _set_session_cookie(response: Response, request: Request, token: str) -> Non
     )
 
 
+def _session_in_the_cookie_only(response: Response, request: Request, out: dict[str, Any]) -> dict[str, Any]:
+    """Set the session cookie from a finished ceremony and answer the rest of ``out``.
+
+    The token goes into the ``HttpOnly`` cookie once. Repeating it in the body
+    handed a page script the very secret the cookie keeps from it, and the page
+    stored that copy where any script in the origin could read it. The ceremony
+    is browser-only and a same-origin page rides the cookie, so the body carries
+    the answer minus the token, plus ``exp`` (a number, not a secret) so the page
+    can still warn before the session lapses.
+    """
+    token = str(out.get("token") or "")
+    _set_session_cookie(response, request, token)
+    body = {k: v for k, v in out.items() if k != "token"}
+    try:
+        body["exp"] = auth.verify_token(token)["exp"]
+    except HTTPException:
+        pass  # a token this module cannot read has no expiry to report
+    return body
+
+
 @router.get("/status")
 async def status(request: Request) -> dict[str, Any]:
     """What the login screen may know before sign-in, plus whether THIS caller is in.
@@ -118,8 +138,7 @@ async def register_finish(request: Request, response: Response) -> dict[str, Any
     if not challenge_id or not isinstance(credential, dict):
         raise HTTPException(400, "challenge_id and credential are required")
     out = auth.finish_registration(request, challenge_id, credential)
-    _set_session_cookie(response, request, out["token"])
-    return out
+    return _session_in_the_cookie_only(response, request, out)
 
 
 @router.post("/login/begin")
@@ -137,8 +156,7 @@ async def login_finish(request: Request, response: Response) -> dict[str, Any]:
     if not challenge_id or not isinstance(credential, dict):
         raise HTTPException(400, "challenge_id and credential are required")
     out = auth.finish_authentication(request, challenge_id, credential)
-    _set_session_cookie(response, request, out["token"])
-    return out
+    return _session_in_the_cookie_only(response, request, out)
 
 
 @router.post("/logout")

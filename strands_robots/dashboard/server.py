@@ -111,6 +111,28 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.safety.store.shutdown()
 
 
+#: What a browser may load and dial from the dashboard. Scripts, styles, fonts and workers
+#: come from this origin only; no plugins, no ``<base>``, no framing. Images also from
+#: ``data:`` and ``blob:`` (camera previews are object URLs). ``connect-src`` stays open to
+#: http(s) and ws(s): the dashboard is a mesh peer that legitimately dials a robot on another
+#: host, and the token such a request may carry is bound to that host by the page.
+CONTENT_SECURITY_POLICY = "; ".join(
+    [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        "font-src 'self'",
+        "connect-src 'self' http: https: ws: wss:",
+        "worker-src 'self'",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "frame-ancestors 'none'",
+        "form-action 'self'",
+    ]
+)
+
+
 def create_app() -> FastAPI:
     """Build the dashboard application. Safe to call more than once (tests do)."""
     log_redaction.install_redaction()
@@ -137,8 +159,13 @@ def create_app() -> FastAPI:
         # (a no-preflight simple request) but cannot hide where it came from.
         # Whatever credential rides along, the Origin decides first.
         if request.method in access.UNSAFE_METHODS and not access.origin_is_self(request):
-            return JSONResponse({"error": "cross-origin write refused"}, status_code=403)
-        return await call_next(request)
+            response = JSONResponse({"error": "cross-origin write refused"}, status_code=403)
+        else:
+            response = await call_next(request)
+        # Every answer, not only the shell: a header covers documents the page did not expect.
+        response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        return response
 
     @app.get("/api/health")
     async def health(request: Request) -> dict[str, Any]:

@@ -96,8 +96,8 @@ class TestAFinishedCeremonyHandsTheBrowserASessionCookie:
         response = client.post(path, json={"challenge_id": "c1", "credential": {"id": "cred-touchid"}})
 
         assert response.status_code == 200
-        # The auth module's answer reaches the caller unedited.
-        assert response.json() == {"token": "minted-session", "user": "owner"}
+        # The auth module's answer reaches the caller minus the token, which the cookie carries.
+        assert response.json() == {"user": "owner"}
         value, attributes = session_cookie(response)
         assert value == "minted-session"
         assert "HttpOnly" in attributes, "a page script must not be able to read the session"

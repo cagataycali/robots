@@ -274,7 +274,7 @@ def _make_resume_envelope(
     if source_zid is not None:
         mac_fields["source_zid"] = source_zid
     mac_input = json.dumps(mac_fields, sort_keys=True, separators=(",", ":")).encode()
-    proof = hmac.new(override_code.encode(), mac_input, "sha256").hexdigest()
+    proof = hmac.new(core_module.resume_proof_key(override_code), mac_input, "sha256").hexdigest()
     env = {
         "peer_id": peer_id,
         "t": t,
@@ -289,10 +289,10 @@ def _make_resume_envelope(
 
 def test_resume_body_zid_matches_wire_zid_clears_lockout(receiver, monkeypatch):
     """Happy path: wire and body source_zid agree, MAC verifies."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     receiver._estop_lockout.set()
 
-    env = _make_resume_envelope(override_code="secret", source_zid=_LEGIT_ZID)
+    env = _make_resume_envelope(override_code="secret-code-1234567890abcdef", source_zid=_LEGIT_ZID)
     receiver._on_safety_resume(_make_sample(env, source_zid=_LEGIT_ZID))
 
     assert not receiver._estop_lockout.is_set()
@@ -316,11 +316,11 @@ def test_resume_cross_session_forgery_rejected(receiver, monkeypatch, caplog):
     the precomputed body MAC (built against the legit zid) fails
     constant-time compare.
     """
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     receiver._estop_lockout.set()
 
     # Attacker has legit override code and forges a body claiming legit zid.
-    env = _make_resume_envelope(override_code="secret", source_zid=_LEGIT_ZID)
+    env = _make_resume_envelope(override_code="secret-code-1234567890abcdef", source_zid=_LEGIT_ZID)
     # ...but wire carries attacker's actual zid.
     with caplog.at_level("WARNING", logger="strands_robots.mesh.core"):
         receiver._on_safety_resume(_make_sample(env, source_zid=_ATTACKER_ZID))
@@ -343,7 +343,7 @@ def test_resume_mac_binds_wire_zid_not_body_zid(receiver, monkeypatch, caplog):
     Result: receiver re-derives MAC against _ATTACKER_ZID, compare
     fails, envelope is rejected.
     """
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     receiver._estop_lockout.set()
 
     # Manual construction: body source_zid = attacker, but MAC was
@@ -359,7 +359,7 @@ def test_resume_mac_binds_wire_zid_not_body_zid(receiver, monkeypatch, caplog):
         "source_zid": _LEGIT_ZID,  # MAC binds legit
     }
     mac_input = json.dumps(mac_fields, sort_keys=True, separators=(",", ":")).encode()
-    proof = hmac.new(b"secret", mac_input, "sha256").hexdigest()
+    proof = hmac.new(core_module.resume_proof_key("secret-code-1234567890abcdef"), mac_input, "sha256").hexdigest()
     env = {
         "peer_id": "op-1",
         "t": envelope_t,
@@ -385,13 +385,13 @@ def test_resume_replay_cache_keyed_on_wire_zid(receiver, monkeypatch):
     setting body ``peer_id`` to match. Post-fix the cache key uses the
     wire-bound zid when available.
     """
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     receiver._estop_lockout.set()
 
     nonce = uuid.uuid4().hex
     # Session A
     env_a = _make_resume_envelope(
-        override_code="secret",
+        override_code="secret-code-1234567890abcdef",
         peer_id="op-1",
         proof_nonce=nonce,
         source_zid=_LEGIT_ZID,
@@ -406,7 +406,7 @@ def test_resume_replay_cache_keyed_on_wire_zid(receiver, monkeypatch):
     # miss and proceeds through MAC verification (which it passes
     # because MAC includes session B's zid).
     env_b = _make_resume_envelope(
-        override_code="secret",
+        override_code="secret-code-1234567890abcdef",
         peer_id="op-1",
         proof_nonce=nonce,
         source_zid=_ATTACKER_ZID,
@@ -423,11 +423,11 @@ def test_resume_pre_binding_publisher_rejected_when_wire_has_zid(receiver, monke
     """A pre-binding peer (no body source_zid) communicating over a
     Zenoh session that DOES propagate source_info is rejected so the
     fleet upgrade is atomic."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     receiver._estop_lockout.set()
 
     # Old envelope, no source_zid in body or in MAC.
-    env = _make_resume_envelope(override_code="secret", source_zid=None)
+    env = _make_resume_envelope(override_code="secret-code-1234567890abcdef", source_zid=None)
     with caplog.at_level("WARNING", logger="strands_robots.mesh.core"):
         receiver._on_safety_resume(_make_sample(env, source_zid=_LEGIT_ZID))
 
@@ -439,10 +439,10 @@ def test_resume_bridge_transport_no_zid_either_side_accepted(receiver, monkeypat
     """Bridge / IoT transport: neither wire nor body carries a zid.
     The envelope is accepted via the body-level HMAC binding alone --
     cross-session-forgery defence is Zenoh-specific."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     receiver._estop_lockout.set()
 
-    env = _make_resume_envelope(override_code="secret", source_zid=None)
+    env = _make_resume_envelope(override_code="secret-code-1234567890abcdef", source_zid=None)
     receiver._on_safety_resume(_make_sample(env, source_zid=None))
 
     assert not receiver._estop_lockout.is_set()

@@ -29,6 +29,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from strands_robots.dashboard import routes_sim, settings, sim_session  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
 
+#: The dashboard's own page at the TestClient host: a browser always sends Origin on a socket handshake (f022).
+OWN_PAGE = {"origin": "http://testserver"}
+
 
 class FakeEngine:
     def __init__(self, robot: str, joints: int = 3):
@@ -105,7 +108,7 @@ def client(tmp_path, monkeypatch, fake_factory):
     settings.clear_overrides()
     settings.load(refresh=True)
     app = create_app()
-    with TestClient(app) as c:
+    with TestClient(app, headers=OWN_PAGE) as c:
         yield c
     app.state.safety.store.shutdown()
 
@@ -372,7 +375,9 @@ class TestSimRoutes:
             client.websocket_connect(f"/ws/telemetry/{sid}", headers={"origin": "http://evil.example"}),
         ):
             pass
-        assert exc.value.code == 4401
+        # Rejected at the handshake, before any credential is read: 4403 is the code the
+        # server-side close carries; on the wire the page sees a failed handshake, no reason.
+        assert exc.value.code == 4403
 
 
 class TestTwinGeometry:

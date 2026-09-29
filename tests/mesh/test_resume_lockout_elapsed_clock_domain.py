@@ -35,7 +35,7 @@ import pytest
 
 from strands_robots.mesh import core
 
-_CODE = "operator-secret"
+_CODE = "operator-secret-1234567890"
 _WALL_AT_ENGAGE = 1_800_000_000.0
 _MONO_AT_ENGAGE = 500_000.0
 
@@ -178,7 +178,7 @@ class TestTheEnvelopeInstantStaysOnTheWallClock:
         clock.hold(12.5, wall_step=3600.0)
         _resume(mesh)
         expected = core.hmac.new(
-            _CODE.encode(),
+            core.resume_proof_key(_CODE),
             json.dumps(
                 {
                     "peer_id": "operator-1",

@@ -661,13 +661,14 @@ def create_policy(provider: str, **kwargs) -> Policy:
             naming its replacement.
 
     Raises:
+        TypeError: If a keyword misspells one the provider's constructor
+            binds, or names one it cannot bind at all (no ``**kwargs``) - see
+            :func:`policy_kwargs_error`. Raised before construction and before
+            the trust-remote-code gate, so no model is downloaded, no server
+            dialled and no opt-in asked for on a typo.
         UntrustedRemoteCodeError: If the provider loads HF models with
             ``trust_remote_code=True`` and ``STRANDS_TRUST_REMOTE_CODE``
             is not set.
-        TypeError: If a keyword misspells one the provider's constructor
-            binds, or names one it cannot bind at all (no ``**kwargs``) - see
-            :func:`policy_kwargs_error`. Raised before construction, so no
-            model is downloaded and no server dialled on a typo.
     """
     canonical, PolicyClass, resolved_kwargs = _resolve_policy_class(provider, **kwargs)
     if (replacement := _REMOVED_IN_0_7.get(canonical)) is not None:
@@ -676,9 +677,11 @@ def create_policy(provider: str, **kwargs) -> Policy:
             DeprecationWarning,
             stacklevel=2,
         )
-    _check_trust_remote_code(canonical)
+    # The kwargs check is pure, so it runs first: a typo must not send the caller
+    # to opt in to remote code only to learn about the typo on the second call.
     if (kwargs_error := policy_kwargs_error(canonical, PolicyClass, resolved_kwargs)) is not None:
         raise TypeError(kwargs_error)
+    _check_trust_remote_code(canonical)
     return PolicyClass(**resolved_kwargs)
 
 

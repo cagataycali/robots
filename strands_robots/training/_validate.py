@@ -40,12 +40,15 @@ from __future__ import annotations
 
 import math
 import numbers
+import os
 import re
 from collections.abc import Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strands_robots._path_validation import validate_save_path
 from strands_robots.utils import (
+    base_dir_path,
     boolean_flag_error,
     finite_number_error,
     non_negative_count_error,
@@ -74,6 +77,84 @@ _FLAG_BOUND_FIELDS = ("dataset_root", "output_dir", "base_model", "embodiment", 
 # ``..`` traversal, protected system directories).
 _PATH_FIELDS = ("dataset_root", "output_dir")
 
+# A Hub reference: ``name`` or ``org/name``, each segment alnum plus ``._-``, with an
+# optional ``@revision``. It is the vocabulary a warm start may name WITHOUT being a
+# path; every backend hands ``base_model`` to a loader that tries the filesystem first
+# (lerobot ``pretrained_path``, GR00T ``--base_model_path``, the Cosmos DCP source), so a
+# string that is neither this nor a contained path is a read of the operator's disk on
+# the agent's behalf, and the backend's own error then tells the agent what is there.
+_HUB_REF_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?(?:@[A-Za-z0-9][A-Za-z0-9._/-]*)?\Z"
+)
+
+#: Moves the training output home on its own; ``STRANDS_BASE_DIR`` moves the default.
+OUTPUT_HOME_ENV = "STRANDS_TRAIN_OUTPUT_DIR"
+
+
+def looks_like_path(value: str) -> bool:
+    """Is this string a filesystem path rather than a ``name`` or ``org/name`` reference?"""
+    v = (value or "").strip()
+    return v.startswith(("/", "~", ".")) or "\\" in v or v.count("/") > 1
+
+
+def output_home() -> Path:
+    """Where training runs may write: ``STRANDS_TRAIN_OUTPUT_DIR`` or ``<base dir>/training``."""
+    explicit = os.environ.get(OUTPUT_HOME_ENV, "").strip()
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    return (base_dir_path() / "training").resolve()
+
+
+def hf_cache_root() -> Path:
+    """Where downloaded model snapshots live, honouring the env the CLI honours.
+
+    ``HF_HUB_CACHE`` points at the hub dir itself; ``HF_HOME`` contains it.
+    """
+    explicit = os.environ.get("HF_HUB_CACHE")
+    if explicit:
+        return Path(explicit).expanduser()
+    home = os.environ.get("HF_HOME")
+    if home:
+        return Path(home).expanduser() / "hub"
+    return Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def checkpoint_homes() -> list[Path]:
+    """The roots a checkpoint path may live under: the training output home and the Hub cache."""
+    return [output_home(), hf_cache_root().resolve()]
+
+
+def base_model_error(value: str) -> str | None:
+    """Why ``base_model`` may not be handed to a trainer, or None when it may.
+
+    A Hub reference passes. A path must resolve (symlinks followed, ``..`` folded) inside
+    one of :func:`checkpoint_homes`; nothing else on the filesystem is consulted, and the
+    sentence is the same whether the target exists or not, so a refusal teaches the caller
+    what the homes are and nothing about the disk.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    homes = checkpoint_homes()
+    where = ", ".join(str(h) for h in homes)
+    reason = (
+        f"base_model must be a Hub reference (org/name, optionally @revision) or a checkpoint inside {where}; "
+        f"got {refusal_repr(value)}"
+    )
+    if "\x00" in raw:
+        return reason
+    if not looks_like_path(raw):
+        return None if _HUB_REF_RE.match(raw) else reason
+    try:
+        real = os.path.normpath(os.path.realpath(os.path.expanduser(raw)))
+    except (OSError, RuntimeError, ValueError):
+        return reason
+    for home in homes:
+        root = str(home)
+        if real == root or real.startswith(root + os.sep):
+            return None
+    return reason
+
 
 def validate_train_inputs(spec: TrainSpec) -> list[str]:
     """Return input-safety problems for *spec*; empty when every value is safe.
@@ -98,6 +179,14 @@ def validate_train_inputs(spec: TrainSpec) -> list[str]:
         val = getattr(spec, label, None)
         if isinstance(val, str) and val.startswith("-"):
             problems.append(f"{label} must not start with '-' (would parse as a stray flag)")
+
+    # The warm start is a Hub reference or a checkpoint inside a known home; every backend
+    # hands it to a loader that reads the filesystem first, so anything else is a path oracle.
+    base_model = getattr(spec, "base_model", None)
+    if isinstance(base_model, str) and not base_model.startswith("-"):
+        problem = base_model_error(base_model)
+        if problem:
+            problems.append(problem)
 
     # ``extra`` keys become backend-native flags - allowlist the key format.
     for key in spec.extra or {}:
