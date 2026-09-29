@@ -244,8 +244,60 @@ function detailSentence(detail) {
   if (lists.length) text += ` (${lists.join("; ")})`;
   return text;
 }
+const LOCAL$1 = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]);
+function hostOf(base, pageHost2 = "") {
+  const v = (base ?? "").trim();
+  if (!v) return (pageHost2 || "").toLowerCase();
+  try {
+    return new URL(/^[a-z]+:\/\//i.test(v) ? v : `http://${v}`).host.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+function isLocal(host) {
+  return LOCAL$1.has(host.replace(/:\d+$/, ""));
+}
+function connectionChange(c) {
+  const nextRaw = (c.nextBase ?? "").trim();
+  const nextToken = (c.nextToken ?? "").trim();
+  const currentToken = (c.currentToken ?? "").trim();
+  if (nextRaw && hostOf(nextRaw, c.pageHost) === "") {
+    return {
+      kind: "unparseable",
+      detail: `"${nextRaw}" is not an address this browser can dial. Use host:port or a full URL (https://robot.lan:8090); leave it empty to talk to the origin that served this page`
+    };
+  }
+  const from = hostOf(c.currentBase, c.pageHost);
+  const to = hostOf(nextRaw, c.pageHost);
+  const carryingOldToken = nextToken !== "" && nextToken === currentToken;
+  if (carryingOldToken && from !== to) {
+    return {
+      kind: "token_follows_host",
+      fromHost: from || "(this origin)",
+      toHost: to || "(this origin)",
+      detail: `The token in this browser was given for ${from || "this origin"}, and connecting to ${to || "this origin"} will send it there — a credential for one machine handed to another. If that address is a typo or not the robot you think it is, the secret is gone.`,
+      alternative: "connect without a token"
+    };
+  }
+  if (nextToken !== "" && to && !isLocal(to)) {
+    const scheme = /^https:\/\//i.test(nextRaw) ? "https" : /^[a-z]+:\/\//i.test(nextRaw) ? "http" : "http";
+    if (scheme === "http") {
+      return {
+        kind: "cleartext_token",
+        toHost: to,
+        detail: `http://${to} is not encrypted, so this token crosses the network in clear text — anyone on the path can read it and use it to move motors. https:// keeps it private.`,
+        alternative: "connect without a token"
+      };
+    }
+  }
+  return { kind: "ok" };
+}
+function needsConfirm(v) {
+  return v.kind === "token_follows_host" || v.kind === "cleartext_token";
+}
 const BASE_KEY = "strands.backend";
 const TOKEN_KEY = "strands.token";
+const TOKEN_HOST_KEY = "strands.token.host";
 function normalize(raw) {
   const value = (raw ?? "").trim();
   if (!value) return "";
@@ -263,18 +315,62 @@ function normalize(raw) {
 let cachedBase = null;
 let absorbedUrl = false;
 let urlBase = null;
+let urlVerdict = null;
+function pageHost() {
+  try {
+    return (location.host || "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+function hostOfBase(base) {
+  return hostOf(base, pageHost());
+}
+function storedToken() {
+  return (localStorage.getItem(TOKEN_KEY) ?? "").trim();
+}
+function bindToken(base) {
+  if (!storedToken()) {
+    localStorage.removeItem(TOKEN_HOST_KEY);
+    return;
+  }
+  localStorage.setItem(TOKEN_HOST_KEY, hostOfBase(base));
+}
 function absorbUrl() {
   if (absorbedUrl) return;
   absorbedUrl = true;
   try {
     const params = new URLSearchParams(location.search);
     const fromToken = params.get("token");
-    if (fromToken) localStorage.setItem(TOKEN_KEY, fromToken);
-    urlBase = params.get("backend");
-    if (fromToken !== null || urlBase !== null) {
+    const fromBackend = params.get("backend");
+    const stored = normalize(localStorage.getItem(BASE_KEY) ?? "");
+    const next = fromBackend === null ? null : normalize(fromBackend);
+    if (storedToken() && !(localStorage.getItem(TOKEN_HOST_KEY) ?? "").trim()) bindToken(stored);
+    if (fromToken) {
+      localStorage.setItem(TOKEN_KEY, fromToken);
+      bindToken(next || stored);
+    }
+    let scrubBackend = fromBackend !== null;
+    if (next) {
+      const token = storedToken();
+      const verdict2 = connectionChange({
+        currentBase: stored,
+        currentToken: token,
+        nextBase: next,
+        nextToken: token,
+        pageHost: pageHost()
+      });
+      const moving = verdict2.kind === "token_follows_host" && needsConfirm(verdict2);
+      urlBase = next;
+      if (moving) {
+        urlVerdict = verdict2;
+        scrubBackend = false;
+      }
+    }
+    if (fromToken !== null || scrubBackend) {
       try {
         params.delete("token");
-        params.delete("backend");
+        if (scrubBackend) params.delete("backend");
         const rest = params.toString();
         history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash || ""}`);
       } catch {
@@ -288,16 +384,41 @@ function backendBase() {
   absorbUrl();
   if (cachedBase !== null) return cachedBase;
   if (urlBase !== null) {
-    cachedBase = normalize(urlBase);
-    localStorage.setItem(BASE_KEY, cachedBase);
+    cachedBase = urlBase;
+    if (urlVerdict === null) localStorage.setItem(BASE_KEY, cachedBase);
     return cachedBase;
   }
   cachedBase = normalize(localStorage.getItem(BASE_KEY) ?? "");
   return cachedBase;
 }
+function urlBackendVerdict() {
+  absorbUrl();
+  return urlVerdict;
+}
+function carryTokenToBackend() {
+  const base = backendBase();
+  urlVerdict = null;
+  localStorage.setItem(BASE_KEY, base);
+  bindToken(base);
+  try {
+    const params = new URLSearchParams(location.search);
+    if (params.has("backend")) {
+      params.delete("backend");
+      const rest = params.toString();
+      history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash || ""}`);
+    }
+  } catch {
+  }
+  forgetLiveRoutes();
+  notifyAuth();
+}
 function authToken() {
   absorbUrl();
-  return (localStorage.getItem(TOKEN_KEY) ?? "").trim();
+  const token = storedToken();
+  if (!token) return "";
+  const issuer = (localStorage.getItem(TOKEN_HOST_KEY) ?? "").trim();
+  if (issuer !== hostOfBase(backendBase())) return "";
+  return token;
 }
 const authListeners = /* @__PURE__ */ new Set();
 function subscribeAuth(fn) {
@@ -323,6 +444,7 @@ function setAuthToken(token) {
   const value = token.trim();
   if (value) localStorage.setItem(TOKEN_KEY, value);
   else localStorage.removeItem(TOKEN_KEY);
+  bindToken(backendBase());
   notifyAuth();
 }
 function backendLabel() {
@@ -333,7 +455,9 @@ function backendKey() {
   return `${backendBase()}|${authToken() ? "auth" : cookieSessionEpoch ? `cookie${cookieSessionEpoch}` : "open"}`;
 }
 function setBackendBase(raw) {
+  absorbUrl();
   cachedBase = normalize(raw);
+  urlVerdict = null;
   if (cachedBase) localStorage.setItem(BASE_KEY, cachedBase);
   else localStorage.removeItem(BASE_KEY);
   forgetLiveRoutes();
@@ -6266,9 +6390,9 @@ function AgentDock({ onSettings, startOpen = false, exampleRobot }) {
     ) : null
   ] });
 }
-const LOCAL$1 = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", ""]);
+const LOCAL = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", ""]);
 function isLocalHost(host) {
-  return LOCAL$1.has((host || "").trim().toLowerCase());
+  return LOCAL.has((host || "").trim().toLowerCase());
 }
 function authRemovalWarning(facts) {
   const host = (facts.host || "").trim();
@@ -6296,57 +6420,6 @@ function authRemovalWarning(facts) {
     lines,
     confirmLabel: remote ? "yes — leave it open to the network" : "yes — remove the token"
   };
-}
-const LOCAL = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]);
-function hostOf(base, pageHost = "") {
-  const v = (base ?? "").trim();
-  if (!v) return (pageHost || "").toLowerCase();
-  try {
-    return new URL(/^[a-z]+:\/\//i.test(v) ? v : `http://${v}`).host.toLowerCase();
-  } catch {
-    return "";
-  }
-}
-function isLocal(host) {
-  return LOCAL.has(host.replace(/:\d+$/, ""));
-}
-function connectionChange(c) {
-  const nextRaw = (c.nextBase ?? "").trim();
-  const nextToken = (c.nextToken ?? "").trim();
-  const currentToken = (c.currentToken ?? "").trim();
-  if (nextRaw && hostOf(nextRaw, c.pageHost) === "") {
-    return {
-      kind: "unparseable",
-      detail: `"${nextRaw}" is not an address this browser can dial. Use host:port or a full URL (https://robot.lan:8090); leave it empty to talk to the origin that served this page`
-    };
-  }
-  const from = hostOf(c.currentBase, c.pageHost);
-  const to = hostOf(nextRaw, c.pageHost);
-  const carryingOldToken = nextToken !== "" && nextToken === currentToken;
-  if (carryingOldToken && from !== to) {
-    return {
-      kind: "token_follows_host",
-      fromHost: from || "(this origin)",
-      toHost: to || "(this origin)",
-      detail: `The token in this browser was given for ${from || "this origin"}, and connecting to ${to || "this origin"} will send it there — a credential for one machine handed to another. If that address is a typo or not the robot you think it is, the secret is gone.`,
-      alternative: "connect without a token"
-    };
-  }
-  if (nextToken !== "" && to && !isLocal(to)) {
-    const scheme = /^https:\/\//i.test(nextRaw) ? "https" : /^[a-z]+:\/\//i.test(nextRaw) ? "http" : "http";
-    if (scheme === "http") {
-      return {
-        kind: "cleartext_token",
-        toHost: to,
-        detail: `http://${to} is not encrypted, so this token crosses the network in clear text — anyone on the path can read it and use it to move motors. https:// keeps it private.`,
-        alternative: "connect without a token"
-      };
-    }
-  }
-  return { kind: "ok" };
-}
-function needsConfirm(v) {
-  return v.kind === "token_follows_host" || v.kind === "cleartext_token";
 }
 function syncDrafts(current, lastServer, nextServer) {
   const next = { ...current };
@@ -13272,6 +13345,7 @@ function AuthGate({ children }) {
   const [showToken, setShowToken] = reactExports.useState(false);
   const [expiring, setExpiring] = reactExports.useState("");
   const [tokenValue, setTokenValue] = reactExports.useState("");
+  const [pending, setPending] = reactExports.useState(() => urlBackendVerdict());
   const prepared = reactExports.useRef(null);
   const verifying = reactExports.useRef(false);
   reactExports.useEffect(() => {
@@ -13445,6 +13519,27 @@ function AuthGate({ children }) {
     mode === "unreachable" && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "dim", children: [
       "The dashboard API did not answer. ",
       error && /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: error })
+    ] }),
+    pending && pending.kind === "token_follows_host" && /* A ?backend= in the address bar asked this page to dial another host. The sign-in this
+    browser holds was NOT sent there (finding f003): it goes only if the operator says so,
+    the same question the Settings drawer asks for a typed address. */
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "result bad", role: "alert", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("b", { children: [
+        "Send this token to ",
+        pending.toHost,
+        "?"
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: pending.detail }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sheet-actions", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "btn ghost danger", type: "button", onClick: () => {
+          carryTokenToBackend();
+          location.reload();
+        }, children: [
+          "send it to ",
+          backendLabel()
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", type: "button", onClick: () => setPending(null), children: pending.alternative })
+      ] })
     ] }),
     noWebauthn && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "authwarn", children: [
       "Passkeys need a secure context. Open this page over ",

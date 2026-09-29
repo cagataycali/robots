@@ -6,9 +6,12 @@
 
 import { routeKnown, staleRouteMessage, unroutedByDetail } from './serverAge'
 import { detailSentence } from './detailSentence'
+import { connectionChange, hostOf, needsConfirm, type ConnectionVerdict } from './connectionChange'
 
 const BASE_KEY = 'strands.backend'
 const TOKEN_KEY = 'strands.token'
+/** The host the stored token was given for: the only host it is ever sent to. */
+const TOKEN_HOST_KEY = 'strands.token.host'
 
 /** `robot.lan:8080` -> `http://robot.lan:8080`; trailing slashes trimmed. */
 export function normalize(raw: string): string {
@@ -30,24 +33,84 @@ export function normalize(raw: string): string {
 
 let cachedBase: string | null = null
 let absorbedUrl = false
-/** `?backend=` from the URL, once — null when the URL said nothing. */
+/** `?backend=` from the URL, once — null when the URL said nothing usable. */
 let urlBase: string | null = null
+/** The question a `?backend=` raised that only the operator can answer; null when none is pending. */
+let urlVerdict: ConnectionVerdict | null = null
 
-/** Take the credentials off the URL. */
+function pageHost(): string {
+  try {
+    return (location.host || '').toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+/** The host a base means: '' is the origin that served the page. */
+function hostOfBase(base: string): string {
+  return hostOf(base, pageHost())
+}
+
+function storedToken(): string {
+  return (localStorage.getItem(TOKEN_KEY) ?? '').trim()
+}
+
+/** Record which host the stored token is for; a token with no record is for `base`. */
+function bindToken(base: string): void {
+  if (!storedToken()) {
+    localStorage.removeItem(TOKEN_HOST_KEY)
+    return
+  }
+  localStorage.setItem(TOKEN_HOST_KEY, hostOfBase(base))
+}
+
+/**
+ * Take the credentials off the URL. A `?backend=` is judged by the rule the Settings drawer
+ * applies to a typed address (connectionChange): when the token this browser holds was given
+ * for another host, the page dials the new host WITHOUT it and keeps the parameter in the
+ * address bar until the operator says yes. A URL is not a more trusting entry point than a field.
+ */
 function absorbUrl(): void {
   if (absorbedUrl) return
   absorbedUrl = true
   try {
     const params = new URLSearchParams(location.search)
     const fromToken = params.get('token')
-    if (fromToken) localStorage.setItem(TOKEN_KEY, fromToken)
-    urlBase = params.get('backend')
+    const fromBackend = params.get('backend')
+    const stored = normalize(localStorage.getItem(BASE_KEY) ?? '')
+    const next = fromBackend === null ? null : normalize(fromBackend)
+    // A token already here with no recorded issuer was minted for the backend this browser has
+    // been talking to; decide that BEFORE the URL is allowed to move the page.
+    if (storedToken() && !(localStorage.getItem(TOKEN_HOST_KEY) ?? '').trim()) bindToken(stored)
+    if (fromToken) {
+      // The hand-off the AuthGate advertises: `?backend=X&token=T` means T was minted for X.
+      localStorage.setItem(TOKEN_KEY, fromToken)
+      bindToken(next || stored)
+    }
+    let scrubBackend = fromBackend !== null
+    if (next) {
+      const token = storedToken()
+      const verdict = connectionChange({
+        currentBase: stored,
+        currentToken: token,
+        nextBase: next,
+        nextToken: token,
+        pageHost: pageHost(),
+      })
+      const moving = verdict.kind === 'token_follows_host' && needsConfirm(verdict)
+      urlBase = next
+      if (moving) {
+        // The evidence stays visible and nothing is persisted: a reload asks the same question.
+        urlVerdict = verdict
+        scrubBackend = false
+      }
+    }
     // Scrub what was absorbed: a ?token= URL outlives its token in history,
     // share sheets and screenshots, and must not be re-sent on reload.
-    if (fromToken !== null || urlBase !== null) {
+    if (fromToken !== null || scrubBackend) {
       try {
         params.delete('token')
-        params.delete('backend')
+        if (scrubBackend) params.delete('backend')
         const rest = params.toString()
         history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash || ''}`)
       } catch { /* no history (a test stub): the values are absorbed either way */ }
@@ -60,19 +123,50 @@ function absorbUrl(): void {
 export function backendBase(): string {
   absorbUrl()
   if (cachedBase !== null) return cachedBase
-  // ?backend=... wins once, then persists.
+  // ?backend=... wins once, then persists, unless the token would have to follow it.
   if (urlBase !== null) {
-    cachedBase = normalize(urlBase)
-    localStorage.setItem(BASE_KEY, cachedBase)
+    cachedBase = urlBase
+    if (urlVerdict === null) localStorage.setItem(BASE_KEY, cachedBase)
     return cachedBase
   }
   cachedBase = normalize(localStorage.getItem(BASE_KEY) ?? '')
   return cachedBase
 }
 
+/** The question a `?backend=` in the address bar is waiting on, if any. */
+export function urlBackendVerdict(): ConnectionVerdict | null {
+  absorbUrl()
+  return urlVerdict
+}
+
+/** The operator's yes: the token is now for the URL's backend, which persists like a typed one. */
+export function carryTokenToBackend(): void {
+  const base = backendBase()
+  urlVerdict = null
+  localStorage.setItem(BASE_KEY, base)
+  bindToken(base)
+  try {
+    const params = new URLSearchParams(location.search)
+    if (params.has('backend')) {
+      params.delete('backend')
+      const rest = params.toString()
+      history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash || ''}`)
+    }
+  } catch { /* no location or history: nothing to scrub */ }
+  forgetLiveRoutes()
+  notifyAuth()
+}
+
+/** The stored token, when it was given for the host the page is talking to; '' otherwise. */
 export function authToken(): string {
   absorbUrl()
-  return (localStorage.getItem(TOKEN_KEY) ?? '').trim()
+  const token = storedToken()
+  if (!token) return ''
+  const issuer = (localStorage.getItem(TOKEN_HOST_KEY) ?? '').trim()
+  // A credential for one machine is not handed to another: the request goes out bare and the
+  // operator lands on the sign-in for that host instead.
+  if (issuer !== hostOfBase(backendBase())) return ''
+  return token
 }
 
 // Auth/backend changes must reach React: localStorage writes emit no event in the
@@ -108,6 +202,7 @@ export function setAuthToken(token: string): void {
   const value = token.trim()
   if (value) localStorage.setItem(TOKEN_KEY, value)
   else localStorage.removeItem(TOKEN_KEY)
+  bindToken(backendBase()) // a token set now is for the backend the page is talking to now
   notifyAuth()
 }
 
@@ -123,7 +218,9 @@ export function backendKey(): string {
 }
 
 export function setBackendBase(raw: string): void {
+  absorbUrl()
   cachedBase = normalize(raw)
+  urlVerdict = null // a typed address answers the URL's question by replacing it
   if (cachedBase) localStorage.setItem(BASE_KEY, cachedBase)
   else localStorage.removeItem(BASE_KEY)
   // The route list belongs to the server we were talking to.

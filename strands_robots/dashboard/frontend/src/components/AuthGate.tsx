@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   api, setAuthToken, authToken, authRefusedRecently, HttpError, lastRenewalAt, noteCookieSession, cookieSessionExpiry,
+  urlBackendVerdict, carryTokenToBackend, backendLabel,
 } from '../lib/endpoints'
 import { sessionVerdict, sessionVerdictAt } from '../lib/sessionExpiry'
 import {
@@ -29,6 +30,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [showToken, setShowToken] = useState(false)
   const [expiring, setExpiring] = useState('')
   const [tokenValue, setTokenValue] = useState('')
+  const [pending, setPending] = useState(() => urlBackendVerdict())
   // Login challenge fetched AHEAD of the tap: iOS Safari only opens the Face ID sheet while the
   // tap's user-activation is alive, so the click handler must reach credentials.get() without
   // awaiting the network first.
@@ -195,6 +197,24 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           <p className="dim">
             The dashboard API did not answer. {error && <code>{error}</code>}
           </p>
+        )}
+
+        {pending && pending.kind === 'token_follows_host' && (
+          /* A ?backend= in the address bar asked this page to dial another host. The sign-in this
+             browser holds was NOT sent there (finding f003): it goes only if the operator says so,
+             the same question the Settings drawer asks for a typed address. */
+          <div className="result bad" role="alert">
+            <b>Send this token to {pending.toHost}?</b>
+            <p>{pending.detail}</p>
+            <div className="sheet-actions">
+              <button className="btn ghost danger" type="button" onClick={() => { carryTokenToBackend(); location.reload() }}>
+                send it to {backendLabel()}
+              </button>
+              <button className="btn go" type="button" onClick={() => setPending(null)}>
+                {pending.alternative}
+              </button>
+            </div>
+          </div>
         )}
 
         {noWebauthn && (
