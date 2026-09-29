@@ -97,7 +97,7 @@ class WBCLatentPolicy(Policy):
         RuntimeError: the decoder weights or ``onnxruntime`` are unavailable.
     """
 
-    reads_instruction: ClassVar[bool] = True
+    reads_instruction: bool = True
     requires_action_controller: ClassVar[str | None] = (
         "wbc_latent torque control: the SONIC decoder's joint targets are tracked with its own per-joint PD "
         "gains on all 29 Unitree G1 joints; the scene's position servos would override them"
@@ -216,7 +216,7 @@ class WBCLatentPolicy(Policy):
         missing = [n for n in SONIC_JOINT_NAMES if n not in keys]
         if missing:
             raise ValueError(
-                f"WBCLatentPolicy drives the Unitree G1 (29 joints, SONIC order); the robot's state keys lack "
+                f"WBCLatentPolicy drives the Unitree G1 (29 joints, SONIC order); the robot's state keys are missing expected G1 joints "
                 f"{missing[:4]}{'...' if len(missing) > 4 else ''}. Use Robot('unitree_g1') or a scene whose joint "
                 "names match the Menagerie g1.xml."
             )

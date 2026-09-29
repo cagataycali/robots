@@ -50,6 +50,10 @@ EXCLUDED: dict[str, dict[str, str]] = {
     "curobo": {
         "motion_gen": "an injected cuRobo MotionGen instance, not JSON",
     },
+    "wbc_latent": {
+        "decoder": "a prebuilt SonicDecoder object (tests, shared sessions), not JSON",
+        "session": "an injected decoder session object, not JSON",
+    },
 }
 
 
