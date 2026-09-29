@@ -70,8 +70,9 @@ _SESSION_REFS: int = 0
 # emit N copies of an identical, static fact.  A set (mutated via .add, never
 # reassigned) avoids a `global` rebind so static analysis sees it as used -- the
 # same shape as ``_software_render_warned`` in the MuJoCo backend.  Mutated only
-# under ``_SESSION_LOCK``.
+# under ``_ZENOH_MISSING_LOCK``.
 _zenoh_missing_warned: set[str] = set()
+_ZENOH_MISSING_LOCK = threading.Lock()
 
 # One-shot-per-topic guard for a payload that cannot be JSON-encoded.  Unlike a
 # transient wire failure, an unencodable payload fails identically on every
@@ -961,17 +962,40 @@ def _report_zenoh_missing() -> None:
     does not need the mesh still runs, and the mesh stays off without taking
     the host process with it.
 
-    Callers must hold ``_SESSION_LOCK``; the once-guard is read and mutated
-    without further synchronisation.
+    The once-guard has its own lock, so the report is safe from both the
+    session opener (which holds ``_SESSION_LOCK``) and ``Mesh.start``.
     """
-    if _zenoh_missing_warned:
-        return
-    _zenoh_missing_warned.add("warned")
+    with _ZENOH_MISSING_LOCK:
+        if _zenoh_missing_warned:
+            return
+        _zenoh_missing_warned.add("warned")
     logger.warning(
         "eclipse-zenoh is not installed, so the mesh stays off: this process "
         "publishes no presence and discovers no peers, and Mesh.alive is "
         "False. Install it with: pip install 'strands-robots[mesh]'"
     )
+
+
+def _import_zenoh() -> Any | None:
+    """Import ``zenoh``, or report the absent extra once and return ``None``."""
+    try:
+        import zenoh
+    except ImportError:
+        _report_zenoh_missing()
+        return None
+    return zenoh
+
+
+def zenoh_backend_missing() -> bool:
+    """True when :func:`get_session` would find the selected Zenoh backend uninstalled.
+
+    Asked by ``Mesh.start`` before any posture check: a missing transport is
+    more fundamental than a misconfigured one, so the absent extra is reported
+    (once, at WARNING) instead of an ACL refusal that guards nothing. False
+    under the kill switch and for the ``iot`` / ``bridge`` backends, which
+    :func:`get_session` answers without importing ``zenoh``.
+    """
+    return not mesh_disabled_by_env() and not _is_transport_backend() and _import_zenoh() is None
 
 
 def get_session() -> Any | None:
@@ -1059,10 +1083,8 @@ def _get_zenoh_session_directly() -> Any | None:
             _SESSION_REFS += 1
             return _SESSION
 
-        try:
-            import zenoh  # noqa: F811 - lazy import
-        except ImportError:
-            _report_zenoh_missing()
+        zenoh = _import_zenoh()
+        if zenoh is None:
             return None
 
         # STRANDS_MESH_PORT is read at session-open time so a process can be

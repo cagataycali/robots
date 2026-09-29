@@ -27,8 +27,6 @@ No serial/USB hardware is touched: only config dataclasses are constructed, and
 from __future__ import annotations
 
 import math
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -36,7 +34,7 @@ import pytest
 pytest.importorskip("lerobot")
 
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState
+from tests._hardware_robot import hardware_robot_on
 
 ROBOT_TYPE = "so101_follower"
 
@@ -59,13 +57,7 @@ def _make_robot() -> HwRobot:
     """A Robot wired with just the attributes ``_create_minimal_config`` /
     ``_initialize_robot`` need, plus the handful the destructor's cleanup path
     reads (so teardown is silent) - never touching hardware."""
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "test_arm"
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw._task_state = RobotTaskState()
-    hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
-    hw.mesh = None
+    hw = hardware_robot_on(None, tool_name="test_arm")
     return hw
 
 

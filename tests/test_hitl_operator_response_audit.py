@@ -29,7 +29,6 @@ import ast
 import asyncio
 import inspect
 import textwrap
-import threading
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -57,6 +56,7 @@ from strands_robots._command_gate import gate_command  # noqa: E402
 from strands_robots._motion_grants import consume_grant  # noqa: E402
 from strands_robots.audit import audit_log_path, read_audit_log  # noqa: E402
 from strands_robots.ros import GATE_TOOL  # noqa: E402
+from tests._hardware_robot import hardware_robot_on
 
 # A reply that carries a reason. Every gate accepts a canonical affirmative only,
 # so this is always a decline - which is exactly why the audit row is the only
@@ -126,11 +126,7 @@ def _drive_robot(response: object) -> dict[str, Any] | None:
     never reaches it either.
     """
     agent = SimpleNamespace(_interrupt_state=SimpleNamespace(interrupts=_AnsweredInterrupts(response)))
-    robot = hw_mod.Robot.__new__(hw_mod.Robot)
-    robot.tool_name_str = "so101"
-    # The stream refuses a shut-down robot before it asks the operator; a
-    # bare instance has no shutdown flag, so give it the one ``__init__`` sets.
-    robot._shutdown_event = threading.Event()
+    robot = hardware_robot_on(None, tool_name="so101")
     robot._execute_task_sync = lambda *a: {"status": "success", "content": [{"text": "done"}]}  # type: ignore[method-assign]
 
     async def _run() -> list[Any]:

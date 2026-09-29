@@ -24,7 +24,14 @@ Lazy Loading:
 
 import importlib as _importlib
 import warnings as _warnings
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _distribution_version
 from typing import TYPE_CHECKING, Any
+
+try:
+    __version__ = _distribution_version("strands-robots")
+except _PackageNotFoundError:  # a source tree that was never installed
+    __version__ = "0.0.0+unknown"
 
 # TYPE_CHECKING-only eager imports so type-checkers see concrete types for
 # the lazy attributes below (the runtime __getattr__ resolves them to Any

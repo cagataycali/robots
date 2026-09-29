@@ -421,6 +421,25 @@ def test_sim_mujoco_extra_declares_the_ik_solver_stack() -> None:
     )
 
 
+def test_sim_isaac_extra_declares_the_ik_solver_stack() -> None:
+    """``[sim-isaac]`` must declare the IK stack its ``move_to`` needs.
+
+    The Isaac backend's ``move_to`` (``isaac/motion_primitives.py``) solves IK
+    on a ``mujoco.MjModel`` of the loaded description through the same
+    ``MinkIKBridge``, and ``move_to`` is in the Isaac action enum. With only
+    ``[sim-isaac]`` installed it returned ``IK bridge unavailable: The mink IK
+    bridge needs 'mink' + 'mujoco' ...`` (measured: 4 failures in
+    tests/simulation/isaac/test_move_to_solves_on_the_loaded_description.py).
+    """
+    requested = _extra_requirements("sim-isaac")
+    missing = [pkg for pkg in (*_IK_SOLVER_PACKAGES, "mujoco") if pkg not in requested]
+    assert not missing, (
+        f"[sim-isaac] ships the move_to primitive but does not declare {missing}; "
+        f"move_to then returns 'IK bridge unavailable'. Declared: {sorted(requested)}"
+    )
+    assert "daqp" in requested["qpsolvers"], "qpsolvers without a backend solves nothing"
+
+
 def test_all_extra_can_run_the_move_to_primitive() -> None:
     """``[all]`` must be able to honor every action the backends it installs advertise."""
     closure = _extra_closure("all")

@@ -35,17 +35,16 @@ from __future__ import annotations
 
 import os
 import sys
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
 
 import strands_robots.utils as utils_mod
-from strands_robots.hardware_robot import Robot, RobotTaskState
+from strands_robots.hardware_robot import Robot
 from strands_robots.hardware_ros_bridge import HardwareRosBridge
 from strands_robots.utils import boolean_flag_error
+from tests._hardware_robot import hardware_robot_on
 
 #: Spellings of "off" that are every one of them truthy, so reading the flag by
 #: truthiness selects the surface they ask to close.
@@ -133,21 +132,12 @@ def fake_dds(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
 
 
 def _robot() -> Robot:
-    """A ``Robot`` skeleton carrying only what ``_init_ros_bridge`` reads.
+    """A ``Robot`` on no device, for calling ``_init_ros_bridge`` directly.
 
-    ``__new__`` is deliberate: ``_init_ros_bridge`` is documented as a plain
-    method precisely so a lightweight double need not thread ``__init__``
-    through, and building one here keeps the test off the hardware path.
+    ``_init_ros_bridge`` is documented as a plain method precisely so a test can
+    call it on a robot whose constructor left the bridge off.
     """
-    robot: Any = Robot.__new__(Robot)
-    robot.tool_name_str = "test_arm"
-    robot.robot = SimpleNamespace(name="test_arm")
-    # What the finalizer reads, so a collected double reports nothing.
-    robot._shutdown_event = threading.Event()
-    robot._stop_requested = threading.Event()
-    robot._task_state = RobotTaskState()
-    robot._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="flag_domain")
-    robot.mesh = None
+    robot: Any = hardware_robot_on(SimpleNamespace(name="test_arm"), tool_name="test_arm")
     return robot
 
 

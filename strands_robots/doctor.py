@@ -73,9 +73,9 @@ def _skip(msg: str) -> str:
 def _resolve_version(import_name: str, dist_name: str) -> str:
     """Resolve a package version, preferring installed distribution metadata.
 
-    Neither ``strands_robots`` nor ``strands`` exposes a module-level
-    ``__version__`` attribute, so reading ``module.__version__`` yields a
-    useless placeholder. The authoritative version lives in the installed
+    ``strands`` exposes no module-level ``__version__`` attribute, so reading
+    ``module.__version__`` yields a useless placeholder. The authoritative
+    version lives in the installed
     distribution metadata (``pyproject.toml`` -> wheel/egg-info), which
     ``importlib.metadata.version`` reads. Fall back to a module ``__version__``
     attribute only if metadata lookup fails (e.g. running from a source tree

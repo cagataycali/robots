@@ -15,6 +15,9 @@ Registers the session-truncation reporter from
 :mod:`tests.session_truncation`, so a run that stops before every collected test
 has started says so instead of reporting counts that read as a total.
 
+Blocks ``import isaacsim`` for every test (:func:`_no_real_isaac_sim`), so a host
+with the Isaac Sim wheel installed never boots Kit inside the unit run.
+
 Finally, removes a passed test's ``<name>current`` symlink in the same teardown
 that removes its ``tmp_path`` (:func:`pytest_runtest_teardown` below): every
 test here creates a ``tmp_path``, and the base temp is listed in full to name
@@ -611,3 +614,21 @@ def pytest_runtest_teardown(item: pytest.Item) -> Iterator[None]:
     tmp_path = funcargs.get("tmp_path")
     if isinstance(tmp_path, Path):
         remove_dead_current_symlink(tmp_path, item.name)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_isaac_sim(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every unit test sees the host CI sees: no importable ``isaacsim``.
+
+    ``tests/`` is the unit suite - its tests fake the Isaac surface they need
+    (``monkeypatch.setitem(sys.modules, "isaacsim", ...)`` wins over this, since
+    it runs later and is undone first). Without the block, a test that assumes
+    Isaac is absent and calls ``create_world`` on a host that HAS the pip wheel
+    boots a real Kit app inside the unit run: it asserts the wrong status, blocks
+    on the EULA prompt when ``OMNI_KIT_ACCEPT_EULA`` is unset, and leaves
+    ``omni.*`` in ``sys.modules`` for whichever test the xdist worker runs next
+    (``TestLazyImport`` then fails at random). The live half is
+    ``tests_integ/simulation/test_isaac_*`` under ``STRANDS_GPU_TEST=1``.
+    """
+    if "isaacsim" not in sys.modules or sys.modules["isaacsim"] is None:
+        monkeypatch.setitem(sys.modules, "isaacsim", None)  # type: ignore[arg-type]
