@@ -1031,6 +1031,11 @@ class MuJoCoSimEngine(
         # robot's next rollout is submitted, so a stale report never reads as
         # the current one.
         self._rollout_results: dict[str, dict[str, Any]] = {}
+        # Robots whose kept report a stop_policy has already answered for: the
+        # stop that halted the rollout (its verdict is the answer), or the first
+        # stop after it ended on its own. A later stop is a bare "Was not
+        # running"; ``policy_result`` still reads the report.
+        self._rollout_reported: set[str] = set()
         # Capture rate of each rollout in ``_policy_threads``, recorded where
         # the Future is tracked so it is readable from another thread the
         # instant ``start_policy`` returns (``start_recording`` compares against
@@ -6919,6 +6924,7 @@ class MuJoCoSimEngine(
         # reading as a rollout that completed.
         self._rollout_failures.pop(robot_name, None)
         self._rollout_results.pop(robot_name, None)
+        self._rollout_reported.discard(robot_name)
         future.add_done_callback(functools.partial(self._record_rollout_outcome, robot_name, policy_provider))
 
         return {
@@ -8327,13 +8333,16 @@ class MuJoCoSimEngine(
         # reads means "the loop is no longer running", which is TRUE for the
         # nothing-to-stop case. This one is False there. Two keys spelled alike
         # and opposite on that case is the drift worth spending a word to avoid.
-        # The report of the rollout that just ended, or that ended before this
-        # call, travels with the verdict: it is the only place a start_policy
-        # caller can read what run_policy would have returned (#4162).
-        # The key is present only when a report exists, so the idle and in-flight
-        # envelopes stay exactly what they were (stand-ins and peers pin them).
+        # The report of a rollout that ended on its own travels with the verdict:
+        # it is the only place a start_policy tool caller can read what
+        # run_policy would have returned (#4162). Only the first stop after
+        # that carries it: a stop
+        # that halted the rollout already answers for it, and so does any stop
+        # after the first, so the halting, idle and repeat envelopes stay exactly
+        # what they were (stand-ins and peers pin them).
         verdict: dict[str, Any] = {"robot": robot_name, "was_running": was_running, "exited": exited}
-        last_result = self.policy_result(robot_name)
+        last_result = None if was_running or robot_name in self._rollout_reported else self.policy_result(robot_name)
+        self._rollout_reported.add(robot_name)
         if last_result is not None:
             first_line = str((last_result.get("content") or [{}])[0].get("text", "")).splitlines()[:1]
             msg += f"\nLast rollout on '{robot_name}' ended {last_result.get('status')}" + (

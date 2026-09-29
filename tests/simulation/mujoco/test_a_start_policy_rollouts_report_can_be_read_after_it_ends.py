@@ -90,8 +90,20 @@ class TestTheResultIsKept:
         stopped = sim.stop_policy("so101")
         verdict = _json(stopped)
         assert verdict["was_running"] is True
-        # The stop joined the worker, so the report of the run it cut short is there.
-        assert verdict["last_result"]["status"] == "success"
+        # The stop that halted the rollout is its answer; the report of the run it
+        # cut short is read through policy_result, and no later stop repeats it.
+        assert "last_result" not in verdict
+        assert _wait_for_result(sim, "so101")["status"] == "success"
+        again = sim.stop_policy("so101")
+        assert "last_result" not in _json(again)
+        assert _text(again) == "Was not running on 'so101'"
+
+    def test_only_the_first_stop_after_completion_carries_the_report(self, sim) -> None:
+        sim.start_policy(robot_name="so101", policy_provider="mock", n_steps=4, control_frequency=50.0)
+        _wait_for_result(sim, "so101")
+        assert "last_result" in _json(sim.stop_policy("so101"))
+        assert _json(sim.stop_policy("so101")) == {"robot": "so101", "was_running": False, "exited": None}
+        assert sim.policy_result("so101") is not None
 
     def test_a_rollout_that_died_is_reported_as_an_error_envelope(self, sim) -> None:
         # ``remote`` against nothing: the worker's constructor refuses and the failure
