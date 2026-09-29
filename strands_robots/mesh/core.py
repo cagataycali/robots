@@ -555,6 +555,11 @@ def _sensor_present(robot: Any, *attrs: str) -> bool:
     return False
 
 
+#: Headroom added to the receiver's cmd period when the sender paces two
+#: publishes apart, so clock jitter on either side cannot land the second one
+#: inside the dropped window.
+CMD_PACE_MARGIN_S: float = 0.01
+
 #: Per-image cap for a ``sim_call`` result on the wire: the camera topic's own
 #: default cap (``STRANDS_MESH_MAX_CAMERA_BYTES``), so a render travels the way
 #: a frame does. Over it, the block is replaced by a sentence naming the size.
@@ -684,6 +689,11 @@ class Mesh(SensorLoopsMixin):
         # D1: this is what _on_response uses to reject a forged
         # response from a peer that wasn't the original target.
         self._rpc_lock = threading.Lock()
+        # Outbound cmd/broadcast publishes are paced under the receiver's rate
+        # cap (see :meth:`_pace_cmd_publish`); one slot for every target,
+        # because the downsampling rule counts per link, not per key.
+        self._cmd_pace_lock = threading.Lock()
+        self._last_cmd_publish_mono: float | None = None
         self._pending: dict[str, threading.Event] = {}
         self._responses: dict[str, list[dict[str, Any]]] = {}
         self._expected_responders: dict[str, str] = {}
@@ -3412,6 +3422,38 @@ class Mesh(SensorLoopsMixin):
             "Shrink world_update/instruction or raise the cap on BOTH peers."
         )
 
+    def _pace_cmd_publish(self) -> None:
+        """Hold a cmd/broadcast publish until the receiver's rate cap admits it.
+
+        Every peer's transport carries an ingress ``downsampling`` rule on
+        ``**/cmd`` and ``**/broadcast`` at ``STRANDS_MESH_CMD_RATE_HZ`` (20 Hz
+        by default): a command arriving sooner than one period after the
+        previous one on the same link is dropped before any parser runs, so
+        the sender waits out its whole timeout for an answer that was never
+        going to come. An agent that issues two tool calls at once did exactly
+        that (the second of two ``sim_call`` reads timed out at 30 s while the
+        peer was idle). The sender therefore spaces its own publishes one
+        period plus :data:`CMD_PACE_MARGIN_S` apart, across every target,
+        because the rule counts per link. The wait rides ``_stop_event`` so a
+        stopping mesh does not hold a caller.
+        """
+        lock = getattr(self, "_cmd_pace_lock", None)
+        if lock is None:
+            return
+        try:
+            from strands_robots.mesh._zenoh_config import cmd_rate_hz
+
+            period = 1.0 / cmd_rate_hz()
+        except ImportError:
+            return
+        with lock:
+            last = self._last_cmd_publish_mono
+            if last is not None:
+                wait = last + period + CMD_PACE_MARGIN_S - time.monotonic()
+                if wait > 0:
+                    self._stop_event.wait(timeout=wait)
+            self._last_cmd_publish_mono = time.monotonic()
+
     def send(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
         """Send a command to a single peer and return the first response.
 
@@ -3499,6 +3541,7 @@ class Mesh(SensorLoopsMixin):
                 self._expected_responders.pop(turn, None)
             return {"status": "error", "error": size_problem}
         try:
+            self._pace_cmd_publish()
             self.publish(f"strands/{target}/cmd", msg)
             event.wait(timeout=timeout)
         finally:
@@ -3566,6 +3609,7 @@ class Mesh(SensorLoopsMixin):
                 self._expected_responders.pop(turn, None)
             return []
         try:
+            self._pace_cmd_publish()
             self.publish("strands/broadcast", msg)
             # A broadcast has no single expected responder, so collect acks for
             # the FULL window. ``event`` fires on the FIRST response

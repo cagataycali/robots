@@ -299,3 +299,67 @@ def test_a_red_cube_added_over_the_wire_is_listed_by_the_same_world() -> None:
         assert duplicate["status"] == "error", duplicate
     finally:
         sim.cleanup()
+
+
+# ───────────────────────────────────────── two commands in a row ───────────
+
+
+def _sending_mesh(published: list[tuple[str, dict[str, Any]]]) -> Any:
+    """A Mesh with the send path's state and a publish that records instead of writing."""
+    import threading
+
+    mesh = mesh_core.Mesh.__new__(mesh_core.Mesh)
+    mesh.peer_id = "dash"
+    mesh._running = True
+    mesh._rpc_lock = threading.Lock()
+    mesh._cmd_pace_lock = threading.Lock()
+    mesh._last_cmd_publish_mono = None
+    mesh._stop_event = threading.Event()
+    mesh._pending = {}
+    mesh._responses = {}
+    mesh._expected_responders = {}
+    mesh.publish = lambda key, payload: published.append((key, payload))  # type: ignore[method-assign]
+    return mesh
+
+
+def test_two_commands_in_a_row_are_published_one_period_apart(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The receiver drops a cmd arriving inside one period of the last; the sender never lets that happen."""
+    import time
+
+    monkeypatch.setenv("STRANDS_MESH_CMD_RATE_HZ", "20")
+    published: list[tuple[str, dict[str, Any]]] = []
+    mesh = _sending_mesh(published)
+    stamps: list[float] = []
+    original = mesh.publish
+
+    def stamped(key: str, payload: dict[str, Any]) -> None:
+        stamps.append(time.monotonic())
+        original(key, payload)
+
+    mesh.publish = stamped  # type: ignore[method-assign]
+    mesh.send("sim-a", {"action": "sim_call", "sim_action": "list_objects"}, timeout=0.01)
+    mesh.send("sim-b", {"action": "sim_call", "sim_action": "list_cameras"}, timeout=0.01)
+    mesh.broadcast({"action": "status"}, timeout=0.01)
+    assert [key for key, _ in published] == ["strands/sim-a/cmd", "strands/sim-b/cmd", "strands/broadcast"]
+    gaps = [b - a for a, b in zip(stamps[:-1], stamps[1:], strict=True)]
+    assert all(gap >= 1 / 20 for gap in gaps), gaps
+
+
+def test_a_stopping_mesh_does_not_hold_the_pacer(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    monkeypatch.setenv("STRANDS_MESH_CMD_RATE_HZ", "0.5")  # a two second period
+    mesh = _sending_mesh([])
+    mesh.send("sim-a", {"action": "status"}, timeout=0.01)
+    mesh._stop_event.set()
+    started = time.monotonic()
+    mesh.send("sim-a", {"action": "status"}, timeout=0.01)
+    assert time.monotonic() - started < 1.0
+
+
+def test_a_mesh_built_without_the_pacer_state_still_sends() -> None:
+    published: list[tuple[str, dict[str, Any]]] = []
+    mesh = _sending_mesh(published)
+    del mesh._cmd_pace_lock
+    mesh.send("sim-a", {"action": "status"}, timeout=0.01)
+    assert published
