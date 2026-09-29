@@ -44,7 +44,6 @@ import ast
 import inspect
 import pathlib
 import textwrap
-import threading
 import types
 from typing import Any
 
@@ -54,11 +53,11 @@ import pytest
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402
-    IsaacConfig,
     IsaacSimulation,
     _RobotState,
 )
 from strands_robots.utils import boolean_flag_error  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 #: The four keys the schema reserves for a floating base.
 _BASE_KEYS = ("base_pos", "base_quat", "base_lin_vel", "base_ang_vel")
@@ -91,15 +90,9 @@ class _Articulation:
 
 
 def _engine(*, fixed_base: bool, articulation: Any = None) -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world = types.SimpleNamespace()
     engine._world_created = True
-    engine._cameras = {}
-    engine._objects = {}
-    engine._replicated = False
-    engine._prim_registry = []
     robot = _RobotState(
         name="arm",
         prim_path="/World/Robots/arm",

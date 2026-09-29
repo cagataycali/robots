@@ -44,7 +44,7 @@ import strands_robots.ros as ros_transport_mod
 import strands_robots.rosbridge as rosbridge_transport_mod
 import strands_robots.rtps.participant as rtps_participant_mod
 import strands_robots.tools.use_ros as ros_mod
-from strands_robots.mesh import RosBridgedRobot, RosbridgeRobot, RtpsRobot
+from strands_robots.drivers.ros import RosBridgedRobot, RosbridgeRobot, RtpsRobot
 from strands_robots.tools.use_ros import use_ros
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.tools.use_rtps import use_rtps
@@ -257,13 +257,13 @@ class TestEveryCallerOfOneTransportAsksTheSameQuestion:
     """A transport is not always a tool: every one of them has a second caller.
 
     :mod:`strands_robots.ros` carries the in-process ``rclpy`` mechanics for the
-    ``use_ros`` tool *and* for :class:`~strands_robots.mesh.RosBridgedRobot` and
-    :class:`~strands_robots.mesh.AckermannRosRobot`;
+    ``use_ros`` tool *and* for :class:`~strands_robots.drivers.ros.RosBridgedRobot` and
+    :class:`~strands_robots.drivers.ros.AckermannRosRobot`;
     :mod:`strands_robots.rtps.participant` carries the DDS mechanics for the
-    ``use_rtps`` tool *and* for :class:`~strands_robots.mesh.RtpsRobot`; and
+    ``use_rtps`` tool *and* for :class:`~strands_robots.drivers.ros.RtpsRobot`; and
     :mod:`strands_robots.rosbridge` carries the WebSocket mechanics for the
     ``use_rosbridge`` tool *and* for
-    :class:`~strands_robots.mesh.RosbridgeRobot`. Each of those robots reaches
+    :class:`~strands_robots.drivers.ros.RosbridgeRobot`. Each of those robots reaches
     the same physical ``cmd_vel`` without going through an agent tool at all,
     and the structural pin above reads the tool package, so it cannot see that
     second caller. Two pins per shared transport: a transport nobody can command

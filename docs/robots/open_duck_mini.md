@@ -7,7 +7,7 @@ description: "Open Duck Mini V2 (16-DOF expressive biped, Feetech servos)"
 
 # Open Duck Mini V2 (16-DOF expressive biped, Feetech servos)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">16 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:open_duck_mini}}
 
 <robot-viewer name="open_duck_mini"></robot-viewer>
 
@@ -26,5 +26,9 @@ Aliases: `bdx`, `mini_bdx`, `open_duck`, `open_duck_mini_v2`, `open_duck_v2`.
 ## Hardware
 
 **`FeetechDriver`** (selected with `driver="strands"`) speaks Feetech STS/SMS serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#feetechdriver).
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 
 Model: [apirrone/Open_Duck_Mini/mini_bdx/robots/open_duck_mini_v2](https://github.com/apirrone/Open_Duck_Mini/tree/b23317a485b3cec7d8417f352478778b3475173c/mini_bdx/robots/open_duck_mini_v2), scene `scene.xml`.

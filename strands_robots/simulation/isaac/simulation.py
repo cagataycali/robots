@@ -909,6 +909,42 @@ def _coerce_prim_path(res: Any) -> str:
     return ""
 
 
+def _select_physics_variant(prim_path: str) -> str | None:
+    """Pick the PhysX flavour of a converter-authored ``Physics`` variantSet.
+
+    Isaac Sim 6.1's MJCF/URDF importers (mujoco-usd-converter >= 0.5) author the
+    physics schemas (ArticulationRootAPI, joints, drives, collision) behind a
+    ``Physics`` variantSet with variants ``{mujoco, none, physics, physx}`` and
+    NO default selection. Referenced as-is the robot composes with no physics at
+    all, and ``Articulation(...)`` dies inside the tensor API with
+    ``'NoneType' object has no attribute 'is_homogeneous'``. 6.0.x's converter
+    (v0.2.0) flattened physics inline, so this is a no-op there.
+
+    Returns the variant selected, or ``None`` when nothing needed selecting.
+    """
+    try:
+        import omni.usd  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        prim = stage.GetPrimAtPath(prim_path) if stage is not None else None
+        if prim is None or not prim.IsValid():
+            return None
+        sets = prim.GetVariantSets()
+        if not sets.HasVariantSet("Physics"):
+            return None
+        vset = sets.GetVariantSet("Physics")
+        if vset.GetVariantSelection():
+            return None  # the asset (or the caller) already chose
+        names = vset.GetVariantNames()
+        for choice in ("physx", "physics"):
+            if choice in names:
+                vset.SetVariantSelection(choice)
+                return choice
+    except (ImportError, AttributeError, RuntimeError):
+        return None
+    return None
+
+
 def _adopt_referenced_type(prim: Any) -> None:
     """Let a referenced mesh asset's own prim type win over the placeholder.
 
@@ -925,6 +961,55 @@ def _adopt_referenced_type(prim: Any) -> None:
     clear = getattr(prim, "ClearTypeName", None)
     if clear is not None:
         clear()
+
+
+def _anchor_fixed_base_articulation(prim_path: str) -> str | None:
+    """Move a welded robot's ``ArticulationRootAPI`` from its base body to the weld.
+
+    Isaac Sim 6.1's URDF importer (mujoco-usd-converter 0.5 layout) applies
+    ``ArticulationRootAPI`` to the base link *rigid body* and welds that body to
+    the world with a separate ``root_joint`` ``FixedJoint``. PhysX reads a root
+    on a rigid body as a FLOATING-base articulation, so the weld is not the
+    articulation's root and does not hold it: measured on 6.1.0, a
+    ``fixed_base`` URDF arm's base lifted 2 cm out of the ground plane and its
+    links drifted, while 6.0.1 (root on the ``Geometry`` scope) stays at the
+    joint origins. PhysX's documented fixed-base shape puts the root on the
+    fixed joint itself; this moves it there. A no-op when the root is not on a
+    world-welded rigid body (6.0.x, floating robots, MJCF conversions whose
+    root is already an ancestor).
+
+    Returns the path the root was moved to, or ``None``.
+    """
+    try:
+        import omni.usd  # type: ignore[import-not-found]
+        from pxr import Usd, UsdPhysics  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        root = stage.GetPrimAtPath(prim_path) if stage is not None else None
+        if root is None or not root.IsValid():
+            return None
+        prims = list(Usd.PrimRange(root))
+        roots = [p for p in prims if p.HasAPI(UsdPhysics.ArticulationRootAPI)]
+        if len(roots) != 1 or not roots[0].HasAPI(UsdPhysics.RigidBodyAPI):
+            return None
+        body_path = roots[0].GetPath()
+        for joint_prim in prims:
+            if not joint_prim.IsA(UsdPhysics.FixedJoint):
+                continue
+            joint = UsdPhysics.FixedJoint(joint_prim)
+            body1 = joint.GetBody1Rel().GetTargets()
+            body0 = joint.GetBody0Rel().GetTargets()
+            if body1 != [body_path]:
+                continue
+            anchor = stage.GetPrimAtPath(body0[0]) if body0 else None
+            if anchor is not None and anchor.IsValid() and anchor.HasAPI(UsdPhysics.RigidBodyAPI):
+                continue  # welded to another body, not to the world
+            roots[0].RemoveAPI(UsdPhysics.ArticulationRootAPI)
+            UsdPhysics.ArticulationRootAPI.Apply(joint_prim)
+            return str(joint_prim.GetPath())
+    except (ImportError, AttributeError, RuntimeError, IndexError):
+        return None
+    return None
 
 
 def _import_articulation_cls() -> Any:
@@ -1454,6 +1539,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # valid frame on the very first call instead of dropping frames during
         # an example's opening rollout. Env-tunable for headroom on slow GPUs.
         self._camera_warmup_steps = _env_int("STRANDS_ISAAC_CAMERA_WARMUP_STEPS", 10)
+        # The camera ``_warmup_camera`` is currently polling, whose not-ready
+        # render failures are expected and logged at DEBUG (see _render_frame).
+        self._camera_in_warmup: str | None = None
 
         # device_requested, not device: no world exists yet, so the physics
         # context cannot be asked what it resolved. create_world reports that.
@@ -2999,7 +3087,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 try:
                     usd_path = convert_mjcf_to_usd(mjcf_path)
                 except (RuntimeError, ValueError, OSError, ImportError) as e:
-                    logger.error("add_robot: converting MJCF %r for robot %r failed: %s", mjcf_path, name, e)
+                    logger.error(
+                        "add_robot: converting MJCF %r for robot %r failed: %s", mjcf_path, name, e, exc_info=True
+                    )
                     return {
                         "status": "error",
                         "content": [
@@ -3035,10 +3125,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                         name,
                         usd_path,
                         e,
+                        exc_info=True,
                     )
                     return {
                         "status": "error",
-                        "content": [{"text": f"Failed to load USD robot '{name}': {e}"}],
+                        "content": [{"text": f"Failed to load USD robot '{name}': {type(e).__name__}: {e}"}],
                     }
 
                 self._prim_registry.append(prim_path)
@@ -3116,10 +3207,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                         name,
                         urdf_path,
                         e,
+                        exc_info=True,
                     )
                     return {
                         "status": "error",
-                        "content": [{"text": f"Failed to load URDF robot '{name}': {e}"}],
+                        "content": [{"text": f"Failed to load URDF robot '{name}': {type(e).__name__}: {e}"}],
                     }
 
                 self._prim_registry.append(prim_path)
@@ -4029,6 +4121,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 add_reference_to_stage,
             )
         _adopt_referenced_type(add_reference_to_stage(usd_path=usd_path, prim_path=prim_path))
+        _select_physics_variant(prim_path)
 
         # Isaac Sim 6.0 exposes the single-prim wrappers under
         # ``isaacsim.core.prims``; the legacy 4.x names lack the ``Single``
@@ -6087,7 +6180,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         held across a marshal hop; each hop takes ``self._lock`` itself.
 
         **Recording**: when a dataset recording session is active
-        (:meth:`~strands_robots.simulation.isaac.recording.IsaacRecordingMixin.start_recording`),
+        (:meth:`~strands_robots.simulation.recording.DatasetRecordingMixin.start_recording`),
         each loop iteration records exactly ONE merged frame containing every
         driven robot's prefixed state/action columns (``alice__shoulder_pan``
         ...) plus all camera images - mirroring the MuJoCo merged-frame
@@ -6816,7 +6909,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 # buffer during RTX warm-up surfaces here too rather than
                 # escaping the loop (#140), even should the pre-slice
                 # shape guard above ever be bypassed.
-                logger.error("Failed to render camera '%s': %s", camera_name, e)
+                # ``_warmup_camera`` polls through here on purpose: its not-ready
+                # reads are the condition it waits out, not a fault, so they go
+                # to DEBUG rather than an ERROR on every healthy add_camera.
+                level = logging.DEBUG if getattr(self, "_camera_in_warmup", None) == camera_name else logging.ERROR
+                logger.log(level, "Failed to render camera '%s': %s", camera_name, e)
                 return None, None, {"error": f"Failed to render camera '{camera_name}': {e}"}
 
             render_info = {
@@ -7103,40 +7200,44 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         budget = max(1, n_steps)
         attempted = 0
         aborted: Exception | None = None
-        for i in range(budget):
-            attempted = i + 1
-            try:
-                _ensure_timeline_playing()
-                # A warmup tick advances ``_sim_time`` like any other, so it
-                # replays the latch too. Exempting it would make a latched wrench
-                # act on a tick count that depends on how many warmup passes the
-                # RTX product happened to need.
-                if getattr(self, "_applied_wrenches", None):
-                    self._reapply_wrenches()
-                self._world.step(render=True)
-                self._sim_time += self._config.physics_dt
-                self._step_count += 1
-                # ``world.step(render=True)`` reliably refreshes only the
-                # PRIMARY render product; a camera added after the first
-                # (e.g. the LIBERO adapter's ``wrist_image``, installed at
-                # episode start next to the pre-existing ``image``) never
-                # accumulates a frame from stepping alone and the warm-up
-                # loop ran to exhaustion (#1802). Flush the secondary
-                # products the same way ``get_observation`` does before
-                # checking for a frame.
-                if len(self._cameras) > 1:
-                    self._refresh_all_render_products()
-                if self.render(camera_name=name).get("status") == "success":
-                    logger.debug("Camera %r warmed up after %d step(s)", name, i + 1)
-                    return True
-            except (RuntimeError, ValueError, OSError, AttributeError, TypeError, IndexError) as e:
-                # Stepping / rendering a partially-initialised stage can
-                # raise on surface drift; warm-up is best-effort, so log
-                # and stop rather than failing the already-registered
-                # camera. Programming bugs (NameError) still propagate.
-                logger.debug("Camera %r warm-up step %d failed: %s", name, i + 1, e)
-                aborted = e
-                break
+        self._camera_in_warmup = name
+        try:
+            for i in range(budget):
+                attempted = i + 1
+                try:
+                    _ensure_timeline_playing()
+                    # A warmup tick advances ``_sim_time`` like any other, so it
+                    # replays the latch too. Exempting it would make a latched wrench
+                    # act on a tick count that depends on how many warmup passes the
+                    # RTX product happened to need.
+                    if getattr(self, "_applied_wrenches", None):
+                        self._reapply_wrenches()
+                    self._world.step(render=True)
+                    self._sim_time += self._config.physics_dt
+                    self._step_count += 1
+                    # ``world.step(render=True)`` reliably refreshes only the
+                    # PRIMARY render product; a camera added after the first
+                    # (e.g. the LIBERO adapter's ``wrist_image``, installed at
+                    # episode start next to the pre-existing ``image``) never
+                    # accumulates a frame from stepping alone and the warm-up
+                    # loop ran to exhaustion (#1802). Flush the secondary
+                    # products the same way ``get_observation`` does before
+                    # checking for a frame.
+                    if len(self._cameras) > 1:
+                        self._refresh_all_render_products()
+                    if self.render(camera_name=name).get("status") == "success":
+                        logger.debug("Camera %r warmed up after %d step(s)", name, i + 1)
+                        return True
+                except (RuntimeError, ValueError, OSError, AttributeError, TypeError, IndexError) as e:
+                    # Stepping / rendering a partially-initialised stage can
+                    # raise on surface drift; warm-up is best-effort, so log
+                    # and stop rather than failing the already-registered
+                    # camera. Programming bugs (NameError) still propagate.
+                    logger.debug("Camera %r warm-up step %d failed: %s", name, i + 1, e)
+                    aborted = e
+                    break
+        finally:
+            self._camera_in_warmup = None
         if aborted is not None:
             # An early abort is NOT a slow render product, and the two need
             # different remedies: the exhaustion report below tells the
@@ -7915,6 +8016,17 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # than silently on the first render attempt.
         camera.initialize()
 
+        # Near plane. A freshly-defined UsdGeom.Camera carries USD's schema
+        # default ``clippingRange=(1, 1000000)`` - in STAGE units, and this
+        # stage is metersPerUnit=1 - so everything closer than ONE METRE to the
+        # camera was culled: a tabletop arm 0.8 m from the lens rendered as an
+        # empty floor. 1 cm matches the Kit viewport camera (/OmniverseKit_Persp)
+        # and sits below MuJoCo's default znear (0.01 x extent).
+        try:
+            camera.set_clipping_range(near_distance=0.01, far_distance=1.0e6)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("add_camera %r: could not set the near clipping plane (%s)", name, exc)
+
         # ``fov_deg`` is the VERTICAL field of view (fovy) -- the one meaning
         # shared with the MuJoCo and Newton backends and with the
         # :meth:`get_camera_params` intrinsics fallback. Isaac has a single
@@ -8366,6 +8478,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # Step 1: stage reference. The USD's default prim becomes a child
         # of ``prim_path``; subsequent Articulation lookups walk that path.
         add_reference_to_stage(usd_path=usd_path, prim_path=prim_path)
+        _select_physics_variant(prim_path)
 
         # Step 2-3: wrap + initialise. The articulation name has to be
         # unique within the scene's articulation registry, so derive it
@@ -8528,6 +8641,8 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             from isaacsim.core.utils.stage import add_reference_to_stage  # type: ignore[import-not-found]
 
             add_reference_to_stage(usd_path=usd_out, prim_path=prim_path)
+            _select_physics_variant(prim_path)
+            _anchor_fixed_base_articulation(prim_path)
             imported_prim_path = prim_path
         else:
             try:

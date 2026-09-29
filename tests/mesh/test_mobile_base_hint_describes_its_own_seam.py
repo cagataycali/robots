@@ -33,8 +33,8 @@ from typing import Any
 
 import pytest
 
-import strands_robots.mesh as mesh_pkg
-from strands_robots.mesh import MobileBaseRobot, RosBridgedRobot, RtpsRobot
+import strands_robots.drivers.ros as ros_pkg
+from strands_robots.drivers.ros import MobileBaseRobot, RosBridgedRobot, RtpsRobot
 
 #: Extracts the example value a hint offers ("... like /turtle1/cmd_vel)").
 _EXAMPLE_RE = re.compile(r"\blike\s+(\S+)")
@@ -66,16 +66,16 @@ def _seams() -> tuple[tuple[str, str, str | None], ...]:
 def _platforms() -> tuple[type[MobileBaseRobot], ...]:
     """The base plus every ``MobileBaseRobot`` subclass the package declares.
 
-    Discovered by walking the public modules of ``strands_robots.mesh`` rather
+    Discovered by walking the public modules of ``strands_robots.drivers.ros`` rather
     than listed, so a platform added later is graded on arrival. Keyed on
     ``__module__`` so a class is attributed to the module that defines it.
     """
-    root = Path(mesh_pkg.__file__).parent
+    root = Path(ros_pkg.__file__).parent
     found: dict[str, type[MobileBaseRobot]] = {MobileBaseRobot.__name__: MobileBaseRobot}
     for path in sorted(root.glob("*.py")):
         if path.stem.startswith("__"):
             continue
-        module = __import__(f"strands_robots.mesh.{path.stem}", fromlist=["_"])
+        module = __import__(f"strands_robots.drivers.ros.{path.stem}", fromlist=["_"])
         for obj in vars(module).values():
             if inspect.isclass(obj) and issubclass(obj, MobileBaseRobot) and obj.__module__ == module.__name__:
                 found[obj.__name__] = obj
@@ -257,7 +257,7 @@ class TestOnlyTheBaseOwnsTheSharedCheck:
     """One ``_check`` means one place a hint can be dropped."""
 
     def test_no_other_mesh_module_defines_a_check(self) -> None:
-        root = Path(mesh_pkg.__file__).parent
+        root = Path(ros_pkg.__file__).parent
         sources = {
             path.stem: path.read_text(encoding="utf-8")
             for path in sorted(root.glob("*.py"))

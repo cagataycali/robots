@@ -7,7 +7,7 @@ description: "HopeJR Hand (dexterous anthropomorphic hand, Feetech)"
 
 # HopeJR Hand (dexterous anthropomorphic hand, Feetech)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
+{{robot_chips:hope_jr_hand}}
 
 The registry ships no simulation asset for it, so `Robot("hope_jr_hand")` in the default sim mode refuses by name.
 
@@ -20,3 +20,7 @@ Aliases: `hopejr_hand`, `hope_junior_hand`.
 ## Hardware
 
 **lerobot.** `Robot("hope_jr_hand", mode="real")` builds lerobot's `hope_jr_hand` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.

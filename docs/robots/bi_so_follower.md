@@ -7,7 +7,7 @@ description: "Bimanual SO-ARM follower (2x SO-100/SO-101, 6-DOF each, Feetech ST
 
 # Bimanual SO-ARM follower (2x SO-100/SO-101, 6-DOF each, Feetech STS3215)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="bimanual">Bimanual</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
+{{robot_chips:bi_so_follower}}
 
 The registry ships no simulation asset for it, so `Robot("bi_so_follower")` in the default sim mode refuses by name.
 
@@ -24,3 +24,7 @@ Aliases: `bi_so100`, `bi_so101`.
 ## Hardware
 
 **lerobot.** `Robot("bi_so_follower", mode="real")` builds lerobot's `bi_so_follower` with `pip install 'strands-robots[lerobot]'`; there is no single `port=`; pass `left_arm_config=` and `right_arm_config=`, one `SOFollowerConfig` per arm with its own `port` and `cameras`. The default when `driver=` is not given.
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.

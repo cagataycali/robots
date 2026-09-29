@@ -64,7 +64,7 @@ rec.save_episode()                             # once per episode
 rec.finalize()
 ```
 
-`create` refuses a frame whose shape disagrees with the declared schema (`RecordingFrameError`), names an action key it cannot record, and normalises `vcodec` (`libx264` becomes `h264`). `DatasetRecorder.resume(repo_id)` appends to an existing dataset with the same schema.
+`add_frame` refuses a frame missing a declared column (`ValueError`), reports a failed write (`RecordingFrameError`), drops undeclared action keys; `create` normalises `vcodec` (`libx264` becomes `h264`). `DatasetRecorder.resume(repo_id)` appends to an existing dataset with the same schema.
 
 ## On hardware
 

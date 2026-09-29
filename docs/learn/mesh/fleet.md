@@ -31,7 +31,7 @@ Every command is a JSON dict with an `action` from `ALLOWED_ACTIONS`, validated 
 | `state`, `features` | the joint state; the observation and action feature schema |
 | `execute` | run a policy to completion: `instruction`, `policy_provider` (required, no silent default), `duration`, checkpoint as a Hub id |
 | `start` | the same, in the background |
-| `step`, `reset`, `set_joints`, `call`, `describe_tool` | step; reset; write `target_joints`; one advertised function (`function`, `params`); the served spec |
+| `step`, `reset`, `set_joints`, `call`, `describe_tool` | step once; reset; write `target_joints`; one advertised function (`function`, `params`); the served spec (simulation peers) |
 | `stop` | halt the rollout; admitted under lockout |
 | `teleop_status`, `teleop_receive`, `teleop_stop` | follow a remote input stream ([teleoperation](../hardware/teleoperation.md)) |
 | `resume` | clear the e-stop lockout with the override code ([safety](safety-and-estop.md)) |

@@ -227,10 +227,10 @@ class TestTheMiniClearsTheHaltWhenItCommitsMotion:
         """The whole point is what the ``status`` verb publishes, not an attribute."""
 
         def published(driver: ReachyDriver) -> bool:
-            # The ``status`` verb nests the whole ``get_status`` envelope inside
-            # one json block, so the flag an agent reads is two levels down.
-            outer = _run_tool(driver, "status")["content"][0]["json"]
-            return bool(outer["content"][0]["json"]["motion_stopped"])
+            # The ``status`` verb answers with ``get_status``'s envelope itself, so
+            # the flag an agent reads sits at content[0].json (#4151).
+            body = _run_tool(driver, "status")["content"][0]["json"]
+            return bool(body["motion_stopped"])
 
         driver, _, _ = _connected(monkeypatch)
         assert _run_tool(driver, "stop")["status"] == "success"

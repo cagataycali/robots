@@ -27,8 +27,6 @@ its entry point.
 
 from __future__ import annotations
 
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -40,6 +38,7 @@ from strands_robots.mesh.security import (
     validate_command,
     validate_mesh_identifier,
 )
+from tests._hardware_robot import hardware_robot_on
 
 #: Values the wire ``teleop_receive`` surface has always rejected. The
 #: wildcards are the safety-critical ones: they widen the subscription.
@@ -186,19 +185,10 @@ class _LiveStream:
 @pytest.fixture
 def hardware_robot() -> Any:
     """A Robot carrying only the teleop state the guard needs (no hardware init)."""
-    from strands_robots.hardware_robot import Robot as HardwareRobot
-    from strands_robots.hardware_robot import RobotTaskState
 
-    hw = HardwareRobot.__new__(HardwareRobot)
-    hw.tool_name_str = "test_arm"
+    hw = hardware_robot_on(object(), tool_name="test_arm")
     hw.mesh = _FakeMesh(peer_id="follower-1")
     hw.peer_id = "follower-1"
-    hw.robot = object()
-    hw._task_state = RobotTaskState()
-    hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="teleop_guard")
-    hw._shutdown_event = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
     return hw
 
 

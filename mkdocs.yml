@@ -65,9 +65,10 @@ extra:
   agent_prompt: >-
     Walk me through https://strands-labs.github.io/robots/start/ one page at a time. Install
     strands-robots with the sim-mujoco extra in a Python 3.12 virtual environment, move the
-    simulated SO-101 from the First robot page, then hand it to a Strands Agent from the First
-    agent page. Ask whether I have a physical SO-101 on USB before the First real arm page, and
-    run strands-robots doctor if any step fails.
+    simulated SO-101 from the First robot page, run a Hub checkpoint on it from the First
+    learned policy page, then hand it to a Strands Agent from the First agent page. Ask whether I have a
+    physical SO-101 on USB before the First real arm page, and run strands-robots doctor if any
+    step fails.
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/strands-labs/robots
@@ -342,6 +343,7 @@ nav:
       - start/install.md
       - start/first-robot.md
       - start/first-real-arm.md
+      - start/first-policy.md
       - start/first-agent.md
       - start/doctor.md
   - Robots:
@@ -400,6 +402,7 @@ nav:
           - robots/fourier_n1.md
           - robots/jvrc.md
           - robots/microduck.md
+          - robots/mujoco_humanoid.md
           - robots/op3.md
           - robots/open_duck_mini.md
           - robots/rby1.md
@@ -439,7 +442,6 @@ nav:
           - robots/reachy_mini.md
   - Learn:
       - learn/index.md
-      - Agents: learn/agents.md
       - Policies:
           - learn/policies/index.md
           - LeRobot local: learn/policies/lerobot-local.md
@@ -453,6 +455,7 @@ nav:
           - Microduck: learn/policies/microduck.md
           - RL checkpoint: learn/policies/rl.md
           - Remote: learn/policies/remote.md
+      - Agents: learn/agents.md
       - Simulation:
           - learn/simulation/index.md
           - MuJoCo: learn/simulation/mujoco.md
@@ -465,6 +468,7 @@ nav:
           - learn/training/index.md
           - LeRobot: learn/training/lerobot.md
           - RL: learn/training/rl.md
+          - Isaac Lab: learn/training/isaaclab.md
       - Data:
           - Record: learn/data/record.md
           - Verify: learn/data/verify.md

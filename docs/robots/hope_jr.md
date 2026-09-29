@@ -7,7 +7,7 @@ description: "HopeJR Arm (high-DOF anthropomorphic arm, Feetech)"
 
 # HopeJR Arm (high-DOF anthropomorphic arm, Feetech)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot, strands</span></p>
+{{robot_chips:hope_jr}}
 
 The registry ships no simulation asset for it, so `Robot("hope_jr")` in the default sim mode refuses by name.
 
@@ -21,3 +21,7 @@ robot = Robot("hope_jr", mode="real", driver="strands", port="/dev/ttyACM0")  # 
 **lerobot.** `Robot("hope_jr", mode="real")` builds lerobot's `hope_jr_arm` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
 **`FeetechDriver`** (selected with `driver="strands"`) speaks Feetech STS/SMS serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#feetechdriver).
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.

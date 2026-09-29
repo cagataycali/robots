@@ -625,6 +625,7 @@ _PYTHON_ONLY_ACTIONS = frozenset(
         "stream_dataset",
         # SimEngine
         "bind_predicate_robot",
+        "capabilities",
         "verify_dataset_episodes",
         # ManipulationMixin
         "attachment_involving",

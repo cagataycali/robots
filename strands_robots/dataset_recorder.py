@@ -1615,10 +1615,13 @@ class DatasetRecorder:
         per-frame in the episode buffer via add_frame().
 
         Returns:
-            Dict with episode info
+            Dict with episode info. A failed save returns ``status="error"``
+            with ``message`` (the full words, exception included) and
+            ``error_type`` (the exception's class name); a closed recorder
+            returns ``status="error"`` with ``reason="recorder closed"``.
         """
         if self._closed:
-            return {"status": "error", "message": "Recorder closed"}
+            return {"status": "error", "message": "Recorder closed", "reason": "recorder closed"}
 
         try:
             self.dataset.save_episode()
@@ -1647,7 +1650,14 @@ class DatasetRecorder:
             # undefined state after a failed save. Subsequent add_frame calls
             # would silently corrupt the dataset. Close to prevent drift.
             self._closed = True
-            return {"status": "error", "message": f"save_episode failed (recorder closed): {e}"}
+            # ``error_type`` is the exception's class name, for a caller that must
+            # report the failure to a reader it does not trust with ``message``
+            # (the dashboard shows the browser this and logs the message).
+            return {
+                "status": "error",
+                "message": f"save_episode failed (recorder closed): {e}",
+                "error_type": type(e).__name__,
+            }
 
     def clear_episode_buffer(self) -> bool:
         """Discard frames buffered for the current (unsaved) episode.
@@ -1749,7 +1759,10 @@ class DatasetRecorder:
 
         Returns:
             Dict with push status. ``status="error"`` (no Hub call made) when
-            the dataset is empty.
+            the dataset is empty. An error carries ``message`` (the full words)
+            and either ``reason`` (this recorder's own short sentence, for the
+            refusals it decides itself) or ``error_type`` (the exception's class
+            name, when the Hub call raised).
 
         ``private`` selects the published repository's visibility, so it is
         checked against :func:`~strands_robots.utils.boolean_flag_error`
@@ -1763,7 +1776,7 @@ class DatasetRecorder:
         expect to select.
         """
         if flag_error := boolean_flag_error(private, "private", "push_to_hub"):
-            return {"status": "error", "message": flag_error}
+            return {"status": "error", "message": flag_error, "reason": "private is not a bool"}
         if self.frame_count == 0 or self.episode_count == 0:
             msg = (
                 f"refusing to push empty dataset {self.dataset.repo_id} "
@@ -1773,7 +1786,11 @@ class DatasetRecorder:
                 "before push_to_hub."
             )
             logger.error("push_to_hub aborted: %s", msg)
-            return {"status": "error", "message": msg}
+            return {
+                "status": "error",
+                "message": msg,
+                "reason": f"empty dataset ({self.frame_count} frames, {self.episode_count} episodes)",
+            }
         try:
             self.dataset.push_to_hub(tags=tags, private=private)
             logger.info("Dataset pushed to hub: %s", self.dataset.repo_id)
@@ -1785,7 +1802,10 @@ class DatasetRecorder:
             }
         except Exception as e:
             logger.error("push_to_hub failed: %s", e)
-            return {"status": "error", "message": str(e)}
+            # ``reason`` is this recorder's own sentence and ``error_type`` the
+            # exception's class name; ``message`` carries the Hub's words, which a
+            # caller may log but should not hand to a reader it does not trust.
+            return {"status": "error", "message": str(e), "error_type": type(e).__name__}
 
     def sync_to_bucket(
         self,

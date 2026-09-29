@@ -83,7 +83,16 @@ def make_fleet_tool(bridge: Any) -> Any:
                     continue
                 pres = p.get("presence") or {}
                 st = p.get("state") or {}
-                task = st.get("task") or {}
+                task = dict(st.get("task") or {})
+                if "status" not in task:
+                    # #4182: a sim peer reports its rollout as robots.<name>.active, not task.status.
+                    flags = [
+                        bool(v.get("active"))
+                        for v in (st.get("robots") or {}).values()
+                        if isinstance(v, dict) and "active" in v
+                    ]
+                    if flags:
+                        task["status"] = "running" if any(flags) else "idle"
                 cams = list((p.get("cameras") or {}).keys())
                 lines.append(
                     f"- {pid}: type={pres.get('robot_type', '?')} hw_connected={pres.get('connected')} "

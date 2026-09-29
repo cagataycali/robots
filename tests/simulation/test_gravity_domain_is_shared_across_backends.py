@@ -51,10 +51,10 @@ import numpy as np
 import pytest
 
 from strands_robots.simulation import base as sim_base
-from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.simulation.models import SimWorld
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
+from tests.simulation._isaac_engine import isaac_engine
 
 from .test_input_validators_refuse_a_boolean import _BOOLEAN_IDS, _BOOLEANS
 
@@ -234,10 +234,8 @@ def _isaac_gravity_gate(value: Any) -> tuple[bool, str]:
     "world already created" check - an unambiguous "the domain accepted this"
     signal that stops short of building a stage.
     """
-    sim = IsaacSimulation.__new__(IsaacSimulation)
-    sim._lock = threading.RLock()
+    sim = isaac_engine()
     sim._world_created = True
-    sim._config = IsaacConfig()
     result = IsaacSimulation.create_world(sim, gravity=value)
     text = _text(result)
     return "World already created" in text, text
