@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from strands_robots.simulation import create_simulation
-from strands_robots.simulation.base import SimEngine
+from strands_robots.simulation.mjlab.simulation import MjlabEngine
 
 _HAS_MJLAB = importlib.util.find_spec("mjlab") is not None and importlib.util.find_spec("mujoco_warp") is not None
 
@@ -53,8 +54,9 @@ class _BatchedHoldPolicy(_HoldPolicy):
 
 
 @pytest.fixture(scope="module")
-def eng():
+def eng() -> Iterator[MjlabEngine]:
     sim = create_simulation("mjlab", num_envs=6)
+    assert isinstance(sim, MjlabEngine)
     sim.create_world()
     sim.add_robot("so101")
     sim.add_object("cube", shape="box", size=[0.02, 0.02, 0.02], position=[0.25, 0.0, 0.02], mass=0.05)
@@ -63,7 +65,7 @@ def eng():
     sim.cleanup()
 
 
-def test_randomize_physics_draws_per_world_and_is_reproducible(eng: SimEngine) -> None:
+def test_randomize_physics_draws_per_world_and_is_reproducible(eng: MjlabEngine) -> None:
     r1 = eng.randomize(randomize_physics=True, seed=3)
     assert r1["status"] == "success", r1
     j1 = r1["content"][1]["json"]
@@ -86,7 +88,7 @@ def test_randomize_physics_draws_per_world_and_is_reproducible(eng: SimEngine) -
     json.dumps(j1)  # tool-envelope friendly
 
 
-def test_randomize_positions_moves_objects_not_robots(eng: SimEngine) -> None:
+def test_randomize_positions_moves_objects_not_robots(eng: MjlabEngine) -> None:
     r = eng.randomize(randomize_positions=True, position_noise=0.03, seed=5)
     assert r["status"] == "success", r
     off = np.asarray(r["content"][1]["json"]["position_offsets"]["cube"])
@@ -96,19 +98,19 @@ def test_randomize_positions_moves_objects_not_robots(eng: SimEngine) -> None:
     assert "so101" not in r["content"][1]["json"]["position_offsets"]
 
 
-def test_randomize_refuses_unsupported_axes_and_unknown_keywords(eng: SimEngine) -> None:
+def test_randomize_refuses_unsupported_axes_and_unknown_keywords(eng: MjlabEngine) -> None:
     assert eng.randomize(randomize_colors=True)["status"] == "error"
     assert eng.randomize(randomize_lighting=True)["status"] == "error"
     bad = eng.randomize(randomize_physics=True, frictoin_range=(0.5, 1.5))
     assert bad["status"] == "error" and "frictoin_range" in bad["content"][0]["text"]
-    assert eng.randomize(randomize_physics="false")["status"] == "error"
+    assert eng.randomize(randomize_physics="false")["status"] == "error"  # type: ignore[arg-type]
     assert eng.randomize(randomize_physics=True, mass_range=(0.0, 1.0))["status"] == "error"
     noop = eng.randomize()
     assert noop["status"] == "success" and "nothing randomized" in noop["content"][0]["text"]
 
 
 @pytest.mark.parametrize("batched", [False, True])
-def test_vec_rollout_drives_every_world_and_prices_the_batched_path(eng: SimEngine, batched: bool) -> None:
+def test_vec_rollout_drives_every_world_and_prices_the_batched_path(eng: MjlabEngine, batched: bool) -> None:
     from strands_robots.training.mjlab_tasks.vec_eval import vec_rollout
 
     joints = list(eng.robot_joint_names("so101"))
@@ -120,7 +122,7 @@ def test_vec_rollout_drives_every_world_and_prices_the_batched_path(eng: SimEngi
     assert res.summary()["episodes_per_minute"] > 0
 
 
-def test_batched_recorder_flushes_n_worlds_as_n_lerobot_episodes(eng: SimEngine, tmp_path: Path) -> None:
+def test_batched_recorder_flushes_n_worlds_as_n_lerobot_episodes(eng: MjlabEngine, tmp_path: Path) -> None:
     import pyarrow.parquet as pq
 
     from strands_robots.training.mjlab_tasks.vec_eval import BatchedLeRobotRecorder, open_recorder, vec_rollout

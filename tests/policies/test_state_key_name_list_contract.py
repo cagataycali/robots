@@ -843,16 +843,6 @@ def _microduck() -> Any:
     return MicroduckPolicy(onnx_path="alpha_walking.onnx")
 
 
-def _rsl_rl_onnx() -> Any:
-    """A two-joint actor written on the spot with the metadata mjlab stamps."""
-    pytest.importorskip("onnx", reason="onnx needed to write the actor fixture")
-    from strands_robots.policies.rsl_rl_onnx import RslRlOnnxPolicy
-    from tests.policies.rsl_rl_onnx.actor_fixture import write_actor
-
-    path = write_actor(pathlib.Path(tempfile.mkdtemp()) / "actor.onnx", ["joint_pos", "actions"], 4)
-    return RslRlOnnxPolicy(onnx_path=path)
-
-
 # (surface id as classified above, factory, the attribute the setter binds into,
 # the import its constructor needs). A ``None`` attribute means the provider
 # validates without storing; a ``None`` import means it needs no extra.

@@ -40,13 +40,13 @@ from strands_robots.simulation.base import (
     own_keyword_names,
     reject_misspelled_kwargs,
     reject_setup_kwargs,
-    unknown_kwargs_error,
 )
 from strands_robots.simulation.mjlab.randomization import MjlabRandomizationMixin
 from strands_robots.simulation.mjlab.recording import MjlabRecordingMixin
 from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
+    FREE_CAMERA_TOKENS,
     camera_name_error,
     coerce_orientation_quaternion,
     coerce_pose_vector,
@@ -111,19 +111,6 @@ class _ObjectSpec:
     mass: float
     color: tuple[float, float, float, float]
     static: bool
-
-
-_ADD_OBJECT_PARAMS: tuple[str, ...] = (
-    "color",
-    "is_static",
-    "mass",
-    "name",
-    "orientation",
-    "position",
-    "shape",
-    "size",
-    "static",
-)
 
 
 class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
@@ -670,8 +657,10 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
             spec = _RobotSpec(
                 name=name,
                 path=path,
-                position=tuple(pos) if pos else (0.0, 0.0, 0.0),
-                orientation=tuple(quat) if quat else (1.0, 0.0, 0.0, 0.0),
+                position=(float(pos[0]), float(pos[1]), float(pos[2])) if pos else (0.0, 0.0, 0.0),
+                orientation=(float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
+                if quat
+                else (1.0, 0.0, 0.0, 0.0),
                 keyframe=keyframe,
             )
             try:
@@ -748,46 +737,55 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         self,
         name: str,
         shape: str = "box",
-        position: Sequence[float] | None = None,
-        orientation: Sequence[float] | None = None,
-        size: Sequence[float] | None = None,
-        color: Sequence[float] | None = None,
+        position: list[float] | None = None,
+        orientation: list[float] | None = None,
+        size: list[float] | None = None,
+        color: list[float] | None = None,
         mass: float = 0.1,
         is_static: bool | None = None,
-        **kwargs: Any,
+        mesh_path: str | None = None,
+        material: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Add a primitive (box/sphere/cylinder/capsule) as a free or static body to every world.
 
         Parameter order is the one every backend shares, so a positional call
-        written against one engine means the same on this one; ``static`` is
-        accepted as the older spelling of ``is_static``.
+        written against one engine means the same on this one. ``mesh_path``
+        and ``material`` are not supported by the mjlab backend yet; a
+        non-``None`` value is refused loudly rather than dropped (use the MuJoCo
+        backend for mesh objects and textured surfaces).
         """
-        if "static" in kwargs and is_static is None:
-            is_static = bool(kwargs.pop("static"))
-        if err := unknown_kwargs_error("add_object", kwargs, _ADD_OBJECT_PARAMS):
-            return err
+        if mesh_path is not None:
+            return {
+                "status": "error",
+                "content": [{"text": "mjlab backend does not support mesh_path yet; use shape= or the mujoco backend"}],
+            }
+        if material is not None:
+            return {
+                "status": "error",
+                "content": [{"text": "mjlab backend does not support material yet; use color= or the mujoco backend"}],
+            }
         static = bool(is_static)
-        err = entity_name_error("add_object", "name", name)
-        if err:
-            return {"status": "error", "content": [{"text": err}]}
+        msg = entity_name_error("add_object", "name", name)
+        if msg:
+            return {"status": "error", "content": [{"text": msg}]}
         if shape not in _SHAPE_GEOM:
             return {
                 "status": "error",
                 "content": [{"text": f"shape must be one of {sorted(_SHAPE_GEOM)}, got {shape!r}"}],
             }
-        pos, err = coerce_pose_vector("add_object", "position", position, 3)
-        if err:
-            return {"status": "error", "content": [{"text": err}]}
-        quat, err = coerce_orientation_quaternion("add_object", "orientation", orientation)
-        if err:
-            return {"status": "error", "content": [{"text": err}]}
+        pos, msg = coerce_pose_vector("add_object", "position", position, 3)
+        if msg:
+            return {"status": "error", "content": [{"text": msg}]}
+        quat, msg = coerce_orientation_quaternion("add_object", "orientation", orientation)
+        if msg:
+            return {"status": "error", "content": [{"text": msg}]}
         size_t = tuple(float(s) for s in (size or (0.02, 0.02, 0.02)))
         color, _cerr = coerce_rgba("add_object", "color", color)
         if _cerr is not None:
             return {"status": "error", "content": [{"text": _cerr}]}
-        rgba = tuple(float(c) for c in (color or (0.8, 0.2, 0.2, 1.0)))
+        rgba = [float(c) for c in (color or (0.8, 0.2, 0.2, 1.0))]
         if len(rgba) == 3:
-            rgba = (*rgba, 1.0)
+            rgba.append(1.0)
         with self._lock:
             if name in self._robots or name in self._objects:
                 return {"status": "error", "content": [{"text": f"Entity '{name}' already exists"}]}
@@ -795,10 +793,12 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
                 name=name,
                 shape=shape,
                 size=size_t,
-                position=tuple(pos) if pos else (0.0, 0.0, 0.0),
-                orientation=tuple(quat) if quat else (1.0, 0.0, 0.0, 0.0),
+                position=(float(pos[0]), float(pos[1]), float(pos[2])) if pos else (0.0, 0.0, 0.0),
+                orientation=(float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
+                if quat
+                else (1.0, 0.0, 0.0, 0.0),
                 mass=float(mass),
-                color=rgba,
+                color=(rgba[0], rgba[1], rgba[2], rgba[3]),
                 static=bool(static),
             )
             self._dirty = True
@@ -859,7 +859,7 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         if not skip_images:
             for cam in self._cameras:
                 try:
-                    out[cam] = self.render(cam)
+                    out[cam] = self._render_rgb(cam)
                 except Exception as exc:  # pragma: no cover - render backend specific
                     logger.debug("render %s failed: %s", cam, exc)
         return out
@@ -990,9 +990,59 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
             return {"status": "success", "content": [{"text": f"Camera '{name}' added"}]}
 
     def render(
+        self, camera_name: str = "default", width: int | None = None, height: int | None = None
+    ) -> dict[str, Any]:
+        """Render one camera of world 0 to a PNG, in the agent-tool shape every backend shares.
+
+        ``camera_name`` is ``"default"`` (also ``None``/``""``/``"free"``) for the
+        built-in three-quarter view or a camera registered with :meth:`add_camera`.
+
+        Returns:
+            Agent-tool dict with ``status`` and a ``content`` list; on success an
+            ``image`` block carrying PNG bytes plus a ``json`` block with pixel
+            statistics, so the shared ``PolicyRunner`` video pipeline consumes it
+            unchanged. Pixel arrays for recorders come from :meth:`_render_rgb`.
+        """
+        if self._sim is None and not self._robots and not self._objects:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        is_default = camera_name in FREE_CAMERA_TOKENS
+        label = "default" if is_default else camera_name
+        if not is_default and registry_entry(self._cameras, camera_name) is None:
+            return {
+                "status": "error",
+                "content": [{"text": f"Camera '{camera_name}' not found. Available: {sorted(self._cameras)}"}],
+            }
+        try:
+            img = self._render_rgb(None if is_default else camera_name, width, height)
+        except Exception as exc:  # noqa: BLE001 - surface any render failure as a tool error
+            return {"status": "error", "content": [{"text": f"Render failed: {exc}"}]}
+
+        import io
+
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.fromarray(img).save(buffer, format="PNG")
+        h, w = img.shape[:2]
+        return {
+            "status": "success",
+            "content": [
+                {"text": f"{w}x{h} from '{label}' at step {self._step_count}"},
+                {"image": {"format": "png", "source": {"bytes": buffer.getvalue()}}},
+                {
+                    "json": {
+                        "pixel_variance": float(np.var(img)),
+                        "pixel_mean": float(np.mean(img)),
+                        "camera": label,
+                    }
+                },
+            ],
+        }
+
+    def _render_rgb(
         self, camera_name: str | None = None, width: int | None = None, height: int | None = None, env_id: int = 0
     ) -> np.ndarray:
-        """Offscreen RGB of one world through ``mujoco.Renderer`` (env-0 qpos copied from the GPU)."""
+        """Offscreen RGB ``(H, W, 3)`` uint8 of one world through ``mujoco.Renderer`` (its qpos copied from the GPU)."""
         import mujoco
 
         with self._lock:
@@ -1024,7 +1074,7 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
                     # Free cameras take the global vertical FOV; apply the registered one.
                     model.vis.global_.fovy = float(cam_cfg["fov"])
             self._renderer.update_scene(data, camera=cam)
-            return self._renderer.render().copy()
+            return np.asarray(self._renderer.render(), dtype=np.uint8).copy()
 
     # ------------------------------------------------------------------- misc
 

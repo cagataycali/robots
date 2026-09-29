@@ -58,8 +58,10 @@ class MjlabRecordingMixin(DatasetRecordingMixin):
         def robot_action_keys(self, robot_name: str) -> list[str]:
             """Actuator-ordered action keys (concrete on the engine)."""
 
-        def render(self, camera_name: str | None = ..., width: int | None = ..., height: int | None = ...) -> Any:
-            """Type-only stub for the engine-provided render method."""
+        def _render_rgb(
+            self, camera_name: str | None = ..., width: int | None = ..., height: int | None = ..., env_id: int = ...
+        ) -> Any:
+            """Type-only stub for the engine-provided pixel-array render."""
 
     def _recording_state(self) -> dict[str, Any] | None:
         """Engine-owned recording-state dict; ``None`` before ``create_world``."""
@@ -303,7 +305,7 @@ class MjlabRecordingMixin(DatasetRecordingMixin):
             # skip_images); render the declared cameras here, as the Newton hook does.
             for src, safe, w, h in state.get("recording_cameras", []):
                 if safe not in images:
-                    images[safe] = self.render(src, width=w, height=h)
+                    images[safe] = self._render_rgb(src, width=w, height=h)
             dt = getattr(self, "_timestep", None) or 0.0
             state["trajectory"].append(
                 TrajectoryStep(

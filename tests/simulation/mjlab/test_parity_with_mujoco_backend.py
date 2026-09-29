@@ -196,8 +196,11 @@ def test_num_envs_batch_shapes_and_world_zero_is_the_contract():
         pan = e.get_observation_batch("so101")["1"].cpu().numpy()
         assert np.all(np.diff(pan) > 0), pan  # eight worlds, eight different targets
         assert e.get_observation("so101", skip_images=True)["1"] == pytest.approx(float(pan[0]))
-        img = e.render()
+        img = e._render_rgb()
         assert img.shape == (480, 640, 3) and img.dtype == np.uint8
+        shot = e.render()
+        assert shot["status"] == "success", shot
+        assert any("image" in block for block in shot["content"]), shot["content"]
     finally:
         e.destroy()
 

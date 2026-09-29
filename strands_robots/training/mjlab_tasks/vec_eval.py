@@ -55,7 +55,7 @@ class VecRolloutResult:
 
     def summary(self) -> dict[str, Any]:
         """JSON-friendly throughput summary."""
-        out = {
+        out: dict[str, Any] = {
             "num_envs": self.num_envs,
             "ticks": self.ticks,
             "wall_s": round(self.wall_s, 3),

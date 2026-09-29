@@ -305,7 +305,12 @@ def _import_backend_class(name: str) -> type[SimEngine]:
             module = importlib.import_module(module_path)
         except ModuleNotFoundError as exc:
             # Map backend names to their pip extras (extras use "sim-" prefix)
-            _BACKEND_EXTRAS = {"mujoco": "sim-mujoco", "newton": "sim-newton", "isaac": "sim-isaac", "mjlab": "sim-mjlab"}
+            _BACKEND_EXTRAS = {
+                "mujoco": "sim-mujoco",
+                "newton": "sim-newton",
+                "isaac": "sim-isaac",
+                "mjlab": "sim-mjlab",
+            }
             extra = _BACKEND_EXTRAS.get(name, f"sim-{name}")
             raise ImportError(
                 f"Simulation backend {name!r} is declared in the built-in registry "

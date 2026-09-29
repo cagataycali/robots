@@ -14,7 +14,7 @@ mjlab's ``JointPositionActionCfg(use_default_offset=True)``).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -94,7 +94,7 @@ class ReachCommand(CommandTerm):
     def _update_command(self, env_ids: torch.Tensor | None) -> None:
         return
 
-    def _debug_vis_impl(self, visualizer) -> None:  # pragma: no cover - viewer only
+    def _debug_vis_impl(self, visualizer: Any) -> None:  # pragma: no cover - viewer only
         for pos in self.target_pos_w().cpu().numpy():
             visualizer.add_sphere(pos, radius=0.015, color=(1.0, 0.5, 0.0, 0.5))
 
@@ -140,7 +140,7 @@ def reach_success(env: ManagerBasedRlEnv, command_name: str = "reach") -> torch.
 # ---------------------------------------------------------------- env cfg
 
 
-def so101_entity_cfg():
+def so101_entity_cfg() -> Any:
     """The so101 EntityCfg the MjlabEngine builds, reused here verbatim."""
     from strands_robots.assets import resolve_model_path, resolve_robot_name
     from strands_robots.simulation.mjlab.simulation import MjlabEngine, _RobotSpec

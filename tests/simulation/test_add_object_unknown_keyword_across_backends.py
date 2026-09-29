@@ -309,7 +309,12 @@ def _scan_add_object_sinks(root: pathlib.Path) -> tuple[set[tuple[str, str]], li
 #: Every backend package that defines an ``add_object``. ``SpecBuilder`` in the
 #: MuJoCo package takes an already-validated ``SimObject``, so the scan keys on
 #: the backend rather than the class and both MuJoCo definitions collapse here.
-_KNOWN_ADD_OBJECT_BACKENDS = {("isaac", "add_object"), ("mjlab", "add_object"), ("mujoco", "add_object"), ("newton", "add_object")}
+_KNOWN_ADD_OBJECT_BACKENDS = {
+    ("isaac", "add_object"),
+    ("mjlab", "add_object"),
+    ("mujoco", "add_object"),
+    ("newton", "add_object"),
+}
 
 
 class TestNoAddObjectKeywordSinkDrifts:
