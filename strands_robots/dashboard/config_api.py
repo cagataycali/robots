@@ -111,6 +111,52 @@ GATE_BEARING_ENV_KEYS: frozenset[str] = frozenset(
 )
 ENV_VALUE_MAX_LEN = 4096
 
+#: Settings keys that ARE credentials. ``settings.py`` maps each to an env spelling that
+#: ``GATE_BEARING_ENV_KEYS`` refuses on the ``env`` half of the same request body, and the
+#: settings half reached the identical value with no check at all: any admitted session,
+#: the pre-enrolment loopback posture included, could write ``security.auth_token`` to disk,
+#: and :func:`~strands_robots.dashboard.access.caller` honours that bearer independently of
+#: passkey enrolment, so it kept admitting its holder after every passkey was deleted. A
+#: bearer is set on the host (``DASHBOARD_AUTH_TOKEN`` in the dashboard's environment),
+#: never from the page. Clearing one stays page-writable: that is the operator's remedy for
+#: a bearer they did not set. Both ``POST /api/config`` and ``POST /api/settings`` go
+#: through :func:`refuse_settings_credentials`; a test derives this roster from the schema.
+REFUSED_SETTINGS_KEYS: frozenset[tuple[str, str]] = frozenset({("security", "auth_token")})
+
+
+def settings_entry_error(section: str, key: str, value: Any) -> str | None:
+    """Why this settings key/value pair must not reach the store, or None if fine.
+
+    Only credential-bearing keys are refused, and only when the value would SET one:
+    ``None`` and the empty string clear it, which remains the page's own business.
+    """
+    if (section, key) not in REFUSED_SETTINGS_KEYS:
+        return None
+    if value is None or value == "":
+        return None
+    return (
+        f"{section}.{key} is not page-writable: a dashboard bearer is set on the host "
+        "(DASHBOARD_AUTH_TOKEN in the dashboard's environment), never from a settings write"
+    )
+
+
+def refuse_settings_credentials(patch: dict[str, Any]) -> list[str]:
+    """Drop every refused key from *patch* in place and return one reason per key dropped.
+
+    Runs before the store sees the patch, so a refused key is never graded, never
+    compared with the current value and never written; the rest of the patch lands.
+    """
+    errors: list[str] = []
+    for section, values in list(patch.items()):
+        if not isinstance(values, dict):
+            continue
+        for key in list(values):
+            problem = settings_entry_error(section, key, values[key])
+            if problem:
+                errors.append(problem)
+                del values[key]
+    return errors
+
 
 def env_key_gate_bearing(key: str) -> bool:
     """Whether a key is one of the gates this process reads live - never page-writable."""
@@ -526,6 +572,10 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
         values = body.get(section)
         if isinstance(values, dict):
             patch[section] = dict(values)
+    # A credential is not page-writable, whatever section it sits in: refused before the
+    # store sees it, with the env half's reason shape, so the two spellings of one value
+    # (``security.auth_token`` here, ``DASHBOARD_AUTH_TOKEN`` under ``env``) share one rule.
+    errors.extend(refuse_settings_credentials(patch))
 
     # "Reset to default prompt" is an explicit action, not an empty string -
     # an empty prompt field should not silently wipe a customised prompt.
