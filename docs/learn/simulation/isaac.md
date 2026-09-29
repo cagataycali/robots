@@ -39,7 +39,7 @@ sim.destroy()
 
 ## Configuration
 
-`IsaacConfig` fields, with defaults: `num_envs=1`, `device="cuda:0"`, `headless=True`, `physics_dt=1/120`, `rendering_dt=1/30`, `render_mode="headless"`, `gravity=(0, 0, -9.81)`, `ground_plane=True`, `stage_path="/World"`, `nucleus_url=None`, `camera_width=640`, `camera_height=480`, `verbose=False`, `extra={}`. Unknown keywords are rejected (`headles=False` is an error). The legacy `tool_name` and `default_timestep` shortcuts are still accepted.
+`IsaacConfig` fields, with defaults: `num_envs=1`, `device="cuda:0"`, `headless=True`, `physics_dt=1/120`, `rendering_dt=1/30`, `render_mode="headless"`, `gravity=(0, 0, -9.81)`, `ground_plane=True`, `stage_path="/World"`, `nucleus_url=None`, `camera_width=640`, `camera_height=480`, `verbose=False`, `extra={}`. Unknown keywords are rejected (`headles=False` is an error). Legacy `tool_name` and `default_timestep` shortcuts still work.
 
 ## Differences from MuJoCo
 
@@ -55,7 +55,7 @@ sim.destroy()
 
 ## Threading
 
-Kit only updates on the thread that created `SimulationApp`; a worker-thread call with nothing pumping is refused. The agent-driven shape:
+Kit only updates on the thread that created `SimulationApp`; a worker-thread call with nothing pumping is refused:
 
 ```python
 import threading
