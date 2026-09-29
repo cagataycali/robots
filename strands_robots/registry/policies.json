@@ -5,7 +5,10 @@
       "class": "MockPolicy",
       "description": "Sinusoidal test actions (no deps)",
       "requires": [],
-      "config_keys": [],
+      "config_keys": [
+        "amplitude",
+        "seed"
+      ],
       "defaults": {},
       "shorthands": [
         "mock",
