@@ -1010,9 +1010,32 @@ _KEY_BITS = 2048
 
 
 def _write_private(path: Path, data: str) -> None:
-    """Write *data* to *path* created owner-only (0600), replacing any old file."""
+    """Write *data* to *path* created owner-only (0600), replacing any old regular file.
+
+    The file is opened with ``O_NOFOLLOW`` (and refused up front when the path
+    is a symlink, for platforms without the flag), the posture the CA download
+    already takes: a symlink planted at ``<thing>.private.key`` before
+    provisioning would otherwise receive the new private key wherever it
+    points, and a planted ``<thing>.cert.pem`` would let an attacker's
+    certificate stand in for the issued one. A pre-existing regular file is
+    replaced in place, which is how a re-run rotates the credential.
+
+    Raises:
+        RuntimeError: When *path* is a symlink.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if path.is_symlink():
+        raise RuntimeError(
+            f"{path} is a symlink (target={os.readlink(path)!r}); refusing to write a credential through it. "
+            "Credential files must be regular files in the cert directory. Remove the link and re-run."
+        )
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow, 0o600)
+    except OSError as exc:
+        # ELOOP is what O_NOFOLLOW raises when the link appeared between the
+        # check above and the open; report it in the same words.
+        raise RuntimeError(f"{path}: refusing to write a credential through a symlink ({exc})") from exc
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(data)
     try:

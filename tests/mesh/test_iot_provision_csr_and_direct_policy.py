@@ -174,6 +174,55 @@ class TestCsrIssuance:
         assert oct(key.stat().st_mode & 0o777) == "0o600"
 
 
+class TestCredentialWritesDoNotFollowSymlinks:
+    """A planted symlink at a credential path is refused, and its target is untouched."""
+
+    def test_a_symlinked_key_path_is_refused_before_any_key_is_written(self, tmp_path):
+        target = tmp_path / "elsewhere.txt"
+        target.write_text("untouched")
+        link = tmp_path / "thing-x.private.key"
+        link.symlink_to(target)
+        with pytest.raises(RuntimeError, match="symlink"):
+            _build_csr("thing-x", link)
+        assert target.read_text() == "untouched"
+        assert link.is_symlink()
+
+    def test_a_symlinked_cert_path_is_refused_and_the_issued_pem_never_lands_elsewhere(self, iot, tmp_path):
+        target = tmp_path / "elsewhere.pem"
+        target.write_text("untouched")
+        cert_link = tmp_path / "so101-l.cert.pem"
+        cert_link.symlink_to(target)
+        with pytest.raises(RuntimeError, match="symlink"):
+            _create_cert(iot, cert_link, tmp_path / "so101-l.private.key", "so101-l")
+        assert target.read_text() == "untouched"
+
+    def test_a_regular_file_is_replaced_in_place(self, tmp_path):
+        key = tmp_path / "k.pem"
+        key.write_text("old")
+        prov._write_private(key, "new")
+        assert key.read_text() == "new"
+        assert oct(key.stat().st_mode & 0o777) == "0o600"
+
+    def test_the_open_uses_nofollow(self):
+        import ast
+        import inspect
+
+        src = inspect.getsource(prov._write_private)
+        opens = [
+            n
+            for n in ast.walk(ast.parse(textwrap_dedent(src)))
+            if isinstance(n, ast.Call) and ast.unparse(n.func) == "os.open"
+        ]
+        assert opens, "no os.open in _write_private"
+        assert all("nofollow" in ast.unparse(c) for c in opens)
+
+
+def textwrap_dedent(src: str) -> str:
+    import textwrap
+
+    return textwrap.dedent(src)
+
+
 class TestBothBuildersAgree:
     def test_cryptography_builder(self, tmp_path):
         pytest.importorskip("cryptography")
