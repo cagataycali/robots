@@ -21,7 +21,6 @@ Wire contract (verified against the server source):
 
 from __future__ import annotations
 
-import inspect
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -105,18 +104,15 @@ class _RawWebsocketTransport:
         headers = {"Authorization": f"Api-Key {self.api_key}"} if self.api_key else None
         # ``Any`` for the same reason ``self._ws`` is declared ``Any``: the frames
         # go straight to the vendored packer, which treats them as opaque.
-        #
-        # This connection outlives the call that opened it (one dial, many
-        # exchanges), which is the "legacy" shape of ``connect``: from
-        # websockets 17.1 the bare call warns on every dial that the context
-        # manager form will become the default, and ``legacy=True`` is the
-        # documented way to keep this shape without the warning. 17.0, the
-        # extra's floor, has neither the warning nor the keyword, so the keyword
-        # is passed only where ``connect`` declares it.
-        connect_kwargs: dict[str, Any] = {"compression": None, "max_size": None, "additional_headers": headers}
-        if "legacy" in inspect.signature(_wsc.connect).parameters:
-            connect_kwargs["legacy"] = True
-        ws: Any = _wsc.connect(self.uri, **connect_kwargs)
+        # ``legacy=True`` is the supported spelling of "return the connection
+        # directly": this transport holds one connection across every
+        # ``infer`` call, which no ``with connect(...)`` block can express.
+        # From websockets 17.1 a connection obtained without the flag warns
+        # (``DeprecationWarning``) on its first read, and connect() is announced
+        # to change behaviour once that period ends. The flag is what sets the
+        # websockets floor to 17.1 (17.0 does not accept it), which the test
+        # suite pins against pyproject.
+        ws: Any = _wsc.connect(self.uri, compression=None, max_size=None, additional_headers=headers, legacy=True)
         # ``self._ws`` is published only once the handshake has been consumed.
         # Assigned before the read, a failed handshake left a live connection
         # cached behind the error it had just raised, with the metadata frame
@@ -227,7 +223,13 @@ class _RawWebsocketTransport:
         return self._decode(resp, "action chunk")
 
     def reset(self) -> None:
-        pass
+        """No-op: the RoboLab wire protocol carries no reset message.
+
+        The protocol is connect, metadata frame, then observation/action pairs
+        (mirroring OpenPI's ``WebsocketClientPolicy.reset``, which is also
+        empty), so there is nothing to send. Kept so the client and the
+        transport share one surface.
+        """
 
 
 class Cosmos3WebsocketClient:
@@ -397,11 +399,14 @@ class Cosmos3WebsocketClient:
             raise ConnectionError(self._closed_by_peer(e)) from e
 
     def reset(self) -> None:
-        """Best-effort per-episode reset hint to the server.
+        """Per-episode reset on the client side only; nothing reaches the server.
 
-        The raw transport is stateless on the client side - reset is a
-        soft hint, never a correctness requirement (mirrors
-        ``Gr00tPolicy.reset``). Any failure is swallowed.
+        The RoboLab wire protocol has no reset message, so the transport's
+        ``reset`` is a no-op and the server's per-episode RNG is not touched
+        from here (``Cosmos3Policy.reset`` documents what that means for
+        reproducibility). The call still establishes the connection when none
+        is open, so a server that is absent at episode start is reported on
+        the first ``infer`` rather than here; any failure here is swallowed.
         """
         try:
             client = self._ensure_client()

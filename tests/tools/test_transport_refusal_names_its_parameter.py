@@ -9,7 +9,7 @@ caller happens to name its parameter ``port``.
 
 That is not a hypothetical constraint on a private helper. Its own docstring
 says it is *shared* with
-:class:`~strands_robots.mesh.rosbridge_robot.RosbridgeRobot` precisely so the
+:class:`~strands_robots.drivers.ros.rosbridge_robot.RosbridgeRobot` precisely so the
 tool and the bridge "cannot disagree about which ports it can carry" - so a
 third caller is anticipated by design, and a caller whose parameter is spelled
 anything else would be handed a refusal naming a parameter it does not have,
@@ -193,7 +193,7 @@ class TestTheShippingCallersSeeNoChange:
     def test_every_shipping_call_site_passes_the_literal_port(self) -> None:
         """Why the change is text-identical in production, read off the source."""
         spellings = set()
-        for module in (ur, __import__("strands_robots.mesh.rosbridge_robot", fromlist=["x"])):
+        for module in (ur, __import__("strands_robots.drivers.ros.rosbridge_robot", fromlist=["x"])):
             tree = ast.parse(inspect.getsource(module))
             for node in ast.walk(tree):
                 if (

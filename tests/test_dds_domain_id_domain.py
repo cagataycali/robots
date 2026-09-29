@@ -36,13 +36,13 @@ import pytest
 import strands_robots
 import strands_robots.hardware_rtps_bridge as rtps_mod
 from strands_robots.drivers.booster import BoosterDriver
-from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_ros_bridge import HardwareRosBridge
 from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
 from strands_robots.ros_telemetry import RosTelemetryBridge
 from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import MAX_DDS_DOMAIN_ID, dds_domain_id_error
 from tests._blocked_module import blocked
+from tests._hardware_robot import hardware_robot_on
 
 #: Values that cannot name a DDS domain, one per way of missing the domain.
 UNUSABLE_DOMAINS: list[Any] = [
@@ -85,11 +85,10 @@ def _refuses(fn: Any, value: Any) -> bool:
 def _hardware_robot(value: Any) -> None:
     """Drive the hardware ``Robot``'s domain surface without opening a bus.
 
-    ``_init_ros_bridge`` is a plain method precisely so a ``__new__``-built
-    double can call it, which is also how the existing bridge tests reach it.
+    ``_init_ros_bridge`` is a plain method, so a robot built on no device can
+    call it again, which is also how the existing bridge tests reach it.
     """
-    robot = HwRobot.__new__(HwRobot)
-    robot.tool_name_str = "arm"
+    robot = hardware_robot_on(None, tool_name="arm")
     robot._init_ros_bridge(ros2_bridge=False, ros2_domain=value)
 
 

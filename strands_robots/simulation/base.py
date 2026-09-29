@@ -26,10 +26,11 @@ import logging
 import math
 import numbers
 import os
+import re
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, SupportsFloat, cast
+from typing import TYPE_CHECKING, Any, ClassVar, SupportsFloat, cast
 
 if TYPE_CHECKING:
     import numpy as np
@@ -37,23 +38,20 @@ if TYPE_CHECKING:
     from strands_robots.policies import Policy
     from strands_robots.rendering import CameraParams
 
-# PolicyRunner and VideoConfig are used by run_policy / replay / eval_policy.
-# We could defer these with inline lazy imports (and historically did), but
-# ``simulation.policy_runner`` only imports `SimEngine` from base under
-# TYPE_CHECKING so
-# the runtime cycle doesn't actually exist. Keep the imports at module level
-# to break the AST-visible cycle that static analysers flag.
-#
-# Note (#191): we deliberately do NOT import ``OnFrame`` here, even under
-# ``TYPE_CHECKING`` - CodeQL's ``py/unsafe-cyclic-import`` rule walks
-# ``TYPE_CHECKING`` blocks too and would flag the static cycle (
-# ``simulation.policy_runner`` imports SimEngine from base under TYPE_CHECKING,
-# so importing OnFrame from policy_runner here closes the loop in the
-# AST). Instead, we reference ``OnFrame`` in the ``evaluate_benchmark``
-# signature as a *string* annotation; ``from __future__ import
-# annotations`` (already in effect) makes that a no-op at runtime.
+# ``VideoConfig`` lives in ``simulation.video_config``, below both this module
+# and ``simulation.policy_runner``, so it can be named here at module level.
+# ``PolicyRunner`` itself is imported inside the four methods that construct
+# one (``run_policy``, ``replay``, ``eval_policy``, ``evaluate_benchmark``):
+# ``policy_runner`` needs ``SimEngine`` as an annotation, so a module-level
+# import of it from here would close an import-time cycle (CodeQL
+# ``py/unsafe-cyclic-import`` walks ``TYPE_CHECKING`` blocks too, which is also
+# why ``OnFrame`` is a string annotation on ``evaluate_benchmark`` rather than
+# an import). The import-cycle pin keeps this module free of a module-level
+# import of ``policy_runner``.
+from strands_robots.simulation import capabilities as _caps
 from strands_robots.simulation.observers import RunPolicyObserver
-from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
+from strands_robots.simulation.seeds import MAX_EVAL_SEED, randomization_seed_error
+from strands_robots.simulation.video_config import VideoConfig
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
     boolean_flag_error,
@@ -69,6 +67,7 @@ from strands_robots.utils import (
     sequence_length,
 )
 
+_VENDOR_CAPABILITY = re.compile(r"[a-z][a-z0-9_]*:[a-z0-9_][a-z0-9_.-]*")
 logger = logging.getLogger(__name__)
 
 
@@ -636,87 +635,6 @@ verb's promotion to this ABC reach the implementation and not the
 advertisement.
 """
 
-MAX_EVAL_SEED = 2**32 - 1
-
-
-def randomization_seed_error(
-    value: Any, context: str, *, max_seed: int | None = None, allow_none: bool = True
-) -> str | None:
-    """Return why a value cannot seed a reproducible randomization stream.
-
-    The seed reaches ``numpy.random.default_rng``, which accepts only
-    non-negative integers (and a few RNG objects the ``int | None`` annotations
-    on these methods do not advertise). A float or string seed raises there -
-    on the sensor-noise path not until the first observation is drawn, long
-    after the configuring call reported success - so it is rejected at the call
-    that supplied it.
-
-    Two families share this domain, and they share it because the failure is
-    the same: the ``seed`` of ``randomize`` / ``set_obs_noise``, which drives
-    the domain-randomization streams, and the ``seed`` of a policy rollout or
-    evaluation (``run_policy`` / ``eval_policy`` / ``start_policy`` /
-    ``evaluate_benchmark``), which pins the client RNGs a stochastic policy
-    samples from. The name reads for the first family and is accurate for both:
-    a rollout seed exists precisely to make the policy's randomization
-    reproducible.
-
-    Their appliers are not equally wide, so the accepted domain is not either.
-    ``randomize`` / ``set_obs_noise`` reach ``default_rng``, which takes a
-    non-negative integer of any width. A rollout seed is applied through
-    :func:`~strands_robots.simulation.policy_runner.set_eval_seed`, which also
-    reseeds the legacy NumPy global RNG (``numpy.random.seed``) - the one most
-    policies draw from - and that refuses anything above :data:`MAX_EVAL_SEED`.
-    ``max_seed`` carries that ceiling, so the rollout surfaces refuse a value
-    they could not apply while the randomization surfaces keep the width they
-    can honor. One rule with an explicit bound per destination is what stops
-    the accepted domain drifting from the applier in either direction.
-
-    ``allow_none`` is the same idea at the other end of the domain. ``None`` is
-    a legitimate *parameter* value for most callers - it selects fresh entropy
-    for ``randomize`` / ``set_obs_noise`` and means "do not seed" at the rollout
-    facades - but it is not a *seed*, so an applier that has to hand one to an
-    RNG cannot honor it: ``random`` and NumPy would reseed from entropy while
-    ``torch.manual_seed`` refuses it, leaving a process-wide RNG side effect on
-    a rollout that asked for none. ``allow_none=False`` refuses it there and
-    drops ``None`` from the messages, so the reason a caller is given always
-    describes the domain that caller actually has.
-
-    Args:
-        value: The candidate seed (``None`` selects fresh entropy).
-        context: Method name to prefix the message with.
-        max_seed: Largest value the caller's applier can honor, or ``None``
-            when the non-negative-integer rule is the only bound.
-        allow_none: Whether ``None`` is a value this caller can honor. True for
-            a parameter where it selects fresh entropy or means "do not seed";
-            False for an applier that has to hand a seed to an RNG, which has
-            nothing to apply. When False the messages stop advertising ``None``
-            too, so a caller is never offered a value this destination refuses.
-
-    Returns:
-        ``None`` when the seed is usable, otherwise the reason as a string.
-    """
-    none_clause = " or None" if allow_none else ""
-    entropy_hint = " (None draws fresh entropy)" if allow_none else ""
-    if value is None:
-        if allow_none:
-            return None
-        return (
-            f"{context}: seed is required; None is the absence of a seed, not a seed to apply. "
-            f"To leave the RNGs untouched, do not call {context} - reseeding them from entropy "
-            "is a global side effect an unseeded rollout must not acquire."
-        )
-    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
-        return f"{context}: seed must be a non-negative integer{none_clause}, got {refusal_repr(value)}{entropy_hint}"
-    if int(value) < 0:
-        return f"{context}: seed must be a non-negative integer{none_clause}, got {refusal_repr(value)}{entropy_hint}"
-    if max_seed is not None and int(value) > max_seed:
-        return (
-            f"{context}: seed must be an integer in [0, {max_seed}]{none_clause}, got {refusal_repr(value)} "
-            "(a rollout seed is applied to the legacy NumPy global RNG, which refuses a larger value)"
-        )
-    return None
-
-
 _NON_FINITE_ACTION_REASON = (
     "A non-finite value is not clamped into the actuator's control range - the "
     "integrator has no usable target for it. On MuJoCo the physics step is "
@@ -978,6 +896,52 @@ class SimEngine(ABC):
     # subclasses and test doubles need not thread ``super().__init__()``
     # through (the same constraint :meth:`_init_ros_bridge` documents).
     _init_complete: bool = False
+
+    # Declared capability names (frozen at class creation); None derives them.
+    CAPABILITIES: ClassVar[frozenset[str] | None] = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Reject a ``CAPABILITIES`` declaration the class cannot honour.
+
+        Args:
+            **kwargs: Forwarded to the next ``__init_subclass__`` in the MRO.
+
+        Raises:
+            TypeError: The declaration is not a collection of str names, lacks a
+                core name, holds an unknown name that is not ``vendor:name``, or
+                or claims an optional capability whose method is the base stub.
+        """
+        super().__init_subclass__(**kwargs)
+        declared = cls.__dict__.get("CAPABILITIES")
+        if declared is not None:
+            if isinstance(declared, str) or not all(isinstance(name, str) for name in declared):
+                raise TypeError(f"{cls.__name__}.CAPABILITIES must be a collection of str names, got {declared!r}")
+            cls.CAPABILITIES = declared = frozenset(declared)
+            if missing_core := set(_caps.CORE_CAPABILITIES) - declared:
+                raise TypeError(f"{cls.__name__}.CAPABILITIES lacks the core capabilities {sorted(missing_core)}")
+            for name in declared:
+                if name not in _caps.KNOWN_CAPABILITIES and not _VENDOR_CAPABILITY.fullmatch(name):
+                    raise TypeError(f"{cls.__name__}.CAPABILITIES: unknown capability {name!r}, not 'vendor:name'")
+        # The member checks run against the effective (possibly inherited)
+        # declaration, so a subclass cannot revert a member its parent claims.
+        for name in getattr(cls, "CAPABILITIES", None) or ():
+            method = _caps.OPTIONAL_CAPABILITY_METHODS.get(name)
+            impl = getattr(cls, method, None) if method else None
+            if method and (impl is getattr(SimEngine, method) or not callable(impl)):
+                raise TypeError(f"{cls.__name__}.CAPABILITIES claims {name!r} but does not override {method}()")
+
+    def capabilities(self) -> frozenset[str]:
+        """Return ``CAPABILITIES``, or derive it: the default set plus each overridden optional method.
+
+        Returns:
+            Frozen set of names from :mod:`strands_robots.simulation.capabilities`.
+        """
+        declared = getattr(type(self), "CAPABILITIES", None)
+        if declared is not None:
+            return frozenset(declared)
+        stubs = {c: getattr(SimEngine, m) for c, m in _caps.OPTIONAL_CAPABILITY_METHODS.items()}
+        optional = {c for c, stub in stubs.items() if getattr(type(self), stub.__name__, stub) is not stub}
+        return _caps.DEFAULT_CAPABILITIES | optional
 
     def _init_ros_bridge(self, *, ros2_bridge: bool = False, ros2_domain: int = 0) -> None:
         """Initialize the optional ROS 2 telemetry bridge state.
@@ -3634,6 +3598,8 @@ class SimEngine(ABC):
                 ],
             }
 
+        from strands_robots.simulation.policy_runner import PolicyRunner
+
         try:
             runner = PolicyRunner(self)
 
@@ -3697,7 +3663,6 @@ class SimEngine(ABC):
             # episodes. Replaces the brittle manual
             # ``for _ in range(n): run_policy(); save_episode(); reset()`` loop.
             return self._run_episodes(
-                runner,
                 robot_name,
                 policy,
                 instruction=instruction,
@@ -4073,7 +4038,6 @@ class SimEngine(ABC):
 
     def _run_episodes(
         self,
-        runner: PolicyRunner,
         robot_name: str,
         policy: Policy,
         *,
@@ -4112,6 +4076,9 @@ class SimEngine(ABC):
         predicate hit (or budget), and its dataset episode is flushed with
         exactly the frames captured up to that stop.
         """
+        from strands_robots.simulation.policy_runner import PolicyRunner
+
+        runner = PolicyRunner(self)
         episodes: list[dict[str, Any]] = []
         episodes_saved = 0
         total_steps = 0
@@ -5153,6 +5120,7 @@ class SimEngine(ABC):
         Override per backend for optimised replay (e.g. direct ctrl
         writes) only when measured necessary.
         """
+        from strands_robots.simulation.policy_runner import PolicyRunner
 
         return PolicyRunner(self).replay(
             repo_id,
@@ -5565,6 +5533,8 @@ class SimEngine(ABC):
         if controller_refusal is not None:
             return {"status": "error", "content": [{"text": controller_refusal}]}
 
+        from strands_robots.simulation.policy_runner import PolicyRunner
+
         try:
             result = PolicyRunner(self).evaluate(
                 resolved_robot,
@@ -5608,11 +5578,13 @@ class SimEngine(ABC):
         supported = getattr(spec, "supported_robots", None)
         if not supported or not isinstance(supported, list | tuple):
             return None
+        from strands_robots.simulation.benchmark import robot_model_is_supported  # noqa: PLC0415
+
         world = getattr(self, "_world", None)
         robots = getattr(world, "robots", None)
         robot_obj = robots.get(robot_name) if isinstance(robots, dict) else None
         data_config = getattr(robot_obj, "data_config", None)
-        if data_config is None or data_config in supported:
+        if data_config is None or robot_model_is_supported(data_config, supported):
             return None
         loadable = list(supported)
         return {
@@ -5999,6 +5971,8 @@ class SimEngine(ABC):
         )
         if controller_refusal is not None:
             return {"status": "error", "content": [{"text": controller_refusal}]}
+
+        from strands_robots.simulation.policy_runner import PolicyRunner
 
         try:
             result = PolicyRunner(self).evaluate(
@@ -6628,6 +6602,19 @@ class SimEngine(ABC):
 
     # Discovery / introspection
 
+    def _described_capabilities(self) -> list[str] | None:
+        """``capabilities()`` for ``describe()``, or ``None`` when it cannot answer.
+
+        A third-party backend may already define its own ``capabilities`` with
+        another shape, or one that raises; ``describe()`` reports ``None`` for it
+        rather than failing, so the "call this first" entry point never crashes.
+        """
+        try:
+            return sorted(self.capabilities())
+        except Exception:  # noqa: BLE001 - a foreign member of this name may raise anything; describe() is advisory
+            logger.debug("%s.capabilities() could not be read for describe()", type(self).__name__, exc_info=True)
+            return None
+
     def describe(self) -> dict[str, Any]:
         """Return a machine-readable summary of this engine's live contract.
 
@@ -6636,7 +6623,7 @@ class SimEngine(ABC):
         in a single call, instead of guessing method names.
 
         Returns:
-            Plain dict with keys: robots, cameras, methods, note.
+            Plain dict with keys: robots, capabilities, cameras, methods, note.
         """
         methods: dict[str, str] = {
             "get_robot_state": "(robot_name: str) -> dict",
@@ -6807,6 +6794,7 @@ class SimEngine(ABC):
                 methods.pop(optional, None)
         return {
             "robots": self.list_robots(),
+            "capabilities": self._described_capabilities(),
             "cameras": [],  # backends override to list camera names
             "methods": methods,
             "note": (

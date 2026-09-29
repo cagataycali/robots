@@ -32,7 +32,6 @@ methods (e.g. MuJoCo acquires a lock inside ``send_action`` / ``step``).
 from __future__ import annotations
 
 import contextlib
-import difflib
 import functools
 import logging
 import math
@@ -44,7 +43,6 @@ import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextvars import ContextVar
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -73,7 +71,6 @@ from strands_robots.utils import (
     optional_callable_error,
     positive_count_error,
     positive_finite_number_error,
-    positive_whole_number_error,
     process_rss_mb,
     refusal_container_repr,
 )
@@ -86,6 +83,8 @@ if TYPE_CHECKING:
 
 from strands_robots.simulation.models import TrajectoryStep
 from strands_robots.simulation.safe_output import validate_output_path, video_sandbox_args
+from strands_robots.simulation.seeds import MAX_EVAL_SEED, randomization_seed_error
+from strands_robots.simulation.video_config import VideoConfig
 
 logger = logging.getLogger(__name__)
 
@@ -146,12 +145,6 @@ def set_eval_seed(seed: int) -> None:
     installs that don't have torch (e.g. ``policy_provider="mock"``
     smoke tests).
     """
-    # Local import: ``simulation.base`` imports this module at module level, so
-    # reaching the
-    # shared domain from here has to stay deferred - the same convention this
-    # module already uses for simulation.benchmark / .recording / .predicates.
-    from strands_robots.simulation.base import MAX_EVAL_SEED, randomization_seed_error
-
     # This is public API (exported via ``__all__``) and documented for standalone
     # callers, so the bound is enforced where it is owned rather than only at the
     # facades one layer up: NumPy's own "Seed must be between 0 and 2**32 - 1"
@@ -172,7 +165,7 @@ def set_eval_seed(seed: int) -> None:
 
         _np.random.seed(seed)
     except ImportError:
-        pass
+        pass  # optional: no numpy, nothing of it to seed
     try:
         import torch as _torch
 
@@ -182,7 +175,7 @@ def set_eval_seed(seed: int) -> None:
         _torch.backends.cudnn.deterministic = True
         _torch.backends.cudnn.benchmark = False
     except ImportError:
-        pass
+        pass  # optional: no torch, nothing of it to seed
 
 
 # Hook signature: called every control step after send_action.
@@ -665,254 +658,6 @@ def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
         except Exception:
             return None
     return None
-
-
-# Canonical :class:`VideoConfig` field -> the dict keys accepted for it, canonical
-# key first followed by the legacy/tool_spec aliases. Single source of truth for
-# both the schema check (``VideoConfig.validation_error``) and the value lookup
-# (``VideoConfig.from_dict``), so the accepted set cannot drift between the two.
-_VIDEO_KEY_ALIASES: dict[str, tuple[str, ...]] = {
-    "path": ("path", "record_video", "output_path"),
-    "fps": ("fps", "video_fps"),
-    "camera": ("camera", "video_camera", "camera_name"),
-    "width": ("width", "video_width"),
-    "height": ("height", "video_height"),
-}
-
-_VIDEO_ACCEPTED_KEYS: tuple[str, ...] = tuple(sorted(key for aliases in _VIDEO_KEY_ALIASES.values() for key in aliases))
-
-
-def _video_values_agree(first: Any, second: Any) -> bool:
-    """Whether two spellings of one ``video`` field carry the same value.
-
-    Args:
-        first: Value carried by the earlier-listed spelling.
-        second: Value carried by the later one.
-
-    Returns:
-        ``True`` when the two are equal, so resolving the field discards
-        nothing. A pair whose equality is not a single truth value (an array)
-        counts as disagreeing: the discard would be real either way, and naming
-        both keys is the answer a caller can act on.
-    """
-    try:
-        return bool(first == second)
-    except (TypeError, ValueError):
-        return False
-
-
-@dataclass(frozen=True)
-class VideoConfig:
-    """Configuration for optional MP4 recording during :meth:`PolicyRunner.run`.
-
-    Consolidates the five formerly-flat video parameters on
-    :meth:`SimEngine.run_policy` into one typed object. Recording is an
-    opt-in feature - if ``path`` is falsy, no recording occurs and the
-    other fields are ignored.
-
-    Attributes:
-        path: Output MP4 path. ``None``/empty string → recording disabled.
-            LLM-supplied, so it is validated (no ``..`` traversal, backslash
-            separators, shell metacharacters, or symlinked target) before a
-            writer is opened; set ``STRANDS_ROBOTS_VIDEO_ROOT`` to confine it
-            to a sandbox.
-        fps: Frames per second to *request*. Capped at ``control_frequency``
-            when it would exceed it, so the rollout always plays back at
-            real time (a rollout renders at most one frame per control
-            step and cannot be up-sampled). The rate the MP4 was actually
-            written at is :attr:`_RolloutVideoWriter.write_fps`, reported as
-            ``video_fps`` in the :meth:`PolicyRunner.run` result - read that,
-            not this, to know how the file on disk plays.
-        camera: Camera name to render from. ``None`` → backend default.
-        width: Render width in pixels.
-        height: Render height in pixels.
-    """
-
-    path: str | None = None
-    fps: int = 30
-    camera: str | None = None
-    width: int = 640
-    height: int = 480
-
-    @property
-    def enabled(self) -> bool:
-        """Whether recording is on: ``True`` iff an output ``path`` was set.
-
-        The other fields (``fps``, ``camera``, ``width``, ``height``) are
-        ignored when this is ``False`` -- a falsy ``path`` opts the whole
-        rollout out of MP4 capture.
-        """
-        return bool(self.path)
-
-    @staticmethod
-    def _pick(d: dict[str, Any], field: str, default: Any = None) -> Any:
-        """First present, non-``None`` value among ``field``'s accepted keys.
-
-        Looks the canonical key up first, then the legacy aliases. Two
-        spellings that carry DIFFERENT values are refused by
-        :meth:`_alias_conflict_error` before this runs, so no value reachable
-        here is discarded.
-        Membership - not truthiness - decides: a caller-supplied ``0`` is
-        returned as ``0`` (and rejected by :meth:`validation_error`) instead of
-        collapsing into ``default`` the way an ``or`` chain would.
-
-        Args:
-            d: The caller's video-config dict.
-            field: Canonical field name (a key of the alias map).
-            default: Returned when no accepted key carries a value.
-
-        Returns:
-            The caller's value, or ``default``.
-        """
-        for key in _VIDEO_KEY_ALIASES[field]:
-            value = d.get(key)
-            if value is not None:
-                return value
-        return default
-
-    @staticmethod
-    def _positive_int_error(value: Any, key: str) -> str | None:
-        """Error text when a ``video`` dict value is not a positive whole number.
-
-        Thin binding of the shared frame/pixel-count domain
-        (:func:`positive_whole_number_error`) to the ``video:`` message prefix,
-        so this dict schema and the plain-MP4 recorder's keyword parameters
-        cannot drift apart on what counts as a usable ``fps`` / ``width`` /
-        ``height``.
-
-        Args:
-            value: The caller-supplied value.
-            key: The dict key it came from, used in the message.
-
-        Returns:
-            An error message, or ``None`` when the value is usable.
-        """
-        return positive_whole_number_error(value, key, "video")
-
-    @classmethod
-    def _alias_conflict_error(cls, d: dict[str, Any]) -> str | None:
-        """Error text when two spellings of one field carry different values.
-
-        :meth:`_pick` resolves a field by taking the first spelling that carries
-        a value, so a dict naming two of them honors one and discards the other
-        - the silent drop this schema exists to refuse, reached through keys it
-        accepts. A camera named twice recorded the rollout from one of the two
-        views under ``status="success"``; a path named twice wrote one file and
-        left the other absent. Two spellings carrying the SAME value discard
-        nothing and are accepted.
-
-        Args:
-            d: The caller's video-config dict, already known to hold only
-                accepted keys.
-
-        Returns:
-            A message naming both spellings and their values, or ``None`` when
-            no field is spelled twice with a disagreement.
-        """
-        for field, aliases in _VIDEO_KEY_ALIASES.items():
-            carried = [(key, d[key]) for key in aliases if d.get(key) is not None]
-            if len(carried) < 2:
-                continue
-            winner, kept = carried[0]
-            for key, value in carried[1:]:
-                if not _video_values_agree(kept, value):
-                    return (
-                        f"video: {winner!r} and {key!r} are both spellings of {field}, and they "
-                        f"disagree ({kept!r} vs {value!r}); {winner!r} wins, so {key!r} would be "
-                        "discarded. Pass one spelling of it."
-                    )
-        return None
-
-    @classmethod
-    def validation_error(cls, d: Any) -> str | None:
-        """Error text when ``d`` is not a video config this class can honor.
-
-        Recording options arrive as a free-form dict (LLM tool call or direct
-        API), so a mistyped key has no signature to bounce off. Silently
-        ignoring one is the worst outcome: ``{"filename": "/tmp/a.mp4"}``
-        leaves ``path`` unset and the rollout reports ``status="success"``
-        with no MP4 anywhere, and ``{"path": p, "resolution": [320, 240]}``
-        records at the default 640x480 while the caller believes otherwise.
-        Two accepted spellings of one field are the same drop wearing an
-        accepted key: ``{"camera": "top", "camera_name": "wrist"}`` recorded
-        from ``top`` while the caller had also named ``wrist``, and ``{"path":
-        a, "output_path": b}`` wrote ``a`` and left ``b`` absent. This rejects
-        any key outside the accepted set (with a closest-match hint), any pair
-        of spellings that disagree about one field, and any known key whose
-        value cannot be honored.
-
-        Args:
-            d: The caller's ``video`` argument. ``None`` (recording off) and an
-                empty dict are valid.
-
-        Returns:
-            An error message describing the first problem found, or ``None``
-            when the config is usable.
-        """
-        if d is None:
-            return None
-        if not isinstance(d, dict):
-            return f"video must be a dict of recording options, got {type(d).__name__}."
-        accepted = ", ".join(_VIDEO_ACCEPTED_KEYS)
-        for key in d:
-            if key in _VIDEO_ACCEPTED_KEYS:
-                continue
-            # Match case-insensitively so "FPS"/"Path" suggest their canonical
-            # spelling; the cutoff is deliberately tight so an unrelated key
-            # ("filename", "resolution") gets the accepted list rather than a
-            # misleading nearest-neighbour.
-            close = difflib.get_close_matches(str(key).lower(), _VIDEO_ACCEPTED_KEYS, n=1, cutoff=0.7)
-            hint = f" Did you mean {close[0]!r}?" if close else ""
-            return f"video: unknown key {key!r}.{hint} Accepted keys: {accepted}."
-        # Two spellings of one field: the collision is reported rather than
-        # resolved, for the reason an unknown key is. Ahead of the per-field
-        # domains below, because those grade the value that WINS - run after a
-        # collision they would pass over the discarded one in silence.
-        if error := cls._alias_conflict_error(d):
-            return error
-        for field in ("path", "camera"):
-            value = cls._pick(d, field)
-            if value is not None and not isinstance(value, str):
-                return f"video: {field} must be a string, got {value!r}."
-        for field in ("fps", "width", "height"):
-            value = cls._pick(d, field)
-            if value is None:
-                continue
-            if error := cls._positive_int_error(value, field):
-                return error
-        return None
-
-    @classmethod
-    def from_dict(cls, d: dict[str, Any] | None) -> VideoConfig | None:
-        """Build from a plain dict (tool_spec dispatcher path). ``None`` passthrough.
-
-        Accepts both canonical keys and the legacy/tool_spec aliases listed in
-        :meth:`validation_error`.
-
-        Args:
-            d: Video-config dict, or ``None``/empty for "no recording".
-
-        Returns:
-            The config, or ``None`` when ``d`` is empty.
-
-        Raises:
-            ValueError: When ``d`` carries a key or value that cannot be
-                honored (see :meth:`validation_error`). Public entry points
-                (``run_policy`` / ``eval_policy`` / ``evaluate_benchmark`` /
-                ``start_policy``) check first and return a structured tool
-                error, so this raise is the guard for direct construction.
-        """
-        if not d:
-            return None
-        if error := cls.validation_error(d):
-            raise ValueError(error)
-        return cls(
-            path=cls._pick(d, "path"),
-            fps=int(cls._pick(d, "fps", 30)),
-            camera=cls._pick(d, "camera"),
-            width=int(cls._pick(d, "width", 640)),
-            height=int(cls._pick(d, "height", 480)),
-        )
 
 
 class _RolloutVideoWriter:
@@ -2219,12 +1964,6 @@ class PolicyRunner:
         # structured envelope to read a refusal from. Same shared rule as
         # SimEngine._validate_seed, raised rather than returned because raising
         # is this layer's contract.
-        # Local import: ``simulation.base`` imports PolicyRunner at module level, so
-        # reaching the shared domain from here has to stay deferred - the
-        # same convention this module already uses for
-        # simulation.benchmark / simulation.recording / simulation.predicates.
-        from strands_robots.simulation.base import MAX_EVAL_SEED, randomization_seed_error
-
         if seed_error := randomization_seed_error(seed, "PolicyRunner.run", max_seed=MAX_EVAL_SEED):
             raise ValueError(seed_error)
         # Same shared domain the facade one layer up enforces, raised rather
@@ -4096,12 +3835,6 @@ class PolicyRunner:
         """
         # Refuse before any frame reaches the engine's open recording.
         self._reject_recording_rate_mismatch(control_frequency, "PolicyRunner.evaluate")
-        # Local import: ``simulation.base`` imports PolicyRunner at module level, so
-        # reaching the shared domain from here has to stay deferred - the
-        # same convention this module already uses for
-        # simulation.benchmark / simulation.recording / simulation.predicates.
-        from strands_robots.simulation.base import MAX_EVAL_SEED, randomization_seed_error
-
         if seed_error := randomization_seed_error(seed, "PolicyRunner.evaluate", max_seed=MAX_EVAL_SEED):
             raise ValueError(seed_error)
         # Same shared domain the facade one layer up enforces, raised rather
@@ -4730,6 +4463,13 @@ class PolicyRunner:
         results: list[dict[str, Any]] = []
         episodes_successful_at_reset = 0
         episodes_failed_at_reset = 0
+        # Inference cost, collected through the same seam ``evaluate()`` reads
+        # it from, so a benchmark result carries the ``avg_inference_ms`` /
+        # ``max_inference_ms`` pair docs/learn/simulation/predicates-and-rollouts.md
+        # promises for both eval surfaces. A spec eval is synchronous, so the
+        # prefetch counters are the zeros of a rollout that never overlapped.
+        inference_ms: list[float] = []
+        rtc_chunks_acquired = 0
 
         # #191 - global step counter passed to ``on_frame``. Crosses
         # episode boundaries so consumers that don't track ep ↔ step
@@ -4889,7 +4629,13 @@ class PolicyRunner:
                 max_step_reward: float | None = None
                 last_info: dict[str, Any] = {}
 
-                for _ in range(max_steps):
+                # Bounded by the steps actually applied, as ``evaluate`` is. A
+                # ``for _ in range(max_steps)`` here ran one iteration per STEP
+                # while each iteration consumed up to ``action_horizon`` actions,
+                # so once the horizon was reached the remaining iterations each
+                # queried the policy and applied nothing: at ``action_horizon=8``
+                # the benchmark paid eight inferences per chunk it used.
+                while steps < max_steps:
                     observation = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
                     # Hook: benchmarks may bridge the sim's observation schema
                     # (typically joint-space) to whatever the policy was trained
@@ -4918,7 +4664,9 @@ class PolicyRunner:
                         instruction=effective_instruction,
                         policy_kwargs=policy_kwargs or {},
                         action_horizon=action_horizon,
+                        inference_ms=inference_ms,
                     )
+                    rtc_chunks_acquired += 1
 
                     # #168: consume up to ``action_horizon`` actions
                     # per inference. Default ``action_horizon=8`` matches NVIDIA's
@@ -5192,6 +4940,19 @@ class PolicyRunner:
                         "positional_fallback_used": bool(getattr(policy, "positional_fallback_used", False)),
                         "generic_state_keys_used": bool(getattr(policy, "generic_state_keys_used", False)),
                         "missing_state_keys_used": bool(getattr(policy, "missing_state_keys_used", False)),
+                        **_with_prefetch_keys(
+                            {
+                                "rtc_async_enabled": False,
+                                "rtc_chunks_acquired": rtc_chunks_acquired,
+                                "rtc_prefetch_hits": 0,
+                                "rtc_prefetch_blocks": 0,
+                                "rtc_avg_inference_ms": round(sum(inference_ms) / len(inference_ms), 3)
+                                if inference_ms
+                                else 0.0,
+                                "rtc_max_inference_ms": round(max(inference_ms), 3) if inference_ms else 0.0,
+                            },
+                            policy,
+                        ),
                         "policy_resident_rss_mb": process_rss_mb(),
                         "episodes": results,
                         "video_paths": video_paths,

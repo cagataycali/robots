@@ -342,7 +342,24 @@ body.sr-viewer-fullscreen { overflow: hidden; }
   .sr-filter button, .sr-filter-btn { min-height: 40px; padding: 0.45rem 0.9rem; }
   .sr-btn { min-height: 44px; }
 }
+
+/* Motion: arrival, state and causality only, on one scale (120 / 300 ms). Instant navigation swaps the content column,
+   which fades in; the proof numbers count up once; a copied pill says so; the "On this page" bar travels; the page
+   head's rule draws in. The reduced-motion block at the end turns every one of these into its end state. */
+.md-content__inner.sr-enter { animation: sr-enter 220ms ease-out both; }
+@keyframes sr-enter { from { opacity: 0; transform: translateY(6px); } }
+.md-typeset a { transition: color 150ms ease, text-decoration-color 150ms ease; }
+.sr-pagehead { border-bottom: 0; position: relative; }
+.sr-pagehead::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--md-default-fg-color--lightest); transform-origin: left; animation: sr-rule 300ms ease-out both; }
+@keyframes sr-rule { from { transform: scaleX(0); } }
+.sr-proof strong { font-variant-numeric: tabular-nums; }
+.sr-copy { transition: border-color 120ms ease, color 120ms ease; }
+.sr-copy.is-copied { border-color: var(--sr-accent); color: var(--sr-accent); }
+.sr-install:has(.sr-copy.is-copied)::before { content: "\2713"; }
+.md-nav--secondary { position: relative; }
+.md-nav--secondary::before { content: ""; position: absolute; left: 0; width: 2px; border-radius: 2px; background: var(--sr-accent); top: var(--sr-toc-y, 0); height: var(--sr-toc-h, 0); transition: top 200ms ease, height 200ms ease; }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 250ms; }
 @media (prefers-reduced-motion: reduce) {
-  .sr-card, .sr-robot, .sr-btn { transition: none; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
   html { scroll-behavior: auto; }
 }

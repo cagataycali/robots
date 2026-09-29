@@ -37,6 +37,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSock
 from fastapi.responses import Response
 
 from strands_robots.dashboard import access, agent_motion, consent, lan_hint, settings
+from strands_robots.dashboard.log_redaction import one_line
 from strands_robots.dashboard.mesh_bridge import (
     PEER_STALE_S,
     MeshBridge,
@@ -775,7 +776,7 @@ async def ws_mesh(ws: WebSocket) -> None:
                 break
             await ws.send_text(json.dumps(getter.result()))
     except (WebSocketDisconnect, RuntimeError):
-        pass
+        pass  # best effort: the browser closed the socket, there is nobody left to tell
     finally:
         gone.cancel()
         bridge.detach_queue(q)
@@ -858,7 +859,7 @@ async def ws_camera(ws: WebSocket, peer_id: str, cam: str) -> None:
                     )
             await asyncio.sleep(CAMERA_TICK_S)
     except (WebSocketDisconnect, RuntimeError):
-        pass
+        pass  # best effort: the browser closed the socket, there is nobody left to tell
     finally:
         gone.cancel()
         # Rate-limited per peer/camera, with the suppressed count carried forward, so a storm reads
@@ -878,6 +879,9 @@ async def ws_camera(ws: WebSocket, peer_id: str, cam: str) -> None:
                 else ""
             )
             line = close_line(
-                peer_id=peer_id, cam=cam, verdict=verdict + cap_note(cap) + churn_note, suppressed=suppressed
+                peer_id=one_line(peer_id, limit=120),
+                cam=one_line(cam, limit=120),
+                verdict=verdict + cap_note(cap) + churn_note,
+                suppressed=suppressed,
             )
-            (logger.info if frames_sent else logger.warning)(line)
+            (logger.info if frames_sent else logger.warning)("%s", line)

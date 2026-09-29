@@ -97,6 +97,41 @@ class TestTheAbsentDependencyIsNamedAtWarning:
         )
 
 
+class TestTheAbsentDependencyOutranksTheAclGate:
+    """``Mesh.start`` names a missing transport before refusing a posture that guards nothing."""
+
+    @pytest.mark.parametrize(
+        ("zenoh_installed", "named", "refused"),
+        [(False, True, False), (True, False, True)],
+        ids=["zenoh-absent", "zenoh-present"],
+    )
+    def test_the_first_start_names_the_real_cause(
+        self,
+        zenoh_installed: bool,
+        named: bool,
+        refused: bool,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import os
+
+        from strands_robots.mesh.core import PERMISSIVE_ACL_REFUSAL
+
+        for var in [v for v in os.environ if v.startswith("STRANDS_MESH_")]:
+            monkeypatch.delenv(var)
+        mesh = Mesh(SimpleNamespace(name="arm"), peer_id="bot-6")
+        modules = {} if zenoh_installed else {"zenoh": None}
+
+        with caplog.at_level(logging.WARNING), patch.dict("sys.modules", modules):
+            with patch("strands_robots.mesh.core.get_session", return_value=None):
+                mesh.start()
+
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert mesh.alive is False
+        assert ("pip install 'strands-robots[mesh]'" in text) is named, text
+        assert (PERMISSIVE_ACL_REFUSAL.splitlines()[0] in text) is refused, text
+
+
 class TestTheRemedyIsRunnable:
     """The message quotes an extra that really supplies the dependency."""
 

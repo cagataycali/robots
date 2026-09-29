@@ -45,9 +45,8 @@ neither optional physics stack is needed.
 from __future__ import annotations
 
 import ast
+import importlib
 import pathlib
-import sys
-import threading
 from collections.abc import Sequence
 from typing import Any
 
@@ -55,6 +54,7 @@ import pytest
 
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.models import SimRobot, SimWorld
+from tests.simulation._isaac_engine import isaac_engine
 
 _SO100_JOINTS = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
 
@@ -64,13 +64,14 @@ _OK = {"status": "success", "content": [{"json": {"n_steps": 3}}]}
 def _stub_rollout(monkeypatch, run_fn=None) -> None:
     """Replace the rollout loop on the ``PolicyRunner`` ``run_policy`` instantiates.
 
-    ``SimEngine.run_policy`` builds its runner from the ``PolicyRunner`` symbol
-    bound in its own module namespace, so the patch is applied there rather than
-    on a separately imported name: a test that reloads ``policy_runner`` rebinds
-    that module's class while ``base`` keeps its original import, and a patch on
-    the reloaded object would silently miss the live rollout.
+    ``SimEngine.run_policy`` builds its runner from a deferred
+    ``from strands_robots.simulation.policy_runner import PolicyRunner`` inside
+    the method (``base`` has no module-level import of ``policy_runner``), which
+    resolves through ``sys.modules`` at call time. The patch is applied to the
+    class on that live module entry, so a test that reloads ``policy_runner``
+    and rebinds the class cannot leave the live rollout unpatched.
     """
-    runner_module = sys.modules[SimEngine.run_policy.__module__]
+    runner_module = importlib.import_module("strands_robots.simulation.policy_runner")  # the sys.modules entry
     monkeypatch.setattr(runner_module.PolicyRunner, "run", run_fn or (lambda self, *a, **k: dict(_OK)))
 
 
@@ -191,7 +192,7 @@ class TestIsaacFreesTheRobotItsRecordingHookClaimed:
     @staticmethod
     def _engine(names: tuple[str, ...] = ("so100",)) -> Any:
         from strands_robots.simulation.isaac.config import IsaacConfig
-        from strands_robots.simulation.isaac.simulation import IsaacSimulation, _RobotState
+        from strands_robots.simulation.isaac.simulation import _RobotState
 
         class _Articulation:
             """Enough of an articulation for the primitive preamble to accept."""
@@ -199,9 +200,8 @@ class TestIsaacFreesTheRobotItsRecordingHookClaimed:
             num_dof = len(_SO100_JOINTS)
             dof_names = list(_SO100_JOINTS)
 
-        engine = IsaacSimulation.__new__(IsaacSimulation)
+        engine = isaac_engine()
         engine._config = IsaacConfig(render_mode="rtx_realtime")
-        engine._lock = threading.RLock()
         engine._world = object()  # non-None Isaac World stand-in: "world created"
         engine._world_created = True
         engine._robots = {
@@ -214,20 +214,9 @@ class TestIsaacFreesTheRobotItsRecordingHookClaimed:
             )
             for name in names
         }
-        engine._cameras = {}
-        engine._objects = {}
-        engine._prim_registry = []
-        engine._cams_rec_state = None
         # A live recording session: what makes the capture hook (and its claim)
         # exist at all.
         engine._recording_state_dict = {"recording": True, "dataset_recorder": None}
-        engine._action_controllers = {}
-        engine._sim_time = 0.0
-        engine._step_count = 0
-        engine._replicated = False
-        engine._num_envs_active = 1
-        engine._pump_running = False
-        engine._main_tid = threading.get_ident()
         return engine
 
     def test_a_primitive_is_reachable_after_a_recorded_rollout(self, monkeypatch):

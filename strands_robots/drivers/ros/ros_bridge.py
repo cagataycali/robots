@@ -15,7 +15,7 @@ without sending anything - the goal coordinates travel inside the request body,
 which the transport forwards verbatim.
 
 The drive contract, its safety semantics, and the ``tools`` property live in
-:class:`~strands_robots.mesh._mobile_base.MobileBaseRobot`; this module supplies
+:class:`~strands_robots.drivers.ros._mobile_base.MobileBaseRobot`; this module supplies
 the ``rclpy`` transport and the ROS 2-specific Nav2 goal surface.
 
 Commanding a robot goes through the shared operator-approval gate, because
@@ -45,7 +45,7 @@ Typical usage::
     import os
 
     from strands import Agent
-    from strands_robots.mesh import RosBridgedRobot
+    from strands_robots.drivers.ros import RosBridgedRobot
 
     turtle = RosBridgedRobot.from_ros(
         node_name="turtlesim",
@@ -76,7 +76,8 @@ from strands import tool
 from strands.types.tools import AgentTool, ToolContext
 
 from strands_robots._command_gate import gate_command
-from strands_robots.mesh._mobile_base import ActionCapable, MobileBaseRobot
+from strands_robots.drivers.base import refuse
+from strands_robots.drivers.ros._mobile_base import ActionCapable, MobileBaseRobot
 from strands_robots.ros import GATE_TOOL, CommandGate, never_gated, ros_action
 from strands_robots.utils import (
     finite_number_error,
@@ -129,7 +130,7 @@ class _UseRosTransport:
     Every method resolves :func:`~strands_robots.ros.ros_action` through this
     module's globals rather than capturing it at import, so tests (and any
     operator patching the transport) can monkeypatch
-    ``strands_robots.mesh.ros_bridge.ros_action`` and have the bridge honor it.
+    ``strands_robots.drivers.ros.ros_bridge.ros_action`` and have the bridge honor it.
     Implements the full optional surface: ROS 2 has services and actions.
 
     Every command verb hands the transport an operator gate built from
@@ -347,7 +348,7 @@ class RosBridgedRobot(MobileBaseRobot):
             honored - in which case no goal is sent.
         """
         if not self.nav_action:
-            return self._error("navigate_to: no nav_action configured for this robot")
+            return refuse("navigate_to: no nav_action configured for this robot")
         # The goal pose is the part of this call the transport never validates: it
         # checks the action name and interface type, but the coordinates travel
         # inside ``fields`` and are serialized into the request verbatim. A
@@ -370,7 +371,7 @@ class RosBridgedRobot(MobileBaseRobot):
             or positive_finite_number_error(timeout, "timeout", "navigate_to")
         )
         if goal_error:
-            return self._error(goal_error)
+            return refuse(goal_error)
         half = 0.5 * float(yaw)
         fields = {
             "pose": {

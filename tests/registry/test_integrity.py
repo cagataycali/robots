@@ -135,7 +135,9 @@ def test_no_alias_shadows_canonical_name(registry: dict) -> None:
 
 
 def test_hardware_only_robots_declare_lerobot_type(registry: dict) -> None:
-    """Robots without an ``asset`` block must still declare a LeRobot hardware type.
+    """Robots without an ``asset`` block must declare a LeRobot type or ``driver="strands"``.
+
+    The same rule ``register_robot`` applies to a user entry with no ``model_xml``.
 
     Prevents silent typos in ``hardware.lerobot_type`` - catches a misspelled
     type during registry expansion rather than at teleop time.
@@ -146,7 +148,7 @@ def test_hardware_only_robots_declare_lerobot_type(registry: dict) -> None:
             continue
         hw = info.get("hardware") or {}
         lerobot_type = hw.get("lerobot_type")
-        if not isinstance(lerobot_type, str) or not lerobot_type.strip():
+        if (not isinstance(lerobot_type, str) or not lerobot_type.strip()) and hw.get("driver") != "strands":
             offenders.append(name)
     assert not offenders, "Hardware-only robots missing 'hardware.lerobot_type': " + ", ".join(offenders)
 
@@ -387,3 +389,13 @@ def test_joint_labels_shape(registry: dict) -> None:
         if isinstance(joints, int) and len(labels) != joints:
             problems.append(f"{name}.joint_labels has {len(labels)} entries for a {joints}-joint robot")
     assert not problems, "\n".join(problems)
+
+
+def test_every_shipped_robot_key_is_already_folded(registry: dict) -> None:
+    """Every lookup folds its query, so an unfolded package key could never be found.
+
+    The loader refuses such a key only in ``user_robots.json``; the package
+    registry is held to the same rule here.
+    """
+    assert len(registry) >= 50, f"premise: the shipped registry declares few robots ({len(registry)})"
+    assert [key for key in registry if key != normalize_robot_name(key)] == []

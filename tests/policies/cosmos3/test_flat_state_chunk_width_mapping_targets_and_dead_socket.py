@@ -7,7 +7,6 @@ L40S) and a wire-faithful RoboLab server stand-in, and fails on that revision.
 
 from __future__ import annotations
 
-import inspect
 import socket
 import sys
 import threading
@@ -303,21 +302,3 @@ def test_a_connection_the_server_closed_is_reported_as_connection_error(robolab_
     assert transport._ws is None  # discarded, so the call after this one redials
     assert client.infer(_obs())["action"].shape == (2, 8)
     client.close()
-
-
-def test_dialing_emits_no_deprecation_warning_on_this_websockets(robolab_like_server):
-    """websockets 17.1 warns on every bare ``connect()`` that the context-manager
-    form will become the default; the long-lived connection this client keeps is
-    the ``legacy=True`` shape, passed wherever ``connect`` declares it."""
-    import websockets.sync.client as wsc
-
-    from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient
-
-    port, _ = robolab_like_server
-    client = Cosmos3WebsocketClient(host="127.0.0.1", port=port)
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)
-        client.infer(_obs())
-    client.close()
-    if "legacy" not in inspect.signature(wsc.connect).parameters:
-        pytest.skip("this websockets has no legacy keyword and no warning to silence")

@@ -79,7 +79,6 @@ async def training_datasets(
     """Datasets for the submit form's picker: local roots plus a Hub search."""
     from strands_robots.dashboard.dataset_check import mark_live_recording
 
-    active, captured = None, None
     try:
         session = getattr(request.app.state, "record", None)
         live = session.session() if session is not None else {}
@@ -200,9 +199,15 @@ async def training_export(body: dict[str, Any], _: dict = Depends(access.require
 
 
 @router.get("/checkpoints/search")
-async def checkpoints_search(q: str = "", limit: int = 15, _: dict = Depends(access.require_session)) -> dict[str, Any]:
-    """Type-ahead checkpoint search: trained here, the local HF cache, then the Hub."""
-    return await asyncio.to_thread(checkpoints.search, q, checkpoints.clamp_limit(limit))
+async def checkpoints_search(
+    q: str = "", limit: int = 15, robot: str = "", _: dict = Depends(access.require_session)
+) -> dict[str, Any]:
+    """Type-ahead checkpoint search: trained here, the local HF cache, then the Hub.
+
+    ``robot`` (a registry name such as ``so101``) puts checkpoints that name that robot
+    first and marks them ``robot_match``; the fit itself is the policy-fit route's verdict.
+    """
+    return await asyncio.to_thread(checkpoints.search, q, checkpoints.clamp_limit(limit), robot[:64] or None)
 
 
 @router.get("/checkpoints/features")
@@ -262,7 +267,7 @@ async def validate_policy(
 
             _check_trust_remote_code(provider)
         except ImportError:
-            pass
+            pass  # best effort: without the factory there is no trust gate to consult
         except Exception as exc:  # noqa: BLE001 - the trust gate, verbatim
             return consent.attach_consent({"ok": False, "stage": "trust", "error": str(exc)}, exc, subject=provider)
         try:

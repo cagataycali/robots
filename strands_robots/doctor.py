@@ -73,9 +73,9 @@ def _skip(msg: str) -> str:
 def _resolve_version(import_name: str, dist_name: str) -> str:
     """Resolve a package version, preferring installed distribution metadata.
 
-    Neither ``strands_robots`` nor ``strands`` exposes a module-level
-    ``__version__`` attribute, so reading ``module.__version__`` yields a
-    useless placeholder. The authoritative version lives in the installed
+    ``strands`` exposes no module-level ``__version__`` attribute, so reading
+    ``module.__version__`` yields a useless placeholder. The authoritative
+    version lives in the installed
     distribution metadata (``pyproject.toml`` -> wheel/egg-info), which
     ``importlib.metadata.version`` reads. Fall back to a module ``__version__``
     attribute only if metadata lookup fails (e.g. running from a source tree
@@ -573,11 +573,14 @@ def _torch_build_supports(device_arch: int, build_archs: tuple[int, ...]) -> boo
     The rule is torch's rather than one derived here, so this check and torch
     cannot reach opposite verdicts about one install. ``_code_compatible_with_device``
     is the predicate torch's own capability check consults, and it reads a table
-    of intervals: a build carrying ``sm_80`` code supports ``>=8.0,<9.0 except
-    {8.7}``, so it does *not* cover a Jetson Orin. The coarser
+    of intervals: for a build against CUDA 13.0 or older, ``sm_80`` code supports
+    ``>=8.0,<9.0 except {8.7}``, so it does *not* cover a Jetson Orin; torch 2.14
+    keeps a second table for CUDA 13.2 and newer, where the Jetson and SBSA
+    wheels are one and 8.7 is admitted again. The coarser
     backward-compatible-within-a-major-version rule that torch's cubin check
-    documents admits that pair, which is why the interval table is preferred and
-    the coarse rule is only the fallback for an install too old to expose it.
+    documents admits that pair on every build, which is why torch's own tables are
+    preferred and the coarse rule is only the fallback for an install too old to
+    expose them.
 
     Args:
         device_arch: Architecture the driver reports, as an ``sm_NN`` integer.
@@ -625,7 +628,36 @@ def _torch_compatible_releases(device_arch: int) -> tuple[str, ...]:
     table = getattr(torch.cuda, "PYTORCH_RELEASES_CODE_CC", None)
     if not isinstance(table, dict):
         return ()
-    return tuple(str(cuda) for cuda, build_ccs in table.items() if _torch_build_supports(device_arch, tuple(build_ccs)))
+    return tuple(
+        str(cuda)
+        for cuda, build_ccs in table.items()
+        if _torch_build_supports(device_arch, _release_build_archs(build_ccs))
+    )
+
+
+def _release_build_archs(build_ccs: object) -> tuple[int, ...]:
+    """The architectures one row of torch's release table carries, for this host.
+
+    torch 2.11 wrote the table as ``{cuda: {arch, ...}}``; torch 2.14 splits each
+    row by platform, ``{cuda: {"x86_64": {...}, "aarch64": {...}}}``, because the
+    aarch64 wheel of one CUDA release carries Thor's ``sm_110`` and the x86_64
+    wheel does not. The row for this machine's platform is the one that matters;
+    when the table names no such platform, the union of its rows is read, which
+    can only offer a release that some wheel of it would honour.
+
+    Args:
+        build_ccs: One value of ``PYTORCH_RELEASES_CODE_CC``.
+
+    Returns:
+        The architectures as ``sm_NN`` integers, empty for a shape not understood.
+    """
+    if isinstance(build_ccs, dict):
+        per_platform = build_ccs.get(platform.machine())
+        rows = [per_platform] if per_platform is not None else list(build_ccs.values())
+        return tuple(arch for row in rows for arch in _release_build_archs(row))
+    if isinstance(build_ccs, (set, frozenset, list, tuple)):
+        return tuple(arch for arch in build_ccs if isinstance(arch, int))
+    return ()
 
 
 def check_torch_arch() -> str:

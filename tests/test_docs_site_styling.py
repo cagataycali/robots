@@ -34,9 +34,10 @@ ROBOT_PAGES_HOOK = REPO_ROOT / "docs" / "hooks" / "robot_pages.py"
 
 # The stylesheet carries the palette with GitHub code colours, the one-row
 # header, the page head and pager, the landing hero and footer, the 3D viewer
-# chrome, the robot cards and the filter chips in 335 lines; the budget leaves
-# room to grow without room to drift back into a per-rule override sheet.
-LINE_BUDGET = 360
+# chrome, the robot cards, the filter chips and the motion layer in 365 lines;
+# the budget leaves room to grow without room to drift back into a per-rule
+# override sheet.
+LINE_BUDGET = 400
 
 # Material names the light scheme in mkdocs.yml; the dark one is its ``slate``.
 LIGHT_SCHEME = "paper"
@@ -102,7 +103,7 @@ def _hook_class_lists() -> set[tuple[str, ...]]:
     hook = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hook)
     html = [hook.cards(None, "")]
-    html += [hook.robot_page(name) for name in hook.registry()]
+    html += [hook.substitute(hook.robot_page(name), "") for name in hook.registry()]
     html += [hook.family_page(category) for category in hook._families_in_order()]
     return {tuple(value.split()) for chunk in html for value in re.findall(r'class="([^"]+)"', chunk)}
 

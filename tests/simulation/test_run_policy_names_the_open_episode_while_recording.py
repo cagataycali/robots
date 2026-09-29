@@ -18,9 +18,6 @@ instead of the false "one call per episode" - a call is not an episode.
 
 from __future__ import annotations
 
-import ast
-import inspect
-
 import pytest
 
 pytest.importorskip("mujoco")
@@ -140,23 +137,8 @@ def test_the_remedies_named_are_ones_an_agent_can_call():
 
 
 def _start_recording_advice() -> str:
-    """``start_recording``'s success text, read from source so no dataset is needed.
-
-    Located by the marker it opens with, as
-    ``test_recording_advice_names_every_route_that_captures`` does: the body
-    also holds refusal texts, and joining every literal would let a check pass
-    on prose that says nothing about capture.
-    """
-    tree = ast.parse(inspect.getsource(_recording_mod))
-    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "start_recording")
-    for node in ast.walk(fn):
-        if isinstance(node, ast.JoinedStr):
-            text = "".join(
-                part.value for part in node.values if isinstance(part, ast.Constant) and isinstance(part.value, str)
-            )
-            if "Recording to LeRobotDataset" in text:
-                return text
-    raise AssertionError("start_recording has no success text naming the dataset it opened")
+    """``start_recording``'s capture advice on the MuJoCo backend, read without a dataset."""
+    return _recording_mod.RecordingMixin._RECORDING_REPLY_TAIL
 
 
 def test_start_recording_advice_names_a_boundary_an_agent_can_dial():

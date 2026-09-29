@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
-import strands_robots.mesh.ros_bridge as bridge_mod
-from strands_robots.mesh import RosBridgedRobot
+import strands_robots.drivers.ros.ros_bridge as bridge_mod
+from strands_robots.drivers.ros import RosBridgedRobot
 from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 

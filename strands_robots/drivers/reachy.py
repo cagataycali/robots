@@ -2510,11 +2510,11 @@ def _act_sensors(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]
 
 
 async def _act_status(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
-    # The ``status`` verb carries the whole ``get_status`` envelope - the
-    # shape the mesh publishes - inside one json block, as every native
-    # driver's status verb does.
+    # The ``status`` verb answers with ``get_status``'s envelope itself, as every
+    # native driver's status verb does: the fields sit at content[0].json, one
+    # level down, never inside a second envelope (#4151).
     del params
-    return {"status": "success", "content": [{"json": await driver.get_status()}]}
+    return await driver.get_status()
 
 
 def _act_stop(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:

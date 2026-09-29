@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -24,6 +25,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 
 from strands_robots.dashboard import access, record_api
 from strands_robots.dashboard.dataset_check import OUTSIDE_DATASET_HOME
+from strands_robots.dashboard.log_redaction import one_line
 
 logger = logging.getLogger(__name__)
 
@@ -40,18 +42,28 @@ def dataset_home() -> Path:
 def contained_path(raw: Any) -> Path:
     """Resolve a client-named path and refuse it unless it sits under :func:`dataset_home`.
 
-    ``resolve()`` follows symlinks and folds ``..`` before the containment check, so a link out of
-    the home does not count as inside it. The refusal carries no trace of the target.
+    The path is folded first (``~`` expanded, made absolute, symlinks followed and ``..``
+    collapsed with ``realpath`` and ``normpath``) and the result must be the home or start with
+    it, so a link out of the home does not count as inside it. The refusal carries no trace of
+    the target.
     """
     if not isinstance(raw, str) or not raw.strip():
         raise HTTPException(422, "path required")
+    home = str(dataset_home())
     try:
-        target = Path(raw.strip()).expanduser().resolve()
+        real = os.path.normpath(os.path.realpath(os.path.expanduser(raw.strip())))
     except (OSError, RuntimeError):
         raise HTTPException(400, OUTSIDE_DATASET_HOME) from None
-    if not target.is_relative_to(dataset_home()):
+    # Two single tests rather than one ``==`` or ``startswith``: the folded path must
+    # begin with the home, and a longer path must continue with a separator, so a
+    # sibling such as ``<home>2`` is refused. The pair admits exactly what the one
+    # compound test did; a path-injection checker reads a lone ``startswith`` as the
+    # barrier and does not read a disjunction as one.
+    if not real.startswith(home):
         raise HTTPException(400, OUTSIDE_DATASET_HOME)
-    return target
+    if real != home and not real.startswith(home + os.sep):
+        raise HTTPException(400, OUTSIDE_DATASET_HOME)
+    return Path(real)
 
 
 # ---------------------------------------------------------------- controller
@@ -126,7 +138,9 @@ async def collect_episodes(request: Request, body: dict[str, Any]) -> dict[str, 
 
         _training.remember_dataset_root(dataset_root)
     except ImportError:
-        logger.debug("[record] training module absent; %s will not be remembered for the picker", dataset_root)
+        logger.debug(
+            "[record] training module absent; %s will not be remembered for the picker", one_line(dataset_root)
+        )
     result = await asyncio.to_thread(
         lambda: devices.collect(
             dataset_root=dataset_root,
@@ -197,7 +211,9 @@ async def dataset_labels(root: str | None = None, path: str | None = None) -> di
         try:
             document = _labels.read_labels(target)
         except Exception as e:  # noqa: BLE001 - a corrupt sidecar must not read as "no labels yet"
-            sidecar_error = f"{type(e).__name__}: {e}"
+            # the parser's own words go to the log; the browser learns the kind of failure
+            logger.warning("episode label sidecar could not be read: %r", e)
+            sidecar_error = type(e).__name__
 
     total: int | None = None
     try:

@@ -37,7 +37,6 @@ can appear as phantom penetrations at t=0)".
 
 from __future__ import annotations
 
-import threading
 import types
 from typing import Any
 
@@ -45,40 +44,22 @@ import pytest
 
 pytest.importorskip("strands_robots.simulation.isaac")
 
-from strands_robots.simulation.isaac.config import IsaacConfig  # noqa: E402
 from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 #: A contact record from a world that no longer exists.
 _STALE = [{"geom1": "cube", "geom2": "CollisionPlane", "dist": -0.001, "pos": [0.0, 0.0, 0.0], "active": True}]
 
 
 def _engine() -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world_created = True
     engine._world = types.SimpleNamespace(
         reset=lambda: None, stop=lambda: None, clear_instance=lambda: None, step=lambda **k: None
     )
-    engine._robots = {}
-    engine._cameras = {}
-    engine._objects = {}
-    engine._prim_registry = []
-    engine._action_controllers = {}
-    engine._cams_rec_state = None
-    engine._recording_state_dict = {}
-    engine._num_envs_active = 1
-    engine._replicated = False
-    engine._applied_wrenches = {}
     engine._obs_noise = {}
-    engine._obs_noise_rng = None
-    engine._dr_base = {}
-    engine._sim_time = 0.0
-    engine._step_count = 0
     engine._revive_articulations_after_reset = lambda: None  # type: ignore[method-assign]
     engine._flush_open_episode_before_reset = lambda: None  # type: ignore[method-assign]
-    engine._main_tid = threading.get_ident()
-    engine._pump_running = False
     return engine
 
 

@@ -7,9 +7,8 @@ operator drives -- task lifecycle (start/status/stop), the async execution
 loop (connect -> policy -> observe -> act), the tool ``stream`` dispatch, and
 the mesh teleop publish/receive lifecycle.
 
-A ``Robot`` is built via ``__new__`` + manual attribute wiring (the same
-pattern the existing ``test_robot_factory`` helper tests use) so construction
-never touches ``_initialize_robot``/lerobot hardware drivers.
+A ``Robot`` is built by ``tests._hardware_robot.hardware_robot_on`` so
+construction never touches ``_initialize_robot``/lerobot hardware drivers.
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import pkgutil
 import sys
-import threading
 import time as real_time
 import types
 from typing import Any
@@ -26,9 +24,9 @@ import pytest
 
 from strands_robots import hardware_robot as hardware_robot_module
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState, TaskStatus
+from strands_robots.hardware_robot import TaskStatus
 from strands_robots.policies.base import Policy
-from tests._daemon_executor import DaemonThreadExecutor
+from tests._hardware_robot import hardware_robot_on
 from tests.tool_result_contract import tool_json
 
 
@@ -115,21 +113,9 @@ class _StubPolicy:
 
 def _make_robot(fake: _FakeLeRobot | None = None, control_frequency: float = 1000.0) -> HwRobot:
     """Construct a Robot bypassing hardware init."""
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "test_arm"
-    hw.action_horizon = 8
-    hw.data_config = None
-    hw.control_frequency = control_frequency
-    hw.action_sleep_time = 1.0 / control_frequency
-    hw._task_state = RobotTaskState()
-    hw._executor = DaemonThreadExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
-    hw.mesh = None
-    hw.peer_id = None
-    hw.robot = fake if fake is not None else _FakeLeRobot()
+    hw = hardware_robot_on(
+        fake if fake is not None else _FakeLeRobot(), tool_name="test_arm", control_frequency=control_frequency
+    )
     return hw
 
 

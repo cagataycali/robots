@@ -85,19 +85,22 @@ def dataset_homes() -> list[Path]:
 def contain(path: str, homes: list[Path], *, label: str) -> Path:
     """Resolve ``path`` and require it to lie inside one of ``homes``.
 
-    Resolution follows symlinks, so a link out of the home is caught the same
-    as ``..``. Nothing here touches the filesystem beyond ``resolve()``, and the
-    refusal is the same sentence whether the target exists or not.
+    Resolution follows symlinks (``realpath``) and folds ``..`` (``normpath``), so a link out of
+    the home is caught the same as ``..``; the folded path must then be a home or start with one.
+    Nothing here touches the filesystem beyond following the links, and the refusal is the same
+    sentence whether the target exists or not.
     """
     raw = (path or "").strip()
     if not raw or "\x00" in raw:
         raise PathOutside(label, homes)
     try:
-        target = Path(raw).expanduser().resolve()
-    except (OSError, RuntimeError) as exc:
+        real = os.path.normpath(os.path.realpath(os.path.expanduser(raw)))
+    except (OSError, RuntimeError, ValueError) as exc:
         raise PathOutside(label, homes) from exc
-    if any(target == h or target.is_relative_to(h) for h in homes):
-        return target
+    for home in homes:
+        root = str(home)
+        if real == root or real.startswith(root + os.sep):
+            return Path(real)
     raise PathOutside(label, homes)
 
 
@@ -225,8 +228,9 @@ def _load_jobs() -> list[dict[str, Any]]:
     try:
         data = json.loads(JOBS_FILE.read_text(encoding="utf-8"))
     except Exception as e:  # noqa: BLE001 - any unreadable ledger, not just bad JSON
-        logger.warning("could not load train jobs: %s", e)
-        detail = f"{type(e).__name__}: {e}"
+        # the parser's own words stay in the log; the browser learns the kind of failure
+        logger.warning("could not load train jobs: %r", e)
+        detail = type(e).__name__
         try:
             kept = _quarantine(JOBS_FILE)
             _JOBS_PROBLEM = (
@@ -235,9 +239,10 @@ def _load_jobs() -> list[dict[str, Any]]:
                 f"running are unaffected"
             )
         except OSError as move_err:
+            logger.warning("could not move the unreadable job ledger aside: %r", move_err)
             _JOBS_PROBLEM = (
                 f"the training job history could not be read ({detail}) and could not be moved "
-                f"aside ({move_err}); refusing to overwrite it - runs started before now have "
+                f"aside ({type(move_err).__name__}); refusing to overwrite it - runs started before now have "
                 f"no card here"
             )
         return []
@@ -546,14 +551,14 @@ def local_datasets(query: str = "") -> list[dict[str, Any]]:
                         "robot_type": raw.get("robot_type"),
                     }
                 except Exception:  # noqa: BLE001
-                    pass
+                    pass  # best effort: an unreadable info.json leaves the row with the fields it has
                 verdict = dataset_verdict(meta, has_data_files=_has_data_files(d))
                 out.append({"root": str(d), "repo_id": rel, **meta, **verdict})
             elif depth < 2:
                 try:
                     stack.extend((c, depth + 1) for c in d.iterdir() if c.is_dir())
                 except OSError:
-                    pass
+                    pass  # best effort: a directory that vanished or is unreadable is simply not listed
     return sorted(out, key=lambda r: r["repo_id"])[:50]
 
 

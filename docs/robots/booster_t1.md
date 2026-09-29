@@ -7,7 +7,7 @@ description: "Booster T1 Humanoid (24-DOF)"
 
 # Booster T1 Humanoid (24-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">24 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:booster_t1}}
 
 <robot-viewer name="booster_t1"></robot-viewer>
 
@@ -24,5 +24,9 @@ robot = Robot("booster_t1", mode="real", port="192.168.10.102")  # BoosterDriver
 ## Hardware
 
 **`BoosterDriver`** (the default for this robot) speaks Booster SDK (`booster_robotics_sdk_python`, DDS): [port, SDK, kwargs and checks](../learn/hardware/drivers.md#boosterdriver).
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 
 Model: [google-deepmind/mujoco_menagerie/booster_t1](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/booster_t1), scene `scene.xml`.

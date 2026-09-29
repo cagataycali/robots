@@ -7,7 +7,7 @@ description: "Robotiq 2F-85 Gripper (2-finger adaptive)"
 
 # Robotiq 2F-85 Gripper (2-finger adaptive)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip">16 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:robotiq_2f85}}
 
 <robot-viewer name="robotiq_2f85"></robot-viewer>
 
@@ -26,5 +26,9 @@ Aliases: `robotiq`.
 ## Hardware
 
 **`RobotiqDriver`** (the default for this robot) speaks Modbus TCP: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#robotiqdriver).
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 
 Model: [google-deepmind/mujoco_menagerie/robotiq_2f85](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/robotiq_2f85), scene `scene.xml`.
