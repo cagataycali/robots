@@ -117,4 +117,4 @@ robot.cleanup()
 
 </div>
 
-The left fence runs on a laptop with no GPU: SmolVLA, a vision-language-action model from the Hub, reads three cameras and the instruction and drives the simulated arm. The right one runs the same checkpoint on the physical arm; as an agent tool, its `execute` waits for operator approval. [First learned policy](start/first-policy.md) explains `obs_rename` and the embodiment.
+The left fence runs on a laptop with no GPU: SmolVLA, a vision-language-action model from the Hub, reads three cameras and the instruction and drives the simulated arm. The right runs the same checkpoint on the physical arm; as an agent tool its `execute` waits for operator approval. [First learned policy](start/first-policy.md) explains `obs_rename` and the embodiment.

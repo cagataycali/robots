@@ -4,7 +4,7 @@ description: A Strands Agent moves the simulated SO-101 from a sentence, then st
 
 # First agent
 
-At the end of this page a Strands Agent has moved the simulated arm from a sentence you typed, and you have watched the same agent stop at the operator gate in front of a real one. The sim fences run without a model. The two fences that call `agent("...")` need a model provider configured for `strands-agents`; Bedrock is the default.
+At the end of this page a Strands Agent has moved the simulated arm from a sentence you typed, and you have watched the same agent stop at the operator gate in front of a real one. The sim fences run without a model. The two fences that call `agent("...")` need a model provider configured for `strands-agents`; [Bedrock](https://strandsagents.com/latest/documentation/docs/user-guide/concepts/model-providers/amazon-bedrock/) is the default.
 
 ## The robot is a tool
 
@@ -32,7 +32,7 @@ Programmatic MuJoCo simulation environment (stateful session). One world per ins
 1 (shoulder_pan): pos=0.0000, vel=0.0000
 ```
 
-Nothing was wrapped. The object `Robot()` returned is a Strands `AgentTool`: it carries a name (`so101_sim` in sim, `so101` on hardware, or whatever `tool_name=` says), a description the model reads, and one `action` enum. `agent.tool.so101_sim(...)` calls it directly, no model in the loop, and returns the same envelope the methods on [First robot](first-robot.md) returned. Two robots in one agent need two names: `Robot("so101", tool_name="left")`.
+Nothing was wrapped. The object `Robot()` returned is a Strands `AgentTool`: a name (`so101_sim` in sim, `so101` on hardware, or `tool_name=`), a description the model reads, one `action` enum. `agent.tool.so101_sim(...)` calls it with no model in the loop and returns the envelope [First robot](first-robot.md) showed. Two robots in one agent need two names: `Robot("so101", tool_name="left")`.
 
 ## Ask in words
 
@@ -47,7 +47,7 @@ print(result)
 robot.cleanup()
 ```
 
-The model calls `get_robot_state`, then `set_joint_positions` or `actuate_robot` with some `step` calls, then `get_robot_state` again, and writes what it found. On one run on this checkout the answer reported the gripper moving from `[+0.020, -0.376, +0.259]` to `[-0.150, -0.335, +0.237]`, a 17 cm sweep along -X for a 0.5 rad pan. Your model will pick its own actions and words; the joint it reports back is read from physics, not invented.
+The model calls `get_robot_state`, then `set_joint_positions` or `actuate_robot` with some `step` calls, then `get_robot_state` again, and writes what it found. One run on this checkout reported the gripper moving from `[+0.020, -0.376, +0.259]` to `[-0.150, -0.335, +0.237]`, a 17 cm sweep along -X for a 0.5 rad pan. Your model picks its own actions and words; the joint it reports is read from physics, not invented.
 
 Other tools mount the same way and are listed in the [tool reference](../reference/tools.md). `pose_tool` talks to a Feetech bus and needs `pip install pyserial` on top of the Start install:
 
@@ -97,31 +97,7 @@ end_turn
 
 The warning says how long the arm may move and, when the policy does not read the instruction, that the words will not shape the motion. `"y"` approves and the rollout is dispatched; anything else denies and nothing moves. `interrupt.reason["how_to_answer"]` carries the resume line, so a script that prints a paused result prints how to continue it.
 
-With no agent, the same call is refused outright:
-
-```python
-import asyncio
-from strands_robots import Robot
-
-arm = Robot("so101", mode="real", port="/dev/null", mock=True)
-
-async def call(action, **fields):
-    tool_use = {"toolUseId": "demo", "name": arm.tool_name, "input": {"action": action, **fields}}
-    async for event in arm.stream(tool_use, {}):
-        return event.tool_result
-
-refused = asyncio.run(call("execute", instruction="wave", policy_provider="mock", duration=2))
-print(refused["status"])
-print(refused["content"][0]["text"].split("No tool_context")[1])
-arm.cleanup()
-```
-
-```text
-error
- available for operator approval. Set STRANDS_ROBOT_COMMAND_ALLOW=execute (or STRANDS_ROBOT_COMMAND_ALLOW=* for every robot command; comma-separated) or BYPASS_TOOL_CONSENT=true to allow in headless mode.
-```
-
-`STRANDS_ROBOT_COMMAND_ALLOW` names pre-approved actions (`execute`, `start`, or `*`); with nobody to ask the call fails closed; every answer lands in the audit log. [The operator gate](../learn/agents.md#the-operator-gate) gives the full order, the other tools' allow variables, and the one path that is not gated yet.
+With no agent, the same call is refused outright and the refusal names the variable that pre-approves it ([what a refusal looks like](../learn/agents.md#what-a-refusal-looks-like); [First learned policy](first-policy.md) shows it with a Hub checkpoint). `STRANDS_ROBOT_COMMAND_ALLOW` names pre-approved actions (`execute`, `start`, or `*`); with nobody to ask the call fails closed; every answer lands in the audit log. [The operator gate](../learn/agents.md#the-operator-gate) gives the full order, the other tools' allow variables, and the one path that is not gated yet.
 
 ## Where next
 

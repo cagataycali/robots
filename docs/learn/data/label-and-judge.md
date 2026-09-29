@@ -42,11 +42,11 @@ print(labels_path(root))                                                        
 | deterministic | the benchmark's predicates, from simulator state (`evaluate_benchmark`) | the `deterministic` block: `success`, `failure`, `steps`, `cumulative_reward`, `seed` | no |
 | judge | a VLM agent reading the recorded episode | the `judge` block: `quality`, `failure_mode`, `note`, `success_opinion`, `disputes_verdict`, `model`, `labeled_at` | no |
 
-`annotate_episode` refuses an episode with no deterministic verdict yet, and a `success_opinion` that contradicts the predicate is recorded as `disputes_verdict: true`, an annotation a human can review, while the `deterministic` block stays byte-identical. That precedence is structural, not advice.
+`annotate_episode` refuses an episode with no deterministic verdict yet. A `success_opinion` that contradicts the predicate is recorded as `disputes_verdict: true` for a human to review; the `deterministic` block stays byte-identical. That precedence is structural, not advice.
 
 ## The sidecar
 
-Labels live in `episode_labels.json` at the dataset root, next to LeRobot's `meta/`, `data/` and `videos/`, so training can filter episodes without rewriting the dataset. It travels with the directory and dies with it on `overwrite=True`. `schema_version` is 1; `read_labels(root)` returns the document, `deterministic_verdict(root, episode)` one verdict.
+Labels live in `episode_labels.json` at the dataset root, next to LeRobot's `meta/`, `data/` and `videos/`, so training can filter episodes without rewriting the dataset. It travels with the directory and dies with it. `schema_version` is 1; `read_labels(root)` returns the document, `deterministic_verdict(root, episode)` one verdict.
 
 Vocabulary is fixed so filters match on identity:
 
@@ -55,11 +55,11 @@ Vocabulary is fixed so filters match on identity:
 | `quality` | `low`, `medium`, `high` |
 | `failure_mode` | `jerky_motion`, `near_miss`, `camera_occlusion`, `wrong_but_lucky`, `drift`, `collision`, `incomplete`, `other` |
 
-`near_miss` and `wrong_but_lucky` are legal on a deterministically successful episode on purpose: they are the annotations that make a success worth excluding from training data.
+`near_miss` and `wrong_but_lucky` are legal on a deterministically successful episode on purpose: they mark a success worth excluding from training data.
 
 ## The judge agent
 
-Four `@tool`s in `strands_robots.tools.episode_judge` drive a judge, and `create_judge_agent(model=None)` assembles them with a system prompt carrying the two-stage doctrine. Pass any strands model object (a Bedrock VLM, an OpenAI-compatible local endpoint) or none for the default:
+Four `@tool`s in `strands_robots.tools.episode_judge` drive a judge; `create_judge_agent(model=None)` assembles them with a system prompt carrying the two-stage doctrine. Pass any strands model object (a Bedrock VLM, an OpenAI-compatible endpoint) or none for the default:
 
 ```python title="sketch"
 from strands_robots.tools.episode_judge import create_judge_agent
@@ -71,7 +71,7 @@ judge(f"Label every episode of the dataset at {root}. Sample four frames each, w
 | tool | returns |
 |---|---|
 | `load_episode(root, episode)` | frame count, features, whether a verdict and a label exist yet |
-| `sample_frames(root, episode, n_frames=4, include_images=False)` | evenly spaced frames: `observation.state` vectors and timestamps always, one decoded image per camera per sampled frame (every camera, in sorted key order; there is no camera selector) when asked, plus `rms_state_jerk` over the episode so a text-only judge can ground `jerky_motion` |
+| `sample_frames(root, episode, n_frames=4, include_images=False)` | evenly spaced frames: `observation.state` and timestamps always, one decoded image per camera (all cameras, sorted key order) when asked, plus `rms_state_jerk` over the episode so a text-only judge can ground `jerky_motion` |
 | `read_predicate_verdict(root, episode)` | the authoritative deterministic verdict |
 | `write_label(root, episode, quality, failure_mode=None, note="", success_opinion=None, judge_model="")` | the judge block, through `annotate_episode` |
 
