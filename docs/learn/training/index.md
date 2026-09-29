@@ -4,7 +4,7 @@ description: What trains where: the Trainer contract, the nine trainers create_t
 
 # Training
 
-By the end of this page you can name every trainer, what it drives and on what hardware, and run the `validate` to `export` lifecycle with the mock trainer.
+By the end of this page you can name every trainer, what it drives on what hardware, and run the `validate` to `export` lifecycle with the mock trainer.
 
 ```python
 import json

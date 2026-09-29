@@ -4,9 +4,9 @@ description: Two robots see each other on the mesh; three switches decide whethe
 
 # Mesh
 
-At the end of this page two robots in one process see each other on the mesh, one asks the other for its status and hands it a task, and you know the three switches: whether the mesh is on, how it is secured, which wire it rides.
+At the end of this page two robots in one process see each other on the mesh, one asks the other for its status and hands it a task, and you know the three switches: mesh on or off, how it is secured, which wire it rides.
 
-This runs without hardware. `STRANDS_MESH_LOCAL_DEV=true` is the single-machine preset (no TLS, no ACL, loud warnings); it must be set before the first `Robot(mesh=True)`.
+No hardware needed. `STRANDS_MESH_LOCAL_DEV=true` is the single-machine preset (no TLS, no ACL, loud warnings); set it before the first `Robot(mesh=True)`.
 
 ```python
 import os, time

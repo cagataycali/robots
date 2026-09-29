@@ -4,7 +4,7 @@ description: Simulation vs SimEngine, the three backends and what each needs, an
 
 # Simulation
 
-By the end of this page you have a MuJoCo world with a robot, an object and a camera running on this machine, you know the one interface every backend implements, and you know which backend needs what.
+By the end of this page a MuJoCo world with a robot, an object and a camera runs on this machine, and you know the one interface every backend implements and which backend needs what.
 
 ```python
 from strands_robots.simulation import create_simulation, list_backends
