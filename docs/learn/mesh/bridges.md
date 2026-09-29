@@ -24,7 +24,7 @@ Export those variables, set `STRANDS_MESH_BACKEND=bridge`, and `Robot("so101", m
 | `iot` | `IotMqttTransport`: MQTT5 over mTLS to AWS IoT Core, no Zenoh | a robot whose only peers are in the cloud |
 | `bridge` | `BridgeTransport`: one of each; every `put` fans out, subscriptions fan in | production: LAN peers plus operator dashboards, audit and fleet ops in AWS |
 
-The bridge degrades rather than fails: Zenoh down means pure IoT, IoT down means pure Zenoh, both down means `is_alive()` is false and every put is a no-op. The mesh never crashes the robot.
+The bridge degrades rather than fails: Zenoh down means pure IoT, IoT down means pure Zenoh, both down means `is_alive()` is false and every put is a no-op.
 
 ## What the bridge forwards
 
@@ -34,7 +34,7 @@ Keys are unchanged on MQTT (`strands/<peer>/cmd` is a valid MQTT topic); wildcar
 
 ## The IoT trust model
 
-Each robot is a Thing whose name equals its mesh `peer_id` and whose cert CN equals the Thing name; the MQTT `client_id` is set to it so `${iot:Connection.Thing.ThingName}` in the IoT policy scopes every robot to its own topics. `provision_robot(thing_name, region=, cert_dir=, attributes=, allow_estop_publish=True)` writes `<thing>.cert.pem`, `<thing>.private.key` and `AmazonRootCA1.pem` under `STRANDS_IOT_CERT_DIR` (default `~/.strands_robots/iot`).
+Each robot is a Thing whose name equals its mesh `peer_id` and its cert CN; the MQTT `client_id` is set to it so `${iot:Connection.Thing.ThingName}` in the IoT policy scopes every robot to its own topics. `provision_robot(thing_name, region=, cert_dir=, attributes=, allow_estop_publish=True)` generates the key locally, has AWS sign a CSR with `CN=<thing>, O=strands-robots`, and writes `<thing>.cert.pem`, `<thing>.private.key` and `AmazonRootCA1.pem` under `STRANDS_IOT_CERT_DIR` (default `~/.strands_robots/iot`). Re-running publishes a changed policy document as the new default version.
 
 | variable | meaning |
 |---|---|
@@ -42,10 +42,11 @@ Each robot is a Thing whose name equals its mesh `peer_id` and whose cert CN equ
 | `STRANDS_IOT_THING_NAME` | the Thing, equal to the cert CN and the peer id |
 | `STRANDS_IOT_CERT_DIR` | where the three PEM files live |
 | `STRANDS_IOT_CA_FILE` | overrides the root CA path |
+| `STRANDS_IOT_DIRECT_AUTH` | `x509` (default with a cert) or `sigv4` (IAM credentials) for direct messages |
 
 Missing `awsiotsdk`, endpoint or cert files make `connect()` return `False` with an ERROR line; the mesh stays off.
 
-Two optional cloud mirrors: `shadow.enable_for_mesh(mesh)` keeps a named Device Shadow (`presence`) per Thing, and `camera_offload.enable_for_mesh(mesh)` puts camera frames in S3 (`STRANDS_MESH_CAMERA_S3_BUCKET`, `STRANDS_MESH_CAMERA_S3_PREFIX`) and publishes presigned URLs (`STRANDS_MESH_CAMERA_PRESIGN_TTL`) instead of bytes.
+Cloud mirrors: `shadow.enable_for_mesh(mesh)` keeps a Device Shadow (`presence`) per Thing; `camera_offload.enable_for_mesh(mesh)` puts camera frames in S3 (`STRANDS_MESH_CAMERA_S3_BUCKET`, `STRANDS_MESH_CAMERA_S3_PREFIX`) and publishes presigned URLs (`STRANDS_MESH_CAMERA_PRESIGN_TTL`).
 
 ## The Zenoh ACL
 
