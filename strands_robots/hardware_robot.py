@@ -2634,8 +2634,7 @@ class Robot(TeleopMixin, AgentTool):
             resolve, or ``None`` when a policy can be resolved from the value.
         """
         from strands_robots.policies.factory import list_providers, provider_can_be_created
-        from strands_robots.registry.policies import removed_provider_error
-        from strands_robots.registry.policies import _url_scheme_refusal
+        from strands_robots.registry.policies import _url_scheme_refusal, removed_provider_error
 
         if not policy_provider or provider_can_be_created(refusal_str(policy_provider)):
             return None
