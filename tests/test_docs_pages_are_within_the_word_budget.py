@@ -63,9 +63,12 @@ _BUDGET: int = _hook().LIMIT
 #: policy) and a generated "Policies verified on this robot" section on every robot
 #: page, each row carrying the source of its numbers (docs/hooks/data/checkpoints.json).
 #: Then lowered to 49,002 when the robot pages' chips became one {{robot_chips:<name>}} token the hook expands (798 words the chips no longer repeat).
-#: Raised again, to 50,689, for the two humanoid design pages under project/
-#: (whole-body teleoperation, driver composition), 1,710 words plus their index rows.
-_SITE_BUDGET = 50_689
+#: Raised to 49,508 when the mesh gained its direct messaging page (one new page under
+#: learn/mesh, a variable row and a sentence on the pages that point at it, and the `iot`
+#: verbs on the command line page).
+#: Raised again, to 51,262, for the two humanoid design pages under project/
+#: (whole-body teleoperation, driver composition), 1,754 words plus their index rows.
+_SITE_BUDGET = 51_262
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

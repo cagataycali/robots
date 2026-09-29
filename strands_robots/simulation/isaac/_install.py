@@ -62,6 +62,18 @@ ISAAC_LAB_BOOTSTRAP: str = "git clone IsaacLab && ./isaaclab.sh -i"
 #: its extension graph without them.
 ISAAC_SIM_PIP_INSTALL: str = "pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url https://pypi.nvidia.com"
 
+#: The same install under uv, the repository's own installer. Both flags are
+#: required, measured with ``uv pip install --dry-run`` (uv 0.11, Python 3.12):
+#: without ``--index-strategy unsafe-best-match`` uv resolves the
+#: ``isaacsim-*`` names PyPI also carries against PyPI only ("no version of
+#: mujoco-usd-converter==0.1.0"); without ``--prerelease=allow`` it refuses
+#: ``isaacsim-core``'s exact pin ``tinyobjloader==2.0.0rc13`` (pip accepts an
+#: exact-pinned prerelease, uv does not, and ``if-necessary`` is not enough).
+ISAAC_SIM_UV_INSTALL: str = (
+    "uv pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url https://pypi.nvidia.com "
+    "--index-strategy unsafe-best-match --prerelease=allow"
+)
+
 #: Caveats that apply only to the pip route (#1803): isaacsim-kernel
 #: downgrades ``coverage`` to 7.4.4, which breaks numba (and hence
 #: robosuite/LIBERO) with a red-herring ``coverage.types.Tracer``
@@ -88,6 +100,7 @@ def install_options_block(indent: str = "  - ") -> str:
     """
     lines = [
         f"{indent}pip (Python 3.12): {ISAAC_SIM_PIP_INSTALL} ({ISAAC_SIM_PIP_CAVEATS})",
+        f"{indent}uv (Python 3.12): {ISAAC_SIM_UV_INSTALL}",
         f"{indent}NVIDIA Omniverse Launcher (Isaac Sim {ISAAC_SIM_MIN_VERSION}+)",
         f"{indent}Isaac Lab: {ISAAC_LAB_BOOTSTRAP}",
         f"{indent}Docker: {ISAAC_SIM_DOCKER_IMAGE}",
@@ -136,6 +149,7 @@ __all__ = [
     "ISAAC_LAB_BOOTSTRAP",
     "ISAAC_SIM_PIP_INSTALL",
     "ISAAC_SIM_PIP_CAVEATS",
+    "ISAAC_SIM_UV_INSTALL",
     "PIP_EXTRA",
     "install_options_block",
     "install_options_inline",

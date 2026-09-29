@@ -51,6 +51,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.mesh.transport.base import DirectResult
 from strands_robots.mesh.transport.iot_transport import _is_camera_ref
 
 if TYPE_CHECKING:
@@ -693,6 +694,57 @@ class BridgeTransport:
         other topics stay Zenoh-local.
         """
         return self._bridge_suffixes
+
+    # Direct Messaging (delegated to the IoT leg)
+
+    def send_direct(
+        self,
+        peer_id: str,
+        key: str,
+        data: dict[str, Any],
+        *,
+        confirm: bool = False,
+        timeout: float = 5.0,
+        response_key: str | None = None,
+        correlation: str | None = None,
+    ) -> DirectResult:
+        """Address one peer through the IoT leg; ``unavailable`` when that leg is down.
+
+        The Zenoh leg has no addressed send, so a bridge peer is a
+        :class:`~strands_robots.mesh.transport.base.DirectSender` exactly as far
+        as its IoT connection is. When the IoT side never came up the caller
+        gets ``unavailable`` and falls back to ``put``, which the Zenoh leg
+        still carries.
+        """
+        if not self._iot.is_alive():
+            return DirectResult(delivered=False, reason="unavailable", latency_ms=0.0, detail="iot leg not connected")
+        return self._iot.send_direct(
+            peer_id,
+            key,
+            data,
+            confirm=confirm,
+            timeout=timeout,
+            response_key=response_key,
+            correlation=correlation,
+        )
+
+    def direct_forbidden(self, peer_id: str) -> bool:
+        """True once the IoT leg saw a 403 for *peer_id* on this connection."""
+        return self._iot.direct_forbidden(peer_id)
+
+    @property
+    def connection_generation(self) -> int:
+        """The IoT leg's CONNACK count; memos about that identity's grants are scoped to it."""
+        return int(getattr(self._iot, "connection_generation", 0))
+
+    @property
+    def thing_name(self) -> str:
+        """The IoT leg's MQTT client id (its Thing name), ``""`` when that leg is down.
+
+        Presence carries it as ``iot_client_id`` so a sender knows which client
+        id a 404 from the broker refers to.
+        """
+        return self._iot.thing_name if self._iot.is_alive() else ""
 
     @property
     def raw_session(self) -> Any | None:

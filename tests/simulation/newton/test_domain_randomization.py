@@ -3,8 +3,9 @@
 Two layers:
 
 - Pure-helper unit tests (no Newton/Warp required) cover the deterministic
-  sampling, range validation, and observation/frame noise application that the
-  feature is built on. These run everywhere, including CPU-only CI.
+  sampling and range validation the feature is built on. These run everywhere,
+  including CPU-only CI. The sensor-noise passes are shared with every backend
+  and graded once, in ``tests/simulation/test_observation_noise.py``.
 - Integration tests (gated on Newton + Warp) drive the real engine: physics
   randomization mutates the finalized model's mass/friction, the multiplier
   sequence is reproducible for a fixed seed and varies across episodes, lighting
@@ -31,7 +32,6 @@ from strands_robots.simulation.base import (
     randomization_seed_error,
 )
 from strands_robots.simulation.newton.randomization import (
-    _OBS_NOISE_PARAMS,
     _RANDOMIZE_PARAMS,
     DomainRandomizationMixin,
 )
@@ -60,7 +60,7 @@ class _NoiseHost(DomainRandomizationMixin):
 class TestUnknownParamsRejected:
     """Keywords the backend cannot honor are named, not swallowed.
 
-    ``randomize`` / ``set_obs_noise`` declare ``**kwargs`` for MuJoCo-signature
+    ``randomize`` declares ``**kwargs`` for MuJoCo-signature
     parity, which used to make a misspelled parameter a successful no-op. The
     keys Newton genuinely reads out of that sink (``randomize_positions`` and
     its ``position_noise`` companion) stay accepted so backend-agnostic code
@@ -82,19 +82,9 @@ class TestUnknownParamsRejected:
         assert result["status"] == "error"
         assert "not supported by the Newton backend" in result["content"][0]["text"]
 
-    def test_set_obs_noise_rejects_misspelled_std(self):
-        host = _NoiseHost()
-        result = host.set_obs_noise(joint_pos_stdev=0.05)
-
-        assert result["status"] == "error"
-        text = result["content"][0]["text"]
-        assert "joint_pos_stdev" in text and "joint_pos_std" in text
-        assert host._obs_noise is None
-
     def test_accepted_names_cover_the_signatures(self):
         for method, accepted, extra in (
             (DomainRandomizationMixin.randomize, _RANDOMIZE_PARAMS, {"randomize_positions", "position_noise"}),
-            (DomainRandomizationMixin.set_obs_noise, _OBS_NOISE_PARAMS, set()),
         ):
             declared = {
                 name
@@ -121,105 +111,6 @@ class TestValidateRange:
 
     def test_rejects_non_finite(self):
         assert randomization_range_error((0.0, float("inf")), "mass_range") is not None
-
-
-class TestSetObsNoiseValidation:
-    def test_negative_std_is_error(self):
-        host = _NoiseHost()
-        result = host.set_obs_noise(joint_pos_std=-0.1)
-        assert result["status"] == "error"
-        assert host._obs_noise is None
-
-    def test_non_finite_is_error(self):
-        host = _NoiseHost()
-        assert host.set_obs_noise(camera_jitter_px=float("nan"))["status"] == "error"
-
-    def test_non_numeric_is_error(self):
-        host = _NoiseHost()
-        result = host.set_obs_noise(joint_pos_std="fast")
-        assert result["status"] == "error"
-        assert host._obs_noise is None
-
-    def test_valid_config_is_stored(self):
-        host = _NoiseHost()
-        result = host.set_obs_noise(joint_pos_std=0.02, joint_vel_std=0.1, camera_jitter_px=3, seed=0)
-        assert result["status"] == "success"
-        assert host._obs_noise == {"joint_pos_std": 0.02, "joint_vel_std": 0.1, "camera_jitter_px": 3.0}
-        assert host._obs_noise_rng is not None
-
-
-class TestJointNoise:
-    def test_disabled_returns_input_unchanged(self):
-        host = _NoiseHost()
-        obs = {"Rotation": 0.5, "Pitch": -0.2}
-        assert host._apply_joint_noise(obs) is obs
-
-    def test_adds_noise_with_requested_std(self):
-        host = _NoiseHost()
-        host.set_obs_noise(joint_pos_std=0.05, seed=0)
-        samples = [host._apply_joint_noise({"j": 1.0})["j"] for _ in range(20000)]
-        assert abs(float(np.std(samples)) - 0.05) < 0.005
-        assert abs(float(np.mean(samples)) - 1.0) < 0.005
-
-    def test_is_reproducible_for_same_seed(self):
-        a, b = _NoiseHost(), _NoiseHost()
-        a.set_obs_noise(joint_pos_std=0.1, seed=7)
-        b.set_obs_noise(joint_pos_std=0.1, seed=7)
-        seq_a = [a._apply_joint_noise({"j": 0.0})["j"] for _ in range(50)]
-        seq_b = [b._apply_joint_noise({"j": 0.0})["j"] for _ in range(50)]
-        assert seq_a == seq_b
-
-    def test_velocity_companions_draw_from_the_velocity_std(self):
-        """``<joint>.vel`` is a rad/s reading, so it takes ``joint_vel_std``.
-
-        The observation's joint block holds both quantities, and spending the
-        position std on a velocity (or vice versa) mislabels the noise the
-        caller configured.
-        """
-        host = _NoiseHost()
-        host.set_obs_noise(joint_pos_std=0.0, joint_vel_std=0.2, seed=0)
-        samples = [host._apply_joint_noise({"j": 1.0, "j.vel": 0.0}) for _ in range(20000)]
-        assert {s["j"] for s in samples} == {1.0}
-        assert abs(float(np.std([s["j.vel"] for s in samples])) - 0.2) < 0.02
-
-
-class TestStateNoise:
-    def test_velocity_noise_independent_of_position(self):
-        host = _NoiseHost()
-        host.set_obs_noise(joint_pos_std=0.0, joint_vel_std=0.2, seed=1)
-        states = [host._apply_state_noise({"j": {"position": 0.3, "velocity": 0.0}})["j"] for _ in range(20000)]
-        positions = [s["position"] for s in states]
-        velocities = [s["velocity"] for s in states]
-        assert positions == [0.3] * len(positions)  # pos std == 0 -> untouched
-        assert abs(float(np.std(velocities)) - 0.2) < 0.02
-
-    def test_disabled_returns_input_unchanged(self):
-        host = _NoiseHost()
-        state = {"j": {"position": 0.1, "velocity": 0.2}}
-        assert host._apply_state_noise(state) is state
-
-
-class TestFrameJitter:
-    def test_disabled_returns_input_unchanged(self):
-        host = _NoiseHost()
-        frame = np.zeros((8, 8, 3), dtype=np.uint8)
-        assert host._maybe_jitter_frame(frame) is frame
-
-    def test_subpixel_jitter_is_noop(self):
-        host = _NoiseHost()
-        host.set_obs_noise(camera_jitter_px=0.5, seed=0)  # int(0.5) == 0 -> no shift
-        frame = np.arange(8 * 8 * 3, dtype=np.uint8).reshape(8, 8, 3)
-        assert host._maybe_jitter_frame(frame) is frame
-
-    def test_jitter_shifts_pixels_without_changing_shape(self):
-        host = _NoiseHost()
-        host.set_obs_noise(camera_jitter_px=3, seed=2)
-        frame = np.arange(8 * 8 * 3, dtype=np.uint8).reshape(8, 8, 3)
-        out = host._maybe_jitter_frame(frame)
-        assert out.shape == frame.shape
-        assert not np.array_equal(out, frame)
-        # A roll is a permutation: the pixel multiset is preserved.
-        assert sorted(out.flatten().tolist()) == sorted(frame.flatten().tolist())
 
 
 class TestRandomizeGuards:
@@ -321,7 +212,8 @@ def _seeded(method: str, seed: Any) -> tuple[dict, _NoiseHost]:
     host = _NoiseHost()
     # randomize() checks only `_world is None`; set_obs_noise() has no world guard.
     host._world = object()  # type: ignore[assignment]
-    result = host.randomize(seed=seed) if method == "randomize" else host.set_obs_noise(seed=seed)
+    # A non-zero std: an all-zero set_obs_noise clears the config instead of seeding a stream.
+    result = host.randomize(seed=seed) if method == "randomize" else host.set_obs_noise(joint_pos_std=0.01, seed=seed)
     return result, host
 
 
@@ -340,8 +232,8 @@ class TestSeedRefusalOnBothEntryPoints:
     backend *calls* :func:`~strands_robots.simulation.base.randomization_seed_error`,
     which a call whose verdict is discarded still satisfies, and the behavioural
     pin beside it drives the MuJoCo backend. The sibling range and amplitude
-    guards here are driven directly (``TestRandomizeGuards``,
-    ``TestSetObsNoiseValidation``); the seed was the one shared domain on this
+    guards here are driven directly (``TestRandomizeGuards``, and the shared
+    ``tests/simulation/test_observation_noise.py``); the seed was the one shared domain on this
     backend whose refusal nothing executed.
     """
 
