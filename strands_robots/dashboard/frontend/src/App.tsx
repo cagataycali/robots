@@ -151,6 +151,10 @@ function Dashboard() {
   const fleetHosts = useMemo(() => armHosts(list.map(q => ({
     peer_id: q.peer_id, joints: Object.keys(q.state?.joints ?? {}).length }))), [list])
 
+  // A host process is not a robot: its `<host>__<robot>` children carry the joints, the cameras
+  // and a Run button that routes back to it, so a card of its own is a second, broken robot.
+  const cards = useMemo(() => list.filter(p => !fleetHosts[p.peer_id]), [list, fleetHosts])
+
   const pairInputs = useMemo(() => list.map(q => ({
     peer_id: q.peer_id, joints: Object.keys(q.state?.joints ?? {}).length,
     role: q.role ?? null, role_volts: q.role_volts ?? null, role_source: q.role_source ?? null,
@@ -374,20 +378,19 @@ function Dashboard() {
           {/* local viewers should not stream camera frames out to the internet and back. */}
           <LanHint />
           {(() => {
-            const lb = lockoutBanner(list)
+            const lb = lockoutBanner(cards)
             return lb ? (
               <div className={`lockout-banner ${lb.severity}`} role="status" style={{ gridColumn: '1 / -1' }}>
                 <span aria-hidden="true">&#128721;</span><span>{lb.text}</span>
               </div>
             ) : null
           })()}
-          {list.map(p => (
+          {cards.map(p => (
             <ErrorBoundary key={p.peer_id} label={`the card for ${p.peer_id}`}>
             <RobotCard
               key={p.peer_id}
               peer={p}
               twinLive={liveTwins.has(`${p.peer_id}-twin`)}
-              hostsChildren={fleetHosts[p.peer_id]?.children ?? null}
               onOpen={setDetail}
               onBusyChange={(id, running) => setBusyPeers(s => (s[id] === running ? s : { ...s, [id]: running }))}
             />

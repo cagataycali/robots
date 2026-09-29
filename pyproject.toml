@@ -34,6 +34,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Physics",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 
 dependencies = [
@@ -856,9 +857,13 @@ constraint-dependencies = [
     "mcp>=1.28.1",
     # GHSA-h35f-9h28-mq5c (MEDIUM): MANIFEST.in exclusion bypass via Unicode
     # normalisation, < 83.0.0. lerobot 0.6.1 caps setuptools < 82.0.0, so the
-    # floor sits at the newest release that resolves; lift it to 83.0.0 when
-    # lerobot lifts its cap.
-    "setuptools>=81.0.0",
+    # real floor lives in override-dependencies below, which replaces that cap.
+    "setuptools>=83.0.0",
+    # GHSA-xrqw-3rrv-vx5w (HIGH, transformers < 5.10.0) is floored the same
+    # way (override-dependencies, since lerobot[transformers-dep] caps < 5.6.0).
+    # GHSA-rrmf-rvhw-rf47 (LOW, torch <= 2.12.1, torch.jit.script memory
+    # corruption) is floored there too, with the torchvision and torchcodec
+    # releases built against that torch.
     # GHSA-hxp9-w8x3-p566 (MEDIUM): permessage-deflate bypasses
     # maxMessagePayloadSize, < 26.7.1 (under roslibpy).
     "autobahn>=26.7.1",
@@ -874,6 +879,29 @@ override-dependencies = [
     # 0.39.0). diffusers is only exercised by the cosmos3-diffusers extra
     # (Cosmos3Policy backend="diffusers"); lerobot core does not import it.
     "diffusers>=0.39",
+    # SECURITY: GHSA-h35f-9h28-mq5c (setuptools < 83.0.0) and
+    # GHSA-xrqw-3rrv-vx5w (transformers < 5.10.0, save_pretrained path
+    # traversal through chat template names). lerobot 0.6.1 caps setuptools
+    # < 82.0.0 and transformers < 5.6.0 (transformers-dep extra), and 0.6.1 is
+    # its newest release, so a plain floor cannot resolve. The override
+    # replaces lerobot's caps; verified 2026-09-28 on transformers 5.17.0 /
+    # setuptools 84.0.0: lerobot 0.6.1 imports, SmolVLA (lerobot/smolvla_base)
+    # and ACT rollouts drive the MuJoCo so101, tests/policies/lerobot_local
+    # and tests/test_robot_factory.py pass. Drop both lines when lerobot lifts
+    # the caps.
+    "setuptools>=83.0.0",
+    "transformers>=5.10.0",
+    # SECURITY: GHSA-rrmf-rvhw-rf47 (torch <= 2.12.1, memory corruption in
+    # torch.jit.script; strands_robots never calls it). lerobot 0.6.1 caps
+    # torch < 2.12.0 and torchvision < 0.27.0, so the same override lifts the
+    # three wheels that must move together (torchvision and torchcodec are
+    # built against one torch). Verified 2026-09-28 on torch 2.14.0 /
+    # torchvision 0.29.0 / torchcodec 0.16.0: SmolVLA and ACT rollouts, and
+    # record -> LeRobotDataset read-back (torchcodec decode) -> replay, all
+    # pass on macOS arm64. Drop when lerobot lifts the caps.
+    "torch>=2.13.0",
+    "torchvision>=0.28.0",
+    "torchcodec>=0.13.0",
 ]
 
 # Auto-select the right PyTorch wheel for the host accelerator. On NVIDIA

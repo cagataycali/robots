@@ -17,7 +17,7 @@ from strands_robots.registry import (
 from strands_robots.registry import (
     resolve_name as resolve_robot_name,
 )
-from strands_robots.utils import get_search_paths, safe_join
+from strands_robots.utils import get_search_paths, log_safe, safe_join
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ def _resolve_candidates(asset_dir_name: str, xml_file: str, name: str) -> list[P
         try:
             model_path = safe_join(search_dir, f"{asset_dir_name}/{xml_file}")
         except ValueError:
-            logger.warning("Path traversal attempt blocked for robot: %s", name)
+            logger.warning("Path traversal attempt blocked for robot: %s", log_safe(name))
             return []
         if model_path.exists():
             candidates.append(model_path)
@@ -169,7 +169,7 @@ def is_robot_asset_present(name: str) -> bool:
             if user_model.exists():
                 return True
         except ValueError:
-            pass
+            pass  # traversal in a user-authored xml_file: the entry is skipped, not an asset
 
     # Check standard search paths
     for search_dir in get_search_paths():
@@ -242,7 +242,7 @@ def resolve_model_path(
         # (incl. suffix-stripped variants) and handles a None return cleanly,
         # so a miss here is normal control flow -- not something the user
         # needs to see on every add_robot.
-        logger.debug("Unknown robot or no asset: %s", name)
+        logger.debug("Unknown robot or no asset: %s", log_safe(name))
         return None
 
     asset = info["asset"]
@@ -264,7 +264,7 @@ def resolve_model_path(
         except ValueError:
             logger.warning(
                 "Path traversal blocked in _user_asset_path for %s: %r",
-                name,
+                log_safe(name),
                 xml_file,
             )
             user_model = None
@@ -276,12 +276,12 @@ def resolve_model_path(
 
     if not candidates and allow_download:
         # No XML found at all - try auto-download, then re-search
-        logger.info("No XML found for %s, attempting auto-download...", name)
+        logger.info("No XML found for %s, attempting auto-download...", log_safe(name))
         if _auto_download_robot(name, info):
             candidates.extend(_resolve_candidates(asset_dir_name, xml_file, name))
 
     if not candidates:
-        logger.warning("Robot model not found: %s -> %s/%s", name, asset_dir_name, xml_file)
+        logger.warning("Robot model not found: %s -> %s/%s", log_safe(name), asset_dir_name, xml_file)
         return None
 
     # Prefer the candidate whose declared meshes all resolve, because an XML with
@@ -290,26 +290,26 @@ def resolve_model_path(
     # pre-download reading.
     for path in candidates:
         if _model_meshes_resolve(path):
-            logger.debug("Resolved %s -> %s (declared meshes resolve)", name, path)
+            logger.debug("Resolved %s -> %s (declared meshes resolve)", log_safe(name), path)
             return Path(path)
 
     # XML found but no meshes - auto-download and re-check. Declining the
     # download leaves the first candidate to the fallback below, which is what a
     # download that fails already does.
     if allow_download:
-        logger.info("XML found for %s but a declared mesh is absent, attempting auto-download...", name)
+        logger.info("XML found for %s but a declared mesh is absent, attempting auto-download...", log_safe(name))
         if _auto_download_robot(name, info):
             # Re-read after download: the fetch is exactly the change the pass
             # above could not have observed.
             refreshed = _resolve_candidates(asset_dir_name, xml_file, name)
             for path in refreshed:
                 if _model_meshes_resolve(path):
-                    logger.debug("Resolved %s -> %s (auto-downloaded)", name, path)
+                    logger.debug("Resolved %s -> %s (auto-downloaded)", log_safe(name), path)
                     return Path(path)
 
     # Final fallback: return the first candidate, which is what a download that
     # cannot supply the absent reference leaves the caller with either way.
-    logger.debug("Resolved %s -> %s (no meshes available)", name, candidates[0])
+    logger.debug("Resolved %s -> %s (no meshes available)", log_safe(name), candidates[0])
     return Path(candidates[0])
 
 

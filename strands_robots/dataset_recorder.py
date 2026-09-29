@@ -39,6 +39,7 @@ from strands_robots.utils import (
     boolean_flag_error,
     camera_schema_key,
     lerobot_version,
+    log_safe,
     name_list_error,
     partial_construction_repr,
     positive_count_error,
@@ -341,7 +342,7 @@ def _prepare_create_target(dataset_dir: Path, *, overwrite: bool) -> None:
             shutil.rmtree(dataset_dir)
         else:
             dataset_dir.unlink()
-        logger.info("Removed existing dataset target for overwrite: %s", dataset_dir)
+        logger.info("Removed existing dataset target for overwrite: %s", log_safe(dataset_dir))
         return
     if not dataset_dir.is_dir():
         raise ValueError(
@@ -358,7 +359,7 @@ def _prepare_create_target(dataset_dir: Path, *, overwrite: bool) -> None:
         # Empty dir (e.g. from tempfile.mkdtemp()): clear it so create() does
         # not trip over LeRobot's exist_ok=False guard.
         shutil.rmtree(dataset_dir)
-        logger.info("Cleared empty recording target for fresh dataset: %s", dataset_dir)
+        logger.info("Cleared empty recording target for fresh dataset: %s", log_safe(dataset_dir))
         return
     raise ValueError(
         f"Recording target {dataset_dir} already exists, is not a LeRobotDataset "
@@ -996,7 +997,13 @@ class DatasetRecorder:
             video_height=video_height,
         )
 
-        logger.info(f"Creating LeRobotDataset: {repo_id} @ {fps}fps, {len(features)} features, robot_type={robot_type}")
+        logger.info(
+            "Creating LeRobotDataset: %s @ %sfps, %s features, robot_type=%s",
+            log_safe(repo_id),
+            fps,
+            len(features),
+            log_safe(robot_type),
+        )
 
         # The directory this dataset will live in, resolved once. It is passed to
         # ``LeRobotDataset.create`` as an explicit ``root`` rather than letting
@@ -1063,7 +1070,7 @@ class DatasetRecorder:
         if extra_state_specs:
             scalar_source = list(joint_names) if joint_names else []
             recorder._state_source_keys = scalar_source + [k for k, _ in extra_state_specs]
-        logger.info("DatasetRecorder ready: %s", repo_id)
+        logger.info("DatasetRecorder ready: %s", log_safe(repo_id))
         return recorder
 
     @classmethod

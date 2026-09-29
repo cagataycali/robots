@@ -99,7 +99,7 @@ def _detect_groot_version(*, force: bool = False) -> str | None:
             logger.info("Detected Isaac-GR00T N1.7")
             return _GROOT_VERSION
     except (ModuleNotFoundError, ValueError):
-        pass
+        pass  # best effort: this GR00T release is not installed, probe the next one
 
     try:
         if importlib.util.find_spec("gr00t.policy.gr00t_policy") is not None:
@@ -107,7 +107,7 @@ def _detect_groot_version(*, force: bool = False) -> str | None:
             logger.info("Detected Isaac-GR00T N1.6")
             return _GROOT_VERSION
     except (ModuleNotFoundError, ValueError):
-        pass
+        pass  # best effort: this GR00T release is not installed, probe the next one
 
     try:
         if importlib.util.find_spec("gr00t.model.policy") is not None:
@@ -115,7 +115,7 @@ def _detect_groot_version(*, force: bool = False) -> str | None:
             logger.info("Detected Isaac-GR00T N1.5")
             return _GROOT_VERSION
     except (ModuleNotFoundError, ValueError):
-        pass
+        pass  # best effort: this GR00T release is not installed, probe the next one
 
     return None
 
@@ -1161,7 +1161,7 @@ class Gr00tPolicy(Policy):
                     if stat is not None and hasattr(stat, "shape"):
                         self._model_state_dof[key] = stat.shape[-1]
         except (AttributeError, TypeError):
-            pass
+            logger.debug("GR00T normalizer exposes no per-key state stats; trying norm_params", exc_info=True)
 
         # Source 2: processor norm_params (N1.6)
         try:
@@ -1177,7 +1177,7 @@ class Gr00tPolicy(Policy):
                                 dim = params["dim"]
                                 self._model_state_dof[key] = int(dim.item()) if hasattr(dim, "item") else int(dim)
         except (AttributeError, TypeError):
-            pass
+            logger.debug("GR00T norm_params carry no state dims; the model's DOF stays unknown", exc_info=True)
 
         discovered = set(self._model_state_dof.keys())
         all_keys = set(mmc["state"].modality_keys)

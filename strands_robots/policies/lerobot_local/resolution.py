@@ -448,7 +448,7 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
         if not inspect.isabstract(PreTrainedPolicy):
             return PreTrainedPolicy
     except ImportError:
-        pass
+        pass  # best effort: this LeRobot has no PreTrainedPolicy, the next strategy is tried
 
     # Turn the dead end into an actionable error: enumerate the policy types
     # this lerobot install can actually resolve (a typo'd ``policy_type`` is the

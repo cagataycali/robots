@@ -15,7 +15,7 @@ The process joins the Zenoh mesh as a robot-less gateway: one page drives hardwa
 
 | tab | shows |
 |---|---|
-| Fleet | every live mesh peer (joints, cameras, task, lockout) and every registry robot; teleop pairing, a task form |
+| Fleet | every live mesh robot (joints, cameras, task, lockout; a host process folds into its `__` robots) and every registry robot; teleop pairing, a task form |
 | Devices | this machine's serial ports and cameras; spawn a robot process per port (a managed mesh child), assign cameras, read its log, despawn |
 | Record | a LeRobot dataset session: arms, cameras, start / stop / redo / discard episodes, thumbnails, labels, upload |
 | Train | datasets, trainers, a graded job form, live loss, checkpoints, validation on a robot, a deploy snippet |
@@ -40,7 +40,7 @@ The first passkey closes the third door. Its enrollment must present `STRANDS_DA
 
 ## The e-stop button
 
-`POST /api/safety/estop` stops every sim session in this process and locks; every route that would move a sim answers `423` until it clears. `POST /api/safety/resume` sets the state to `unknown` on purpose: a resume is a request, not proof; the first command a session accepts is, and only then does `GET /api/safety` say `clear`. The signed fleet stop ([safety and e-stop](mesh/safety-and-estop.md)) is a separate rail; one reaching this process engages the same lockout.
+`POST /api/safety/estop` stops every sim session in this process and locks; every route that would move a sim answers `423` until it clears. `POST /api/safety/resume` sets the state to `unknown` on purpose: a resume is a request, not proof; the first command a session accepts is, and only then does `GET /api/safety` say `clear`. The signed fleet stop ([safety and e-stop](mesh/safety-and-estop.md)) is a separate rail; its verdict is `fleet` in that answer.
 
 ## The agent in the browser
 

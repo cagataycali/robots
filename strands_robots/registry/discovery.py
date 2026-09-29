@@ -35,6 +35,7 @@ from functools import lru_cache
 from typing import Any
 
 from .._description_cache import import_description
+from ..utils import log_safe
 from .loader import normalize_robot_name
 
 logger = logging.getLogger(__name__)
@@ -152,7 +153,7 @@ def discover_robot(name: str) -> dict[str, Any] | None:
     try:
         mod = import_description(module_name)
     except ImportError as exc:
-        logger.debug("Discovery import failed for %r (%s): %s", norm, module_name, exc)
+        logger.debug("Discovery import failed for %s (%s): %s", log_safe(norm), module_name, exc)
         _DISCOVER_CACHE[norm] = None
         return None
 
@@ -160,9 +161,9 @@ def discover_robot(name: str) -> dict[str, Any] | None:
     package_path = getattr(mod, "PACKAGE_PATH", None)
     if not mjcf_path or not package_path:
         logger.warning(
-            "robot_descriptions module %r lacks MJCF_PATH/PACKAGE_PATH; cannot discover %r",
+            "robot_descriptions module %r lacks MJCF_PATH/PACKAGE_PATH; cannot discover %s",
             module_name,
-            norm,
+            log_safe(norm),
         )
         _DISCOVER_CACHE[norm] = None
         return None

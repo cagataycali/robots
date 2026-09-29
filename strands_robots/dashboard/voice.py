@@ -342,8 +342,8 @@ async def run_voice_session(ws: Any, *, bridge: Any = None) -> None:
                 try:
                     if json.loads(raw["text"]).get("type") == "stop":
                         break
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001
+                    pass  # best effort: a text frame that is not the stop message is ignored
         stop_evt.set()
 
     import asyncio as _a

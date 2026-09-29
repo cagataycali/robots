@@ -14,6 +14,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
 from strands_robots.dashboard import safety_state
@@ -1062,6 +1063,41 @@ class MeshBridge:
         res = m._resume_lockout(override_code)
         return {"signed": True, "issuer": m.peer_id, **(res or {})}
 
+    def confirm_resume(self, since: float, *, wait_s: float = 2.0, timeout: float = 2.0) -> list[str]:
+        """Ask every live host whether its lockout cleared after a resume sent at ``since``.
+
+        A resume is a request each peer verifies itself, so the verdict stays
+        ``unknown`` until a peer answers a command a lockout refuses. ``state``
+        is one and moves nothing: a peer that answers it after this dashboard
+        heard the resume is proven clear, one that refuses or stays silent keeps
+        ``unknown``. A ``<host>__<robot>`` child is covered by its host. The
+        fresh snapshot is pushed to every page.
+
+        Returns:
+            The peer ids that answered, sorted. Empty when this dashboard never
+            heard its own resume within ``wait_s``, since proof older than the
+            resume it heard would not count.
+        """
+        deadline = time.monotonic() + wait_s
+        while True:
+            with self._peers_lock:
+                heard = self._lockout.state != "locked" and (self._lockout.arrived or 0.0) >= since
+            if heard or time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+        if not heard:
+            return []
+        hosts = sorted(
+            pid for pid in self.live_peers() if pid != self.peer_id and "__" not in pid and not pid.endswith("-safety")
+        )
+        answered: list[str] = []
+        if hosts:
+            with ThreadPoolExecutor(max_workers=min(8, len(hosts))) as pool:
+                results = pool.map(lambda pid: self.send_cmd(pid, {"action": "state"}, timeout, source="resume"), hosts)
+                answered = [pid for pid, res in zip(hosts, results, strict=True) if not res.get("error")]
+        self._emit(self.snapshot())
+        return answered
+
     def send_cmd(
         self,
         target: str,
@@ -1200,10 +1236,14 @@ class MeshBridge:
             for pid, peer in list(peers.items()):
                 if not isinstance(peer, dict):
                     continue
+                # A "<host>__<robot>" child is dispatched by its host's Mesh (route_task_target), so the
+                # host accepting a command is the child's proof too.
+                host, _, child = pid.partition("__")
+                proven = [t for t in (proofs.get(pid), proofs.get(host) if child else None) if t is not None]
                 verdict = safety_state.resolve_peer(
                     fleet_lockout,
                     first_seen=peer.get("first_seen"),
-                    proof_at=proofs.get(pid),
+                    proof_at=max(proven, default=None),
                 )
                 peers[pid] = {**peer, "lockout": verdict.as_fields()}
         except Exception as exc:  # pragma: no cover - an annotation must never break the fleet view

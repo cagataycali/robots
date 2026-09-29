@@ -30,7 +30,7 @@ from .._description_cache import import_description
 from ..registry import get_robot
 from ..registry import list_robots as registry_list_robots
 from ..registry import resolve_name as resolve_robot_name
-from ..utils import boolean_flag_error, get_assets_dir, get_search_paths, safe_join
+from ..utils import boolean_flag_error, get_assets_dir, get_search_paths, log_safe, safe_join
 
 logger = logging.getLogger(__name__)
 
@@ -730,7 +730,7 @@ def auto_download_robot(name: str, info: dict[str, Any]) -> bool:
     if _robot_descriptions_available():
         results = _download_via_robot_descriptions({canonical: info}, dest_dir)
         if results.get(canonical, "").startswith("downloaded"):
-            logger.info("Auto-downloaded %s via robot_descriptions", canonical)
+            logger.info("Auto-downloaded %s via robot_descriptions", log_safe(canonical))
             return True
 
     # Fall back to custom GitHub source
@@ -738,7 +738,7 @@ def auto_download_robot(name: str, info: dict[str, Any]) -> bool:
     if source.get("type") == "github":
         result = _download_from_github(canonical, info, dest_dir)
         if result.startswith("downloaded"):
-            logger.info("Auto-downloaded %s from GitHub", canonical)
+            logger.info("Auto-downloaded %s from GitHub", log_safe(canonical))
             return True
 
     return False

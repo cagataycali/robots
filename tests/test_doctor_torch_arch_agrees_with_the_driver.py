@@ -150,6 +150,36 @@ class TestABuildWithoutTheDevicesCodeIsRefused:
         assert "FAIL" in result
         assert "pytorch.org/get-started/locally" in result
 
+    def test_the_remedy_reads_the_row_for_this_platform_when_torch_splits_the_table(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """torch 2.14 keys each release by platform, since only the aarch64 wheel carries Thor.
+
+        The remedy reads the row for this machine and offers only what that wheel
+        carries; the other platform's row is not this reader's remedy.
+        """
+        import platform
+
+        here = platform.machine()
+        elsewhere = "x86_64" if here != "x86_64" else "aarch64"
+        split = {
+            "13.0": {here: {80, 90, 100, THOR_ARCH, 120}, elsewhere: {80, 90, 100, 120}},
+            "13.2": {here: {80, 90, 100, 120}, elsewhere: {80, 90, 100, THOR_ARCH, 120}},
+        }
+        result = _thor_on_an_older_build(monkeypatch, releases=split)  # type: ignore[arg-type]
+        assert "FAIL" in result
+        assert "13.0" in result
+        assert "13.2" not in result
+
+    def test_the_remedy_reads_every_row_when_the_table_names_no_row_for_this_platform(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A table keyed by platforms this host is not among still names what some wheel carries."""
+        split = {"13.0": {"riscv64": {80, 90, 100, THOR_ARCH, 120}}, "12.8": {"riscv64": {80, 90, 100, 120}}}
+        result = _thor_on_an_older_build(monkeypatch, releases=split)  # type: ignore[arg-type]
+        assert "13.0" in result
+        assert "12.8" not in result
+
 
 class TestThePairTheCoarseRuleWouldAdmit:
     """The interval table is preferred because a coarser rule disagrees with it."""
@@ -331,20 +361,58 @@ class TestAgainstTheInstalledTorch:
             assert callable(getattr(torch.cuda, name)), name
         assert isinstance(torch.__version__, str)
 
-    def test_the_interval_rule_agrees_with_torchs_own_predicate(self) -> None:
-        """The written-out rule is graded against the predicate it stands in for."""
+    def test_the_interval_rule_agrees_with_torchs_own_table(self) -> None:
+        """The written-out rule is graded against the table it is read off.
+
+        ``DEVICE_REQUIREMENT`` is the table torch consults for a build against
+        CUDA 13.0 or older, and the one the rule above transcribes. The predicate
+        itself is not the oracle here: since torch 2.14 it picks a second table
+        for CUDA 13.2 and newer (where 8.7 is admitted on ``sm_80``), and on a CPU
+        wheel, where ``torch.version.cuda`` is ``None``, it consults no table at
+        all and falls back to a plain major-version interval. CI installs the CPU
+        wheel, so grading against the predicate would grade the fallback.
+        """
         torch = pytest.importorskip("torch", reason="torch ships in the extras that run a policy")
-        predicate = getattr(torch.cuda, "_code_compatible_with_device", None)
-        if predicate is None:
+        table = getattr(torch.cuda, "DEVICE_REQUIREMENT", None)
+        if table is None:
             pytest.skip("this torch predates the interval table")
         pairs = ((ORIN_ARCH, 80), (THOR_ARCH, 80), (THOR_ARCH, 90), (THOR_ARCH, THOR_ARCH), (90, 90))
+        for device_cc, code_cc in pairs:
+            assert (device_cc in table[code_cc]) is _interval_rule(device_cc, code_cc), (device_cc, code_cc)
+
+    def test_the_predicate_reads_a_table_only_for_a_cuda_build(self) -> None:
+        """Why the rule is graded against the table: on a CPU wheel the predicate falls back.
+
+        The doctor calls the predicate, so on a CUDA build it inherits torch's
+        verdict for the build's own CUDA version; this pins the shape of the
+        surface the doctor relies on so a future torch that changes it is noticed.
+        """
+        torch = pytest.importorskip("torch", reason="torch ships in the extras that run a policy")
+        predicate = getattr(torch.cuda, "_code_compatible_with_device", None)
+        if predicate is None or not hasattr(torch.cuda, "DEVICE_REQUIREMENT"):
+            pytest.skip("this torch predates the interval table")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            for device_cc, code_cc in pairs:
-                assert bool(predicate(device_cc, code_cc)) is _interval_rule(device_cc, code_cc), (
-                    device_cc,
-                    code_cc,
-                )
+            verdict = bool(predicate(ORIN_ARCH, 80))
+        if torch.version.cuda is None:
+            # No table applies on a CPU wheel; the fallback is the major-version interval.
+            assert verdict is True
+        else:
+            post = getattr(torch.cuda, "DEVICE_REQUIREMENT_POST_JETSON_SBSA_UNIFICATION", None)
+            cuda = tuple(int(x) for x in torch.version.cuda.split("."))
+            table = post if post is not None and cuda >= (13, 2) else torch.cuda.DEVICE_REQUIREMENT
+            assert verdict is (ORIN_ARCH in table[80])
+
+    def test_the_remedy_reads_the_installed_torchs_release_table_without_raising(self) -> None:
+        """The table's shape is torch's to change (2.14 nested it by platform); the doctor reads both."""
+        torch = pytest.importorskip("torch", reason="torch ships in the extras that run a policy")
+        if not isinstance(getattr(torch.cuda, "PYTORCH_RELEASES_CODE_CC", None), dict):
+            pytest.skip("this torch ships no release table")
+        from strands_robots.doctor import _torch_compatible_releases
+
+        releases = _torch_compatible_releases(THOR_ARCH)
+        assert all(isinstance(cuda, str) for cuda in releases)
+        assert not _torch_compatible_releases(10)  # no torch release carries sm_10 code
 
     def test_the_arch_parser_agrees_with_torchs_own(self) -> None:
         torch = pytest.importorskip("torch", reason="torch ships in the extras that run a policy")
