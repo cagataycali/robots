@@ -42,6 +42,7 @@ from .embodiment import (
 from .processor import POSTPROCESSOR_CONFIG, PREPROCESSOR_CONFIG, ProcessorBridge
 from .resolution import (
     accepts_partial_images,
+    config_for_untagged_checkpoint,
     declared_image_features,
     resolve_policy_class_by_name,
     resolve_policy_class_from_hub,
@@ -1280,7 +1281,16 @@ class LerobotLocalPolicy(Policy):
             # Pass revision only when set so the call matches lerobot's
             # default (revision=None) and stays compatible with policy
             # classes whose from_pretrained does not accept the kwarg.
-            from_pretrained_kwargs = {"revision": self.revision} if self.revision else {}
+            from_pretrained_kwargs: dict[str, Any] = {"revision": self.revision} if self.revision else {}
+            if self.policy_type:
+                # A checkpoint whose config.json has no draccus ``type`` tag
+                # cannot be loaded by from_pretrained alone; the caller named
+                # the type, so parse the config for it and hand it over.
+                untagged = config_for_untagged_checkpoint(
+                    self.pretrained_name_or_path, self.policy_type, revision=self.revision
+                )
+                if untagged is not None:
+                    from_pretrained_kwargs["config"] = untagged
             self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path, **from_pretrained_kwargs)
             assert self._policy is not None
 
