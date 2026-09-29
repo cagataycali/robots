@@ -4360,6 +4360,7 @@ all = [
     { name = "awscrt", version = "0.34.1", source = { registry = "https://pypi.org/simple" } },
     { name = "awsiotsdk" },
     { name = "boto3" },
+    { name = "botocore" },
     { name = "device-connect-agent-tools" },
     { name = "device-connect-edge" },
     { name = "diffusers" },
@@ -4465,6 +4466,7 @@ mesh-iot = [
     { name = "awscrt", version = "0.34.1", source = { registry = "https://pypi.org/simple" } },
     { name = "awsiotsdk" },
     { name = "boto3" },
+    { name = "botocore" },
     { name = "eclipse-zenoh" },
     { name = "json5" },
 ]
@@ -4570,8 +4572,11 @@ requires-dist = [
     { name = "awsiotsdk", marker = "extra == 'all'", specifier = ">=1.21.0,<2.0.0" },
     { name = "awsiotsdk", marker = "extra == 'mesh-iot'", specifier = ">=1.21.0,<2.0.0" },
     { name = "boto3", marker = "extra == 'all'", specifier = ">=1.34.0,<2.0.0" },
-    { name = "boto3", marker = "extra == 'mesh-iot'", specifier = ">=1.34.0,<2.0.0" },
+    { name = "boto3", marker = "extra == 'all'", specifier = ">=1.43.17,<2.0.0" },
+    { name = "boto3", marker = "extra == 'mesh-iot'", specifier = ">=1.43.17,<2.0.0" },
     { name = "boto3", marker = "extra == 'sagemaker'", specifier = ">=1.34.0,<2.0.0" },
+    { name = "botocore", marker = "extra == 'all'", specifier = ">=1.43.17,<2.0.0" },
+    { name = "botocore", marker = "extra == 'mesh-iot'", specifier = ">=1.43.17,<2.0.0" },
     { name = "cflib", marker = "extra == 'crazyflie'", specifier = ">=0.1.25,<0.2.0" },
     { name = "cyclonedds", marker = "extra == 'ros2'", specifier = ">=0.10.2,<12" },
     { name = "device-connect-agent-tools", marker = "extra == 'all'", specifier = ">=0.1.0" },
@@ -4706,9 +4711,9 @@ requires-dist = [
     { name = "warp-lang", marker = "extra == 'sim-newton'", specifier = ">=1.14.0,<2.0.0" },
     { name = "webauthn", marker = "extra == 'all'", specifier = ">=2.0,<4.0" },
     { name = "webauthn", marker = "extra == 'dashboard'", specifier = ">=2.0,<4.0" },
-    { name = "websockets", marker = "extra == 'all'", specifier = ">=17.0" },
-    { name = "websockets", marker = "extra == 'cosmos3-service'", specifier = ">=17.0" },
-    { name = "websockets", marker = "extra == 'inference'", specifier = ">=17.0" },
+    { name = "websockets", marker = "extra == 'all'", specifier = ">=17.1" },
+    { name = "websockets", marker = "extra == 'cosmos3-service'", specifier = ">=17.1" },
+    { name = "websockets", marker = "extra == 'inference'", specifier = ">=17.1" },
 ]
 provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "groot", "inference", "kimodo", "lerobot", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "rl", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mujoco", "sim-newton", "smolvla", "ur", "voice", "wbc"]
 

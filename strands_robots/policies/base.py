@@ -339,9 +339,13 @@ class Policy(ABC):
     #: ``start`` / ``status`` / ``stop``) say so beside the instruction they
     #: echo. Without that line "MockPolicy | wave the arm ... completed" read as
     #: a wave that happened, and an agent relayed it as one. A class attribute
-    #: rather than a property so the class answers before an instance exists:
-    #: ``start`` reports before the executor thread builds the policy.
-    reads_instruction: ClassVar[bool] = True
+    #: by default so the class answers before an instance exists (``start``
+    #: reports before the executor thread builds the policy); a provider whose
+    #: answer depends on the loaded checkpoint overrides it with a property
+    #: (:class:`~strands_robots.policies.lerobot_local.policy.LerobotLocalPolicy`
+    #: reads it off the model's language input), so the class says ``True``
+    #: and the instance says what the checkpoint does.
+    reads_instruction: bool = True
 
     #: What the actions of a policy with ``reads_instruction = False`` are, in
     #: the words the task envelope uses to describe them - ``"a test motion on
@@ -349,7 +353,7 @@ class Policy(ABC):
     #: Read only when ``reads_instruction`` is ``False``; ``None`` (the
     #: default) makes the notice say the actions were commanded and describe
     #: no motion, so a custom non-reader is not described as the mock.
-    instruction_free_actions: ClassVar[str | None] = None
+    instruction_free_actions: str | None = None
 
     #: Why this policy cannot be rolled out without an action controller the
     #: engine installs for it, or ``None`` (the default) when it drives the

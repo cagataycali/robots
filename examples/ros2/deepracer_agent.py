@@ -27,7 +27,7 @@ Runtime: ~20 seconds (depends on LLM latency).
 
 from strands import Agent
 
-from strands_robots.mesh import AckermannRosRobot
+from strands_robots.drivers.ros import AckermannRosRobot
 
 # Stock DeepRacer wiring: servo topic, lidar, and the two-step manual-mode
 # handshake are preconfigured; override any keyword for a modified car.

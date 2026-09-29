@@ -276,14 +276,10 @@ class TestNoRefusalFollowsTheDeletion:
 
     @staticmethod
     def _recording_modules() -> dict[str, str]:
+        """The one module whose ``start_recording`` every backend inherits."""
         import strands_robots.simulation as simulation
 
-        root = Path(inspect.getfile(simulation)).parent
-        return {
-            path.parent.name: path.read_text()
-            for path in sorted(root.glob("*/recording.py"))
-            if "def start_recording" in path.read_text()
-        }
+        return {"shared": (Path(inspect.getfile(simulation)).parent / "recording.py").read_text()}
 
     @staticmethod
     def _span(source: str) -> tuple[int, int, list[int]]:
@@ -315,10 +311,6 @@ class TestNoRefusalFollowsTheDeletion:
             if isinstance(node, ast.Return) and deletion < node.lineno < recorder
         ]
         return deletion, recorder, between
-
-    def test_more_than_one_backend_is_graded(self):
-        # Without this the rules below pass on an empty inventory.
-        assert len(self._recording_modules()) >= 2, sorted(self._recording_modules())
 
     def test_every_backend_still_resolves_the_target_before_building_the_recorder(self):
         for backend, source in self._recording_modules().items():

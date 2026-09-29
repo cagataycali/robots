@@ -29,7 +29,6 @@ live):
 
 from __future__ import annotations
 
-import threading
 import types
 from typing import Any
 
@@ -40,11 +39,11 @@ pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac import randomization as rnd_module  # noqa: E402
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402
-    IsaacConfig,
     IsaacSimulation,
     _ObjectState,
     _RobotState,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 
 class _Handle:
@@ -81,14 +80,9 @@ class _Handle:
 
 
 def _engine(with_object: bool = True) -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world = types.SimpleNamespace()
     engine._world_created = True
-    engine._robots = {}
-    engine._cameras = {}
-    engine._objects = {}
     if with_object:
         state = _ObjectState(name="cube", prim_path="/World/Objects/cube", shape="box", is_static=False)
         state.handle = _Handle()
@@ -271,40 +265,6 @@ class TestObsNoise:
         assert "cleared" in _text(engine.set_obs_noise())
         assert engine.get_observation()["j0"] == pytest.approx(0.5)
 
-    def test_the_pass_is_suffix_keyed_and_leaves_lists_alone(self) -> None:
-        """Graded on the helper directly with every value shape the schema
-        carries: position float, ``.vel`` float, ndarray frame, base_* list."""
-        engine = _engine(with_object=False)
-        engine.set_obs_noise(joint_pos_std=0.5, joint_vel_std=0.0, camera_jitter_px=0.0, seed=1)
-        frame = np.zeros((4, 4, 3), dtype=np.uint8)
-        obs = {"j0": 0.5, "j0.vel": 1.5, "cam": frame, "base_quat": [1.0, 0.0, 0.0, 0.0]}
-        out = engine._apply_obs_noise(obs)
-        assert out["j0"] != pytest.approx(0.5), "joint_pos_std configured but not applied"
-        assert out["j0.vel"] == pytest.approx(1.5), "joint_pos_std leaked onto a .vel key"
-        assert out["cam"] is frame, "no jitter configured, the frame must pass through"
-        assert out["base_quat"] == [1.0, 0.0, 0.0, 0.0]
-
-    def test_camera_jitter_rolls_the_frame(self) -> None:
-        engine = _engine(with_object=False)
-        engine.set_obs_noise(camera_jitter_px=2, seed=2)
-        frame = np.zeros((8, 8, 3), dtype=np.uint8)
-        frame[0, 0] = 255
-        out = engine._apply_obs_noise({"cam": frame})
-        assert out["cam"].shape == frame.shape
-        assert not np.array_equal(out["cam"], frame), "jitter configured but the frame is unmoved"
-        assert out["cam"].sum() == frame.sum(), "a roll relocates pixels, never invents or drops them"
-
-    def test_an_unknown_kwarg_is_refused_by_name(self) -> None:
-        result = _engine().set_obs_noise(joint_pos_st=0.1)
-        assert result["status"] == "error"
-        assert "joint_pos_st" in result["content"][0]["text"]
-
-    @pytest.mark.parametrize("param", ["joint_pos_std", "joint_vel_std", "camera_jitter_px"])
-    def test_a_negative_std_is_refused(self, param: str) -> None:
-        result = _engine().set_obs_noise(**{param: -0.1})
-        assert result["status"] == "error", param
-        assert param in result["content"][0]["text"]
-
 
 class TestTheSharedSignatureOrder:
     """Held structurally by test_backend_shared_parameter_order.py's derived
@@ -317,17 +277,6 @@ class TestTheSharedSignatureOrder:
 
         ours = [p for p in inspect.signature(IsaacSimulation.randomize).parameters if p not in ("self", "kwargs")]
         theirs = [p for p in inspect.signature(RandomizationMixin.randomize).parameters if p not in ("self", "kwargs")]
-        assert ours == theirs
-
-    def test_set_obs_noise_matches_the_mujoco_order(self) -> None:
-        import inspect
-
-        from strands_robots.simulation.mujoco.randomization import RandomizationMixin
-
-        ours = [p for p in inspect.signature(IsaacSimulation.set_obs_noise).parameters if p not in ("self", "kwargs")]
-        theirs = [
-            p for p in inspect.signature(RandomizationMixin.set_obs_noise).parameters if p not in ("self", "kwargs")
-        ]
         assert ours == theirs
 
 

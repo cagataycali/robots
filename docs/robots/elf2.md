@@ -7,7 +7,7 @@ description: "BXI Elf2 Humanoid (25-DOF)"
 
 # BXI Elf2 Humanoid (25-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">26 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:elf2}}
 
 <robot-viewer name="elf2"></robot-viewer>
 

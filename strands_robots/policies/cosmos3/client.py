@@ -43,6 +43,18 @@ _READ_TIMEOUT_SECS = 600.0
 _SERVER_NAME = "Cosmos 3 policy server"
 
 
+def _connection_closed() -> type[BaseException]:
+    """``websockets.exceptions.ConnectionClosed``, imported where it is caught.
+
+    ``websockets`` is an optional extra, so it is not imported at module scope;
+    the ``except`` clauses that name this type run only after a connection was
+    dialed, by which point the import has already succeeded.
+    """
+    from websockets.exceptions import ConnectionClosed
+
+    return ConnectionClosed
+
+
 class _UnreadableFrame(Exception):
     """A frame arrived that the msgpack + NumPy codec cannot read.
 
@@ -92,7 +104,15 @@ class _RawWebsocketTransport:
         headers = {"Authorization": f"Api-Key {self.api_key}"} if self.api_key else None
         # ``Any`` for the same reason ``self._ws`` is declared ``Any``: the frames
         # go straight to the vendored packer, which treats them as opaque.
-        ws: Any = _wsc.connect(self.uri, compression=None, max_size=None, additional_headers=headers)
+        # ``legacy=True`` is the supported spelling of "return the connection
+        # directly": this transport holds one connection across every
+        # ``infer`` call, which no ``with connect(...)`` block can express.
+        # From websockets 17.1 a connection obtained without the flag warns
+        # (``DeprecationWarning``) on its first read, and connect() is announced
+        # to change behaviour once that period ends. The flag is what sets the
+        # websockets floor to 17.1 (17.0 does not accept it), which the test
+        # suite pins against pyproject.
+        ws: Any = _wsc.connect(self.uri, compression=None, max_size=None, additional_headers=headers, legacy=True)
         # ``self._ws`` is published only once the handshake has been consumed.
         # Assigned before the read, a failed handshake left a live connection
         # cached behind the error it had just raised, with the metadata frame
@@ -191,11 +211,25 @@ class _RawWebsocketTransport:
     def infer(self, observation: dict[str, Any]) -> dict[str, Any]:
         resp = self._exchange(observation)
         if isinstance(resp, str):
+            # The OpenPI server answers a failed ``infer`` with the traceback as
+            # a text frame and then closes the connection (code 1011). The
+            # exchange completed, so ``_exchange`` kept the socket; kept, the
+            # next request would be written to a connection the peer has
+            # already closed and surface as the transport's own
+            # ``ConnectionClosedError`` instead of a report naming the server.
+            # Dropping it here makes the next call dial afresh, as the first did.
+            self.close()
             raise RuntimeError(f"Error in inference server:\n{resp}")
         return self._decode(resp, "action chunk")
 
     def reset(self) -> None:
-        pass
+        """No-op: the RoboLab wire protocol carries no reset message.
+
+        The protocol is connect, metadata frame, then observation/action pairs
+        (mirroring OpenPI's ``WebsocketClientPolicy.reset``, which is also
+        empty), so there is nothing to send. Kept so the client and the
+        transport share one surface.
+        """
 
 
 class Cosmos3WebsocketClient:
@@ -262,6 +296,15 @@ class Cosmos3WebsocketClient:
             budget_param="read_timeout",
         )
 
+    def _closed_by_peer(self, exc: BaseException) -> str:
+        """Report for a connection the server closed under this client."""
+        return (
+            f"{_SERVER_NAME} at ws://{self.host}:{self.port} closed the connection "
+            f"({exc}). The server exited or dropped this client after an error; read its "
+            "log. The connection has been discarded, so the next call dials afresh once "
+            "the server is answering again."
+        )
+
     def _server_hint(self) -> str:
         """Actionable hint for starting the Cosmos 3 RoboLab policy server."""
         return (
@@ -307,6 +350,14 @@ class Cosmos3WebsocketClient:
             raise ConnectionError(str(e)) from e
         except OSError as e:
             raise ConnectionError(self._server_hint()) from e
+        except _connection_closed() as e:
+            # The peer closed an established connection: the server exited, or
+            # this is the 1011 close that follows its text error frame. Not an
+            # ``OSError``, so the clause above does not see it, and the
+            # transport's own exception names a close code and nothing about
+            # which server or how to recover.
+            client.close()
+            raise ConnectionError(self._closed_by_peer(e)) from e
 
     def infer(self, observation: dict[str, Any]) -> dict[str, Any]:
         """Send an observation dict and return the server response.
@@ -338,13 +389,24 @@ class Cosmos3WebsocketClient:
             raise ConnectionError(str(e)) from e
         except OSError as e:
             raise ConnectionError(self._server_hint()) from e
+        except _connection_closed() as e:
+            # The peer closed an established connection: the server exited, or
+            # this is the 1011 close that follows its text error frame. Not an
+            # ``OSError``, so the clause above does not see it, and the
+            # transport's own exception names a close code and nothing about
+            # which server or how to recover.
+            client.close()
+            raise ConnectionError(self._closed_by_peer(e)) from e
 
     def reset(self) -> None:
-        """Best-effort per-episode reset hint to the server.
+        """Per-episode reset on the client side only; nothing reaches the server.
 
-        The raw transport is stateless on the client side - reset is a
-        soft hint, never a correctness requirement (the base
-        ``Policy.reset`` contract). Any failure is swallowed.
+        The RoboLab wire protocol has no reset message, so the transport's
+        ``reset`` is a no-op and the server's per-episode RNG is not touched
+        from here (``Cosmos3Policy.reset`` documents what that means for
+        reproducibility). The call still establishes the connection when none
+        is open, so a server that is absent at episode start is reported on
+        the first ``infer`` rather than here; any failure here is swallowed.
         """
         try:
             client = self._ensure_client()

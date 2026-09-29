@@ -7,7 +7,7 @@ description: "OMX Robot Arm (ROBOTIS, CAN bus motors)"
 
 # OMX Robot Arm (ROBOTIS, CAN bus motors)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
+{{robot_chips:omx}}
 
 The registry ships no simulation asset for it, so `Robot("omx")` in the default sim mode refuses by name.
 

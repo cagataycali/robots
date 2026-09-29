@@ -470,3 +470,19 @@ def test_a_dotted_path_does_not_answer_for_the_spelling() -> None:
     assert _names_the_spelling("the ``persistent`` spelling resolves", "persistent")
     assert not _names_the_spelling("CompositePolicy wraps two policies", "composite")
     assert _names_the_spelling("`composite` builds through the factory", "composite")
+
+
+@pytest.mark.parametrize(
+    ("spelled", "meant"),
+    [("gr00t", "groot"), ("GR00T", "groot"), ("WBC", "wbc"), ("cosmos", "cosmos3"), ("lerobot-local", "lerobot_local")],
+)
+def test_an_unknown_provider_names_the_close_spelling(spelled: str, meant: str) -> None:
+    """A near-miss provider is refused naming the one meant, as ``Robot()`` does for a robot."""
+    with pytest.raises(ValueError, match=rf"Unknown policy provider: '{spelled}'\. Did you mean: '{meant}'"):
+        create_policy(spelled)
+
+
+def test_a_provider_near_nothing_offers_no_guess() -> None:
+    """Control: the hint is a match, not a fixed suffix."""
+    with pytest.raises(ValueError, match=r"Unknown policy provider: 'no_such_provider'\. Available:"):
+        create_policy("no_such_provider")

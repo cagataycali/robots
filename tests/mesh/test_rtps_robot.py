@@ -11,8 +11,8 @@ from typing import Any
 
 import pytest
 
-import strands_robots.mesh.rtps_robot as rtps_mod
-from strands_robots.mesh.rtps_robot import RtpsRobot
+import strands_robots.drivers.ros.rtps_robot as rtps_mod
+from strands_robots.drivers.ros.rtps_robot import RtpsRobot
 from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 

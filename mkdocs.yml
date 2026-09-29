@@ -403,6 +403,7 @@ nav:
           - robots/fourier_n1.md
           - robots/jvrc.md
           - robots/microduck.md
+          - robots/mujoco_humanoid.md
           - robots/op3.md
           - robots/open_duck_mini.md
           - robots/rby1.md
@@ -491,6 +492,7 @@ nav:
           - Safety and e-stop: learn/mesh/safety-and-estop.md
           - Topics: learn/mesh/topics.md
           - Bridges: learn/mesh/bridges.md
+          - Direct messaging: learn/mesh/direct.md
       - Dashboard: learn/dashboard.md
       - ROS 2: learn/ros2.md
       - Security: learn/security.md

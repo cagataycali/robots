@@ -469,12 +469,19 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
         "start",
         "step",
         "reset",
+        # ``set_joints`` writes a joint-space pose on a SIMULATION peer (its
+        # ``target_joints`` dict is the one ``start`` already carries); a
+        # hardware peer refuses it, real motion rides execute/start only.
+        "set_joints",
         "teleop_status",
         "teleop_receive",
         "teleop_stop",
         # ``resume`` clears the emergency-stop lockout; the only action
         # other than ``status`` permitted while the lockout is engaged.
         "resume",
+        # ``ping`` is answered by the mesh layer itself with an empty result,
+        # no robot method is reached: the round trip is the answer.
+        "ping",
     }
 )
 
@@ -1098,6 +1105,42 @@ def validate_mesh_identifier(value: Any, param: str) -> str:
     return value
 
 
+def _coerce_robot_name(value: Any) -> str:
+    """A sim ``robot_name``: a non-empty identifier-safe string, bounded like a peer id."""
+    if not isinstance(value, str) or not value:
+        raise ValidationError("robot_name must be a non-empty string")
+    if len(value) > MAX_PEER_ID_LEN:
+        raise ValidationError(f"robot_name length {len(value)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN}).")
+    if not _PEER_ID_RE.fullmatch(value):
+        raise ValidationError(
+            "robot_name must match [A-Za-z0-9_.-]+ (no whitespace, NULs, control chars, shell metacharacters, or '/')."
+        )
+    return value
+
+
+def _coerce_target_joints(value: Any) -> dict[str, float]:
+    """The ``target_joints`` dict, validated and coerced: bounded size, identifier-safe keys, finite floats."""
+    if not isinstance(value, dict):
+        raise ValidationError("target_joints must be a dict mapping joint name -> float")
+    if len(value) > MAX_TARGET_JOINTS:
+        raise ValidationError(f"target_joints has {len(value)} entries > MAX_TARGET_JOINTS ({MAX_TARGET_JOINTS}).")
+    coerced_joints: dict[str, float] = {}
+    for joint_name, joint_value in value.items():
+        if not isinstance(joint_name, str) or not joint_name:
+            raise ValidationError("target_joints keys must be non-empty strings")
+        if len(joint_name) > MAX_PEER_ID_LEN:
+            raise ValidationError(f"target_joints key length {len(joint_name)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN}).")
+        if not _PEER_ID_RE.fullmatch(joint_name):
+            raise ValidationError(
+                f"target_joints key {joint_name!r} must match [A-Za-z0-9_.-]+ "
+                "(no whitespace, NULs, control chars, shell metacharacters, or '/')."
+            )
+        coerced_joints[joint_name] = _coerce_float(
+            f"target_joints[{joint_name}]", joint_value, lo=-1e6, hi=1e6, default=None
+        )
+    return coerced_joints
+
+
 def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
     """Validate a mesh command and return a copy built only from validated keys.
 
@@ -1142,6 +1185,18 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             if not _SAFE_PASSTHROUGH_RE.fullmatch(value):
                 raise ValidationError(f"{passthrough} contains control characters, NUL, or non-printable bytes")
             out[passthrough] = value
+    if action == "set_joints":
+        if "target_joints" not in cmd:
+            raise ValidationError("set_joints requires `target_joints` (joint name -> float)")
+        out["target_joints"] = _coerce_target_joints(cmd["target_joints"])
+        if not out["target_joints"]:
+            raise ValidationError("set_joints requires at least one joint in `target_joints`")
+        if "hold" in cmd:
+            if not isinstance(cmd["hold"], bool):
+                raise ValidationError("hold must be a bool")
+            out["hold"] = cmd["hold"]
+        if "robot_name" in cmd:
+            out["robot_name"] = _coerce_robot_name(cmd["robot_name"])
     if action in ("execute", "start"):
         instruction = cmd.get("instruction", "")
         if not isinstance(instruction, str) or not instruction.strip():
@@ -1239,17 +1294,7 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         # Sim-targeted fields; inert on the hardware path but validated so the
         # wire schema is the same for every receiver.
         if "robot_name" in cmd:
-            value = cmd["robot_name"]
-            if not isinstance(value, str) or not value:
-                raise ValidationError("robot_name must be a non-empty string")
-            if len(value) > MAX_PEER_ID_LEN:
-                raise ValidationError(f"robot_name length {len(value)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN}).")
-            if not _PEER_ID_RE.fullmatch(value):
-                raise ValidationError(
-                    "robot_name must match [A-Za-z0-9_.-]+ (no whitespace, NULs, "
-                    "control chars, shell metacharacters, or '/')."
-                )
-            out["robot_name"] = value
+            out["robot_name"] = _coerce_robot_name(cmd["robot_name"])
         # Issue #300 per-call policy kwargs, forwarded as policy_kwargs. Every
         # key SimEngine.run_policy documents is admitted here; an unlisted key
         # never reaches out.
@@ -1262,30 +1307,7 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 coerced_pose.append(_coerce_float(f"target_pose[{i}]", component, lo=-1e6, hi=1e6, default=None))
             out["target_pose"] = coerced_pose
         if "target_joints" in cmd:
-            value = cmd["target_joints"]
-            if not isinstance(value, dict):
-                raise ValidationError("target_joints must be a dict mapping joint name -> float")
-            if len(value) > MAX_TARGET_JOINTS:
-                raise ValidationError(
-                    f"target_joints has {len(value)} entries > MAX_TARGET_JOINTS ({MAX_TARGET_JOINTS})."
-                )
-            coerced_joints: dict[str, float] = {}
-            for joint_name, joint_value in value.items():
-                if not isinstance(joint_name, str) or not joint_name:
-                    raise ValidationError("target_joints keys must be non-empty strings")
-                if len(joint_name) > MAX_PEER_ID_LEN:
-                    raise ValidationError(
-                        f"target_joints key length {len(joint_name)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN})."
-                    )
-                if not _PEER_ID_RE.fullmatch(joint_name):
-                    raise ValidationError(
-                        f"target_joints key {joint_name!r} must match [A-Za-z0-9_.-]+ "
-                        "(no whitespace, NULs, control chars, shell metacharacters, or '/')."
-                    )
-                coerced_joints[joint_name] = _coerce_float(
-                    f"target_joints[{joint_name}]", joint_value, lo=-1e6, hi=1e6, default=None
-                )
-            out["target_joints"] = coerced_joints
+            out["target_joints"] = _coerce_target_joints(cmd["target_joints"])
         if "target_velocity" in cmd:
             value = cmd["target_velocity"]
             if not isinstance(value, list) or not value:

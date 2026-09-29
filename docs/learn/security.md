@@ -34,7 +34,7 @@ Teleoperation frames are bounded too: `STRANDS_MESH_INPUT_VALUE_ABS` (720), `STR
 
 ## The wire
 
-`STRANDS_MESH_AUTH_MODE=mtls` is the default and cannot be turned off without a second factor (`STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`, or the one-machine preset `STRANDS_MESH_LOCAL_DEV=true`). Multicast discovery is off by default. A permissive ACL under mTLS refuses to start until acknowledged. The IoT leg binds each robot's X.509 CN to its Thing name and scopes its topics with `${iot:Connection.Thing.ThingName}`. The pure-RTPS ROS 2 bridge refuses an inbound command surface without DDS Security unless `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1` ([ROS 2](ros2.md)). rosbridge is unauthenticated by design; it is for trusted networks.
+`STRANDS_MESH_AUTH_MODE=mtls` is the default and cannot be turned off without a second factor (`STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`, or the one-machine preset `STRANDS_MESH_LOCAL_DEV=true`). Multicast discovery is off by default. A permissive ACL under mTLS refuses to start until acknowledged. The IoT leg binds each robot's X.509 CN to its Thing name and scopes its topics with `${iot:Connection.Thing.ThingName}`; a direct reply goes only to `strands/<sender>/response/<self>/<turn>` ([direct](mesh/direct.md)). The pure-RTPS ROS 2 bridge refuses an inbound command surface without DDS Security unless `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1` ([ROS 2](ros2.md)). rosbridge is unauthenticated by design, for trusted networks.
 
 ## Paths, buses, subprocesses
 

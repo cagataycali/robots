@@ -310,6 +310,19 @@ def _camera_option_vocabulary(camera_name: str, config: Mapping[str, Any]) -> tu
     return ConfigClass, fields
 
 
+def _is_blank_port(name: str, value: object) -> bool:
+    """Whether a port-shaped required field carries a value no bus can open.
+
+    ``port`` and ``*_port`` name a device path or a host. ``None``, a non-string
+    and a blank or whitespace string are not one, and each was accepted as
+    "supplied" by the presence test alone, so the refusal that names this
+    host's serial devices never fired for them.
+    """
+    if not (name == "port" or name.endswith("_port")):
+        return False
+    return not isinstance(value, str) or not value.strip()
+
+
 def _requires_a_caller_value(field: dataclasses.Field) -> bool:
     """Answer whether a config dataclass field is one the caller must supply.
 
@@ -1383,10 +1396,14 @@ class Robot(TeleopMixin, AgentTool):
         # reading the absent default alone: a field the class derives for itself
         # is one the constructor does not accept, so counting it as missing
         # would refuse a call that builds.
+        # A blank or non-string port is as missing as an absent one: ``port=""``
+        # constructed and then called the empty string a network port at the
+        # first bus action (#4168), where an omitted port was refused here.
         missing_required = [
             field.name
             for field in dataclasses.fields(ConfigClass)
-            if _requires_a_caller_value(field) and field.name not in config_data
+            if _requires_a_caller_value(field)
+            and (field.name not in config_data or _is_blank_port(field.name, config_data[field.name]))
         ]
         if missing_required:
             remedy = ", ".join(f"{name}=..." for name in missing_required)
@@ -2618,6 +2635,7 @@ class Robot(TeleopMixin, AgentTool):
         """
         from strands_robots.policies.factory import list_providers, provider_can_be_created
         from strands_robots.registry.policies import removed_provider_error
+        from strands_robots.registry.policies import _url_scheme_refusal
 
         if not policy_provider or provider_can_be_created(refusal_str(policy_provider)):
             return None
@@ -2625,18 +2643,14 @@ class Robot(TeleopMixin, AgentTool):
             # A removed provider is not a typo: its sentence names the
             # replacement, which the registry listing cannot.
             return {"status": "error", "content": [{"text": f"{method}: {removed}"}]}
+        reason = _url_scheme_refusal(refusal_str(policy_provider)) or (
+            f"unknown policy_provider {refusal_repr(policy_provider)}. "
+            f"Available: {', '.join(list_providers())} "
+            "(declared aliases such as 'lerobot' for 'lerobot_local' also resolve)."
+        )
         return {
             "status": "error",
-            "content": [
-                {
-                    "text": (
-                        f"{method}: unknown policy_provider {refusal_repr(policy_provider)}. "
-                        f"Available: {', '.join(list_providers())} "
-                        "(declared aliases such as 'lerobot' for 'lerobot_local' also resolve). "
-                        "Nothing was dispatched and the arm was not energized."
-                    )
-                }
-            ],
+            "content": [{"text": f"{method}: {reason} Nothing was dispatched and the arm was not energized."}],
         }
 
     @staticmethod
@@ -3762,7 +3776,8 @@ class Robot(TeleopMixin, AgentTool):
                             "description": (
                                 "Provider keywords forwarded to strands_robots.policies.create_policy, "
                                 "the same bag the sim tool takes. For lerobot_local: pretrained_name_or_path "
-                                "(a Hugging Face repo id or a local checkpoint dir), policy_type, device, "
+                                "(a Hugging Face repo id or a local checkpoint dir), embodiment (the robot's "
+                                "key map, e.g. so101_real for a LeRobot SO-arm follower), policy_type, device, "
                                 "actions_per_step. For remote: endpoint, connect_timeout, request_timeout. "
                                 "Never host/port here: those are policy_host/policy_port. An entry the "
                                 "provider does not take is the provider's own refusal, before the arm moves."

@@ -29,7 +29,6 @@ extra and are gated below.
 
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 import pytest
@@ -42,24 +41,10 @@ _SO100_JOINTS = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw
 
 def _make_engine(robots: dict[str, _RobotState] | None = None) -> IsaacSimulation:
     """Build a skeleton IsaacSimulation without booting the Isaac Kit runtime."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
+    engine = isaac_engine()
     engine._config = IsaacConfig(render_mode="rtx_realtime")
-    engine._lock = threading.RLock()
-    engine._world = None
     engine._world_created = True
     engine._robots = robots if robots is not None else {}
-    engine._cameras = {}
-    engine._objects = {}
-    engine._prim_registry = []
-    engine._cams_rec_state = None
-    engine._recording_state_dict = {}
-    engine._action_controllers = {}
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._replicated = False
-    engine._num_envs_active = 1
-    engine._pump_running = False
-    engine._main_tid = threading.get_ident()
     return engine
 
 
@@ -146,6 +131,7 @@ class TestRunPolicyHookGuards:
 pytest.importorskip("lerobot")
 
 import strands_robots.dataset_recorder as dataset_recorder  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine  # noqa: E402
 
 
 class TestStartRecordingGuards:

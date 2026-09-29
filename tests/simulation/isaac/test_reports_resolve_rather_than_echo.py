@@ -32,7 +32,6 @@ the thing that fails.
 
 from __future__ import annotations
 
-import threading
 import types
 from typing import Any
 
@@ -42,6 +41,7 @@ pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac.config import IsaacConfig  # noqa: E402
 from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 
 def _resolved_dt():
@@ -67,19 +67,11 @@ def _world(*, device: str | None = None, dt: float | None = None, raise_dt: bool
 
 
 def _engine(*, world: Any = None, requested_device: str = "cuda:0", requested_dt: float = 1 / 120) -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
     engine._config = IsaacConfig(device=requested_device, physics_dt=requested_dt, render_mode="headless")
     engine._world_created = world is not None
     engine._world = world
     engine._num_envs_active = 4
-    engine._robots = {}
-    engine._cameras = {}
-    engine._objects = {}
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._main_tid = threading.get_ident()
-    engine._pump_running = False
     return engine
 
 

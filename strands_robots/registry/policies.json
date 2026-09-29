@@ -37,7 +37,20 @@
         "image_keys",
         "inference_action_mode",
         "embodiment",
-        "strict_keys"
+        "strict_keys",
+        "camera_key_map",
+        "obs_rename_override",
+        "use_processor",
+        "processor_overrides",
+        "tokenizer_max_length",
+        "tokenizer_padding_side",
+        "rtc_enabled",
+        "rtc_execution_horizon",
+        "rtc_max_guidance_weight",
+        "inference_kwargs",
+        "pad_short_actions",
+        "cache_model",
+        "revision"
       ],
       "defaults": {},
       "aliases": [
@@ -71,7 +84,8 @@
         "api_key",
         "backend",
         "mode",
-        "model"
+        "model",
+        "pretrained_name_or_path"
       ],
       "defaults": {
         "host": "localhost",
@@ -107,7 +121,8 @@
         "port",
         "planning_group",
         "timeout_ms",
-        "api_token"
+        "api_token",
+        "joint_name_map"
       ],
       "defaults": {
         "host": "127.0.0.1",
@@ -131,7 +146,10 @@
         "world_config",
         "action_horizon",
         "tensor_args",
-        "motion_gen_kwargs"
+        "motion_gen_kwargs",
+        "warmup",
+        "device_cfg",
+        "motion_planner_kwargs"
       ],
       "defaults": {
         "action_horizon": 16

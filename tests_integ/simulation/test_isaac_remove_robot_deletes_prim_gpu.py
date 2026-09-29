@@ -102,8 +102,14 @@ class TestRemoveRobotDeletesPrimGPU:
             if r["status"] != "success":
                 r = sim.get_body_state(body_name="link1")
             assert r["status"] == "success", f"get_body_state(link1): {r}"
+            # get_body_state reports the LINK FRAME (MuJoCo's xpos), which for
+            # link1 is the URDF joint origin z=0.05 - the 0.4 m column geometry
+            # sits above it. A welded base holds it there; on Isaac 6.1 without
+            # the weld fix the floating root let it rise to ~0.07 (base lifted 2 cm).
             column_z = _json_payload(r)["position"][2]
-            assert column_z > 0.15, f"arm column should stand above the base, got z={column_z}"
+            assert column_z == pytest.approx(0.05, abs=2e-3), (
+                f"link1 frame should sit at its joint origin, got z={column_z}"
+            )
 
             # Remove the robot; a dynamic-body mutation, so the view is stale.
             assert sim.remove_robot("arm")["status"] == "success"
