@@ -320,6 +320,32 @@ def check_lerobot() -> str:
     import lerobot
 
     ver = getattr(lerobot, "__version__", "?")
+
+    # Runtime version guard: pyproject pins `lerobot>=0.6.1,<0.7.0` and the
+    # streaming/dataset wrappers pass kwargs (`return_uint8`, `repo_type`) that
+    # only 0.6.1+ accepts. An environment with a pre-existing older lerobot
+    # satisfies `import lerobot` and would otherwise reach `_pass` here, then
+    # crash at first `stream_dataset(...)` with a TypeError naming a kwarg the
+    # user never passed. The pyproject comment beside the pin ("the same
+    # version for the runtime guard that protects an environment with a
+    # pre-existing older lerobot") documents this guard - the doctor is where
+    # it lives, so a doctor PASS is the runtime's own verdict at first call.
+    _LEROBOT_FLOOR = (0, 6, 1)
+    _LEROBOT_CEIL = (0, 7, 0)
+    try:
+        parts = tuple(int(p) for p in ver.split(".")[:3])
+    except ValueError:
+        parts = None
+    if parts is not None and not (_LEROBOT_FLOOR <= parts < _LEROBOT_CEIL):
+        floor_s = ".".join(str(p) for p in _LEROBOT_FLOOR)
+        ceil_s = ".".join(str(p) for p in _LEROBOT_CEIL)
+        return _warn(
+            f"lerobot {ver} is outside the pinned range >={floor_s},<{ceil_s} "
+            f"(strands_robots wrappers pass `return_uint8`/`repo_type` that only "
+            f"{floor_s}+ accepts; first stream_dataset() will TypeError otherwise)",
+            note=f'uv pip install "lerobot[feetech,dataset]>={floor_s},<{ceil_s}"',
+        )
+
     return _pass(f"lerobot {ver}")
 
 
