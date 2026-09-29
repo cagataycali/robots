@@ -6,13 +6,15 @@ No AWS, no awsiot. The transport class is replaced by a stand-in whose
 
   - SKIP for any backend but ``iot`` / ``bridge``, and for ``STRANDS_MESH_IOT_DIRECT=0``
     (a deliberate posture, not a fault);
-  - FAIL naming the missing variables before any connection is attempted;
-  - the probe addresses the peer's OWN reply topic
+  - FAIL naming the missing variables before any request is made; the MQTT
+    SDK is not needed for the HTTPS probe;
+  - the probe is HTTPS only (never an MQTT connect, which would take over the
+    running robot's session) and addresses the peer's OWN reply topic
     ``strands/{thing}/response/{thing}/<turn>`` with confirmation: the one
     topic a robot identity may send itself a direct message on;
-  - PASS carries the measured round trip; a 403 names the certificate CN when
-    it can be read and it is not the Thing name; 404 / unavailable are FAIL
-    with the reason; anything else is a WARN;
+  - 200 and 404 are both PASS (grant in place; the robot is, or is not,
+    connected right now), a 403 names the certificate CN when it can be read
+    and it is not the Thing name, unavailable is FAIL, anything else WARN;
   - the transport is closed on every path.
 """
 
@@ -51,11 +53,14 @@ class _Transport:
         _Transport.instances.append(self)
 
     def connect(self) -> bool:
-        self.connected = True
-        return self.connect_ok
+        raise AssertionError("the doctor must not open an MQTT session under the robot's client id")
+
+    result_for_cmd: DirectResult | None = None
 
     def send_direct(self, peer_id: str, key: str, data: dict[str, Any], **kw: Any) -> DirectResult:
         self.sent.append({"peer_id": peer_id, "key": key, "data": data, **kw})
+        if key.endswith("/cmd") and self.result_for_cmd is not None:
+            return self.result_for_cmd
         return self.result
 
     def close(self) -> None:
@@ -78,6 +83,7 @@ def iot_env(monkeypatch):
     _Transport.instances.clear()
     _Transport.connect_ok = True
     _Transport.result = DirectResult(delivered=True, reason="", latency_ms=123.4)
+    _Transport.result_for_cmd = None
     yield
 
 
@@ -109,25 +115,15 @@ class TestFailuresBeforeTheWire:
         assert "STRANDS_IOT_THING_NAME" in line and "provision_robot" in line
         assert all(not t.connected for t in _Transport.instances)
 
-    def test_missing_sdk_fails_with_the_extra(self, iot_env, monkeypatch):
+    def test_the_probe_needs_no_awsiot_sdk(self, iot_env, monkeypatch):
+        # HTTPS only: the MQTT SDK is not consulted, so a box with boto3 and a
+        # certificate but no awsiotsdk still gets a verdict.
         monkeypatch.delitem(sys.modules, "awsiot")
-        import builtins
+        assert doctor.check_iot_direct().startswith("  PASS  ")
 
-        real = builtins.__import__
-
-        def _no_awsiot(name: str, *a: Any, **kw: Any) -> Any:
-            if name == "awsiot":
-                raise ImportError(name)
-            return real(name, *a, **kw)
-
-        monkeypatch.setattr(builtins, "__import__", _no_awsiot)
-        line = doctor.check_iot_direct()
-        assert "awsiotsdk not installed" in line and "[mesh-iot]" in line
-
-    def test_a_session_that_does_not_open_fails_and_closes(self, iot_env):
-        _Transport.connect_ok = False
-        line = doctor.check_iot_direct()
-        assert line.startswith("  FAIL  ") and "did not open" in line
+    def test_no_mqtt_session_is_opened(self, iot_env):
+        # connect() raises in the stand-in; a PASS proves it was never called.
+        assert doctor.check_iot_direct().startswith("  PASS  ")
         assert _Transport.instances[0].closed
 
 
@@ -142,11 +138,17 @@ class TestTheProbe:
         assert call["data"]["responder_id"] == "thor-arm"
         assert call["data"]["turn_id"] == call["key"].rsplit("/", 1)[1]
         assert t.closed
-        assert line == "  PASS  iot direct: thor-arm reached itself in 123 ms (confirmed, x509)"
+        assert line == "  PASS  iot direct: robot grant OK, thor-arm is connected and answered in 123 ms (x509)"
 
     def test_pass_names_the_auth_mode(self, iot_env, monkeypatch):
         monkeypatch.setenv("STRANDS_IOT_DIRECT_AUTH", "sigv4")
-        assert doctor.check_iot_direct().endswith("(confirmed, sigv4)")
+        assert doctor.check_iot_direct().endswith("(sigv4)")
+
+    def test_a_404_is_a_pass_the_grant_is_in_place_and_the_robot_is_simply_not_running_here(self, iot_env):
+        _Transport.result = DirectResult(delivered=False, reason="offline", latency_ms=81.0, detail="not connected")
+        line = doctor.check_iot_direct()
+        assert line.startswith("  PASS  ")
+        assert "grant OK" in line and "not running here" in line and "81 ms" in line
 
     def test_forbidden_with_a_foreign_cn_names_it(self, iot_env, monkeypatch, tmp_path):
         _Transport.result = DirectResult(
@@ -158,28 +160,36 @@ class TestTheProbe:
         assert "certificate CN is 'AWS IoT Certificate'" in line
         assert "CN='thor-arm'" in line and "provision_robot('thor-arm')" in line
 
-    def test_forbidden_with_the_right_cn_points_at_the_policy(self, iot_env, monkeypatch):
+    def test_forbidden_on_both_grants_with_the_right_cn_points_at_the_policy_version(self, iot_env, monkeypatch):
         _Transport.result = DirectResult(
             delivered=False, reason="forbidden", latency_ms=80.0, detail="Authorization failed"
         )
         monkeypatch.setattr(doctor, "_certificate_cn", lambda path: "thor-arm")
         line = doctor.check_iot_direct()
-        assert "may not send a direct message to its own reply topic" in line
-        assert "AllowDirectResponseToAnyOperator" in line
+        assert "neither as a robot" in line and "nor as an operator" in line
+        assert "predates the direct messaging grants" in line
+        (t,) = _Transport.instances
+        keys = [c["key"] for c in t.sent]
+        assert keys[1] == "strands/thor-arm/cmd" and keys[0].startswith("strands/thor-arm/response/thor-arm/")
+
+    def test_an_operator_identity_passes_on_the_cmd_grant(self, iot_env, monkeypatch):
+        # A robot-grant 403 followed by a cmd-grant 404: the identity is an
+        # operator whose grant is in place; not a failure.
+        _Transport.result = DirectResult(delivered=False, reason="forbidden", latency_ms=80.0)
+        _Transport.result_for_cmd = DirectResult(delivered=False, reason="offline", latency_ms=90.0)
+        monkeypatch.setattr(doctor, "_certificate_cn", lambda path: "thor-arm")
+        line = doctor.check_iot_direct()
+        assert line.startswith("  PASS  ") and "operator grant OK" in line and "90 ms" in line
 
     def test_forbidden_without_a_readable_cn_still_explains(self, iot_env, monkeypatch):
         _Transport.result = DirectResult(delivered=False, reason="forbidden", latency_ms=80.0)
         monkeypatch.setattr(doctor, "_certificate_cn", lambda path: None)
         assert "(403)" in doctor.check_iot_direct()
 
-    @pytest.mark.parametrize(
-        ("reason", "detail", "needle"),
-        [("offline", "not connected", "does not see thor-arm connected"), ("unavailable", "no creds", "no credential")],
-    )
-    def test_offline_and_unavailable_are_failures(self, iot_env, reason, detail, needle):
-        _Transport.result = DirectResult(delivered=False, reason=reason, latency_ms=1.0, detail=detail)
+    def test_unavailable_is_a_failure(self, iot_env):
+        _Transport.result = DirectResult(delivered=False, reason="unavailable", latency_ms=1.0, detail="no creds")
         line = doctor.check_iot_direct()
-        assert line.startswith("  FAIL  ") and needle in line
+        assert line.startswith("  FAIL  ") and "no credential" in line
 
     @pytest.mark.parametrize("reason", ["throttled", "unconfirmed", "error"])
     def test_transient_reasons_are_warnings(self, iot_env, reason):

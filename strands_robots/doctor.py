@@ -23,6 +23,7 @@ import os
 import platform
 import re
 import sys
+import time
 import uuid
 import warnings
 from pathlib import Path
@@ -1087,20 +1088,24 @@ def _certificate_cn(cert_path: Path) -> str | None:
 
 
 def check_iot_direct() -> str:
-    """Whether this peer can reach itself over AWS IoT Core Direct Messaging.
+    """Whether this identity may send AWS IoT Core direct messages, over HTTPS alone.
 
     Only meaningful with ``STRANDS_MESH_BACKEND=iot`` or ``bridge``; any other
-    backend is a SKIP. With one configured, the probe connects the IoT
-    transport exactly as ``Mesh.start`` would, sends ONE direct message to
-    its own client id with confirmation (so the broker waits for this very
-    process's PUBACK) and reports the round trip, or the exact reason the
-    broker gave: ``offline`` means the MQTT session did not come up,
-    ``forbidden`` means the policy grants no ``iot:SendDirectMessage`` for
-    this identity (a certificate issued before the CSR default has the CN
-    ``AWS IoT Certificate``, which the robot grant cannot match: re-run
-    ``provision_robot``), ``unavailable`` means no credential could sign the
-    HTTPS call. ``STRANDS_MESH_IOT_DIRECT=0`` is reported as a deliberate
-    SKIP, not a failure.
+    backend is a SKIP. With one configured, the probe makes ONE HTTPS
+    ``SendDirectMessage`` call with the identity's own certificate (or IAM
+    credentials under ``STRANDS_IOT_DIRECT_AUTH=sigv4``) to its own client id
+    on its own reply topic, and never opens an MQTT session: connecting here
+    under the robot's client id would take the running robot's session over
+    (AWS IoT keeps one session per client id). The broker checks the grant
+    before the connection, so every answer is informative: 200 means the
+    robot is live and reachable (the probe was delivered to it, harmlessly, on
+    a reply topic no turn is waiting on); 404 means the grant is in place and
+    no session holds that id right now, the expected verdict on a machine that
+    is not currently running the robot; 403 means the policy grants no
+    ``iot:SendDirectMessage`` for this identity, and the certificate CN is
+    named when it is not the Thing name (a certificate issued before the CSR
+    default carries ``AWS IoT Certificate``: re-run ``provision_robot``).
+    ``STRANDS_MESH_IOT_DIRECT=0`` is reported as a deliberate SKIP.
     """
     from strands_robots.mesh._backend_select import select_backend
 
@@ -1118,11 +1123,6 @@ def check_iot_direct() -> str:
     if not direct_messaging_enabled():
         return _skip(f"iot direct: {DIRECT_ENV_VAR}=0 (commands go over publish/subscribe)")
 
-    try:
-        import awsiot  # noqa: F401
-    except ImportError:
-        return _fail("iot direct: awsiotsdk not installed", fix='uv pip install "strands-robots[mesh-iot]"')
-
     transport = IotMqttTransport(connect_timeout=10.0)
     thing = transport.thing_name
     if not thing or not transport._endpoint:
@@ -1130,16 +1130,13 @@ def check_iot_direct() -> str:
             "iot direct: STRANDS_IOT_THING_NAME and STRANDS_IOT_ENDPOINT are required",
             fix="run provision_robot(<thing>) and export the lines it prints",
         )
+    role = "robot"
     try:
-        if not transport.connect():
-            return _fail(
-                f"iot direct: MQTT session for {thing} did not open (see the log line above)",
-                fix="check STRANDS_IOT_CERT_DIR holds <thing>.cert.pem, <thing>.private.key, AmazonRootCA1.pem",
-            )
-        # The one topic a robot identity may address itself on: its own reply
-        # path, which the robot grant scopes to the certificate's CN and the
-        # robot's Receive grant covers. (Its ``cmd`` topic would need the
-        # OPERATOR grant to send.)
+        # HTTPS only: no connect(). First the topic a ROBOT identity may
+        # address itself on (its own reply path, scoped to the certificate
+        # CN); on 403, the topic an OPERATOR identity may (any cmd topic). The
+        # broker checks the grant before the connection, so 404 on either
+        # means that grant is in place.
         probe_turn = uuid.uuid4().hex
         result = transport.send_direct(
             thing,
@@ -1148,12 +1145,29 @@ def check_iot_direct() -> str:
             confirm=True,
             timeout=5.0,
         )
+        if result.reason == "forbidden":
+            as_operator = transport.send_direct(
+                thing,
+                f"strands/{thing}/cmd",
+                {"sender_id": thing, "turn_id": probe_turn, "command": {"action": "ping"}, "timestamp": time.time()},
+                confirm=True,
+                timeout=5.0,
+            )
+            if as_operator.reason != "forbidden":
+                result, role = as_operator, "operator"
     finally:
         transport.close()
 
     auth = os.environ.get(DIRECT_AUTH_ENV_VAR, "").strip() or "x509"
     if result.delivered:
-        return _pass(f"iot direct: {thing} reached itself in {result.latency_ms:.0f} ms (confirmed, {auth})")
+        return _pass(
+            f"iot direct: {role} grant OK, {thing} is connected and answered in {result.latency_ms:.0f} ms ({auth})"
+        )
+    if result.reason == "offline":
+        return _pass(
+            f"iot direct: {role} grant OK for {thing} in {result.latency_ms:.0f} ms ({auth}); no session holds "
+            "that client id right now (this peer is not running here)"
+        )
     if result.reason == "forbidden":
         cn = _certificate_cn(transport._cert_dir / f"{thing}.cert.pem")
         if cn is not None and cn != thing:
@@ -1162,14 +1176,13 @@ def check_iot_direct() -> str:
                 fix=f"re-run provision_robot({thing!r}) to issue a certificate from a CSR with that CN",
             )
         return _fail(
-            f"iot direct: {thing} may not send a direct message to its own reply topic ({result.detail or '403'})",
+            f"iot direct: {thing} may send a direct message neither as a robot (its reply topic) nor as an "
+            f"operator (a cmd topic) ({result.detail or '403'})",
             fix=(
-                f"a robot: re-run provision_robot({thing!r}) so the policy carries AllowDirectResponseToAnyOperator; "
-                "an operator identity is expected here (its grant is strands/*/cmd), run the doctor on the robot"
+                f"re-run provision_robot({thing!r}) or provision_operator({thing!r}): the account's policy "
+                "version predates the direct messaging grants"
             ),
         )
-    if result.reason == "offline":
-        return _fail(f"iot direct: broker does not see {thing} connected ({result.detail or '404'})")
     if result.reason == "unavailable":
         return _fail(
             f"iot direct: no credential for the HTTPS call ({result.detail})",
