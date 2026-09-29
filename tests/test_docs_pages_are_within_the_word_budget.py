@@ -62,7 +62,9 @@ _BUDGET: int = _hook().LIMIT
 #: look that learned policies run on real robots: a new Start page (First learned
 #: policy) and a generated "Policies verified on this robot" section on every robot
 #: page, each row carrying the source of its numbers (docs/hooks/data/checkpoints.json).
-_SITE_BUDGET = 49_800
+#: Raised again, to 51,489, for the two humanoid design pages under project/
+#: (whole-body teleoperation, driver composition), 1,710 words plus their index rows.
+_SITE_BUDGET = 51_489
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
