@@ -40,6 +40,11 @@ from strands_robots.policies.wbc_latent.policy import (
     TOKEN_KEYS,
     WBCLatentPolicy,
 )
+from strands_robots.policies.wbc_latent.sim_control import (
+    WBCLatentTorqueController,
+    install_wbc_latent_torque_control,
+    wbc_latent_uses_position_servo,
+)
 
 __all__ = [
     "DEFAULT_REPLAN_EVERY",
@@ -57,6 +62,9 @@ __all__ = [
     "TOKEN_KEYS",
     "SonicDecoder",
     "WBCLatentPolicy",
+    "WBCLatentTorqueController",
+    "install_wbc_latent_torque_control",
+    "wbc_latent_uses_position_servo",
     "resolve_decoder_path",
     "sonic_variant_error",
 ]
