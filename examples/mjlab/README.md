@@ -125,7 +125,18 @@ the bimanual scene (F13).
 
 ## 03 Humanoid beyond velocity
 
-Results follow (running).
+Results so far (rough done, getup training):
+
+**Rough terrain, 1500 iterations, 4096 envs, 2 h 39 min on Thor** (`results/g1_rough`, shared GPU). Training ended at
+mean reward 15.66 and mean episode length 926 of 1000 ticks under the terrain curriculum. Native mjlab play at the
+maximum terrain difficulty, one world per command, 10 s each: `yaw_0.5` and `fwd_0.5` survive the full 10 s,
+`stand` falls at 2.7 s, `fwd_1.0` at 1.4 s. Classic MuJoCo replay on a flat plane through `rsl_rl_onnx` with the
+flat-plane `height_scan` builder (every ray hits z = 0): falls at 1.1-1.2 s on all four commands. The flat velocity
+policy from the mjlab lane walks identically on both engines through the same harness, so the rough gap is either an
+undertrained actor (it also falls natively) or a `height_scan` mismatch on a plane; the one-minute test that decides
+it, the rough actor on mjlab's own flat task, is the next step (F18). Two core paths had to be bypassed to get here
+(F17): the exporter's one-world env overflows mjwarp's contact budget on rough terrain (`nconmax must be >= 72`), and
+the provider refuses the `height_scan` term before any builder can be supplied.
 
 ## 04 Extreme domain randomisation
 
