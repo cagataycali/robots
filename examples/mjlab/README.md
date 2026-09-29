@@ -355,7 +355,7 @@ sha `3e23649c`, 9 files, 374 MB); the episode count in the table is the one
   1,024-episode batch the ONNX actor needs 10.6 s of rollout and the recorder 66 to 69 s
   of flush; over the run 79 % (scripted) and 85 % (onnx) of the wall clock is the
   LeRobot writer. The 6,370 episodes/min rollout ceiling from the deep lane holds
-  here (rollout alone would give ~330,000 episodes/h); the next 10x is a parallel or
+  here (rollout alone would give about 300,000 actor episodes/h); the next 10x is a parallel or
   asynchronous writer, not a faster simulator.
 - **The scripted expert is not faster than the actor.** Batched damped-least-squares IK
   on the CPU FK costs 15 to 17 s per batch (the `policy_s` column), the ONNX actor
