@@ -6,10 +6,10 @@ serial buses / sim state, and a second in-process ``Robot('so101')`` would colli
 the bus. So "native" here means a PROXY that is indistinguishable to the agent: for
 each fleet peer we build an AgentTool named for it whose tool_spec mirrors what that
 peer really is - ``hardware_robot.Robot``'s execute/start/status/stop spec for a real
-arm, the MuJoCo published-action spec for a sim - and whose invocation routes over the
-mesh rails that already exist (``sim_call`` for sim actions; the validated
-execute/start/status/stop command family for robots), via the dashboard bridge's
-``send_cmd``.
+arm, the wire's sim command family (state/set_joints/reset/step/stop plus
+execute/start rollouts) for a sim - and whose invocation routes over the mesh
+command rail that already exists (``mesh.security.validate_command``), via the
+dashboard bridge's ``send_cmd``.
 
 Gating stays ONE layer: these proxies do NOT gate themselves. ``MotionInterruptHook``
 (agent_hitl) gates them by tool name + action, peer-aware through ``peer_is_physical``
@@ -26,7 +26,6 @@ import json
 import keyword
 import re
 from collections.abc import AsyncGenerator, Callable, Mapping
-from pathlib import Path
 from typing import Any, cast
 
 # ── classification ──────────────────────────────────────────────────────────
@@ -36,13 +35,6 @@ KIND_REAL = "real"
 KIND_SIM = "sim"
 KIND_HOST = "host"  # a robot process with no joints announced (yet): status/stop only
 KIND_SKIP = "skip"
-
-#: Sim actions a ``sim_call`` rail refuses: rollouts must ride execute/start, whose
-#: provider/HF-repo/host allowlists would otherwise be bypassed. The proxy
-#: spec must not advertise what the wire will refuse. main's ``strands_robots.mesh.security``
-#: has no ``sim_call`` action yet, so the list lives here until the rail lands
-#: and exports it (then import it from there so the two cannot drift).
-SIM_CALL_BLOCKED: frozenset[str] = frozenset({"run_policy", "start_policy", "replay_episode", "eval_policy"})
 
 _SIM_TYPES = ("sim", "simulation", "mujoco")
 
@@ -108,7 +100,7 @@ def classify_peer(peer_id: str, peer: Mapping[str, Any] | None) -> str:
     if robot_type in _SIM_TYPES or presence.get("sim") is True or presence.get("mode") == "sim":
         return KIND_SIM
     # A child peer of a sim world (``<parent>__<robot>``) is itself a sim
-    # robot even when its own presence is sparse: core delegates its sim_call
+    # robot even when its own presence is sparse: core delegates its commands
     # to the parent Simulation.
     if "__" in peer_id and str(peer.get("parent") or presence.get("parent") or "").strip():
         return KIND_SIM
@@ -149,25 +141,44 @@ def sanitize_tool_name(peer_id: str, taken: frozenset[str] | set[str] = frozense
 
 # ── tool specs ───────────────────────────────────────────────────────────────
 
-_SIM_SPEC_PATH = Path(__file__).resolve().parents[1] / "simulation" / "mujoco" / "tool_spec.json"
-_sim_schema_cache: dict[str, Any] | None = None
+#: What a sim peer accepts on the wire (``strands_robots.mesh.security.ALLOWED_ACTIONS``
+#: as ``mesh.core._dispatch`` serves them for a Simulation or its child SimRobot).
+SIM_ACTIONS: tuple[str, ...] = ("status", "state", "set_joints", "reset", "step", "stop", "execute", "start")
 
-
-def _sim_input_schema() -> dict[str, Any]:
-    """The MuJoCo published-action schema, with wire-refused actions removed."""
-    global _sim_schema_cache
-    if _sim_schema_cache is None:
-        raw = json.loads(_SIM_SPEC_PATH.read_text(encoding="utf-8"))
-        actions = [a for a in raw["properties"]["action"]["enum"] if a not in SIM_CALL_BLOCKED]
-        schema = json.loads(json.dumps(raw))  # deep copy; the file is trusted JSON
-        schema["properties"]["action"]["enum"] = actions
-        schema["properties"]["action"]["description"] = (
-            "Published simulation action to invoke on this sim peer. Policy rollouts "
-            "(run_policy/start_policy/replay_episode/eval_policy) are not carried on "
-            "this rail. Use the execute/start actions of a robot tool instead."
-        )
-        _sim_schema_cache = schema
-    return _sim_schema_cache
+_SIM_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "action": {
+            "type": "string",
+            "description": "status | state | set_joints | reset | step | stop | execute | start",
+            "enum": list(SIM_ACTIONS),
+            "default": "state",
+        },
+        "target_joints": {
+            "type": "object",
+            "description": "set_joints: joint name (or 1-based index as a string) -> radians",
+            "additionalProperties": {"type": "number"},
+        },
+        "hold": {
+            "type": "boolean",
+            "description": "set_joints: re-seed the servos so the pose survives the next step (default true)",
+        },
+        "steps": {"type": "integer", "description": "step: how many physics steps (default 1)"},
+        "instruction": {"type": "string", "description": "execute/start: natural language task"},
+        "policy_provider": {
+            "type": "string",
+            "description": "execute/start: mock, lerobot_local, groot, cosmos3, ... (default mock)",
+        },
+        "pretrained_name_or_path": {
+            "type": "string",
+            "description": "execute/start with lerobot_local: the Hub checkpoint, e.g. lerobot/smolvla_base",
+        },
+        "policy_type": {"type": "string", "description": "execute/start with lerobot_local: act, smolvla, pi0, ..."},
+        "duration": {"type": "number", "description": "execute/start: seconds (positive, finite)"},
+        "robot_name": {"type": "string", "description": "a Simulation holding several robots: which one"},
+    },
+    "required": ["action"],
+}
 
 
 def peer_tool_spec(peer_id: str, kind: str, tool_name: str) -> dict[str, Any] | None:
@@ -176,13 +187,14 @@ def peer_tool_spec(peer_id: str, kind: str, tool_name: str) -> dict[str, Any] | 
         return {
             "name": tool_name,
             "description": (
-                f"Simulation peer '{peer_id}' as a native tool. Invokes the sim's own "
-                f"published actions (add_object, add_camera, list_objects, raycast, "
-                f"register_urdf, ...) over the mesh sim_call rail - world building and "
-                f"inspection, never real hardware. Parameters beyond 'action' are that "
-                f"action's own keyword arguments."
+                f"Simulation peer '{peer_id}' as a native tool (routed over the mesh to the MuJoCo "
+                f"process that owns it). Actions: status, state (joint names and positions), "
+                f"set_joints (write target_joints in radians, held by the servos), reset, step, stop, "
+                f"and execute/start (a policy rollout: instruction + policy_provider, e.g. mock or "
+                f"lerobot_local with pretrained_name_or_path). Never real hardware, so nothing here "
+                f"asks the operator first."
             ),
-            "inputSchema": {"json": _sim_input_schema()},
+            "inputSchema": {"json": _SIM_INPUT_SCHEMA},
         }
     if kind == KIND_REAL:
         return {
@@ -271,6 +283,19 @@ _REAL_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+#: Fields the sim rail forwards per action; everything else is dropped before the wire.
+_SIM_FIELDS: dict[str, tuple[str, ...]] = {
+    "status": (),
+    "state": ("robot_name",),
+    "set_joints": ("target_joints", "hold", "robot_name"),
+    "reset": ("robot_name",),
+    "step": ("steps",),
+    "stop": (),
+    "execute": ("instruction", "policy_provider", "pretrained_name_or_path", "policy_type", "duration", "robot_name"),
+    "start": ("instruction", "policy_provider", "pretrained_name_or_path", "policy_type", "duration", "robot_name"),
+}
+
+
 def map_invocation(
     peer_id: str, kind: str, tool_input: Mapping[str, Any] | None
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -279,7 +304,7 @@ def map_invocation(
     Returns ``(command, error)`` - exactly one is non-None. The command is a
     dict for ``bridge.send_cmd(peer_id, command)``; its shape is what
     ``mesh/security.validate_command`` accepts (execute/start/status/stop for
-    robots, the sim_call envelope for sims).
+    robots, the sim command family for sims).
     """
     tool_input = dict(tool_input or {})
     action = str(tool_input.pop("action", "") or "").strip()
@@ -287,17 +312,18 @@ def map_invocation(
         return None, "input needs an 'action'"
 
     if kind == KIND_SIM:
-        if action in SIM_CALL_BLOCKED:
-            return None, (
-                f"{action!r} is a policy rollout and does not ride the sim_call rail "
-                f"(its provider/repo allowlists live on execute/start). Ask the robot "
-                f"tool to execute instead."
-            )
-        params = {k: v for k, v in tool_input.items() if v is not None}
-        cmd: dict[str, Any] = {"action": "sim_call", "sim_action": action, "sim_params": params}
-        # robot_name is a validated top-level field, not a sim param.
-        if "robot_name" in params:
-            cmd["robot_name"] = params.pop("robot_name")
+        if action not in SIM_ACTIONS:
+            return None, f"unknown action {action!r} for this sim. Valid: {', '.join(SIM_ACTIONS)}"
+        cmd: dict[str, Any] = {"action": action}
+        for field in _SIM_FIELDS.get(action, ()):
+            if tool_input.get(field) is not None:
+                cmd[field] = tool_input[field]
+        if action == "set_joints" and not isinstance(cmd.get("target_joints"), Mapping):
+            return None, "set_joints needs target_joints: {joint name -> radians}"
+        if action in ("execute", "start"):
+            cmd.setdefault("policy_provider", "mock")
+            if not str(cmd.get("instruction") or "").strip():
+                return None, f"{action} needs an instruction"
         return cmd, None
 
     if kind in (KIND_REAL, KIND_HOST):
@@ -451,8 +477,7 @@ def build_peer_tools(
                 except Exception:  # noqa: BLE001 - an unreadable snapshot must not block a command
                     live = None
                 # stop-class verbs and status reads are NEVER refused on
-                # staleness - the raw requested action decides (a sim's stop maps
-                # to sim_call, so cmd["action"] would hide it).
+                # staleness - the requested action decides.
                 requested = str((tool_use.get("input") or {}).get("action") or "").strip()
                 if requested in NEVER_GATED:
                     staleness_note = stale_note(self._peer_id, live)

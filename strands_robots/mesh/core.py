@@ -2535,6 +2535,8 @@ class Mesh(SensorLoopsMixin):
                         **extra,
                     )
                 )
+        if action == "set_joints":
+            return self._dispatch_set_joints(cmd)
         if action == "step" and hasattr(r, "step"):
             return dict(r.step(cmd.get("steps", 1)))
         if action == "reset" and hasattr(r, "reset"):
@@ -2577,6 +2579,44 @@ class Mesh(SensorLoopsMixin):
     # ``target_velocity`` is the locomotion goal - WBC / wbc_gait read
     # ``[vx, vy, omega]``, microduck accepts that or ``[vx, vy]``. Every one of
     # those providers is reachable over the mesh: the policy-provider
+    def _dispatch_set_joints(self, cmd: dict[str, Any]) -> dict[str, Any]:
+        """``set_joints``: write a joint-space pose on a SIMULATION peer.
+
+        A child SimRobot peer (``<sim>__<robot>``) delegates to its parent
+        Simulation with ``robot_name`` bound to itself; a Simulation peer needs
+        ``robot_name`` when it holds more than one robot. The write goes through
+        the simulation's own published action (``set_joint_positions``), so its
+        validation and its ``hold`` semantics (re-seed the servos so the pose
+        survives the next step; the default here, because a pose that snaps
+        back one step later is not what "move the joint" means) are the
+        simulation's, not a copy. A hardware peer refuses: real motion rides
+        ``execute`` / ``start`` only, where the human gate lives.
+        """
+        r = self.robot
+        parent = getattr(r, "_sim_parent", None)
+        robot_name = cmd.get("robot_name")
+        target: Any
+        if parent is not None:
+            target = parent
+            robot_name = robot_name or getattr(r, "name", None)
+        elif hasattr(r, "_dispatch_action") and hasattr(r, "_world") and hasattr(r, "list_robots"):
+            target = r
+        else:
+            return {
+                "error": (
+                    "set_joints is a simulation-only action; a real robot moves through "
+                    "execute/start, which ask the operator first"
+                )
+            }
+        params: dict[str, Any] = {
+            "positions": dict(cmd.get("target_joints") or {}),
+            "hold": bool(cmd.get("hold", True)),
+        }
+        if robot_name:
+            params["robot_name"] = robot_name
+        result = target._dispatch_action("set_joint_positions", params)
+        return dict(result) if isinstance(result, dict) else {"result": result}
+
     # allowlist is derived from the registry (see
     # ``strands_robots.mesh.security``), so a locomotion peer can be told to
     # walk and has to be able to receive where.
