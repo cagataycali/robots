@@ -909,6 +909,42 @@ def _coerce_prim_path(res: Any) -> str:
     return ""
 
 
+def _select_physics_variant(prim_path: str) -> str | None:
+    """Pick the PhysX flavour of a converter-authored ``Physics`` variantSet.
+
+    Isaac Sim 6.1's MJCF/URDF importers (mujoco-usd-converter >= 0.5) author the
+    physics schemas (ArticulationRootAPI, joints, drives, collision) behind a
+    ``Physics`` variantSet with variants ``{mujoco, none, physics, physx}`` and
+    NO default selection. Referenced as-is the robot composes with no physics at
+    all, and ``Articulation(...)`` dies inside the tensor API with
+    ``'NoneType' object has no attribute 'is_homogeneous'``. 6.0.x's converter
+    (v0.2.0) flattened physics inline, so this is a no-op there.
+
+    Returns the variant selected, or ``None`` when nothing needed selecting.
+    """
+    try:
+        import omni.usd  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        prim = stage.GetPrimAtPath(prim_path) if stage is not None else None
+        if prim is None or not prim.IsValid():
+            return None
+        sets = prim.GetVariantSets()
+        if not sets.HasVariantSet("Physics"):
+            return None
+        vset = sets.GetVariantSet("Physics")
+        if vset.GetVariantSelection():
+            return None  # the asset (or the caller) already chose
+        names = vset.GetVariantNames()
+        for choice in ("physx", "physics"):
+            if choice in names:
+                vset.SetVariantSelection(choice)
+                return choice
+    except (ImportError, AttributeError, RuntimeError):
+        return None
+    return None
+
+
 def _import_articulation_cls() -> Any:
     """Resolve the single-prim articulation wrapper across Isaac versions.
 
@@ -4001,6 +4037,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 add_reference_to_stage,
             )
         add_reference_to_stage(usd_path=usd_path, prim_path=prim_path)
+        _select_physics_variant(prim_path)
 
         # Isaac Sim 6.0 exposes the single-prim wrappers under
         # ``isaacsim.core.prims``; the legacy 4.x names lack the ``Single``
@@ -8338,6 +8375,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # Step 1: stage reference. The USD's default prim becomes a child
         # of ``prim_path``; subsequent Articulation lookups walk that path.
         add_reference_to_stage(usd_path=usd_path, prim_path=prim_path)
+        _select_physics_variant(prim_path)
 
         # Step 2-3: wrap + initialise. The articulation name has to be
         # unique within the scene's articulation registry, so derive it
@@ -8500,6 +8538,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             from isaacsim.core.utils.stage import add_reference_to_stage  # type: ignore[import-not-found]
 
             add_reference_to_stage(usd_path=usd_out, prim_path=prim_path)
+            _select_physics_variant(prim_path)
             imported_prim_path = prim_path
         else:
             try:
