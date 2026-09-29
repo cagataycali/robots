@@ -557,7 +557,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
                 _err(
                     "move_to: the IK solve runs on the MuJoCo model of the robot and needs the "
                     "'mujoco' + 'mink' stack, which is not importable. Install the sim extra: "
-                    "uv pip install 'strands-robots[sim-mujoco]'."
+                    "uv pip install 'strands-robots[sim-isaac]'."
                 ),
             )
         try:

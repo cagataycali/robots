@@ -18,3 +18,7 @@ from strands_robots import Robot
 
 robot = Robot("omy_l100")
 ```
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.

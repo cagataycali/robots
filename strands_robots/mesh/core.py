@@ -40,6 +40,7 @@ from strands_robots.mesh.session import (
     put,
     release_session,
     update_peer,
+    zenoh_backend_missing,
     zenoh_error_types,
 )
 from strands_robots.mesh.session import (
@@ -777,6 +778,11 @@ class Mesh(SensorLoopsMixin):
         """Acquire a Zenoh session and start all publishing loops."""
         with self._lifecycle_lock:
             if self._running:
+                return
+
+            # No transport means nothing below applies: report the absent extra
+            # rather than posture warnings and an ACL refusal that guard nothing.
+            if zenoh_backend_missing():
                 return
 
             # H-1: permanent-fleet-lockout footgun warning.

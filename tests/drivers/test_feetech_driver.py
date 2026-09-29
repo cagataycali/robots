@@ -680,11 +680,11 @@ class TestStream:
         )
         assert result["toolUseId"] == "tid-1"
         assert result["status"] == "success"
-        # The status envelope is nested inside content[0].json; the outer
-        # shape and the inner shape both carry the "success" flag.
-        outer_body = result["content"][0]["json"]
-        assert outer_body["status"] == "success"
-        assert outer_body["content"][0]["json"]["tool_name"] == "so101"
+        # The verb answers with get_status()'s envelope itself: the fields sit one
+        # level down, at content[0].json, never inside a second envelope (#4151).
+        body = result["content"][0]["json"]
+        assert body["tool_name"] == "so101"
+        assert "content" not in body
 
     def test_stream_sensors_reports_the_joint_positions(self) -> None:
         driver = _wired()

@@ -4511,6 +4511,9 @@ sim-gs = [
 sim-isaac = [
     { name = "imageio" },
     { name = "imageio-ffmpeg" },
+    { name = "mink" },
+    { name = "mujoco" },
+    { name = "qpsolvers", extra = ["daqp"] },
     { name = "robot-descriptions" },
     { name = "usd-core" },
 ]
@@ -4621,6 +4624,7 @@ requires-dist = [
     { name = "mink", marker = "extra == 'all'", specifier = ">=0.0.4" },
     { name = "mink", marker = "extra == 'cosmos3-sim'", specifier = ">=0.0.4" },
     { name = "mink", marker = "extra == 'rl'", specifier = ">=0.0.4" },
+    { name = "mink", marker = "extra == 'sim-isaac'", specifier = ">=0.0.4" },
     { name = "mink", marker = "extra == 'sim-mujoco'", specifier = ">=0.0.4" },
     { name = "mink", marker = "extra == 'sim-newton'", specifier = ">=0.0.4" },
     { name = "mink", marker = "extra == 'sim-urdf'", specifier = ">=0.0.4" },
@@ -4631,6 +4635,7 @@ requires-dist = [
     { name = "mujoco", marker = "extra == 'all'", specifier = ">=3.5.0,<4.0.0" },
     { name = "mujoco", marker = "extra == 'cosmos3-sim'", specifier = ">=3.5.0,<4.0.0" },
     { name = "mujoco", marker = "extra == 'rl'", specifier = ">=3.5.0,<4.0.0" },
+    { name = "mujoco", marker = "extra == 'sim-isaac'", specifier = ">=3.5.0,<4.0.0" },
     { name = "mujoco", marker = "extra == 'sim-mujoco'", specifier = ">=3.5.0,<4.0.0" },
     { name = "mujoco", marker = "extra == 'sim-newton'", specifier = ">=3.5.0,<4.0.0" },
     { name = "mujoco", marker = "extra == 'sim-newton'", specifier = ">=3.11.0,<3.12.0" },
@@ -4672,6 +4677,7 @@ requires-dist = [
     { name = "pyzmq", marker = "extra == 'moveit2'", specifier = ">=27.0.0,<28.0.0" },
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'all'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'rl'", specifier = ">=4.0.0" },
+    { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'sim-isaac'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'sim-mujoco'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'sim-newton'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'sim-urdf'", specifier = ">=4.0.0" },

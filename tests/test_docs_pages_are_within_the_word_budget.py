@@ -58,17 +58,15 @@ _BUDGET: int = _hook().LIMIT
 #: to 48,896 when the per-driver facts moved to one section on the drivers page, and
 #: to 47,845 when the robot pages dropped the back-link footer the nav already gives, and
 #: to 46,418 when they dropped the lines their chips and the nav already state; the old
-#: site was 112,416.
-#:
-#: One exception to "never raise it", stated here so it is a decision and not a
-#: drift: the registry gained the 81 robot_descriptions URDF robots the MuJoCo
-#: backend compiles on first use (urdf_robots.json), and the catalog generates one
-#: page per registry robot, so 81 pages of 64 words each (5,215 words: title,
-#: chips, one provenance line, the thumbnail, the constructor) plus the 890-word
-#: learn page that explains the loader once arrived with them. Raised from 46,418
-#: to 52,524 for exactly that content; the per-robot template is the leanest the
-#: catalog has and any further robot rides at the same 64 words.
-_SITE_BUDGET = 52_524
+#: to 46,418 when they dropped the lines their chips and the nav already state; the old
+#: site was 112,416. Raised once, to 49,800, when the site started saying where readers
+#: look that learned policies run on real robots: a new Start page (First learned
+#: policy) and a generated "Policies verified on this robot" section on every robot
+#: page, each row carrying the source of its numbers (docs/hooks/data/checkpoints.json).
+#: Then raised to 57,704 for the 81 robot_descriptions URDF robots: one generated page
+#: each (64 words of template plus the 22-word "Policies verified" section every robot
+#: page now carries) and the learn page that explains the loader once.
+_SITE_BUDGET = 57_704
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

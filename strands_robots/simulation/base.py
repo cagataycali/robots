@@ -5543,11 +5543,13 @@ class SimEngine(ABC):
         supported = getattr(spec, "supported_robots", None)
         if not supported or not isinstance(supported, list | tuple):
             return None
+        from strands_robots.simulation.benchmark import robot_model_is_supported  # noqa: PLC0415
+
         world = getattr(self, "_world", None)
         robots = getattr(world, "robots", None)
         robot_obj = robots.get(robot_name) if isinstance(robots, dict) else None
         data_config = getattr(robot_obj, "data_config", None)
-        if data_config is None or data_config in supported:
+        if data_config is None or robot_model_is_supported(data_config, supported):
             return None
         loadable = list(supported)
         return {
