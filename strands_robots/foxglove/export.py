@@ -139,14 +139,18 @@ def export_episode(
     context = fox.Context()
     writer = fox.open_mcap(str(out_path), context=context, writer_options=options)
     try:
-        scalar_channels = {
-            key: fox.Channel(topic, schema=SCALARS_SCHEMA, message_encoding="json", context=context)
+        scalar_topics = {
+            key: topic
             for key, topic in (("observation.state", "/observation/state"), ("action", "/action/state"))
             if key in meta.features
         }
+        image_topics = {key: f"/observation/images/{key.rsplit('.', 1)[-1]}" for key in camera_keys}
+        scalar_channels = {
+            key: fox.Channel(topic, schema=SCALARS_SCHEMA, message_encoding="json", context=context)
+            for key, topic in scalar_topics.items()
+        }
         image_channels: dict[str, Any] = {
-            key: CompressedImageChannel(topic=f"/observation/images/{key.rsplit('.', 1)[-1]}", context=context)
-            for key in camera_keys
+            key: CompressedImageChannel(topic=topic, context=context) for key, topic in image_topics.items()
         }
         episode_channel = fox.Channel(
             "/lerobot/episode", schema=EPISODE_SCHEMA, message_encoding="json", context=context
@@ -196,11 +200,7 @@ def export_episode(
         "frames": int(frames),
         "fps": float(meta.fps),
         "cameras": camera_keys,
-        "channels": sorted(
-            [c.topic for c in scalar_channels.values()]
-            + [c.topic for c in image_channels.values()]
-            + ["/lerobot/episode"]
-        ),
+        "channels": sorted([*scalar_topics.values(), *image_topics.values(), "/lerobot/episode"]),
         "bytes": int(size),
         "seconds": round(time.perf_counter() - started, 3),
     }

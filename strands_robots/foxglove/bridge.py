@@ -35,7 +35,6 @@ and is re-sent to each new subscriber, never on a timer; steady state is about
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import threading
 import time
@@ -387,8 +386,9 @@ class FoxgloveBridge:
             self._resend_scene.clear()
             for topic, message in self._scene_messages.items():
                 # A recompile that left a robot's meshes untouched (an added
-                # cube) produces the same bytes: the file keeps one copy.
-                digest = hashlib.sha1(message.encode(), usedforsecurity=False).hexdigest()
+                # cube) draws the same scene: the file keeps one copy.
+                robot_of_topic = topic[1:-6] or None  # "/so101/scene" -> "so101", "/scene" -> None
+                digest = scene_mod.scene_digest(model, robot=robot_of_topic)
                 if self._scene_digests.get(topic) == digest:
                     self._log_live(topic, SceneUpdateChannel, message)
                 else:

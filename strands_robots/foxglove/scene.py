@@ -19,6 +19,7 @@ install without the ``[foxglove]`` extra.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import numpy as np
@@ -231,3 +232,42 @@ def joint_states(model: Any, data: Any, joint_names: list[str], stamp_ns: int, *
             )
         )
     return JointStates(timestamp=_timestamp(stamp_ns), joints=states)
+
+
+def scene_digest(model: Any, *, robot: str | None = None) -> str:
+    """A digest of everything :func:`scene_update` draws for ``robot``, timestamps aside.
+
+    Two models that would produce the same scene (a recompile that added an
+    object elsewhere) share a digest, so the bridge can tell "new model" from
+    "new scene" and write each scene to the file once.
+    """
+    digest = hashlib.sha1(usedforsecurity=False)
+    for b in range(1, model.nbody):
+        name = body_name(model, b)
+        if robot_of_body(name) != robot:
+            continue
+        digest.update(name.encode("utf-8"))
+        for g in range(model.ngeom):
+            if int(model.geom_bodyid[g]) != b or int(model.geom_group[g]) > VISUAL_GROUP_MAX:
+                continue
+            for array in (
+                model.geom_type[g : g + 1],
+                model.geom_size[g],
+                model.geom_pos[g],
+                model.geom_quat[g],
+                model.geom_rgba[g],
+            ):
+                digest.update(np.ascontiguousarray(array).tobytes())
+            if int(model.geom_type[g]) == int(_mesh_type()):
+                mesh_id = int(model.geom_dataid[g])
+                v0, nv = int(model.mesh_vertadr[mesh_id]), int(model.mesh_vertnum[mesh_id])
+                f0, nf = int(model.mesh_faceadr[mesh_id]), int(model.mesh_facenum[mesh_id])
+                digest.update(np.ascontiguousarray(model.mesh_vert[v0 : v0 + nv]).tobytes())
+                digest.update(np.ascontiguousarray(model.mesh_face[f0 : f0 + nf]).tobytes())
+    return digest.hexdigest()
+
+
+def _mesh_type() -> Any:
+    import mujoco
+
+    return mujoco.mjtGeom.mjGEOM_MESH
