@@ -588,10 +588,10 @@ def _wire_tool_target(robot: Any) -> tuple[Any, str | None]:
 
 def _wire_tool_spec_of(robot: Any) -> dict[str, Any] | None:
     """The served spec a peer advertises, or ``None``; never raises."""
-    target, _ = _wire_tool_target(robot)
-    if target is None:
-        return None
     try:
+        target, _ = _wire_tool_target(robot)
+        if target is None:
+            return None
         spec = target.wire_tool_spec()
     except Exception:
         logger.debug("wire_tool_spec not read from robot", exc_info=True)

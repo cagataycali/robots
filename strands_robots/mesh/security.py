@@ -540,14 +540,6 @@ def _wire_surface() -> dict[str, Any]:
     return surface
 
 
-def _denied_actions() -> dict[str, str]:
-    return dict(_wire_surface()["denied_actions"])
-
-
-def _denied_params() -> dict[str, str]:
-    return dict(_wire_surface()["denied_params"])
-
-
 #: Published simulation actions the wire refuses even on a simulation peer
 #: (``wire_surface.json`` ``denied_actions``): it replaces or destroys the world
 #: the peer's mesh robots live in, opens a window or reads a path on the peer
