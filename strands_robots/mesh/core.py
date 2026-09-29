@@ -2204,7 +2204,7 @@ class Mesh(SensorLoopsMixin):
             # the dispatch thread and silently kill the mesh") is
             # achievable with a narrow tuple: this catches every
             # realistic adapter failure (LeRobot raising RuntimeError,
-            # GR00T raising ValueError on bad inputs, type mismatches,
+            # a policy raising ValueError on bad inputs, type mismatches,
             # missing keys, OSError from device I/O) but lets
             # ``MemoryError``, ``SystemExit``, ``KeyboardInterrupt``,
             # and any future programmer-error type that doesn't fit
