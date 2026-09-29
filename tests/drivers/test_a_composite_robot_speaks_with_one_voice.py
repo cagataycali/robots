@@ -14,6 +14,7 @@ import time
 from typing import Any
 
 import pytest
+from strands.types.tools import ToolUse
 
 from strands_robots import Robot
 from strands_robots.drivers.composite import VERBS, CompositeDriver, MockGripperPart, SimPart, part_key
@@ -177,7 +178,8 @@ def test_the_agent_verbs_dispatch_and_an_unknown_verb_is_refused(g1: Any) -> Non
 
     async def call(action: str, **payload: Any) -> dict[str, Any]:
         events = []
-        async for event in driver.stream({"toolUseId": "t", "input": {"action": action, **payload}}, {}):
+        tool_use: ToolUse = {"toolUseId": "t", "name": driver.tool_name, "input": {"action": action, **payload}}
+        async for event in driver.stream(tool_use, {}):
             events.append(event)
         assert len(events) == 1
         return events[0]
