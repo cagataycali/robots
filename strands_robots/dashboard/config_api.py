@@ -84,11 +84,19 @@ ALLOWED_ENV_KEYS: frozenset[str] = frozenset(
 #: Never dashboard-managed, whatever the allowlist says later: each of these is a gate
 #: some other route reads live from ``os.environ``. Kept as a second fence so that adding
 #: a key above by mistake still cannot open one of them.
+#:
+#: The whole ``STRANDS_MESH_`` vocabulary is fenced, not a few spellings of it. Three
+#: narrower mesh prefixes (``_AUTH``, ``_MTLS``, ``_INSECURE``) named one real variable
+#: between them and missed ``STRANDS_MESH_LOCAL_DEV``, which alone defaults the wire to
+#: ``auth_mode=none`` and stands in for the ``STRANDS_MESH_I_KNOW_THIS_IS_INSECURE``
+#: acknowledgement, and ``STRANDS_MESH_MULTICAST``, which reopens LAN scouting. Both were
+#: in ``INTERESTING_ENV`` and so page-writable: one settings save turned mesh auth off for
+#: the next session and for every child that read the env file. The mesh knobs a page may
+#: change (port, backend, camera rate, policy allowlist) travel as ``mesh.*`` settings,
+#: never as env writes, so nothing the page needs is behind this prefix.
 GATE_BEARING_ENV_PREFIXES: tuple[str, ...] = (
     "STRANDS_DASH_AUTH_",
-    "STRANDS_MESH_AUTH",
-    "STRANDS_MESH_MTLS",
-    "STRANDS_MESH_INSECURE",
+    "STRANDS_MESH_",
 )
 GATE_BEARING_ENV_KEYS: frozenset[str] = frozenset(
     {
