@@ -7,7 +7,7 @@ description: "Apptronik Apollo Humanoid (34-DOF)"
 
 # Apptronik Apollo Humanoid (34-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">34 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:apollo}}
 
 <robot-viewer name="apollo"></robot-viewer>
 

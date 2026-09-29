@@ -7,7 +7,7 @@ description: "Unitree G1 Humanoid (29-DOF + dexterous hands)"
 
 # Unitree G1 Humanoid (29-DOF + dexterous hands)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">46 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot, strands</span></p>
+{{robot_chips:unitree_g1}}
 
 <robot-viewer name="unitree_g1"></robot-viewer>
 
