@@ -14,6 +14,7 @@ import logging
 import os
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -615,7 +616,7 @@ def build_lerobot_command(
             forward.
 
     Returns:
-        The argv list, beginning with ``["python", "-m", "lerobot.scripts...."]``.
+        The argv list, beginning with ``[sys.executable, "-m", "lerobot.scripts...."]``.
 
     Raises:
         ValueError: If ``action`` is unknown, ``replay`` is requested without
@@ -661,7 +662,7 @@ def build_lerobot_command(
             raise ValueError(error)
         if error := _flag_error("replay", flag_options):
             raise ValueError(error)
-        cmd = ["python", "-m", "lerobot.scripts.lerobot_replay"]
+        cmd = [sys.executable, "-m", "lerobot.scripts.lerobot_replay"]
         cmd.extend(
             _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
         )
@@ -681,7 +682,7 @@ def build_lerobot_command(
                 raise ValueError(error)
             from strands_robots.dataset_source import resolve_dataset_dir
 
-            cmd = ["python", "-m", "lerobot.scripts.lerobot_record"]
+            cmd = [sys.executable, "-m", "lerobot.scripts.lerobot_record"]
             cmd.extend(
                 _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
             )
@@ -716,7 +717,7 @@ def build_lerobot_command(
             raise ValueError(error)
         if error := _flag_error("teleoperate", flag_options):
             raise ValueError(error)
-        cmd = ["python", "-m", "lerobot.scripts.lerobot_teleoperate"]
+        cmd = [sys.executable, "-m", "lerobot.scripts.lerobot_teleoperate"]
         cmd.extend(
             _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
         )
@@ -768,7 +769,7 @@ def build_lerobot_command(
                 "point). Reinstall with: uv pip install 'strands-robots[lerobot]'."
             )
 
-        cmd = ["python", "-m", "lerobot.scripts.lerobot_rollout"]
+        cmd = [sys.executable, "-m", "lerobot.scripts.lerobot_rollout"]
         cmd.extend(
             _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
         )

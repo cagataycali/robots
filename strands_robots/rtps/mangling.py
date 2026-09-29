@@ -62,7 +62,7 @@ import re
 #: starting with a digit, and no repeated underscore anywhere (tilde and braces
 #: are substitution syntax that must already be resolved before mangling). The
 #: one owner of this rule: :mod:`strands_robots.tools.use_rtps` and
-#: :mod:`strands_robots.mesh.rtps_robot` gate caller-supplied names against
+#: :mod:`strands_robots.drivers.ros.rtps_robot` gate caller-supplied names against
 #: this pattern rather than restating it, so they cannot come to disagree with
 #: the mangling about what a ROS 2 topic is.
 ROS_TOPIC_RE = re.compile(r"^(?!.*__)(?:/(?![0-9])[A-Za-z0-9_]+)+\Z")

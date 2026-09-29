@@ -33,7 +33,7 @@ from typing import Any
 import pytest
 import strands
 
-import strands_robots.mesh as mesh
+import strands_robots.drivers.ros as ros_drivers
 
 _EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
@@ -142,7 +142,7 @@ def stub_bridge(monkeypatch: pytest.MonkeyPatch):
                 "from_deepracer": classmethod(lambda _cls, **_k: stub),
             },
         )
-        monkeypatch.setattr(mesh, demo.factory, factory)
+        monkeypatch.setattr(ros_drivers, demo.factory, factory)
         return stub
 
     return install

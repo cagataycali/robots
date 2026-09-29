@@ -4,7 +4,7 @@ An :class:`AckermannRosRobot` wraps an Ackermann-steering ROS 2 car (reference
 platform: AWS DeepRacer) so an agent can drive it with the same
 ``Agent(tools=robot.tools)`` pattern as every other strands robot. Ackermann
 platforms differ from the differential-drive bases served by
-:class:`~strands_robots.mesh.ros_bridge.RosBridgedRobot` in three ways this
+:class:`~strands_robots.drivers.ros.ros_bridge.RosBridgedRobot` in three ways this
 class absorbs:
 
 1. Commands are normalized servo pairs (``angle``/``throttle`` in [-1, 1]),
@@ -42,7 +42,7 @@ Typical usage::
     import os
 
     from strands import Agent
-    from strands_robots.mesh import AckermannRosRobot
+    from strands_robots.drivers.ros import AckermannRosRobot
 
     car = AckermannRosRobot.from_deepracer(node_name="deepracer")
 
@@ -67,8 +67,9 @@ from typing import Any
 from strands import tool
 from strands.types.tools import AgentTool, ToolContext
 
-from strands_robots.mesh._mobile_base import failed_halt_error
-from strands_robots.mesh.ros_bridge import _check_topic, _operator_gate
+from strands_robots.drivers.base import refuse
+from strands_robots.drivers.ros._mobile_base import failed_halt_error
+from strands_robots.drivers.ros.ros_bridge import _check_topic, _operator_gate
 from strands_robots.ros import never_gated, ros_action
 from strands_robots.utils import (
     finite_number_error,
@@ -134,7 +135,7 @@ def _rest_command_error(linear: float, angular: float, context: str) -> str | No
     This is :func:`~strands_robots.drivers.earthrover.drive_axis_error`'s
     disposition - a velocity has no endpoint to land on, so it is refused by name
     rather than substituted - applied at the other end of the range, and the rule
-    :meth:`~strands_robots.mesh._mobile_base.MobileBaseRobot.drive` already states
+    :meth:`~strands_robots.drivers.ros._mobile_base.MobileBaseRobot.drive` already states
     for ``count=0``: a request that commands nothing must not report success.
 
     Args:
@@ -280,10 +281,6 @@ class AckermannRosRobot:
         scan_topic = wiring.pop("scan_topic")
         return cls(node_name, servo_topic, scan_topic, **wiring)
 
-    @staticmethod
-    def _error(text: str) -> dict[str, Any]:
-        return {"status": "error", "content": [{"text": text}]}
-
     def enable(self, tool_context: ToolContext | None = None) -> dict[str, Any]:
         """Run the ``init_services`` handshake once; idempotent on success.
 
@@ -365,11 +362,11 @@ class AckermannRosRobot:
             )
         )
         if cmd_err:
-            return self._error(cmd_err)
+            return refuse(cmd_err)
         # Ordered after the finiteness guard on purpose: every comparison
         # against ``nan`` is false, so a ceiling test cannot stand in for one.
         if duration is not None and duration > self.max_duration:
-            return self._error(
+            return refuse(
                 f"drive: duration {duration}s exceeds max_duration {self.max_duration}s "
                 "- issue shorter commands instead of one long hold"
             )
@@ -377,7 +374,7 @@ class AckermannRosRobot:
         # kinematics cannot execute must not be what switches the car into a
         # commandable state, and it must not be published as a halt either.
         if rest_err := _rest_command_error(linear, angular, "drive"):
-            return self._error(rest_err)
+            return refuse(rest_err)
         if not self._enabled and self.init_services:
             enabled = self.enable(tool_context=tool_context)
             if enabled.get("status") != "success":
@@ -413,7 +410,7 @@ class AckermannRosRobot:
             topic=self.servo_topic,
             subject="the car may still be holding the commanded throttle",
         )
-        return self._error(latched) if latched else result
+        return refuse(latched) if latched else result
 
     def _publish_servo(
         self,
@@ -449,9 +446,9 @@ class AckermannRosRobot:
         transport's own ``echo``.
         """
         if not self.scan_topic:
-            return self._error("get_scan: no scan_topic configured for this robot")
+            return refuse("get_scan: no scan_topic configured for this robot")
         if wait_err := positive_finite_number_error(timeout, "timeout", "get_scan"):
-            return self._error(wait_err)
+            return refuse(wait_err)
         return ros_action(
             action="echo",
             topic=self.scan_topic,

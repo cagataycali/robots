@@ -58,7 +58,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-import threading
 from typing import Any
 
 import numpy as np
@@ -67,6 +66,7 @@ import pytest
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation, _CameraState
 from strands_robots.utils import positive_count_error
+from tests.simulation._isaac_engine import isaac_engine
 
 #: The camera's native render size. Both readback surfaces accept only this
 #: size or ``None``, so every "usable" probe below uses it.
@@ -127,19 +127,10 @@ def _engine(handle: _FakeCameraHandle | None = None) -> IsaacSimulation:
     ``render_mode`` must not be ``"headless"``: both surfaces refuse that mode
     before they reach the dims guard, and ``get_frame`` says so explicitly.
     """
-    engine = IsaacSimulation.__new__(IsaacSimulation)
+    engine = isaac_engine()
     engine._config = IsaacConfig(render_mode="rtx_realtime", camera_width=NATIVE_W, camera_height=NATIVE_H)
-    engine._lock = threading.RLock()
-    engine._world = None
     engine._world_created = True
-    engine._robots = {}
-    engine._objects = {}
-    engine._cameras = {}
-    engine._prim_registry = []
     engine._camera_warmup_steps = 0
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._main_tid = threading.get_ident()
 
     cam = _CameraState("cam", "/World/cameras/cam", NATIVE_W, NATIVE_H)
     cam.handle = handle if handle is not None else _FakeCameraHandle()

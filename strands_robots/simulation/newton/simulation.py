@@ -2612,6 +2612,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             "available_solvers": sorted(articulated_solvers()),
             "device": device,
             "robots": self.list_robots(),
+            "capabilities": self._described_capabilities(),
             "objects": list(self._world.objects) if self._world else [],
             "bodies": bodies,
             "cameras": self.list_cameras(),

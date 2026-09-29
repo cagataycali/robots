@@ -7,7 +7,7 @@ description: "Dynamixel 2R Educational Arm (2-DOF)"
 
 # Dynamixel 2R Educational Arm (2-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">2 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:dynamixel_2r}}
 
 <robot-viewer name="dynamixel_2r"></robot-viewer>
 

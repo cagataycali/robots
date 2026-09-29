@@ -234,6 +234,31 @@ class PersistentPolicy(Policy):
         """Forward the observed inference delay (RTC steps) to the wrapped policy."""
         self._inner.set_rtc_observed_delay(steps)
 
+    # ``control_frequency`` and ``rtc_observed_delay_steps`` are CLASS attributes
+    # on ``Policy`` (``None`` until a setter runs), so normal lookup finds them on
+    # the wrapper and ``__getattr__`` below is never consulted for them - the two
+    # setters above write the wrapped policy's slot and the wrapper's own stayed
+    # ``None``. Read them from the policy that was told.
+    @property
+    def control_frequency(self) -> float | None:  # type: ignore[override]
+        """The control rate the wrapped policy was told (``None`` until set)."""
+        return self._inner.control_frequency
+
+    @control_frequency.setter
+    def control_frequency(self, hz: float | None) -> None:
+        """Write the wrapped policy's slot, so a direct assignment lands where the setter's does."""
+        self._inner.control_frequency = hz
+
+    @property
+    def rtc_observed_delay_steps(self) -> int | None:  # type: ignore[override]
+        """The RTC delay the wrapped policy was told (``None`` until set)."""
+        return self._inner.rtc_observed_delay_steps
+
+    @rtc_observed_delay_steps.setter
+    def rtc_observed_delay_steps(self, steps: int | None) -> None:
+        """Write the wrapped policy's slot, so a direct assignment lands where the setter's does."""
+        self._inner.rtc_observed_delay_steps = steps
+
     @property
     def requires_images(self) -> bool:
         """Whether the wrapped policy needs camera frames in its observation."""

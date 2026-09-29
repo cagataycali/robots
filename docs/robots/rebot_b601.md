@@ -7,7 +7,7 @@ description: "Seeed Studio reBot B601-DM (6-DOF + gripper, Damiao CAN motors)"
 
 # Seeed Studio reBot B601-DM (6-DOF + gripper, Damiao CAN motors)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
+{{robot_chips:rebot_b601}}
 
 The registry ships no simulation asset for it, so `Robot("rebot_b601")` in the default sim mode refuses by name.
 

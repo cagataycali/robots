@@ -18,7 +18,7 @@ trusted networks.
 Typical usage::
 
     from strands import Agent
-    from strands_robots.mesh import RosbridgeRobot
+    from strands_robots.drivers.ros import RosbridgeRobot
 
     rover = RosbridgeRobot.from_curiosity(host="localhost")
     rover.drive(linear=1.0, duration=3.0)
@@ -36,8 +36,9 @@ from strands import tool
 from strands.types.tools import AgentTool, ToolContext
 
 from strands_robots._command_gate import gate_command
-from strands_robots.mesh._mobile_base import LATCHED_VELOCITY, failed_halt_error
-from strands_robots.mesh.ros_bridge import _check_topic
+from strands_robots.drivers.base import refuse
+from strands_robots.drivers.ros._mobile_base import LATCHED_VELOCITY, failed_halt_error
+from strands_robots.drivers.ros.ros_bridge import _check_topic
 from strands_robots.rosbridge import _HOST_RE, GATE_TOOL, _transport_port_error, never_gated, rosbridge_action
 from strands_robots.utils import (
     dial_host_error,
@@ -171,10 +172,6 @@ class RosbridgeRobot:
         scan_topic = wiring.pop("scan_topic", None)
         return cls(node_name, cmd_vel_topic, odom_topic, scan_topic, host=host, port=port, **wiring)
 
-    @staticmethod
-    def _error(text: str) -> dict[str, Any]:
-        return {"status": "error", "content": [{"text": text}]}
-
     def _publish_twist(
         self,
         linear: float,
@@ -238,7 +235,7 @@ class RosbridgeRobot:
         Not carried by every mobile base: velocities are clamped to
         ``max_linear`` and ``max_angular``, and a hold beyond ``max_duration``
         is refused.
-        :class:`~strands_robots.mesh.ackermann_robot.AckermannRosRobot`
+        :class:`~strands_robots.drivers.ros.ackermann_robot.AckermannRosRobot`
         declares both as well, as ``max_speed`` and a ``max_duration`` of its
         own, because it too wraps a platform whose limits are known - so a hold
         this bridge accepts can be refused on that car, and the reverse.
@@ -296,11 +293,11 @@ class RosbridgeRobot:
             )
         )
         if cmd_err:
-            return self._error(cmd_err)
+            return refuse(cmd_err)
         # Ordered after the finiteness guard on purpose: every comparison
         # against ``nan`` is false, so a ceiling test cannot stand in for one.
         if duration is not None and duration > self.max_duration:
-            return self._error(
+            return refuse(
                 f"drive: duration {duration}s exceeds max_duration {self.max_duration}s "
                 "- issue shorter commands instead of one long hold"
             )
@@ -312,7 +309,7 @@ class RosbridgeRobot:
         n = max(1, round(duration * self.publish_rate)) if duration is not None else count
         # The trailing stop goes out from ``finally`` even when the main publish
         # raised, and its verdict is kept rather than dropped - see
-        # :func:`~strands_robots.mesh._mobile_base.failed_halt_error`.
+        # :func:`~strands_robots.drivers.ros._mobile_base.failed_halt_error`.
         halt: dict[str, Any] | None = None
         try:
             result = self._publish_twist(v, w, count=n, tool_context=tool_context)
@@ -323,7 +320,7 @@ class RosbridgeRobot:
             if (duration is not None or n > 1) and (v or w):
                 halt = self._publish_twist(0.0, 0.0, count=1, tool_context=tool_context)
         latched = failed_halt_error(result, halt, topic=self.cmd_vel_topic, subject=LATCHED_VELOCITY)
-        return self._error(latched) if latched else result
+        return refuse(latched) if latched else result
 
     def stop(self, tool_context: ToolContext | None = None) -> dict[str, Any]:
         """Publish a single zero Twist.
@@ -353,7 +350,7 @@ class RosbridgeRobot:
         unchecked value would report success with no sample in it.
         """
         if wait_err := positive_finite_number_error(timeout, "timeout", "get_pose"):
-            return self._error(wait_err)
+            return refuse(wait_err)
         return rosbridge_action(
             action="echo",
             host=self.host,
@@ -371,9 +368,9 @@ class RosbridgeRobot:
         Grades ``timeout`` on the same domain as :meth:`get_pose`.
         """
         if not self.scan_topic:
-            return self._error("get_scan: no scan_topic configured for this robot")
+            return refuse("get_scan: no scan_topic configured for this robot")
         if wait_err := positive_finite_number_error(timeout, "timeout", "get_scan"):
-            return self._error(wait_err)
+            return refuse(wait_err)
         return rosbridge_action(
             action="echo",
             host=self.host,

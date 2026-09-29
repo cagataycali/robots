@@ -54,14 +54,13 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from strands_robots.simulation.isaac.config import IsaacConfig
-from strands_robots.simulation.isaac.simulation import IsaacSimulation, _RobotState
+from strands_robots.simulation.isaac.simulation import _RobotState
 from strands_robots.simulation.models import SimRobot, SimWorld
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.simulation.recording import (
@@ -69,6 +68,7 @@ from strands_robots.simulation.recording import (
     dataset_recording_posture_error,
 )
 from strands_robots.utils import name_list_error
+from tests.simulation._isaac_engine import isaac_engine
 
 _SO100_JOINTS = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
 
@@ -91,10 +91,8 @@ def _isaac_engine() -> Any:
     uses: ``__new__`` plus exactly the attributes the recording path reads, so
     the fixture stays honest about what ``start_recording`` depends on.
     """
-    engine = IsaacSimulation.__new__(IsaacSimulation)
+    engine = isaac_engine()
     engine._config = IsaacConfig(render_mode="rtx_realtime")
-    engine._lock = threading.RLock()
-    engine._world = None
     engine._world_created = True
     engine._robots = {
         "so100": _RobotState(
@@ -104,18 +102,6 @@ def _isaac_engine() -> Any:
             data_config="so100",
         )
     }
-    engine._cameras = {}
-    engine._objects = {}
-    engine._prim_registry = []
-    engine._cams_rec_state = None
-    engine._recording_state_dict = {}
-    engine._action_controllers = {}
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._replicated = False
-    engine._num_envs_active = 1
-    engine._pump_running = False
-    engine._main_tid = threading.get_ident()
     return engine
 
 

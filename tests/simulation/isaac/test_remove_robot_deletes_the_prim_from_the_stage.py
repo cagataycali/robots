@@ -26,7 +26,6 @@ single reference. The live-Kit rest-height half is exercised on GPU.
 from __future__ import annotations
 
 import sys
-import threading
 import types
 from typing import Any
 
@@ -35,10 +34,10 @@ import pytest
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402 - after importorskip
-    IsaacConfig,
     IsaacSimulation,
     _RobotState,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 
 class _StageModel:
@@ -85,14 +84,8 @@ def fake_delete_prim(monkeypatch, stage: _StageModel) -> list[str]:
 
 def _engine(stage: _StageModel) -> Any:
     """A skeleton engine whose world is present so the delete path runs."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig()
+    engine = isaac_engine()
     engine._world = object()  # truthy: the delete branch is gated on ``is not None``
-    engine._robots = {}
-    engine._action_controllers = {}
-    engine._prim_registry = []
-    engine._physics_view_stale = False
     return engine
 
 

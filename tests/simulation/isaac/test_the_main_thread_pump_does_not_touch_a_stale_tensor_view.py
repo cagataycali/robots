@@ -48,7 +48,6 @@ from __future__ import annotations
 import ast
 import logging
 import pathlib
-import queue
 import threading
 from typing import Any
 
@@ -57,10 +56,9 @@ import pytest
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402 - after importorskip
-    IsaacConfig,
-    IsaacSimulation,
     _RobotState,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 #: What ``remove_object`` measured the backend raising when it does not hang. Not a
 #: subclass of any handler tuple around these reads, which is the whole point.
@@ -136,26 +134,11 @@ class _Articulation:
 
 def _engine(*, stale: bool, raises: bool = False) -> Any:
     """A skeleton engine with a live world, a pump, and a possibly-stale view."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world = _World()
     engine._world_created = True
-    engine._objects = {}
-    engine._cameras = {}
-    engine._scene_objects = set()
-    engine._prim_registry = []
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._recording_state_dict = {}
-    engine._applied_wrenches = {}
-    engine._action_controllers = {}
-    engine._main_tid = threading.get_ident()
-    engine._pump_running = False
     engine._physics_view_stale = stale
     engine._pump_stale_warned = False
-    engine._action_q = queue.Queue()
-    engine._main_jobs = queue.Queue()
     engine._idle_converge = 3
     robot = _RobotState(name="arm", prim_path="/World/Robots/arm", joint_names=["j0", "j1"])
     robot.articulation = _Articulation(raises=raises)
