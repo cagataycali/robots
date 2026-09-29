@@ -78,4 +78,4 @@ sim.run_pump_forever(stop_event=stop)             # main thread runs worker jobs
 - Physics runs on **CPU PhysX**: `device` is reported as `device_requested` but not forwarded, because the GPU pipeline breaks incremental `add_robot`. Rendering uses the GPU.
 - `render_mode="headless"` (the default) renders nothing; pass `render_mode="rtx_realtime"` (also with `headless=True`).
 - Rendering is slower per frame than MuJoCo's and faster per batch: use it for fidelity, not unit-test loops.
-- `remove_robot`, like a dynamic `remove_object`, invalidates the tensor view: `step()` and `send_action()` refuse until the next `reset()`. Build the scene, then reset.
+- `remove_robot`, like a dynamic `remove_object`, invalidates the tensor view: every call reading it, `add_robot` included, refuses until `reset()`. Build the scene, then reset.

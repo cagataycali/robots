@@ -681,10 +681,11 @@ def _physics_view_stale_error(engine: Any, verb: str) -> dict[str, Any] | None:
                     "robot's get_observation() comes back empty. Call reset() first, "
                     f"then {verb}(). Note reset() returns robots to their default pose. "
                     "Only a dynamic body does this: a static add_object or "
-                    "remove_object, add_camera, remove_camera, move_object and "
-                    "add_robot all leave the view intact. remove_robot deletes an "
+                    "remove_object, add_camera and remove_camera leave the view intact, "
+                    "and add_robot keeps it intact on a live view. remove_robot deletes an "
                     "articulation, so it invalidates the view like a dynamic "
-                    "remove_object and needs the same reset()."
+                    "remove_object and needs the same reset() - including before the "
+                    "next add_robot, which builds the new robot inside that view."
                 )
             }
         ],
@@ -2920,6 +2921,15 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # structured envelope this method documents as its failure channel.
             if (name_err := entity_name_error("add_robot", "name", name)) is not None:
                 return {"status": "error", "content": [{"text": name_err}]}
+            # A new articulation is initialized INSIDE the tensor view, so on a
+            # stale one (after remove_robot or a dynamic remove_object) the load
+            # used to half-happen and fail with "'NoneType' object has no
+            # attribute 'link_names'" - a message naming neither the cause nor
+            # the one-call remedy, and whose failure path rebuilt enough state
+            # that the SAME call then worked, so remove/add cycles alternated
+            # error/success. Refused before any prim is created instead.
+            if stale := _physics_view_stale_error(self, "add_robot"):
+                return stale
 
             # A posture flag, checked rather than read by truthiness: it selects
             # whether the root is welded, and a truthy non-boolean would pick the
@@ -5631,6 +5641,8 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     }
             if not registered(self._robots, robot_name):
                 return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+            if stale := _physics_view_stale_error(self, "get_jacobian"):
+                return stale
             try:
                 jac = self._link_jacobian(self._robots[robot_name], body_name)
             except (RuntimeError, ValueError) as e:
@@ -9215,6 +9227,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             robot = registry_entry(self._robots, robot_name)
             if robot is None or robot.articulation is None:
                 return {"status": "error", "content": [{"text": f"Robot {robot_name!r} not initialized."}]}
+            # The root-pose write goes through the tensor view; on a stale one it
+            # raised a bare ``Exception`` ("Failed to get root link transforms
+            # from backend") straight out of this method.
+            if stale := _physics_view_stale_error(self, "set_robot_pose"):
+                return stale
             # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
             # MuJoCo backend's ``set_robot_pose`` and this backend's own ``add_camera`` already
             # use, so a pose one backend refuses is refused by all of them - the
@@ -9269,6 +9286,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         obj = registry_entry(self._objects, name)
         if obj is None or obj.handle is None:
             return {"status": "error", "content": [{"text": f"Object {name!r} not found."}]}
+        # A dynamic object is moved through its rigid-body handle, which reads
+        # the tensor view; on a stale one it raised a bare ``Exception`` ("Failed
+        # to get rigid body transforms from backend") out of this method. A
+        # static object is a plain prim and moves fine.
+        if not getattr(obj, "is_static", False) and (stale := _physics_view_stale_error(self, "move_object")):
+            return stale
         # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
         # MuJoCo backend's ``move_object`` and this backend's own ``add_camera`` already
         # use, so a pose one backend refuses is refused by all of them - the
@@ -9506,7 +9529,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
     def _get_body_state_impl(self, body_name: str) -> dict[str, Any]:
         """Resolve + read ``body_name``; runs on the main thread (or pump-less)."""
         obj = registry_entry(self._objects, body_name)
-        if obj is not None and obj.handle is not None:
+        # A stale tensor view makes the rigid handle RAISE a bare ``Exception``
+        # ("Failed to get rigid body transforms from backend") rather than any
+        # type ``_object_body_state`` catches, so the read is not attempted:
+        # the registered-object branch below names the stale view and reset().
+        stale = bool(getattr(self, "_physics_view_stale", False))
+        if obj is not None and obj.handle is not None and not stale:
             state = self._object_body_state(obj)
             if state is not None:
                 return _body_state_envelope(body_name, state)
@@ -9535,6 +9563,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             reason = (
                 "it has no rigid-prim handle"
                 if obj.handle is None
+                else "a DYNAMIC body was added or removed since the last reset(), so PhysX's tensor view "
+                "no longer covers the scene"
+                if stale
                 else "its rigid prim could not be read (the handle raised, or returned an unusable pose)"
             )
             return {
