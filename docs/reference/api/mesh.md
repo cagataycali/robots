@@ -46,22 +46,22 @@ The mesh puts robots on a shared Zenoh session so agents and peers discover each
 
 ## Bridged robots
 
-::: strands_robots.mesh.ros_bridge.RosBridgedRobot
+::: strands_robots.drivers.ros.ros_bridge.RosBridgedRobot
     options:
       heading_level: 3
       show_root_heading: true
 
-::: strands_robots.mesh.rosbridge_robot.RosbridgeRobot
+::: strands_robots.drivers.ros.rosbridge_robot.RosbridgeRobot
     options:
       heading_level: 3
       show_root_heading: true
 
-::: strands_robots.mesh.rtps_robot.RtpsRobot
+::: strands_robots.drivers.ros.rtps_robot.RtpsRobot
     options:
       heading_level: 3
       show_root_heading: true
 
-::: strands_robots.mesh.ackermann_robot.AckermannRosRobot
+::: strands_robots.drivers.ros.ackermann_robot.AckermannRosRobot
     options:
       heading_level: 3
       show_root_heading: true

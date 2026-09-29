@@ -4,6 +4,7 @@ import { numField } from '../lib/numField'
 import type { PolicyProvider } from '../types'
 import { post, api as httpGet } from '../lib/endpoints'
 import CheckpointPicker from './CheckpointPicker'
+import { robotHint } from '../lib/checkpointRobot'
 import { useConfig } from '../lib/useConfig'
 import { peekDeployIntent, clearDeployIntent, type DeployIntent } from '../lib/deployIntent'
 import { runRisk } from '../lib/runRisk'
@@ -333,6 +334,8 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
                 <CheckpointPicker
                   value={value(f.key, f.default)}
                   disabled={blocked}
+                  robot={robotHint(peerId, presence)}
+                  peerId={peerId}
                   onPick={(repoId, policyType) => setFields(s => {
                     const next = { ...s, [f.key]: repoId }
                     if (policyType && wireFields.some(w => w.key === 'policy_type') && !s.policy_type) {

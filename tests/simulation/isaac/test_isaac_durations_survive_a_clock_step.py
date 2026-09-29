@@ -53,9 +53,7 @@ runtime, GL context or MP4 encoder is touched: the engine is the skeleton
 
 from __future__ import annotations
 
-import queue
 import sys
-import threading
 import time
 from typing import Any
 
@@ -63,6 +61,7 @@ import pytest
 
 from strands_robots.simulation.isaac import simulation as isaac_module
 from strands_robots.simulation.isaac.simulation import IsaacSimulation, _CameraState
+from tests.simulation._isaac_engine import isaac_engine
 
 #: Idle-render period under test, and therefore the gap the gate must hold.
 IDLE_PERIOD = 0.2
@@ -155,11 +154,8 @@ class _StopAfter:
 
 def _pump_engine(period: float = IDLE_PERIOD) -> Any:
     """Skeleton engine carrying only what ``run_pump_forever`` reads."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
+    engine = isaac_engine()
     engine._idle_render_period = period
-    engine._main_jobs = queue.Queue()
-    engine._action_q = queue.Queue()
-    engine._pump_running = False
     return engine
 
 
@@ -323,11 +319,9 @@ def _recording_engine() -> Any:
     Empty buffers keep the flush away from ``encode_clip``, so no MP4 encoder or
     ffmpeg import runs under the clock double.
     """
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
     engine._world_created = True
     engine._cameras = {"front": _CameraState(name="front", prim_path="/World/Cameras/front", width=32, height=24)}
-    engine._cams_rec_state = None
     return engine
 
 

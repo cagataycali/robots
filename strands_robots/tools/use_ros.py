@@ -13,8 +13,8 @@ can get wrong, the operator gate, and the tool docstring a model reads. The
 transport itself - the process-wide ``rclpy`` node and executor, the dynamic
 type resolution, the graph introspection and the action-goal lifecycle - is
 :mod:`strands_robots.ros`, which
-:class:`~strands_robots.mesh.ros_bridge.RosBridgedRobot` and
-:class:`~strands_robots.mesh.ackermann_robot.AckermannRosRobot` forward through
+:class:`~strands_robots.drivers.ros.ros_bridge.RosBridgedRobot` and
+:class:`~strands_robots.drivers.ros.ackermann_robot.AckermannRosRobot` forward through
 as well.
 
 Requirements:

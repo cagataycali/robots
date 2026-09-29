@@ -5,8 +5,8 @@ process, the dynamic type resolution ``rosidl_runtime_py`` provides, the graph
 introspection, the pub/sub/service calls and the action-goal lifecycle with its
 timeout cancel. Three surfaces need them - the agent-facing
 :mod:`~strands_robots.tools.use_ros` tool,
-:class:`~strands_robots.mesh.ros_bridge.RosBridgedRobot` and
-:class:`~strands_robots.mesh.ackermann_robot.AckermannRosRobot` - so they live
+:class:`~strands_robots.drivers.ros.ros_bridge.RosBridgedRobot` and
+:class:`~strands_robots.drivers.ros.ackermann_robot.AckermannRosRobot` - so they live
 here rather than inside one of the three.
 
 They lived in the tool, and both mesh robots imported the ``@tool`` to reach
@@ -473,7 +473,7 @@ def ros_action(
             :mod:`strands_robots._command_gate` exists to prevent. The numeric
             domains of ``timeout`` / ``count`` / ``rate`` belong to the caller
             too - an agent tool reports a malformed option, while a
-            :class:`~strands_robots.mesh._mobile_base.MobileBaseRobot` has
+            :class:`~strands_robots.drivers.ros._mobile_base.MobileBaseRobot` has
             already refused one at its own seam.
 
     Returns:

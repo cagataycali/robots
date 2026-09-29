@@ -98,3 +98,15 @@ def test_each_native_driver_is_described_once_and_every_robot_page_links_there()
         assert "| Other kwargs |" not in text, f"{name}.md restates its driver's facts"
         if cls:
             assert f"](../learn/hardware/drivers.md#{cls.lower()})" in text, f"{name}.md does not link {cls}"
+
+
+def test_every_robot_page_names_its_own_chips_and_the_build_renders_them() -> None:
+    """A robot page carries ``{{robot_chips:<its name>}}``, not chip markup, and the token expands to the chips."""
+    hook = _hook()
+    for name in hook.registry():
+        text = (_ROBOTS / f"{name}.md").read_text(encoding="utf-8")
+        tokens = hook._TOKEN_CHIPS.findall(text)
+        assert tokens == [name], f"{name}.md carries chip tokens {tokens}, expected [{name!r}]"
+        assert "sr-chip" not in text, f"{name}.md restates chip markup the token renders"
+        rendered = hook.substitute(text, "../")
+        assert "{{robot_chips" not in rendered and hook.chips(name) in rendered, f"{name}.md chips did not render"

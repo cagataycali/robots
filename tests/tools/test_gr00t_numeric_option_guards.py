@@ -31,7 +31,7 @@ import pytest
 # shipped source, so the tool's own symbols are qualified through this alias
 # instead of being imported a second time by name.
 import strands_robots.tools.gr00t_inference as gi
-from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
+from strands_robots.drivers.ros.rosbridge_robot import RosbridgeRobot
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.utils import tcp_port_error
 
@@ -276,7 +276,7 @@ class TestPortDomainParity:
 # through. The other places this package mentions the port space are a CLI
 # ``argparse`` check and a generic env-var range helper, which have their own
 # failure channels and are not caller-facing entry points.
-_PORT_TAKING_GLOBS = ("tools/*.py", "mesh/*_robot.py", "rosbridge.py")
+_PORT_TAKING_GLOBS = ("tools/*.py", "drivers/ros/*_robot.py", "rosbridge.py")
 _ROUTED_MODULES = {"rosbridge.py", "rosbridge_robot.py", "gr00t_inference.py"}
 
 

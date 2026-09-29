@@ -31,6 +31,7 @@ from strands_robots.simulation.models import SimRobot, SimWorld, registered, reg
 mj = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine  # noqa: E402
 from tests.simulation.mujoco._gl_probe import requires_gl  # noqa: E402
 
 # A name that cannot key a registry, one per unhashable builtin a caller might
@@ -317,18 +318,14 @@ def _isaac_engine() -> Any:
     lookup fails on that state instead, which is how the tests below tell a name
     that resolved from one that did not.
     """
-    from strands_robots.simulation.isaac.config import IsaacConfig
     from strands_robots.simulation.isaac.simulation import (
-        IsaacSimulation,
         _CameraState,
         _ObjectState,
         _RobotState,
     )
 
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
     engine._world_created = True
-    engine._config = IsaacConfig()
     engine._robots = {"arm": _RobotState(name="arm", prim_path="/World/Robots/arm", joint_names=["pan"])}
     engine._objects = {
         "crate": _ObjectState(name="crate", prim_path="/World/Objects/crate", shape="box", is_static=False)
@@ -338,10 +335,6 @@ def _isaac_engine() -> Any:
     # No Isaac ``World``: the prim deletion each ``remove_*`` attempts is
     # best-effort and reports through the same envelope, so its absence does
     # not stand in the way of the name resolution under test.
-    engine._world = None
-    engine._action_controllers = {}
-    engine._cams_rec_state = None
-    engine._main_tid = threading.get_ident()
     return engine
 
 

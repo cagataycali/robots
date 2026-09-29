@@ -242,7 +242,7 @@ class TestEachArmPageCarriesTheSameFacts:
     def test_the_arm_page_chips_match_the_registry(self, name: str) -> None:
         page = ROBOTS_DIR / f"{name}.md"
         assert page.is_file(), f"docs/robots/{name}.md is not generated"
-        text = page.read_text(encoding="utf-8")
+        text = _hook().substitute(page.read_text(encoding="utf-8"), "../", "")
         has_asset = bool(_registry()[name].get("asset"))
         lerobot = name in _arms_with_a_lerobot_type()
         native = name in _arms_with_a_native_driver()

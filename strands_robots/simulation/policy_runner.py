@@ -4471,6 +4471,13 @@ class PolicyRunner:
         results: list[dict[str, Any]] = []
         episodes_successful_at_reset = 0
         episodes_failed_at_reset = 0
+        # Inference cost, collected through the same seam ``evaluate()`` reads
+        # it from, so a benchmark result carries the ``avg_inference_ms`` /
+        # ``max_inference_ms`` pair docs/learn/simulation/predicates-and-rollouts.md
+        # promises for both eval surfaces. A spec eval is synchronous, so the
+        # prefetch counters are the zeros of a rollout that never overlapped.
+        inference_ms: list[float] = []
+        rtc_chunks_acquired = 0
 
         # #191 - global step counter passed to ``on_frame``. Crosses
         # episode boundaries so consumers that don't track ep ↔ step
@@ -4630,7 +4637,13 @@ class PolicyRunner:
                 max_step_reward: float | None = None
                 last_info: dict[str, Any] = {}
 
-                for _ in range(max_steps):
+                # Bounded by the steps actually applied, as ``evaluate`` is. A
+                # ``for _ in range(max_steps)`` here ran one iteration per STEP
+                # while each iteration consumed up to ``action_horizon`` actions,
+                # so once the horizon was reached the remaining iterations each
+                # queried the policy and applied nothing: at ``action_horizon=8``
+                # the benchmark paid eight inferences per chunk it used.
+                while steps < max_steps:
                     observation = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
                     # Hook: benchmarks may bridge the sim's observation schema
                     # (typically joint-space) to whatever the policy was trained
@@ -4659,7 +4672,9 @@ class PolicyRunner:
                         instruction=effective_instruction,
                         policy_kwargs=policy_kwargs or {},
                         action_horizon=action_horizon,
+                        inference_ms=inference_ms,
                     )
+                    rtc_chunks_acquired += 1
 
                     # #168: consume up to ``action_horizon`` actions
                     # per inference. Default ``action_horizon=8`` matches NVIDIA's
@@ -4933,6 +4948,19 @@ class PolicyRunner:
                         "positional_fallback_used": bool(getattr(policy, "positional_fallback_used", False)),
                         "generic_state_keys_used": bool(getattr(policy, "generic_state_keys_used", False)),
                         "missing_state_keys_used": bool(getattr(policy, "missing_state_keys_used", False)),
+                        **_with_prefetch_keys(
+                            {
+                                "rtc_async_enabled": False,
+                                "rtc_chunks_acquired": rtc_chunks_acquired,
+                                "rtc_prefetch_hits": 0,
+                                "rtc_prefetch_blocks": 0,
+                                "rtc_avg_inference_ms": round(sum(inference_ms) / len(inference_ms), 3)
+                                if inference_ms
+                                else 0.0,
+                                "rtc_max_inference_ms": round(max(inference_ms), 3) if inference_ms else 0.0,
+                            },
+                            policy,
+                        ),
                         "policy_resident_rss_mb": process_rss_mb(),
                         "episodes": results,
                         "video_paths": video_paths,

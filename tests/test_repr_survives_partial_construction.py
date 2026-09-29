@@ -48,13 +48,13 @@ import pytest
 
 import strands_robots
 from strands_robots.dataset_recorder import DatasetRecorder
+from strands_robots.drivers.ros.ackermann_robot import AckermannRosRobot
+from strands_robots.drivers.ros.ros_bridge import RosBridgedRobot
+from strands_robots.drivers.ros.rosbridge_robot import RosbridgeRobot
+from strands_robots.drivers.ros.rtps_robot import RtpsRobot
 from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
-from strands_robots.mesh.ackermann_robot import AckermannRosRobot
 from strands_robots.mesh.core import Mesh
 from strands_robots.mesh.input import InputPublisher, InputReceiver
-from strands_robots.mesh.ros_bridge import RosBridgedRobot
-from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
-from strands_robots.mesh.rtps_robot import RtpsRobot
 from strands_robots.mesh.security import ValidationError
 from strands_robots.mesh.session import PeerInfo
 from strands_robots.policies.lerobot_local.processor import ProcessorBridge
@@ -72,13 +72,13 @@ EXPECTED_REPR_CLASSES = frozenset(
     {
         "dataset_recorder::DatasetRecorder",
         "hardware_rtps_bridge::HardwareRtpsBridge",
-        "mesh/_mobile_base::MobileBaseRobot",
-        "mesh/ackermann_robot::AckermannRosRobot",
+        "drivers/ros/_mobile_base::MobileBaseRobot",
+        "drivers/ros/ackermann_robot::AckermannRosRobot",
         "mesh/core::Mesh",
         "mesh/input::InputPublisher",
         "mesh/input::InputReceiver",
-        "mesh/rosbridge_robot::RosbridgeRobot",
-        "mesh/rtps_robot::RtpsRobot",
+        "drivers/ros/rosbridge_robot::RosbridgeRobot",
+        "drivers/ros/rtps_robot::RtpsRobot",
         "mesh/session::PeerInfo",
         "policies/flux3_action/policy::Flux3ActionPolicy",
         "policies/lerobot_local/processor::ProcessorBridge",
