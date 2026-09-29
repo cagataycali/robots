@@ -326,7 +326,44 @@ def import_policy_class(provider: str) -> type:
         if getattr(exc, "name", None) != f"strands_robots.policies.{provider}":
             raise _provider_import_error(provider, exc, None) from exc
 
-    raise ValueError(f"Unknown policy provider: '{provider}'. Available: {list_policy_providers()}")
+    # A misspelled provider name gets the same treatment ``policy_kwargs_error``
+    # already applies to misspelled kwargs (line 555 below): match against
+    # every registered spelling (canonicals + aliases + shorthands), lower-case
+    # -folded so ``GR00T`` and ``Groot`` both find ``groot``. The kwarg path
+    # exists because a silent drop of a wrong name is indistinguishable from
+    # omitting it; the provider path exists because the message a real user
+    # first sees ("Unknown policy provider: 'gr00t'. Available: [13 items]")
+    # is a wall of text with no next-step, when the file already knows how to
+    # spot ``gr00t`` -> ``groot``. Robot() gives ``Did you mean: microduck?``
+    # for ``duck``; create_policy() ought to give the same shape here.
+    #
+    # The cutoff is 0.6 rather than :data:`_MISSPELLING_RATIO` (0.8, tuned for
+    # kwargs) because provider names are shorter (~5 chars) so a single wrong
+    # char scores 0.8, and two wrong chars (NVIDIA's brand ``GR00T`` folded to
+    # ``gr00t`` vs registry key ``groot`` - the same-position digit-for-letter
+    # swap ``_mistyped_in_place`` does not model) scores 0.6. The universe of
+    # candidates is 13 providers + ~20 aliases: precision cost is negligible
+    # and every miss lands on a real registry entry.
+    _all_spellings = list(list_providers()) + list(list_aliases().keys())
+    folded = provider.lower()
+    lookup = {s.lower(): s for s in _all_spellings}
+    suggestion: str | None = None
+    if folded in lookup and lookup[folded] != provider:
+        # Exact match once case is folded (``WBC`` -> ``wbc``); report as the fix.
+        suggestion = lookup[folded]
+    else:
+        match = difflib.get_close_matches(folded, list(lookup.keys()), n=1, cutoff=0.6)
+        if match:
+            suggestion = lookup[match[0]]
+        else:
+            for candidate in lookup:
+                if _mistyped_in_place(folded, candidate):
+                    suggestion = lookup[candidate]
+                    break
+    hint = f" Did you mean: '{suggestion}'?" if suggestion else ""
+    raise ValueError(
+        f"Unknown policy provider: '{provider}'.{hint} Available: {list_policy_providers()}"
+    )
 
 
 def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], dict]:
