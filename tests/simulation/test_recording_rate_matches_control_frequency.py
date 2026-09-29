@@ -776,16 +776,8 @@ def test_every_ordering_reaches_the_same_verdict_and_explanation(fps, rate):
             assert shared in reason, f"{name} gives its own account of the distortion"
 
 
-_START_RECORDING_BACKENDS = (
-    "strands_robots/simulation/mujoco/recording.py",
-    "strands_robots/simulation/isaac/recording.py",
-    "strands_robots/simulation/newton/recording.py",
-)
-
-
-@pytest.mark.parametrize("module", _START_RECORDING_BACKENDS)
-def test_every_backend_start_recording_checks_the_running_rollout_rate(module):
-    """``start_recording`` is per backend, so each copy must reach the shared guard.
+def test_the_shared_start_recording_checks_the_running_rollout_rate():
+    """The one ``start_recording`` every backend inherits reaches the rate guard.
 
     Structural rather than behavioural for a measured reason: this refusal is
     unreachable on the Isaac and Newton backends. The guard compares against
@@ -800,6 +792,7 @@ def test_every_backend_start_recording_checks_the_running_rollout_rate(module):
     ``test_recording_preflight_refusals_across_backends.py``, which also pins the
     inherited empty mapping this reason rests on.
     """
+    module = "strands_robots/simulation/recording.py"
     assert "_validate_recording_start_rate" in _self_calls(module, "start_recording"), (
         f"{module}::start_recording does not check the running rollout rate"
     )

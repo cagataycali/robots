@@ -24,7 +24,6 @@ here without an edit.
 import ast
 import inspect
 import textwrap
-import threading
 import types
 from typing import Any
 
@@ -34,11 +33,11 @@ import pytest
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402
-    IsaacConfig,
     IsaacSimulation,
     _ObjectState,
 )
 from strands_robots.utils import boolean_flag_error  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 #: Non-booleans the domain refuses (the opt-out spellings that read as truthy,
 #: plus the branch-takers that are never a declared spelling).
@@ -69,9 +68,7 @@ class _CollisionHandle:
 
 def _engine(handle: Any = None) -> Any:
     """A minimally-stubbed engine holding one object named ``drop``."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world = types.SimpleNamespace()
     engine._world_created = True
     engine._objects = {
@@ -133,10 +130,7 @@ class TestSetObjectCollisionIsChecked:
 
 class TestCreateWorldGroundPlaneIsChecked:
     def _fresh(self) -> Any:
-        engine = IsaacSimulation.__new__(IsaacSimulation)
-        engine._lock = threading.RLock()
-        engine._config = IsaacConfig(render_mode="headless")
-        engine._world_created = False
+        engine = isaac_engine()
         return engine
 
     @pytest.mark.parametrize("bad", _NON_BOOL)

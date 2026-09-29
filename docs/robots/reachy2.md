@@ -7,7 +7,7 @@ description: "Pollen Reachy 2"
 
 # Pollen Reachy 2
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
+{{robot_chips:reachy2}}
 
 The registry ships no simulation asset for it, so `Robot("reachy2")` in the default sim mode refuses by name.
 

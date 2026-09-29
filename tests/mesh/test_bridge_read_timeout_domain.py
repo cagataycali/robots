@@ -27,9 +27,9 @@ from typing import Any
 
 import pytest
 
-import strands_robots.mesh.ackermann_robot as ackermann_mod
-import strands_robots.mesh.ros_bridge as ros_bridge_mod
-import strands_robots.mesh.rosbridge_robot as rosbridge_mod
+import strands_robots.drivers.ros.ackermann_robot as ackermann_mod
+import strands_robots.drivers.ros.ros_bridge as ros_bridge_mod
+import strands_robots.drivers.ros.rosbridge_robot as rosbridge_mod
 from strands_robots.utils import positive_finite_number_error
 from tests.mesh._transport_stand_in import Transport, stands_in_for
 

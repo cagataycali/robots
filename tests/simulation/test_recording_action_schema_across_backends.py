@@ -71,8 +71,8 @@ def _engine(world: SimWorld, free_base: dict[str, str] | None = None) -> Any:
 
 def _schema(engine: Any) -> tuple[list[str], list[str]]:
     """Return ``(joint_names, action_names)`` from the backend's schema builder."""
-    joint_names, action_names, *_rest = engine._collect_recording_schema()
-    return joint_names, action_names
+    schema = engine._collect_recording_schema()
+    return schema.joint_names, schema.action_names
 
 
 class TestNewtonDeclaresItsActionColumnsFromTheActionKeys:
@@ -162,11 +162,7 @@ class TestNoBackendFallsBackToTheJointNameVocabulary:
     which no behavioural test on that backend would fail.
     """
 
-    SCHEMA_MODULES = [
-        "strands_robots/simulation/isaac/recording.py",
-        "strands_robots/simulation/newton/recording.py",
-        "strands_robots/simulation/mujoco/recording.py",
-    ]
+    SCHEMA_MODULES = ["strands_robots/simulation/recording.py"]
 
     @staticmethod
     def _recorder_create_calls(source: str) -> list[ast.Call]:

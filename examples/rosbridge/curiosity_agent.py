@@ -40,7 +40,7 @@ import os
 
 from strands import Agent
 
-from strands_robots.mesh import RosbridgeRobot
+from strands_robots.drivers.ros import RosbridgeRobot
 
 # Stock NASA-sim wiring: cmd_vel/odom topics and safety limits preconfigured;
 # point host at wherever rosbridge runs (docker port-map, another machine...).

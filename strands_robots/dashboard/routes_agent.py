@@ -25,16 +25,25 @@ router = APIRouter()
 def _console_factory(app: Any) -> Any:
     """Tests install their own; production builds a Console over the app's Safety."""
     factory = getattr(app.state, "console_factory", None)
-    return factory if factory is not None else (lambda: agent_console.Console(app.state.safety))
+    if factory is not None:
+        return factory
+    return lambda: agent_console.Console(
+        app.state.safety,
+        bridge=getattr(app.state, "bridge", None),
+        devices=getattr(app.state, "devices", None),
+    )
 
 
 @router.get("/api/agent")
 async def agent_info(request: Request, _: dict = Depends(access.require_session)) -> dict[str, Any]:
-    """Which model the console will use and which tools ask first."""
+    """Which model the console will use, the tools it will hold, and which ask first."""
+    bridge = getattr(request.app.state, "bridge", None)
     return {
         "model": agent_console.model_id(),
         "asks_first": sorted(agent_console.MOTION_TOOLS),
         "interrupt": agent_console.INTERRUPT_NAME,
+        "tools": agent_console.expected_tool_names(bridge),
+        "fleet_aware": bridge is not None,
     }
 
 

@@ -7,7 +7,7 @@ description: "Skydio X2 Autonomous Drone"
 
 # Skydio X2 Autonomous Drone
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="aerial">Aerial</span><span class="sr-chip">1 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:skydio_x2}}
 
 <robot-viewer name="skydio_x2"></robot-viewer>
 

@@ -29,7 +29,7 @@ substituting a zero would command a real robot from a fabricated state.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 from strands_robots.policies.base import Policy
 from strands_robots.utils import name_list_error
@@ -79,9 +79,9 @@ class RLCheckpointPolicy(Policy):
 
     #: ``False``: the actor was trained against a reward function, not language,
     #: so the task envelopes say the instruction they echo was never read.
-    reads_instruction: ClassVar[bool] = False
+    reads_instruction: bool = False
     #: The words the task envelope uses for what the actor commands instead.
-    instruction_free_actions: ClassVar[str | None] = "the trained actor's per-step commands"
+    instruction_free_actions: str | None = "the trained actor's per-step commands"
 
     @property
     def provider_name(self) -> str:

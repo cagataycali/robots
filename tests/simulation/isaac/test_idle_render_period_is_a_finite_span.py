@@ -39,14 +39,14 @@ instance, so no Isaac Sim Kit runtime, GL context or GPU is touched.
 
 from __future__ import annotations
 
-import queue
 import time
 from typing import Any
 
 import pytest
 
 from strands_robots.simulation.isaac import simulation as isaac_module
-from strands_robots.simulation.isaac.simulation import IsaacSimulation, _env_float
+from strands_robots.simulation.isaac.simulation import _env_float
+from tests.simulation._isaac_engine import isaac_engine
 
 #: The knob under test and the default its resolver falls back to.
 IDLE_PERIOD_ENV = "SO101_IDLE_RENDER_PERIOD"
@@ -118,11 +118,8 @@ def _refresh_timeline(monkeypatch: pytest.MonkeyPatch, iterations: int = PUMP_IT
     """
     clock = _VirtualClock()
     monkeypatch.setattr(isaac_module, "time", clock)
-    engine = IsaacSimulation.__new__(IsaacSimulation)
+    engine = isaac_engine()
     engine._idle_render_period = _env_float(IDLE_PERIOD_ENV, DEFAULT_PERIOD)
-    engine._main_jobs = queue.Queue()
-    engine._action_q = queue.Queue()
-    engine._pump_running = False
 
     refreshes: list[float] = []
 
