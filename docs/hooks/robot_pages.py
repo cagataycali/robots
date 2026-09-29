@@ -352,7 +352,9 @@ def _chips(name: str, spec: dict, cov, entry: dict) -> str:  # noqa: ANN001
         f'<span class="sr-chip sr-chip-family" data-family="{spec["category"]}">{html.escape(_label(spec["category"]))}</span>'
     ]
     if isinstance(joints, int):
-        parts.append(f'<span class="sr-chip">{joints} joints</span>')
+        # The model's joint count, which is not the DOF in the description (a hand's
+        # model carries the wrist and fixed frames too), so the chip says which it is.
+        parts.append(f'<span class="sr-chip">{joints} model joint{"" if joints == 1 else "s"}</span>')
     if entry.get("sim"):
         parts.append(f'<span class="sr-chip sr-chip-sim">{"sim" if cov.real else "sim only"}</span>')
     if cov.real:
@@ -379,6 +381,24 @@ BIMANUAL_ARM_CONFIG: dict[str, tuple[str, str]] = {
 }
 
 
+# lerobot types that connect over the network rather than a serial device: the keyword the
+# config declares, an example value for the fence, and the prose the hardware section prints.
+LEROBOT_NETWORK_WIRING: dict[str, tuple[str, str, str]] = {
+    "unitree_g1": ("robot_ip", '"192.168.123.164"', "`robot_ip=` is the robot's address (DDS over Ethernet)"),
+    "lekiwi_client": ("remote_ip", '"192.168.1.50"', "`remote_ip=` is the address of the Pi that runs `lekiwi`"),
+    "reachy2": ("ip_address", '"192.168.1.42"', "`ip_address=` is the robot's address (gRPC, `port=` 50065)"),
+    "earthrover_mini_plus": ("sdk_url", '"http://localhost:8000"', "`sdk_url=` is where the EarthRover SDK listens"),
+}
+
+
+def _lerobot_wiring(lerobot_type: str) -> tuple[str, str]:
+    """(fence keyword and value, prose clause) for how a lerobot robot is addressed."""
+    if lerobot_type in LEROBOT_NETWORK_WIRING:
+        keyword, example, prose = LEROBOT_NETWORK_WIRING[lerobot_type]
+        return f"{keyword}={example}", prose
+    return 'port="/dev/ttyACM0"', "`port=` is the serial device"
+
+
 def _real_fences(name: str, spec: dict, cov) -> list[str]:  # noqa: ANN001
     """The ``mode="real"`` lines, one per driver that builds this robot."""
     lines: list[str] = []
@@ -395,7 +415,8 @@ def _real_fences(name: str, spec: dict, cov) -> list[str]:  # noqa: ANN001
         ]
     elif cov.lerobot_type:
         pin = "" if cov.default_driver == "lerobot" else ', driver="lerobot"'
-        lines.append(f'robot = Robot("{name}", mode="real"{pin}, port="/dev/ttyACM0")  # lerobot {cov.lerobot_type}')
+        wiring, _ = _lerobot_wiring(cov.lerobot_type)
+        lines.append(f'robot = Robot("{name}", mode="real"{pin}, {wiring})  # lerobot {cov.lerobot_type}')
     if cov.native_driver:
         facts = DRIVERS[cov.native_driver]
         pin = "" if cov.default_driver == "strands" else ', driver="strands"'
@@ -422,7 +443,7 @@ def _hardware_section(name: str, spec: dict, cov) -> str:  # noqa: ANN001
                 f"with its own `port` and `cameras`."
             )
         else:
-            wiring = "`port=` is the serial device, `cameras=` the lerobot camera dict."
+            wiring = f"{_lerobot_wiring(cov.lerobot_type)[1]}, `cameras=` the lerobot camera dict."
         out.append(
             f'**lerobot.** `Robot("{name}", mode="real")` builds lerobot\'s `{cov.lerobot_type}` '
             f"with `pip install 'strands-robots[lerobot]'`; {wiring}{default}{source}"

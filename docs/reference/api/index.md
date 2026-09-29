@@ -1,3 +1,7 @@
+---
+description: The public Python surface of strands_robots at this commit, rendered from the docstrings, one page per group.
+---
+
 # API reference
 
 This section is the public Python surface of `strands_robots` at this commit, rendered from the docstrings in the source. Every name below is importable from the top-level package (`strands_robots.__all__`) or from the sub-package the page names. When you finish this page you know which page holds the symbol you need.

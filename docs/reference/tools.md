@@ -1,3 +1,7 @@
+---
+description: Every agent-callable tool, one table per area, with the action values a dispatching tool accepts, read from the source.
+---
+
 # Tools
 
 Every agent-callable tool in the package, in one table per area, read from the `@tool` decorators in the source at build time. After this page you know which tool does what, where it lives, and the action values a dispatching tool accepts, so you can hand an `Agent` the right subset.

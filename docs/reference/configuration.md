@@ -1,3 +1,7 @@
+---
+description: Every environment variable the package reads, with the module that reads it and its default, generated at build time.
+---
+
 # Configuration
 
 Every environment variable the package reads, generated from the source at build time. After this page you can find the variable behind any behaviour you want to change, see which module reads it and what the code assumes when it is unset.

@@ -5,13 +5,7 @@ description: Every robot strands-robots knows by name, filterable by family, eac
 
 # Robots
 
-Every robot the registry knows, all {{n:robots}} of them across {{n:categories}} families: filter by family, open a card for the robot's page with its 3D viewer, one-line constructor, aliases and the hardware facts read from its driver. {{n:sim_assets}} load in MuJoCo from a pinned public model; the rest are hardware definitions only. Generated from `strands_robots/registry/robots.json` at build time, so a robot added to the registry appears at the next build and a stale row cannot exist.
-
-```python
-from strands_robots import Robot
-
-robot = Robot("so101")  # simulation, the default
-```
+All {{n:robots}} robots the registry knows, in {{n:categories}} families. Filter, then open a card: each page has the 3D viewer, the one line that builds the robot, its aliases and the hardware facts read from its driver. {{n:sim_assets}} load in MuJoCo from a pinned public model; the rest are hardware definitions only. Generated from `strands_robots/registry/robots.json` at build time, so a stale row cannot exist.
 
 <div class="sr-filter" role="group" aria-label="Filter robots by family" markdown="0">
   <button class="sr-filter-btn" data-family="all" aria-pressed="true">All</button>

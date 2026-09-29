@@ -1,3 +1,7 @@
+---
+description: The Mesh object a robot exposes, the session and peer helpers, and the bridges that put ROS 2 robots on the mesh.
+---
+
 # Mesh
 
 The mesh puts robots on a shared Zenoh session so agents and peers discover each other, exchange commands and stop together. After this page you know the `Mesh` object a robot exposes, the session and peer helpers, and the bridge classes that put ROS 2 and RTPS robots on the same mesh.

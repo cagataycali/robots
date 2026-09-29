@@ -1,6 +1,10 @@
+---
+description: Every flag of strands-robots doctor, verify-dataset, dashboard and iot, what each prints, and its exit codes.
+---
+
 # Command line
 
-The package installs one console script, `strands-robots`, with four subcommands. `python -m strands_robots <command>` is the same entry point. After this page you know every flag each subcommand takes, what it prints, and its exit codes.
+One console script, `strands-robots`, with four subcommands; `python -m strands_robots <command>` is the same entry point. After this page you know every flag each subcommand takes, what it prints, and its exit codes.
 
 ```bash
 strands-robots --help       # usage and the command list

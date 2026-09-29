@@ -1,3 +1,7 @@
+---
+description: The Policy contract, how a provider string resolves through create_policy, and the cache that keeps a loaded model.
+---
+
 # Policies
 
 A `Policy` turns an observation into actions. Providers live in `registry/policies.json` and resolve through `create_policy`. After this page you know the `Policy` contract, how a provider string resolves, and how the persistent cache keeps a loaded model between calls.

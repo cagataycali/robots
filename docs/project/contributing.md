@@ -1,3 +1,7 @@
+---
+description: Set up a development install, run the checks a pull request must pass, and open the PR in the shape the check accepts.
+---
+
 # Contributing
 
 The short version of `AGENTS.md`, the file that governs this repository. After this page you can set up a development install, run the checks a pull request must pass, and open the PR in the shape the required check accepts.

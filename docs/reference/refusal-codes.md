@@ -1,3 +1,7 @@
+---
+description: The stable code a continuable refusal carries and the grant that lifts it, so a consumer matches by identity, not message.
+---
+
 # Refusal codes
 
 The package refuses before it acts when a request is well formed but not yet allowed, and a continuable refusal carries a stable code so a consumer can offer the operator the grant that lifts it. After this page you can match a refusal by identity instead of parsing its message, and you know which variable each grant sets.

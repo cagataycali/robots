@@ -1,3 +1,7 @@
+---
+description: Resolve an alias to a canonical robot, list robots by category, inspect a provider entry, add your own robot.
+---
+
 # Registry
 
 The registry is `strands_robots/registry/robots.json` and `policies.json` read through the functions below. After this page you can resolve any alias to a canonical robot name, list robots by category, inspect a policy provider entry, and add your own robot without editing the package.

@@ -1,3 +1,7 @@
+---
+description: Where a vulnerability report goes and which safety postures the code enforces by default.
+---
+
 # Security policy
 
 How to report a vulnerability in strands-robots, and what the package itself does about the risks a robot library carries. After this page you know where a report goes and which safety postures the code enforces by default.

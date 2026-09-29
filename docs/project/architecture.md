@@ -1,3 +1,7 @@
+---
+description: Which object Robot(...) returns in each mode, which module owns what, the seven layers, and the numbers behind them.
+---
+
 # Architecture
 
 `strands_robots` is one factory over two lanes and seven import layers. After this page you know which object `Robot(...)` hands you in each mode, which module owns what, the layer rule a change must obey, and the numbers behind all of it, generated from the tree at build time.

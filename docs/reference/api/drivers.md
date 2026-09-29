@@ -1,3 +1,7 @@
+---
+description: The HardwareDriver protocol a native driver satisfies and the functions that register and look drivers up.
+---
+
 # Drivers
 
 A native driver speaks a robot's wire protocol without lerobot. `Robot(name, mode="real", driver="strands")` builds one through the registry below. After this page you know the `HardwareDriver` protocol a driver must satisfy and the functions that register and look drivers up.

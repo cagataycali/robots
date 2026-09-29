@@ -1,3 +1,7 @@
+---
+description: What 1.0 keeps, what it replaces, where it is built, and what changes for a 0.5.x user.
+---
+
 # Roadmap: the road to 1.0
 
 `main` is 0.5.x. Version 1.0 is a rewrite in progress, being built in the open at [github.com/cagataycali/stobor](https://github.com/cagataycali/stobor) with its own site at [cagataycali.github.io/stobor](https://cagataycali.github.io/stobor/). After this page you know what 1.0 keeps, what it replaces, and what changes for a user of 0.5.x.
@@ -30,7 +34,7 @@ The stobor `DESIGN.md` is the build contract. Its shape:
 | refusals are messages, five carry codes | every refusal carries a code from `core/refusals.py` and names the value, the cause and the remedy |
 | one extra per feature area in `pyproject.toml`, `[all]` a curated subset | one extra per backend or driver, `[sim]` for MuJoCo, base install is numpy only |
 
-The registry rows, the robot names and aliases, the wire protocols and the safety postures carry over unchanged. A script that uses `Robot("so101")` and `act` / `observe` keeps working.
+The registry rows, the robot names and aliases, the wire protocols and the safety postures carry over unchanged. A script that uses `Robot("so101")` with `send_action` and `get_observation` keeps working; `act` and `observe` are the 1.0 names.
 
 ## How it lands
 
