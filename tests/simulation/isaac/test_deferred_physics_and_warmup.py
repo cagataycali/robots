@@ -41,8 +41,8 @@ import types
 
 import pytest
 
-from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
+from tests.simulation._isaac_engine import isaac_engine
 
 
 class _FakeTimeline:
@@ -244,12 +244,9 @@ def _skeleton_sim(
     ``_world_created`` (an incomplete skeleton makes every assertion failure in
     this file carry a misleading ``AttributeError`` from ``repr()``).
     """
-    sim = IsaacSimulation.__new__(IsaacSimulation)
-    sim._config = IsaacConfig(headless=True, num_envs=1)
+    sim = isaac_engine()
     sim._world = world
     sim._world_created = True
-    sim._sim_time = 0.0
-    sim._step_count = 0
     # Values are irrelevant - the loop only takes len() - but the keys mirror
     # the live registry so a reader sees which scenario is under test.
     sim._cameras = dict.fromkeys(camera_names, None)  # type: ignore[assignment]

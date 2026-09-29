@@ -24,13 +24,13 @@ drivers.
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 
 from strands_robots.simulation.isaac.simulation import IsaacSimulation, _RobotState
+from tests.simulation._isaac_engine import isaac_engine
 
 _SCENE_MJCF = """
 <mujoco model="scene_probe">
@@ -88,14 +88,9 @@ class _Calls:
 
 
 def _make_engine(with_robot: bool = True) -> tuple[IsaacSimulation, _Calls]:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
     engine._world = _RecordingWorld()
     engine._world_created = True
-    engine._objects = {}
-    engine._robots = {}
-    engine._scene_objects = set()
-    engine._prim_registry = []
     calls = _Calls()
     if with_robot:
         robot = _RobotState(name="robot", prim_path="/World/Robots/robot", joint_names=[])

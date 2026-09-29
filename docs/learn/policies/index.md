@@ -26,8 +26,8 @@ Three gaps are open: the [lerobot_local](lerobot-local.md) example used to refus
 class Policy(ABC):
     control_frequency: float | None = None          # set by the runtime
     rtc_observed_delay_steps: int | None = None      # set by the runtime
-    reads_instruction: ClassVar[bool] = True         # False: the words never shape actions
-    instruction_free_actions: ClassVar[str | None] = None   # what a non-reader does
+    reads_instruction: bool = True                   # False: the words never shape actions
+    instruction_free_actions: str | None = None             # what a non-reader does
     requires_action_controller: ClassVar[str | None] = None # the engine installs it or refuses
 
     @abstractmethod

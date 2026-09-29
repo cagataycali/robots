@@ -105,9 +105,9 @@ class TestOneSeamOwnsTheRecorderHandle:
 
 class TestEveryBackendThatResumesSaysSo:
     def test_a_resuming_start_recording_tells_the_caller(self) -> None:
-        """``start_recording`` read identically fresh or resumed on every backend."""
+        """The one ``start_recording`` every backend inherits says when it resumes."""
         resuming = _functions_resuming_a_dataset()
-        assert len(resuming) == 3, f"expected one resuming start_recording per backend, got {sorted(resuming)}"
+        assert list(resuming) == ["simulation/recording.py:start_recording"], sorted(resuming)
         silent = sorted(where for where, body in resuming.items() if not _announces_a_resume(body))
         assert silent == [], f"these resume a dataset without saying so: {silent}"
 

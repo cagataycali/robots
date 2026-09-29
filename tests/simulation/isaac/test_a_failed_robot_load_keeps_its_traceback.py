@@ -14,7 +14,6 @@ envelope names the exception type.
 from __future__ import annotations
 
 import logging
-import threading
 import types
 from typing import Any
 
@@ -23,24 +22,15 @@ import pytest
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac.simulation import IsaacConfig, IsaacSimulation  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine  # noqa: E402
 
 _LOGGER = "strands_robots.simulation.isaac.simulation"
 
 
 def _engine() -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig()
+    engine = isaac_engine(IsaacConfig())
     engine._world = types.SimpleNamespace(physics_sim_view=object())
     engine._world_created = True
-    engine._robots = {}
-    engine._objects = {}
-    engine._cameras = {}
-    engine._scene_objects = set()
-    engine._prim_registry = []
-    engine._action_controllers = {}
-    engine._replicated = False
-    engine._recording_state_dict = {}
     return engine
 
 

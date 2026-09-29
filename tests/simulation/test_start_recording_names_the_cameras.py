@@ -98,22 +98,12 @@ class TestNoCameraSaysWhatTheDatasetCarriesAndWhy:
         assert "scoped out" not in line
 
 
-@pytest.mark.parametrize(
-    "module",
-    [
-        "strands_robots.simulation.mujoco.recording",
-        "strands_robots.simulation.isaac.recording",
-        "strands_robots.simulation.newton.recording",
-    ],
-)
-def test_every_backend_builds_the_line_from_the_shared_helper(module: str) -> None:
+def test_the_shared_start_recording_builds_the_line_from_the_helper() -> None:
     import inspect
 
-    # Isaac and Newton are optional extras; importorskip is the house answer for
-    # a module that may not be installed (a try/except that skips leaves the name
-    # bound only on the success path).
-    mod = pytest.importorskip(module)
-    src = inspect.getsource(mod)
+    from strands_robots.simulation.recording import DatasetRecordingMixin
+
+    src = inspect.getsource(DatasetRecordingMixin.start_recording)
     assert "recorded_cameras_line(joint_names, recorded_cameras, " in src
     assert "cameras @ {fps}fps" not in src
     # The dataset column keys never reach the reply as the camera's name.

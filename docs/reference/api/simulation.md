@@ -1,6 +1,6 @@
 # Simulation
 
-`strands_robots.simulation` holds the engine contract, the backend factory and the data types a simulation returns. After this page you know how a backend is created, what `SimWorld` and its children carry, and how to register a backend of your own.
+`strands_robots.simulation` holds the engine contract, the backend factory and the data types a simulation returns. After this page you know how backends are created, what `SimWorld` carries, and how to register your own.
 
 ## Factory
 
@@ -22,6 +22,12 @@
       show_root_heading: true
       filters: ["!^_"]
       members_order: source
+
+## Capabilities
+
+::: strands_robots.simulation.capabilities
+    options:
+      heading_level: 3
 
 ## World model
 

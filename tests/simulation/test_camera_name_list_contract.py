@@ -39,6 +39,7 @@ from __future__ import annotations
 import ast
 import inspect
 import pathlib
+import textwrap
 from collections.abc import Callable
 from typing import Any
 
@@ -271,6 +272,19 @@ def _backend_root() -> pathlib.Path:
     return pathlib.Path(inspect.getfile(SimWorld)).parent
 
 
+def _scanned_modules() -> list[tuple[str, str, str]]:
+    """``(backend, file, source)`` for every backend module, plus the shared
+    recording mixin every backend inherits (the class, not its module helpers)."""
+    from strands_robots.simulation.recording import DatasetRecordingMixin
+
+    modules = [("shared", "recording.py", textwrap.dedent(inspect.getsource(DatasetRecordingMixin)))]
+    for backend in ("mujoco", "newton", "isaac"):
+        modules.extend(
+            (backend, module.name, module.read_text()) for module in sorted((_backend_root() / backend).glob("*.py"))
+        )
+    return modules
+
+
 def _cameras_surfaces(source: str) -> list[tuple[str, bool]]:
     """Public methods in ``source`` taking ``cameras``, and whether each guards it."""
     found: list[tuple[str, bool]] = []
@@ -299,12 +313,11 @@ class TestGuardIsWiredAtEveryBackendSurface:
     def test_every_public_cameras_surface_resolves_the_shared_domain(self) -> None:
         unguarded: list[str] = []
         seen: list[str] = []
-        for backend in ("mujoco", "newton", "isaac"):
-            for module in sorted((_backend_root() / backend).glob("*.py")):
-                for name, guarded in _cameras_surfaces(module.read_text()):
-                    seen.append(f"{backend}/{module.name}::{name}")
-                    if not guarded:
-                        unguarded.append(f"{backend}/{module.name}::{name}")
+        for backend, filename, source in _scanned_modules():
+            for name, guarded in _cameras_surfaces(source):
+                seen.append(f"{backend}/{filename}::{name}")
+                if not guarded:
+                    unguarded.append(f"{backend}/{filename}::{name}")
         assert seen, f"no cameras= surface found under {_backend_root()}"
         assert unguarded == [], (
             f"these public methods accept a cameras= subset without calling name_list_error: {unguarded}"
@@ -314,18 +327,15 @@ class TestGuardIsWiredAtEveryBackendSurface:
         """Non-vacuity: a scan root that resolved elsewhere would find nothing."""
         seen = {
             f"{backend}::{name}"
-            for backend in ("mujoco", "newton", "isaac")
-            for module in sorted((_backend_root() / backend).glob("*.py"))
-            for name, _ in _cameras_surfaces(module.read_text())
+            for backend, _file, source in _scanned_modules()
+            for name, _ in _cameras_surfaces(source)
         }
         assert seen == {
             "mujoco::render_all",
             "mujoco::start_cameras_recording",
             "mujoco::start_cameras_recording_synchronous",
-            "mujoco::start_recording",
-            "newton::start_recording",
             "isaac::start_cameras_recording",
-            "isaac::start_recording",
+            "shared::start_recording",
         }, seen
 
     def test_the_scanner_detects_a_surface_that_drops_the_guard(self) -> None:
