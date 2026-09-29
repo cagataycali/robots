@@ -26,5 +26,5 @@ Every driver's `start_task` / `execute` default `policy_provider` moves from
 checkpoint is refused on the missing `pretrained_name_or_path` instead of on a
 missing port. The `groot` docs page is removed (its URLs redirect to
 `learn/policies/lerobot-local`, which gains a "GR00T N1.7 through lerobot"
-section); the site word ceiling drops 46,418 -> 45,821. The GR00T Whole-Body-Control
+section); the site word ceiling drops 49,800 -> 49,108. The GR00T Whole-Body-Control
 providers (`wbc`, `wbc_gait`) are unrelated ONNX locomotion and are unchanged.
