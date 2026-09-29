@@ -4,7 +4,7 @@ description: The stable code a continuable refusal carries and the grant that li
 
 # Refusal codes
 
-The package refuses before it acts when a request is well formed but not yet allowed, and a continuable refusal carries a stable code so a consumer can offer the operator the grant that lifts it. After this page you can match a refusal by identity instead of parsing its message, and you know which variable each grant sets.
+The package refuses before it acts when a request is well formed but not yet allowed; a continuable refusal carries a stable code so a consumer can offer the operator the grant that lifts it. After this page you match a refusal by identity, not by parsing its message, and know which variable each grant sets.
 
 ```python
 from strands_robots.refusal_codes import REFUSAL_CODES, REFUSAL_GRANTS
@@ -13,9 +13,9 @@ for code in REFUSAL_CODES:
     print(f"{code:28} lifted by {REFUSAL_GRANTS[code]}")
 ```
 
-Only continuable refusals get a code. A refusal nothing can lift (an instruction over the length limit, an unknown joint name) stays a plain error with a message that names the valid set. The message text of a coded refusal may change between releases; the code and the `subject` attribute do not.
+Only continuable refusals get a code. A refusal nothing can lift (an instruction over the length limit, an unknown joint name) stays a plain error naming the valid set. A coded refusal's message may change between releases; its code and `subject` attribute do not.
 
-Three grants are allowlists the refusal's `subject` is appended to (`HF_REPO_NOT_ALLOWED`, `POLICY_TYPE_NOT_ALLOWED`, `POLICY_HOST_NOT_ALLOWED`). The other two are not: `STRANDS_TRUST_REMOTE_CODE` takes `1`, and `STRANDS_MESH_INPUT_VALUE_ABS` takes a bound larger than the refused magnitude. Applying a subject to those two is a silent no-op, so read the `meaning` column before wiring a consent flow.
+Three grants are allowlists the refusal's `subject` is appended to (`HF_REPO_NOT_ALLOWED`, `POLICY_TYPE_NOT_ALLOWED`, `POLICY_HOST_NOT_ALLOWED`). The other two are not: `STRANDS_TRUST_REMOTE_CODE` takes `1`, `STRANDS_MESH_INPUT_VALUE_ABS` a bound above the refused magnitude; a subject applied to those is a silent no-op, so read the `meaning` column before wiring a consent flow.
 
 {{refusals}}
 

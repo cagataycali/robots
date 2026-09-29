@@ -4,7 +4,7 @@ description: Stream a LeRobot dataset without a full download, sync one to a buc
 
 # Data
 
-Datasets are LeRobot v3 datasets on disk or on the Hub. These functions read them without a full download, copy them to a bucket, and grade episodes. After this page you know how to stream a dataset, sync one to S3, and label an episode.
+Datasets are LeRobot v3 datasets on disk or on the Hub. These functions stream them without a full download, sync them to a bucket, and grade episodes.
 
 ## Streaming
 

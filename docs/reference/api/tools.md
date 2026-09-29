@@ -4,7 +4,7 @@ description: The @tool functions re-exported from strands_robots, with their par
 
 # Tools
 
-These are the `@tool` functions re-exported from `strands_robots`. Hand any of them to a Strands `Agent` and the agent can call it. After this page you know each tool's parameters as the agent sees them. The catalog with every action value, including tools not re-exported at the top level, is [reference/tools.md](../tools.md).
+The `@tool` functions re-exported from `strands_robots`; hand any of them to a Strands `Agent` and the agent can call it. Below: each tool's parameters as the agent sees them. The catalog with every action value, including tools not re-exported at the top level, is [Tools](../tools.md).
 
 ## Hardware and simulation
 

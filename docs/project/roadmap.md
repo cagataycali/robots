@@ -4,24 +4,24 @@ description: What 1.0 keeps, what it replaces, where it is built, and what chang
 
 # Roadmap: the road to 1.0
 
-`main` is 0.5.x. Version 1.0 is a rewrite in progress, being built in the open at [github.com/cagataycali/stobor](https://github.com/cagataycali/stobor) with its own site at [cagataycali.github.io/stobor](https://cagataycali.github.io/stobor/). After this page you know what 1.0 keeps, what it replaces, and what changes for a user of 0.5.x.
+`main` is 0.5.x. Version 1.0 is a rewrite in progress, built in the open at [github.com/cagataycali/stobor](https://github.com/cagataycali/stobor) with its own site, [cagataycali.github.io/stobor](https://cagataycali.github.io/stobor/). After this page you know what 1.0 keeps, what it replaces, and what changes for a user of 0.5.x.
 
 ## Why a rewrite
 
-The 0.5.x package is {{module_map_total}} lines of Python. It grew by adding: every provider, driver and simulation feature has a module, and the tool layer carries the agent envelope in many places. The layers hold (see [architecture](architecture.md)), but the surface is wide, and the same idea (a driver, a unit conversion, a refusal) is spelled several ways. 1.0 works backwards from what a user needs: one `Robot`, six contracts, a small package a team can hold in its head, and one command that proves it against real backends.
+The 0.5.x package is {{module_map_total}} lines of Python. It grew by adding: every provider, driver and simulation feature has a module, and the tool layer carries the agent envelope in many places. The layers hold ([architecture](architecture.md)), but the surface is wide and one idea (a driver, a unit conversion, a refusal) is spelled several ways. 1.0 works backwards from what a user needs: one `Robot`, six contracts, a small package a team can hold in its head, and one command that proves it against real backends.
 
 ## What 1.0 is
 
 The stobor `DESIGN.md` is the build contract. Its shape:
 
-- **Six contracts, one module each.** `Policy`, `Driver`, `SimEngine`, `Transport`, `Recorder` and `RobotLike`. A class that does two of these is two files. Every contract returns typed values and raises `core.errors` types; the agent envelope (`{"ok": ..., "refusal": {...}}`) exists only in `tools/` and `dashboard/`.
+- **Six contracts, one module each.** `Policy`, `Driver`, `SimEngine`, `Transport`, `Recorder`, `RobotLike`; a class that does two is two files. Every contract returns typed values and raises `core.errors` types; the agent envelope (`{"ok": ..., "refusal": {...}}`) exists only in `tools/` and `dashboard/`.
 - **The same seven layers.** `core -> registry -> drivers | mesh -> sim | policies -> app -> tools -> dashboard`, with `scripts/check_layers.py` as referee. Siblings never import each other.
 - **Typed observations and unit frames.** `Observation(joints, images, sensors, t, frame)`, `Action` as a mapping of joint name to float, and `UnitFrame(space, dof, scale, offset)` on every robot and policy. `robot.preflight(policy)` refuses a unit mismatch before any motion.
-- **Motion is clamped and consented.** Every real write passes `core.motion.clamp_step` with the per-step travel bound from the registry row; every tool defaults to `mode="sim"` and `dry_run=True`; real motion requires `confirm=True`; the Strands HITL gate wraps the tool layer.
-- **Wire formats are copied, never simplified.** Feetech, Dynamixel, Unitree DDS, Franka, UR, Robotiq, Crazyflie, Microduck, Reachy: the protocol files port byte-for-byte from 0.5.x. Everything else is rewritten against the contract.
+- **Motion is clamped and consented.** Every real write passes `core.motion.clamp_step` with the registry row's per-step travel bound; every tool defaults to `mode="sim"` and `dry_run=True`; real motion requires `confirm=True`; the Strands operator gate wraps the tool layer.
+- **Wire formats are copied, never simplified.** Feetech, Dynamixel, Unitree DDS, Franka, UR, Robotiq, Crazyflie, Microduck, Reachy: the protocol files port byte for byte from 0.5.x; everything else is rewritten against the contract.
 - **Cheap import.** `python -c "import strands_robots"` on a bare venv is a no-op; base dependency is numpy only; every heavy import goes through `core.optional.require(name, extra)`.
 - **Acceptance instead of mocks.** `bash acceptance/all.sh` runs eleven scripts against real backends (MuJoCo step, checkpoint inference, RTC rollout, record and reopen, a real arm, teleop, two mesh peers, live dashboard, agent tools, preflight refusals, an MHS device) and prints `ACCEPTANCE GREEN (n real / m skipped)`.
-- **Every `Robot` is an MHS device.** `app/mhs` mounts a robot on a Model Hardware Standard broker with a manifest derived from its registry row, fleet e-stop bridged to the mesh, and controls lowered to safe values on broker disconnect.
+- **Every `Robot` is an MHS device.** `app/mhs` mounts a robot on a Model Hardware Standard broker with a manifest from its registry row, fleet e-stop bridged to the mesh, and controls lowered to safe values on broker disconnect.
 
 ## What changes for you
 
@@ -34,10 +34,10 @@ The stobor `DESIGN.md` is the build contract. Its shape:
 | refusals are messages, five carry codes | every refusal carries a code from `core/refusals.py` and names the value, the cause and the remedy |
 | one extra per feature area in `pyproject.toml`, `[all]` a curated subset | one extra per backend or driver, `[sim]` for MuJoCo, base install is numpy only |
 
-The registry rows, the robot names and aliases, the wire protocols and the safety postures carry over unchanged. A script that uses `Robot("so101")` with `send_action` and `get_observation` keeps working; `act` and `observe` are the 1.0 names.
+Registry rows, robot names and aliases, wire protocols and safety postures carry over unchanged. A script using `Robot("so101")` with `send_action` and `get_observation` keeps working; `act` and `observe` are the 1.0 names.
 
 ## How it lands
 
-The stobor repository is the staging ground; every file lands in `strands-labs/robots` by path without renaming, in reviewed pull requests, once the acceptance suite is green on hardware as well as headless. Until then, `main` stays 0.5.x and receives fixes. Progress is visible on the stobor site: the [contracts](https://cagataycali.github.io/stobor/contracts/robot/), the [coverage matrix](https://cagataycali.github.io/stobor/robots/) with a witness mark per cell, and the [acceptance page](https://cagataycali.github.io/stobor/reference/acceptance/).
+The stobor repository is the staging ground; every file lands in `strands-labs/robots` by path, unrenamed, in reviewed pull requests once the acceptance suite is green on hardware as well as headless. Until then `main` stays 0.5.x and receives fixes. Progress is on the stobor site: the [contracts](https://cagataycali.github.io/stobor/contracts/robot/), the [coverage matrix](https://cagataycali.github.io/stobor/robots/) with a witness mark per cell, the [acceptance page](https://cagataycali.github.io/stobor/reference/acceptance/).
 
-No date is promised here. The definition of done is the acceptance run, not a calendar.
+No date is promised; done is the acceptance run, not a calendar.

@@ -4,7 +4,7 @@ description: Set up a development install, run the checks a pull request must pa
 
 # Contributing
 
-The short version of `AGENTS.md`, the file that governs this repository. After this page you can set up a development install, run the checks a pull request must pass, and open the PR in the shape the required check accepts.
+The short version of `AGENTS.md`, the file that governs this repository: a development install, the checks a pull request must pass, and the PR shape the required check accepts.
 
 ## Set up
 
@@ -15,7 +15,7 @@ uv pip install -e ".[all,dev]"
 strands-robots doctor
 ```
 
-Python 3.12 or newer is required. `hatch` drives the scripts below and uses `uv` as its installer, so nothing else needs installing.
+Python 3.12 or newer. `hatch` drives the scripts below with `uv` as its installer; nothing else needs installing.
 
 ## Check before you push
 
@@ -27,7 +27,7 @@ hatch run whole-tree-check  # the graders whose input is the rest of the repo
 hatch run test-integ        # integration tests: GPU, model weights, hardware
 ```
 
-Ruff runs at line length 120 targeting `py312`; mypy runs with `disallow_untyped_defs`. A narrow test run (`pytest tests/drivers -k g1`) is fine for iteration, but pair it with `whole-tree-check`: many graders take the whole repository as their input, so no path filter over your own area collects them.
+Ruff runs at line length 120 targeting `py312`; mypy runs with `disallow_untyped_defs`. A narrow test run (`pytest tests/drivers -k g1`) is fine for iteration; pair it with `whole-tree-check`, since many graders read the whole repository and no path filter collects them.
 
 ## Conventions the graders enforce
 
@@ -44,13 +44,13 @@ Ruff runs at line length 120 targeting `py312`; mypy runs with `disallow_untyped
 
 ## Log the change
 
-Every pull request that changes behaviour adds one file under `changelog.d/`, named `<pr-number>-<slug>.md`, containing the `### <Category>: <summary>` heading and body that would have gone into `CHANGELOG.md`. Never edit `## [Unreleased]` directly; the `Guards` step of the required check (`scripts/ci_guards.py`) refuses a PR that does. `0000` and `999x` are placeholders and are refused too. Push the fragment right after opening the PR, or open as a draft and add it before marking ready: a push after an approval dismisses the approval.
+Every pull request that changes behaviour adds one file under `changelog.d/`, `<pr-number>-<slug>.md`, with the `### <Category>: <summary>` heading and body that would have gone into `CHANGELOG.md`. Never edit `## [Unreleased]` directly; the `Guards` step (`scripts/ci_guards.py`) refuses a PR that does, and refuses the placeholders `0000` and `999x`. Push the fragment right after opening the PR, or open as a draft and add it before marking ready: a push after an approval dismisses the approval.
 
 ## Open the pull request
 
-1. Branch on your fork. Branch creation in `strands-labs/robots` is refused by a ruleset for every account, so a push to the base repository fails with a rule violation that does not name the rule.
-2. Before starting, check that no open PR already claims the issue or edits the file: `python3 .github/scripts/check_duplicate_claim.py --repo strands-labs/robots --issue <N>` and `python3 scripts/check_merge_base_overlap.py --github-repo strands-labs/robots --paths <files>`.
+1. Branch on your fork: a ruleset refuses branch creation in `strands-labs/robots` for every account, with a rule violation that does not name the rule.
+2. Check that no open PR claims the issue or edits the file: `python3 .github/scripts/check_duplicate_claim.py --repo strands-labs/robots --issue <N>` and `python3 scripts/check_merge_base_overlap.py --github-repo strands-labs/robots --paths <files>`.
 3. Put `Closes #N` in the PR body, not the title.
-4. The required check evaluates the merge commit: ruff, mypy, the unit suite, the whole-tree graders, the guards, lockfile parity, and CodeQL under `ci.yml`.
+4. The required check evaluates the merge commit: ruff, mypy, the unit suite, the whole-tree graders, the guards, lockfile parity and CodeQL (`ci.yml`).
 
-Security findings do not go through issues; see the [security policy](security-policy.md).
+Security findings do not go through issues: [security policy](security-policy.md).
