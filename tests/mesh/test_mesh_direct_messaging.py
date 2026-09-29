@@ -432,7 +432,9 @@ class TestReplyOverTheResponseTopic:
         assert call["peer_id"] == "operator-1"
         assert call["key"] == f"strands/operator-1/response/so101/{self.TURN}"
         assert call["correlation"] == self.TURN
-        assert call["confirm"] is False
+        # The reply is confirmed like the command was (D4), inside a bounded budget.
+        assert call["confirm"] is True
+        assert call["timeout"] == Mesh.REPLY_DIRECT_BUDGET_S
         assert call["data"]["turn_id"] == self.TURN
         assert call["data"]["responder_id"] == "so101"
         assert [k for k, _ in puts if "/response/" in k] == []

@@ -2010,14 +2010,26 @@ class Mesh(SensorLoopsMixin):
         )
         return None
 
+    #: Budget for one direct reply: the confirmation window the broker waits
+    #: for the sender's PUBACK plus the HTTPS round trip. A reply is worth
+    #: confirming (D4: motion commands are exactly where a receipt matters), and
+    #: a sender that does not acknowledge inside this gets the reply published
+    #: on the key it still subscribes to, so the wait is bounded and no reply is
+    #: lost to a QoS 0 leg reading as a command that never executed.
+    REPLY_DIRECT_BUDGET_S = 3.0
+
     def _reply(self, sender: str, turn: str, rkey: str, payload: dict[str, Any], direct_key: str | None) -> None:
         """Send one command response: direct to *sender* when it asked for that, else publish.
 
-        A direct reply that is not delivered falls back to ``publish`` on
-        ``rkey`` in the same call, which the sender still subscribes to.
+        The direct reply is confirmed (QoS 1 and the sender's PUBACK) within
+        :data:`REPLY_DIRECT_BUDGET_S`, the same way the command came in. One
+        that is not delivered falls back to ``publish`` on ``rkey`` in the same
+        call, which the sender still subscribes to.
         """
         if direct_key is not None and self._direct is not None:
-            result = self._direct.send_direct(sender, direct_key, payload, correlation=turn)
+            result = self._direct.send_direct(
+                sender, direct_key, payload, confirm=True, timeout=self.REPLY_DIRECT_BUDGET_S, correlation=turn
+            )
             if result.delivered:
                 return
             self._note_direct_fallback(sender, result.reason, result.detail)
