@@ -8,4 +8,4 @@ mechanism is a `palette` per robot in the viewer manifest (`docs/hooks/manifest.
 `_BRAND_PALETTES`): a model colour as the MJCF spells it and a theme token the
 viewer resolves. `tests/test_docs_viewer_brand_palette.py` pins that every token
 exists in the viewer's theme, that every painted robot is one the viewer renders,
-and that no other robot is repainted.
+and that no other robot is repainted (#4207).
