@@ -287,6 +287,15 @@ class TestAColumnPresentAsNoneCarriesNoCommand:
         np.testing.assert_allclose(ds.frames[0]["action"], [0.4, 0.5, 0.6, 0.0], atol=1e-6)
 
 
+def _receiver_name(node: ast.expr) -> str | None:
+    """Name the object ``add_frame`` is called on: ``rec`` or ``clock.recorder``."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
 class TestEveryRecordingHookDeclaresItsActionColumns:
     """No backend may forward a policy's action without scoping the columns.
 
@@ -297,9 +306,9 @@ class TestEveryRecordingHookDeclaresItsActionColumns:
     """
 
     HOOK_MODULES = [
-        "strands_robots/simulation/mujoco/simulation.py",
-        "strands_robots/simulation/isaac/recording.py",
-        "strands_robots/simulation/newton/recording.py",
+        # The one writer every backend's rollout hook, merge loop and MuJoCo's
+        # step clock share.
+        "strands_robots/simulation/recording.py",
     ]
 
     @pytest.mark.parametrize("module_path", HOOK_MODULES)
@@ -312,8 +321,7 @@ class TestEveryRecordingHookDeclaresItsActionColumns:
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "add_frame"
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id in {"rec", "recorder"}
+            and _receiver_name(node.func.value) in {"rec", "recorder"}
         ]
         assert calls, f"{module_path}: no recorder.add_frame call found"
         for call in calls:
