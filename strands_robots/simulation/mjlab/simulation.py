@@ -194,6 +194,9 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         self._renderer: Any = None
         self._render_data: Any = None
         self._build_seconds = 0.0
+        self._dr_applied: dict[str, Any] | None = None
+        # Last on purpose: SimEngine.__del__ only runs cleanup on engines that finished __init__.
+        self._init_complete = True
 
     # ------------------------------------------------------------------ world
 
