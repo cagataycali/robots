@@ -945,6 +945,24 @@ def _select_physics_variant(prim_path: str) -> str | None:
     return None
 
 
+def _adopt_referenced_type(prim: Any) -> None:
+    """Let a referenced mesh asset's own prim type win over the placeholder.
+
+    ``add_reference_to_stage`` defines a missing target as ``Xform`` before
+    adding the reference, and a local ``typeName`` is stronger than the one the
+    reference brings. Every mesh USD this backend writes (and most a caller
+    hands it) has a ``Mesh`` as its default prim, so the composed prim was an
+    ``Xform`` carrying mesh attributes: nothing to render, and the collision
+    APIs applied to it had no geometry to collide. Clearing the local opinion
+    makes the prim compose as the ``Mesh`` it references (an ``Xform`` asset
+    still composes as an ``Xform``). A ``None`` prim (a stand-in loader) is a
+    no-op.
+    """
+    clear = getattr(prim, "ClearTypeName", None)
+    if clear is not None:
+        clear()
+
+
 def _import_articulation_cls() -> Any:
     """Resolve the single-prim articulation wrapper across Isaac versions.
 
@@ -1472,6 +1490,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # valid frame on the very first call instead of dropping frames during
         # an example's opening rollout. Env-tunable for headroom on slow GPUs.
         self._camera_warmup_steps = _env_int("STRANDS_ISAAC_CAMERA_WARMUP_STEPS", 10)
+        # The camera ``_warmup_camera`` is currently polling, whose not-ready
+        # render failures are expected and logged at DEBUG (see _render_frame).
+        self._camera_in_warmup: str | None = None
 
         # device_requested, not device: no world exists yet, so the physics
         # context cannot be asked what it resolved. create_world reports that.
@@ -1910,6 +1931,16 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     "step_count": self._step_count,
                 }
 
+                # The json carries both fields, but the text line is what most
+                # callers read: a request that was not honoured (every default
+                # cuda:0 world - the device is deliberately not forwarded, see
+                # the World() call above) is said in it, not left to a diff.
+                device_text = str(world_info["device"])
+                if world_info["device"] != self._config.device:
+                    device_text += (
+                        f" (requested {self._config.device}; physics runs on CPU PhysX - see "
+                        "the Limits section of docs/learn/simulation/isaac.md)"
+                    )
                 return {
                     "status": "success",
                     "content": [
@@ -1917,7 +1948,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                             "text": (
                                 f"Isaac Sim world created. "
                                 f"dt={dt:.5f}, gravity={grav}, "
-                                f"device={world_info['device']}, "
+                                f"device={device_text}, "
                                 f"headless={self._config.headless}"
                             ),
                             "json": world_info,
@@ -4036,7 +4067,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             from omni.isaac.core.utils.stage import (  # type: ignore[import-not-found]
                 add_reference_to_stage,
             )
-        add_reference_to_stage(usd_path=usd_path, prim_path=prim_path)
+        _adopt_referenced_type(add_reference_to_stage(usd_path=usd_path, prim_path=prim_path))
         _select_physics_variant(prim_path)
 
         # Isaac Sim 6.0 exposes the single-prim wrappers under
@@ -4549,7 +4580,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # sits at body origin + offset, so the local translate is
             # ``mesh_pos - offset``.
             visual_path = f"{prim_path}/visual"
-            add_reference_to_stage(usd_path=usd_path, prim_path=visual_path)
+            _adopt_referenced_type(add_reference_to_stage(usd_path=usd_path, prim_path=visual_path))
             local_pos = tuple(obj.mesh_pos[i] - obj.offset[i] for i in range(3))
             self._author_local_xform(
                 stage.GetPrimAtPath(visual_path),
@@ -6825,7 +6856,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 # buffer during RTX warm-up surfaces here too rather than
                 # escaping the loop (#140), even should the pre-slice
                 # shape guard above ever be bypassed.
-                logger.error("Failed to render camera '%s': %s", camera_name, e)
+                # ``_warmup_camera`` polls through here on purpose: its not-ready
+                # reads are the condition it waits out, not a fault, so they go
+                # to DEBUG rather than an ERROR on every healthy add_camera.
+                level = logging.DEBUG if getattr(self, "_camera_in_warmup", None) == camera_name else logging.ERROR
+                logger.log(level, "Failed to render camera '%s': %s", camera_name, e)
                 return None, None, {"error": f"Failed to render camera '{camera_name}': {e}"}
 
             render_info = {
@@ -7112,40 +7147,44 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         budget = max(1, n_steps)
         attempted = 0
         aborted: Exception | None = None
-        for i in range(budget):
-            attempted = i + 1
-            try:
-                _ensure_timeline_playing()
-                # A warmup tick advances ``_sim_time`` like any other, so it
-                # replays the latch too. Exempting it would make a latched wrench
-                # act on a tick count that depends on how many warmup passes the
-                # RTX product happened to need.
-                if getattr(self, "_applied_wrenches", None):
-                    self._reapply_wrenches()
-                self._world.step(render=True)
-                self._sim_time += self._config.physics_dt
-                self._step_count += 1
-                # ``world.step(render=True)`` reliably refreshes only the
-                # PRIMARY render product; a camera added after the first
-                # (e.g. the LIBERO adapter's ``wrist_image``, installed at
-                # episode start next to the pre-existing ``image``) never
-                # accumulates a frame from stepping alone and the warm-up
-                # loop ran to exhaustion (#1802). Flush the secondary
-                # products the same way ``get_observation`` does before
-                # checking for a frame.
-                if len(self._cameras) > 1:
-                    self._refresh_all_render_products()
-                if self.render(camera_name=name).get("status") == "success":
-                    logger.debug("Camera %r warmed up after %d step(s)", name, i + 1)
-                    return True
-            except (RuntimeError, ValueError, OSError, AttributeError, TypeError, IndexError) as e:
-                # Stepping / rendering a partially-initialised stage can
-                # raise on surface drift; warm-up is best-effort, so log
-                # and stop rather than failing the already-registered
-                # camera. Programming bugs (NameError) still propagate.
-                logger.debug("Camera %r warm-up step %d failed: %s", name, i + 1, e)
-                aborted = e
-                break
+        self._camera_in_warmup = name
+        try:
+            for i in range(budget):
+                attempted = i + 1
+                try:
+                    _ensure_timeline_playing()
+                    # A warmup tick advances ``_sim_time`` like any other, so it
+                    # replays the latch too. Exempting it would make a latched wrench
+                    # act on a tick count that depends on how many warmup passes the
+                    # RTX product happened to need.
+                    if getattr(self, "_applied_wrenches", None):
+                        self._reapply_wrenches()
+                    self._world.step(render=True)
+                    self._sim_time += self._config.physics_dt
+                    self._step_count += 1
+                    # ``world.step(render=True)`` reliably refreshes only the
+                    # PRIMARY render product; a camera added after the first
+                    # (e.g. the LIBERO adapter's ``wrist_image``, installed at
+                    # episode start next to the pre-existing ``image``) never
+                    # accumulates a frame from stepping alone and the warm-up
+                    # loop ran to exhaustion (#1802). Flush the secondary
+                    # products the same way ``get_observation`` does before
+                    # checking for a frame.
+                    if len(self._cameras) > 1:
+                        self._refresh_all_render_products()
+                    if self.render(camera_name=name).get("status") == "success":
+                        logger.debug("Camera %r warmed up after %d step(s)", name, i + 1)
+                        return True
+                except (RuntimeError, ValueError, OSError, AttributeError, TypeError, IndexError) as e:
+                    # Stepping / rendering a partially-initialised stage can
+                    # raise on surface drift; warm-up is best-effort, so log
+                    # and stop rather than failing the already-registered
+                    # camera. Programming bugs (NameError) still propagate.
+                    logger.debug("Camera %r warm-up step %d failed: %s", name, i + 1, e)
+                    aborted = e
+                    break
+        finally:
+            self._camera_in_warmup = None
         if aborted is not None:
             # An early abort is NOT a slow render product, and the two need
             # different remedies: the exhaustion report below tells the
