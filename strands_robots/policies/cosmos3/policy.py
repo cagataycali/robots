@@ -65,7 +65,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots.policies._log_safety import sanitize_log_value
-from strands_robots.policies._state_keys import drop_velocity_siblings
+from strands_robots.policies._state_keys import FLAT_STATE_KEY, drop_velocity_siblings
 from strands_robots.policies.base import Policy
 from strands_robots.utils import dial_host_error, name_list_error, tcp_port_error
 
@@ -246,6 +246,25 @@ class Cosmos3Policy(Policy):
             )
         self.default_prompt = prompt
         self._obs_mapping = observation_mapping or self._default_obs_mapping()
+        # Every mapping target must live in the server's ``observation/``
+        # namespace, which is the shape the docs state and the only one
+        # ``_build_server_observation`` forwards. A target outside it was
+        # skipped there without a word, so a camera mapped to
+        # ``"wrist_image_left"`` (the prefix forgotten) reached the server
+        # under neither name and the entry was dead from construction on.
+        # Refused here, while the caller still holds the mapping.
+        malformed = sorted(
+            f"{k!r} -> {v!r}"
+            for k, v in self._obs_mapping.items()
+            if not (isinstance(v, str) and v.startswith("observation/") and len(v) > len("observation/"))
+        )
+        if malformed:
+            raise ValueError(
+                f"observation_mapping targets must be server keys of the form "
+                f"'observation/<name>' (e.g. 'observation/wrist_image_left'); got {malformed}. "
+                f"Required camera keys for embodiment {self.embodiment.name!r}: "
+                f"{list(self.embodiment.camera_keys)}"
+            )
         # ``robot=`` sugar: apply a built-in DROID-layout -> actuator mapping
         # (e.g. robot="panda" -> joint_0..6->joint1..7, gripper->finger_joint1)
         # unless the caller supplied an explicit action_mapping. Unknown robot
@@ -585,6 +604,26 @@ class Cosmos3Policy(Policy):
         joints: list[float] = []
         gripper: float | None = None
 
+        # The flat ``observation.state`` vector wins when present: it is the
+        # shape a direct-API caller passes and the one the docs name first,
+        # and the shared rule (:mod:`strands_robots.policies._state_keys`)
+        # every other provider reads it by. Its layout is the served
+        # ``joint_pos`` row - 7 joints then the gripper - so it is bound
+        # positionally; a vector of another length cannot be that row and is
+        # refused rather than truncated or padded.
+        flat = robot_obs.get(FLAT_STATE_KEY)
+        if flat is not None:
+            values = [float(x) for x in np.asarray(flat, dtype=np.float64).reshape(-1)]
+            if len(values) != 8:
+                raise ValueError(
+                    f"Cosmos3Policy(action_space='joint_pos') read {FLAT_STATE_KEY!r} with "
+                    f"{len(values)} values; the DROID joint_pos state is 8 (7 joints then the "
+                    "gripper). Pass the 8-vector, or per-joint scalar keys instead."
+                )
+            obs.setdefault("observation/joint_position", np.asarray(values[:7], dtype=np.float32).reshape(1, 7))
+            obs.setdefault("observation/gripper_position", np.asarray([[values[7]]], dtype=np.float32))
+            return
+
         # Use declared state-key order when it names this observation; an
         # ordering inferred from the observation is position-only (see
         # drop_velocity_siblings).
@@ -679,13 +718,34 @@ class Cosmos3Policy(Policy):
         return list(self.embodiment.action_layouts.get(self.action_space, []))
 
     def _action_column_names(self, width: int) -> list[str]:
-        """Resolve the per-column action names for the active backend's layout."""
+        """Resolve the per-column action names for the active backend's layout.
+
+        Raises:
+            ValueError: If the chunk is not as wide as the active layout. The
+                width is the one fact about the served action this client can
+                check, and it is the one that tells a client and a server apart
+                when they disagree about ``action_space``: a RoboLab server
+                launched with ``--action-space midtrain`` answers an
+                ``action_space="joint_pos"`` client with 8 absolute-pose
+                columns that are not joints. Named positionally onto the
+                joint layout and padded with ``action_<i>``, that chunk was a
+                well-formed step dict of pose components labelled as joint
+                targets, which the robot then executed. Only an embodiment
+                whose layout is empty (none is registered) is named
+                positionally.
+        """
         layout = self._active_action_layout()
-        names = list(layout[:width])
-        # Pad / fall back if the run returns a different width than expected.
-        for i in range(len(names), width):
-            names.append(f"action_{i}")
-        return names
+        if not layout:
+            return [f"action_{i}" for i in range(width)]
+        if width != len(layout):
+            raise ValueError(
+                f"Cosmos3Policy(embodiment={self.embodiment.name!r}, backend={self.backend!r}, "
+                f"action_space={self.action_space!r}) received a {width}-column action chunk, "
+                f"but its action layout names {len(layout)} columns: {layout}. The server is "
+                f"serving a different action_space (or embodiment) than this policy was built "
+                f"for; pass the action_space the server was launched with."
+            )
+        return list(layout)
 
     def _unpack_actions(self, action: np.ndarray) -> list[dict[str, Any]]:
         """Split an ``[T, D]`` chunk into per-timestep actuator dicts."""
