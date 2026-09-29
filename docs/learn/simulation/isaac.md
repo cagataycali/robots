@@ -58,4 +58,4 @@ sim.destroy()
 - Python 3.12 only, an RTX-class GPU, and a multi-gigabyte install. There is no CPU fallback; `is_available()` says why before anything is built.
 - Physics runs on **CPU PhysX**: `device` is reported as `device_requested` but not forwarded, because the GPU pipeline breaks incremental `add_robot`. Rendering uses the GPU.
 - Rendering is slower per frame than MuJoCo's offscreen path and faster per batch: use it for fidelity and scale, not unit-test loops.
-- `remove_robot` deletes the articulation prim from the stage, and like a dynamic `remove_object` it invalidates the tensor view: `step()` and `send_action()` refuse until the next `reset()` rebuilds it. Build the scene and reset before posing anything.
+- `remove_robot`, like a dynamic `remove_object`, invalidates the tensor view: `step()` and `send_action()` refuse until the next `reset()`. Build the scene, then reset.
