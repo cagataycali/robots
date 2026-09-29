@@ -491,6 +491,7 @@ nav:
           - Safety and e-stop: learn/mesh/safety-and-estop.md
           - Topics: learn/mesh/topics.md
           - Bridges: learn/mesh/bridges.md
+          - Direct messaging: learn/mesh/direct.md
       - Dashboard: learn/dashboard.md
       - ROS 2: learn/ros2.md
       - Security: learn/security.md
