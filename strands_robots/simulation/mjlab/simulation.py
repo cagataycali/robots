@@ -41,6 +41,7 @@ from strands_robots.simulation.base import (
     reject_misspelled_kwargs,
     reject_setup_kwargs,
 )
+from strands_robots.simulation.mjlab.recording import MjlabRecordingMixin
 from strands_robots.utils import coerce_pose_vector, entity_name_error, positive_count_error
 
 if TYPE_CHECKING:
@@ -101,7 +102,7 @@ class _ObjectSpec:
     static: bool
 
 
-class MjlabEngine(SimEngine):
+class MjlabEngine(MjlabRecordingMixin, SimEngine):
     """GPU-vectorized MuJoCo backend built on mjlab / MuJoCo-Warp.
 
     Args:
@@ -181,6 +182,7 @@ class MjlabEngine(SimEngine):
         self._robots: dict[str, _RobotSpec] = {}
         self._objects: dict[str, _ObjectSpec] = {}
         self._cameras: dict[str, dict[str, Any]] = {}
+        self._recording_state_dict: dict[str, Any] = {}
 
         # Built state (None until the first physics call).
         self._scene: Any = None
@@ -245,6 +247,7 @@ class MjlabEngine(SimEngine):
             self._objects.clear()
             self._cameras.clear()
             self._pending_ctrl.clear()
+            self._recording_state_dict = {}
             self._world_created = False
             self._dirty = True
             return {"status": "success", "content": [{"text": "World destroyed"}]}
@@ -459,7 +462,16 @@ class MjlabEngine(SimEngine):
     # ----------------------------------------------------------------- stepping
 
     def reset(self) -> dict[str, Any]:
-        """Return every world to its spawn pose with zero velocity and zero ctrl."""
+        """Return every world to its spawn pose with zero velocity and zero ctrl.
+
+        An open recording episode is saved first (episode boundary), as on the
+        other backends; a failed flush leaves the worlds untouched.
+        """
+        flush_note = ""
+        if (flush := self._flush_open_episode_before_reset()) is not None:
+            if flush.get("status") != "success":
+                return flush
+            flush_note = flush["content"][0]["text"] + " "
         with self._lock:
             self._ensure_built()
             import torch
@@ -472,7 +484,10 @@ class MjlabEngine(SimEngine):
             self._pending_ctrl.clear()
             self._step_count = 0
             del torch
-            return {"status": "success", "content": [{"text": f"Reset {self.num_envs} world(s) to initial state"}]}
+            return {
+                "status": "success",
+                "content": [{"text": f"{flush_note}Reset {self.num_envs} world(s) to initial state"}],
+            }
 
     def step(self, n_steps: int = 1) -> dict[str, Any]:
         """Advance all worlds ``n_steps`` physics steps (the lock is released every 1000 steps)."""
