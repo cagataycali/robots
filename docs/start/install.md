@@ -41,7 +41,7 @@ print("\n".join(report["content"][0]["text"].splitlines()[:3]))
 You should see a count, then one line per registered robot, `[ok]` when its files are present and `[--]` when they are not:
 
 ```text
-64 available, 2 missing
+<available> available, <missing> missing
 [ok] ability_hand         hand         PSYONIC Ability Hand (5-finger prosthetic, 11-DOF)
 [ok] adam_lite            humanoid     PNDbotics Adam Lite Humanoid (26-DOF)
 ```
