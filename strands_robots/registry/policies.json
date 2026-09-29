@@ -214,6 +214,30 @@
         "sonic_gait"
       ]
     },
+    "wbc_latent": {
+      "module": "strands_robots.policies.wbc_latent",
+      "class": "WBCLatentPolicy",
+      "description": "A VLA's SONIC motion tokens decoded into Unitree G1 joint targets (nvidia/GEAR-SONIC decoder, in-process ONNX) and tracked with SONIC's per-joint PD",
+      "extra": "wbc",
+      "requires": [],
+      "config_keys": [
+        "inner",
+        "inner_provider",
+        "inner_config",
+        "checkpoint",
+        "variant",
+        "replan_every",
+        "warn_token_abs"
+      ],
+      "defaults": {
+        "variant": "default",
+        "replan_every": 20
+      },
+      "shorthands": [
+        "wbc_latent",
+        "sonic_latent"
+      ]
+    },
     "kimodo": {
       "module": "strands_robots.policies.kimodo",
       "class": "KimodoPolicy",

@@ -33,8 +33,18 @@ from strands_robots.policies.wbc_latent.decoder import (
     resolve_decoder_path,
     sonic_variant_error,
 )
+from strands_robots.policies.wbc_latent.policy import (
+    DEFAULT_REPLAN_EVERY,
+    GRIPPER_KEYS,
+    INNER_EMBODIMENT,
+    TOKEN_KEYS,
+    WBCLatentPolicy,
+)
 
 __all__ = [
+    "DEFAULT_REPLAN_EVERY",
+    "GRIPPER_KEYS",
+    "INNER_EMBODIMENT",
     "SONIC_ACTION_SCALE",
     "SONIC_DEFAULT_ANGLES",
     "SONIC_JOINT_NAMES",
@@ -44,7 +54,9 @@ __all__ = [
     "SONIC_VARIANT_FILES",
     "STANDING_TOKEN",
     "TOKEN_DIM",
+    "TOKEN_KEYS",
     "SonicDecoder",
+    "WBCLatentPolicy",
     "resolve_decoder_path",
     "sonic_variant_error",
 ]
