@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from strands_robots.dashboard import access, record_api
 from strands_robots.dashboard.dataset_check import OUTSIDE_DATASET_HOME
 from strands_robots.dashboard.log_redaction import one_line
+from strands_robots.utils import refusal_repr
 
 logger = logging.getLogger(__name__)
 
@@ -124,12 +125,70 @@ def _devices_or_503(request: Request) -> Any:
     return devices
 
 
+#: The ``policy_config`` keys a collect may forward: the ones the mesh dispatcher forwards from a
+#: validated ``execute`` (its ``extra`` tuple) plus the two host knobs the wire grades. Every one
+#: has a validator in :func:`strands_robots.mesh.security.validate_command`; a key outside this
+#: set is a Policy constructor kwarg the wire would never carry, so the route refuses it by name
+#: instead of dropping it.
+WIRE_POLICY_CONFIG_KEYS: tuple[str, ...] = (
+    "model_path",
+    "server_address",
+    "policy_type",
+    "pretrained_name_or_path",
+    "policy_host",
+    "policy_port",
+)
+
+
+def contained_policy_request(policy_provider: Any, policy_config: Any) -> tuple[str, dict[str, Any] | None]:
+    """The provider and config a collect may hand to ``run_policy``: what the wire would accept.
+
+    The page's ``policy_provider`` and ``policy_config`` used to reach ``create_policy`` in the
+    child process untouched, so a provider off the allowlist, a ``model_path`` anywhere on the
+    disk or a ``server_address`` to any host went through a route the mesh would have refused.
+    The same validator now runs here, ``model_path`` is additionally contained under the
+    checkpoint homes, and only validated keys come back. Raises :class:`HTTPException` 422
+    (400 for a path outside its home) with the validator's own sentence.
+    """
+    from strands_robots.dashboard import training
+    from strands_robots.mesh import security
+
+    if policy_config is None:
+        config: dict[str, Any] = {}
+    elif isinstance(policy_config, dict):
+        config = dict(policy_config)
+    else:
+        raise HTTPException(422, "policy_config must be an object")
+    unknown = sorted(str(key) for key in config if key not in WIRE_POLICY_CONFIG_KEYS)
+    if unknown:
+        raise HTTPException(
+            422,
+            f"policy_config keys not carried by the wire: {', '.join(refusal_repr(k) for k in unknown)} "
+            f"(allowed: {', '.join(WIRE_POLICY_CONFIG_KEYS)})",
+        )
+    if isinstance(config.get("model_path"), str):
+        try:
+            config["model_path"] = str(training.contain_checkpoint_path(config["model_path"]))
+        except training.PathOutside as exc:
+            raise HTTPException(400, exc.refusal()) from exc
+    cmd = {"action": "execute", "policy_provider": policy_provider, "instruction": "collect", **config}
+    try:
+        validated = security.validate_command(cmd)
+    except security.ValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    forwarded = {key: validated[key] for key in WIRE_POLICY_CONFIG_KEYS if key in validated and key in config}
+    return str(validated["policy_provider"]), forwarded or None
+
+
 @router.post("/api/collect")
 async def collect_episodes(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     """Collect a policy-driven dataset in a one-shot mesh sim. run_policy drives exactly n_episodes
     rollouts with per-episode parquet boundaries and reports parquet-truth counts.
     """
     dataset_root = str(contained_path(body.get("dataset_root")))
+    policy_provider, policy_config = contained_policy_request(
+        body.get("policy_provider", "mock"), body.get("policy_config")
+    )
     devices = _devices_or_503(request)
     # Remember the root so /api/training/datasets discovers the result even outside the default
     # scan paths. The training lane ships the memory; without it the collection still runs.
@@ -146,8 +205,8 @@ async def collect_episodes(request: Request, body: dict[str, Any]) -> dict[str, 
             dataset_root=dataset_root,
             dataset_repo_id=body.get("dataset_repo_id", "local/collected"),
             robot_name=body.get("robot_name") or "so101",
-            policy_provider=body.get("policy_provider", "mock"),
-            policy_config=body.get("policy_config"),
+            policy_provider=policy_provider,
+            policy_config=policy_config,
             instruction=body.get("instruction", ""),
             n_episodes=int(body.get("n_episodes", 5)),
             duration=float(body.get("duration", 10.0)),
