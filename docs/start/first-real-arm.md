@@ -103,6 +103,7 @@ The lerobot driver looks the file up by id, and the id it uses is the tool name,
 |---|---|
 | `Robot("so101", port="/dev/ttyACM0")` | `TypeError`: the default is `mode="sim"`, and a simulation would ignore `port=`. Add `mode="real"` |
 | `Robot("so101", mode="real")` with no servo bus found | `ValueError` naming the ports on this host and that none looks like a servo bus |
+| no `port=`, or `port=""`, on either driver | `ValueError` at construction naming this host's serial devices; the same sentence on `driver="lerobot"` and `driver="strands"` |
 | `Robot("so101_leader", mode="real", port=...)` | `ValueError`: a leader is a `Teleoperator`, not a robot. Driving it would servo the arm a human is holding |
 | `cameras=` with `driver="strands"` | `ValueError`: the native Feetech driver does not open cameras; use `driver="lerobot"` |
 | a keyword the driver does not declare (`prot=`) | `ValueError` listing what `FeetechDriver` accepts |

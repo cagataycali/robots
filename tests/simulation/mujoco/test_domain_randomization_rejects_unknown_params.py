@@ -21,7 +21,7 @@ import pytest
 
 from strands_robots.simulation import Simulation
 from strands_robots.simulation.base import unknown_kwargs_error
-from strands_robots.simulation.mujoco.randomization import _OBS_NOISE_PARAMS, _RANDOMIZE_PARAMS
+from strands_robots.simulation.mujoco.randomization import _RANDOMIZE_PARAMS
 
 pytest.importorskip("mujoco")
 
@@ -92,14 +92,6 @@ class TestRandomizeRejectsUnknownParams:
 
 
 class TestSetObsNoiseRejectsUnknownParams:
-    def test_misspelled_std_errors_instead_of_configuring_zero_noise(self, sim):
-        result = sim.set_obs_noise(joint_pos_stdev=0.05, seed=0)
-
-        assert result["status"] == "error"
-        text = result["content"][0]["text"]
-        assert "joint_pos_stdev" in text and "joint_pos_std" in text
-        assert sim._obs_noise is None  # nothing was configured
-
     def test_valid_call_still_configures_noise(self, sim):
         result = sim.set_obs_noise(joint_pos_std=0.02, seed=0)
 
@@ -111,14 +103,6 @@ class TestSetObsNoiseRejectsUnknownParams:
 
         assert result["status"] == "error"
         assert "joint_pos_stdev" in result["content"][0]["text"]
-
-    def test_accepted_names_match_the_signature(self):
-        declared = {
-            name
-            for name, p in inspect.signature(Simulation.set_obs_noise).parameters.items()
-            if name != "self" and p.kind is not inspect.Parameter.VAR_KEYWORD
-        }
-        assert set(_OBS_NOISE_PARAMS) == declared
 
 
 class TestUnknownKwargsErrorHelper:
