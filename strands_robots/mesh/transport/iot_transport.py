@@ -314,6 +314,10 @@ def _close_quietly(conn: http.client.HTTPSConnection) -> None:
         logger.debug("direct HTTPS close: %s", exc)
 
 
+class _SdkTooOld(RuntimeError):
+    """The installed AWS SDK does not model the Direct Messaging operation."""
+
+
 class _SigV4DirectClient:
     """``SendDirectMessage`` through boto3's ``iot-data`` client (IAM credentials).
 
@@ -365,6 +369,14 @@ class _SigV4DirectClient:
         if remaining <= 0:
             raise TimeoutError("direct SigV4: budget exhausted before the request")
         client = self._get()
+        if not callable(getattr(client, "send_direct_message", None)):
+            # The installed botocore predates 1.43.17, whose iot-data model
+            # first carries SendDirectMessage. Reported as unavailable once
+            # rather than as an error retried with a sleep on every command.
+            raise _SdkTooOld(
+                "botocore's iot-data model has no SendDirectMessage (needs botocore>=1.43.17, "
+                "the [mesh-iot] floor); direct messaging is unavailable in this environment"
+            )
         try:
             out = client.send_direct_message(**params)
         except ClientError as exc:
@@ -721,6 +733,7 @@ class IotMqttTransport:
         self._direct_forbidden: set[str] = set()
         self._unmatched_inbound = 0
         self.direct_stats: dict[str, int] = {"sent": 0, "delivered": 0, "failed": 0}
+        self._sdk_too_old_reported = False
 
     # Lifecycle
 
@@ -1027,6 +1040,11 @@ class IotMqttTransport:
                     message = body.decode("utf-8", "replace")
             except TimeoutError as exc:
                 return _done(False, "error", detail=f"TimeoutError: {exc}"[:200])
+            except _SdkTooOld as exc:
+                if not self._sdk_too_old_reported:
+                    self._sdk_too_old_reported = True
+                    logger.warning("direct messaging unavailable: %s", exc)
+                return _done(False, "unavailable", detail=str(exc)[:200])
             except Exception as exc:  # noqa: BLE001 - socket, TLS, botocore: all map to "error"
                 logger.debug("direct send to %s on %s failed (attempt %d): %s", peer_id, key, attempt, exc)
                 if attempt == 0 and _budget_allows_retry(deadline):

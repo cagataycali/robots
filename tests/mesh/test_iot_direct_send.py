@@ -306,6 +306,24 @@ class TestSigV4Path:
         r = t.send_direct("p", "strands/p/cmd", {})
         assert (r.delivered, r.reason, r.detail) == (False, reason, "m")
 
+    def test_an_sdk_without_the_operation_is_unavailable_once_and_never_retried(self, tmp_path, monkeypatch, caplog):
+        class _OldBoto:
+            pass  # no send_direct_message attribute: botocore before 1.43.17
+
+        monkeypatch.setenv(DIRECT_AUTH_ENV_VAR, "sigv4")
+        slept: list[float] = []
+        monkeypatch.setattr("strands_robots.mesh.transport.iot_transport.time.sleep", slept.append)
+        t = IotMqttTransport(thing_name="agent", endpoint=_EP, cert_dir=str(tmp_path / "none"))
+        sender = t._direct_sender()
+        sender._client = _OldBoto()  # type: ignore[union-attr]
+        with caplog.at_level(logging.WARNING):
+            r1 = t.send_direct("p", "strands/p/cmd", {})
+            r2 = t.send_direct("p", "strands/p/cmd", {})
+        assert (r1.reason, r2.reason) == ("unavailable", "unavailable")
+        assert "1.43.17" in r1.detail
+        assert slept == []
+        assert sum("direct messaging unavailable" in rec.getMessage() for rec in caplog.records) == 1
+
     def test_default_is_sigv4_without_certificate_and_x509_with(self, tmp_path, monkeypatch):
         monkeypatch.delenv(DIRECT_AUTH_ENV_VAR, raising=False)
         assert direct_auth_mode(cert_present=False) == "sigv4"
