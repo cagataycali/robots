@@ -117,7 +117,7 @@ class TestTheBrowserSentenceIsBuiltFromNeitherMessageNorException:
         worker._closed = False
         worker._phase = "recording"
         worker._current = mock.Mock(frames=3, started_at=0.0)
-        worker._motion = None
+        worker._motion = []
         worker._motion_notice = None
         monkeypatch.setattr(record_worker.record_motion, "motion_verdict", lambda *_a, **_k: None)
         worker._episodes = []
