@@ -44,7 +44,7 @@ _MINIMUM_PROVIDERS = 10
 # The LeRobot policy families the allowlist accepts as ``policy_type``. Not
 # provider names, so they are the allowlist's legitimate excess over the
 # provider registry.
-_LEROBOT_POLICY_FAMILIES = frozenset({"act", "diffusion", "tdmpc", "vqbet", "pi0", "pi0fast", "smolvla", "sac"})
+_LEROBOT_POLICY_FAMILIES = frozenset({"act", "diffusion", "tdmpc", "vqbet", "pi0", "pi0fast", "smolvla", "sac", "groot"})
 
 
 def _registry_spellings() -> dict[str, str]:
