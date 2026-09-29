@@ -66,7 +66,9 @@ def test_the_data_file_names_robots_the_registry_ships() -> None:
 
 def test_some_robot_has_a_verified_checkpoint() -> None:
     """Non-vacuity: the table exists for at least the SO-101."""
-    assert any(_data().values()), "checkpoints.json lists no verified checkpoint; the section would say 'none' everywhere"
+    assert any(_data().values()), (
+        "checkpoints.json lists no verified checkpoint; the section would say 'none' everywhere"
+    )
     assert "so101" in _data()
 
 

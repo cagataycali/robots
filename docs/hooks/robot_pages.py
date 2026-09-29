@@ -310,7 +310,10 @@ def _policies_section(name: str, cov) -> str:  # noqa: ANN001
         ]
     if cov.policies:
         providers = ", ".join(f"`{p}`" for p in cov.policies)
-        out += [f"Providers written for this body: {providers}; the rest are in the [policy matrix](../learn/policies/index.md).", ""]
+        out += [
+            f"Providers written for this body: {providers}; the rest are in the [policy matrix](../learn/policies/index.md).",
+            "",
+        ]
     return "\n".join(out)
 
 
