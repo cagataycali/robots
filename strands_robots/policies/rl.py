@@ -32,7 +32,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import name_list_error
+from strands_robots.utils import name_list_error, sequence_length
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from strands_robots.training.rl.checkpoint import DeployableActor
@@ -156,6 +156,7 @@ class RLCheckpointPolicy(Policy):
         """
         import torch
 
+        observation_dict = _expand_vector_observations(observation_dict, self._actor.actor_obs_keys)
         missing = [key for key in self._actor.actor_obs_keys if key not in observation_dict]
         if missing:
             raise ValueError(
@@ -183,3 +184,35 @@ class RLCheckpointPolicy(Policy):
         )
         action = self._actor.act(obs)[0]
         return [{key: float(action[i]) for i, key in enumerate(action_keys)}]
+
+
+def _expand_vector_observations(observation_dict: dict[str, Any], keys: list[str]) -> dict[str, Any]:
+    """Let an observation carry ``name.0 .. name.<n-1>`` as one vector under ``name``.
+
+    An exported Isaac Lab actor reads one concatenated observation group
+    (``policy_obs.<i>``); a caller holding that vector passes it whole. Only a
+    key the observation lacks is filled, and only from a 1-D sequence whose
+    length covers every index the actor reads, so a short vector is still
+    reported as missing keys rather than padded.
+    """
+    wanted: dict[str, list[int]] = {}
+    for key in keys:
+        if key in observation_dict:
+            continue
+        base, _, index = key.rpartition(".")
+        if base and index.isdigit():
+            wanted.setdefault(base, []).append(int(index))
+    if not wanted:
+        return observation_dict
+    expanded = dict(observation_dict)
+    for base, indices in wanted.items():
+        vector = observation_dict.get(base)
+        if vector is None or isinstance(vector, (str, bytes)) or sequence_length(vector) is None:
+            continue
+        try:
+            values = [float(v) for v in vector]
+        except (TypeError, ValueError):
+            continue
+        if max(indices) < len(values):
+            expanded.update({f"{base}.{i}": values[i] for i in indices})
+    return expanded

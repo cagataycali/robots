@@ -135,16 +135,20 @@ def _save_thumbnail(frame: Any, path: Path) -> bool:
         if arr.shape[1] > THUMB_MAX_WIDTH:
             step = max(1, arr.shape[1] // THUMB_MAX_WIDTH)
             arr = arr[::step, ::step]
+        # The directory is the controller's private root (record_api.RecordController.thumb_dir);
+        # it is not created here, so a path someone else planted is never adopted, and a link at
+        # the file name is refused rather than written through (f006). Both writers follow links.
+        if not path.parent.is_dir() or path.is_symlink():
+            logger.debug("thumbnail skipped: %s is not a plain file in the thumbnail directory", path.name)
+            return False
         try:
             import cv2
 
-            path.parent.mkdir(parents=True, exist_ok=True)
             # observations are RGB; cv2 writes BGR
             return bool(cv2.imwrite(str(path), arr[:, :, 2::-1]))
         except ImportError:
             from PIL import Image
 
-            path.parent.mkdir(parents=True, exist_ok=True)
             Image.fromarray(arr[:, :, :3].astype("uint8")).save(path)
             return True
     except Exception as exc:  # noqa: BLE001 - decoration only
