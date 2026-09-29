@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="300" viewBox="0 0 1080 300" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+<rect width="1080" height="300" fill="#fff"/>
+<text x="20" y="30" font-size="17" font-weight="600" fill="#202124">Six Robot("so101", backend="isaac") processes started together on one 32-core L40S host</text>
+<text x="20" y="54" font-size="13" fill="#5f6368">each bar: seconds until SimulationApp was up (240 s limit; red = still booting at the limit)</text>
+<text x="20" y="94" font-size="13" font-weight="600" fill="#202124">default (Kit: 32 task threads each)</text>
+<rect x="300" y="80" width="110" height="20" rx="4" fill="#d93025"/>
+<text x="300" y="116" font-size="12" fill="#3c4043">>240 s</text>
+<rect x="425" y="80" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="425" y="116" font-size="12" fill="#3c4043">17.4 s</text>
+<rect x="550" y="80" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="550" y="116" font-size="12" fill="#3c4043">16.2 s</text>
+<rect x="675" y="80" width="110" height="20" rx="4" fill="#d93025"/>
+<text x="675" y="116" font-size="12" fill="#3c4043">>240 s</text>
+<rect x="800" y="80" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="800" y="116" font-size="12" fill="#3c4043">17.0 s</text>
+<rect x="925" y="80" width="110" height="20" rx="4" fill="#d93025"/>
+<text x="925" y="116" font-size="12" fill="#3c4043">>240 s</text>
+<text x="20" y="160" font-size="13" font-weight="600" fill="#202124">task_threads=4, run 1</text>
+<rect x="300" y="146" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="300" y="182" font-size="12" fill="#3c4043">15.3 s</text>
+<rect x="425" y="146" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="425" y="182" font-size="12" fill="#3c4043">15.9 s</text>
+<rect x="550" y="146" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="550" y="182" font-size="12" fill="#3c4043">16.2 s</text>
+<rect x="675" y="146" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="675" y="182" font-size="12" fill="#3c4043">16.0 s</text>
+<rect x="800" y="146" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="800" y="182" font-size="12" fill="#3c4043">15.9 s</text>
+<rect x="925" y="146" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="925" y="182" font-size="12" fill="#3c4043">15.7 s</text>
+<text x="20" y="226" font-size="13" font-weight="600" fill="#202124">task_threads=4, run 2</text>
+<rect x="300" y="212" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="300" y="248" font-size="12" fill="#3c4043">15.8 s</text>
+<rect x="425" y="212" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="425" y="248" font-size="12" fill="#3c4043">15.9 s</text>
+<rect x="550" y="212" width="6" height="20" rx="4" fill="#1e8e3e"/>
+<text x="550" y="248" font-size="12" fill="#3c4043">15.0 s</text>
+<rect x="675" y="212" width="6" height="20" rx="4" fill="#1e8e3e"/>
+<text x="675" y="248" font-size="12" fill="#3c4043">15.1 s</text>
+<rect x="800" y="212" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="800" y="248" font-size="12" fill="#3c4043">15.8 s</text>
+<rect x="925" y="212" width="7" height="20" rx="4" fill="#1e8e3e"/>
+<text x="925" y="248" font-size="12" fill="#3c4043">15.7 s</text>
+</svg>
