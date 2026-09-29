@@ -63,9 +63,8 @@ import pytest
 import strands_robots
 from strands_robots.bus_access import read_observation
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState
 from strands_robots.policies.base import Policy
-from tests._daemon_executor import DaemonThreadExecutor
+from tests._hardware_robot import hardware_robot_on
 
 from .test_bus_access_serializes_motor_reads import RefusingBusRobot
 
@@ -133,21 +132,7 @@ def make_robot(bus: Any) -> HwRobot:
     a ``ThreadPoolExecutor`` worker is not a daemon and the interpreter joins it
     at exit, so a wedged item would deliver a failing test as a hung job.
     """
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "arm"
-    hw.action_horizon = 2
-    hw.data_config = None
-    hw.control_frequency = 200.0
-    hw.action_sleep_time = 1.0 / 200.0
-    hw._task_state = RobotTaskState()
-    hw._executor = DaemonThreadExecutor(thread_name_prefix="arm_executor")
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
-    hw.mesh = None
-    hw.peer_id = None
-    hw.robot = bus
+    hw = hardware_robot_on(bus, tool_name="arm", control_frequency=200.0, action_horizon=2)
     return hw
 
 

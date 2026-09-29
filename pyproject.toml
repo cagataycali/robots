@@ -536,6 +536,7 @@ sim-newton = [
 #     builders / loaders (loaders.load_usd) even when Kit isn't booted. usd-core
 #     uses CalVer (25.x/26.x); per AGENTS.md `>=1.0` deps cap the major.
 #   * `imageio` / `imageio-ffmpeg` - rollout-video encoding.
+#   * `mujoco` / `mink` / `qpsolvers[daqp]` - the IK stack `move_to` solves on.
 # All heavy omni/isaacsim imports stay lazy - installing this extra never
 # imports Isaac Sim.
 sim-isaac = [
@@ -543,6 +544,15 @@ sim-isaac = [
     "usd-core>=25.5,<27.0.0",
     "imageio>=2.28.0,<3.0.0",
     "imageio-ffmpeg>=0.4.0,<1.0.0",
+    # `move_to` is in this backend's action enum, and isaac/motion_primitives.py
+    # solves its IK on a mujoco.MjModel of the loaded description through the
+    # same MinkIKBridge as [sim-mujoco] - so the solver stack ships here too,
+    # with the same bounds and the same `[daqp]` backend reasoning (see
+    # [sim-mujoco]). Isaac Sim 6.1's own wheels pin mujoco==3.11.0, inside this
+    # range.
+    "mujoco>=3.5.0,<4.0.0",
+    "mink>=0.0.4",
+    "qpsolvers[daqp]>=4.0.0",
 ]
 # 3D Gaussian Splatting hybrid rendering (strands_robots.rendering:
 # GsplatBackground + HybridCompositor). GPU/heavy - kept OUT of `[all]`

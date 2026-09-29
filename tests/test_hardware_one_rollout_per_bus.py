@@ -38,14 +38,14 @@ than slept through, so every assertion here is deterministic.
 from __future__ import annotations
 
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
 
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState, TaskStatus
+from strands_robots.hardware_robot import TaskStatus
 from strands_robots.policies.base import Policy
+from tests._hardware_robot import hardware_robot_on
 
 #: Upper bound on any wait, so a broken contract fails instead of hanging.
 DEADLINE = 10.0
@@ -123,21 +123,9 @@ class TaggedPolicy(Policy):
 
 def make_robot(bus: GatedBus | None = None) -> HwRobot:
     """Build a Robot bypassing hardware init (the pattern used across tests/)."""
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "gated_arm"
-    hw.action_horizon = 4
-    hw.data_config = None
-    hw.control_frequency = 500.0
-    hw.action_sleep_time = 1.0 / 500.0
-    hw._task_state = RobotTaskState()
-    hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gated_arm_executor")
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
-    hw.mesh = None
-    hw.peer_id = None
-    hw.robot = bus if bus is not None else GatedBus()
+    hw = hardware_robot_on(
+        bus if bus is not None else GatedBus(), tool_name="gated_arm", control_frequency=500.0, action_horizon=4
+    )
     return hw
 
 

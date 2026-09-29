@@ -23,3 +23,7 @@ Aliases: `earth_rover`, `earthrover_mini_plus`, `frodobots`.
 **lerobot.** `Robot("earthrover", mode="real")` builds lerobot's `earthrover_mini_plus` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
 **`EarthRoverDriver`** (selected with `driver="strands"`) speaks HTTP to the vendor `earth-rovers-sdk`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#earthroverdriver).
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.

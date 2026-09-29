@@ -7,7 +7,7 @@ description: The Isaac Sim backend: what it needs, how to construct it, USD and 
 By the end of this page you know exactly what the `isaac` backend requires, how to construct it, and which MuJoCo habits do not carry over.
 
 ```bash
-pip install 'strands-robots[sim-isaac]'                                            # usd-core + imageio; not Isaac Sim itself
+pip install 'strands-robots[sim-isaac]'                                            # usd-core, imageio, mujoco+mink IK (not Isaac Sim)
 pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url https://pypi.nvidia.com   # Isaac Sim, Python 3.12 only
 export OMNI_KIT_ACCEPT_EULA=YES                                                     # first import
 ```
@@ -16,7 +16,7 @@ The docker route is `nvcr.io/nvidia/isaac-sim:6.0.1`. The pinned image tag and i
 
 ## What it is
 
-`IsaacSimulation` (`strands_robots/simulation/isaac/simulation.py`) implements `SimEngine` on NVIDIA Isaac Sim / Omniverse: photoreal rendering, synthetic data, GPU-batched sensors, USD stages. It inherits the policy orchestration (`run_policy`, `eval_policy`, benchmarks, recording) from the base class and implements the physics primitives, loaders (`isaac/loaders.py`: URDF, MJCF and USD), mesh and MJCF asset conversion, motion primitives and recording.
+`IsaacSimulation` (`strands_robots/simulation/isaac/simulation.py`) implements `SimEngine` on NVIDIA Isaac Sim / Omniverse: photoreal rendering, synthetic data, GPU-rendered sensors, USD stages. It inherits the policy orchestration (`run_policy`, `eval_policy`, benchmarks, recording) from the base class and implements the physics primitives, loaders (`isaac/loaders.py`: URDF, MJCF and USD), mesh and MJCF asset conversion, motion primitives and recording.
 
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
@@ -56,6 +56,6 @@ sim.destroy()
 ## Limits
 
 - Python 3.12 only, an RTX-class GPU, and a multi-gigabyte install. There is no CPU fallback; `is_available()` tells you why before anything is built.
-- Wrist cameras that ride with the arm are a MuJoCo and Newton feature. On Isaac, place the camera in world coordinates.
-- Rendering is slower per frame than MuJoCo's offscreen path and faster per batch; the backend is for fidelity and scale, not for the inner loop of a unit test.
+- Physics runs on **CPU PhysX**: `device` is reported as `device_requested` but not forwarded, because the GPU pipeline breaks incremental `add_robot`. Rendering uses the GPU.
+- Rendering is slower per frame than MuJoCo's offscreen path and faster per batch; the backend is for fidelity and scale, not for unit-test inner loops.
 - `remove_robot` deletes the articulation prim from the stage, and like a dynamic `remove_object` it invalidates the tensor view: `step()` and `send_action()` refuse until the next `reset()` rebuilds it. Build the scene and reset before posing anything.
