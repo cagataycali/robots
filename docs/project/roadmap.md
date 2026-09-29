@@ -4,7 +4,7 @@ description: What 1.0 keeps, what it replaces, where it is built, and what chang
 
 # Roadmap: the road to 1.0
 
-`main` is 0.5.x. Version 1.0 is a rewrite in progress, built in the open at [github.com/cagataycali/stobor](https://github.com/cagataycali/stobor) with its own site, [cagataycali.github.io/stobor](https://cagataycali.github.io/stobor/). After this page you know what 1.0 keeps, what it replaces, and what changes for a user of 0.5.x.
+`main` is 0.5.x. Version 1.0 is a rewrite in progress, built in the open at [github.com/cagataycali/stobor](https://github.com/cagataycali/stobor) with its own site, [cagataycali.github.io/stobor](https://cagataycali.github.io/stobor/). This page says what 1.0 keeps, replaces and changes for a 0.5.x user.
 
 ## Why a rewrite
 
@@ -38,6 +38,6 @@ Registry rows, robot names and aliases, wire protocols and safety postures carry
 
 ## How it lands
 
-The stobor repository is the staging ground; every file lands in `strands-labs/robots` by path, unrenamed, in reviewed pull requests once the acceptance suite is green on hardware as well as headless. Until then `main` stays 0.5.x and receives fixes. Progress is on the stobor site: the [contracts](https://cagataycali.github.io/stobor/contracts/robot/), the [coverage matrix](https://cagataycali.github.io/stobor/robots/) with a witness mark per cell, the [acceptance page](https://cagataycali.github.io/stobor/reference/acceptance/).
+The stobor repository is the staging ground; every file lands in `strands-labs/robots` by path, unrenamed, in reviewed pull requests once the acceptance suite is green on hardware as well as headless. Until then `main` stays 0.5.x and receives fixes. Progress: the [contracts](https://cagataycali.github.io/stobor/contracts/robot/), the [coverage matrix](https://cagataycali.github.io/stobor/robots/) with a witness mark per cell, the [acceptance page](https://cagataycali.github.io/stobor/reference/acceptance/).
 
 No date is promised; done is the acceptance run, not a calendar.
