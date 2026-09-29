@@ -564,7 +564,7 @@ class URDriver:
         if action == "state":
             envelope = self.state()
         elif action == "status":
-            envelope = {"status": "success", "content": [{"json": await self.get_status()}]}
+            envelope = await self.get_status()  # already the envelope (#4151)
         elif action == "stop":
             # ``stop`` is the protocol's shutdown hook and returns ``None``, so
             # an envelope built beside it could only restate the intent.
