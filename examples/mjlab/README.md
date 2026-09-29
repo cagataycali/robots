@@ -72,7 +72,56 @@ What the table says:
 
 ## 02 Every arm, one night
 
-Results follow (running).
+`02_every_arm_one_night.py --all-arms --num-envs 1024` walks every arm the registry
+can simulate (20 today), builds an mjlab reach task for each from the registry
+entry alone (end effector = the first site, else the deepest leaf body), trains
+200 PPO iterations with one fixed recipe, exports ONNX, and plays 20 goals on
+classic MuJoCo (`SimEngine`) through the `rsl_rl_onnx` provider. Same wall-clock
+budget for every arm; nothing per-robot except three facts read from the model.
+
+Two things the sweep needed before it was fair:
+
+- **reach scaling.** The so101 recipe's reward stds (3 cm coarse, 15 cm fine) and
+  its 2 cm success radius are tuned for a 0.4 m arm. Verbatim, arx_l5 (0.81 m)
+  stalled at `at_goal` 0.014 and scored 1/20. Stds and the success radius are
+  scaled by `max(1, reach / 0.4 m)`, where reach is measured by sampling 4,096
+  random joint configurations on the compiled model (`reachable` in the json).
+  The verbatim run is kept under `results/every_arm_verbatim/` as evidence.
+- **an armature floor.** Menagerie `gen3.xml` declares no joint armature with
+  kp 2000 / 500 position actuators; under random targets the wrist rings at
+  347 rad/s in mjlab and 194 rad/s in classic MuJoCo (fr3, which has armature:
+  2.8 rad/s), so `joint_vel_l2` dominates the reward and PPO learns to freeze
+  (`at_goal` 0.003). Zero-armature actuated joints get armature 0.1 before
+  compiling, in both the training spec and the evaluation plant. kinova_gen3 went
+  0/20 to 10/20 with it; the no-floor run is kept under
+  `results/every_arm_noarmature_kinova_gen3/`.
+
+Rows landed so far (the sweep is still running; the table is regenerated from
+`results/every_arm/*/result.json` when it finishes):
+
+| arm | DoF | end effector | reach m | at_goal (last 10 its) | train min | env-steps/s | classic MuJoCo 20 targets | median err mm | status |
+|---|---|---|---|---|---|---|---|---|---|
+| arx_l5 | 7 | body link7 | 0.81 | 0.59 | 8.1 | 10,271 | 15/20 | 45 | done |
+| dynamixel_2r | 2 | body second_segment | 0.63 | 0.96 | 6.1 | 14,106 | 20/20 | 2 | done |
+| fr3 | 7 | site attachment_site | 1.19 | 0.24 | 6.9 | 12,286 | 9/20 | 105 | done |
+| fr3_v2 | 7 | body fr3v2_link8 | 1.19 | 0.26 | 6.8 | 12,583 | 8/20 | 95 | done |
+| kinova_gen3 | 7 | site pinch_site | 1.18 | 0.40 | 10.4 | 8,667 | 10/20 | 88 | done |
+| koch | 6 | body gripper_moving_finger | 0.33 | 0.81 | 8.8 | 9,570 | 18/20 | 6 | done |
+| kuka_iiwa | 7 | site attachment_site | 1.30 | 0.82 | 6.9 | 12,702 | 20/20 | 17 | done |
+| openarm | 8 | body openarm_right_finger | 0.61 | 0.00 | 12.7 | 6,888 |  |  | KeyError: 'openarm_joint1' |
+| panda | 7 | body left_finger | 1.23 | 0.26 | 8.7 | 9,661 | 7/20 | 116 | done |
+
+8 arms trained; 5 reach at least 10/20 on classic MuJoCo with the one recipe.
+
+Reading the table: a 2-DoF arm and the 7-DoF iiwa both solve the task in 200
+iterations; the 1.2 m Franka-class arms (fr3, fr3_v2, panda) do not, and their
+median error (95 to 116 mm) says under-training, not failure: their `at_goal`
+was still climbing at iteration 200. That is the point of a fixed budget: it
+tells you which arms need more than one recipe. dynamixel_2r first scored 9/20
+because its MJCF lists actuators R2, R1 while joint order is R1, R2; the
+example's forward kinematics now index by joint name (FINDINGS F9). openarm
+fails because the registry's `model_xml` is the single arm while `scene_xml` is
+the bimanual scene (F13).
 
 ## 03 Humanoid beyond velocity
 
