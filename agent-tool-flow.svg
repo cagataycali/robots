@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="330" viewBox="0 0 1180 330" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5f6368"/></marker></defs>
+<rect width="1180" height="330" fill="#fff"/>
+<text x="20" y="32" font-size="18" font-weight="600" fill="#202124">sim.run_agent(agent, prompt): the agent thinks on a worker, Kit runs on the thread that owns it</text>
+<rect x="20" y="60" width="330" height="170" rx="12" fill="#e8f0fe" stroke="#1a73e8"/>
+<text x="36" y="88" font-size="15" font-weight="600" fill="#202124">worker thread</text>
+<text x="36" y="116" font-size="13" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">agent(prompt)</text>
+<text x="36" y="138" font-size="13" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">  -> tool call {"action": "step"}</text>
+<text x="36" y="160" font-size="13" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">  -> IsaacSimulation.stream()</text>
+<text x="36" y="182" font-size="13" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">  -> run_on_main(job) and wait</text>
+<path d="M352 150 L470 150" stroke="#5f6368" stroke-width="2" marker-end="url(#a)"/>
+<text x="362" y="140" font-size="12" fill="#5f6368">job queue</text>
+<rect x="475" y="60" width="330" height="170" rx="12" fill="#e6f4ea" stroke="#1e8e3e"/>
+<text x="491" y="88" font-size="15" font-weight="600" fill="#202124">main thread (SimulationApp)</text>
+<text x="491" y="116" font-size="13" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">run_pump_forever(stop=done)</text>
+<text x="491" y="138" font-size="13" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">  picks the job up within 5 ms</text>
+<text x="491" y="160" font-size="13" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">  sim.step() on the Kit thread</text>
+<text x="491" y="182" font-size="13" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">  result back to the worker</text>
+<rect x="830" y="60" width="330" height="170" rx="12" fill="#fff" stroke="#dadce0"/>
+<text x="846" y="88" font-size="15" font-weight="600" fill="#202124">measured, one L40S</text>
+<text x="846" y="116" font-size="13" fill="#a50e0e">before: Agent(tools=[sim]) -> 0 tools</text>
+<text x="846" y="138" font-size="13" fill="#0d652d">now: 1 tool, 43 actions</text>
+<text x="846" y="166" font-size="13" fill="#a50e0e">before: worker send_action 75 ms (13 Hz)</text>
+<text x="846" y="188" font-size="13" fill="#0d652d">now: 7.2 ms (139 Hz); main thread 2.0 ms</text>
+<text x="846" y="216" font-size="13" fill="#0d652d">Bedrock agent: 7 calls, 28 s, no errors</text>
+<text x="20" y="270" font-size="13" fill="#5f6368">Without the pump, a worker tool call is refused with this recipe instead of blocking forever.</text>
+</svg>
