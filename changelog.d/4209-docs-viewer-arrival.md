@@ -12,4 +12,4 @@ the `robot.act` line a slider just changed, and a mono clock reads the simulated
 time while Physics is on. Compile and Reset both land on the model's first
 keyframe when it has one. Every motion is skipped under `prefers-reduced-motion`,
 which the stage now honours inside its own shadow root, pinned by
-`tests/test_docs_viewer_arrival.py`.
+`tests/test_docs_viewer_arrival.py` (#4209).
