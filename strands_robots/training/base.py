@@ -567,6 +567,16 @@ class Trainer(ABC):
         return None
 
     @property
+    def needs_dataset(self) -> bool:
+        """Whether :meth:`train` reads a LeRobotDataset (``dataset_root`` / ``dataset_repo_id``).
+
+        ``True`` for every post-tuning backend. An RL trainer that learns
+        against the simulator (``rsl_rl`` on mjlab) overrides to ``False`` so
+        the ``train_policy`` tool does not demand a data source it never reads.
+        """
+        return True
+
+    @property
     def hardware_floor(self) -> dict[str, Any]:
         """Return the advisory minimum hardware for the ``plan`` advisor.
 

@@ -319,6 +319,10 @@
     "rsl_rl_onnx": {
       "module": "strands_robots.policies.rsl_rl_onnx",
       "class": "RslRlOnnxPolicy",
+      "trainer": {
+        "module": "strands_robots.training.rsl_rl",
+        "class": "RslRlTrainer"
+      },
       "description": "Deterministic rollout of an rsl_rl actor exported to ONNX by mjlab (metadata-driven observation rebuild; JointPositionAction decode)",
       "requires": [
         "onnxruntime"

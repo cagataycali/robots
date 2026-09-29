@@ -253,11 +253,15 @@ def train_policy(
                 ],
             }
 
-        # All remaining actions need a spec.
-        if not (dataset_root or dataset_repo_id) or not output_dir:
+        # All remaining actions need a spec. The data-source gate is the
+        # trainer's to waive: an RL trainer (``rsl_rl``) learns against the
+        # simulator and reads no dataset, so it declares ``needs_dataset=False``.
+        trainer = create_trainer(provider)
+        if not output_dir:
+            return _err("output_dir is required")
+        if getattr(trainer, "needs_dataset", True) and not (dataset_root or dataset_repo_id):
             return _err("a data source (dataset_root or dataset_repo_id) and output_dir are required")
 
-        trainer = create_trainer(provider)
         spec = TrainSpec(
             dataset_root=dataset_root or "",
             dataset_repo_id=dataset_repo_id,
