@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +41,7 @@ SOCKETS = ["/ws/mesh", "/ws/camera/peer/cam", "/ws/agent", "/ws/voice", "/ws/tel
 
 
 @pytest.fixture()
-def sealed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+def sealed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
     """An enrolled dashboard and the cookie its owner's browser holds."""
     monkeypatch.setattr(settings, "SETTINGS_FILE", tmp_path / "settings.json")
     settings.clear_overrides()
