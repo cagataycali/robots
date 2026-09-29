@@ -643,6 +643,30 @@ def _is_camera_ref(topic: str) -> bool:
     return len(parts) >= 5 and parts[0] == "strands" and parts[2] == "camera" and parts[-1] == "ref"
 
 
+#: Robot-side opt-in: publish camera frames that fit under :data:`DIRECT_PAYLOAD_CAP`
+#: over MQTT instead of dropping them. Off by default; the designed path for a
+#: fleet with a bucket is :mod:`~strands_robots.mesh.iot.camera_offload`.
+INLINE_CAMERA_ENV = "STRANDS_MESH_IOT_CAMERA_INLINE"
+
+
+def inline_camera_opted_in() -> bool:
+    """True when the robot process set :data:`INLINE_CAMERA_ENV` to a truthy word.
+
+    Raises:
+        ValueError: The variable holds a word that is not a boolean; a privacy
+            and cost switch fails loud rather than silently staying off.
+    """
+    from strands_robots.mesh._zenoh_config import _bool_env  # type: ignore[import-untyped]
+
+    return bool(_bool_env(INLINE_CAMERA_ENV, default=False))
+
+
+def _is_camera_frame(topic: str) -> bool:
+    """True for ``strands/<peer>/camera/<cam>``: a frame, not a ``/ref`` pointer."""
+    parts = topic.split("/")
+    return len(parts) >= 4 and parts[0] == "strands" and parts[2] == "camera" and not _is_camera_ref(topic)
+
+
 def _should_drop(topic: str) -> bool:
     """True if the topic's payload should never traverse MQTT (camera/input/hand).
 
@@ -728,6 +752,8 @@ class IotMqttTransport:
         self._client: Any | None = None
         self._connected = threading.Event()
         self._lock = threading.Lock()
+        # Camera topics whose inline frame already exceeded the payload cap once (warned).
+        self._oversize_camera_topics: set[str] = set()
         # topic_filter -> list of handlers (multiple subs to same topic OK)
         self._handlers: dict[str, list[Callable[[Any], None]]] = {}
         # Direct Messaging state. The HTTPS client is built lazily on the first
@@ -1163,11 +1189,14 @@ class IotMqttTransport:
         if self._client is None or not self._connected.is_set():
             return
 
-        if _should_drop(key):
+        inline_frame = _is_camera_frame(key) and inline_camera_opted_in()
+        if _should_drop(key) and not inline_frame:
             return
 
         qos, retain = _qos_and_retain_for(key)
-        if qos < 0:
+        if inline_frame:
+            qos, retain = 0, False
+        elif qos < 0:
             return  # explicit DROP
 
         # Encoded BEFORE the publish attempt, and outside its handler: a payload
@@ -1180,6 +1209,24 @@ class IotMqttTransport:
             encoded = json.dumps(data).encode()
         except Exception as exc:  # noqa: BLE001 - the encoder's raise set is payload-defined
             _report_unencodable_payload("MQTT", key, exc)
+            return
+
+        if inline_frame and len(encoded) > DIRECT_PAYLOAD_CAP:
+            # The broker refuses anything over the cap and closes the session;
+            # dropping here keeps the connection up. Once per topic: a camera
+            # loop at 5 Hz would otherwise write the same line 300 times a minute.
+            with self._lock:
+                first = key not in self._oversize_camera_topics
+                self._oversize_camera_topics.add(key)
+            if first:
+                logger.warning(
+                    "%s: inline camera frame is %d bytes, over the %d byte AWS IoT payload cap; dropped. "
+                    "Lower the resolution or STRANDS_MESH_CAMERA_HZ, or set STRANDS_MESH_CAMERA_S3_BUCKET "
+                    "for the S3 reference path",
+                    key,
+                    len(encoded),
+                    DIRECT_PAYLOAD_CAP,
+                )
             return
 
         try:
