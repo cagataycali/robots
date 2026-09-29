@@ -519,6 +519,9 @@ _NOT_AN_INPUT_DOMAIN = {
     "rollout_rate_mismatch_reason": "compares already-validated rates",
     # Reads a pose back off the USD stage - not caller input.
     "_prim_body_state": "reads state out of the engine",
+    # Isaac set_joint_positions' range check runs on the map
+    # _coerce_joint_state_map has already accepted, which refuses a boolean.
+    "_joint_range_error": "checks values _coerce_joint_state_map already accepted",
     # Measures the distance between a target _validate_move_to_args has already
     # coerced (its position runs through coerce_pose_vector, which refuses a
     # boolean component) and the engine-owned robot base position - a boolean
