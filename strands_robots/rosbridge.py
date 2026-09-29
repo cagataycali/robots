@@ -5,7 +5,7 @@ The WebSocket mechanics behind ``use_rosbridge``: one long-lived
 ``rosapi`` node's services, and the topic / service / host / port domains this
 transport can carry. Two surfaces need them - the agent-facing
 :mod:`~strands_robots.tools.use_rosbridge` tool and
-:class:`~strands_robots.mesh.rosbridge_robot.RosbridgeRobot`, which drives a
+:class:`~strands_robots.drivers.ros.rosbridge_robot.RosbridgeRobot`, which drives a
 ROS 1 (or remote) mobile base over the same WebSocket - so they live here rather
 than inside one of the two callers.
 
@@ -136,7 +136,7 @@ def _transport_port_error(port: int, param: str, context: str) -> str | None:
     Applied after :func:`strands_robots.utils.tcp_port_error`, which establishes
     that ``port`` is an ``int`` in the 16-bit space, so this only has to place it
     against the transport's own ceiling. Shared with
-    :class:`strands_robots.mesh.rosbridge_robot.RosbridgeRobot`, which reaches
+    :class:`strands_robots.drivers.ros.rosbridge_robot.RosbridgeRobot`, which reaches
     this transport through this module, so the two cannot disagree about which
     ports it can carry.
 
@@ -401,7 +401,7 @@ def rosbridge_action(
             :mod:`strands_robots._command_gate` exists to prevent. The numeric
             domains of ``timeout`` / ``count`` / ``rate`` belong to the caller
             too - an agent tool reports a malformed option, while a mesh bridge
-            such as :class:`~strands_robots.mesh.RosbridgeRobot` has already
+            such as :class:`~strands_robots.drivers.ros.RosbridgeRobot` has already
             refused one at its own seam, naming the verb its caller invoked.
 
     Returns:

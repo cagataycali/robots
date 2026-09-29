@@ -439,3 +439,19 @@ def test_gait_policy_registered_and_round_trips():
     # shorthand
     p2 = create_policy("sonic_gait", allow_missing_models=True)
     assert p2.provider_name == "wbc_gait"
+
+
+@pytest.mark.parametrize("checkpoint_kind", ["none", "empty_dir"])
+def test_missing_checkpoint_error_names_the_gait_family(monkeypatch, tmp_path, checkpoint_kind) -> None:  # type: ignore[no-untyped-def]
+    # The gait variant must not send the user after the non-gait Balance/Walk
+    # pair, which its own width check refuses; it names the 570-wide family.
+    from strands_robots.policies.wbc import policy as wbc_policy
+
+    monkeypatch.setattr(wbc_policy, "require_optional", lambda *a, **k: object())
+    checkpoint = None if checkpoint_kind == "none" else str(tmp_path)
+    with pytest.raises(RuntimeError) as excinfo:
+        create_policy("wbc_gait", checkpoint=checkpoint)
+    message = str(excinfo.value)
+    assert message.startswith("WBCGaitPolicy ")
+    assert "[batch, 570]" in message and "516-wide" in message
+    assert "Obtain GR00T-WholeBodyControl-Balance.onnx" not in message

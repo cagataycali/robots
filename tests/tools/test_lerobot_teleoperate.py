@@ -16,6 +16,7 @@ from __future__ import annotations
 import builtins
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +81,7 @@ def test_build_replay_command_uses_nested_dataset_and_robot_args() -> None:
         replay_episode=5,
         display_data=True,
     )
-    assert cmd[:3] == ["python", "-m", "lerobot.scripts.lerobot_replay"]
+    assert cmd[:3] == [sys.executable, "-m", "lerobot.scripts.lerobot_replay"]
     assert cmd[cmd.index("--dataset.episode") + 1] == "5"
     assert cmd[cmd.index("--dataset.repo_id") + 1] == "user/cubes"
     assert cmd[cmd.index("--robot.type") + 1] == "so101_follower"
@@ -114,7 +115,7 @@ def test_build_replay_command_routes_bimanual_arm_ports() -> None:
         robot_left_arm_port="/dev/ttyACM0",
         robot_right_arm_port="/dev/ttyACM1",
     )
-    assert cmd[:3] == ["python", "-m", "lerobot.scripts.lerobot_replay"]
+    assert cmd[:3] == [sys.executable, "-m", "lerobot.scripts.lerobot_replay"]
     assert cmd[cmd.index("--robot.left_arm_port") + 1] == "/dev/ttyACM0"
     assert cmd[cmd.index("--robot.right_arm_port") + 1] == "/dev/ttyACM1"
     # No single robot_port was given, so the single-arm flag must be absent.
@@ -910,7 +911,7 @@ def _dagger_cmd(**overrides: Any) -> list[str]:
 
 def test_build_dagger_command_uses_rollout_with_dagger_strategy() -> None:
     cmd = _dagger_cmd()
-    assert cmd[:3] == ["python", "-m", "lerobot.scripts.lerobot_rollout"]
+    assert cmd[:3] == [sys.executable, "-m", "lerobot.scripts.lerobot_rollout"]
     assert "--robot.type" in cmd and "so101_follower" in cmd
     assert "--teleop.type" in cmd and "so101_leader" in cmd
     assert "--policy.path" in cmd and "user/act_fold" in cmd

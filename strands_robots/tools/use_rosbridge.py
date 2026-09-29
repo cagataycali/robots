@@ -25,7 +25,7 @@ can get wrong, the operator gate, and the tool docstring a model reads. The
 transport itself - the long-lived ``roslibpy.Ros`` per ``(host, port)``, the
 ``rosapi`` graph introspection, the host / port / name domains and the action
 dispatch - is :mod:`strands_robots.rosbridge`, which
-:class:`~strands_robots.mesh.rosbridge_robot.RosbridgeRobot` forwards through
+:class:`~strands_robots.drivers.ros.rosbridge_robot.RosbridgeRobot` forwards through
 as well.
 
 Actions:
