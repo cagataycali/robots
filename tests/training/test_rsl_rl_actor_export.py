@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -84,7 +85,7 @@ def write_rsl_rl_run(
     return run_dir / f"model_{iteration}.pt", actor
 
 
-def _reference(actor: dict, x: torch.Tensor, activation: str = "elu") -> torch.Tensor:
+def _reference(actor: dict, x: Any, activation: str = "elu") -> Any:
     """rsl_rl's MLPModel forward, by hand."""
     if "obs_normalizer._mean" in actor:
         x = (x - actor["obs_normalizer._mean"]) / (actor["obs_normalizer._std"] + 1e-2)
