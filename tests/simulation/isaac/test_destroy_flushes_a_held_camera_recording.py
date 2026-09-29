@@ -27,7 +27,6 @@ on a skeleton engine built with ``__new__`` (no Isaac Kit runtime):
 from __future__ import annotations
 
 import logging
-import threading
 import types
 
 import numpy as np
@@ -35,9 +34,9 @@ import pytest
 
 pytest.importorskip("strands_robots.simulation.isaac")
 
-from strands_robots.simulation.isaac.config import IsaacConfig  # noqa: E402
-from strands_robots.simulation.isaac.simulation import IsaacSimulation, _CameraState  # noqa: E402
+from strands_robots.simulation.isaac.simulation import _CameraState  # noqa: E402
 from tests._blocked_module import blocked  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 _CAMERAS = ["front", "wrist"]
 _FRAMES = 4
@@ -60,25 +59,10 @@ class _FakeCameraHandle:
 
 def _engine(output_dir, *, width: int = 32, height: int = 24):
     """A skeleton engine that can both record cameras and be destroyed."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._config = IsaacConfig(render_mode="headless")
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
     # A world stub so destroy()'s teardown path runs without the Kit runtime.
     engine._world = types.SimpleNamespace(stop=lambda: None, clear_instance=lambda: None)
     engine._world_created = True
-    engine._robots = {}
-    engine._action_controllers = {}
-    engine._objects = {}
-    engine._prim_registry = []
-    engine._cams_rec_state = None
-    engine._recording_state_dict = {}
-    engine._num_envs_active = 1
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._main_tid = threading.get_ident()
-    engine._obs_noise = None
-    engine._obs_noise_rng = None
-    engine._cameras = {}
     for name in _CAMERAS:
         cam = _CameraState(name=name, prim_path=f"/World/Cameras/{name}", width=width, height=height)
         cam.handle = _FakeCameraHandle(np.zeros((height, width, 4), dtype=np.uint8))

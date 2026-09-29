@@ -7,7 +7,7 @@ description: "Bi-manual OpenArm (dual-arm coordination)"
 
 # Bi-manual OpenArm (dual-arm coordination)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="bimanual">Bimanual</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
+{{robot_chips:bi_openarm}}
 
 The registry ships no simulation asset for it, so `Robot("bi_openarm")` in the default sim mode refuses by name.
 

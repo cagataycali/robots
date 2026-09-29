@@ -279,11 +279,8 @@ class TestAnExistingDatasetIsResumedNotRecreated:
             dr._prepare_create_target(addressed, overwrite=False)
 
 
-_START_RECORDING_BACKENDS = (
-    "strands_robots/simulation/mujoco/recording.py",
-    "strands_robots/simulation/isaac/recording.py",
-    "strands_robots/simulation/newton/recording.py",
-)
+#: The one module whose ``start_recording`` every backend inherits.
+_START_RECORDING_BACKENDS = ("strands_robots/simulation/recording.py",)
 
 #: This repository, located from this file. Every path below is joined onto it:
 #: a relative literal resolves against the working directory, so the reads here

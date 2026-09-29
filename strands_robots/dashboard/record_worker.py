@@ -10,8 +10,33 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from strands_robots.dashboard import record_motion
+from strands_robots.dashboard.log_redaction import one_line
 
 logger = logging.getLogger(__name__)
+
+
+def recorder_error_summary(info: dict[str, Any]) -> str:
+    """The sentence a browser may see about a recorder error, derived from no exception text.
+
+    ``DatasetRecorder`` answers an error with ``message`` (its full words, which may
+    quote an exception and so a path, a token or a traceback), plus ``reason`` when the
+    refusal is the recorder's own sentence or ``error_type`` when a call raised. Only
+    the latter two reach the operator's screen; the caller logs ``message``.
+
+    Args:
+        info: The recorder's ``status="error"`` dict.
+
+    Returns:
+        ``reason`` when present, else ``error_type``, else ``"no reason given"``.
+    """
+    reason = info.get("reason")
+    if isinstance(reason, str) and reason.strip():
+        return reason.strip()
+    kind = info.get("error_type")
+    if isinstance(kind, str) and kind.strip():
+        return kind.strip()
+    return "no reason given"
+
 
 THUMB_MAX_WIDTH = 160
 
@@ -153,11 +178,11 @@ def upload_verdict(
     if status == "success":
         return {"ok": True, "detail": f"pushed to {(result or {}).get('repo_id') or dataset}"}
     if status == "error":
-        # The recorder's own message names the cause (empty dataset, 403, no token).
-        return {
-            "ok": False,
-            "detail": f"saved locally, upload REFUSED: {(result or {}).get('message') or 'no reason given'}",
-        }
+        # The recorder's own reason names the cause it decided itself (empty dataset,
+        # bad flag); a Hub failure is named by its kind. The Hub's own words are in
+        # ``message`` and go to the log, not to the browser.
+        logger.error("[record] upload refused: %s", one_line(str((result or {}).get("message", ""))))
+        return {"ok": False, "detail": f"saved locally, upload REFUSED: {recorder_error_summary(result or {})}"}
     # An unrecognised answer is not evidence of a push. Saying "pushed" here is
     # the exact lie this function exists to remove.
     return {
@@ -302,7 +327,10 @@ class RecordWorker:
                 return self.session()
             info = self._recorder.save_episode()
             if isinstance(info, dict) and info.get("status") == "error":
-                self._last_error = str(info.get("message", "save_episode failed"))
+                # the recorder's full words (exception text included) go to the log;
+                # the browser learns the recorder's own reason or the kind of failure
+                logger.error("[record] save_episode failed: %s", one_line(str(info.get("message", ""))))
+                self._last_error = f"save_episode failed: {recorder_error_summary(info)}"
                 return self.session()
             ep.duration_s = self._clock() - ep.started_at
             self._episodes.append(ep)

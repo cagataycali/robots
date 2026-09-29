@@ -37,7 +37,6 @@ was written.
 
 from __future__ import annotations
 
-import queue
 import threading
 import types
 from typing import Any
@@ -47,7 +46,7 @@ import pytest
 
 pytest.importorskip("strands_robots.simulation.isaac")
 
-from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 
 class _Articulation:
@@ -66,14 +65,11 @@ class _Articulation:
 
 
 def _engine(*, pump_running: bool) -> tuple[Any, _Articulation]:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
     engine._world_created = True
     engine._world = types.SimpleNamespace()
-    engine._action_q = queue.Queue()
     engine._pump_running = pump_running
     # Recorded on THIS thread, so a call from a spawned thread is off-main.
-    engine._main_tid = threading.get_ident()
     articulation = _Articulation()
     engine._robots = {
         "arm": types.SimpleNamespace(  # type: ignore[dict-item]

@@ -163,28 +163,16 @@ class TestThePremise:
 
 
 class TestEveryBackendConsultsTheGuard:
-    """A backend that declares a dataset schema declares it from the collapse.
-
-    Derived from the packages that ship a ``start_recording``, so a backend
-    added later is graded on arrival rather than being outside a list written
-    today.
-    """
+    """The one ``start_recording`` every backend inherits consults the collapse."""
 
     @staticmethod
     def _recording_modules() -> dict[str, str]:
-        import strands_robots.simulation as simulation
+        import inspect
+        import textwrap
 
-        root = _source_file(simulation).parent
-        found = {}
-        for path in sorted(root.glob("*/recording.py")):
-            source = path.read_text()
-            if "def start_recording" in source:
-                found[path.parent.name] = source
-        return found
+        from strands_robots.simulation.recording import DatasetRecordingMixin
 
-    def test_more_than_one_backend_is_graded(self):
-        # Without this the rules below pass on an empty inventory.
-        assert len(self._recording_modules()) >= 2, sorted(self._recording_modules())
+        return {"shared": textwrap.dedent(inspect.getsource(DatasetRecordingMixin.start_recording))}
 
     def test_every_backend_calls_the_guard_from_start_recording(self):
         missing = []

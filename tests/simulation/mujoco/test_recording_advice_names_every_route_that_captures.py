@@ -48,26 +48,13 @@ _DENIAL_MARKERS = ("cannot feed", "cannot fill", "do not feed", "does not feed",
 
 
 def _advice() -> str:
-    """The success text ``start_recording`` replies with, read from its source.
+    """The capture advice ``start_recording`` replies with on this backend.
 
-    Located by the marker it opens with rather than by joining every literal in
-    the function: the body also holds refusal texts and dict keys, and joining
-    those made a single-word check pass on prose that says nothing about
-    capture. Interpolations (``{fps}``) drop out, so assertions here avoid
-    spanning one.
+    Read from the class constant the shared reply formats, so the refusal texts
+    in the method body cannot satisfy a check. ``{fps}`` is formatted in at reply
+    time, so assertions here avoid spanning it.
     """
-    tree = ast.parse(inspect.getsource(recording))
-    start_recording = next(
-        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "start_recording"
-    )
-    for node in ast.walk(start_recording):
-        if isinstance(node, ast.JoinedStr):
-            text = "".join(
-                part.value for part in node.values if isinstance(part, ast.Constant) and isinstance(part.value, str)
-            )
-            if "Recording to LeRobotDataset" in text:
-                return text
-    raise AssertionError("start_recording has no success text naming the dataset it opened")
+    return recording.RecordingMixin._RECORDING_REPLY_TAIL
 
 
 def _names(text: str, name: str) -> bool:
