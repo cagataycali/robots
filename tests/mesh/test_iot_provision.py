@@ -94,15 +94,12 @@ def fake_iot_client():
         "policyVersionId": "1",
     }
 
-    # create_keys_and_certificate
-    iot.create_keys_and_certificate.return_value = {
+    # create_certificate_from_csr: the key is generated locally, only the
+    # request reaches AWS, so the response carries the certificate alone.
+    iot.create_certificate_from_csr.return_value = {
         "certificateArn": "arn:aws:iot:us-west-2:123456789012:cert/abc123def456",
         "certificateId": "abc123def456",
         "certificatePem": "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n",
-        "keyPair": {
-            "PrivateKey": "-----BEGIN RSA PRIVATE KEY-----\nFAKE\n-----END RSA PRIVATE KEY-----\n",
-            "PublicKey": "-----BEGIN PUBLIC KEY-----\nFAKE\n-----END PUBLIC KEY-----\n",
-        },
     }
 
     iot.describe_endpoint.return_value = {
@@ -391,7 +388,7 @@ class TestCleanupStaleCerts:
         fake_iot_client.update_certificate.assert_called_once()
         fake_iot_client.delete_certificate.assert_called_once_with(certificateId="old-cert-id-aaaaa", forceDelete=True)
         # Then the new cert is created.
-        fake_iot_client.create_keys_and_certificate.assert_called_once()
+        fake_iot_client.create_certificate_from_csr.assert_called_once()
         # And attached.
         fake_iot_client.attach_thing_principal.assert_called()
 
@@ -412,7 +409,7 @@ class TestCleanupStaleCerts:
         # Must NOT raise - proceeds to create the new cert.
         result = provision_robot("test-thing", cert_dir=tmp_cert_dir)
         assert result.thing_name == "test-thing"
-        fake_iot_client.create_keys_and_certificate.assert_called_once()
+        fake_iot_client.create_certificate_from_csr.assert_called_once()
 
     def test_cleanup_handles_missing_thing(self):
         """When list_thing_principals raises NotFound, _cleanup_stale_certs

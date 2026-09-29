@@ -21,7 +21,7 @@ from strands_robots.registry import (
 # The one canonicalisation rule, shared rather than restated: a decision keyed
 # on a provider name has to resolve the caller's spelling first, and a second
 # copy of that rule here is a second thing to keep in step with policies.json.
-from strands_robots.registry.policies import _canonical_provider_name
+from strands_robots.registry.policies import _canonical_provider_name, _url_scheme_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -212,8 +212,9 @@ def provider_can_be_created(provider: Any) -> bool:
     unknown at every hardware entry point, while ``create_policy`` built it.
 
     Optimistic where resolution is: a smart string is reported as resolving
-    (its refusal, if any, needs the network or the Hub), and a registered
-    loader is never invoked here.
+    unless its URL scheme is one no provider declares (the one refusal that
+    needs neither the network nor the Hub), and a registered loader is never
+    invoked here.
 
     Args:
         provider: Any spelling a caller may supply. ``None``/empty/non-string
@@ -227,7 +228,7 @@ def provider_can_be_created(provider: Any) -> bool:
     if _runtime_aliases.get(provider, provider) in _runtime_registry:
         return True
     if _is_smart_string(provider):
-        return True
+        return _url_scheme_refusal(provider) is None
     from strands_robots.registry.policies import policy_provider_resolves
 
     return policy_provider_resolves(provider)
@@ -366,10 +367,6 @@ def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], d
         try:
             resolved_provider, resolved_kwargs = resolve_policy(provider, **kwargs)
         except ImportError:
-            resolved_provider = None
-            resolved_kwargs = {}
-        except Exception as e:
-            logger.warning("Policy resolution failed for '%s': %s", provider, e)
             resolved_provider = None
             resolved_kwargs = {}
         if resolved_provider:

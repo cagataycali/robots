@@ -45,6 +45,7 @@ from strands_robots.mesh.iot.provision import (
     ProvisionedThing,
     provision_operator,
     provision_robot,
+    reprovision_thing,
     teardown_thing,
 )
 from strands_robots.mesh.iot.shadow import (
@@ -59,6 +60,7 @@ __all__ = [
     "ProvisionedThing",
     "provision_robot",
     "provision_operator",
+    "reprovision_thing",
     "teardown_thing",
     # Bootstrap
     "BootstrappedAccount",

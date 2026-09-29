@@ -11,6 +11,8 @@ import ast
 import inspect
 from unittest.mock import MagicMock
 
+import pytest
+
 from strands_robots.mesh.iot import bootstrap as b
 
 
@@ -381,3 +383,127 @@ def test_grant_invoke_permission_is_idempotent():
 
     assert "lambda-permission:provisioning-hook-invoke" in acct.skipped
     assert "lambda-permission:provisioning-hook-invoke" not in acct.created
+
+
+# The certificate subject gate. The robot IoT policy grants direct replies on
+# ``${iot:Certificate.Subject.CommonName}``, so a claim-cert device that
+# registers with a CSR carrying ``CN=<existing robot>`` would inherit that
+# robot's grant. The hook reads the CN off ``certificatePem`` with a stdlib
+# DER walk (Lambda has no ``cryptography``) and denies any CN that is neither
+# the ThingName nor the CN AWS writes into a certificate it generated the key
+# for.
+
+
+def _self_signed_pem(cn: str) -> str:
+    pytest.importorskip("cryptography")
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives.serialization import Encoding
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "strands-robots"),
+            x509.NameAttribute(NameOID.COMMON_NAME, cn),
+        ]
+    )
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(Encoding.PEM).decode()
+
+
+def _hook_globals() -> dict:
+    import sys
+    from unittest.mock import patch
+
+    with patch.dict(sys.modules, {"boto3": MagicMock()}):
+        g: dict = {}
+        exec(compile(b._PROVISIONING_HOOK_SOURCE, "<hook>", "exec"), g)
+        return g
+
+
+def test_the_der_walk_reads_the_cn_of_a_real_certificate():
+    g = _hook_globals()
+    assert g["certificate_cn"](_self_signed_pem("g1-robot-001")) == "g1-robot-001"
+    assert g["certificate_cn"](_self_signed_pem("AWS IoT Certificate")) == "AWS IoT Certificate"
+    assert g["certificate_cn"]("-----BEGIN CERTIFICATE-----\nbm90IGEgY2VydA==\n-----END CERTIFICATE-----\n") is None
+
+
+def test_hook_allows_a_certificate_whose_cn_is_the_thing_name():
+    res = _run_handler(
+        {
+            "parameters": {"SerialNumber": "robot-001", "ThingName": "g1-robot-001"},
+            "certificatePem": _self_signed_pem("g1-robot-001"),
+        }
+    )
+    assert res == {"allowProvisioning": True}
+
+
+def test_hook_allows_the_cn_aws_writes_into_a_generated_key_certificate():
+    res = _run_handler(
+        {
+            "parameters": {"SerialNumber": "robot-001", "ThingName": "g1-robot-001"},
+            "certificatePem": _self_signed_pem("AWS IoT Certificate"),
+        }
+    )
+    assert res == {"allowProvisioning": True}
+
+
+def test_hook_denies_a_certificate_that_names_another_robot():
+    res = _run_handler(
+        {
+            "parameters": {"SerialNumber": "robot-001", "ThingName": "g1-robot-001"},
+            "certificatePem": _self_signed_pem("so101-arm-01"),
+        }
+    )
+    assert res == {"allowProvisioning": False}
+
+
+def test_hook_denies_an_unreadable_certificate():
+    res = _run_handler(
+        {
+            "parameters": {"SerialNumber": "robot-001", "ThingName": "g1-robot-001"},
+            "certificatePem": "-----BEGIN CERTIFICATE-----\nbm90IGEgY2VydA==\n-----END CERTIFICATE-----\n",
+        }
+    )
+    assert res == {"allowProvisioning": False}
+
+
+def test_the_cn_gate_precedes_the_thing_and_allowlist_lookups():
+    # A forged CN is refused before any AWS call, so the deny cannot be
+    # turned into an allow by an existing-Thing or allowlist race.
+    fake_boto3 = MagicMock()
+    import sys
+    from unittest.mock import patch
+
+    with patch.dict(sys.modules, {"boto3": fake_boto3}):
+        g: dict = {}
+        exec(compile(b._PROVISIONING_HOOK_SOURCE, "<hook>", "exec"), g)
+        res = g["lambda_handler"](
+            {
+                "parameters": {"SerialNumber": "robot-001", "ThingName": "g1-robot-001"},
+                "certificatePem": _self_signed_pem("so101-arm-01"),
+            },
+            MagicMock(),
+        )
+    assert res == {"allowProvisioning": False}
+    # ssm is built at import; iot is only built inside the handler after the gate.
+    assert all(c.args[0] != "iot" for c in fake_boto3.client.call_args_list)
+
+
+def test_the_hook_version_was_bumped_for_the_cn_gate():
+    assert b._PROVISIONING_HOOK_VERSION >= 2
