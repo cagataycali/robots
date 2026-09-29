@@ -74,13 +74,23 @@ ISAAC_SIM_UV_INSTALL: str = (
     "--index-strategy unsafe-best-match --prerelease=allow"
 )
 
-#: Caveats that apply only to the pip route (#1803): isaacsim-kernel
-#: downgrades ``coverage`` to 7.4.4, which breaks numba (and hence
-#: robosuite/LIBERO) with a red-herring ``coverage.types.Tracer``
-#: AttributeError; and the first non-interactive import hangs on the EULA
-#: prompt without the env var.
+#: pip releases this backend has been run against end to end (create_world,
+#: add_robot, the GPU integration suite). 6.1.0.0 is the newest wheel on
+#: pypi.nvidia.com; ``ISAAC_SIM_PIP_INSTALL`` keeps the ``6.0.*`` pin that the
+#: docker tag matches, and ``==6.1.*`` with the same flags installs the other.
+ISAAC_SIM_VERIFIED_PIP_VERSIONS: tuple[str, ...] = ("6.0.1.0", "6.1.0.0")
+
+#: Caveats that apply only to the pip route (#1803), from the wheels' own
+#: requirements: ``isaacsim-kernel`` 6.0.x pins ``coverage==7.4.4``, which breaks
+#: numba (and hence robosuite/LIBERO) with a red-herring
+#: ``coverage.types.Tracer`` AttributeError - 6.1 relaxes it to ``>=7.4.4,<8``;
+#: both releases pin ``numpy==2.3.1`` and ``torch==2.11.0`` exactly, so installing
+#: into an existing environment moves those; and the first non-interactive
+#: import hangs on the EULA prompt without the env var.
 ISAAC_SIM_PIP_CAVEATS: str = (
-    "then reinstall 'pip install coverage>=7.6.1' and set OMNI_KIT_ACCEPT_EULA=YES for the first import"
+    "it pins numpy==2.3.1 and torch==2.11.0, so prefer a fresh venv; on 6.0.x reinstall "
+    "'pip install coverage>=7.6.1' afterwards (6.0 pins coverage==7.4.4); "
+    "set OMNI_KIT_ACCEPT_EULA=YES for the first import"
 )
 
 #: Pip extra users install to pull our Python helpers alongside an
@@ -150,6 +160,7 @@ __all__ = [
     "ISAAC_SIM_PIP_INSTALL",
     "ISAAC_SIM_PIP_CAVEATS",
     "ISAAC_SIM_UV_INSTALL",
+    "ISAAC_SIM_VERIFIED_PIP_VERSIONS",
     "PIP_EXTRA",
     "install_options_block",
     "install_options_inline",

@@ -3747,7 +3747,7 @@ class Robot(TeleopMixin, AgentTool):
                         "policy_provider": {
                             "type": "string",
                             "description": (
-                                "Which policy backend runs: one of cosmos3, curobo, groot, kimodo, "
+                                "Which policy backend runs: one of cosmos3, curobo, flux3_action, groot, kimodo, "
                                 "lerobot_local, microduck, mock, moveit2, protomotions, "
                                 "remote, rl, wbc, wbc_gait. "
                                 "groot (default, needs policy_port) and moveit2 dial a server; "
@@ -3774,7 +3774,8 @@ class Robot(TeleopMixin, AgentTool):
                                 "the same bag the sim tool takes. For lerobot_local: pretrained_name_or_path "
                                 "(a Hugging Face repo id or a local checkpoint dir), embodiment (the robot's "
                                 "key map, e.g. so101_real for a LeRobot SO-arm follower), policy_type, device, "
-                                "actions_per_step. For groot: api_token, observation_mapping, action_mapping. "
+                                "actions_per_step. For flux3_action: model_id, revision, camera_map. "
+                                "For groot: api_token, observation_mapping, action_mapping. "
                                 "Never host/port here: those are policy_host/policy_port. An entry the "
                                 "provider does not take is the provider's own refusal, before the arm moves."
                             ),
