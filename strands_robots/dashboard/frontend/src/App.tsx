@@ -14,6 +14,8 @@ import FleetBar from './components/FleetBar'
 import { getRecordApi } from './lib/recordApi'
 import RobotCard from './components/RobotCard'
 import { armHosts } from './lib/armHosts'
+import RegistryCard from './components/RegistryCard'
+import { useRegistry, registryCards } from './lib/useRegistry'
 import RobotDetail from './components/RobotDetail'
 import AgentDock from './components/AgentDock'
 import SettingsDrawer from './components/SettingsDrawer'
@@ -154,6 +156,12 @@ function Dashboard() {
   // A host process is not a robot: its `<host>__<robot>` children carry the joints, the cameras
   // and a Run button that routes back to it, so a card of its own is a second, broken robot.
   const cards = useMemo(() => list.filter(p => !fleetHosts[p.peer_id]), [list, fleetHosts])
+
+  // Provisioned IoT Things that are not speaking: grey cards after the live ones.
+  const registry = useRegistry(10_000, loaded)
+  const thingCards = useMemo(
+    () => registryCards(registry, list.map(p => p.peer_id)),
+    [registry, list])
 
   const pairInputs = useMemo(() => list.map(q => ({
     peer_id: q.peer_id, joints: Object.keys(q.state?.joints ?? {}).length,
@@ -396,6 +404,23 @@ function Dashboard() {
             />
             </ErrorBoundary>
           ))}
+          {thingCards.map(t => (
+            <ErrorBoundary key={`thing:${t.thing_name}`} label={`the registry card for ${t.thing_name}`}>
+              <RegistryCard thing={t} />
+            </ErrorBoundary>
+          ))}
+          {registry && registry.status !== 'ok' && (
+            <div className="registry-bar" role="status">
+              <span className="reachchip registry">registry</span>
+              <span>IoT registry: {registry.detail || registry.status}</span>
+            </div>
+          )}
+          {registry && registry.status === 'ok' && (
+            <div className="registry-bar" role="status">
+              <span className="reachchip registry">registry</span>
+              <span>{registry.count ?? registry.things.length} things in {registry.region ?? 'the account'}{registry.indexed ? '' : ' · no connectivity index'}</span>
+            </div>
+          )}
         </main>
       )}
 

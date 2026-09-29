@@ -514,6 +514,7 @@ a:hover { color: var(--accent-bright); }
 }
 .typebadge.robot { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
 .typebadge.sim { color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.typebadge.thing { color: var(--dim); background: color-mix(in srgb, var(--dim) 13%, transparent); }
 .peername {
   font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text);
   background: none; border: none; cursor: pointer; text-align: left;
@@ -1643,6 +1644,23 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
   border: 1px dashed var(--border-hi); color: var(--dim);
   background: transparent; white-space: nowrap; cursor: help;
 }
+/* Transport reach: lan (Zenoh), iot (AWS IoT Core), both (bridge). A fact about the path, so
+   it is a quiet pill; the one accent is reserved for iot, the path that crosses a network edge. */
+.reachchip {
+  font-size: var(--fs-micro); letter-spacing: .08em; text-transform: uppercase; font-family: var(--mono);
+  padding: 2px var(--s3); border-radius: var(--rpill); border: 1px solid var(--border-hi);
+  color: var(--dim); background: transparent; white-space: nowrap; cursor: help;
+}
+.reachchip.iot { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.reachchip.both { color: var(--text); border-color: var(--accent); }
+.card-head .reachchip { flex-shrink: 0; }
+/* A provisioned Thing nobody has heard: grey by design, with the last time it spoke. */
+.card.registry { opacity: .55; border-style: dashed; }
+.card.registry .peername { cursor: default; }
+.card.registry .regnote { font-size: var(--fs-tiny); color: var(--dim); margin-top: var(--s2); }
+.card.registry .regattrs { font-family: var(--mono); font-size: var(--fs-micro); color: var(--dim); margin-top: var(--s2); word-break: break-all; }
+.registry-bar { grid-column: 1 / -1; font-size: var(--fs-tiny); color: var(--dim); display: flex; gap: var(--s3); align-items: center; }
+.registry-bar .reachchip { cursor: default; }
 .boardlist .small { font-size: var(--fs-tiny); }
 .boardlist .warn, p.warn { color: var(--amber); }
 

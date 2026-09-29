@@ -51,6 +51,7 @@ from strands_robots.dashboard.mesh_bridge import (
 from strands_robots.dashboard.refusals import RefusalTally
 from strands_robots.dashboard.routes_auth import _json_body
 from strands_robots.dashboard.teleop_health import published_frames, teleop_health
+from strands_robots.dashboard.ttl_cache import TTLCache
 from strands_robots.dashboard.ws_observability import (
     CloseLogThrottle,
     cap_note,
@@ -689,6 +690,52 @@ async def _restart_mesh(request: Request, *, force: bool = False) -> dict[str, A
 async def get_mesh_config(request: Request, _: dict = Depends(access.require_session)) -> dict[str, Any]:
     """Mesh posture: endpoints, auth mode, peer counts, the stored ``mesh`` settings."""
     return cast("dict[str, Any]", _bridge(request).mesh_info())
+
+
+#: One registry read per 30 s at most, whatever the page's poll cadence.
+IOT_REGISTRY_TTL_S = 30.0
+_IOT_REGISTRY_CACHE: TTLCache[dict[str, Any]] = TTLCache(IOT_REGISTRY_TTL_S, max_entries=4)
+
+
+def iot_registry_view(bridge: MeshBridge) -> dict[str, Any]:
+    """The IoT Thing registry merged with what the bridge has heard, for the fleet grid.
+
+    Every Thing is a row; ``peer_live`` says whether a peer of that name has spoken
+    inside the TTL (its card already exists, with a ``reach`` chip), and ``last_seen``
+    prefers the bridge's own presence stamp over the fleet index's. Things are never
+    written into ``bridge.peers``: presence is the only path into the peer table.
+    """
+    from strands_robots.mesh.iot.registry import list_things
+
+    cached = _IOT_REGISTRY_CACHE.get("registry")
+    if cached is None:
+        cached = list_things().as_dict()
+        _IOT_REGISTRY_CACHE.put("registry", cached)
+    view = dict(cached)
+    live = set(bridge.live_peers())
+    peers = dict(bridge.peers)
+    things = []
+    for row in view.get("things") or []:
+        name = str(row.get("thing_name") or "")
+        heard = peers.get(name) or {}
+        stamp = heard.get("last_seen") if isinstance(heard, dict) else None
+        merged = {
+            **row,
+            "peer_live": name in live,
+            "heard_by_bridge": isinstance(stamp, (int, float)),
+            "last_seen": float(stamp) if isinstance(stamp, (int, float)) else row.get("last_seen"),
+        }
+        things.append(merged)
+    view["things"] = things
+    view["dashboard_thing"] = bridge.mesh_info().get("backend")
+    return view
+
+
+@router.get("/mesh/iot/registry")
+async def iot_registry(request: Request, _: dict = Depends(access.require_session)) -> dict[str, Any]:
+    """Provisioned IoT Things next to the peers this dashboard has heard (read only)."""
+    bridge = _bridge(request)
+    return await asyncio.to_thread(iot_registry_view, bridge)
 
 
 @router.post("/mesh/config")

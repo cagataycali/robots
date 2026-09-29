@@ -106,6 +106,10 @@ export interface Peer {
    *  U15: this is the ONLY thing that may differ. It says nothing about the
    *  robot's health and gates no control. */
   origin?: 'managed' | 'external' | string | null
+  /** Which transport leg carried this peer's presence inside the TTL: 'lan' (Zenoh only),
+   *  'iot' (AWS IoT Core only) or 'both' (a bridge peer heard on both). Absent or null =
+   *  the server does not know; render nothing rather than guess. */
+  reach?: 'lan' | 'iot' | 'both' | string | null
   /** Camera names this dashboard REQUESTED when it spawned the peer (annotation,
    *  managed peers only). Presence lists only the cameras the robot managed to
    *  OPEN, so this is the only way to tell "joints-only by design" from "they
@@ -296,3 +300,26 @@ export type MeshEvent =
   | { type: 'safety'; kind: 'estop' | 'resume'; data: Record<string, unknown> }
   | { type: 'activity'; data: ActivityEntry }
   | { type: 'mesh_reconfigured'; ok: boolean; mesh: MeshInfo }
+
+/** One provisioned AWS IoT Thing as `/api/mesh/iot/registry` reports it (read only). */
+export interface RegistryThing {
+  thing_name: string
+  thing_type?: string | null
+  attributes?: Record<string, string>
+  /** The broker's verdict from the fleet index, null when the account does not index connectivity. */
+  connectivity?: 'connected' | 'disconnected' | string | null
+  /** Epoch seconds: the bridge's own presence stamp when it heard this Thing, else the index's. */
+  last_seen?: number | null
+  /** A peer of this name has spoken inside the TTL: its own card exists, no registry card. */
+  peer_live?: boolean
+  heard_by_bridge?: boolean
+}
+
+export interface RegistryView {
+  status: 'ok' | 'off' | 'no-boto3' | 'no-credentials' | 'denied' | 'error' | string
+  detail?: string
+  region?: string | null
+  indexed?: boolean
+  things: RegistryThing[]
+  count?: number
+}

@@ -21,6 +21,7 @@ from typing import Any, cast
 from strands_robots.dashboard import safety_state
 from strands_robots.mesh import security as _security
 from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_bytes_cap
+from strands_robots.mesh.transport.base import SAMPLE_LEGS, sample_leg
 from strands_robots.utils import finite_number_error, refusal_repr
 
 logger = logging.getLogger(__name__)
@@ -315,6 +316,26 @@ def peer_origins(
         return "external"
 
     return {pid: origin(pid) for pid in peer_ids}
+
+
+def peer_reach(legs: Mapping[str, Any] | None, now: float, ttl_s: float | None = None) -> str | None:
+    """``"lan"``, ``"iot"`` or ``"both"``: the legs that carried presence inside *ttl_s*.
+
+    ``None`` when no leg has spoken inside the window (a peer the table still
+    holds but whose transport origin is not known), so the card shows nothing
+    rather than a guess.
+    """
+    if not isinstance(legs, Mapping):
+        return None
+    ttl = PEER_TTL_S if ttl_s is None else ttl_s
+    fresh = []
+    for leg in SAMPLE_LEGS:
+        stamp = legs.get(leg)
+        if isinstance(stamp, (int, float)) and not isinstance(stamp, bool) and (now - float(stamp)) <= ttl:
+            fresh.append(leg)
+    if not fresh:
+        return None
+    return "both" if len(fresh) == 2 else fresh[0]
 
 
 def absent_children(
@@ -934,6 +955,10 @@ class MeshBridge:
             entry["presence"] = record
             entry["presence_source"] = "wire"
             entry["sim_corroborated"] = self._sim_corroborated(peer_id)
+            # Which leg carried this heartbeat: the fleet view's ``reach`` chip (lan / iot /
+            # both) is derived from the legs that spoke inside the TTL, never from the body.
+            legs = entry.setdefault("legs", {})
+            legs[sample_leg(sample)] = time.time()
         self._emit({"type": "presence", "peer_id": peer_id, "data": record})
 
     def _on_state(self, sample: Any) -> None:
@@ -1387,7 +1412,7 @@ class MeshBridge:
         for pid, origin in peer_origins(peers, protected).items():
             peer = peers.get(pid)
             if isinstance(peer, dict):
-                peers[pid] = {**peer, "origin": origin}
+                peers[pid] = {**peer, "origin": origin, "reach": peer_reach(peer.get("legs"), now)}
         try:
             with self._peers_lock:
                 fleet_lockout = getattr(self, "_lockout", None) or safety_state.Lockout()

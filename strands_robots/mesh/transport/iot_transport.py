@@ -452,6 +452,10 @@ class _MqttSample:
 
     __slots__ = ("correlation_data", "key_expr", "payload", "response_topic")
 
+    #: Read by :func:`~strands_robots.mesh.transport.base.sample_leg`: this sample came
+    #: over AWS IoT Core, not the LAN.
+    leg = "iot"
+
     def __init__(
         self,
         topic: str,
