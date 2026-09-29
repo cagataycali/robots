@@ -113,7 +113,8 @@ class TestProfileThreadedToEveryClient:
         assert len(fake.sessions) == 1
         session = fake.sessions[0]
         assert session.profile_name == PROFILE
-        assert set(session.created) == {"iot", "iam", "lambda", "dynamodb", "logs"}
+        # STS is consulted for the account id that names the managed policy ARN.
+        assert set(session.created) == {"sts", "iot", "iam", "lambda", "dynamodb", "logs"}
         assert fake.default_client_calls == []
 
 

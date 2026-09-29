@@ -69,8 +69,15 @@ PROVISIONING_TEMPLATE = "strands-mesh-fleet-provisioning"
 PROVISIONING_ROLE = "strands-mesh-provisioning-role"
 PROVISIONING_HOOK_LAMBDA_NAME = "strands-mesh-provisioning-hook"
 PROVISIONING_HOOK_ROLE = "strands-mesh-provisioning-hook-role"
+#: IAM customer managed policy for processes that command robots with IAM
+#: credentials instead of a device certificate (an agent, a dashboard, a
+#: notebook): ``iot:SendDirectMessage`` to any connected client, on
+#: ``strands/*/cmd`` only. Attach it to the role or user the process runs as.
+#: It mirrors the ``AllowDirectCommandToAnyRobot`` statement of the operator
+#: IoT policy for the SigV4 path (``STRANDS_IOT_DIRECT_AUTH=sigv4``).
+OPERATOR_DIRECT_POLICY = "strands-operator-direct"
 #: Bump whenever _PROVISIONING_HOOK_SOURCE changes.
-_PROVISIONING_HOOK_VERSION = 1
+_PROVISIONING_HOOK_VERSION = 2
 LOG_GROUP_NAME = "/aws/iot/strands-mesh"
 
 #: Ledger names for the two Lambda resource policy statements the bootstrap
@@ -206,8 +213,20 @@ _ESTOP_LAMBDA_SOURCE = textwrap.dedent(
 #   * The serial must be pre-seeded by the operator in SSM Parameter
 #     Store at /strands-mesh/provisioning/allow/<serial>. Sites with a
 #     CMDB can swap this lookup for their own API.
+#   * The certificate being registered must not carry a subject CN that
+#     names ANOTHER identity. The robot IoT policy grants direct replies on
+#     ``${iot:Certificate.Subject.CommonName}``, so a claim-cert device that
+#     submitted a CSR with ``CN=<existing robot>`` would inherit that robot's
+#     grant even though its Thing name differs. Accepted: CN equal to the
+#     ThingName, or the CN AWS writes into a certificate it generated the key
+#     for ("AWS IoT Certificate"), which matches no robot grant.
+#
+# The CN is read with a small DER walk rather than ``cryptography``: the
+# hook runs in Lambda with only the runtime's boto3 available, and adding a
+# layer for one field is a heavier dependency than thirty lines of stdlib.
 _PROVISIONING_HOOK_SOURCE = textwrap.dedent(
     """
+    import base64
     import logging
     import re
 
@@ -220,6 +239,49 @@ _PROVISIONING_HOOK_SOURCE = textwrap.dedent(
 
     _SERIAL_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
     _ALLOW_PREFIX = "/strands-mesh/provisioning/allow/"
+    # The subject CN AWS writes into a certificate whose key it generated
+    # (CreateKeysAndCertificate). It names no robot, so it inherits no grant.
+    _AWS_GENERATED_CN = "AWS IoT Certificate"
+    _OID_CN = bytes.fromhex("550403")
+
+    def _der_tlv(buf, i):
+        # One DER TLV at buf[i:]: returns (tag, value_start, value_end).
+        tag = buf[i]
+        length = buf[i + 1]
+        j = i + 2
+        if length & 0x80:
+            n = length & 0x7F
+            length = int.from_bytes(buf[j:j + n], "big")
+            j += n
+        return tag, j, j + length
+
+    def _der_children(buf, start, end):
+        i = start
+        while i < end:
+            tag, vs, ve = _der_tlv(buf, i)
+            yield tag, vs, ve
+            i = ve
+
+    def certificate_cn(pem):
+        # Subject CN of a PEM X.509 certificate, or None when unreadable.
+        try:
+            body = "".join(l for l in pem.splitlines() if l and not l.startswith("-----"))
+            der = base64.b64decode(body)
+            _, cs, ce = _der_tlv(der, 0)                 # Certificate
+            _, ts, te = _der_tlv(der, cs)                # TBSCertificate
+            fields = list(_der_children(der, ts, te))
+            # [0] version (optional, context tag 0xA0), serial, sigalg, issuer, validity, subject
+            idx = 1 if fields[0][0] == 0xA0 else 0
+            _, ss, se = fields[idx + 4]                  # subject Name
+            for _rtag, rs, re_ in _der_children(der, ss, se):        # RDN SETs
+                for _atag, as_, ae in _der_children(der, rs, re_):   # AttributeTypeAndValue SEQs
+                    parts = list(_der_children(der, as_, ae))
+                    oid = der[parts[0][1]:parts[0][2]]
+                    if oid == _OID_CN:
+                        return der[parts[1][1]:parts[1][2]].decode("utf-8", "replace")
+            return ""
+        except Exception:
+            return None
 
     def lambda_handler(event, context):
         # AWS IoT Fleet Provisioning PreProvisioningHook.
@@ -231,6 +293,16 @@ _PROVISIONING_HOOK_SOURCE = textwrap.dedent(
         if not isinstance(serial, str) or not _SERIAL_RE.fullmatch(serial):
             log.warning("provisioning DENY: bad/missing SerialNumber %r", serial)
             return {"allowProvisioning": False}
+
+        pem = (event or {}).get("certificatePem")
+        if isinstance(pem, str) and pem:
+            cn = certificate_cn(pem)
+            if cn is None:
+                log.warning("provisioning DENY: certificate for %r is unreadable", thing_name)
+                return {"allowProvisioning": False}
+            if cn not in (thing_name, _AWS_GENERATED_CN):
+                log.warning("provisioning DENY: certificate CN %r does not name Thing %r", cn, thing_name)
+                return {"allowProvisioning": False}
 
         iot = boto3.client("iot")
         try:
@@ -283,6 +355,7 @@ class BootstrappedAccount:
     log_group_arn: str = ""
     provisioning_template_arn: str = ""
     provisioning_hook_lambda_arn: str = ""
+    operator_direct_policy_arn: str = ""
     skipped: list[str] = field(default_factory=list)
     created: list[str] = field(default_factory=list)
 
@@ -1062,6 +1135,7 @@ def bootstrap_account(
             f"  - Lambda: {PROVISIONING_HOOK_LAMBDA_NAME} (Fleet Provisioning gate)\n"
             f"  - IAM Role: {PROVISIONING_ROLE}\n"
             f"  - IoT Fleet Provisioning Template: {PROVISIONING_TEMPLATE}\n"
+            f"  - IAM Managed Policy: {OPERATOR_DIRECT_POLICY} (SigV4 direct commands)\n"
             f"\nPass dry_run=False, confirm=True to create.",
             file=sys.stderr,
         )
@@ -1103,6 +1177,9 @@ def bootstrap_account(
     out.provisioning_template_arn = _ensure_provisioning_template(iot, iam, out, hook_lambda_arn=hook_arn)
     _grant_iot_invoke_provisioning_hook(lam, hook_arn, out)
 
+    # Direct commands from IAM principals (no device certificate).
+    out.operator_direct_policy_arn = _ensure_operator_direct_policy(iam, account_id, out)
+
     logger.info(
         "[bootstrap] account %s in %s - created %d, skipped %d",
         account_id,
@@ -1111,6 +1188,57 @@ def bootstrap_account(
         len(out.skipped),
     )
     return out
+
+
+def _operator_direct_policy_doc(region: str, account_id: str) -> dict[str, Any]:
+    """The IAM document for :data:`OPERATOR_DIRECT_POLICY`, scoped to this account and region.
+
+    The IoT device policies use ``arn:aws:iot:*:*:client/*`` because a device
+    policy is evaluated inside one account and region anyway; an IAM policy
+    is not, so the ARN names both. The topic condition is the same
+    ``strands/*/cmd`` the operator IoT policy grants.
+    """
+    return {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "AllowDirectCommandToAnyRobot",
+                "Effect": "Allow",
+                "Action": "iot:SendDirectMessage",
+                "Resource": f"arn:aws:iot:{region}:{account_id}:client/*",
+                "Condition": {"StringLike": {"iot:Topic": "strands/*/cmd"}},
+            }
+        ],
+    }
+
+
+def _ensure_operator_direct_policy(iam: Any, account_id: str, account: BootstrappedAccount) -> str:
+    """Create the :data:`OPERATOR_DIRECT_POLICY` IAM managed policy if absent.
+
+    The IoT operator policy grants ``iot:SendDirectMessage`` to a certificate;
+    this is the same grant for an IAM principal, so an agent process with only
+    AWS credentials can command robots over the SigV4 path. Nothing is
+    attached here: which role or user runs the agent is the account owner's
+    call, so the ARN is returned and recorded for them.
+
+    Returns:
+        The policy ARN.
+    """
+    arn = f"arn:aws:iam::{account_id}:policy/{OPERATOR_DIRECT_POLICY}"
+    try:
+        iam.get_policy(PolicyArn=arn)
+        account.skipped.append(f"iam-policy:{OPERATOR_DIRECT_POLICY}")
+        return arn
+    except iam.exceptions.NoSuchEntityException:
+        pass  # expected: created below
+    resp = iam.create_policy(
+        PolicyName=OPERATOR_DIRECT_POLICY,
+        PolicyDocument=json.dumps(_operator_direct_policy_doc(account.region, account_id)),
+        Description="strands-mesh: iot:SendDirectMessage on strands/*/cmd for IAM operators",
+        Tags=[{"Key": "strands-mesh", "Value": "managed"}],
+    )
+    account.created.append(f"iam-policy:{OPERATOR_DIRECT_POLICY}")
+    return str(resp["Policy"]["Arn"])
 
 
 def teardown_account(*, region: str | None = None, profile: str | None = None) -> None:
@@ -1168,6 +1296,18 @@ def teardown_account(*, region: str | None = None, profile: str | None = None) -
             logger.info("[teardown] role %s removed", role)
         except Exception as exc:
             logger.debug("[teardown] role %s: %s", role, exc)
+
+    try:
+        account_id = session.client("sts").get_caller_identity()["Account"]
+        policy_arn = f"arn:aws:iam::{account_id}:policy/{OPERATOR_DIRECT_POLICY}"
+        for ent in iam.list_entities_for_policy(PolicyArn=policy_arn).get("PolicyRoles", []):
+            iam.detach_role_policy(RoleName=ent["RoleName"], PolicyArn=policy_arn)
+        for ent in iam.list_entities_for_policy(PolicyArn=policy_arn).get("PolicyUsers", []):
+            iam.detach_user_policy(UserName=ent["UserName"], PolicyArn=policy_arn)
+        iam.delete_policy(PolicyArn=policy_arn)
+        logger.info("[teardown] managed policy %s removed", OPERATOR_DIRECT_POLICY)
+    except Exception as exc:
+        logger.debug("[teardown] managed policy %s: %s", OPERATOR_DIRECT_POLICY, exc)
 
     try:
         ddb.delete_table(TableName=SAFETY_TABLE_NAME)
