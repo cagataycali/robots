@@ -813,6 +813,12 @@ dependencies = [
 # [voice] and [mesh-iot] each pin awscrt to a different exact release (through
 # aws-sdk-bedrock-runtime[awscrt] and awsiotsdk), so no one environment holds
 # both; declaring the conflict lets the universal lock resolve each on its own.
+# [sim-mjlab] reaches websockets<17 through mjlab's viser viewer, while
+# [inference] and [cosmos3-service] floor websockets at 17.0 (a measured
+# behaviour floor, see those extras), so no one environment holds mjlab next
+# to either of them or to [all]; declaring the conflicts lets the universal
+# lock resolve each on its own. mjlab still installs next to [sim-mujoco],
+# [lerobot] and [dev], which is what its tests and the recorder need.
 conflicts = [
     [
         { extra = "voice" },
@@ -820,6 +826,18 @@ conflicts = [
     ],
     [
         { extra = "voice" },
+        { extra = "all" },
+    ],
+    [
+        { extra = "sim-mjlab" },
+        { extra = "inference" },
+    ],
+    [
+        { extra = "sim-mjlab" },
+        { extra = "cosmos3-service" },
+    ],
+    [
+        { extra = "sim-mjlab" },
         { extra = "all" },
     ],
 ]

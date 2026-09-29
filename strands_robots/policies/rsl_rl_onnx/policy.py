@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import numpy as np
 
 from strands_robots.policies.base import Policy
+from strands_robots.utils import name_list_error
 
 if TYPE_CHECKING:  # pragma: no cover
     import onnxruntime as ort
@@ -215,7 +216,6 @@ class RslRlOnnxPolicy(Policy):
         self._default = np.asarray(self.spec.default_joint_pos, dtype=np.float32)
         self._scale = np.asarray(self.spec.action_scale, dtype=np.float32)
         self._fk = None
-        self._ee_site = ee_site
         if "ee_to_target" in self.spec.observation_names:
             self._fk = _SiteFK(robot or "so101", ee_site, self.spec.joint_names)
         self.robot_state_keys: list[str] = []
@@ -239,7 +239,21 @@ class RslRlOnnxPolicy(Policy):
         return False
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
-        """Record the robot's ordered action keys (informational: the ONNX names its own joints)."""
+        """Record the robot's ordered action keys.
+
+        The actor indexes its observation and action by joint NAME (read from
+        the ONNX metadata), so it does not depend on this ordering; the list is
+        validated for shape only, through the shared
+        :func:`~strands_robots.utils.name_list_error` domain, so a single joint
+        name passed as a bare string (iterable per character) is refused rather
+        than bound one joint per letter.
+
+        Raises:
+            ValueError: If ``robot_state_keys`` is not an ordered list of
+                distinct non-blank names.
+        """
+        if error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys"):
+            raise ValueError(error)
         self.robot_state_keys = list(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:

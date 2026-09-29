@@ -100,6 +100,7 @@ _DISTRIBUTION_BY_IMPORT_NAME = {
     "device_connect_edge": "device-connect-edge",
     "fastapi": "fastapi",
     "jwt": "pyjwt",
+    "mjlab": "mjlab",
     "msgpack": "msgpack",
     "numpy": "numpy",
     "psutil": "psutil",

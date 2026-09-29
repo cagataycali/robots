@@ -43,7 +43,8 @@ from strands_robots.simulation.base import (
 )
 from strands_robots.simulation.mjlab.randomization import MjlabRandomizationMixin
 from strands_robots.simulation.mjlab.recording import MjlabRecordingMixin
-from strands_robots.utils import coerce_pose_vector, entity_name_error, positive_count_error
+from strands_robots.simulation.terrain import validate_difficulty
+from strands_robots.utils import coerce_pose_vector, entity_name_error, positive_count_error, step_aborted_msg
 
 if TYPE_CHECKING:
     import mujoco
@@ -52,7 +53,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMESTEP = 0.002
-_STEPS_PER_BATCH = 1000
 # mjlab (MuJoCo-Warp) supports euler + implicitfast: RK4/implicit fall back to implicitfast.
 _INTEGRATORS = {0: "euler", 1: "implicitfast", 2: "implicitfast", 3: "implicitfast"}
 _SOLVERS = {0: "pgs", 1: "cg", 2: "newton"}
@@ -170,7 +170,6 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
 
         # World options (create_world) - None = "take it from the first robot".
         self._timestep: float | None = None
-        self._timestep_pinned = False
         self._gravity: tuple[float, float, float] = (0.0, 0.0, -9.81)
         self._ground_plane = True
         self._world_created = False
@@ -206,16 +205,38 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         gravity: Sequence[float] | None = None,
         ground_plane: bool = True,
         terrain: str | None = None,
-        difficulty: float | None = None,
+        difficulty: float = 1.0,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Configure the shared world: timestep, gravity, flat ground (terrains are not supported yet)."""
+        """Configure the shared world: timestep, gravity, flat ground (terrains are not supported yet).
+
+        ``difficulty`` is accepted for signature parity with the base contract
+        and judged on the shared :func:`~strands_robots.simulation.terrain.validate_difficulty`
+        domain; since this backend has no heightfield terrain a non-default
+        value can never take effect, so it is refused rather than ignored.
+        """
         with self._lock:
+            try:
+                validate_difficulty(difficulty)
+            except ValueError as exc:
+                return {"status": "error", "content": [{"text": str(exc)}]}
+            if float(difficulty) != 1.0:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"difficulty={difficulty!r} has no effect on the mjlab backend (it scales a "
+                                "heightfield terrain's elevation, and this backend has no heightfield terrain); "
+                                "use create_simulation(backend='mujoco') for a terrain curriculum."
+                            )
+                        }
+                    ],
+                }
             if timestep is not None:
                 if not isinstance(timestep, (int, float)) or not timestep > 0:
                     return {"status": "error", "content": [{"text": f"timestep must be positive, got {timestep!r}"}]}
                 self._timestep = float(timestep)
-                self._timestep_pinned = True
             if gravity is not None:
                 g, err = coerce_pose_vector("create_world", "gravity", gravity, 3)
                 if err:
@@ -521,14 +542,32 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
             }
 
     def step(self, n_steps: int = 1) -> dict[str, Any]:
-        """Advance all worlds ``n_steps`` physics steps (the lock is released every 1000 steps)."""
+        """Advance all worlds ``n_steps`` physics steps.
+
+        Batched so the lock is released every ``_STEPS_PER_BATCH`` steps (the
+        shared granularity on :class:`~strands_robots.simulation.base.SimEngine`);
+        because the lock is dropped between batches a concurrent ``destroy`` is
+        reachable mid-call, so each batch re-checks that the scene it is about
+        to advance still exists and aborts naming the steps completed.
+        """
         err = positive_count_error(n_steps, "n_steps", "step")
         if err:
             return {"status": "error", "content": [{"text": err}]}
-        remaining = int(n_steps)
+        n_steps = int(n_steps)
+        with self._lock:
+            try:
+                self._ensure_built()
+            except RuntimeError as exc:
+                return {"status": "error", "content": [{"text": str(exc)}]}
+        remaining = n_steps
         while remaining > 0:
-            batch = min(remaining, _STEPS_PER_BATCH)
+            batch = min(remaining, self._STEPS_PER_BATCH)
             with self._lock:
+                if self._sim is None and not self._robots and not self._objects:
+                    return {
+                        "status": "error",
+                        "content": [{"text": step_aborted_msg(n_steps - remaining, n_steps)}],
+                    }
                 self._ensure_built()
                 dt = self._timestep or self._default_timestep
                 for _ in range(batch):

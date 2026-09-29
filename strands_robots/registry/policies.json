@@ -324,8 +324,9 @@
         "class": "RslRlTrainer"
       },
       "description": "Deterministic rollout of an rsl_rl actor exported to ONNX by mjlab (metadata-driven observation rebuild; JointPositionAction decode)",
+      "extra": "sim-mjlab",
       "requires": [
-        "onnxruntime"
+        "onnx_path"
       ],
       "config_keys": [
         "onnx_path",

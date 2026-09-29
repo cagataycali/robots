@@ -409,6 +409,9 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         # LerobotLocalPolicy
         "lerobot_local",
         "lerobot",
+        # RslRlOnnxPolicy (ONNX actor exported from the rsl_rl / mjlab trainer)
+        "rsl_rl_onnx",
+        "mjlab_onnx",
         # Cosmos3Policy
         "cosmos3",
         "c3",
@@ -441,6 +444,9 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         "remote",
         # RLCheckpointPolicy
         "rl",
+        # RslRlOnnxPolicy (rsl_rl actor exported to ONNX by the mjlab trainer)
+        "rsl_rl_onnx",
+        "mjlab_onnx",
     }
 )
 

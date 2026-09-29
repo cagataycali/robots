@@ -338,7 +338,7 @@ class TestEveryCreateWorldRoutesThroughTheOneBinding:
     def test_the_scan_finds_every_backend(self) -> None:
         """Non-vacuity: an empty or mis-rooted scan must not read as clean."""
         found = {name for name, module in self._backend_modules().items() if self._difficulty_create_worlds(module)}
-        assert found == {"mujoco", "newton", "isaac"}, found
+        assert found == {"mujoco", "newton", "isaac", "mjlab"}, found
 
     def test_every_backend_calls_it(self) -> None:
         adrift = [
