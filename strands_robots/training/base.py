@@ -152,7 +152,8 @@ class TrainResult:
     """Outcome of a training lifecycle call.
 
     Attributes:
-        status: ``"success"`` | ``"running"`` | ``"error"``.
+        status: ``"success"`` | ``"running"`` | ``"error"`` | ``"stopped"``
+            (ended by :meth:`Trainer.stop`; its checkpoints are kept).
         job_id: Stable id for this run (used by :meth:`Trainer.status`).
         checkpoint_dir: Where checkpoints are written (``None`` before any
             save / on validation failure).
@@ -530,8 +531,10 @@ class Trainer(ABC):
         A *local* trainer blocks until the run finishes and returns a terminal
         :class:`TrainResult` with ``metrics`` populated. A *transport* trainer
         MAY return ``running`` with a ``job_id`` that :meth:`status` polls and
-        no ``checkpoint_dir`` yet, so a caller must branch on all three
-        ``status`` values rather than read "not ``error``" as finished.
+        no ``checkpoint_dir`` yet, and a run it waits on can end ``stopped``
+        when :meth:`stop` ended it (its checkpoints kept), so a caller must
+        branch on every ``status`` value rather than read "not ``error``" as
+        finished.
         """
 
     def status(self, job_id: str) -> TrainResult:
@@ -539,8 +542,9 @@ class Trainer(ABC):
 
         Two kinds of job reach here: one launched out of band that a caller
         polls by id, and one a *transport* :meth:`train` handed back as
-        ``running`` because it outlives the submitting process. A local trainer
-        produces neither, so
+        ``running`` because it outlives the submitting process - which reads
+        ``stopped`` once :meth:`stop` has ended it. A local trainer produces
+        neither, so
         most backends inherit this default, which returns an informative
         ``error``. Backends that override read the runner's own job API
         (``sagemaker`` -> ``DescribeTrainingJob``) or parse their training logs.
@@ -551,6 +555,53 @@ class Trainer(ABC):
             message=(
                 f"{self.provider_name}: status() polling is not supported - "
                 "train() runs synchronously and already returns the metrics verdict."
+            ),
+        )
+
+    def stop(self, job_id: str) -> TrainResult:
+        """Stop a job still in flight and return its verdict, ``stopped``.
+
+        Only a *transport* trainer has a run to stop - one :meth:`train`
+        handed back as ``running``. The default returns an informative
+        ``error``, since a local trainer's run ends with the call that made it.
+        """
+        return TrainResult(
+            status="error",
+            job_id=job_id,
+            message=(
+                f"{self.provider_name}: stop() is not supported - train() runs synchronously, so there is "
+                "no run in flight to stop."
+            ),
+        )
+
+    def play(
+        self,
+        job_id: str,
+        *,
+        num_envs: int = 16,
+        video_length: int = 200,
+        timeout_s: float | None = 900.0,
+        wait: bool = False,
+    ) -> TrainResult:
+        """Play a finished job's policy back and record it; the verdict carries the video.
+
+        Only a trainer that owns a simulator to replay in implements this
+        (``isaaclab``). The default returns an informative ``error``.
+
+        Args:
+            job_id: The finished training job.
+            num_envs: Environments to play.
+            video_length: Frames in the clip.
+            timeout_s: Wall-clock limit for the playback.
+            wait: Block until the playback ends.
+        """
+        del num_envs, video_length, timeout_s, wait
+        return TrainResult(
+            status="error",
+            job_id=job_id,
+            message=(
+                f"{self.provider_name}: play() is not supported - roll the exported policy out with "
+                "run_policy / eval_policy instead."
             ),
         )
 
