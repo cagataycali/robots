@@ -132,9 +132,13 @@ mean reward 15.66 and mean episode length 926 of 1000 ticks under the terrain cu
 maximum terrain difficulty, one world per command, 10 s each: `yaw_0.5` and `fwd_0.5` survive the full 10 s,
 `stand` falls at 2.7 s, `fwd_1.0` at 1.4 s. Classic MuJoCo replay on a flat plane through `rsl_rl_onnx` with the
 flat-plane `height_scan` builder (every ray hits z = 0): falls at 1.1-1.2 s on all four commands. The flat velocity
-policy from the mjlab lane walks identically on both engines through the same harness, so the rough gap is either an
-undertrained actor (it also falls natively) or a `height_scan` mismatch on a plane; the one-minute test that decides
-it, the rough actor on mjlab's own flat task, is the next step (F18). Two core paths had to be bypassed to get here
+policy from the mjlab lane walks identically on both engines through the same harness. The control that separates the
+actor from the replay: `eval-native --task rough --terrain plane` puts the same actor on a flat plane inside mjlab with
+the real ray-cast sensor (`results/g1_rough/eval_native_plane.json`), where it sinks to base z 0.20 m in the first second
+on all four commands and never moves; the plane height scan equals pelvis z x 0.2 (0.158 at 0.788 m, 187 equal rays, no
+misses), which is exactly what the classic builder feeds, and zero action holds the robot standing at 0.734 m on both
+terrains. So the classic replay is a true negative: the 1500-iteration rough actor is brittle outside the curriculum
+band it ended in (F18). Two core paths had to be bypassed to get here
 (F17): the exporter's one-world env overflows mjwarp's contact budget on rough terrain (`nconmax must be >= 72`), and
 the provider refuses the `height_scan` term before any builder can be supplied.
 
