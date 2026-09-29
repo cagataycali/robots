@@ -28,6 +28,7 @@ Environment variables:
 from __future__ import annotations
 
 import logging
+import math
 import os
 import queue
 import threading
@@ -117,7 +118,6 @@ def _vertical_fov_lens_mm(
     Returns:
         ``(vertical_aperture_mm, focal_length_mm)``.
     """
-    import math
 
     vertical_aperture_mm = horizontal_aperture_mm * float(height) / float(width)
     focal_length_mm = vertical_aperture_mm / (2.0 * math.tan(math.radians(fov_deg) / 2.0))
@@ -434,6 +434,43 @@ def _resolve_registry_description(data_config: str | None, lookup_name: str) -> 
 #: as the fallback when the stage cannot be searched; the search runs first, because
 #: a hardcoded path is exactly what got this wrong.
 _DEFAULT_PHYSICS_SCENE_PATH = "/physicsScene"
+
+
+def _env_grid_offsets(num_envs: int, spacing: float) -> list[list[float]]:
+    """Offsets of ``num_envs`` environments from env_0, on a square grid, env_0 at the origin.
+
+    Row-major, ``ceil(sqrt(n))`` per row, +x along a row and +y between rows, so
+    every environment gets its own cell and the scene already on the stage
+    (env_0) does not move. Returned for every environment, env_0 included.
+    """
+    per_row = max(1, math.ceil(math.sqrt(num_envs)))
+    return [[(i % per_row) * spacing, (i // per_row) * spacing, 0.0] for i in range(num_envs)]
+
+
+def _prim_world_pose(stage: Any, path: str) -> tuple[list[float], list[float]]:
+    """World translation and (w, x, y, z) orientation of the prim at *path*.
+
+    What a clone of it must keep: the cloner writes the pose it is given onto the
+    clone root, replacing the source's own. Identity when the prim or its
+    transform cannot be read (a stage without USD transforms), so a clone lands
+    at its environment's origin as before rather than failing.
+    """
+    try:
+        from pxr import Usd, UsdGeom  # type: ignore[import-not-found]
+
+        prim = stage.GetPrimAtPath(path)
+        if not prim or not prim.IsValid():
+            return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
+        matrix = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+        translation = matrix.ExtractTranslation()
+        rotation = matrix.RemoveScaleShear().ExtractRotationQuat()
+        imag = rotation.GetImaginary()
+        return (
+            [float(translation[0]), float(translation[1]), float(translation[2])],
+            [float(rotation.GetReal()), float(imag[0]), float(imag[1]), float(imag[2])],
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
 
 
 def _physics_scene_path(stage: Any) -> str:
@@ -8016,7 +8053,10 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
         Every registered robot and object is cloned into ``{stage_path}/envs/env_i``
         for ``i`` in ``1..num_envs-1``, laid out on a square grid with ``spacing``
-        metres between neighbours. The scene you already built is environment 0, so
+        metres between neighbours: env ``i`` sits at column ``i % k``, row
+        ``i // k`` (``k = ceil(sqrt(num_envs))``), with env_0 - the scene already
+        built - at the origin, and each clone keeps its source's own pose plus
+        that offset. The offsets are returned as ``env_origins``. The scene you already built is environment 0, so
         ``num_envs`` counts it: ``replicate(64)`` produces the source plus 63
         clones. Cloning is done by Isaac Sim's own
         ``isaacsim.core.cloner.GridCloner``, which is what makes it a GPU-side
@@ -8153,7 +8193,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 }
 
             try:
-                from isaacsim.core.cloner import GridCloner  # type: ignore[import-not-found]
+                from isaacsim.core.cloner import Cloner  # type: ignore[import-not-found]
             except ImportError as exc:
                 # Refuse rather than report a fleet nobody built. This is the
                 # single behaviour this method used to get wrong.
@@ -8188,7 +8228,17 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 stage = omni.usd.get_context().get_stage()
                 before = sum(1 for _ in stage.Traverse())
 
-                cloner = GridCloner(spacing=grid_spacing)
+                # ``Cloner`` with explicit poses, not ``GridCloner``'s own layout.
+                # GridCloner lays out a grid for the N-1 TARGET paths, centred on
+                # the origin, while the source scene stays where it is as env_0 -
+                # so with 4 envs at 1.5 m env_2 landed exactly on env_0 (to 1e-7
+                # m, hidden by the inter-env collision filter), and each clone
+                # root was moved TO its grid cell, dropping the source's own pose
+                # (a cube authored at (0.3, 0.3, 0.02) cloned to (x, y, 0), inside
+                # the ground). Each clone now keeps its source's world pose plus
+                # its environment's offset from env_0.
+                offsets = _env_grid_offsets(n, grid_spacing)
+                cloner = Cloner()
                 cloner.define_base_env(env_root)
 
                 # Define each environment scope BEFORE cloning into it. The cloner
@@ -8209,9 +8259,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     leaf = source.rsplit("/", 1)[-1]
                     clone_paths = [f"{target}/{leaf}" for target in targets]
                     expected += clone_paths
+                    src_pos, src_quat = _prim_world_pose(stage, source)
                     cloner.clone(
                         source_prim_path=source,
                         prim_paths=clone_paths,
+                        positions=np.array([np.add(src_pos, off) for off in offsets[1:]], dtype=float),
+                        orientations=np.array([src_quat] * len(clone_paths), dtype=float),
                         replicate_physics=True,
                         base_env_path=env_root,
                         root_path=env_prefix,
@@ -8326,6 +8379,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                             "prims_created": prims_created,
                             "build_time_ms": elapsed * 1000,
                             "spacing": grid_spacing,
+                            "env_origins": [[round(float(v), 6) for v in off] for off in offsets],
                             "env_root": env_root,
                             "physics_replicated": physics_replicated,
                             "collisions_filtered": collisions_filtered,
