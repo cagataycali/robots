@@ -36,7 +36,7 @@ from typing import Any, ClassVar
 import numpy as np
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import sequence_length
+from strands_robots.utils import refusal_repr, sequence_length
 
 from .constants import NUM_JOINTS, SONIC_JOINT_NAMES, TOKEN_DIM
 from .decoder import DecoderSession, SonicDecoder, sonic_variant_error
@@ -60,7 +60,7 @@ _TOKEN_RE = re.compile(r"\Amotion_token_(\d+)\Z")
 
 def _positive_int_error(value: Any, name: str) -> str | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        return f"WBCLatentPolicy: {name} must be a positive whole number of control ticks, got {value!r}"
+        return f"WBCLatentPolicy: {name} must be a positive whole number of control ticks, got {refusal_repr(value)}"
     return None
 
 

@@ -46,7 +46,7 @@ from typing import Any, Protocol
 import numpy as np
 
 from strands_robots.policies.wbc.control import projected_gravity
-from strands_robots.utils import require_optional
+from strands_robots.utils import refusal_repr, require_optional
 
 from .constants import (
     HARDWARE_TO_ISAACLAB,
@@ -97,7 +97,7 @@ def sonic_variant_error(variant: Any) -> str | None:
     """Reason ``variant`` is not one of the published SONIC decoder variants, or ``None``."""
     if not isinstance(variant, str) or variant not in SONIC_VARIANT_FILES:
         return (
-            f"SonicDecoder: variant must be one of {sorted(SONIC_VARIANT_FILES)}, got {variant!r}. "
+            f"SonicDecoder: variant must be one of {sorted(SONIC_VARIANT_FILES)}, got {refusal_repr(variant)}. "
             "The variants are the entries of nvidia/GEAR-SONIC config.json; a VLA's tokens decode "
             "correctly only through the variant that encoded its training data."
         )
