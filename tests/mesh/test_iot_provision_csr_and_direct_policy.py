@@ -27,6 +27,7 @@ each test pins one observable:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -386,3 +387,158 @@ class TestEnsurePolicyVersions:
         iot.existing_policy = {"Version": "2012-10-17", "Statement": []}
         provision_robot("so101-b", cert_dir=tmp_path)
         assert "create_policy_version" in iot.names()
+
+
+class _RotatingIot(_Iot):
+    """An account with one Thing that already holds an old-style certificate on one policy."""
+
+    OLD = "arn:aws:iot:us-west-2:1:cert/old0000000000"
+
+    def __init__(self, fail_deactivate: bool = False) -> None:
+        super().__init__()
+        self.fail_deactivate = fail_deactivate
+        self.principals = [self.OLD]
+        self.attached: dict[str, list[str]] = {self.OLD: ["strands-robot"]}
+
+    def _answer(self, name: str, kw: dict[str, Any]) -> Any:
+        if name == "describe_thing":
+            return {"thingArn": f"arn:aws:iot:us-west-2:1:thing/{kw['thingName']}"}
+        if name == "list_thing_principals":
+            return {"principals": list(self.principals)}
+        if name == "list_attached_policies":
+            return {"policies": [{"policyName": p} for p in self.attached.get(kw["target"], [])]}
+        if name == "attach_policy":
+            self.attached.setdefault(kw["target"], []).append(kw["policyName"])
+            return {}
+        if name == "attach_thing_principal":
+            self.principals.append(kw["principal"])
+            return {}
+        if name == "detach_thing_principal":
+            self.principals.remove(kw["principal"])
+            return {}
+        if name == "update_certificate":
+            if self.fail_deactivate:
+                raise RuntimeError("DeleteConflictException: certificate is attached elsewhere")
+            return {}
+        if name == "delete_certificate":
+            return {}
+        return super()._answer(name, kw)
+
+
+@pytest.fixture
+def rotating(monkeypatch):
+    def _make(fail_deactivate: bool = False) -> _RotatingIot:
+        client = _RotatingIot(fail_deactivate=fail_deactivate)
+        monkeypatch.setattr(
+            prov, "_require_boto3", lambda: type("B", (), {"client": staticmethod(lambda *a, **kw: client)})
+        )
+        monkeypatch.setattr(prov, "_ensure_ca", lambda ca_path: ca_path.write_text("ca"))
+        return client
+
+    return _make
+
+
+class TestReprovisionThing:
+    """``reprovision_thing`` rotates the certificate and keeps everything else."""
+
+    def test_new_certificate_attached_and_activated_before_the_old_one_is_removed(self, rotating, tmp_path):
+        iot = rotating()
+        result = prov.reprovision_thing("so101-r", cert_dir=tmp_path)
+        names = iot.names()
+        assert "create_certificate_from_csr" in names
+        assert names.index("attach_thing_principal") < names.index("detach_thing_principal")
+        assert names.index("attach_policy") < names.index("update_certificate")
+        # The old certificate is gone, the new one carries the same policy.
+        assert iot.principals == ["arn:aws:iot:us-west-2:1:cert/abc"]
+        assert iot.attached["arn:aws:iot:us-west-2:1:cert/abc"] == ["strands-robot"]
+        assert result.policy_name == "strands-robot" and result.subject_cn == "so101-r"
+        assert result.stale_certificates == ()
+        # Nothing about the Thing itself is touched.
+        assert "create_thing" not in names and "update_thing" not in names and "create_policy" not in names
+
+    def test_a_missing_thing_is_refused_before_anything_is_issued(self, rotating, tmp_path):
+        iot = rotating()
+        original = iot._answer
+
+        def _answer(name: str, kw: dict[str, Any]) -> Any:
+            if name == "describe_thing":
+                raise _NotFound()
+            return original(name, kw)
+
+        iot._answer = _answer  # type: ignore[method-assign]
+        with pytest.raises(ValueError, match="does not exist"):
+            prov.reprovision_thing("ghost", cert_dir=tmp_path)
+        assert "create_certificate_from_csr" not in iot.names()
+
+    def test_a_failed_deactivation_is_a_warning_with_the_command_and_is_reported(self, rotating, tmp_path, caplog):
+        rotating(fail_deactivate=True)
+        with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.iot.provision"):
+            result = prov.reprovision_thing("so101-r", cert_dir=tmp_path)
+        assert result.stale_certificates == ("old0000000000",)
+        (w,) = [r for r in caplog.records if "still attached and active" in r.getMessage()]
+        assert "aws iot update-certificate --certificate-id old0000000000 --new-status INACTIVE" in w.getMessage()
+        assert "DeleteConflictException" in w.getMessage()
+
+    def test_provision_robot_reports_stale_certificates_too(self, rotating, tmp_path):
+        iot = rotating(fail_deactivate=True)
+        original = iot._answer
+
+        def _answer(name: str, kw: dict[str, Any]) -> Any:
+            if name == "describe_thing":
+                raise _NotFound()  # provision_robot creates the Thing
+            return original(name, kw)
+
+        iot._answer = _answer  # type: ignore[method-assign]
+        result = prov.provision_robot("so101-r", cert_dir=tmp_path)
+        assert result.stale_certificates == ("old0000000000",)
+
+
+class TestIotCli:
+    """``python -m strands_robots iot <verb>``."""
+
+    def test_reprovision_prints_the_identity_the_restart_note_and_the_exports(self, rotating, tmp_path, capsys):
+        from strands_robots.mesh.iot.cli import main
+
+        rotating()
+        rc = main(["reprovision", "so101-r", "--region", "us-west-2", "--cert-dir", str(tmp_path)])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "CN=so101-r" in out and "policy strands-robot" in out
+        assert "restart the peer" in out
+        assert "export STRANDS_IOT_THING_NAME=so101-r" in out and "export STRANDS_MESH_BACKEND=iot" in out
+
+    def test_a_missing_thing_exits_1_with_the_reason(self, rotating, tmp_path, capsys):
+        from strands_robots.mesh.iot.cli import main
+
+        iot = rotating()
+        original = iot._answer
+
+        def _answer(name: str, kw: dict[str, Any]) -> Any:
+            if name == "describe_thing":
+                raise _NotFound()
+            return original(name, kw)
+
+        iot._answer = _answer  # type: ignore[method-assign]
+        rc = main(["reprovision", "ghost", "--cert-dir", str(tmp_path)])
+        assert rc == 1
+        assert "does not exist" in capsys.readouterr().err
+
+    def test_stale_certificates_are_printed_to_stderr(self, rotating, tmp_path, capsys):
+        from strands_robots.mesh.iot.cli import main
+
+        rotating(fail_deactivate=True)
+        rc = main(["reprovision", "so101-r", "--cert-dir", str(tmp_path)])
+        assert rc == 0
+        assert "old0000000000" in capsys.readouterr().err
+
+    def test_the_dispatcher_carries_the_command(self):
+        from strands_robots.__main__ import _COMMANDS
+
+        assert "iot" in _COMMANDS
+
+    def test_usage_error_exits_2(self):
+        from strands_robots.mesh.iot.cli import main
+
+        with pytest.raises(SystemExit) as exc:
+            main(["frobnicate", "x"])
+        assert exc.value.code == 2

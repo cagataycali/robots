@@ -159,6 +159,12 @@ class ProvisionedThing:
     policy_name: str
     region: str
     subject_cn: str = ""
+    #: Certificate ids that were attached to the Thing before this run and
+    #: could NOT be removed (a deactivate, detach or delete failed). Each is
+    #: still an active credential for the Thing until an operator removes it;
+    #: the WARNING logged for each names the command. Empty when the rotation
+    #: was clean.
+    stale_certificates: tuple[str, ...] = ()
 
     def env_vars(self) -> dict[str, str]:
         """Return env vars a process can export to use these artefacts."""
@@ -668,7 +674,7 @@ def provision_robot(
     # overwritten on disk), so without cleanup
     # the Thing would accumulate certs across re-runs - every leftover is
     # an active credential that could impersonate the robot.
-    _cleanup_stale_certs(iot, thing_name)
+    _cleaned, stale = _cleanup_stale_certs_report(iot, thing_name)
 
     cert_path = cert_dir / f"{thing_name}.cert.pem"
     key_path = cert_dir / f"{thing_name}.private.key"
@@ -697,6 +703,7 @@ def provision_robot(
         policy_name=policy_name,
         region=region,
         subject_cn=thing_name,
+        stale_certificates=stale,
     )
 
 
@@ -752,7 +759,7 @@ def provision_operator(
     logger.info("[provision] %s: using policy %s", thing_name, policy_arn)
 
     # Clean up stale certs from prior provision_operator runs.
-    _cleanup_stale_certs(iot, thing_name)
+    _cleaned, stale = _cleanup_stale_certs_report(iot, thing_name)
 
     cert_path = cert_dir / f"{thing_name}.cert.pem"
     key_path = cert_dir / f"{thing_name}.private.key"
@@ -778,6 +785,104 @@ def provision_operator(
         policy_name=OPERATOR_POLICY_NAME,
         region=region,
         subject_cn=thing_name,
+        stale_certificates=stale,
+    )
+
+
+def reprovision_thing(
+    thing_name: str,
+    *,
+    region: str | None = None,
+    cert_dir: Path | str | None = None,
+) -> ProvisionedThing:
+    """Rotate *thing_name*'s certificate in place to one issued from a local CSR with ``CN=<thing_name>``.
+
+    For a Thing provisioned before the CSR default (its certificate carries
+    the CN ``AWS IoT Certificate``, which the direct-reply grant cannot match)
+    or one whose key must be rotated. The Thing, its attributes and its policy
+    attachments are kept exactly as they are: the new certificate receives the
+    same policies the old one had, is attached and activated first, and only
+    then are the old certificates deactivated, detached and deleted. The
+    certificate CN is fixed at issuance, so this is also how an identity
+    follows a renamed Thing.
+
+    Deleting the old certificate ends the MQTT session a running robot holds
+    on it; restart the robot afterwards. The new files land under *cert_dir*
+    (default ``~/.strands_robots/iot``) on the machine this runs on, so run it
+    on the robot or copy the two PEM files to it.
+
+    Args:
+        thing_name: An existing Thing. Refused when it does not exist.
+        region: AWS region. Defaults to the default boto3 session region.
+        cert_dir: Where the new ``<thing>.cert.pem`` and ``<thing>.private.key``
+            are written (mode 0600).
+
+    Returns:
+        The new credential, with ``stale_certificates`` naming any old
+        certificate that could not be removed.
+
+    Raises:
+        ValueError: When the Thing name is malformed or the Thing does not exist.
+    """
+    _validate_thing_name(thing_name)
+    boto3 = _require_boto3()
+    iot = boto3.client("iot", region_name=region)
+    region = iot.meta.region_name
+    try:
+        thing_arn = str(iot.describe_thing(thingName=thing_name)["thingArn"])
+    except iot.exceptions.ResourceNotFoundException:
+        raise ValueError(
+            f"reprovision: Thing {thing_name!r} does not exist in {region}; use provision_robot or "
+            "provision_operator to create it"
+        ) from None
+
+    old_certs: list[str] = list(iot.list_thing_principals(thingName=thing_name).get("principals", []))
+    policy_names: list[str] = []
+    for cert_arn in old_certs:
+        for pol in iot.list_attached_policies(target=cert_arn).get("policies", []):
+            if pol["policyName"] not in policy_names:
+                policy_names.append(pol["policyName"])
+    if not policy_names:
+        raise ValueError(
+            f"reprovision: no policy is attached to {thing_name!r}'s certificates, so there is nothing to carry "
+            "over; use provision_robot or provision_operator instead"
+        )
+
+    cert_dir = Path(cert_dir) if cert_dir else DEFAULT_CERT_DIR
+    cert_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(cert_dir, 0o700)
+    except OSError:
+        logger.debug("could not chmod 0o700 %s", cert_dir, exc_info=True)
+    cert_path = cert_dir / f"{thing_name}.cert.pem"
+    key_path = cert_dir / f"{thing_name}.private.key"
+    cert_arn, cert_id = _create_cert(iot, cert_path, key_path, thing_name)
+    for name in policy_names:
+        iot.attach_policy(policyName=name, target=cert_arn)
+    iot.attach_thing_principal(thingName=thing_name, principal=cert_arn)
+    logger.info(
+        "[provision] %s: rotated to cert %s (CN=%s), policies %s", thing_name, cert_id, thing_name, policy_names
+    )
+
+    _cleaned, stale = _cleanup_stale_certs_report(iot, thing_name, keep=cert_arn)
+
+    ca_path = cert_dir / "AmazonRootCA1.pem"
+    _ensure_ca(ca_path)
+    endpoint = _discover_endpoint(iot)
+    (cert_dir / "endpoint").write_text(endpoint, encoding="utf-8")
+    return ProvisionedThing(
+        thing_name=thing_name,
+        thing_arn=thing_arn,
+        cert_arn=cert_arn,
+        cert_id=cert_id,
+        cert_path=cert_path,
+        key_path=key_path,
+        ca_path=ca_path,
+        endpoint=endpoint,
+        policy_name=policy_names[0],
+        region=region,
+        subject_cn=thing_name,
+        stale_certificates=stale,
     )
 
 
@@ -951,53 +1056,82 @@ def _ensure_policy(iot: Any, name: str, document: dict[str, Any]) -> str:
     return resp["policyArn"]
 
 
-def _cleanup_stale_certs(iot: Any, thing_name: str) -> int:
+def _cleanup_stale_certs(iot: Any, thing_name: str, *, keep: str | None = None) -> int:
     """Detach + delete any certificates already attached to *thing_name*.
 
     Re-running :func:`provision_robot` on the same Thing has historically
-    caused certs to accumulate (each run issues a fresh cert because
-    AWS doesn't expose previously-generated private keys). That left
-    Things with 5-10 ACTIVE certs after a few dev iterations, which is
-    a footgun: every old cert is a credential that *could* be used to
-    impersonate the robot.
+    left the previous certificates attached and ACTIVE, so a Thing collected
+    5 to 10 live credentials over a few dev iterations, every one of which
+    could impersonate the robot. This helper detaches every existing
+    principal except *keep* (the certificate just issued, on the
+    :func:`reprovision_thing` path), removes its policy attachments, marks it
+    INACTIVE and force-deletes it.
 
-    This helper detaches every existing principal, removes its policy
-    attachments, marks the cert INACTIVE, and force-deletes it. Failures
-    are logged at DEBUG and swallowed so a partial cleanup never blocks
-    the new cert issuance - the new cert is what users actually want.
+    A failure never blocks the new issuance, but it is not swallowed either:
+    each certificate that could not be removed is logged at WARNING with its
+    id and the exact command that finishes the job, and returned by
+    :func:`_cleanup_stale_certs_report` so the caller can put it on
+    :attr:`ProvisionedThing.stale_certificates`.
 
-    Returns the number of certs cleaned up (for logging in the caller).
+    Returns:
+        The number of certificates removed.
     """
+    cleaned, _stale = _cleanup_stale_certs_report(iot, thing_name, keep=keep)
+    return cleaned
+
+
+def _cleanup_stale_certs_report(iot: Any, thing_name: str, *, keep: str | None = None) -> tuple[int, tuple[str, ...]]:
+    """:func:`_cleanup_stale_certs` plus the ids that could not be removed."""
     cleaned = 0
+    stale: list[str] = []
     try:
         existing = iot.list_thing_principals(thingName=thing_name).get("principals", [])
     except iot.exceptions.ResourceNotFoundException:
-        return 0
+        return 0, ()
 
     for cert_arn in existing:
+        if keep is not None and cert_arn == keep:
+            continue
         cert_id = cert_arn.rsplit("/", 1)[-1]
+        failed: list[str] = []
         try:
             iot.detach_thing_principal(thingName=thing_name, principal=cert_arn)
-        except Exception as exc:
-            logger.debug("[provision] detach %s from %s: %s", cert_id, thing_name, exc)
+        except Exception as exc:  # noqa: BLE001 - reported below with the remedy
+            failed.append(f"detach from thing ({exc})")
         try:
             for pol in iot.list_attached_policies(target=cert_arn).get("policies", []):
                 iot.detach_policy(policyName=pol["policyName"], target=cert_arn)
-        except Exception as exc:
-            logger.debug("[provision] detach policies from %s: %s", cert_id, exc)
+        except Exception as exc:  # noqa: BLE001 - reported below with the remedy
+            failed.append(f"detach policies ({exc})")
         try:
             iot.update_certificate(certificateId=cert_id, newStatus="INACTIVE")
             iot.delete_certificate(certificateId=cert_id, forceDelete=True)
+        except Exception as exc:  # noqa: BLE001 - reported below with the remedy
+            failed.append(f"deactivate/delete ({exc})")
+        if failed:
+            stale.append(cert_id)
+            logger.warning(
+                "[provision] certificate %s on %s is still attached and active: %s. Finish with: "
+                "aws iot update-certificate --certificate-id %s --new-status INACTIVE && "
+                "aws iot detach-thing-principal --thing-name %s --principal %s && "
+                "aws iot delete-certificate --certificate-id %s --force-delete",
+                cert_id,
+                thing_name,
+                "; ".join(failed),
+                cert_id,
+                thing_name,
+                cert_arn,
+                cert_id,
+            )
+        else:
             cleaned += 1
-        except Exception as exc:
-            logger.warning("[provision] could not delete stale cert %s: %s", cert_id, exc)
     if cleaned:
         logger.info(
             "[provision] cleaned up %d stale cert(s) on %s before issuing new one",
             cleaned,
             thing_name,
         )
-    return cleaned
+    return cleaned, tuple(stale)
 
 
 #: Organisation name written into every CSR this module builds.

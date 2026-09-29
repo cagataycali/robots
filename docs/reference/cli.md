@@ -1,13 +1,13 @@
 # Command line
 
-The package installs one console script, `strands-robots`, with three subcommands. `python -m strands_robots <command>` is the same entry point. After this page you know every flag each subcommand takes, what it prints, and its exit codes.
+The package installs one console script, `strands-robots`, with four subcommands. `python -m strands_robots <command>` is the same entry point. After this page you know every flag each subcommand takes, what it prints, and its exit codes.
 
 ```bash
 strands-robots --help       # usage and the command list
 strands-robots --version    # strands-robots <installed version>
 ```
 
-The first token is the subcommand. A missing or unknown command prints the list (`doctor`, `verify-dataset`, `dashboard`) and exits 1. Flags after the command belong to that command's own parser.
+The first token is the subcommand. A missing or unknown command prints the list (`doctor`, `verify-dataset`, `dashboard`, `iot`) and exits 1. Flags after the command belong to that command's own parser.
 
 ## doctor
 
@@ -62,3 +62,23 @@ strands-robots dashboard --host 0.0.0.0 --port 8090 --log-level debug
 | `--log-level L` | `info` | uvicorn log level: `critical`, `error`, `warning`, `info`, `debug` |
 
 A bind to anything other than `127.0.0.1`, `::1` or `localhost` is refused with exit 2 until the API is guarded: enrol a passkey on `http://127.0.0.1` first, or set `DASHBOARD_AUTH_TOKEN`. The dashboard needs the `dashboard` extra (`pip install "strands-robots[dashboard]"`). Its pages and endpoints are described in [learn/dashboard.md](../learn/dashboard.md).
+
+## iot
+
+Provisions, re-provisions and tears down AWS IoT identities for the `iot` and `bridge` mesh backends (`[mesh-iot]` extra, AWS credentials in the environment). Exit 0 on success, 1 when AWS refused or the Thing does not exist, 2 on a usage error.
+
+```bash
+strands-robots iot provision-robot so101-arm-01
+strands-robots iot provision-operator ops-console-1
+strands-robots iot reprovision so101-arm-01
+strands-robots iot teardown so101-arm-01
+```
+
+| verb | effect |
+|---|---|
+| `provision-robot THING [--no-estop-publish]` | Thing, CSR certificate with `CN=THING`, `strands-robot` policy (or `strands-robot-no-estop`) |
+| `provision-operator THING` | the same with the `strands-operator` policy |
+| `reprovision THING` | rotate the certificate in place: new key and CSR certificate attached and activated first, then the old certificates deactivated, detached and deleted; the Thing, its attributes and its policy attachments are kept. Ends the MQTT session a running peer holds on the old certificate, so restart that peer |
+| `teardown THING` | delete the Thing, its certificates and the local files |
+
+Every verb takes `--region` and `--cert-dir` (default `~/.strands_robots/iot`) and prints the `export` lines a process needs. `reprovision` is how a robot provisioned before the CSR default (certificate CN `AWS IoT Certificate`) gains the direct-reply grant ([direct messaging](../learn/mesh/direct.md)).
