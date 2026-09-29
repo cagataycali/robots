@@ -576,8 +576,8 @@ def _add_actuators(spec: Any, limits: dict[str, tuple[float, float]], mujoco: An
     """One position actuator per hinge/slide joint; returns the joint names driven."""
     driven: list[str] = []
     # Enum values compared as int() to int(): a mujoco enum on the left of ==
-    # stops matching numpy fields on mujoco 3.12 (see
-    # tests/test_mujoco_enum_comparisons_are_value_based.py).
+    # (which is what a tuple membership test produces) stops matching numpy
+    # fields on mujoco 3.12, silently, so the membership is spelled by value.
     hinge, slide_t = int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE)
     for joint in spec.joints:
         if int(joint.type) not in (hinge, slide_t):
@@ -794,7 +794,7 @@ def _description_pin(mod: Any) -> tuple[str | None, str | None]:
         entry = next((r for r in REPOSITORIES.values() if getattr(r, "cache_path", None) == leaf), None)
     if entry is None:
         return None, None
-    m = re.search(r"github\.com[/:]([^/]+/[^/]+?)(?:\.git)?/?$", str(getattr(entry, "url", "")))
+    m = re.search(r"github\.com[/:]([^/]+/[^/]+?)(?:\.git)?/?\Z", str(getattr(entry, "url", "")))
     return (m.group(1) if m else None), (str(entry.commit) if getattr(entry, "commit", None) else None)
 
 
