@@ -1,6 +1,0 @@
-{
-  "name": "strands-robots-drawings",
-  "private": true,
-  "description": "Renders docs/drawings/*.excalidraw to docs/assets/drawings/<id>.{paper,dark}.svg with Excalidraw's own exporter.",
-  "dependencies": { "@excalidraw/utils": "0.1.5" }
-}

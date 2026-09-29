@@ -7,7 +7,7 @@ source of truth: open it on excalidraw.com or in the VS Code Excalidraw extensio
 tokens (fonts embedded, one green accent, both colour schemes), and are committed so the build
 needs no browser.
 
-    cd docs/drawings/_tools && npm i && python3 -m playwright install chromium
+    python3 -m playwright install chromium    # @excalidraw/utils is npm-installed into .cache/drawings-node on first run
     python3 d01_what_is.py        # rebuild one scene from its script
     python3 render.py             # export every scene to docs/assets/drawings
     python3 render.py --check     # exit 1 when a committed SVG does not match its source

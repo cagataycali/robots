@@ -5,7 +5,7 @@ inside a headless Chromium, so the SVG is exactly what excalidraw.com would expo
 is then restyled by ``restyle.py``: docs fonts embedded, hex values mapped for the dark scheme,
 ``role="img"`` and a ``<title>`` added, the fixed pixel size dropped in favour of the viewBox.
 
-    cd docs/drawings/_tools && npm i && python3 -m playwright install chromium
+    python3 -m playwright install chromium   # npm i of @excalidraw/utils happens on first run, in .cache/
     python3 render.py            # all drawings
     python3 render.py d01_what_is   # one
     python3 render.py --check    # exit 1 when a committed SVG differs from its source
@@ -25,14 +25,34 @@ from restyle import restyle
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE.parent  # docs/drawings
-OUT = HERE.parent.parent / "assets" / "drawings"
+REPO = HERE.parent.parent.parent
+OUT = REPO / "docs" / "assets" / "drawings"
+# The npm project lives OUTSIDE docs/ on purpose: the docs graders walk every *.md under docs/,
+# and a node_modules tree there would be graded as site pages.
+NODE = REPO / ".cache" / "drawings-node"
 PORT = 8793
+EXCALIDRAW_UTILS = "0.1.5"
+
+
+def ensure_node_modules() -> None:
+    if (NODE / "node_modules" / "@excalidraw" / "utils").exists():
+        return
+    NODE.mkdir(parents=True, exist_ok=True)
+    (NODE / "package.json").write_text(
+        json.dumps({"name": "strands-robots-drawings", "private": True,
+                    "dependencies": {"@excalidraw/utils": EXCALIDRAW_UTILS}}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["npm", "i", "--silent"], cwd=NODE, check=True)
+    (NODE / "render_page.html").write_text((HERE / "render_page.html").read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def export_all(files: list[Path]) -> dict[str, str]:
+    ensure_node_modules()
+    (NODE / "render_page.html").write_text((HERE / "render_page.html").read_text(encoding="utf-8"), encoding="utf-8")
     srv = subprocess.Popen(
         [sys.executable, "-m", "http.server", str(PORT), "--bind", "127.0.0.1"],
-        cwd=HERE,
+        cwd=NODE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

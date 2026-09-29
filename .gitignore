@@ -15,3 +15,6 @@ site/
 # macOS Finder metadata
 .DS_Store
 .venv-docs/
+
+# drawing exporter npm project (docs/drawings/_tools/render.py)
+.cache/
