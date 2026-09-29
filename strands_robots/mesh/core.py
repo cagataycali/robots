@@ -3489,6 +3489,22 @@ class Mesh(SensorLoopsMixin):
             return None
         if not isinstance(data, dict):
             return None
+        # A retained MQTT delivery is a stored message the broker hands to a
+        # new subscriber, not an operator acting now; the payload's own ``t``
+        # cannot tell the two apart, so the transport's flag decides. Only a
+        # real ``True`` counts (a Zenoh sample has no such attribute, a unit
+        # fixture's MagicMock attribute is truthy but is not this flag).
+        if getattr(sample, "retain", False) is True:
+            logger.warning(
+                f"[safety] %s: refusing remote {kind} -- delivered as a RETAINED message at subscribe time, "
+                "not a live publish (broker replay of a stored envelope)",
+                self.peer_id,
+            )
+            self._audit_local(
+                "safety_retained_delivery_rejected",
+                {"kind": kind, "issuer": data.get("peer_id")},
+            )
+            return None
         wire_zid = _extract_sample_source_zid(sample)
         body_zid = data.get("source_zid")
         if wire_zid is not None and body_zid is not None:
