@@ -429,6 +429,13 @@ class TestEveryArticulationTouchConsultsTheGate:
         # flag being cleared. A gate here would refuse the very call that repairs
         # the view, so its exemption is structural rather than a concession.
         "_revive_articulations_after_reset": "reset() itself, which rebuilds the view",
+        # _MultiArticulation's methods forward one articulation call to each of
+        # a multi-root robot's parts. They are reached only through the gated
+        # call sites that drive ``robot.articulation`` (send_action,
+        # set_joint_positions, the primitives), exactly as a single
+        # articulation's own methods are.
+        "apply_action": "the gated callers of robot.articulation (send_action, primitives)",
+        "set_joint_positions": "IsaacSimulation.set_joint_positions, which consults the gate",
     }
 
     @staticmethod
