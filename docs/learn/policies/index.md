@@ -59,7 +59,7 @@ Abridged ([API reference](../../reference/api/policies.md)). `get_actions` retur
 
 ## Providers
 
-Generated from `strands_robots/registry/policies.json` and `pyproject.toml` at build time.
+Generated from `strands_robots/registry/policies.json` and `pyproject.toml` at build time; "Also spelled" lists the shorthands `create_policy` accepts.
 
 {{providers:table}}
 
