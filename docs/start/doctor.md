@@ -37,6 +37,7 @@ strands-robots doctor
           - Sharing a trusted lab network?  Set STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 to accept this posture.
           - Production?  Point STRANDS_MESH_ACL_FILE at a role-separated ACL (see examples/mesh/mesh_acl_example.json5).
           - Don't need the mesh?  It is OFF by default now -- just drop mesh=True (or set STRANDS_MESH=false).
+  SKIP  iot direct: STRANDS_MESH_BACKEND=zenoh (no AWS IoT leg)
   PASS  sim smoke test: Robot('so100') works (13 obs keys)
 
 All checks passed. Ready to use strands-robots.
@@ -62,6 +63,7 @@ Four verdicts. `PASS` and `FAIL` are what they say; a `FAIL` line carries a `Fix
 | HF Auth | `HF_TOKEN` is set, or a cached login token exists where `huggingface_hub` looks | `WARN`: private checkpoints and dataset pushes will not authenticate |
 | Device Connect | the device-connect edge posture: authenticated transport, or an explicit insecure opt-in, or neither | `SKIP` without the extra; `WARN` when `run()` would refuse; `FAIL` when it would be online unencrypted with no caller restriction |
 | Mesh | zenoh is installed and `mesh=True` would start under the configured ACL and TLS posture | `WARN` without zenoh, or when the mesh would refuse to start, with the choices listed |
+| IoT Direct | with `STRANDS_MESH_BACKEND=iot` or `bridge`, one HTTPS `SendDirectMessage` from this identity to its own reply topic checks the grant is in place without opening an MQTT session | `SKIP` on any other backend or when `STRANDS_MESH_IOT_DIRECT=0`; `FAIL` when the policy refuses the call, `WARN` on a transient error |
 | Sim Test | `Robot("so100")` builds in sim and returns an observation | `FAIL` with the exception, pointing at `MUJOCO_GL` and the MuJoCo install |
 
 A failed `pip install 'strands-robots[ros2]'` on a Jetson is not a doctor row: it is the aarch64 build, written up at [ROS 2](../learn/ros2.md#linux-aarch64-jetson).

@@ -23,7 +23,7 @@ strands-robots doctor --list
 | `--list` | print the check names and exit 0 without probing anything |
 | `-h`, `--help` | usage and exit |
 
-An argument the parser does not know exits 2 with the usage line. The checks run in this order: Python, Package, Strands SDK, MuJoCo, MuJoCo GL, LeRobot, Torchcodec, CUDA/GPU, Torch Arch, Warp Arch, Serial, HF Auth, Device Connect, Mesh, Sim Test. Each row prints `PASS`, `WARN`, `SKIP` or `FAIL` with one line of detail and, for a failure, the fix; only `FAIL` rows change the exit code. `NO_COLOR` or `TERM=dumb` turns the colour off. The walk-through with expected output is [start/doctor.md](../start/doctor.md).
+An argument the parser does not know exits 2 with the usage line. The checks run in this order: Python, Package, Strands SDK, MuJoCo, MuJoCo GL, LeRobot, Torchcodec, CUDA/GPU, Torch Arch, Warp Arch, Serial, HF Auth, Device Connect, Mesh, IoT Direct, Sim Test. Each row prints `PASS`, `WARN`, `SKIP` or `FAIL` with one line of detail and, for a failure, the fix; only `FAIL` rows change the exit code. `NO_COLOR` or `TERM=dumb` turns the colour off. The walk-through with expected output is [start/doctor.md](../start/doctor.md).
 
 ## verify-dataset
 
