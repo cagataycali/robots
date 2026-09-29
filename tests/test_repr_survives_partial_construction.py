@@ -80,6 +80,7 @@ EXPECTED_REPR_CLASSES = frozenset(
         "drivers/ros/rosbridge_robot::RosbridgeRobot",
         "drivers/ros/rtps_robot::RtpsRobot",
         "mesh/session::PeerInfo",
+        "policies/flux3_action/policy::Flux3ActionPolicy",
         "policies/lerobot_local/processor::ProcessorBridge",
         "simulation/isaac/simulation::IsaacSimulation",
     }

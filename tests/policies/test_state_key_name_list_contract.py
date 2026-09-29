@@ -100,7 +100,7 @@ the shared domain. It cannot prove that any of them RAISES: a body keeping the
 Only ``MockPolicy`` and ``RemotePolicy`` were driven behaviourally, so on the
 others the refusal was asserted structurally and had never fired - measured
 with coverage over the suite, the ``raise ValueError(error)`` line was unexecuted
-in ``cosmos3``, ``curobo``, ``lerobot_local``
+in ``cosmos3``, ``curobo``, ``flux3_action``, ``lerobot_local``
 and ``moveit2``. Each is now constructed and driven directly, and the
 table that does so is derived from ``_MUST_VALIDATE`` so a provider added later
 cannot quietly join the structurally-only half.
@@ -132,6 +132,7 @@ _PACKAGE = pathlib.Path(strands_robots.__file__).parent
 _MUST_VALIDATE = {
     "inference/client.py::RemotePolicy",
     "policies/cosmos3/policy.py::Cosmos3Policy",
+    "policies/flux3_action/policy.py::Flux3ActionPolicy",
     "policies/curobo/policy.py::CuroboPolicy",
     "policies/lerobot_local/policy.py::LerobotLocalPolicy",
     "policies/mock.py::MockPolicy",
@@ -788,6 +789,17 @@ def test_protomotions_reads_the_first_occurrence_and_emits_the_canonical_29() ->
 # --------------------------------------------------------------------------
 
 
+def _flux3_action() -> Any:
+    """Weights load in ``__init__`` (22 GB of GPU); build the bare instance and run ``Policy.__init__``."""
+    from strands_robots.policies.base import Policy
+    from strands_robots.policies.flux3_action.policy import Flux3ActionPolicy
+
+    policy = object.__new__(Flux3ActionPolicy)
+    Policy.__init__(policy)
+    policy.robot_state_keys = []
+    return policy
+
+
 def _cosmos3() -> Any:
     """Service backend: the constructor records host/port and dials nothing."""
     from strands_robots.policies.cosmos3.policy import Cosmos3Policy
@@ -830,6 +842,7 @@ _Surface = tuple[str, Callable[[], Any], str | None, str | None]
 
 _OWNING_SURFACES: list[_Surface] = [
     ("policies/cosmos3/policy.py::Cosmos3Policy", _cosmos3, "robot_state_keys", None),
+    ("policies/flux3_action/policy.py::Flux3ActionPolicy", _flux3_action, "robot_state_keys", None),
     ("policies/curobo/policy.py::CuroboPolicy", _curobo, "_robot_state_keys", None),
     ("policies/lerobot_local/policy.py::LerobotLocalPolicy", _lerobot_local, "robot_state_keys", "torch"),
     ("policies/microduck/policy.py::MicroduckPolicy", _microduck, "_robot_state_keys", None),

@@ -142,3 +142,51 @@ class TestTheDrivesAreAuthored:
 
     def test_the_cache_key_names_the_postprocess(self) -> None:
         assert mjcf_assets._POSTPROCESS_VERSION
+
+
+_NUMERIC_MJCF = """
+<mujoco>
+  <worldbody>
+    <body name="link">
+      <joint name="1" type="hinge" axis="0 0 1" damping="0.6"/>
+      <geom type="box" size="0.05 0.05 0.05" mass="1"/>
+    </body>
+  </worldbody>
+  <actuator><position joint="1" kp="17.8"/></actuator>
+</mujoco>
+"""
+
+
+class TestANonIdentifierJointName:
+    """so101 names its joints "1".."6"; the converter writes them as ``tn__1_``.
+
+    Measured on 6.1: ``add_robot("so101")`` reported ``tn__1_``..``tn__6_`` and no
+    drive was authored (the gains are keyed by the MJCF names), so the arm hung
+    limp. The joint's passive ``damping`` (so101 declares ``kv=0``) also has to
+    reach the single PhysX drive-damping term or the arm rings.
+    """
+
+    def test_mjcf_joint_names_reads_the_compiled_vocabulary(self, tmp_path) -> None:
+        from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, mjcf_joint_names
+
+        path = tmp_path / "numeric.xml"
+        path.write_text(_NUMERIC_MJCF, encoding="utf-8")
+        names = mjcf_joint_names(str(path))
+        assert names == ["1"]
+        assert demangle_usd_joint_names(["tn__1_"], names) == (["1"], {"tn__1_": "1"})
+
+    def test_the_drive_reaches_a_transcoded_prim_with_the_passive_damping(self, tmp_path) -> None:
+        mjcf = tmp_path / "numeric.xml"
+        mjcf.write_text(_NUMERIC_MJCF, encoding="utf-8")
+        usd = tmp_path / "numeric.usda"
+        stage = Usd.Stage.CreateNew(str(usd))
+        stage.SetDefaultPrim(stage.DefinePrim("/arm", "Xform"))
+        UsdPhysics.RevoluteJoint.Define(stage, "/arm/Physics/tn__1_")
+        stage.GetRootLayer().Save()
+
+        assert mjcf_assets._author_position_drives(str(usd), str(mjcf)) == ["1"]
+
+        reopened = Usd.Stage.Open(str(usd))
+        drive = UsdPhysics.DriveAPI.Get(reopened.GetPrimAtPath("/arm/Physics/tn__1_"), "angular")
+        assert drive.GetStiffnessAttr().Get() == pytest.approx(17.8 * math.pi / 180)
+        assert drive.GetDampingAttr().Get() == pytest.approx(0.6 * math.pi / 180)

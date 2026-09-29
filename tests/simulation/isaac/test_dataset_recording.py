@@ -561,3 +561,25 @@ def test_start_recording_dedupes_both_spellings_of_one_camera(tmp_path) -> None:
     assert image_feats == ["observation.images.arm0__wrist"], image_feats
     assert engine._recording_state_dict["recording_cameras"] == [("arm0/wrist", "arm0__wrist", 64, 48)]
     assert "2 cameras" not in started["content"][0]["text"], started["content"][0]["text"]
+
+
+def test_headless_render_mode_names_the_real_reason_a_scoped_camera_is_refused(tmp_path) -> None:
+    """The camera exists; headless render mode is why it cannot be recorded.
+
+    ``Robot("so100", backend="isaac")`` + ``add_camera("front")`` +
+    ``start_recording(cameras=["front"])`` - the notebook's backend-swap cell -
+    was refused with "unknown camera(s) ['front'] ... Available scene cameras:
+    []. Add them with add_camera(...)", sending the caller to add the camera
+    they had just added. The refusal now names render_mode and the switch.
+    """
+    root = str(tmp_path / "isaac_headless_scoped")
+    engine = _make_engine(robots={"so100": _robot()}, cameras={"front": _camera("front")}, render_mode="headless")
+
+    result = engine.start_recording(repo_id="local/isaac_hs", root=root, overwrite=True, cameras=["front"])
+
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert "are in the scene but record no frames" in text
+    assert 'render_mode="rtx_realtime"' in text
+    assert "Add them with add_camera" not in text
+    assert engine._is_recording() is False

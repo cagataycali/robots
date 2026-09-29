@@ -39,7 +39,7 @@ import numpy as np
 
 from strands_robots.simulation.base import SimEngine, unknown_kwargs_error, unknown_model_msg
 from strands_robots.simulation.isaac.config import IsaacConfig
-from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, urdf_joint_names
+from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, mjcf_joint_names, urdf_joint_names
 from strands_robots.simulation.isaac.loaders import mjcf_declares_floating_base
 from strands_robots.simulation.isaac.mjcf_assets import MJCF_EXTENSIONS, convert_mjcf_to_usd
 from strands_robots.simulation.isaac.motion_primitives import IsaacMotionPrimitivesMixin
@@ -826,10 +826,7 @@ def _get_or_create_simulation_app(
             # Try the modern path first, fall back to the legacy one so
             # this code keeps working on older Isaac Sim builds (and on
             # CI mocks that monkey-patch the legacy module).
-            try:
-                from isaacsim import SimulationApp  # type: ignore[import-not-found]
-            except ImportError:
-                from omni.isaac.kit import SimulationApp  # type: ignore[import-not-found]
+            from isaacsim import SimulationApp  # type: ignore[import-not-found]
         except ImportError as e:
             from strands_robots.simulation.isaac._install import not_available_import_error
 
@@ -846,33 +843,20 @@ def _get_or_create_simulation_app(
 
 
 # ----------------------------------------------------------------------------
-# Dual-namespace import note
+# Isaac Sim import note
 # ----------------------------------------------------------------------------
 #
-# Isaac Sim ships every runtime extension under TWO namespaces: the legacy
-# ``omni.isaac.*`` tree (the 4.x path, still present as Kit-extension shims
-# under ``extsDeprecated/`` on 4.5/5.x -- imports work post-SimulationApp
-# boot but emit deprecation warnings) and the modern ``isaacsim.*`` tree
-# (the supported path on Isaac Sim 6.0). This file targets Isaac Sim 6.0 /
-# Python 3.12 (see ``_install.ISAAC_SIM_MIN_VERSION``): every lazy import
-# now tries the ``isaacsim.*`` location first and falls back to the
-# ``omni.isaac.*`` path via ``try: ... except ImportError:`` so 4.x
-# installs aren't hard-broken during the transition. The namespace map
-# applied across this module:
-#
-#   omni.isaac.core.World              -> isaacsim.core.api.World
-#   omni.isaac.core.objects.*          -> isaacsim.core.api.objects.*
-#   omni.isaac.sensor.Camera           -> isaacsim.sensors.camera.Camera
-#   omni.isaac.core.articulations.*    -> isaacsim.core.prims.SingleArticulation
-#                                         (see ``_import_articulation_cls``)
-#   omni.isaac.core.utils.{prims,
-#       stage,viewports}               -> isaacsim.core.utils.{prims,stage,viewports}
-#   omni.importer.urdf                 -> isaacsim.asset.importer.urdf
-#
-# ``import omni.usd`` is NOT renamed (it stays under ``omni.*`` on 6.0).
-# Downstream unit tests ``patch.dict("sys.modules", {"isaacsim.*": fake})``
-# to inject mocks; the modern-first dual-path resolves those mocks while
-# still degrading gracefully on a legacy box.
+# This file targets Isaac Sim 6.x / Python 3.12 (``_install.ISAAC_SIM_MIN_VERSION``).
+# The legacy ``omni.isaac.*`` namespace (4.x) is gone since 5.0, so there are no
+# fallbacks to it. The core-API extensions this backend is built on -
+# ``isaacsim.core.{api,prims,utils}`` and ``isaacsim.sensors.camera`` - moved to
+# ``extsDeprecated/`` in 6.1; every symbol taken from them is imported through
+# :mod:`strands_robots.simulation.isaac._deprecated_api`, which owns the
+# name -> module map. Everything else (``isaacsim.SimulationApp``,
+# ``isaacsim.core.simulation_manager``, ``isaacsim.core.cloner``, the asset
+# importers, ``omni.usd``, ``pxr``) is imported directly. Unit tests that
+# ``monkeypatch.setitem(sys.modules, "isaacsim.core.api", fake)`` still reach
+# their fake: the compat module resolves each name at import time.
 
 
 def _accepts_config_kw(cls: Any) -> bool:
@@ -1026,52 +1010,16 @@ _HEADLESS_RENDER_REMEDY = (
 
 
 def _import_articulation_cls() -> Any:
-    """Resolve the single-prim articulation wrapper across Isaac versions.
+    """Resolve the single-prim articulation wrapper across Isaac 6.x builds.
 
-    Isaac Sim 6.0 relocated the single-articulation view. The 4.x path
-    was ``omni.isaac.core.articulations.Articulation``; on 6.0 the
-    high-level wrapper is ``isaacsim.core.api.articulations.Articulation``
-    and the lower-level single-prim view lives in ``isaacsim.core.prims``
-    as ``SingleArticulation`` (some builds also keep an ``Articulation``
-    alias). Probe modern locations first, fall back to the legacy 4.x
-    path so transitional installs keep working.
-
-    Returns the class object. Raises ``ImportError`` only if no known
-    location resolves (the caller's cleanup-clause tuple catches it).
+    Delegates to :func:`~strands_robots.simulation.isaac._deprecated_api.articulation_cls`,
+    which owns the probe order (the classes live in 6.1's ``extsDeprecated/``).
+    Raises ``ImportError`` only if no known location resolves (the caller's
+    cleanup-clause tuple catches it).
     """
-    # 1. Isaac Sim 6.0 high-level API (keeps the ``Articulation`` name).
-    try:
-        from isaacsim.core.api.articulations import (  # type: ignore[import-not-found]
-            Articulation,
-        )
+    from strands_robots.simulation.isaac._deprecated_api import articulation_cls
 
-        return Articulation
-    except ImportError:
-        pass
-    # 2. Isaac Sim 6.0 single-prim view: isaacsim.core.prims.SingleArticulation
-    try:
-        from isaacsim.core.prims import (  # type: ignore[import-not-found]
-            SingleArticulation,
-        )
-
-        return SingleArticulation
-    except ImportError:
-        pass
-    # 3. Some 6.0 builds keep an ``Articulation`` alias under core.prims.
-    try:
-        from isaacsim.core.prims import (  # type: ignore[import-not-found]
-            Articulation,
-        )
-
-        return Articulation
-    except ImportError:
-        pass
-    # 4. Legacy 4.x fallback.
-    from omni.isaac.core.articulations import (  # type: ignore[import-not-found]
-        Articulation,
-    )
-
-    return Articulation
+    return articulation_cls()
 
 
 class _RobotState:
@@ -1875,10 +1823,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 # exposes ``World`` under ``isaacsim.core.api``; the legacy
                 # 4.x path was ``omni.isaac.core``. Try modern first, fall
                 # back so 4.x installs keep working during the transition.
-                try:
-                    from isaacsim.core.api import World  # type: ignore[import-not-found]
-                except ImportError:
-                    from omni.isaac.core import World  # type: ignore[import-not-found]
+                from strands_robots.simulation.isaac._deprecated_api import (
+                    World,
+                )
 
                 # Published to the cleanup handler below, which cannot see the
                 # import-scoped name when the import never ran.
@@ -3147,6 +3094,16 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
                 self._prim_registry.append(prim_path)
 
+                # A converted MJCF's joint names come back USD-transcoded when
+                # they are not valid identifiers (so101: "1" -> "tn__1_"); map
+                # them onto the MJCF vocabulary MuJoCo reports, as the URDF
+                # path does with its URDF (same helper, same guarantees).
+                usd_to_mjcf: dict[str, str] = {}
+                if source_mjcf:
+                    joint_names, usd_to_mjcf = demangle_usd_joint_names(
+                        list(joint_names), mjcf_joint_names(source_mjcf)
+                    )
+
                 robot_state = _RobotState(
                     name=name,
                     prim_path=prim_path,
@@ -3154,6 +3111,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     articulation=articulation,
                     actual_prim_path=getattr(articulation, "_strands_actual_prim_path", None),
                     data_config=data_config,
+                    usd_to_urdf_joint_names=usd_to_mjcf,
                     # The MJCF this USD was converted from, when there is one:
                     # it is the MuJoCo-compilable truth about the kinematics on
                     # the stage, and move_to's IK solve prefers it over a
@@ -3808,11 +3766,25 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # envelope) and in ``tests_integ/simulation/test_isaac_body_state_gpu``.
             if not is_static:
                 self._physics_view_stale = True
+            # Said at add time, where the caller can still act on it: the next
+            # step()/send_action() refuses until reset() rebuilds the view, and
+            # a caller that discards that refusal (a loop over step() that never
+            # reads the envelope) otherwise watches a dynamic body hang in the
+            # air with nothing having told it why. MuJoCo needs no reset
+            # here; resetting implicitly is not an option because reset()
+            # returns every robot to its default pose.
+            obj_info["requires_reset"] = not is_static
+            note = (
+                " Dynamic body: call reset() before step()/send_action() - PhysX's tensor view "
+                "must be rebuilt to simulate it (reset() returns robots to their default pose)."
+                if not is_static
+                else ""
+            )
             return {
                 "status": "success",
                 "content": [
                     {
-                        "text": f"Object '{name}' added (shape={shape}, pos={pos}).",
+                        "text": f"Object '{name}' added (shape={shape}, pos={pos}).{note}",
                         "json": obj_info,
                     }
                 ],
@@ -4000,28 +3972,16 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 mesh_path=mesh_path,
             )
 
-        try:
-            from isaacsim.core.api.objects import (  # type: ignore[import-not-found]
-                DynamicCapsule,
-                DynamicCuboid,
-                DynamicCylinder,
-                DynamicSphere,
-                FixedCapsule,
-                FixedCuboid,
-                FixedCylinder,
-                FixedSphere,
-            )
-        except ImportError:
-            from omni.isaac.core.objects import (  # type: ignore[import-not-found]
-                DynamicCapsule,
-                DynamicCuboid,
-                DynamicCylinder,
-                DynamicSphere,
-                FixedCapsule,
-                FixedCuboid,
-                FixedCylinder,
-                FixedSphere,
-            )
+        from strands_robots.simulation.isaac._deprecated_api import (
+            DynamicCapsule,
+            DynamicCuboid,
+            DynamicCylinder,
+            DynamicSphere,
+            FixedCapsule,
+            FixedCuboid,
+            FixedCylinder,
+            FixedSphere,
+        )
 
         common: dict[str, Any] = {
             "prim_path": prim_path,
@@ -4125,32 +4085,20 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # is not recomputed here (no triangle parse for USD).
             resolved_size = []
 
-        try:
-            from isaacsim.core.utils.stage import (  # type: ignore[import-not-found]
-                add_reference_to_stage,
-            )
-        except ImportError:
-            from omni.isaac.core.utils.stage import (  # type: ignore[import-not-found]
-                add_reference_to_stage,
-            )
+        from strands_robots.simulation.isaac._deprecated_api import (
+            add_reference_to_stage,
+        )
+
         _adopt_referenced_type(add_reference_to_stage(usd_path=usd_path, prim_path=prim_path))
         _select_physics_variant(prim_path)
 
         # Isaac Sim 6.0 exposes the single-prim wrappers under
         # ``isaacsim.core.prims``; the legacy 4.x names lack the ``Single``
         # prefix. Same modern-first probe as the primitive constructors.
-        try:
-            from isaacsim.core.prims import (  # type: ignore[import-not-found]
-                SingleGeometryPrim,
-                SingleRigidPrim,
-            )
-        except ImportError:
-            from omni.isaac.core.prims import (  # type: ignore[import-not-found]
-                GeometryPrim as SingleGeometryPrim,
-            )
-            from omni.isaac.core.prims import (  # type: ignore[import-not-found]
-                RigidPrim as SingleRigidPrim,
-            )
+        from strands_robots.simulation.isaac._deprecated_api import (
+            SingleGeometryPrim,
+            SingleRigidPrim,
+        )
 
         pos = np.asarray(position, dtype=float)
         orient = np.asarray(orientation, dtype=float)
@@ -4608,26 +4556,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             import omni.usd  # type: ignore[import-not-found]
             from pxr import UsdGeom, UsdPhysics  # type: ignore[import-not-found]
 
-            try:
-                from isaacsim.core.prims import (  # type: ignore[import-not-found]
-                    SingleRigidPrim,
-                    SingleXFormPrim,
-                )
-            except ImportError:
-                from omni.isaac.core.prims import (  # type: ignore[import-not-found]
-                    RigidPrim as SingleRigidPrim,
-                )
-                from omni.isaac.core.prims import (  # type: ignore[import-not-found]
-                    XFormPrim as SingleXFormPrim,
-                )
-            try:
-                from isaacsim.core.utils.stage import (  # type: ignore[import-not-found]
-                    add_reference_to_stage,
-                )
-            except ImportError:
-                from omni.isaac.core.utils.stage import (  # type: ignore[import-not-found]
-                    add_reference_to_stage,
-                )
+            from strands_robots.simulation.isaac._deprecated_api import (
+                SingleRigidPrim,
+                SingleXFormPrim,
+                add_reference_to_stage,
+            )
 
             stage = omni.usd.get_context().get_stage()
             UsdGeom.Xform.Define(stage, prim_path)
@@ -4800,14 +4733,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # ``world.scene.remove_object``.
             try:
                 if self._world is not None:
-                    try:
-                        from isaacsim.core.utils.prims import (  # type: ignore[import-not-found]
-                            delete_prim,
-                        )
-                    except ImportError:
-                        from omni.isaac.core.utils.prims import (  # type: ignore[import-not-found]
-                            delete_prim,
-                        )
+                    from strands_robots.simulation.isaac._deprecated_api import (
+                        delete_prim,
+                    )
 
                     for path in dict.fromkeys((prim_path, actual_prim_path)):
                         delete_prim(path)
@@ -5972,7 +5900,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 # See ``set_joint_positions`` for the teleport (non-PD) counterpart.
                 if robot.articulation is not None and action_array.size > 0:
                     try:
-                        from isaacsim.core.utils.types import (  # type: ignore[import-not-found]
+                        from strands_robots.simulation.isaac._deprecated_api import (
                             ArticulationAction,
                         )
 
@@ -6120,7 +6048,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         )
         joint_indices: np.ndarray = np.array(named, dtype=np.int32)
         try:
-            from isaacsim.core.utils.types import (  # type: ignore[import-not-found]
+            from strands_robots.simulation.isaac._deprecated_api import (
                 ArticulationAction,
             )
 
@@ -7600,14 +7528,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # retry.
             try:
                 if self._world is not None:
-                    try:
-                        from isaacsim.core.utils.prims import (  # type: ignore[import-not-found]
-                            delete_prim,
-                        )
-                    except ImportError:
-                        from omni.isaac.core.utils.prims import (  # type: ignore[import-not-found]
-                            delete_prim,
-                        )
+                    from strands_robots.simulation.isaac._deprecated_api import (
+                        delete_prim,
+                    )
 
                     delete_prim(prim_path)
             except (RuntimeError, ValueError, OSError, AttributeError, TypeError, ImportError) as e:
@@ -7991,10 +7914,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         ``omni.isaac.sensor``. Try modern first, fall back so 4.x
         installs keep working.
         """
-        try:
-            from isaacsim.sensors.camera import Camera  # type: ignore[import-not-found]
-        except ImportError:
-            from omni.isaac.sensor import Camera  # type: ignore[import-not-found]
+        from strands_robots.simulation.isaac._deprecated_api import Camera
 
         camera = Camera(
             prim_path=prim_path,
@@ -8081,14 +8001,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # is correctly oriented at the target. ``set_camera_view`` works
         # on any USD camera prim by path; no Camera-specific API.
         if target is not None:
-            try:
-                from isaacsim.core.utils.viewports import (  # type: ignore[import-not-found]
-                    set_camera_view,
-                )
-            except ImportError:
-                from omni.isaac.core.utils.viewports import (  # type: ignore[import-not-found]
-                    set_camera_view,
-                )
+            from strands_robots.simulation.isaac._deprecated_api import (
+                set_camera_view,
+            )
 
             set_camera_view(eye=position, target=target, camera_prim_path=prim_path)
 
@@ -8459,14 +8374,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # alias). Probe the modern locations first, fall back to legacy.
         Articulation = _import_articulation_cls()  # noqa: N806
 
-        try:
-            from isaacsim.core.utils.stage import (  # type: ignore[import-not-found]
-                add_reference_to_stage,
-            )
-        except ImportError:
-            from omni.isaac.core.utils.stage import (  # type: ignore[import-not-found]
-                add_reference_to_stage,
-            )
+        from strands_robots.simulation.isaac._deprecated_api import (
+            add_reference_to_stage,
+        )
 
         # Step 1: stage reference. The USD's default prim becomes a child
         # of ``prim_path``; subsequent Articulation lookups walk that path.
@@ -8631,7 +8541,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             usd_out = importer.import_urdf()
             if not isinstance(usd_out, str) or not usd_out:
                 raise RuntimeError(f"URDF import (6.0 API) returned no USD path for {urdf_path!r}")
-            from isaacsim.core.utils.stage import add_reference_to_stage  # type: ignore[import-not-found]
+            from strands_robots.simulation.isaac._deprecated_api import (
+                add_reference_to_stage,
+            )
 
             add_reference_to_stage(usd_path=usd_out, prim_path=prim_path)
             _select_physics_variant(prim_path)
@@ -8998,8 +8910,8 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             "that created SimulationApp, so this call would block forever. Either call "
             "it from the owning thread, or have the owning thread run "
             "`run_pump_forever(stop_event=...)` and submit the call from the worker via "
-            "`run_on_main(lambda: ...)` (see docs/reference/simulation/isaac.md for the "
-            "agent-driven shape)."
+            "`run_on_main(lambda: ...)` (see the Threading section of docs/learn/simulation/isaac.md "
+            "for the agent-driven shape)."
         )
 
     # --- joint targets / kinematic teleport --------------------------------
@@ -9230,7 +9142,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                                 "SimulationApp, so it would sit in a queue nobody drains and never "
                                 "reach the robot. Either call it from the owning thread, or have that "
                                 "thread run run_pump_forever(stop_event=...) and submit from the "
-                                "worker (see docs/reference/simulation/isaac.md for the agent-driven shape). "
+                                "worker (see the Threading section of docs/learn/simulation/isaac.md for the agent-driven shape). "
                                 "The pose was validated and NOT applied."
                             )
                         }
