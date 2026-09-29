@@ -69,14 +69,33 @@ def iter_shards(roots: list[Path]):
             yield root, row, root / "episodes" / f"{row['name']}.npz"
 
 
-def export_dataset(roots: list[Path], repo_id: str, out: Path, *, push: bool = False, limit: int | None = None) -> dict:
-    """Write the LeRobot v3 dataset under ``out`` (fresh) and optionally push it private."""
+def export_dataset(
+    roots: list[Path],
+    repo_id: str,
+    out: Path,
+    *,
+    push: bool = False,
+    limit: int | None = None,
+    image_writer_threads: int = 4,
+) -> dict:
+    """Write the LeRobot v3 dataset under ``out`` (fresh) and optionally push it private.
+
+    ``image_writer_threads`` feeds LeRobot's async image writer; the single-threaded default took ~5 s per
+    120-frame episode on Thor (measured on the r0+r1 export), dominated by PNG writes before AV1 encoding.
+    """
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     out = Path(out)
     if out.exists():
         shutil.rmtree(out)
-    ds = LeRobotDataset.create(repo_id, FPS, root=out, features=lerobot_features(), use_videos=True)
+    ds = LeRobotDataset.create(
+        repo_id,
+        FPS,
+        root=out,
+        features=lerobot_features(),
+        use_videos=True,
+        image_writer_threads=image_writer_threads,
+    )
     n_ep = 0
     n_frames = 0
     per_task = {t: 0 for t in TASK_NAMES}
@@ -148,6 +167,7 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--out", type=Path, required=True)
     d.add_argument("--limit", type=int, default=None)
     d.add_argument("--push", action="store_true")
+    d.add_argument("--image-writer-threads", type=int, default=4)
     m = sub.add_parser("model")
     m.add_argument("ckpt", type=Path)
     m.add_argument("--repo", required=True)
@@ -155,7 +175,18 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument("--push", action="store_true")
     args = ap.parse_args(argv)
     if args.cmd == "dataset":
-        print(json.dumps(export_dataset(args.roots, args.repo, args.out, push=args.push, limit=args.limit)))
+        print(
+            json.dumps(
+                export_dataset(
+                    args.roots,
+                    args.repo,
+                    args.out,
+                    push=args.push,
+                    limit=args.limit,
+                    image_writer_threads=args.image_writer_threads,
+                )
+            )
+        )
     else:
         print(json.dumps(push_model(args.ckpt, args.repo, card=args.card, push=args.push)))
 
