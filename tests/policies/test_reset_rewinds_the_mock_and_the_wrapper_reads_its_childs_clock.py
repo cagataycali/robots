@@ -54,10 +54,12 @@ class TestMockResetRewinds:
         policy.set_robot_state_keys(KEYS)
         assert _chunk(policy) != _chunk(policy)
 
-    def test_reset_returns_none_and_takes_no_seed_too(self) -> None:
+    def test_reset_takes_no_seed_too(self) -> None:
+        # Both spellings the runtime uses; neither raises (the seed is unread).
         policy = MockPolicy()
-        assert policy.reset() is None
-        assert policy.reset(seed=None) is None
+        policy.reset()
+        policy.reset(seed=None)
+        assert policy._step == 0
 
 
 class TestPersistentReadsTheWrappedClock:
