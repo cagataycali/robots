@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="450" viewBox="0 0 1100 450" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5f6368"/></marker></defs>
+<rect width="1100" height="450" fill="#ffffff"/>
+<text x="30" y="40" font-size="20" font-weight="600" fill="#202124">What train_policy(action="status") said about three real failed runs</text>
+<text x="30" y="68" font-size="14" fill="#5f6368">before (left) and with this change (right) - the same job directories, read by both versions</text>
+<text x="30" y="112" font-size="15" font-weight="600" fill="#202124">G1 rough terrain, iteration 611</text>
+<rect x="30" y="122" width="430" height="70" rx="10" fill="#fce8e6" stroke="#d93025"/>
+<text x="45" y="152" font-size="13" fill="#a50e0e" font-family="ui-monospace, Menlo, monospace">Isaac Lab exited 1; log tail: (12 lines of iteration</text>
+<text x="45" y="174" font-size="13" fill="#a50e0e" font-family="ui-monospace, Menlo, monospace"> metrics)</text>
+<path d="M470 157 L520 157" stroke="#5f6368" stroke-width="2" marker-end="url(#a)"/>
+<rect x="530" y="122" width="540" height="70" rx="10" fill="#e6f4ea" stroke="#1e8e3e"/>
+<text x="545" y="146" font-size="13" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">failure: nan_observation</text>
+<text x="545" y="165" font-size="13" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">ValueError: ... contains NaN values</text>
+<text x="545" y="184" font-size="13" fill="#137333">next: try another physics preset or a lower learning_rate</text>
+<text x="30" y="232" font-size="15" font-weight="600" fill="#202124">Isaac-Ant at 262,144 envs</text>
+<rect x="30" y="242" width="430" height="70" rx="10" fill="#fce8e6" stroke="#d93025"/>
+<text x="45" y="272" font-size="13" fill="#a50e0e" font-family="ui-monospace, Menlo, monospace">Isaac Lab exited 1; log tail: (model summary, git li</text>
+<text x="45" y="294" font-size="13" fill="#a50e0e" font-family="ui-monospace, Menlo, monospace">nes)</text>
+<path d="M470 277 L520 277" stroke="#5f6368" stroke-width="2" marker-end="url(#a)"/>
+<rect x="530" y="242" width="540" height="70" rx="10" fill="#e6f4ea" stroke="#1e8e3e"/>
+<text x="545" y="266" font-size="13" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">failure: cuda_oom</text>
+<text x="545" y="285" font-size="13" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 3.12 G</text>
+<text x="545" y="304" font-size="13" fill="#137333">next: lower extra[&#x27;num_envs&#x27;]</text>
+<text x="30" y="352" font-size="15" font-weight="600" fill="#202124">task &#x27;Isaac-Does-Not-Exist&#x27;</text>
+<rect x="30" y="362" width="430" height="70" rx="10" fill="#fce8e6" stroke="#d93025"/>
+<text x="45" y="392" font-size="13" fill="#a50e0e" font-family="ui-monospace, Menlo, monospace">Isaac Lab exited 1; log tail: (gymnasium traceback f</text>
+<text x="45" y="414" font-size="13" fill="#a50e0e" font-family="ui-monospace, Menlo, monospace">ragment)</text>
+<path d="M470 397 L520 397" stroke="#5f6368" stroke-width="2" marker-end="url(#a)"/>
+<rect x="530" y="362" width="540" height="70" rx="10" fill="#e6f4ea" stroke="#1e8e3e"/>
+<text x="545" y="386" font-size="13" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">failure: unknown_task</text>
+<text x="545" y="405" font-size="13" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">refused by validate() before launch; at run time: NameNotFound</text>
+<text x="545" y="424" font-size="13" fill="#137333">next: check extra[&#x27;task&#x27;] (closest matches listed)</text>
+</svg>
