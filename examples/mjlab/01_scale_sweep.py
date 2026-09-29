@@ -7,6 +7,10 @@ peak GPU memory (torch allocator high water mark plus the Warp mempool high
 water mark, which is where MuJoCo Warp allocates), with and without CUDA graph
 capture. Everything goes to one JSON, the plot helper renders a PNG from it.
 
+Install (the lerobot extra first, then this one: mjlab needs torch>=2.14)::
+
+    uv pip install "strands-robots[sim-mjlab,rl]" matplotlib
+
 Usage::
 
     python examples/mjlab/01_scale_sweep.py --num-envs 64 256 1024 4096 \
