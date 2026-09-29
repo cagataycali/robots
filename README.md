@@ -38,12 +38,10 @@
   <img src="docs/assets/hero_loop.svg" alt="Strands Robots: one Robot object, any robot. A Strands Agent perceives, reasons and acts; the world, MuJoCo or a real arm, answers" width="100%">
 </p>
 
-`strands-robots` runs a **VLA policy from the Hugging Face Hub** (SmolVLA, ACT,
-Pi0, GR00T, Cosmos, whole-body control) on a **real robot** with one `run_policy`
-call, the same call that drives the **MuJoCo simulation** (default: no GPU, no
-hardware), and gives a [Strands Agent](https://github.com/strands-agents/harness-sdk)
-the robot as a tool: a real arm does not move until an operator says yes. Same
-code, same natural-language control, same opt-in peer-to-peer **mesh**.
+`strands-robots` gives a [Strands Agent](https://github.com/strands-agents/harness-sdk)
+hands. One `Robot()` call returns a **MuJoCo simulation** (default: no GPU, no
+hardware) or a **real robot** - same code, same natural-language control, same
+opt-in peer-to-peer **mesh**.
 
 ```python
 from strands import Agent
