@@ -165,7 +165,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   if (mode === 'checking') {
     return (
       <div className="authgate" role="status" aria-live="polite">
-        <div className="authcard"><StrandsMark size={40} /><p className="dim">checking access…</p></div>
+        <div className="authcard"><StrandsMark height={26} title="Strands Agents" /><p className="dim">checking access…</p></div>
       </div>
     )
   }
@@ -175,7 +175,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   return (
     <div className="authgate">
       <div className="authcard" role="dialog" aria-labelledby="authgate-title">
-        <StrandsMark size={40} />
+        <StrandsMark height={26} title="Strands Agents" />
         {/* Identity on the gate: an anonymous credential prompt is what a phishing page looks like. */}
         <p className="authhost">strands robots · {window.location.host}</p>
         <h1 id="authgate-title">

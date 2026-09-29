@@ -332,7 +332,13 @@ def import_policy_class(provider: str) -> type:
         if getattr(exc, "name", None) != f"strands_robots.policies.{provider}":
             raise _provider_import_error(provider, exc, None) from exc
 
-    raise ValueError(f"Unknown policy provider: '{provider}'. Available: {list_policy_providers()}")
+    # Offer the nearest registered spellings, the way Robot() does for a robot
+    # name: case and dash are folded, and 0.6 is Robot()'s cutoff, which is
+    # what lets NVIDIA's own spelling ``gr00t`` find ``groot``.
+    folded = provider.lower().replace("-", "_")
+    close = difflib.get_close_matches(folded, [*list_providers(), *list_aliases()], n=3, cutoff=0.6)
+    hint = f" Did you mean: {', '.join(map(repr, close))}?" if close else ""
+    raise ValueError(f"Unknown policy provider: '{provider}'.{hint} Available: {list_policy_providers()}")
 
 
 def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], dict]:

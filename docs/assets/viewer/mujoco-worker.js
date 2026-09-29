@@ -9,10 +9,14 @@
  * worker owns the physics and posts geom poses, and the page only renders.
  *
  * Protocol (main -> worker): init {url} · compile {id, sceneXml, files} · setQpos {qadr,
- * value, act} · reset · physics {on} · dispose. Worker -> main: ready · compiled {id,
- * model, pose, pluginsStripped} · pose {xpos, xmat, qpos, time} · error {id?, message}.
- * The model message carries plain typed arrays, not embind handles, so the page never
- * touches the WebAssembly heap.
+ * value, act} · setQposAll {qpos} · reset · physics {on} · dispose. Worker -> main: ready ·
+ * compiled {id, model, pose, pluginsStripped} · pose {xpos, xmat, qpos, time} · error {id?,
+ * message}. The model message carries plain typed arrays, not embind handles, so the page
+ * never touches the WebAssembly heap.
+ *
+ * The rest pose is the model's first keyframe when it has one (a humanoid's "stand"), else
+ * qpos0; compile and reset both land there, and the snapshot carries qpos0 so the page can
+ * tween from the default pose into the keyframe when the robot first appears.
  */
 
 let mj = null;
@@ -69,6 +73,8 @@ function snapshot() {
     mesh_vert: Float32Array.from(m.mesh_vert), mesh_face: Int32Array.from(m.mesh_face),
     jnt_type: Int32Array.from(m.jnt_type), jnt_qposadr: Int32Array.from(m.jnt_qposadr),
     jnt_range: Float64Array.from(m.jnt_range), jnt_names: names,
+    nkey: m.nkey, qpos0: Float64Array.from(m.qpos0),
+    key_qpos: m.nkey > 0 ? Float64Array.from(m.key_qpos).subarray(0, m.nq) : new Float64Array(0),
     actuator_trntype: Int32Array.from(m.actuator_trntype), actuator_trnid: Int32Array.from(m.actuator_trnid),
     enums: {
       geom: {
@@ -77,6 +83,7 @@ function snapshot() {
         ELLIPSOID: G.mjGEOM_ELLIPSOID.value,
       },
       HINGE: mj.mjtJoint.mjJNT_HINGE.value, SLIDE: mj.mjtJoint.mjJNT_SLIDE.value,
+      BALL: mj.mjtJoint.mjJNT_BALL.value, FREE: mj.mjtJoint.mjJNT_FREE.value,
       TRN_JOINT: mj.mjtTrn.mjTRN_JOINT.value,
     },
   };
@@ -99,7 +106,7 @@ function compile({ id, sceneXml, files }) {
   if (!model) throw new Error("MuJoCo returned no model");
   data = new mj.MjData(model);
   handles.push(model, data);
-  mj.mj_forward(model, data);
+  rest();
   const snap = snapshot();
   actuated = [];
   for (let j = 0; j < model.njnt; j++) {
@@ -113,6 +120,17 @@ function compile({ id, sceneXml, files }) {
   const transfer = Object.values(snap).filter((v) => ArrayBuffer.isView(v)).map((v) => v.buffer);
   post({ type: "compiled", id, model: snap, pluginsStripped }, transfer);
   pose();
+}
+
+/** Rest pose: keyframe 0 when the model declares one, else qpos0. Leaves data at mj_forward. */
+function rest() {
+  if (model.nkey > 0) {
+    mj.mj_resetData(model, data);
+    for (let i = 0; i < model.nq; i++) data.qpos[i] = model.key_qpos[i];
+  } else {
+    mj.mj_resetData(model, data);
+  }
+  mj.mj_forward(model, data);
 }
 
 function setPhysics(on) {
@@ -150,10 +168,16 @@ self.onmessage = async (e) => {
         if (msg.act >= 0) data.ctrl[msg.act] = msg.value;
         if (!physicsTimer) { data.qvel.fill(0); mj.mj_forward(model, data); pose(); }
         return;
+      case "setQposAll":
+        // A whole pose at once (the wake-up tween): one message per frame instead of one per joint.
+        if (!data) return;
+        for (let i = 0; i < msg.qpos.length && i < model.nq; i++) data.qpos[i] = msg.qpos[i];
+        for (const { qadr, act } of actuated) data.ctrl[act] = data.qpos[qadr];
+        if (!physicsTimer) { data.qvel.fill(0); mj.mj_forward(model, data); pose(); }
+        return;
       case "reset":
         if (!data) return;
-        mj.mj_resetData(model, data);
-        mj.mj_forward(model, data);
+        rest();
         for (const { qadr, act } of actuated) data.ctrl[act] = data.qpos[qadr];
         pose();
         return;

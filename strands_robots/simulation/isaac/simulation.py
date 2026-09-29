@@ -909,6 +909,42 @@ def _coerce_prim_path(res: Any) -> str:
     return ""
 
 
+def _select_physics_variant(prim_path: str) -> str | None:
+    """Pick the PhysX flavour of a converter-authored ``Physics`` variantSet.
+
+    Isaac Sim 6.1's MJCF/URDF importers (mujoco-usd-converter >= 0.5) author the
+    physics schemas (ArticulationRootAPI, joints, drives, collision) behind a
+    ``Physics`` variantSet with variants ``{mujoco, none, physics, physx}`` and
+    NO default selection. Referenced as-is the robot composes with no physics at
+    all, and ``Articulation(...)`` dies inside the tensor API with
+    ``'NoneType' object has no attribute 'is_homogeneous'``. 6.0.x's converter
+    (v0.2.0) flattened physics inline, so this is a no-op there.
+
+    Returns the variant selected, or ``None`` when nothing needed selecting.
+    """
+    try:
+        import omni.usd  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        prim = stage.GetPrimAtPath(prim_path) if stage is not None else None
+        if prim is None or not prim.IsValid():
+            return None
+        sets = prim.GetVariantSets()
+        if not sets.HasVariantSet("Physics"):
+            return None
+        vset = sets.GetVariantSet("Physics")
+        if vset.GetVariantSelection():
+            return None  # the asset (or the caller) already chose
+        names = vset.GetVariantNames()
+        for choice in ("physx", "physics"):
+            if choice in names:
+                vset.SetVariantSelection(choice)
+                return choice
+    except (ImportError, AttributeError, RuntimeError):
+        return None
+    return None
+
+
 def _adopt_referenced_type(prim: Any) -> None:
     """Let a referenced mesh asset's own prim type win over the placeholder.
 
@@ -925,6 +961,55 @@ def _adopt_referenced_type(prim: Any) -> None:
     clear = getattr(prim, "ClearTypeName", None)
     if clear is not None:
         clear()
+
+
+def _anchor_fixed_base_articulation(prim_path: str) -> str | None:
+    """Move a welded robot's ``ArticulationRootAPI`` from its base body to the weld.
+
+    Isaac Sim 6.1's URDF importer (mujoco-usd-converter 0.5 layout) applies
+    ``ArticulationRootAPI`` to the base link *rigid body* and welds that body to
+    the world with a separate ``root_joint`` ``FixedJoint``. PhysX reads a root
+    on a rigid body as a FLOATING-base articulation, so the weld is not the
+    articulation's root and does not hold it: measured on 6.1.0, a
+    ``fixed_base`` URDF arm's base lifted 2 cm out of the ground plane and its
+    links drifted, while 6.0.1 (root on the ``Geometry`` scope) stays at the
+    joint origins. PhysX's documented fixed-base shape puts the root on the
+    fixed joint itself; this moves it there. A no-op when the root is not on a
+    world-welded rigid body (6.0.x, floating robots, MJCF conversions whose
+    root is already an ancestor).
+
+    Returns the path the root was moved to, or ``None``.
+    """
+    try:
+        import omni.usd  # type: ignore[import-not-found]
+        from pxr import Usd, UsdPhysics  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        root = stage.GetPrimAtPath(prim_path) if stage is not None else None
+        if root is None or not root.IsValid():
+            return None
+        prims = list(Usd.PrimRange(root))
+        roots = [p for p in prims if p.HasAPI(UsdPhysics.ArticulationRootAPI)]
+        if len(roots) != 1 or not roots[0].HasAPI(UsdPhysics.RigidBodyAPI):
+            return None
+        body_path = roots[0].GetPath()
+        for joint_prim in prims:
+            if not joint_prim.IsA(UsdPhysics.FixedJoint):
+                continue
+            joint = UsdPhysics.FixedJoint(joint_prim)
+            body1 = joint.GetBody1Rel().GetTargets()
+            body0 = joint.GetBody0Rel().GetTargets()
+            if body1 != [body_path]:
+                continue
+            anchor = stage.GetPrimAtPath(body0[0]) if body0 else None
+            if anchor is not None and anchor.IsValid() and anchor.HasAPI(UsdPhysics.RigidBodyAPI):
+                continue  # welded to another body, not to the world
+            roots[0].RemoveAPI(UsdPhysics.ArticulationRootAPI)
+            UsdPhysics.ArticulationRootAPI.Apply(joint_prim)
+            return str(joint_prim.GetPath())
+    except (ImportError, AttributeError, RuntimeError, IndexError):
+        return None
+    return None
 
 
 def _import_articulation_cls() -> Any:
@@ -3002,7 +3087,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 try:
                     usd_path = convert_mjcf_to_usd(mjcf_path)
                 except (RuntimeError, ValueError, OSError, ImportError) as e:
-                    logger.error("add_robot: converting MJCF %r for robot %r failed: %s", mjcf_path, name, e)
+                    logger.error(
+                        "add_robot: converting MJCF %r for robot %r failed: %s", mjcf_path, name, e, exc_info=True
+                    )
                     return {
                         "status": "error",
                         "content": [
@@ -3038,10 +3125,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                         name,
                         usd_path,
                         e,
+                        exc_info=True,
                     )
                     return {
                         "status": "error",
-                        "content": [{"text": f"Failed to load USD robot '{name}': {e}"}],
+                        "content": [{"text": f"Failed to load USD robot '{name}': {type(e).__name__}: {e}"}],
                     }
 
                 self._prim_registry.append(prim_path)
@@ -3119,10 +3207,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                         name,
                         urdf_path,
                         e,
+                        exc_info=True,
                     )
                     return {
                         "status": "error",
-                        "content": [{"text": f"Failed to load URDF robot '{name}': {e}"}],
+                        "content": [{"text": f"Failed to load URDF robot '{name}': {type(e).__name__}: {e}"}],
                     }
 
                 self._prim_registry.append(prim_path)
@@ -4032,6 +4121,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 add_reference_to_stage,
             )
         _adopt_referenced_type(add_reference_to_stage(usd_path=usd_path, prim_path=prim_path))
+        _select_physics_variant(prim_path)
 
         # Isaac Sim 6.0 exposes the single-prim wrappers under
         # ``isaacsim.core.prims``; the legacy 4.x names lack the ``Single``
@@ -6090,7 +6180,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         held across a marshal hop; each hop takes ``self._lock`` itself.
 
         **Recording**: when a dataset recording session is active
-        (:meth:`~strands_robots.simulation.isaac.recording.IsaacRecordingMixin.start_recording`),
+        (:meth:`~strands_robots.simulation.recording.DatasetRecordingMixin.start_recording`),
         each loop iteration records exactly ONE merged frame containing every
         driven robot's prefixed state/action columns (``alice__shoulder_pan``
         ...) plus all camera images - mirroring the MuJoCo merged-frame
@@ -8388,6 +8478,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # Step 1: stage reference. The USD's default prim becomes a child
         # of ``prim_path``; subsequent Articulation lookups walk that path.
         add_reference_to_stage(usd_path=usd_path, prim_path=prim_path)
+        _select_physics_variant(prim_path)
 
         # Step 2-3: wrap + initialise. The articulation name has to be
         # unique within the scene's articulation registry, so derive it
@@ -8550,6 +8641,8 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             from isaacsim.core.utils.stage import add_reference_to_stage  # type: ignore[import-not-found]
 
             add_reference_to_stage(usd_path=usd_out, prim_path=prim_path)
+            _select_physics_variant(prim_path)
+            _anchor_fixed_base_articulation(prim_path)
             imported_prim_path = prim_path
         else:
             try:

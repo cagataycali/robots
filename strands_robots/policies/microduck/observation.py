@@ -147,7 +147,14 @@ def quat_rotate_inverse(quat: NDArray[np.float32], vec: NDArray[np.float32]) -> 
             f"the gravity block of a perfectly upright base. Supply the base's real wxyz "
             f"orientation (MuJoCo reports it as base_quat in get_observation)."
         )
-    q = (q / np.float32(norm)).astype(np.float32)
+    # An ``inf`` component makes the norm ``inf`` and ``inf / inf`` is ``nan``,
+    # which NumPy reports as ``RuntimeWarning: invalid value encountered in
+    # divide`` on the way to the propagation this docstring promises. The
+    # warning is not the refusal - the assembled-vector pass is - so it is
+    # silenced here rather than turned into a second, differently worded error
+    # that a ``-W error`` caller would see instead of the documented ValueError.
+    with np.errstate(invalid="ignore"):
+        q = (q / np.float32(norm)).astype(np.float32)
     w = q[0]
     xyz = q[1:4]
     t = np.cross(xyz, v) * 2.0

@@ -7,7 +7,7 @@ description: "Unitree H1 Humanoid (19-DOF)"
 
 # Unitree H1 Humanoid (19-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">20 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:unitree_h1}}
 
 <robot-viewer name="unitree_h1"></robot-viewer>
 

@@ -3762,7 +3762,8 @@ class Robot(TeleopMixin, AgentTool):
                             "description": (
                                 "Provider keywords forwarded to strands_robots.policies.create_policy, "
                                 "the same bag the sim tool takes. For lerobot_local: pretrained_name_or_path "
-                                "(a Hugging Face repo id or a local checkpoint dir), policy_type, device, "
+                                "(a Hugging Face repo id or a local checkpoint dir), embodiment (the robot's "
+                                "key map, e.g. so101_real for a LeRobot SO-arm follower), policy_type, device, "
                                 "actions_per_step. For remote: endpoint, connect_timeout, request_timeout. "
                                 "Never host/port here: those are policy_host/policy_port. An entry the "
                                 "provider does not take is the provider's own refusal, before the arm moves."

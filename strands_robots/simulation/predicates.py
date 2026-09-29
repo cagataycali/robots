@@ -2283,8 +2283,10 @@ def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
 
     This is the single entry point the DSL loader uses - it never touches
     ``eval`` or ``exec``. Unknown names produce a ``ValueError`` listing
-    the valid set; bad kwargs surface as whatever ``TypeError`` the factory
-    raises.
+    the valid set; a keyword the factory does not take, or a required one
+    that is missing, produces a ``ValueError`` naming the keywords the
+    predicate accepts (read from the factory's signature), so no surface
+    ever shows the factory's own ``TypeError`` text.
 
     Every numeric kwarg is held to a finite domain here - a tolerance kwarg
     additionally to a non-negative one and a heading kwarg to the measurable
@@ -2306,20 +2308,69 @@ def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
         predicate.
 
     Raises:
-        ValueError: If ``name`` is unknown, a kwarg the factory annotates as
-            numeric is not a finite number, a kwarg that names a tolerance is
-            negative, a kwarg that names a heading lies outside the
-            ``(-pi, pi)`` range a heading can be measured in, or a kwarg that
-            names a scene entity is not a non-empty string.
-        TypeError: If required factory kwargs are missing.
+        ValueError: If ``name`` is unknown, a keyword is one the factory does
+            not take or a required keyword is missing (the message names the
+            accepted keywords), a kwarg the factory annotates as numeric is
+            not a finite number, a kwarg that names a tolerance is negative, a
+            kwarg that names a heading lies outside the ``(-pi, pi)`` range a
+            heading can be measured in, or a kwarg that names a scene entity
+            is not a non-empty string.
     """
     factory = PREDICATE_REGISTRY.get(name)
     if factory is None:
         valid = sorted(PREDICATE_REGISTRY.keys())
         raise ValueError(f"Unknown predicate '{name}'. Valid: {valid}")
+    if (err := _keyword_set_error(name, factory, kwargs)) is not None:
+        raise ValueError(err)
     if (err := _kwarg_domain_error(name, factory, kwargs)) is not None:
         raise ValueError(err)
     return factory(**kwargs)
+
+
+def _keyword_set_error(name: str, factory: Callable[..., Any], kwargs: dict[str, Any]) -> str | None:
+    """The refusal for a keyword set the factory cannot be called with, or ``None``.
+
+    Read from ``inspect.signature(factory)`` so the accepted list is the
+    signature itself and cannot drift from it. A factory that takes
+    ``**kwargs`` accepts any keyword, so only its missing required ones are
+    reported. Returned rather than raised so :func:`make_predicate` owns the
+    exception type: the factory's own ``TypeError`` text (``got an unexpected
+    keyword argument 'body_a'``) names no accepted keyword, and every DSL
+    surface (``stop_when``, ``success_when``, a benchmark file) showed it
+    verbatim.
+    """
+    try:
+        params = inspect.signature(factory).parameters
+    except (TypeError, ValueError):
+        # A callable with no readable signature (a C builtin, a mock): let the
+        # call decide, as before.
+        return None
+    accepted = [
+        p.name
+        for p in params.values()
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    ]
+    takes_any = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+    required = [
+        p.name
+        for p in params.values()
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        and p.default is inspect.Parameter.empty
+    ]
+    accepted_text = ", ".join(accepted) if accepted else "(no keywords)"
+    unknown = [k for k in kwargs if k not in accepted] if not takes_any else []
+    if unknown:
+        return (
+            f"predicate '{name}' takes {accepted_text}; got {', '.join(unknown)}. "
+            f"Required: {', '.join(required) if required else '(none)'}."
+        )
+    missing = [k for k in required if k not in kwargs]
+    if missing:
+        return (
+            f"predicate '{name}' is missing {', '.join(missing)}. "
+            f"It takes {accepted_text}; required: {', '.join(required)}."
+        )
+    return None
 
 
 def predicate_kind(name: str) -> str:

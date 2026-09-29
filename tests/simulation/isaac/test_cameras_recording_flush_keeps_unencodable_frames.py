@@ -28,14 +28,12 @@ lifecycle runs without the Isaac Sim Kit runtime.
 
 from __future__ import annotations
 
-import threading
-
 import numpy as np
 import pytest
 
-from strands_robots.simulation.isaac.config import IsaacConfig
-from strands_robots.simulation.isaac.simulation import IsaacSimulation, _CameraState
+from strands_robots.simulation.isaac.simulation import _CameraState
 from tests._blocked_module import blocked
+from tests.simulation._isaac_engine import isaac_engine
 
 _CAMERAS = ["front", "wrist"]
 _FRAMES = 4
@@ -70,19 +68,8 @@ class _Recorder:
     """A skeleton Isaac engine with a live camera recording and a frame source."""
 
     def __init__(self, output_dir, *, width: int = 32, height: int = 24) -> None:
-        engine = IsaacSimulation.__new__(IsaacSimulation)
-        engine._config = IsaacConfig()
-        engine._lock = threading.RLock()
-        engine._world = None
+        engine = isaac_engine()
         engine._world_created = True
-        engine._robots = {}
-        engine._objects = {}
-        engine._prim_registry = []
-        engine._cams_rec_state = None
-        engine._sim_time = 0.0
-        engine._step_count = 0
-        engine._main_tid = threading.get_ident()
-        engine._cameras = {}
         for name in _CAMERAS:
             cam = _CameraState(name=name, prim_path=f"/World/Cameras/{name}", width=width, height=height)
             cam.handle = _FakeCameraHandle(np.zeros((height, width, 4), dtype=np.uint8))

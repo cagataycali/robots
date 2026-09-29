@@ -7,7 +7,7 @@ description: "PSYONIC Ability Hand (5-finger prosthetic, 11-DOF)"
 
 # PSYONIC Ability Hand (5-finger prosthetic, 11-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip">11 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:ability_hand}}
 
 <robot-viewer name="ability_hand"></robot-viewer>
 

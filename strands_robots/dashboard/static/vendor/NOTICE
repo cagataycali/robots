@@ -12,6 +12,14 @@ scheduler (MIT License, Copyright (c) Meta Platforms, Inc. and affiliates),
 versions as pinned in frontend/package-lock.json. Kept apart from app.js so the
 code this repository wrote can be read on its own.
 
+Fonts (strands_robots/dashboard/static/fonts/, copied from frontend/public/fonts/
+by the build): JetBrainsMono-wght.woff2 (JetBrains Mono, Copyright 2020 The
+JetBrains Mono Project Authors, https://github.com/JetBrains/JetBrainsMono) and
+SpaceGrotesk-wght.woff2 (Space Grotesk, Copyright 2020 Florian Karsten,
+https://github.com/floriankarsten/space-grotesk), both under the SIL Open Font
+License 1.1 (https://openfontlicense.org), as the variable latin builds Google
+Fonts serves. They are the two typefaces the documentation site uses.
+
 Vendored rather than fetched from a CDN so the dashboard renders on a robot LAN
-with no internet. No other third-party browser code is included; the twin's
+with no internet. No other third-party browser code or asset is included; the twin's
 geometry comes from the compiled MuJoCo model this process already holds.

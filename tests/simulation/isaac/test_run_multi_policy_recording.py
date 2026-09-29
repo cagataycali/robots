@@ -22,8 +22,6 @@ separate ``tests_integ/`` follow-up.
 
 from __future__ import annotations
 
-import queue
-import threading
 from typing import Any
 
 import numpy as np
@@ -100,25 +98,12 @@ def _make_engine(
     render_mode: str = "rtx_realtime",
 ) -> IsaacSimulation:
     """Skeleton IsaacSimulation (no Kit runtime), per the recording-test pattern."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
+    engine = isaac_engine()
     engine._config = IsaacConfig(render_mode=render_mode)
-    engine._lock = threading.RLock()
     engine._world = _StubWorld()
     engine._world_created = True
     engine._robots = robots
     engine._cameras = cameras if cameras is not None else {}
-    engine._objects = {}
-    engine._prim_registry = []
-    engine._cams_rec_state = None
-    engine._recording_state_dict = {}
-    engine._action_controllers = {}
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._replicated = False
-    engine._num_envs_active = 1
-    engine._pump_running = False
-    engine._main_tid = threading.get_ident()
-    engine._main_jobs = queue.Queue()
     return engine
 
 
@@ -139,6 +124,7 @@ from pathlib import Path  # noqa: E402
 from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
 
 from strands_robots.dataset_metadata import read_dataset_episode_indices  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine  # noqa: E402
 
 
 def test_synchronized_two_robot_rollout_records_merged_frames(sim_two_robots, tmp_path) -> None:

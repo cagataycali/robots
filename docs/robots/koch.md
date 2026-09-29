@@ -7,7 +7,7 @@ description: "Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel)"
 
 # Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot, strands</span></p>
+{{robot_chips:koch}}
 
 <robot-viewer name="koch"></robot-viewer>
 

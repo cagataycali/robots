@@ -49,9 +49,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import strands_robots.mesh as mesh_pkg
+import strands_robots.drivers.ros as ros_pkg
 import strands_robots.rosbridge as transport_mod
-from strands_robots.mesh import RosbridgeRobot
+from strands_robots.drivers.ros import RosbridgeRobot
 
 # ``/turtle1/cmd_vel`` matches the ``/cmd_vel`` blocklist entry on the
 # final-segment rule, so every command a robot on it sends is gated - which is
@@ -298,12 +298,12 @@ def _drive_owning_classes() -> list[type]:
     skipped because a shared base declares a contract but is not a platform
     anyone drives.
     """
-    package_dir = pathlib.Path(mesh_pkg.__file__).parent
+    package_dir = pathlib.Path(ros_pkg.__file__).parent
     owners: list[type] = []
     for path in sorted(package_dir.glob("*.py")):
         if path.name.startswith("_"):
             continue
-        module = importlib.import_module(f"strands_robots.mesh.{path.stem}")
+        module = importlib.import_module(f"strands_robots.drivers.ros.{path.stem}")
         owners.extend(
             candidate
             for candidate in vars(module).values()

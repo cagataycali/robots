@@ -36,7 +36,6 @@ from typing import Any
 
 import pytest
 
-import strands_robots.simulation as simulation_pkg
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
     dataset_recording_posture_error,
@@ -287,8 +286,7 @@ class TestTheRefusalPrecedesTheLerobotProbe:
 def _flags_checked_by(source: str, function: str) -> set[str]:
     """Flag names passed to the shared posture guard inside *function*.
 
-    Parsed by AST so backends whose optional dependencies (Isaac Sim, Newton)
-    are not installed are still checked. It proves the guard is *called*, never
+    Parsed by AST. It proves the guard is *called*, never
     that its refusal is *returned* - a copy that keeps the call and drops the
     ``return`` satisfies it - so the returned refusal is driven per backend in
     ``test_recording_preflight_refusals_across_backends.py``.
@@ -320,19 +318,11 @@ def _flags_checked_by(source: str, function: str) -> set[str]:
     return checked
 
 
-def _backend_recording_source(backend: str) -> str:
-    path = Path(simulation_pkg.__file__).parent / backend / "recording.py"
-    return path.read_text(encoding="utf-8")
-
-
-@pytest.mark.parametrize("backend", ["mujoco", "newton", "isaac"])
-def test_every_backend_start_recording_checks_both_flags(backend):
-    """No backend may accept a posture the others refuse."""
-    checked = _flags_checked_by(_backend_recording_source(backend), "start_recording")
-    assert set(POSTURE_FLAGS) <= checked, (
-        f"{backend}/recording.py start_recording must check {POSTURE_FLAGS} "
-        f"via dataset_recording_posture_error; found {sorted(checked)}"
-    )
+def test_the_shared_start_recording_checks_both_flags():
+    """The one ``start_recording`` every backend inherits judges both postures."""
+    source = Path(inspect.getfile(DatasetRecordingMixin)).read_text(encoding="utf-8")
+    checked = _flags_checked_by(source, "start_recording")
+    assert set(POSTURE_FLAGS) <= checked, sorted(checked)
 
 
 def test_the_shared_stop_recording_checks_its_override():

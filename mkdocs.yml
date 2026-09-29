@@ -403,6 +403,7 @@ nav:
           - robots/fourier_n1.md
           - robots/jvrc.md
           - robots/microduck.md
+          - robots/mujoco_humanoid.md
           - robots/op3.md
           - robots/open_duck_mini.md
           - robots/rby1.md
