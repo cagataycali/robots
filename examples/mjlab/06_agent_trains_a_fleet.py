@@ -52,6 +52,36 @@ evaluation success (x/20) and median final error in mm, sorted by success. Use o
 returned; if a tool failed for an arm, keep the row and put the error in the status column."""
 
 
+def trim_onnx_metadata_to_actuated(onnx_path: str, actuated_joints: list[str]) -> list[str]:
+    """Rewrite ``joint_names`` / ``default_joint_pos`` in an mjlab ONNX file to the actuated joints.
+
+    mjlab's ``get_base_metadata`` lists every joint of the entity while the actor has
+    one output per ``joint_pos`` action target, so an arm with an unactuated joint
+    (arx_l5: 8 joints, 7 actuators) exports 7 outputs against 8 names and the
+    ``rsl_rl_onnx`` provider refuses the file (FINDINGS F15; needs upstream change in
+    ``strands_robots/training/mjlab_tasks/export.py``). Filters in mjlab's natural
+    joint order, which is the order the joint observation terms and the action term use.
+    Returns the names kept.
+    """
+    import onnx
+
+    model = onnx.load(onnx_path)
+    props = {e.key: e.value for e in model.metadata_props}
+    names = [n for n in props.get("joint_names", "").split(",") if n]
+    keep = [i for i, n in enumerate(names) if n in set(actuated_joints)]
+    if len(keep) == len(names):
+        return names
+    defaults = [d for d in props.get("default_joint_pos", "").split(",") if d]
+    new = {"joint_names": ",".join(names[i] for i in keep)}
+    if len(defaults) == len(names):
+        new["default_joint_pos"] = ",".join(defaults[i] for i in keep)
+    for entry in model.metadata_props:
+        if entry.key in new:
+            entry.value = new[entry.key]
+    onnx.save(model, onnx_path)
+    return [names[i] for i in keep]
+
+
 def register_arm_tasks(arms: list[str], seed: int) -> dict[str, dict]:
     """Register ``Strands-Reach-<arm>`` for every arm but so101 (which the trainer already knows)."""
     from mjlab.tasks.registry import list_tasks, load_rl_cfg, register_mjlab_task
@@ -109,11 +139,52 @@ def main(argv: list[str] | None = None) -> int:
     import numpy as np
     from strands.tools.decorator import tool
 
-    from strands_robots.tools.train_policy import train_policy
+    from strands_robots.tools.train_policy import train_policy as core_train_policy
 
     every_arm = __import__("02_every_arm_one_night")
     table = register_arm_tasks(arms, a.seed)
     calls: list[dict[str, Any]] = []
+
+    @tool
+    def train_policy(
+        provider: str,
+        extra: dict[str, Any],
+        steps: int,
+        batch_size: int,
+        save_freq: int,
+        seed: int,
+        embodiment: str,
+        output_dir: str,
+    ) -> dict[str, Any]:
+        """Train a policy with the stock strands-robots trainer and export its ONNX actor.
+
+        Args:
+            provider: Training provider, "rsl_rl" for the MuJoCo-Warp PPO trainer.
+            extra: Provider extras; ``{"task": "<mjlab task id>"}`` picks the reach task.
+            steps: PPO iterations.
+            batch_size: Number of parallel simulated worlds.
+            save_freq: Checkpoint cadence in iterations.
+            seed: Random seed.
+            embodiment: Registry name of the arm (e.g. "so101").
+            output_dir: Where the run directory and the exported ONNX go.
+        """
+        tr = core_train_policy(
+            provider=provider,
+            extra=extra,
+            steps=steps,
+            batch_size=batch_size,
+            save_freq=save_freq,
+            seed=seed,
+            embodiment=embodiment,
+            output_dir=output_dir,
+        )
+        payload = next((c["json"] for c in tr.get("content", []) if isinstance(c, dict) and "json" in c), {})
+        onnx = payload.get("exported_model")
+        row = table.get(embodiment) or {}
+        if onnx and row.get("_info") is not None:
+            kept = trim_onnx_metadata_to_actuated(onnx, list(row["_info"].actuated_joints))
+            calls.append({"tool": "trim_onnx_metadata", "args": {"onnx": onnx}, "result": {"joint_names": kept}})
+        return tr
 
     @tool
     def evaluate_policy(onnx_path: str, robot: str, n_episodes: int = 20) -> dict[str, Any]:
