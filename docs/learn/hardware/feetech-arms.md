@@ -1,5 +1,5 @@
 ---
-description: An SO-100 or SO-101 on a serial port: which of two drivers talks to it, what units a command takes, how to check the bus.
+description: An SO-100 or SO-101 on a serial port: which driver talks to it, what units a command takes, how to check the bus.
 ---
 
 # Feetech arms

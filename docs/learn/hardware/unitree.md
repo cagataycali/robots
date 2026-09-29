@@ -1,5 +1,5 @@
 ---
-description: Install the Unitree SDK the way that works, reach a G1 or Go2 over CycloneDDS, and the gate each driver enforces before a motor frame.
+description: Install the Unitree SDK the way that works, reach a G1 or Go2 over CycloneDDS, and each driver's safety gate.
 ---
 
 # Unitree G1 and Go2

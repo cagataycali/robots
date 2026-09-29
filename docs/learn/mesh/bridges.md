@@ -1,5 +1,5 @@
 ---
-description: Presence, commands and safety events reach AWS IoT Core over MQTT5 with per-robot X.509 identities while joint state stays on the LAN.
+description: Presence, commands and safety events reach AWS IoT Core over MQTT5; joint state stays on the LAN.
 ---
 
 # Bridges

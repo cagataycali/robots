@@ -1,5 +1,5 @@
 ---
-description: A Microduck walks on intents from Robot("microduck", mode="real"); no per-joint write, and the same walking policy as in simulation.
+description: A Microduck walks on intents; no per-joint write, and the same walking policy as in simulation.
 ---
 
 # Microduck

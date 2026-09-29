@@ -1,5 +1,5 @@
 ---
-description: An operator's command reaches one robot as an AWS IoT Core direct message, the reply comes back the same way, offline is one round trip.
+description: An operator's command reaches one robot as an AWS IoT Core direct message; offline is one round trip.
 ---
 
 # Direct messaging

@@ -1,5 +1,5 @@
 ---
-description: Every mesh topic by its exact key, how often each is published and which variable changes that, which topics the bridge sends to the cloud.
+description: Every mesh topic by its exact key, how often each is published, and which ones the bridge sends to the cloud.
 ---
 
 # Topics

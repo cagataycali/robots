@@ -1,5 +1,5 @@
 ---
-description: Two robots in one process see each other on the mesh; three switches decide whether it is on, how it is secured, which wire.
+description: Two robots see each other on the mesh; three switches decide whether it is on, how it is secured, which wire.
 ---
 
 # Mesh

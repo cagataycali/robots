@@ -1,5 +1,5 @@
 ---
-description: One calibration file gives every joint reading and commanded degree the same meaning here, in lerobot and in recorded datasets.
+description: One calibration file gives every joint reading the same meaning here, in lerobot and in recorded datasets.
 ---
 
 # Calibration
@@ -41,7 +41,7 @@ arm = Robot("so101", mode="real", driver="strands", port="/dev/ttyACM0", calibra
 
 The two drivers behave differently, and both say so:
 
-- **lerobot driver.** lerobot itself prompts to calibrate on `connect()`. In a `lerobot_teleoperate` session `auto_accept_calibration` answers that prompt. The read-only `get_state` action on the robot tool does not connect through lerobot at all; it reads raw ticks over the bus and reports degrees estimated as `(ticks - 2048) * 360 / 4096`, labelled as an estimate, so an agent can tell you the arm is uncalibrated instead of failing to read it. An arm whose calibration flag could not be read is reported as unread, not as uncalibrated.
+- **lerobot driver.** lerobot itself prompts to calibrate on `connect()`. In a `lerobot_teleoperate` session `auto_accept_calibration` answers that prompt. The read-only `get_state` action does not connect through lerobot; it reads raw ticks over the bus and reports degrees estimated as `(ticks - 2048) * 360 / 4096`, labelled an estimate, so an agent can say the arm is uncalibrated instead of failing to read it. A calibration flag that could not be read is reported as unread, not as uncalibrated.
 - **native driver.** With no `calibration=` the bus uses `full_travel_calibration`: count 0 is one end of the servo's rotation and 4095 the other. Readings and targets are then off by however far your arm's mechanical stops sit inside that rotation. `get_status()` reports `calibration_source: None` so you can see which is in force.
 
 ## Why it matters for data

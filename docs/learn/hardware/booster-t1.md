@@ -1,5 +1,5 @@
 ---
-description: A Booster T1 takes upper-body joint targets and locomotion twists from Robot("booster_t1", mode="real"); legs never get stiffness.
+description: A Booster T1 takes upper-body joint targets and locomotion twists; legs never get stiffness.
 ---
 
 # Booster T1

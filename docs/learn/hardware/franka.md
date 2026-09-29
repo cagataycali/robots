@@ -1,5 +1,5 @@
 ---
-description: A Panda or FR3 accepts joint-space motion through the Franka Control Interface: the joint names this package uses and what libfranka keeps.
+description: A Panda or FR3 accepts joint-space motion through the Franka Control Interface; the joint names and what libfranka keeps.
 ---
 
 # Franka Panda and FR3

@@ -1,5 +1,5 @@
 ---
-description: What one emergency_stop() does to every robot it reaches, why the fleet stays stopped, what a resume must prove, and where it is logged.
+description: What emergency_stop() does to every robot it reaches, why the fleet stays stopped, and what a resume must prove.
 ---
 
 # Safety and e-stop

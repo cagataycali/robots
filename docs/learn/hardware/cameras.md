@@ -1,5 +1,5 @@
 ---
-description: Attach cameras to a real robot for policies and recordings, read a frame from an agent, discover devices, mirror the camera in simulation.
+description: Cameras on a real robot for policies and recordings, one frame from an agent, and the same camera in simulation.
 ---
 
 # Cameras

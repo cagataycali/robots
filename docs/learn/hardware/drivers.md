@@ -1,5 +1,5 @@
 ---
-description: How Robot(name, mode="real") picks its driver, which native drivers ship and over which wire, and the contract a driver implements.
+description: How Robot(name, mode="real") picks its driver, the native drivers that ship, and the contract a driver implements.
 ---
 
 # Drivers

@@ -1,5 +1,5 @@
 ---
-description: List peers, ask one for its state, hand one a task, fan a command out, subscribe to topics; the same from an agent with approvals.
+description: List peers, ask one for its state, hand one a task, fan a command out; the same from an agent with approvals.
 ---
 
 # Fleet
