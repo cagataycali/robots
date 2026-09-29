@@ -20,7 +20,7 @@ without executing it and without the network:
   function without ``**kwargs``;
 - every ``action="..."`` passed to a robot tool is an action that tool publishes;
 - every Hub id (``org/name``) is recorded; ``--online`` HEADs it on huggingface.co;
-- in ``bash`` fences: every ``strands-robots[extra]`` is an extra in pyproject.toml, every
+- in ``bash`` fences: every ``strands-robots[<extra>]`` is an extra in pyproject.toml, every
   ``strands-robots <command> --flag`` parses with the command's own argparse parser, and
   every ``pip install`` name is recorded (installed names are checked, ``--online`` asks
   PyPI for the rest).
