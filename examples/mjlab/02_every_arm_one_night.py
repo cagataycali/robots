@@ -215,6 +215,23 @@ def _with_min_armature(entity, info: ArmInfo):
     return replace(entity, spec_fn=spec_fn)
 
 
+def apply_min_armature_classic(m, info: ArmInfo) -> list[str]:
+    """Classic-MuJoCo twin of ``_with_min_armature``: same joints, same floor, on a compiled model."""
+    import mujoco
+
+    touched = []
+    for j in zero_armature_joints(info):
+        jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, j)
+        if jid < 0:  # registry scenes prefix robot names; try the prefixed form
+            jid = next(
+                (k for k in range(m.njnt) if mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, k).endswith("/" + j)), -1
+            )
+        if jid >= 0:
+            m.dof_armature[m.jnt_dofadr[jid]] = MIN_ARMATURE
+            touched.append(j)
+    return touched
+
+
 def build_task(info: ArmInfo, cloud: np.ndarray, *, play: bool = False, scale: float = 1.0):
     """The so101 reach task on ``info``'s robot, targets drawn from ``cloud``; ``scale`` widens stds + success."""
     import torch
@@ -424,6 +441,7 @@ async def sim2sim(
 
     fk = ArmFK(info)
     sim = Robot(info.robot, backend="mujoco")
+    apply_min_armature_classic(sim.mj_model, info)  # the same plant the actor was trained on
     # The provider only knows MJCF sites and reads them from the registry MJCF; the
     # example's FK also handles a leaf body and the base frame, so it is injected
     # (FINDINGS: the provider wants an injectable FK / body fallback).

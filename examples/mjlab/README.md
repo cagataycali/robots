@@ -140,7 +140,38 @@ under 3 cm, one fresh model per episode so perturbations never stack. Data:
 
 ## 05 Curriculum goal box
 
-Results follow (queued).
+`05_curriculum_goal_box.py` keeps a level per world. Every world starts with the so101 recipe's 1x goal box
+(0.12..0.30 x -0.20..0.20 x 0.08..0.30 m in the base frame) and is promoted one level (1.5x, 2x, 2.5x, 3x the box
+around its centre) when it reaches its target, demoted when it misses badly; the command term resamples inside the
+world's current box. Training: 400 iterations, 1,024 worlds, 1,040 s on the shared GPU. Evaluation: classic MuJoCo,
+20 targets per box drawn from that box, 200 ticks at 50 Hz, success within 30 mm, same seed for both actors.
+
+| goal box | reachable targets | curriculum success | baseline_1x success | curriculum median err mm | baseline_1x median err mm |
+|---|---|---|---|---|---|
+| x1.0 | 0.95 | 18/20 | 18/20 | 10 | 10 |
+| x1.5 | 0.75 | 10/20 | 9/20 | 31 | 45 |
+| x2.0 | 0.70 | 11/20 | 8/20 | 28 | 41 |
+| x2.5 | 0.50 | 9/20 | 6/20 | 70 | 106 |
+| x3.0 | 0.60 | 6/20 | 3/20 | 103 | 120 |
+
+`baseline_1x` is the `reach_none` actor from 04 (300 iterations, 1x box only). "reachable targets" is the fraction
+of the 20 sampled targets that FK says the arm can reach at all (the 3x box pokes 0.6 m out of a 0.4 m arm), so
+it is the ceiling for both rows.
+
+How the population moved (worlds per level, from `curriculum_schedule.json`):
+
+| iteration | mean level | worlds at 1x / 1.5x / 2x / 2.5x / 3x | at_goal at 1x / 3x |
+|---|---|---|---|
+| 100 | 0.09 | 932 / 90 / 2 / 0 / 0 | 0.10 / - |
+| 200 | 0.90 | 343 / 462 / 195 / 24 / 0 | 0.56 / - |
+| 300 | 1.87 | 100 / 290 / 351 / 207 / 76 | 0.67 / 0.16 |
+| 399 | 2.21 | 51 / 215 / 355 / 279 / 124 | 0.63 / 0.18 |
+
+Reading it honestly: inside the box both actors were trained for, they tie (18/20, 10 mm). Outside it the
+curriculum actor wins every stage (10 vs 9, 11 vs 8, 9 vs 6, 6 vs 3; 36/80 vs 26/80 across the four wider boxes)
+and its median error is 30 to 35 percent lower, but it also had 100 more iterations and never saw the 3x box for
+most of training (the first world got there at iteration 250). The curriculum is a cheap way to widen the
+workspace a fixed recipe covers; it is not a substitute for a recipe designed for the wider box.
 
 ## 06 Agent trains a fleet
 
