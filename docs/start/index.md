@@ -17,4 +17,4 @@ You leave with a simulated SO-101 you can command from Python, the two lines tha
 | [First agent](first-agent.md) | `Agent(tools=[robot])`, a sentence that moves the sim arm, the operator gate stopping a real one |
 | [Doctor](doctor.md) | `strands-robots doctor`: what each of the fifteen probes checks and what its verdict means |
 
-Every `python` fence on these pages ran against this commit on a laptop with no GPU. Fences that need an arm on USB are marked `sketch`.
+Every `python` code block (a fence, on these pages) ran against this commit on a laptop with no GPU. Fences that need an arm on USB are marked `sketch`.

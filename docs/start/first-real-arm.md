@@ -89,7 +89,7 @@ arm.send_action({"shoulder_pan.pos": 20.0})
 arm.cleanup()
 ```
 
-Both are the `so101` tool when handed to an agent. The lerobot path connects on the first action; the native path connects on `connect_eagerly()` or the first action. `cleanup()` closes the port and leaves torque as it is, so an arm holding a payload does not drop when a process exits; `stop()` is the verb that de-energizes.
+Both take degrees for the joints (lerobot's `so101_follower` sets `use_degrees=True`; its `gripper.pos` is 0 to 100) and both are the `so101` tool in an agent. lerobot connects on the first action, the native driver on `connect_eagerly()` or the first action. `cleanup()` closes the port and leaves torque as it is, so a loaded arm does not drop at exit; `stop()` de-energizes.
 
 ## Calibrate
 
@@ -99,7 +99,7 @@ Calibration is the arm's measured travel per servo. Without it the driver reads 
 lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=so101
 ```
 
-The lerobot driver looks the file up by id, and the id it uses is the tool name, `so101` unless you pass `tool_name=` or `id=`. The native driver takes the file as `calibration=`; `lerobot_calibration_path("so101_follower", "so101")` returns where lerobot put it, and `get_status()` reports `calibration_source` so you can tell whether the arm's travel or the servo's full rotation is in force. Details in [Calibration](../learn/hardware/calibration.md).
+The lerobot driver looks the file up by id, the tool name `so101` unless you pass `tool_name=` or `id=`. The native driver takes it as `calibration=`; `lerobot_calibration_path("so101_follower", "so101")` returns where lerobot put it, and `get_status()` reports `calibration_source`. Details in [Calibration](../learn/hardware/calibration.md).
 
 ## What is refused before the arm moves
 
@@ -115,4 +115,4 @@ The lerobot driver looks the file up by id, and the id it uses is the tool name,
 
 ## The operator gate
 
-When the lerobot-driver `Robot` is mounted as an agent tool, its `execute` and `start` actions stop for operator approval before any rollout is dispatched, and refuse when no operator can be reached. The native driver's `move_to` action does not ask at this commit. [First agent](first-agent.md) shows the gate; [Drivers](../learn/hardware/drivers.md) covers the other {{n:native_drivers}} native drivers.
+Mounted as an agent tool, the lerobot-driver `Robot` stops `execute` and `start` for operator approval before a rollout is dispatched, and refuses when no operator can be reached. The native driver's `move_to` does not ask at this commit. [First agent](first-agent.md) shows the gate; [Drivers](../learn/hardware/drivers.md) covers the other {{n:native_drivers}} native drivers.

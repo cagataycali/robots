@@ -6,14 +6,15 @@ description: A control loop in sim or on hardware writes a LeRobot v3 dataset th
 
 At the end of this page a control loop, in simulation or on hardware, writes a LeRobot v3 dataset (parquet plus one MP4 per camera per episode) that `lerobot-train` and every policy provider here can read, and you know where it lands on disk and how to keep episodes distinct.
 
-Recording needs the `[lerobot]` extra for the dataset schema. On the simulation side one call opens a session and `run_policy` writes one frame per control step while it is open:
+Recording needs the `[lerobot]` extra for the dataset schema. In simulation one call opens a session and `run_policy` writes one frame per control step while it is open (about 25 s on a laptop; drop `root=` to record under `$HF_LEROBOT_HOME`):
 
-```python title="sketch"
+```python
+import tempfile
 from strands_robots import Robot
 
 sim = Robot("so101")
 sim.add_camera("front", position=[0.6, 0.0, 0.4], target=[0.0, 0.0, 0.1])
-sim.start_recording(repo_id="you/so101_reach", task="reach the cube", fps=30, cameras=["front"])
+sim.start_recording(repo_id="you/so101_reach", task="reach the cube", fps=30, cameras=["front"], root=tempfile.mkdtemp())
 sim.run_policy(policy_provider="mock", instruction="reach the cube", duration=3.0, n_episodes=5, reset_between=True)
 print(sim.stop_recording())              # flushes the last episode to parquet, finalizes meta/
 print(sim.verify_dataset_episodes(expected=5))

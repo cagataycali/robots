@@ -42,10 +42,10 @@ report = download_assets(action="status")
 print(report["content"][0]["text"][:200])
 ```
 
-You should see a count, then one line per registered robot, `[ok]` when its files are present and `[--]` when they are not:
+You should see a count (`{{n:robots}}` robots are registered), then one line per robot, `[ok]` when its files are present and `[--]` when they are not:
 
 ```text
-64 available, 2 missing
+66 available, 1 missing
 [ok] ability_hand         hand         PSYONIC Ability Hand (5-finger prosthetic, 11-DOF)
 [ok] adam_lite            humanoid     PNDbotics Adam Lite Humanoid (26-DOF)
 ```
