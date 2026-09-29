@@ -14,7 +14,7 @@ pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url https://pypi.nvid
 export OMNI_KIT_ACCEPT_EULA=YES                                                     # first import
 ```
 
-Verified pip wheels: 6.0.1.0 and 6.1.0.0 (swap `==6.0.*` for `==6.1.*`). Both pin `numpy==2.3.1` and `torch==2.11.0`, so use a fresh venv; on 6.0.x then reinstall `coverage>=7.6.1` (its 7.4.4 pin breaks numba). Docker: `nvcr.io/nvidia/isaac-sim:6.0.1`. Pins live in `strands_robots/simulation/isaac/_install.py`.
+Verified pip wheels: 6.0.1.0 and 6.1.0.0 (`==6.1.*` for the latter). Both pin `numpy==2.3.1` and `torch==2.11.0`, so use a fresh venv; on 6.0.x reinstall `coverage>=7.6.1` (its 7.4.4 pin breaks numba). `lerobot` (recording) needs `numpy<2.3`: install it last; pip's downgrade to 2.2.6 works on 6.1. Docker: `nvcr.io/nvidia/isaac-sim:6.0.1`. Pins live in `strands_robots/simulation/isaac/_install.py`.
 
 ## What it is
 
@@ -39,7 +39,7 @@ sim.destroy()
 
 ## Configuration
 
-`IsaacConfig` fields, with defaults: `num_envs=1`, `device="cuda:0"`, `headless=True`, `physics_dt=1/120`, `rendering_dt=1/30`, `render_mode="headless"`, `gravity=(0, 0, -9.81)`, `ground_plane=True`, `stage_path="/World"`, `nucleus_url=None`, `camera_width=640`, `camera_height=480`, `verbose=False`, `extra={}`. Unknown keywords are rejected at construction rather than dropped, so `headles=False` is an error, not a silent default. The legacy `tool_name` and `default_timestep` shortcuts from `create_simulation` are still accepted.
+`IsaacConfig` fields, with defaults: `num_envs=1`, `device="cuda:0"`, `headless=True`, `physics_dt=1/120`, `rendering_dt=1/30`, `render_mode="headless"`, `gravity=(0, 0, -9.81)`, `ground_plane=True`, `stage_path="/World"`, `nucleus_url=None`, `camera_width=640`, `camera_height=480`, `verbose=False`, `extra={}`. Unknown keywords are rejected (`headles=False` is an error). The legacy `tool_name` and `default_timestep` shortcuts are still accepted.
 
 ## Differences from MuJoCo
 
