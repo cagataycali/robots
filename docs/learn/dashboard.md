@@ -7,11 +7,11 @@ pip install 'strands-robots[dashboard,sim-mujoco]'      # fastapi, uvicorn, weba
 strands-robots dashboard --open                          # http://127.0.0.1:8090
 ```
 
-Flags: `--host` (default `127.0.0.1`), `--port` (default `8090`), `--open`, `--log-level`. A non-loopback host is refused until a passkey or static `security.auth_token` guards the API.
+Flags: `--host` (default `127.0.0.1`), `--port` (default `8090`), `--open`, `--log-level`, `--mesh-listen tcp/0.0.0.0:7447` (anchor the mesh; the header shows the join line). A non-loopback host is refused until a passkey or `security.auth_token` guards the API.
 
 ## What it serves
 
-The process joins the Zenoh mesh as a robot-less gateway: one page drives hardware, simulators, or a mix. The UI is a built React SPA under `strands_robots/dashboard/static/`; no node at runtime. Each tab's rules live in the `strands_robots.dashboard` module named for it.
+The process joins the Zenoh mesh as a robot-less gateway for hardware, simulators, or a mix. The UI is a built React SPA under `strands_robots/dashboard/static/`, no node at runtime. Each tab's rules live in the `strands_robots.dashboard` module named for it.
 
 | tab | shows |
 |---|---|
@@ -44,9 +44,9 @@ The first passkey closes the third door. Its enrollment must present `STRANDS_DA
 
 ## The agent in the browser
 
-`/ws/agent` takes `{"type": "say", "text": ...}` and streams the console's events back (text, tool_use, tool_result, interrupt, done, error). Its tools share the HTTP routes' `Safety` object, so the e-stop refuses the agent like a button. `sim_set_joints` raises the real-hardware hook's interrupt (`MotionInterruptHook`, see [agents](agents.md)); the browser shows a consent card and `{"type": "resume", "id": ..., "approve": true, "always": false}` resumes the turn; `always` lasts the conversation and dies with the socket. One turn per socket; a second `say` is refused, not queued.
+`/ws/agent` takes `{"type": "say", "text": ...}` and streams the console's events back (text, tool_use, tool_result, interrupt, done, error). Its tools share the routes' `Safety` object, so the e-stop refuses the agent too. `sim_set_joints` raises the real-hardware hook's interrupt (`MotionInterruptHook`, see [agents](agents.md)); the browser shows a consent card and `{"type": "resume", "id": ..., "approve": true, "always": false}` resumes the turn; `always` lasts the conversation, dying with the socket. One turn per socket; a second `say` is refused.
 
-Two switches, off by default, matter once a physical peer is reachable: `STRANDS_DASH_AGENT_PHYSICAL_MOTION=1` lets the agent's tools move metal at all, and `STRANDS_DASH_TASK_REQUIRES_CONFIRM=1` makes a real-motion task or teleop POST carry an explicit boolean confirmation (strings are refused). Neither touches a simulated peer; both are granted and revoked from a consent card, never from Settings.
+Two switches, off by default, matter once a physical peer is reachable: `STRANDS_DASH_AGENT_PHYSICAL_MOTION=1` lets the agent's tools move metal at all, and `STRANDS_DASH_TASK_REQUIRES_CONFIRM=1` makes a real-motion task or teleop POST carry an explicit boolean confirmation (strings refused). Neither touches a simulated peer; both are granted and revoked from a consent card, not Settings.
 
 ## Logs
 

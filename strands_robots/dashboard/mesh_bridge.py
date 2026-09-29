@@ -87,6 +87,23 @@ def _env_float(name: str, default: str) -> float:
     return value
 
 
+def _mesh_anchor_hint(listen: list[str]) -> str | None:
+    """:func:`lan_hint.mesh_anchor_hint` over this machine's addresses; ``None`` when nothing listens."""
+    if not listen:
+        return None
+    from strands_robots.dashboard import lan_hint
+
+    own: list[str] = []
+    try:
+        import psutil
+
+        for addrs in psutil.net_if_addrs().values():
+            own.extend(a.address for a in addrs if a.address)
+    except Exception:  # noqa: BLE001 - psutil is optional and platform-specific; the hint degrades
+        pass
+    return lan_hint.mesh_anchor_hint(listen, own)
+
+
 def _resolve_mesh_camera_hz() -> float:
     """Resolve the camera publish rate ``STRANDS_MESH_CAMERA_HZ`` names.
 
@@ -693,6 +710,9 @@ class MeshBridge:
             "settings": settings.load()["mesh"],
             "multicast": os.getenv("STRANDS_MESH_MULTICAST", ""),
             "max_cmd_bytes": MAX_CMD_BYTES,
+            # The line a LAN robot needs when this dashboard anchors the mesh
+            # (--mesh-listen / ZENOH_LISTEN); None when it listens on nothing.
+            "anchor_hint": _mesh_anchor_hint(self._endpoints.get("listen") or []),
         }
         try:
             from strands_robots.mesh.security import _policy_type_allowlist

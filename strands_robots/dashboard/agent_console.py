@@ -464,7 +464,7 @@ class Console:
         self._model = model if model is not None else default_model()
         self._bridge = bridge
         self._devices = devices
-        self._signature: frozenset[tuple[str, str]] = frozenset()
+        self._signature: frozenset[tuple[str, str, str]] = frozenset()
         self._hook: Any | None = None
         self.agent = self._build(messages=None)
 

@@ -26,6 +26,7 @@ import asyncio
 import base64
 import json
 import keyword
+import logging
 import re
 from collections.abc import AsyncGenerator, Callable, Mapping
 from typing import Any, cast
@@ -33,6 +34,8 @@ from typing import Any, cast
 # ── classification ──────────────────────────────────────────────────────────
 
 #: Robot kinds a proxy can represent. ``skip`` = build no tool for this peer.
+logger = logging.getLogger(__name__)
+
 KIND_REAL = "real"
 KIND_SIM = "sim"
 KIND_HOST = "host"  # a robot process with no joints announced (yet): status/stop only
@@ -243,8 +246,150 @@ def sim_input_schema() -> dict[str, Any]:
     return _SIM_INPUT_SCHEMA_CACHE
 
 
-def peer_tool_spec(peer_id: str, kind: str, tool_name: str) -> dict[str, Any] | None:
-    """The ToolSpec a proxy presents for this peer - mirrors what the peer IS."""
+# ── the advertised tool surface (projector) ──────────────────────────────────
+
+#: Specs fetched from peers, keyed by the ``tool_spec_hash`` their presence
+#: carries. A hash names one canonical spec, so a child peer that carries its
+#: parent's hash costs no second round trip and a peer that restarts with the
+#: same tool is served from memory.
+_ADVERTISED_SPECS: dict[str, dict[str, Any]] = {}
+
+#: How long the projector waits for ``describe_tool``: a read the peer answers
+#: from memory, so a slow answer means a slow link, and the static proxy is the
+#: fallback for this build.
+DESCRIBE_TOOL_TIMEOUT_S: float = 10.0
+
+
+def presence_tool_spec_hash(peer: Mapping[str, Any] | None) -> str | None:
+    """The ``tool_spec_hash`` a peer's presence carries, or ``None`` when it advertises none."""
+    if not isinstance(peer, Mapping):
+        return None
+    presence = peer.get("presence")
+    value = presence.get("tool_spec_hash") if isinstance(presence, Mapping) else None
+    if value is None:
+        value = peer.get("tool_spec_hash")
+    return str(value) if isinstance(value, str) and value else None
+
+
+def _unwrap_wire(res: Any) -> dict[str, Any]:
+    """The peer's answer out of the bridge's wire envelope (same reading as the proxy's)."""
+    envelope: dict[str, Any] = res if isinstance(res, dict) else {"result": res}
+    inner = envelope.get("result")
+    if envelope.get("type") == "response" and isinstance(inner, dict) and not envelope.get("error"):
+        return dict(inner)
+    return envelope
+
+
+def advertised_spec(
+    peer_id: str, peer: Mapping[str, Any] | None, send_cmd: Callable[..., dict[str, Any]]
+) -> dict[str, Any] | None:
+    """The tool surface *peer_id* advertises, fetched once per hash with ``describe_tool``.
+
+    ``None`` when the peer advertises none (no ``tool_spec_hash`` in presence:
+    real hardware, or a peer on a build before the advertisement) or when the
+    fetch fails; the caller then presents the static proxy, so a slow or old
+    peer costs the agent nothing but the wider surface.
+    """
+    spec_hash = presence_tool_spec_hash(peer)
+    if spec_hash is None:
+        return None
+    cached = _ADVERTISED_SPECS.get(spec_hash)
+    if cached is not None:
+        return cached
+    try:
+        answer = _unwrap_wire(
+            send_cmd(peer_id, {"action": "describe_tool"}, timeout=DESCRIBE_TOOL_TIMEOUT_S, source="agent")
+        )
+    except Exception:  # noqa: BLE001 - a failed fetch leaves the static proxy in place
+        logger.debug("describe_tool on %s failed; static proxy kept", peer_id, exc_info=True)
+        return None
+    spec = answer.get("spec") if isinstance(answer, dict) else None
+    if not isinstance(spec, dict) or not isinstance(spec.get("functions"), dict):
+        return None
+    served_hash = answer.get("tool_spec_hash")
+    if isinstance(served_hash, str) and served_hash:
+        _ADVERTISED_SPECS[served_hash] = spec
+    _ADVERTISED_SPECS[spec_hash] = spec
+    return spec
+
+
+def projected_actions(spec: Mapping[str, Any]) -> tuple[str, ...]:
+    """The advertised functions the projected tool offers beyond the mesh verbs, sorted; a verb of the same name wins."""
+    functions = spec.get("functions") or {}
+    return tuple(sorted(name for name in functions if name not in SIM_ACTIONS))
+
+
+def projected_input_schema(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """The projected tool's input: the mesh verbs first, then every function the peer advertises.
+
+    Each advertised param appears once with the peer's own type, description
+    (cut to a sentence) and enum; the verbs' wording wins for a shared name.
+    Nothing here is read from a package copy of the spec: what the peer sent is
+    what the model sees.
+    """
+    calls = projected_actions(spec)
+    properties: dict[str, Any] = {
+        "action": {
+            "type": "string",
+            "description": (
+                " | ".join(SIM_ACTIONS) + " | or one of the functions this peer advertises: " + ", ".join(calls)
+            ),
+            "enum": [*SIM_ACTIONS, *calls],
+            "default": "state",
+        },
+        **_SIM_VERB_FIELDS,
+    }
+    functions: Mapping[str, Any] = spec.get("functions") or {}
+    for name in calls:
+        params = functions.get(name, {}).get("params") or {}
+        for key, entry in params.items():
+            if key in properties or not isinstance(entry, Mapping):
+                continue
+            prop: dict[str, Any] = {}
+            if "type" in entry:
+                prop["type"] = entry["type"]
+            if isinstance(entry.get("description"), str):
+                prop["description"] = _first_sentence(entry["description"])
+            if isinstance(entry.get("enum"), list):
+                prop["enum"] = list(entry["enum"])
+            properties[key] = prop or {"description": f"{key} (see the peer's describe_tool)"}
+    return {"type": "object", "properties": properties, "required": ["action"]}
+
+
+def _projected_tool_spec(peer_id: str, tool_name: str, spec: Mapping[str, Any]) -> dict[str, Any]:
+    calls = projected_actions(spec)
+    denied = spec.get("denied") or {}
+    return {
+        "name": tool_name,
+        "description": (
+            f"Simulation peer '{peer_id}' as a native tool (routed over the mesh to the process that owns "
+            f"it). Mesh verbs: status, state (joint names and positions), set_joints (write target_joints in "
+            f"radians, held by the servos), reset, step, stop, and execute/start (a policy rollout: "
+            f"instruction + policy_provider, e.g. mock or lerobot_local with pretrained_name_or_path). "
+            f"The other {len(calls)} actions in the enum are the functions this peer itself advertises "
+            f"(tool '{spec.get('tool_name') or 'sim'}'), called with their parameters as top-level fields, "
+            f"e.g. action=add_object name=red_cube shape=box size=[0.02,0.02,0.02] color=[1,0,0,1] "
+            f"position=[0.25,0,0.02]; then list_objects, move_object, add_camera, render (returns the "
+            f"image), get_robot_state, set_joint_positions, move_to, set_gripper. The peer answers as its "
+            f"tool answers in process and refuses a parameter a function does not take by name. "
+            f"{len(denied)} of its published actions are not served over the mesh (world replacement, "
+            f"peer-host windows and paths, rollouts, dataset reads) and say so when asked. Never real "
+            f"hardware, so nothing here asks the operator first."
+        ),
+        "inputSchema": {"json": projected_input_schema(spec)},
+    }
+
+
+def peer_tool_spec(
+    peer_id: str, kind: str, tool_name: str, advertised: Mapping[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """The ToolSpec a proxy presents for this peer - mirrors what the peer IS.
+
+    With *advertised* (the spec the peer served to ``describe_tool``) a sim
+    peer's tool is projected from it; without, the static mirror of the wire.
+    """
+    if kind == KIND_SIM and advertised is not None:
+        return _projected_tool_spec(peer_id, tool_name, advertised)
     if kind == KIND_SIM:
         return {
             "name": tool_name,
@@ -401,15 +546,52 @@ def _map_sim_call(action: str, tool_input: Mapping[str, Any]) -> tuple[dict[str,
     return {"action": "sim_call", "sim_action": action, "params": params}, None
 
 
+def _map_advertised_call(
+    action: str, tool_input: Mapping[str, Any], spec: Mapping[str, Any]
+) -> tuple[dict[str, Any] | None, str | None]:
+    """An advertised function -> the ``call`` command, or why not, judged by the peer's own spec.
+
+    A function the peer lists as denied is refused with the peer's reason (and
+    the rail it rides), one it never advertised as unknown, and a field its
+    params do not include by name, all before the round trip; the peer applies
+    the same rules when the command lands, so the two never disagree.
+    """
+    from strands_robots.mesh.security import SIM_CALL_RAIL_FOR
+
+    functions: Mapping[str, Any] = spec.get("functions") or {}
+    denied: Mapping[str, Any] = spec.get("denied") or {}
+    if action in denied and action not in functions:
+        rail = SIM_CALL_RAIL_FOR.get(action)
+        how = f"; use action={rail!r} on this tool" if rail else ""
+        return None, f"{action!r} is not served by this peer: {denied[action]}{how}"
+    if action not in functions:
+        valid = ", ".join([*SIM_ACTIONS, *projected_actions(spec)])
+        return None, f"unknown action {action!r} for this peer. Valid: {valid}"
+    params = {k: v for k, v in tool_input.items() if v is not None}
+    accepted: Mapping[str, Any] = functions[action].get("params") or {}
+    unknown = sorted(k for k in params if k not in accepted)
+    if unknown:
+        return None, (
+            f"{action} on this peer does not take {', '.join(unknown)}; its parameters are "
+            f"{', '.join(sorted(accepted)) or 'none'}"
+        )
+    return {"action": "call", "function": action, "params": params}, None
+
+
 def map_invocation(
-    peer_id: str, kind: str, tool_input: Mapping[str, Any] | None
+    peer_id: str,
+    kind: str,
+    tool_input: Mapping[str, Any] | None,
+    advertised: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Proxy tool input -> the validated mesh command to send this peer.
 
     Returns ``(command, error)`` - exactly one is non-None. The command is a
     dict for ``bridge.send_cmd(peer_id, command)``; its shape is what
     ``mesh/security.validate_command`` accepts (execute/start/status/stop for
-    robots, the sim command family for sims).
+    robots, the sim command family for sims). With *advertised*, a sim peer's
+    own functions ride ``call`` and are judged by the peer's spec; without, the
+    static ``sim_call`` mirror.
     """
     tool_input = dict(tool_input or {})
     action = str(tool_input.pop("action", "") or "").strip()
@@ -418,6 +600,8 @@ def map_invocation(
 
     if kind == KIND_SIM:
         if action not in SIM_ACTIONS:
+            if advertised is not None:
+                return _map_advertised_call(action, tool_input, advertised)
             return _map_sim_call(action, tool_input)
         cmd: dict[str, Any] = {"action": action}
         for field in _SIM_FIELDS.get(action, ()):
@@ -552,11 +736,14 @@ def build_peer_tools(
     class PeerProxyTool(AgentTool):  # type: ignore[misc,valid-type]
         """A fleet peer, presented to the agent as the robot itself."""
 
-        def __init__(self, peer_id: str, kind: str, spec: dict[str, Any]) -> None:
+        def __init__(
+            self, peer_id: str, kind: str, spec: dict[str, Any], advertised: dict[str, Any] | None = None
+        ) -> None:
             super().__init__()
             self._peer_id = peer_id
             self._kind = kind
             self._spec = spec
+            self._advertised = advertised
 
         @property
         def tool_name(self) -> str:
@@ -579,13 +766,18 @@ def build_peer_tools(
         def peer_kind(self) -> str:
             return self._kind
 
+        @property
+        def advertised(self) -> dict[str, Any] | None:
+            """The spec the peer served, when the tool is a projection of it."""
+            return self._advertised
+
         async def stream(
             self, tool_use: Mapping[str, Any], invocation_state: dict[str, Any], **kwargs: Any
         ) -> AsyncGenerator[Any, None]:
             from strands.types._events import ToolResultEvent
 
             tool_use_id = tool_use.get("toolUseId", "")
-            cmd, err = map_invocation(self._peer_id, self._kind, tool_use.get("input") or {})
+            cmd, err = map_invocation(self._peer_id, self._kind, tool_use.get("input") or {}, self._advertised)
             if err is not None:
                 yield ToolResultEvent({"toolUseId": tool_use_id, "status": "error", "content": [{"text": err}]})
                 return
@@ -654,11 +846,12 @@ def build_peer_tools(
         if kind == KIND_SKIP:
             continue
         name = sanitize_tool_name(peer_id, taken)
-        spec = peer_tool_spec(peer_id, kind, name)
+        advertised = advertised_spec(peer_id, peer, send_cmd) if kind == KIND_SIM else None
+        spec = peer_tool_spec(peer_id, kind, name, advertised)
         if spec is None:
             continue
         taken.add(name)
-        tools.append(PeerProxyTool(peer_id, kind, spec))
+        tools.append(PeerProxyTool(peer_id, kind, spec, advertised))
     return tools
 
 
@@ -680,8 +873,8 @@ def expected_tool_names(peers: Mapping[str, Mapping[str, Any]]) -> list[str]:
     return names
 
 
-def fleet_signature(peers: Mapping[str, Mapping[str, Any]]) -> frozenset[tuple[str, str]]:
-    """What the proxy surface depends on: the set of (peer_id, kind).
+def fleet_signature(peers: Mapping[str, Mapping[str, Any]]) -> frozenset[tuple[str, str, str]]:
+    """What the proxy surface depends on: the set of (peer_id, kind, advertised tool hash).
 
     get_agent compares this at call time against the signature the agent was
     built with - a changed fleet (join/leave/reclassify) rebuilds the agent so
@@ -692,7 +885,7 @@ def fleet_signature(peers: Mapping[str, Mapping[str, Any]]) -> frozenset[tuple[s
     for peer_id, peer in peers.items():
         kind = classify_peer(peer_id, peer)
         if kind != KIND_SKIP:
-            out.add((peer_id, kind))
+            out.add((peer_id, kind, presence_tool_spec_hash(peer) or ""))
     return frozenset(out)
 
 

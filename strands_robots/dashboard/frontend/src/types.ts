@@ -168,6 +168,8 @@ export interface MeshInfo {
   auth_mode?: string
   local_dev?: boolean
   wire_security?: string
+  /** the ZENOH_CONNECT line a LAN robot needs when this dashboard anchors the mesh (--mesh-listen); null when it listens on nothing */
+  anchor_hint?: string | null
   camera_hz?: number
   multicast?: string
   max_cmd_bytes?: number

@@ -1490,6 +1490,22 @@ function FleetBar({
         }
       ),
       meshDown && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge danger", title: "the dashboard's own mesh session is closed", children: "mesh down" }),
+      mesh.online && mesh.anchor_hint && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          className: "badge",
+          "data-testid": "mesh-anchor",
+          onClick: () => {
+            var _a;
+            void ((_a = navigator.clipboard) == null ? void 0 : _a.writeText(mesh.anchor_hint ?? ""));
+          },
+          title: "This dashboard listens for robots. Start a robot with this variable set and it joins the fleet here. Click to copy.",
+          children: [
+            "mesh anchor · connect with ",
+            /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: mesh.anchor_hint })
+          ]
+        }
+      ),
       installable && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chip", onClick: onInstall, title: "Install as an app", children: "⤓ install" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chip", onClick: onDevices, title: "Local hardware and managed robots", children: "⚙ devices" }),
       quiet && /* @__PURE__ */ jsxRuntimeExports.jsxs(

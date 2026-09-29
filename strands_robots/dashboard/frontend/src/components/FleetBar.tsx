@@ -74,6 +74,17 @@ export default function FleetBar({
           </button>
         )}
         {meshDown && <span className="badge danger" title="the dashboard's own mesh session is closed">mesh down</span>}
+        {/* This dashboard anchors the mesh (--mesh-listen): the one line a robot on the LAN needs to join is right here, copyable. */}
+        {mesh.online && mesh.anchor_hint && (
+          <button
+            className="badge"
+            data-testid="mesh-anchor"
+            onClick={() => { void navigator.clipboard?.writeText(mesh.anchor_hint ?? '') }}
+            title="This dashboard listens for robots. Start a robot with this variable set and it joins the fleet here. Click to copy."
+          >
+            mesh anchor · connect with <code>{mesh.anchor_hint}</code>
+          </button>
+        )}
 
         {installable && (
           <button className="chip" onClick={onInstall} title="Install as an app">⤓ install</button>

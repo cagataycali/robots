@@ -97,3 +97,39 @@ def hint(client_ip: str | None, own_addrs: Sequence[str], port: int) -> dict:
         "lan_urls": [],
         "why": "cannot tell from an IPv4 address behind NAT whether you are local",
     }
+
+
+def private_v4(own_addrs: Sequence[str]) -> list[str]:
+    """This machine's private IPv4 addresses (what a LAN peer can dial), best candidate first."""
+    out: list[str] = []
+    for a in own_addrs:
+        try:
+            ip = ipaddress.ip_address(a.split("%")[0])
+        except ValueError:
+            continue
+        if isinstance(ip, ipaddress.IPv4Address) and ip.is_private and not ip.is_loopback:
+            text = str(ip)
+            if text not in out:
+                out.append(text)
+    return out
+
+
+def mesh_anchor_hint(listen: Sequence[str], own_addrs: Sequence[str]) -> str | None:
+    """The one line a robot on the LAN needs to join a dashboard that anchors the mesh.
+
+    ``listen`` is what the dashboard's session listens on (``ZENOH_LISTEN``,
+    e.g. ``tcp/0.0.0.0:7447``); the hint names the same scheme and port on a
+    LAN address a peer can dial: ``ZENOH_CONNECT=tcp/192.168.1.20:7447``. ``None``
+    when the dashboard listens on nothing or has no private address.
+    """
+    for endpoint in listen:
+        scheme, sep, rest = str(endpoint).partition("/")
+        if not sep or not scheme:
+            continue
+        host, colon, port = rest.rpartition(":")
+        if not colon or not port.isdigit() or int(port) == 0:
+            continue
+        addresses = [host] if host and host not in ("0.0.0.0", "[::]", "::") else private_v4(own_addrs)
+        if addresses:
+            return f"ZENOH_CONNECT={scheme}/{addresses[0]}:{port}"
+    return None
