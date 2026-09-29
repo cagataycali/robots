@@ -336,7 +336,7 @@ class RemotePolicy(Policy):
             # websockets 17.1 warns on a connection obtained without the flag
             # and will change connect()'s default behaviour after the
             # deprecation period; the flag sets the 17.1 floor (17.0 has no such
-            # parameter), owned by tests/test_websockets_floor_ships_the_imported_api.py.
+            # parameter), which the test suite pins against pyproject.
             self._ws = connect(
                 self.uri,
                 open_timeout=self.connect_timeout,
