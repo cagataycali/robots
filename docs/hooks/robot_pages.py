@@ -304,11 +304,11 @@ def _policies_section(name: str, cov) -> str:  # noqa: ANN001
             )
         out.append("")
     else:
-        out += [
+        none_yet = (
             "No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then "
-            "[train](../learn/training/lerobot.md) and run it with `run_policy`.",
-            "",
-        ]
+            "[train](../learn/training/lerobot.md) and run it with `run_policy`."
+        )
+        out += [none_yet, ""]
     if cov.policies:
         providers = ", ".join(f"`{p}`" for p in cov.policies)
         out += [
