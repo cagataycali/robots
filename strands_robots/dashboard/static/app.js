@@ -1663,10 +1663,19 @@ function getRecordApi() {
   return cached;
 }
 const RUNNING = /* @__PURE__ */ new Set(["running", "executing"]);
+function simActivityStatus(robots, peerId) {
+  if (!robots || typeof robots !== "object") return void 0;
+  const own = peerId == null ? void 0 : peerId.split("__")[1];
+  const entries = Object.entries(robots).filter(([name]) => !own || name === own);
+  const flags = entries.map(([, v]) => v == null ? void 0 : v.active).filter((f) => typeof f === "boolean");
+  if (!flags.length) return void 0;
+  return flags.some(Boolean) ? "running" : "idle";
+}
 function reportedTaskStatus(peer) {
-  var _a, _b, _c;
+  var _a, _b, _c, _d;
   const s = ((_b = (_a = peer.state) == null ? void 0 : _a.task) == null ? void 0 : _b.status) ?? ((_c = peer.presence) == null ? void 0 : _c.task_status);
-  return typeof s === "string" ? s : void 0;
+  if (typeof s === "string") return s;
+  return simActivityStatus((_d = peer.state) == null ? void 0 : _d.robots, peer.peer_id);
 }
 function isRunningStatus(status) {
   return status !== void 0 && RUNNING.has(status);
@@ -2183,19 +2192,19 @@ function ribbonDetail(line) {
   return rest.length > 0 ? rest : text;
 }
 function peerStatusFields(peer, telemetry, hostsChildren) {
-  var _a, _b, _c, _d, _e, _f, _g;
+  var _a, _b, _c, _d, _e, _f, _g, _h;
   const p = peer.presence;
   return {
     stale: !!peer.stale,
     lastSeenAgoS: peer.last_seen ? Date.now() / 1e3 - peer.last_seen : null,
     hwConnected: (p == null ? void 0 : p.connected) ?? null,
-    taskStatus: ((_b = (_a = peer.state) == null ? void 0 : _a.task) == null ? void 0 : _b.status) ?? (p == null ? void 0 : p.task_status) ?? null,
-    instruction: ((_d = (_c = peer.state) == null ? void 0 : _c.task) == null ? void 0 : _d.instruction) || (p == null ? void 0 : p.instruction) || null,
-    taskDurationS: ((_f = (_e = peer.state) == null ? void 0 : _e.task) == null ? void 0 : _f.duration) ?? null,
+    taskStatus: ((_b = (_a = peer.state) == null ? void 0 : _a.task) == null ? void 0 : _b.status) ?? (p == null ? void 0 : p.task_status) ?? simActivityStatus((_c = peer.state) == null ? void 0 : _c.robots, peer.peer_id) ?? null,
+    instruction: ((_e = (_d = peer.state) == null ? void 0 : _d.task) == null ? void 0 : _e.instruction) || (p == null ? void 0 : p.instruction) || null,
+    taskDurationS: ((_g = (_f = peer.state) == null ? void 0 : _f.task) == null ? void 0 : _g.duration) ?? null,
     moving: telemetry.moving ?? null,
     jointsSeen: telemetry.jointsSeen ?? null,
     stateAgeS: telemetry.stateAgeS ?? null,
-    lockout: ((_g = peer.lockout) == null ? void 0 : _g.state) ?? null,
+    lockout: ((_h = peer.lockout) == null ? void 0 : _h.state) ?? null,
     hostsChildren: hostsChildren ?? null
   };
 }
