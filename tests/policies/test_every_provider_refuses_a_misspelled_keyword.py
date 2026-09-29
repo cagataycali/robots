@@ -10,6 +10,7 @@ address the hardware drivers hand every provider.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 
 import pytest
@@ -63,14 +64,13 @@ class TestTheMockHasASignature:
         with pytest.raises(ValueError, match="amplitude"):
             MockPolicy(amplitude=bad)  # type: ignore[arg-type]
 
-    @pytest.mark.asyncio
-    async def test_the_amplitude_shapes_the_sinusoid(self) -> None:
+    def test_the_amplitude_shapes_the_sinusoid(self) -> None:
         loud = MockPolicy(amplitude=1.0)
         loud.set_robot_state_keys(["j0"])
         quiet = MockPolicy(amplitude=0.0)
         quiet.set_robot_state_keys(["j0"])
-        loud_actions = await loud.get_actions({"j0": 0.0}, "")
-        quiet_actions = await quiet.get_actions({"j0": 0.0}, "")
+        loud_actions = asyncio.run(loud.get_actions({"j0": 0.0}, ""))
+        quiet_actions = asyncio.run(quiet.get_actions({"j0": 0.0}, ""))
         assert max(abs(a["j0"]) for a in loud_actions) > 0.0
         assert all(a["j0"] == 0.0 for a in quiet_actions)
 
