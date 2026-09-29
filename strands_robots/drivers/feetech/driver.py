@@ -70,6 +70,7 @@ from strands_robots.drivers.feetech.bus import (
     load_calibration,
 )
 from strands_robots.drivers.rollout import PolicyRollout, policy_from_provider
+from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
 from strands_robots.utils import boolean_flag_error, positive_count_error, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ TRANSPORTS: tuple[str, ...] = ("serial", "twin")
 DEFAULT_CONTROL_FREQUENCY: float = 30.0
 
 
-class FeetechDriver:
+class FeetechDriver(TeleopMixin):
     """Native Feetech driver for the arms in :data:`SUPPORTED_ROBOTS`.
 
     The bus writes STS/SMS-series frames: that series' two-byte word order and
@@ -457,6 +458,36 @@ class FeetechDriver:
         if note := getattr(self._bus, "last_clamp_note", ""):
             body["note"] = note
         return {"status": "success", "content": [{"json": body}]}
+
+    def _teleop_device_error(self, device: Any, map_fn: Any) -> str | None:
+        """Refuse a leader whose joints report in a unit this bus does not take.
+
+        :meth:`send_action` reads degrees for a joint and percent open for the
+        gripper, which is lerobot's ``DEGREES`` / ``RANGE_0_100``. A lerobot
+        leader built with ``use_degrees=False`` (or ``koch_leader``, which is
+        always ``RANGE_M100_100``) reports -100..100, and those numbers read as
+        degrees put the follower somewhere the leader never went. The leader's
+        motor table says which unit it reports, so it is compared motor for
+        motor with this bus. A device without one (a gamepad) and a caller who
+        passes ``map_fn=`` are not graded.
+        """
+        leader_motors = getattr(getattr(device, "bus", None), "motors", None)
+        if map_fn is not None or not isinstance(leader_motors, dict):
+            return None
+        mismatched = {}
+        for name, motor in leader_motors.items():
+            spec = self._bus.motors.get(name)
+            mode = getattr(motor, "norm_mode", None)
+            reported = str(getattr(mode, "value", mode))
+            if spec is not None and mode is not None and reported != spec.norm_mode:
+                mismatched[name] = (reported, spec.norm_mode)
+        if not mismatched:
+            return None
+        detail = ", ".join(f"{n} reports {got} (this bus takes {want})" for n, (got, want) in mismatched.items())
+        return (
+            f"attach_teleop: {self._tool_name}'s leader reports in a unit this driver does not command: {detail}. "
+            "Build the leader with ``use_degrees=True`` where it has one, or pass ``map_fn=`` to convert."
+        )
 
     def start_task(
         self,
@@ -807,6 +838,11 @@ class FeetechDriver:
         """
         if detail := halt_failure_detail(self.stop_task()):
             logger.error("%s: stop_task did not halt the rollout: %s", self._tool_name, detail)
+        # A leader attached through ``attach_teleop`` writes goals from its own
+        # thread; it has to be joined before the torque goes off, or the next
+        # enable lands on whatever it wrote last.
+        if getattr(self, "_teleops", None) and not _stop_reported_stopped(self.stop_teleoperate()):
+            logger.error("%s: stop_teleoperate did not join the teleop loop", self._tool_name)
         envelope = self._set_torque_envelope(False)
         if envelope["status"] == "error":
             logger.error("%s: %s", self._tool_name, envelope["content"][0]["text"])

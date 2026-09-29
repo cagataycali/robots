@@ -319,3 +319,115 @@ def test_the_rule_refuses_a_kind_it_does_not_know() -> None:
 
     with pytest.raises(ValueError, match="wanted must be 'robot' or 'teleoperator'"):
         _other_lerobot_kind_refusal("so101_leader", wanted="gripper")
+
+
+# --- The route the refusal names has to exist on the driver it lands on --------
+#
+# The refusal sends the caller to ``Robot('<follower>', mode='real', port=...)
+# .attach_teleop(...)``. That call returns whichever driver the follower
+# resolves to, and with ``driver='strands'`` that is the native driver - which
+# answered ``AttributeError: 'FeetechDriver' object has no attribute
+# 'attach_teleop'`` until it composed ``TeleopMixin`` like the other two hosts.
+
+
+class _ScriptedLeader:
+    """A leader arm's teleoperator surface: connect, poll, disconnect."""
+
+    is_connected = False
+
+    def connect(self, calibrate: bool = False) -> None:
+        self.is_connected = True
+
+    def disconnect(self) -> None:
+        self.is_connected = False
+
+    def get_action(self) -> dict[str, float]:
+        return {"shoulder_pan.pos": 12.0, "elbow_flex.pos": -8.0}
+
+
+@pytest.mark.parametrize("follower", ["so100", "so101", "koch"])
+def test_every_native_follower_driver_takes_the_leader_the_refusal_names(follower: str) -> None:
+    """Each follower a ``*_leader`` refusal points at has ``attach_teleop`` on its native driver."""
+    from strands_robots.drivers.registry import get_native_driver_class
+
+    driver_cls = get_native_driver_class(follower)
+    assert driver_cls is not None
+    assert callable(getattr(driver_cls, "attach_teleop", None)), driver_cls.__name__
+
+
+def test_a_leader_drives_the_native_driver_and_stop_joins_it_before_torque_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The route runs end to end on the twin, and ``stop()`` ends the session first."""
+    import asyncio
+    import time
+
+    follower = Robot("so101", mode="real", driver="strands", transport="twin")
+    commanded: list[dict[str, float]] = []
+    torque: list[bool] = []
+    send = follower.send_action
+    monkeypatch.setattr(
+        follower, "send_action", lambda action, robot_name=None: commanded.append(action) or send(action)
+    )
+    set_torque = follower._set_torque_envelope
+    monkeypatch.setattr(
+        follower,
+        "_set_torque_envelope",
+        lambda on: torque.append(bool(follower._teleop_running)) or set_torque(on),
+    )
+
+    assert follower.attach_teleop(_ScriptedLeader(), name="leader") is follower
+    assert follower.teleoperate(duration=5.0)["status"] == "success"
+    deadline = time.monotonic() + 5.0
+    while not commanded and time.monotonic() < deadline:
+        time.sleep(0.02)
+    asyncio.run(follower.stop())
+
+    assert commanded and commanded[0] == {"shoulder_pan.pos": 12.0, "elbow_flex.pos": -8.0}
+    assert torque == [False], "torque went off while the teleop loop was still writing"
+    assert follower._teleop_thread is None
+
+
+def _lerobot_so_leader(use_degrees: bool) -> Any:
+    pytest.importorskip("lerobot")
+    from strands_robots import Teleoperator
+
+    return Teleoperator("so101_leader", port="/dev/null", use_degrees=use_degrees)
+
+
+def _koch_shaped_leader() -> Any:
+    """``koch_leader``'s motor table: every joint ``RANGE_M100_100``, gripper ``RANGE_0_100``."""
+    from types import SimpleNamespace
+
+    joints = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll")
+    motors = {name: SimpleNamespace(norm_mode="range_m100_100") for name in joints}
+    motors["gripper"] = SimpleNamespace(norm_mode="range_0_100")
+    leader = _ScriptedLeader()
+    leader.bus = SimpleNamespace(motors=motors)  # type: ignore[attr-defined]
+    return leader
+
+
+@pytest.mark.parametrize(
+    ("follower", "build_leader", "accepted"),
+    [
+        ("so101", lambda: _lerobot_so_leader(use_degrees=True), True),
+        ("so101", lambda: _lerobot_so_leader(use_degrees=False), False),
+        ("koch", _koch_shaped_leader, False),
+        ("so101", _ScriptedLeader, True),
+    ],
+    ids=["so_leader_degrees", "so_leader_range_m100_100", "koch_leader", "no_motor_table"],
+)
+def test_the_native_driver_refuses_a_leader_that_reports_another_unit(
+    follower: str, build_leader: Any, accepted: bool
+) -> None:
+    """Degrees in, degrees out: a -100..100 leader would be read as degrees on the native bus."""
+    driver = Robot(follower, mode="real", driver="strands", port="/dev/null")
+    leader = build_leader()
+    if accepted:
+        driver.attach_teleop(leader, name="leader")
+        assert list(driver._teleops) == ["leader"]
+    else:
+        with pytest.raises(ValueError, match="range_m100_100 .this bus takes degrees.*map_fn="):
+            driver.attach_teleop(leader, name="leader")
+        assert driver._teleops == {}
+        driver.attach_teleop(leader, name="leader", map_fn=lambda frame: frame)  # the caller took the units
