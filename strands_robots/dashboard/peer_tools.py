@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import binascii
 import json
 import keyword
 import re
@@ -457,7 +456,7 @@ def _image_block_from_wire(block: Any) -> Any:
         return block
     try:
         raw = base64.b64decode(image["base64"], validate=True)
-    except (ValueError, binascii.Error):
+    except ValueError:  # binascii.Error is a ValueError
         return {"text": "[image block from the peer could not be decoded]"}
     return {"image": {"format": image.get("format", "png"), "source": {"bytes": raw}}}
 
