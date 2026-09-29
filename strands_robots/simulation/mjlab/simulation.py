@@ -194,7 +194,6 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         self._renderer: Any = None
         self._render_data: Any = None
         self._build_seconds = 0.0
-        self._dr_applied: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------ world
 
