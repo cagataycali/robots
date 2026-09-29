@@ -60,7 +60,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 import time
 from typing import Any
 
@@ -71,8 +70,7 @@ pytest.importorskip("lerobot")  # the fakes below mirror lerobot's own error typ
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError  # noqa: E402
 
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState
-from tests._daemon_executor import DaemonThreadExecutor
+from tests._hardware_robot import hardware_robot_on
 
 #: Upper bound on any wait, so a broken contract fails instead of hanging.
 DEADLINE = 10.0
@@ -240,19 +238,7 @@ class _Bridge:
 
 def _make_robot(driver: Any) -> HwRobot:
     """Construct a ``Robot`` around ``driver``, bypassing hardware init."""
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "test_arm"
-    hw.action_horizon = 8
-    hw.data_config = None
-    hw.control_frequency = 1000.0
-    hw.action_sleep_time = 0.001
-    hw._task_state = RobotTaskState()
-    hw._executor = DaemonThreadExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw.mesh = None
-    hw.peer_id = None
-    hw.robot = driver
+    hw = hardware_robot_on(driver, tool_name="test_arm", control_frequency=1000.0)
     return hw
 
 
@@ -378,6 +364,21 @@ class TestOneStuckDeviceCannotKeepTheRestOpen:
             hw.cleanup()
 
         assert any("robot.disconnect() raised during cleanup" in r.getMessage() for r in caplog.records)
+
+    def test_a_teardown_step_that_raises_is_logged_not_raised(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A step of ``cleanup()`` that raises ends the call with an error naming the robot."""
+        hw = _make_robot(_arm())
+
+        def _raises() -> None:
+            raise RuntimeError("bus gone")
+
+        monkeypatch.setattr(hw, "_disconnect_devices", _raises)
+        with caplog.at_level(logging.ERROR, logger="strands_robots.hardware_robot"):
+            hw.cleanup()
+
+        assert any(r.getMessage() == "Cleanup error for test_arm: bus gone" for r in caplog.records)
 
     def test_a_half_open_robot_still_gets_its_port_closed(self) -> None:
         """The state no other entry point can recover.
