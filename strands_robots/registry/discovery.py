@@ -18,6 +18,11 @@ Resolution rules:
       ``discover_urdf_path``) is a parallel surface for URDF-native backends
       (Newton via ``ModelBuilder.add_urdf``). It covers the large URDF-only long
       tail that MJCF discovery cannot (humanoids, quadrupeds, hands).
+    - The MuJoCo backend reaches that same long tail through
+      :func:`discover_robot`: a name with a URDF description and no MJCF one gets
+      an entry whose ``asset.source.type`` is ``"urdf"``, and
+      :mod:`strands_robots.assets.urdf` compiles the URDF into ``robot.xml`` +
+      ``scene.xml`` on first resolution (:func:`list_urdf_only` names them).
     - :func:`descriptions_module`, :func:`is_discoverable`, and
       :func:`list_discoverable` are cheap - a static dict lookup with no module
       import and no network. :func:`discover_robot` is heavy: importing a
@@ -147,8 +152,9 @@ def discover_robot(name: str) -> dict[str, Any] | None:
 
     module_name = descriptions_module(norm)
     if module_name is None:
-        _DISCOVER_CACHE[norm] = None
-        return None
+        entry_urdf = _urdf_entry(norm)
+        _DISCOVER_CACHE[norm] = entry_urdf
+        return entry_urdf
 
     try:
         mod = import_description(module_name)
@@ -303,13 +309,88 @@ def discover_urdf_path(name: str) -> str | None:
     return str(urdf_path)
 
 
+#: Marker the URDF entries carry in ``asset.source`` so the downloader builds
+#: instead of symlinking, and so listings can say where a robot came from.
+URDF_SOURCE_TYPE = "urdf"
+
+
+def _urdf_entry(norm: str) -> dict[str, Any] | None:
+    """Registry-style entry for a URDF-only ``robot_descriptions`` robot, or ``None``.
+
+    Cheap: static tables only. The asset directory is the module name (unique,
+    self-describing, never a Menagerie directory); the model and scene files are
+    the ones :mod:`strands_robots.assets.urdf` writes there on first resolution.
+    ``category`` comes from the description's tags through the same mapping the
+    builder uses, so the docs family and the sim agree.
+    """
+    module_name = urdf_descriptions_module(norm)
+    if module_name is None:
+        return None
+    from ..assets.urdf import ASSET_JSON, ROBOT_XML, SCENE_XML, category_for_tags, is_floating
+
+    tags: set[str] = set()
+    try:
+        from robot_descriptions._descriptions import DESCRIPTIONS  # type: ignore[import-not-found]
+
+        tags = set(getattr(DESCRIPTIONS.get(module_name), "tags", ()) or ())
+    except ImportError:  # pragma: no cover - urdf_descriptions_module already needed the package
+        pass
+    return {
+        "description": f"{norm} (discovered via robot_descriptions:{module_name}, URDF compiled to MJCF)",
+        "category": category_for_tags(tags),
+        "discovered": True,
+        "source": URDF_SOURCE_TYPE,
+        "floating": is_floating(tags),
+        "asset": {
+            "dir": module_name,
+            "model_xml": ROBOT_XML,
+            "scene_xml": SCENE_XML,
+            "info_json": ASSET_JSON,
+            "robot_descriptions_module": module_name,
+            "source": {"type": URDF_SOURCE_TYPE},
+        },
+    }
+
+
+def list_urdf_only() -> list[str]:
+    """Sorted URDF names the MuJoCo backend gains: no MJCF description, not curated.
+
+    The complement of :func:`list_discoverable` inside :func:`list_urdf_discoverable`,
+    minus every curated name and alias (curated always wins, and an alias must
+    stay unique). Cheap: static tables and the curated registry, no import.
+    """
+    from .robots import _load
+
+    reg = _load("robots").get("robots", {})
+    taken = set(reg)
+    for info in reg.values():
+        taken.update(info.get("aliases", ()))
+    mjcf = _mjcf_modules()
+    return sorted(n for n in _urdf_modules() if n not in mjcf and n not in taken)
+
+
+def is_urdf_only(name: str) -> bool:
+    """Return ``True`` if *name* is a robot the MuJoCo backend serves from a URDF.
+
+    The membership test for :func:`list_urdf_only`: a URDF description, no MJCF
+    description, not a curated name or alias. Cheap: no import, no network.
+    """
+    norm = normalize_robot_name(name)
+    return _NAME_RE.match(norm) is not None and norm in _urdf_only_set()
+
+
+@lru_cache(maxsize=1)
+def _urdf_only_set() -> frozenset[str]:
+    return frozenset(list_urdf_only())
+
+
 def invalidate_cache() -> None:
     """Clear the discovery caches (synthesized entries + module table)."""
     _DISCOVER_CACHE.clear()
     # ``_mjcf_modules`` / ``_urdf_modules`` are normally ``lru_cache``-wrapped;
     # guard ``cache_clear`` so a test (or future refactor) that swaps in a plain
     # callable cannot break this.
-    for cached in (_mjcf_modules, _urdf_modules):
+    for cached in (_mjcf_modules, _urdf_modules, _urdf_only_set):
         clear = getattr(cached, "cache_clear", None)
         if clear is not None:
             clear()

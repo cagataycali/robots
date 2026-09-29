@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         is_discoverable,
         list_discoverable,
         list_robots,
+        list_urdf_only,
     )
     from strands_robots.robot import Robot
     from strands_robots.simulation import (
@@ -109,6 +110,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "get_robot": ("strands_robots.registry", "get_robot"),
     "list_discoverable": ("strands_robots.registry", "list_discoverable"),
     "is_discoverable": ("strands_robots.registry", "is_discoverable"),
+    "list_urdf_only": ("strands_robots.registry", "list_urdf_only"),
     # Policies
     "Gr00tPolicy": ("strands_robots.policies.groot", "Gr00tPolicy"),
     # lerobot_local policy-type discovery surface. Lazy (unlike list_providers,
@@ -186,6 +188,7 @@ __all__ = [
     "get_robot",
     "list_discoverable",
     "is_discoverable",
+    "list_urdf_only",
     "create_simulation",
     "list_backends",
     "register_backend",
