@@ -21,6 +21,7 @@ Wire contract (verified against the server source):
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -41,6 +42,18 @@ _READ_TIMEOUT_SECS = 600.0
 
 #: What the reports call the service, so "absent" and "silent" name one server.
 _SERVER_NAME = "Cosmos 3 policy server"
+
+
+def _connection_closed() -> type[BaseException]:
+    """``websockets.exceptions.ConnectionClosed``, imported where it is caught.
+
+    ``websockets`` is an optional extra, so it is not imported at module scope;
+    the ``except`` clauses that name this type run only after a connection was
+    dialed, by which point the import has already succeeded.
+    """
+    from websockets.exceptions import ConnectionClosed
+
+    return ConnectionClosed
 
 
 class _UnreadableFrame(Exception):
@@ -92,7 +105,18 @@ class _RawWebsocketTransport:
         headers = {"Authorization": f"Api-Key {self.api_key}"} if self.api_key else None
         # ``Any`` for the same reason ``self._ws`` is declared ``Any``: the frames
         # go straight to the vendored packer, which treats them as opaque.
-        ws: Any = _wsc.connect(self.uri, compression=None, max_size=None, additional_headers=headers)
+        #
+        # This connection outlives the call that opened it (one dial, many
+        # exchanges), which is the "legacy" shape of ``connect``: from
+        # websockets 17.1 the bare call warns on every dial that the context
+        # manager form will become the default, and ``legacy=True`` is the
+        # documented way to keep this shape without the warning. 17.0, the
+        # extra's floor, has neither the warning nor the keyword, so the keyword
+        # is passed only where ``connect`` declares it.
+        connect_kwargs: dict[str, Any] = {"compression": None, "max_size": None, "additional_headers": headers}
+        if "legacy" in inspect.signature(_wsc.connect).parameters:
+            connect_kwargs["legacy"] = True
+        ws: Any = _wsc.connect(self.uri, **connect_kwargs)
         # ``self._ws`` is published only once the handshake has been consumed.
         # Assigned before the read, a failed handshake left a live connection
         # cached behind the error it had just raised, with the metadata frame
@@ -191,6 +215,14 @@ class _RawWebsocketTransport:
     def infer(self, observation: dict[str, Any]) -> dict[str, Any]:
         resp = self._exchange(observation)
         if isinstance(resp, str):
+            # The OpenPI server answers a failed ``infer`` with the traceback as
+            # a text frame and then closes the connection (code 1011). The
+            # exchange completed, so ``_exchange`` kept the socket; kept, the
+            # next request would be written to a connection the peer has
+            # already closed and surface as the transport's own
+            # ``ConnectionClosedError`` instead of a report naming the server.
+            # Dropping it here makes the next call dial afresh, as the first did.
+            self.close()
             raise RuntimeError(f"Error in inference server:\n{resp}")
         return self._decode(resp, "action chunk")
 
@@ -262,6 +294,15 @@ class Cosmos3WebsocketClient:
             budget_param="read_timeout",
         )
 
+    def _closed_by_peer(self, exc: BaseException) -> str:
+        """Report for a connection the server closed under this client."""
+        return (
+            f"{_SERVER_NAME} at ws://{self.host}:{self.port} closed the connection "
+            f"({exc}). The server exited or dropped this client after an error; read its "
+            "log. The connection has been discarded, so the next call dials afresh once "
+            "the server is answering again."
+        )
+
     def _server_hint(self) -> str:
         """Actionable hint for starting the Cosmos 3 RoboLab policy server."""
         return (
@@ -307,6 +348,14 @@ class Cosmos3WebsocketClient:
             raise ConnectionError(str(e)) from e
         except OSError as e:
             raise ConnectionError(self._server_hint()) from e
+        except _connection_closed() as e:
+            # The peer closed an established connection: the server exited, or
+            # this is the 1011 close that follows its text error frame. Not an
+            # ``OSError``, so the clause above does not see it, and the
+            # transport's own exception names a close code and nothing about
+            # which server or how to recover.
+            client.close()
+            raise ConnectionError(self._closed_by_peer(e)) from e
 
     def infer(self, observation: dict[str, Any]) -> dict[str, Any]:
         """Send an observation dict and return the server response.
@@ -338,6 +387,14 @@ class Cosmos3WebsocketClient:
             raise ConnectionError(str(e)) from e
         except OSError as e:
             raise ConnectionError(self._server_hint()) from e
+        except _connection_closed() as e:
+            # The peer closed an established connection: the server exited, or
+            # this is the 1011 close that follows its text error frame. Not an
+            # ``OSError``, so the clause above does not see it, and the
+            # transport's own exception names a close code and nothing about
+            # which server or how to recover.
+            client.close()
+            raise ConnectionError(self._closed_by_peer(e)) from e
 
     def reset(self) -> None:
         """Best-effort per-episode reset hint to the server.

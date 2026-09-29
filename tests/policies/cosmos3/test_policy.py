@@ -166,10 +166,17 @@ def test_unpack_1d_action_promoted():
     assert len(steps[0]) == 8
 
 
-def test_unpack_unexpected_width_pads_names():
+def test_unpack_unexpected_width_is_refused_not_padded():
+    """A chunk wider (or narrower) than the active layout is the server serving
+    another ``action_space``: naming its columns positionally and padding with
+    ``action_<i>`` handed pose components to the robot as joint targets."""
     p = _make_droid_policy()
-    steps = p._unpack_actions(np.zeros((2, 10), dtype=np.float32))  # wider than 8
-    assert "action_8" in steps[0] and "action_9" in steps[0]
+    with pytest.raises(ValueError, match=r"10-column action chunk.*names 8 columns.*action_space"):
+        p._unpack_actions(np.zeros((2, 10), dtype=np.float32))  # wider than joint_pos (8)
+    with pytest.raises(ValueError, match=r"7-column action chunk"):
+        p._unpack_actions(np.zeros((2, 7), dtype=np.float32))
+    steps = p._unpack_actions(np.zeros((2, 8), dtype=np.float32))
+    assert sorted(steps[0]) == sorted([f"joint_{i}" for i in range(7)] + ["gripper"])
 
 
 def test_to_image_uint8_coerces_float():
