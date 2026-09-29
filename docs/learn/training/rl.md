@@ -113,6 +113,6 @@ Booleans are checked, not read by truthiness; counts are positive integers; the 
 
 ## Limits
 
-- CPU MuJoCo is the only batched path today (`VecSimEnv` threads N engines). A GPU-batched `VecSimEnv` over Newton is the interface's intended next implementation, not a shipped one.
+- CPU MuJoCo is the only in-process batched path (`VecSimEnv` threads N engines); for GPU-parallel RL use [isaaclab](isaaclab.md).
 - No image observations: `actor_obs_keys` are scalars and `skip_images=True` by default.
 - Three algorithms, one MLP shape each. No recurrent actor; curriculum is whatever `reset_fn` and the terrain `difficulty` knob give you.

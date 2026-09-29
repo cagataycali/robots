@@ -51,8 +51,6 @@ sim.destroy()
 | motion primitives | its own implementation in `isaac/motion_primitives.py` |
 | randomization | `IsaacRandomizationMixin`, same `randomize` / `set_obs_noise` names |
 
-`docs-old/reference/simulation/isaac-parity.md` tracked what matched and what did not at the time of writing; the table above is what the code says at this commit.
-
 ## Limits
 
 - Python 3.12 only, an RTX-class GPU, and a multi-gigabyte install. There is no CPU fallback; `is_available()` tells you why before anything is built.

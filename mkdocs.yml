@@ -465,6 +465,7 @@ nav:
           - learn/training/index.md
           - LeRobot: learn/training/lerobot.md
           - RL: learn/training/rl.md
+          - Isaac Lab: learn/training/isaaclab.md
       - Data:
           - Record: learn/data/record.md
           - Verify: learn/data/verify.md
