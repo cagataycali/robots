@@ -507,6 +507,9 @@ sim-urdf = [
     "strands-robots[sim-mujoco]",
     "trimesh>=4.0.0,<6.0.0",
     "pycollada>=0.8,<1.0",
+    # 23 descriptions ship xacro and no URDF; robot_descriptions renders them
+    # with xacrodoc (which brings xacro and rospkg) on first use.
+    "xacrodoc>=2.0.0,<3.0.0",
 ]
 sim-newton = [
     "strands-robots[sim-mujoco]",

@@ -86,6 +86,12 @@ _FINGER_RE = re.compile(r"finger|gripper|thumb|index|middle|ring|pinky|knuckle|j
 #: (Gazebo plugins ship as ``.so`` in ``filename=`` attributes, for example).
 _ROS_ONLY_ELEMENTS: tuple[str, ...] = ("gazebo", "transmission", "ros2_control", "sensor", "plugin")
 
+#: MuJoCo's mjMINVAL: the smallest mass or inertia a moving body may carry.
+_MJ_MINVAL = 1e-15
+
+#: What a link with a broken inertial gets: 1 g and a 1e-6 kg m^2 per kg diagonal.
+_DEFAULT_MASS, _DEFAULT_INERTIA_PER_KG = 0.001, 1e-6
+
 #: Gap left between the lowest geom and the floor when the root is lifted (m).
 _FLOOR_CLEARANCE = 0.01
 
@@ -110,6 +116,7 @@ REFUSAL_NO_TRIMESH = "mesh format {ext} needs trimesh: pip install 'strands-robo
 REFUSAL_COMPILE = "MuJoCo refused the compiled spec: {error}"
 REFUSAL_NO_JOINTS = "the compiled model has no actuated joint"
 REFUSAL_CLONE = "upstream clone failed or URDF_PATH missing after import"
+REFUSAL_XACRO = "the description ships xacro only; rendering it needs xacrodoc: pip install 'strands-robots[sim-urdf]'"
 
 
 class UrdfBuildError(RuntimeError):
@@ -188,8 +195,9 @@ def resolve_mesh_uri(uri: str, urdf_dir: Path, package_dir: Path | None, repo_di
     ``package://<pkg>/<rest>`` is looked up as ``<rest>`` under the description's
     package directory when its name is ``<pkg>``, under ``<pkg>`` inside the
     package's parent and the repository, and finally under any directory named
-    ``<pkg>`` in the repository. ``file://`` is stripped; a relative path is
-    relative to the URDF's own directory.
+    ``<pkg>`` in the repository, then as ``<rest>`` under the package directory
+    and the URDF's directory whatever they are called. ``file://`` is stripped;
+    a relative path is relative to the URDF's own directory.
     """
     if uri.startswith("package://"):
         rest = uri[len("package://") :]
@@ -204,13 +212,25 @@ def resolve_mesh_uri(uri: str, urdf_dir: Path, package_dir: Path | None, repo_di
             for d in repo_dir.rglob(pkg):
                 if d.is_dir() and (d / tail).is_file():
                     return d / tail
+        # The package name in the URI is the ROS package, which need not be the
+        # directory's name (a description checked out as ``urdf/`` or ``v1/``
+        # still names its own package): the description's own package and the
+        # URDF's directory are the last places to look.
+        for fallback in (package_dir, urdf_dir):
+            if fallback is not None and (fallback / tail).is_file():
+                return fallback / tail
         return None
     if uri.startswith("file://"):
         uri = uri[len("file://") :]
     p = Path(os.path.expanduser(uri))
-    if not p.is_absolute():
-        p = urdf_dir / p
-    return p if p.is_file() else None
+    if p.is_absolute():
+        return p if p.is_file() else None
+    # A relative path is relative to the URDF in the spec; in the wild it is as
+    # often relative to the package (``meshes/x.stl`` next to ``urdf/``).
+    for base in (urdf_dir, package_dir, repo_dir):
+        if base is not None and (base / p).is_file():
+            return base / p
+    return None
 
 
 #: MuJoCo's STL decoder refuses more faces than this; bigger meshes go to OBJ.
@@ -298,6 +318,20 @@ def _load_collada_tolerant(src: Path) -> Any:
     return mesh
 
 
+def _stl_is_loadable(path: Path) -> bool:
+    """Whether MuJoCo's STL decoder accepts *path*: binary, 1..200,000 faces."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(84)
+        if len(head) < 84 or head[:5].lower() == b"solid" and not head[80:84]:
+            return False
+        faces = int.from_bytes(head[80:84], "little")
+        binary_size = 84 + 50 * faces
+        return 0 < faces <= _STL_MAX_FACES and path.stat().st_size == binary_size
+    except OSError:
+        return False
+
+
 def _safe_stem(path: Path) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", path.stem) or "mesh"
 
@@ -310,6 +344,138 @@ def _is_fresh(src: Path, out: Path) -> bool:
         return False
 
 
+_PREFIX_RE = re.compile(r"<(\w+):\w+")
+_ROBOT_TAG_RE = re.compile(r"<robot\b")
+
+
+def _parse_urdf(urdf_path: Path) -> ET.Element:
+    """Parse the URDF; a file that still carries xacro-style prefixes gets them bound.
+
+    A hand-exported URDF sometimes keeps ``<xacro:...>`` or ``<gazebo:...>``
+    elements without the ``xmlns:`` declaration that makes them XML. Those
+    elements are dropped anyway, so binding the prefix to a placeholder
+    namespace is enough to read the rest.
+    """
+    text = urdf_path.read_text(encoding="utf-8", errors="replace")
+    try:
+        return ET.fromstring(text)  # noqa: S314 - the URDF is the asset being built; no external entities
+    except ET.ParseError as exc:
+        if "unbound prefix" not in str(exc):
+            raise
+    prefixes = sorted(set(_PREFIX_RE.findall(text)) - {"xml"})
+    decls = "".join(f' xmlns:{p}="urn:strands-robots:{p}"' for p in prefixes)
+    text = _ROBOT_TAG_RE.sub(f"<robot{decls}", text, count=1)
+    return ET.fromstring(text)  # noqa: S314 - same file, prefixes now declared
+
+
+def _inertia_is_positive(inertial: ET.Element) -> bool:
+    """MuJoCo's rule: mass and every inertia eigenvalue above ``mjMINVAL`` (1e-15).
+
+    A 1e-22 eigenvalue is positive to linear algebra and "not positive" to the
+    compiler, which is what a CAD export of a sensor frame produces.
+    """
+    import numpy as np
+
+    mass_el = inertial.find("mass")
+    inertia = inertial.find("inertia")
+    try:
+        mass = float(mass_el.get("value", 0)) if mass_el is not None else 0.0
+        if inertia is None:
+            return mass > 0
+        g = {k: float(inertia.get(k, 0) or 0) for k in ("ixx", "iyy", "izz", "ixy", "ixz", "iyz")}
+    except ValueError:
+        return False
+    if mass <= _MJ_MINVAL:
+        return False
+    m = np.array([[g["ixx"], g["ixy"], g["ixz"]], [g["ixy"], g["iyy"], g["iyz"]], [g["ixz"], g["iyz"], g["izz"]]])
+    return bool(np.all(np.linalg.eigvalsh(m) > _MJ_MINVAL))
+
+
+def _geom_is_degenerate(geometry: ET.Element) -> bool:
+    """A primitive with a zero dimension, which MuJoCo refuses as ``size 0``."""
+    for child in geometry:
+        try:
+            if child.tag == "box":
+                return any(float(v) <= 0 for v in child.get("size", "1 1 1").split())
+            if child.tag == "sphere":
+                return float(child.get("radius", 1)) <= 0
+            if child.tag == "cylinder":
+                return float(child.get("radius", 1)) <= 0 or float(child.get("length", 1)) <= 0
+            if child.tag == "capsule":
+                return float(child.get("radius", 1)) <= 0
+        except ValueError:
+            return True
+    return False
+
+
+def _repair_urdf(root: ET.Element) -> list[str]:
+    """Fix, in place, the URDF defects that make MuJoCo refuse a model.
+
+    * an ``<inertial>`` whose mass is zero or whose inertia matrix is not
+      positive definite becomes a small positive one (the link keeps its mass
+      when that is positive; the inertia is what position control never
+      notices); a link with no ``<inertial>`` gets that default too;
+    * a visual or collision whose primitive has a zero dimension is removed;
+    * a visual with several ``<material>`` children keeps the first;
+    * a ``<material>`` re-defined under the same name becomes a reference to
+      the first definition (MuJoCo refuses a repeated definition).
+
+    Returns one line per repair for the log.
+    """
+    repairs: list[str] = []
+    for link in root.iter("link"):
+        inertial = link.find("inertial")
+        if inertial is None:
+            # A link with no inertial is massless, which MuJoCo refuses once a
+            # joint moves it; the URDF spec says the same link is a frame with
+            # no dynamics, so it gets the smallest inertial that compiles.
+            inertial = ET.SubElement(link, "inertial")
+            repairs.append(f"link {link.get('name')}: no inertial, added the default")
+        if not _inertia_is_positive(inertial):
+            mass_el = inertial.find("mass")
+            try:
+                mass = float(mass_el.get("value", 0)) if mass_el is not None else 0.0
+            except ValueError:
+                mass = 0.0
+            # A mass at the mjMINVAL edge (4e-15 kg lidar frames) would make the
+            # derived inertia fall under it again; a link this light is a frame.
+            mass = mass if mass >= _DEFAULT_MASS else _DEFAULT_MASS
+            for child in list(inertial):
+                if child.tag in ("mass", "inertia"):
+                    inertial.remove(child)
+            ET.SubElement(inertial, "mass", {"value": f"{mass:g}"})
+            i = f"{mass * _DEFAULT_INERTIA_PER_KG:g}"
+            ET.SubElement(inertial, "inertia", {"ixx": i, "iyy": i, "izz": i, "ixy": "0", "ixz": "0", "iyz": "0"})
+            repairs.append(f"link {link.get('name')}: inertia was not positive definite, replaced")
+        for shape in list(link):
+            if shape.tag not in ("visual", "collision"):
+                continue
+            geometry = shape.find("geometry")
+            if geometry is not None and _geom_is_degenerate(geometry):
+                link.remove(shape)
+                repairs.append(f"link {link.get('name')}: dropped a {shape.tag} with a zero-size primitive")
+                continue
+            materials = shape.findall("material")
+            for extra in materials[1:]:  # one material per visual; MuJoCo refuses a second
+                shape.remove(extra)
+            if len(materials) > 1:
+                repairs.append(
+                    f"link {link.get('name')}: kept the first of {len(materials)} materials in a {shape.tag}"
+                )
+    seen: set[str] = set()
+    for material in root.iter("material"):
+        name = material.get("name")
+        if not name:
+            continue
+        if name in seen and len(material):
+            for child in list(material):
+                material.remove(child)
+            repairs.append(f"material {name}: repeated definition turned into a reference")
+        elif len(material):
+            seen.add(name)
+    return repairs
+
+
 def rewrite_urdf(
     urdf_path: Path,
     dest: Path,
@@ -320,13 +486,14 @@ def rewrite_urdf(
     """Resolve meshes into ``dest/meshes`` and write ``dest/robot.urdf``.
 
     Returns the rewritten URDF path, the mesh records and the per-joint
-    ``(effort, damping)`` the URDF declared (MjSpec keeps neither).
+    ``(effort, damping)`` the URDF declared (MjSpec keeps neither). Repairs the
+    rewrite makes (see :func:`_repair_urdf`) are logged, one line each.
 
     Raises:
         UrdfBuildError: a mesh is missing, unconvertible or of an unknown format.
     """
-    tree = ET.parse(urdf_path)  # noqa: S314 - the URDF is the asset being built; no external entities
-    root = tree.getroot()
+    root = _parse_urdf(urdf_path)
+    repairs = _repair_urdf(root)
     for tag in _ROS_ONLY_ELEMENTS:
         for el in list(root.iter(tag)):
             for parent in root.iter():
@@ -360,6 +527,11 @@ def rewrite_urdf(
         if convert:
             cached = [c for c in (mesh_dir / f"{stem}.stl", mesh_dir / f"{stem}.obj") if _is_fresh(src, c)]
             out = cached[0] if cached else _convert_mesh(src, mesh_dir / stem)
+        elif ext == ".stl" and not _stl_is_loadable(src):
+            # An ASCII STL or one above MuJoCo's face cap is re-encoded.
+            cached = [c for c in (mesh_dir / f"{stem}.stl", mesh_dir / f"{stem}.obj") if _is_fresh(src, c)]
+            out = cached[0] if cached else _convert_mesh(src, mesh_dir / stem)
+            convert = True
         else:
             out = mesh_dir / f"{stem}{ext}"
             if not _is_fresh(src, out):
@@ -395,6 +567,8 @@ def rewrite_urdf(
     )
     out_urdf = dest / ROBOT_URDF
     out_urdf.write_text(ET.tostring(root, encoding="unicode"), encoding="utf-8")
+    for line in repairs:
+        logger.info("urdf %s: %s", urdf_path.name, line)
     return out_urdf, records, limits
 
 
@@ -438,6 +612,8 @@ def _lowest_point(model: Any, data: Any) -> float:
 
     lowest = 0.0
     for g in range(model.ngeom):
+        if model.geom_type[g] == 0:  # mjGEOM_PLANE: infinite, and it is the floor itself
+            continue
         center = model.geom_aabb[g, :3]
         half = model.geom_aabb[g, 3:]
         rot = data.geom_xmat[g].reshape(3, 3)
@@ -611,6 +787,30 @@ def _description_pin(mod: Any) -> tuple[str | None, str | None]:
     return (m.group(1) if m else None), (str(entry.commit) if getattr(entry, "commit", None) else None)
 
 
+def _urdf_path_of(mod: Any) -> str | None:
+    """``URDF_PATH`` of a description, rendering a xacro-only one through robot_descriptions.
+
+    23 descriptions (the Universal Robots family, Kinova Jaco, xArm, Franka
+    FER/FR3 v2, Stretch SE3) ship xacro and no URDF; ``robot_descriptions``
+    renders and caches the URDF with ``xacrodoc`` when asked through its own
+    ``_xacro.get_urdf_path``. Without ``xacrodoc`` installed the render raises
+    and the description is refused with the sentence that names the package.
+    """
+    direct = getattr(mod, "URDF_PATH", None)
+    if direct:
+        return str(direct)
+    if not getattr(mod, "XACRO_PATH", None):
+        return None
+    try:
+        from robot_descriptions._xacro import get_urdf_path  # type: ignore[import-not-found]
+
+        return str(get_urdf_path(mod))
+    except ModuleNotFoundError as exc:
+        raise UrdfBuildError(REFUSAL_XACRO) from exc
+    except Exception as exc:
+        raise UrdfBuildError(f"{REFUSAL_CLONE}: xacro render failed ({str(exc)[:120]})") from exc
+
+
 def build_urdf_asset(name: str, module: str, dest_dir: str | os.PathLike[str]) -> UrdfAssetInfo:
     """Import the ``robot_descriptions`` URDF *module* and build its asset.
 
@@ -628,7 +828,7 @@ def build_urdf_asset(name: str, module: str, dest_dir: str | os.PathLike[str]) -
         mod = import_description(module)
     except ImportError as exc:
         raise UrdfBuildError(f"{REFUSAL_CLONE}: {exc}") from exc
-    urdf_path = getattr(mod, "URDF_PATH", None)
+    urdf_path = _urdf_path_of(mod)
     if not urdf_path or not os.path.isfile(str(urdf_path)):
         raise UrdfBuildError(REFUSAL_CLONE)
     tags: set[str] = set()
