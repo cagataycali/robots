@@ -77,7 +77,8 @@ class TestTheWire:
 
 
 @pytest.mark.slow
-def test_a_two_second_so101_run_is_live_and_lands_in_an_mcap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_thirty_step_so101_run_is_live_and_lands_in_an_mcap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Thirty ``step`` calls spaced past the 50 Hz state period: every call is due, so the counts do not depend on the host's speed."""
     pytest.importorskip("mujoco")
     from strands_robots.assets.manager import resolve_model_dir
 
@@ -92,10 +93,9 @@ def test_a_two_second_so101_run_is_live_and_lands_in_an_mcap(tmp_path: Path, mon
         url = robot.foxglove_url
         assert url is not None and url.startswith("ws://127.0.0.1:")
         assert "Foxglove: " + url in robot.get_state()["content"][0]["text"]
-        started = time.monotonic()
-        while time.monotonic() - started < 2.0:
+        for _ in range(30):
             robot.step(10)
-            time.sleep(0.02)
+            time.sleep(0.025)  # past the 50 Hz state period, so each call publishes /tf and joint states
         info, topics = _handshake(url, wait_for_topics={"/tf", "/so101/scene", "/so101/joint_states"})
     finally:
         robot.cleanup()
