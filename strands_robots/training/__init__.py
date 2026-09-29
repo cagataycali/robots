@@ -84,6 +84,18 @@ def _load_sagemaker_trainer() -> type[Trainer]:
 register_trainer("sagemaker", _load_sagemaker_trainer)
 
 
+# Register the Isaac Lab transport. Like "sagemaker" it has no paired inference
+# provider, so registration is what lists it. The trainer imports no Isaac Lab
+# code at all - it launches the CLI of a separate interpreter ($ISAACLAB_PYTHON).
+def _load_isaaclab_trainer() -> type[Trainer]:
+    from strands_robots.training.isaaclab import IsaacLabTrainer
+
+    return IsaacLabTrainer
+
+
+register_trainer("isaaclab", _load_isaaclab_trainer)
+
+
 # ``rsl_rl`` is the training-side name of the ``rsl_rl_onnx`` provider (mjlab +
 # rsl_rl PPO in, ONNX out). The policies.json ``trainer`` block already resolves
 # ``create_trainer("rsl_rl_onnx")``; this alias lets an agent say what it is

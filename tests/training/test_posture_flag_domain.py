@@ -43,6 +43,7 @@ from strands_robots.training._validate import resume_problems, streaming_problem
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
 from strands_robots.training.groot import Gr00tTrainer
+from strands_robots.training.isaaclab import IsaacLabTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 from strands_robots.training.rsl_rl import RslRlTrainer
@@ -74,7 +75,7 @@ A_BOOLEAN = [
 # Which backend reads which field, by name or through a forwarding table. The
 # one-owner scan at the bottom derives the same sets from the tree, so a
 # backend that starts reading a field is graded on arrival.
-READS_RESUME = (LerobotTrainer, Gr00tTrainer, RslRlTrainer, SagemakerTrainer)
+READS_RESUME = (LerobotTrainer, Gr00tTrainer, RslRlTrainer, SagemakerTrainer, IsaacLabTrainer)
 READS_STREAMING = (LerobotTrainer, SagemakerTrainer)
 IGNORES_RESUME = (MockTrainer, Cosmos3Trainer)
 IGNORES_STREAMING = (MockTrainer, Cosmos3Trainer, Gr00tTrainer, RslRlTrainer)
@@ -307,6 +308,7 @@ class TestTheListedReadersAgreeWithTheTree:
             "groot.py": Gr00tTrainer,
             "rsl_rl.py": RslRlTrainer,
             "sagemaker.py": SagemakerTrainer,
+            "isaaclab.py": IsaacLabTrainer,
         }
         for field, listed in (("resume", READS_RESUME), ("streaming", READS_STREAMING)):
             readers = {p.name for p in _trainer_modules() if reads_spec_field(p.read_text(), (field,))}

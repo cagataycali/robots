@@ -96,6 +96,9 @@ def _pin_cuda_device(device: str) -> None:
 class RslRlTrainer(Trainer):
     """Train an rsl_rl PPO actor in mjlab and export it to ONNX."""
 
+    #: RL against the simulator: no dataset is read.
+    requires_dataset = False
+
     @property
     def provider_name(self) -> str:
         """Provider identity - pairs with ``RslRlOnnxPolicy.provider_name``."""
@@ -301,11 +304,6 @@ class RslRlTrainer(Trainer):
                 if events:
                     out[tag] = round(float(events[-1].value), 4)
         return out
-
-    @property
-    def needs_dataset(self) -> bool:
-        """RL against the simulator: no dataset is read."""
-        return False
 
     @property
     def hardware_floor(self) -> dict[str, Any]:

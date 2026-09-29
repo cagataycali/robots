@@ -201,6 +201,12 @@ class Trainer(ABC):
     the run, not the syntax that fetched it.
     """
 
+    #: Whether a run reads a dataset. The ``train_policy`` tool refuses a spec
+    #: with no data source for a trainer that does; a provider whose runs build
+    #: their own environments (``isaaclab``, ``rsl_rl`` on mjlab) sets this
+    #: ``False`` so the agent can reach it without naming a dataset it would never read.
+    requires_dataset: bool = True
+
     @property
     @abstractmethod
     def provider_name(self) -> str:
@@ -565,16 +571,6 @@ class Trainer(ABC):
         discoverable tree, which is the default. Read-only (stat only).
         """
         return None
-
-    @property
-    def needs_dataset(self) -> bool:
-        """Whether :meth:`train` reads a LeRobotDataset (``dataset_root`` / ``dataset_repo_id``).
-
-        ``True`` for every post-tuning backend. An RL trainer that learns
-        against the simulator (``rsl_rl`` on mjlab) overrides to ``False`` so
-        the ``train_policy`` tool does not demand a data source it never reads.
-        """
-        return True
 
     @property
     def hardware_floor(self) -> dict[str, Any]:

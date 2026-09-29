@@ -930,7 +930,9 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
             # the wrong length, a non-numeric or multi-element value, a boolean,
             # and any nan/inf. It runs BEFORE the nan-sentinel packing below, so a
             # nan a caller sends is an error here and never reads as "key absent".
-            action_map, coerce_error = self._coerce_action(action, robot_name)
+            action_map, coerce_error = self._coerce_action(
+                dict(action) if isinstance(action, Mapping) else action, robot_name
+            )
             if coerce_error is not None:
                 return coerce_error
             assert action_map is not None  # narrow for mypy: no error implies a mapping
@@ -1192,7 +1194,7 @@ def _resolve_key(model: Any, keyframe: str | int | None) -> int | None:
         if 0 <= keyframe < model.nkey:
             return keyframe
         raise KeyError(f"keyframe index {keyframe} out of range; the model has {model.nkey} keyframe(s): {names}.")
-    kid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, str(keyframe))
+    kid = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, str(keyframe)))
     if kid >= 0:
         return kid
     # The ABC contract: an unknown keyframe is a hard error that names what

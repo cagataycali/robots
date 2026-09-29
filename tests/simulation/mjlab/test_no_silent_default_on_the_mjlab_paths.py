@@ -152,7 +152,8 @@ class TestSendActionRefusesWhatEveryBackendRefuses:
         assert engine.send_action({"j0": True, "j1": 0.1}, "arm")["status"] == "error"
 
     def test_a_non_numeric_value_is_an_error_not_a_traceback(self, engine: _StandInEngine) -> None:
-        assert engine.send_action({"j0": "open", "j1": 0.1}, "arm")["status"] == "error"
+        bad: dict[str, Any] = {"j0": "open", "j1": 0.1}
+        assert engine.send_action(bad, "arm")["status"] == "error"
 
     def test_a_partial_dict_still_keeps_the_other_ctrl(self, engine: _StandInEngine) -> None:
         engine._ensure_built()

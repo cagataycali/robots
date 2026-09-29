@@ -36,8 +36,8 @@ class TestRegistration:
         assert trainer.provider_name == RslRlOnnxPolicy.provider_name.fget(None)
 
     def test_rl_trainer_waives_the_dataset_gate(self, trainer):
-        assert Trainer.needs_dataset.fget(trainer) is True  # the default
-        assert trainer.needs_dataset is False
+        assert Trainer.requires_dataset is True  # the default
+        assert trainer.requires_dataset is False
 
 
 class TestTaskResolution:
