@@ -733,6 +733,11 @@ class BridgeTransport:
         return self._iot.direct_forbidden(peer_id)
 
     @property
+    def connection_generation(self) -> int:
+        """The IoT leg's CONNACK count; memos about that identity's grants are scoped to it."""
+        return int(getattr(self._iot, "connection_generation", 0))
+
+    @property
     def thing_name(self) -> str:
         """The IoT leg's MQTT client id (its Thing name), ``""`` when that leg is down.
 

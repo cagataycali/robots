@@ -626,6 +626,7 @@ class Mesh(SensorLoopsMixin):
         # WARNING for a 403 fallback from repeating on every command.
         self._direct: DirectSender | None = None
         self._direct_fallback_logged: set[str] = set()
+        self._direct_fallback_generation = -1
 
         # User subscribe state
         self.inbox: dict[str, list[tuple[str, dict[str, Any]]]] = {}
@@ -1112,6 +1113,7 @@ class Mesh(SensorLoopsMixin):
         # through object.__new__), so the attribute may not exist yet.
         self._direct = None
         self._direct_fallback_logged = set()
+        self._direct_fallback_generation = -1
 
         if self._has_session_ref:
             release_session()
@@ -2060,6 +2062,13 @@ class Mesh(SensorLoopsMixin):
         publishes the current document.
         """
         if reason == "forbidden":
+            # Follow the transport's connection: after a reconnect (which is
+            # when a re-provisioned policy takes effect) the warning may fire
+            # again, and after a reprovision that fixed it, it stays quiet.
+            generation = int(getattr(self._direct, "connection_generation", 0))
+            if generation != self._direct_fallback_generation:
+                self._direct_fallback_generation = generation
+                self._direct_fallback_logged = set()
             if peer not in self._direct_fallback_logged:
                 self._direct_fallback_logged.add(peer)
                 if leg == "reply":

@@ -1190,18 +1190,26 @@ def bootstrap_account(
     return out
 
 
-_OPERATOR_DIRECT_POLICY_DOC: dict[str, Any] = {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "AllowDirectCommandToAnyRobot",
-            "Effect": "Allow",
-            "Action": "iot:SendDirectMessage",
-            "Resource": "arn:aws:iot:*:*:client/*",
-            "Condition": {"StringLike": {"iot:Topic": "strands/*/cmd"}},
-        }
-    ],
-}
+def _operator_direct_policy_doc(region: str, account_id: str) -> dict[str, Any]:
+    """The IAM document for :data:`OPERATOR_DIRECT_POLICY`, scoped to this account and region.
+
+    The IoT device policies use ``arn:aws:iot:*:*:client/*`` because a device
+    policy is evaluated inside one account and region anyway; an IAM policy
+    is not, so the ARN names both. The topic condition is the same
+    ``strands/*/cmd`` the operator IoT policy grants.
+    """
+    return {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "AllowDirectCommandToAnyRobot",
+                "Effect": "Allow",
+                "Action": "iot:SendDirectMessage",
+                "Resource": f"arn:aws:iot:{region}:{account_id}:client/*",
+                "Condition": {"StringLike": {"iot:Topic": "strands/*/cmd"}},
+            }
+        ],
+    }
 
 
 def _ensure_operator_direct_policy(iam: Any, account_id: str, account: BootstrappedAccount) -> str:
@@ -1225,7 +1233,7 @@ def _ensure_operator_direct_policy(iam: Any, account_id: str, account: Bootstrap
         pass  # expected: created below
     resp = iam.create_policy(
         PolicyName=OPERATOR_DIRECT_POLICY,
-        PolicyDocument=json.dumps(_OPERATOR_DIRECT_POLICY_DOC),
+        PolicyDocument=json.dumps(_operator_direct_policy_doc(account.region, account_id)),
         Description="strands-mesh: iot:SendDirectMessage on strands/*/cmd for IAM operators",
         Tags=[{"Key": "strands-mesh", "Value": "managed"}],
     )

@@ -345,6 +345,22 @@ class TestSendGoesDirectFirst:
         assert "CN" not in warnings[0].getMessage()
         assert len([k for k, _ in puts if k == "strands/so101/cmd"]) == 2
 
+    def test_the_403_warning_returns_after_the_transport_reconnects(self, puts, caplog):
+        # A reconnect is when a republished policy takes effect; the memo
+        # follows the transport's connection generation instead of stop().
+        t = _DirectTransport([_fail("forbidden")] * 3)
+        t.connection_generation = 1  # type: ignore[attr-defined]
+        m = _start(t)
+        try:
+            with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.core"):
+                m.send("so101", {"action": "status"}, timeout=0.05)
+                m.send("so101", {"action": "status"}, timeout=0.05)
+                t.connection_generation = 2  # type: ignore[attr-defined]
+                m.send("so101", {"action": "status"}, timeout=0.05)
+        finally:
+            _stop(m)
+        assert len([r for r in caplog.records if "refused by policy" in r.getMessage()]) == 2
+
     def test_a_peer_the_transport_remembers_as_forbidden_is_not_asked_again(self, puts):
         t = _DirectTransport()
         t.forbidden.add("so101")

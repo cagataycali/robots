@@ -735,6 +735,11 @@ class IotMqttTransport:
         self._direct_client: _X509DirectClient | _SigV4DirectClient | None = None
         self._direct_lock = threading.Lock()
         self._direct_forbidden: set[str] = set()
+        # Bumped on every CONNACK. A policy change reaches a client at its
+        # next connect, so anything remembered about "what this identity may
+        # do" (the 403 memos here and at the Mesh layer) is scoped to one
+        # generation and compared against this number.
+        self.connection_generation = 0
         self._unmatched_inbound = 0
         self.direct_stats: dict[str, int] = {"sent": 0, "delivered": 0, "failed": 0}
         self._sdk_too_old_reported = False
@@ -1266,6 +1271,7 @@ class IotMqttTransport:
         # memo is scoped to one connection.
         with self._direct_lock:
             self._direct_forbidden.clear()
+            self.connection_generation += 1
 
     def _on_connection_failure(self, data: Any) -> None:
         logger.warning("IoT MQTT connection failure: %s", data.exception)

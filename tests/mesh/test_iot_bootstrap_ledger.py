@@ -117,6 +117,7 @@ class _FakeAws:
         # deployment, so its update path is unreachable without this.
         self.stale = set(stale)
         self.requested: list[str] = []
+        self.iam_create_policy_calls: list[dict[str, Any]] = []
 
     # boto3 module surface
     def client(self, svc: str, **_: Any) -> Any:
@@ -149,9 +150,12 @@ class _FakeAws:
             return {"Policy": {"Arn": PolicyArn}}
 
         c.get_policy.side_effect = get_policy
-        c.create_policy.side_effect = lambda PolicyName, **_kw: {  # noqa: N803
-            "Policy": {"Arn": f"arn:aws:iam::{ACCOUNT}:policy/{PolicyName}"}
-        }
+
+        def create_policy(PolicyName: str, **kw: Any) -> Any:  # noqa: N803 - boto3 casing
+            self.iam_create_policy_calls.append({"PolicyName": PolicyName, **kw})
+            return {"Policy": {"Arn": f"arn:aws:iam::{ACCOUNT}:policy/{PolicyName}"}}
+
+        c.create_policy.side_effect = create_policy
         return c
 
     def _lambda(self) -> Any:
@@ -514,3 +518,23 @@ class TestTheLedgerIsNotWidened:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+class TestOperatorDirectPolicyDocument:
+    """The IAM grant names the account and region; the IoT device policies may wildcard them, IAM may not."""
+
+    def test_the_arn_is_scoped_to_account_and_region(self):
+        doc = boot_mod._operator_direct_policy_doc("us-west-2", "111122223333")
+        (st,) = doc["Statement"]
+        assert st["Resource"] == "arn:aws:iot:us-west-2:111122223333:client/*"
+        assert st["Action"] == "iot:SendDirectMessage"
+        assert st["Condition"] == {"StringLike": {"iot:Topic": "strands/*/cmd"}}
+        assert "*:*:" not in st["Resource"]
+
+    def test_bootstrap_writes_the_scoped_document(self, monkeypatch, no_sleep):
+        fake = _FakeAws(set())
+        monkeypatch.setattr(boot_mod, "_require_boto3", lambda: fake)
+        boot_mod.bootstrap_account(region=REGION, confirm=True, dry_run=False)
+        (kw,) = fake.iam_create_policy_calls
+        assert kw["PolicyName"] == boot_mod.OPERATOR_DIRECT_POLICY
+        assert f"arn:aws:iot:{REGION}:{ACCOUNT}:client/*" in kw["PolicyDocument"]

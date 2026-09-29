@@ -180,8 +180,10 @@ class TestStatusMap:
         assert not t.direct_forbidden("q")
         t.send_direct("q", "strands/q/cmd", {})
         assert not t.direct_forbidden("q")
+        before = t.connection_generation
         t._on_connection_success(object())
         assert not t.direct_forbidden("p")
+        assert t.connection_generation == before + 1
 
     def test_stats_count_every_call(self, tmp_path, monkeypatch):
         t, _rec = _transport(tmp_path, monkeypatch, [(200, b""), (404, b"{}")])
