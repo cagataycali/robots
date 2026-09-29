@@ -47,6 +47,7 @@ _EXTRA_FOR: dict[str, str] = {
     "curobo": "curobo",
     "wbc": "wbc",
     "wbc_gait": "wbc",
+    "wbc_latent": "wbc",
     "kimodo": "kimodo",
     "protomotions": "protomotions",
     "microduck": "microduck",
@@ -57,6 +58,7 @@ _EXTRA_FOR: dict[str, str] = {
 _PAGE_FOR: dict[str, str] = {
     "lerobot_local": "lerobot-local.md",
     "wbc_gait": "wbc.md",
+    "wbc_latent": "wbc-latent.md",
 }
 
 

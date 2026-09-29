@@ -36,7 +36,7 @@ gait = create_policy("wbc_gait", checkpoint="./gait-ckpt", gait_frequency=1.5)
 
 `checkpoint` is a directory holding the ONNX files and an optional `config.json`, a direct path to the main `.onnx`, or a HuggingFace model id. The loader accepts the official artifact names `GR00T-WholeBodyControl-Balance.onnx` and `-Walk.onnx` verbatim, so you do not rename the download. When a G1 checkpoint ships ONNX only, the SONIC gains and default angles for 15 actuators are applied. `walk` is a strict boolean; `"false"` is refused, not read as truthy. `target_velocity` in the constructor is the default command for paths that forward constructor kwargs only, such as the mesh `tell()`; the per-call keyword overrides it.
 
-The repo `nvidia/GEAR-SONIC` ships the SONIC VLA inference stack (`model_encoder.onnx`, `planner_sonic.onnx`, ...), not these controllers; pointing `checkpoint` at it is refused with the reason.
+The repo `nvidia/GEAR-SONIC` ships the SONIC VLA inference stack (`model_encoder.onnx`, `planner_sonic.onnx`, ...), not these controllers; pointing `checkpoint` at it is refused with the reason. Its decoder is what [`wbc_latent`](wbc-latent.md) runs, for a VLA that predicts SONIC motion tokens.
 
 ## Goals
 
