@@ -304,7 +304,9 @@ class TestTheLandingPageShowsTheProduct:
         fails here.
         """
         calls = {mode: names for mode, _, names in _attribute_uses_per_fence() if "run_policy" in names}
-        assert {"sim", "real"} <= set(calls), f"the checkpoint pair carries fences for {sorted(calls)}; it promises sim and real"
+        assert {"sim", "real"} <= set(calls), (
+            f"the checkpoint pair carries fences for {sorted(calls)}; it promises sim and real"
+        )
         for mode in ("sim", "real"):
             assert "cleanup" in calls[mode], f"the {mode} checkpoint fence never calls cleanup"
         checkpoints = [

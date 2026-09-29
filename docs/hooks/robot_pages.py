@@ -287,7 +287,8 @@ def manifest() -> dict[str, dict]:
 @lru_cache(maxsize=1)
 def checkpoints() -> dict[str, list[dict[str, str]]]:
     """Checkpoints run on each robot, from ``docs/hooks/data/checkpoints.json``."""
-    return json.loads(_CHECKPOINTS.read_text(encoding="utf-8"))["robots"]
+    rows: dict[str, list[dict[str, str]]] = json.loads(_CHECKPOINTS.read_text(encoding="utf-8"))["robots"]
+    return rows
 
 
 def _policies_section(name: str, cov) -> str:  # noqa: ANN001
