@@ -152,13 +152,34 @@ at the same budget (200 iterations, 1,024 environments, seed 42, the same 20 tar
 
 | arm | keyframe | max home-zero rad | resets with contact at qpos 0 | A at_goal | A classic 20 targets | A median mm | B at_goal | B classic 20 targets | B median mm |
 |---|---|---|---|---|---|---|---|---|---|
+| arx_l5 | home | 0.31 | 40 % | 0.59 | 15/20 | 45 | 0.75 | 20/20 | 15 |
+| fr3 | home | 1.57 | 64 % | 0.24 | 9/20 | 105 | 0.76 | 20/20 | 15 |
+| fr3_v2 | home | 1.57 | 63 % | 0.26 | 8/20 | 95 | 0.75 | 20/20 | 14 |
+| kinova_gen3 | home | 3.14 | 100 % | 0.40 | 10/20 | 88 | 0.55 | 16/20 | 39 |
 | panda | home | 1.57 | 90 % | 0.26 | 7/20 | 116 | 0.79 | 20/20 | 13 |
+| piper | home | 1.57 | 45 % | 0.57 | 14/20 | 29 | 0.83 | 19/20 | 16 |
+| sawyer | home | 3.32 | 0 % | 0.28 | 9/20 | 134 | 0.65 | 16/20 | 40 |
 | ur10e | home | 1.57 | 0 % | 0.09 | 0/20 | 1426 | 0.70 | 19/20 | 42 |
 | ur5e | home | 1.57 | 0 % | 0.10 | 0/20 | 990 | 0.75 | 20/20 | 22 |
+| xarm7 | home | 1.16 | 30 % | 0.46 | 13/20 | 79 | 0.72 | 19/20 | 30 |
+| yam | home | 1.05 | 38 % | 0.25 | 6/20 | 89 | 0.66 | 16/20 | 25 |
+| z1 | home | 0.79 | 58 % |  | KeyError: 'jointGripper' |  | 0.73 | 18/20 native | 17 |
 
-A = the zero-pose sweep above, B = the home-keyframe re-run; more rows land as the
-re-run finishes. panda goes from a 116 mm miss to 20/20 at 13 mm with no other change,
-so the Franka-class "under-training" reading above was really the rest pose.
+A = the zero-pose sweep above, B = the home-keyframe re-run, same budget, same 20 targets,
+same seed. Every one of the 12 re-run arms improves and none gets worse: 91/220 classic
+successes at qpos 0 against 205/220 from `home` over the 11 arms with both replays (z1's
+classic replay dies on the F13 joint mismatch either way; its `home` ONNX scores 18/20 at
+17 mm on a native mjlab replay of the same targets, so the row says so). panda 7/20 at
+116 mm becomes 20/20 at 13 mm with no other change, fr3 and fr3_v2 go 9 and 8 -> 20/20,
+and the two UR arms go from 0/20 to 20/20 and 19/20 (after the frame fix below), so the
+Franka-class and UR "under-training" readings above were the rest pose, not the budget.
+The three arms that stay below 20/20 (kinova_gen3 16, sawyer 16, yam 16) are the three
+with the largest home-to-zero distance or a 7-dof redundant chain reaching a 1.2 m box;
+200 iterations is the knob left to turn there. The `resets with contact at qpos 0` column
+is the 200-reset probe; sawyer's 0 % with a 9/20 zero-pose score is the exception to the
+contact ranking: its qpos 0 stretches the tool 1.02 m out at 0.32 m height, 3.32 rad from
+`home`, the largest home-to-zero distance in the table, so the actor spent its 200
+iterations travelling rather than colliding.
 
 **The UR rows hid a second, frame bug (F16b).** With `home`, ur10e trained to `at_goal`
 0.70 yet the classic replay first scored 0/20 with the tool ending 0.9-1.9 m away. A
