@@ -20,7 +20,7 @@ live at the top level. Everything else is grouped by topic:
 - [`wbc/`](wbc/) - whole-body control on the Unitree G1 (torque deploy, gait, composite)
 - [`locomotion/`](locomotion/) - G1 locomotion and the VLA-on-G1 record→tune→deploy workflow
 - [`training/`](training/) - from-scratch RL trainers (PPO, FastSAC)
-- [`mesh/`](mesh/) - Zenoh mesh ACL config templates
+- [`mesh/`](mesh/) - Zenoh mesh ACL config templates and the AWS IoT Core direct messaging RPC
 - [`fleet/`](fleet/) - fleet orchestration suite: work-order ingress onto capability manifests (epic #2179)
 - [`registry/`](registry/) - robot / hardware catalog discovery
 - [`lerobot/`](lerobot/) - LeRobot hub-to-hardware companion scripts
@@ -56,6 +56,7 @@ record→train→deploy loop) as Jupyter notebooks - all CPU-only, no hardware o
 | -- | [`locomotion/vla_g1_workflow.py`](locomotion/vla_g1_workflow.py) | VLA-on-G1: record -> GR00T fine-tune -> WBC deploy | No | Optional (tune) |
 | — | [`isaac_gs/`](isaac_gs/) | Isaac RTX robot z-composited over a 3DGS / panorama backdrop (digital-twin) | No | **Yes** (Isaac Sim / RTX) |
 | — | [`mujoco_gs/`](mujoco_gs/) | MuJoCo + 3D Gaussian Splatting hybrid render (depth-aware composite) driven by the `Simulation` AgentTool | No | Optional (`gsplat`) |
+| -- | [`mesh/iot_direct_rpc.py`](mesh/iot_direct_rpc.py) | `Mesh.send` over AWS IoT Core Direct Messaging: confirmed delivery, direct reply, offline verdict in one round trip | No (AWS account) | No |
 | -- | [`registry/lerobot_hardware_catalog.py`](registry/lerobot_hardware_catalog.py) | `Robot()` covers the whole LeRobot hardware catalog (name -> lerobot_type) | No | No |
 
 ## What each example shows vs raw lerobot
