@@ -775,6 +775,10 @@ class IotMqttTransport:
         afterwards to retry, so the WARNING is the only trace an operator gets
         of an IO thread and socket that may still be open.
         """
+        # The direct HTTPS client is independent of the MQTT one: a transport
+        # that only ever addressed peers (SigV4 agent, never connected) still
+        # holds one, so it is released before the early return below.
+        self._close_direct()
         with self._lock:
             if self._client is None:
                 return
@@ -797,7 +801,6 @@ class IotMqttTransport:
             self._connected.clear()
             self._handlers.clear()
             logger.info("IoT mesh session closed (thing=%s)", self._thing_name)
-        self._close_direct()
 
     # Inspection
 
