@@ -7,7 +7,6 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from strands_robots.mesh import security as _security
-from strands_robots.utils import refusal_repr
 
 
 @dataclass(frozen=True)
@@ -74,7 +73,7 @@ def envelope_refusal(data: Mapping[str, Any]) -> str | None:
     if "t" not in data:
         return None
     if _security.as_wire_timestamp(data.get("t")) is None:
-        return f"envelope t is not a finite wire timestamp: {refusal_repr(data.get('t'))}"
+        return "envelope t is not a finite wire timestamp (NaN, an infinity, a boolean or a non-number)"
     return None
 
 
