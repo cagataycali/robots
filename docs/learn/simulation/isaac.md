@@ -14,7 +14,7 @@ pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url https://pypi.nvid
 export OMNI_KIT_ACCEPT_EULA=YES                                                     # first import
 ```
 
-The docker route is `nvcr.io/nvidia/isaac-sim:6.0.1`. The pinned image tag and install lines live in `strands_robots/simulation/isaac/_install.py`; that file is the source of truth when they move.
+Verified pip wheels: 6.0.1.0 and 6.1.0.0 (swap `==6.0.*` for `==6.1.*`). Both pin `numpy==2.3.1` and `torch==2.11.0`, so use a fresh venv; on 6.0.x then reinstall `coverage>=7.6.1` (its 7.4.4 pin breaks numba). Docker: `nvcr.io/nvidia/isaac-sim:6.0.1`. Pins live in `strands_robots/simulation/isaac/_install.py`.
 
 ## What it is
 
@@ -55,7 +55,7 @@ sim.destroy()
 
 ## Limits
 
-- Python 3.12 only, an RTX-class GPU, and a multi-gigabyte install. There is no CPU fallback; `is_available()` tells you why before anything is built.
+- Python 3.12 only, an RTX-class GPU, and a multi-gigabyte install. There is no CPU fallback; `is_available()` says why before anything is built.
 - Physics runs on **CPU PhysX**: `device` is reported as `device_requested` but not forwarded, because the GPU pipeline breaks incremental `add_robot`. Rendering uses the GPU.
-- Rendering is slower per frame than MuJoCo's offscreen path and faster per batch; the backend is for fidelity and scale, not for unit-test inner loops.
+- Rendering is slower per frame than MuJoCo's offscreen path and faster per batch: use it for fidelity and scale, not unit-test loops.
 - `remove_robot` deletes the articulation prim from the stage, and like a dynamic `remove_object` it invalidates the tensor view: `step()` and `send_action()` refuse until the next `reset()` rebuilds it. Build the scene and reset before posing anything.
