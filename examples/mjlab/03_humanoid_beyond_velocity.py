@@ -224,8 +224,13 @@ def export(task: str, checkpoint: Path, onnx: Path, device: str = "cuda:0") -> N
 # ------------------------------------------------------------ native eval
 
 
-def eval_native(task: str, onnx: str, out: Path, ticks: int, seed: int) -> dict:
-    """One mjlab world per command, play cfg (full terrain difficulty), ONNX actor via onnxruntime."""
+def eval_native(task: str, onnx: str, out: Path, ticks: int, seed: int, terrain: str = "generator") -> dict:
+    """One mjlab world per command, play cfg (full terrain difficulty), ONNX actor via onnxruntime.
+
+    ``terrain="plane"`` swaps the rough generator for a flat plane while keeping the ray-cast
+    sensor, so the rough actor sees a real (flat) height scan: the control that separates
+    "the actor is brittle" from "the classic-replay height_scan builder is wrong".
+    """
     import onnxruntime as ort
     import torch
     from mjlab.envs import ManagerBasedRlEnv
@@ -237,7 +242,12 @@ def eval_native(task: str, onnx: str, out: Path, ticks: int, seed: int) -> dict:
     cfg.scene.num_envs = len(commands)
     cfg.seed = seed
     if task == "rough" and cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
-        cfg.scene.terrain.terrain_generator.difficulty_range = (0.9, 1.0)
+        if terrain == "plane":
+            cfg.scene.terrain.terrain_type = "plane"
+            cfg.scene.terrain.terrain_generator = None
+            cfg.sim.nconmax = EXPORT_NCONMAX
+        else:
+            cfg.scene.terrain.terrain_generator.difficulty_range = (0.9, 1.0)
     env = ManagerBasedRlEnv(cfg=cfg, device="cuda:0")
     sess = ort.InferenceSession(onnx, providers=["CPUExecutionProvider"])
     in_name = sess.get_inputs()[0].name
@@ -280,6 +290,7 @@ def eval_native(task: str, onnx: str, out: Path, ticks: int, seed: int) -> dict:
     rec = {
         "task": tid,
         "onnx": onnx,
+        "terrain": terrain,
         "ticks": ticks,
         "hz": hz,
         "episodes": eps,
@@ -379,6 +390,7 @@ def main(argv: list[str] | None = None) -> None:
     n.add_argument("--out", required=True)
     n.add_argument("--ticks", type=int, default=500)
     n.add_argument("--seed", type=int, default=7)
+    n.add_argument("--terrain", choices=("generator", "plane"), default="generator")
     s = sub.add_parser("eval-s2s")
     s.add_argument("--onnx", required=True)
     s.add_argument("--out", required=True)
@@ -390,7 +402,7 @@ def main(argv: list[str] | None = None) -> None:
     elif a.cmd == "export":
         export(a.task, Path(a.checkpoint), Path(a.onnx))
     elif a.cmd == "eval-native":
-        rec = eval_native(a.task, a.onnx, Path(a.out), a.ticks, a.seed)
+        rec = eval_native(a.task, a.onnx, Path(a.out), a.ticks, a.seed, a.terrain)
         print(
             json.dumps({k: v for k, v in rec.items() if k != "episodes"}),
             *(f"{k}: {v}" for k, v in rec["episodes"].items()),
