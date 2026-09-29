@@ -1271,7 +1271,19 @@ class DatasetRecorder:
         # record path and of every published v3 dataset. Training transposes
         # by names, so datasets this recorder wrote as CHW keep loading.
         if camera_keys:
-            from lerobot.utils.feature_utils import hw_to_dataset_features
+            # lerobot 0.5.x lives at ``lerobot.datasets.feature_utils``; the
+            # ``lerobot.utils.feature_utils`` path never existed in a released
+            # wheel. streaming_dataset.py:348 already uses the correct path,
+            # so this import drift wedged only the ``camera_keys`` branch of
+            # ``DatasetRecorder.create``. Without the fallback, every user
+            # who follows docs/learn/data/record.md hits
+            # ``Dataset init failed: No module named 'lerobot.utils.feature_utils'``
+            # from ``start_recording`` while ``run_policy`` still reports
+            # ``5/5 episode(s) completed`` (0 flushed) with ``status=success``.
+            try:
+                from lerobot.datasets.feature_utils import hw_to_dataset_features
+            except ImportError:  # pragma: no cover - retained for the old path
+                from lerobot.utils.feature_utils import hw_to_dataset_features
 
             camera_dims = camera_dims or {}
             # Per-camera (height, width). Falls back to the global
