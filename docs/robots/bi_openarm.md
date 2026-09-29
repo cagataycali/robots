@@ -24,3 +24,7 @@ Aliases: `bi_openarm_follower`, `dual_openarm`, `openarm_bimanual`.
 ## Hardware
 
 **lerobot.** `Robot("bi_openarm", mode="real")` builds lerobot's `bi_openarm_follower` with `pip install 'strands-robots[lerobot]'`; there is no single `port=`; pass `left_arm_config=` and `right_arm_config=`, one `OpenArmFollowerConfig` per arm with its own `port` and `cameras`. The default when `driver=` is not given.
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.

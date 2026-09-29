@@ -203,23 +203,41 @@ def test_lerobot_extra_requires_at_least_0_6_1() -> None:
     )
 
 
-def test_no_torch_or_torchvision_uv_override() -> None:
-    """No ``torch``/``torchvision`` pin may live in ``[tool.uv].override-dependencies``.
+def test_torch_uv_overrides_are_security_floors_not_caps() -> None:
+    """A ``torch``/``torchvision`` entry in ``[tool.uv].override-dependencies`` may only be a floor.
 
     lerobot 0.6 resolves torch 2.11 + torchvision 0.26 (the ABI-matched pair, and
     the torch build that fixes the Thor sm_110 cuBLAS bug) on every platform
-    unaided. A strands ``torch``/``torchvision`` override -- in particular a
-    ``torch<2.11`` cap like the 0.5.1-era one -- would conflict with that
-    resolution, so it must stay removed. (The diffusers security-floor override
-    is unrelated and intentionally retained.)
+    unaided. A strands *cap* -- in particular a ``torch<2.11`` like the 0.5.1-era
+    one -- would conflict with that resolution, so no ``<``/``<=``/``==`` may
+    appear. A security floor is different: GHSA-rrmf-rvhw-rf47 (torch <= 2.12.1)
+    is closed by ``torch>=2.13.0``, which lerobot 0.6.1's ``torch<2.12.0`` cap
+    would otherwise forbid, and the cu130 aarch64 wheels for the floored trio
+    exist, so the Thor build is still served. Because torchvision and torchcodec
+    are built against one torch, a torch floor must travel with a torchvision and
+    a torchcodec floor (``tests/test_locked_torch_extensions_match_torch.py``
+    checks the locked trio is ABI-matched). (The diffusers security-floor
+    override is unrelated and intentionally retained.)
     """
     data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
     overrides = data.get("tool", {}).get("uv", {}).get("override-dependencies", [])
-    offenders = [o for o in overrides if Requirement(o).name in ("torch", "torchvision")]
-    assert not offenders, (
-        "torch/torchvision uv overrides must stay removed (they compensated for "
-        f"lerobot 0.5.1 and conflict with lerobot 0.6's torch 2.11): {offenders}"
+    trio = {"torch", "torchvision", "torchcodec"}
+    present = {Requirement(o).name: Requirement(o) for o in overrides if Requirement(o).name in trio}
+    caps = [
+        str(req)
+        for req in present.values()
+        for spec in req.specifier
+        if spec.operator in ("<", "<=", "==", "~=", "===")
+    ]
+    assert not caps, (
+        "torch/torchvision/torchcodec uv overrides may only be security floors (>=); a cap "
+        f"conflicts with lerobot 0.6's own torch resolution: {caps}"
     )
+    if present:
+        assert set(present) == trio, (
+            "a torch floor in override-dependencies must travel with torchvision and torchcodec "
+            f"floors (the three wheels are built against one torch), got {sorted(present)}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +419,25 @@ def test_sim_mujoco_extra_declares_the_ik_solver_stack() -> None:
         f"[sim-mujoco] ships the move_to primitive but does not declare {missing}; "
         f"move_to then returns 'IK bridge unavailable'. Declared: {sorted(closure)}"
     )
+
+
+def test_sim_isaac_extra_declares_the_ik_solver_stack() -> None:
+    """``[sim-isaac]`` must declare the IK stack its ``move_to`` needs.
+
+    The Isaac backend's ``move_to`` (``isaac/motion_primitives.py``) solves IK
+    on a ``mujoco.MjModel`` of the loaded description through the same
+    ``MinkIKBridge``, and ``move_to`` is in the Isaac action enum. With only
+    ``[sim-isaac]`` installed it returned ``IK bridge unavailable: The mink IK
+    bridge needs 'mink' + 'mujoco' ...`` (measured: 4 failures in
+    tests/simulation/isaac/test_move_to_solves_on_the_loaded_description.py).
+    """
+    requested = _extra_requirements("sim-isaac")
+    missing = [pkg for pkg in (*_IK_SOLVER_PACKAGES, "mujoco") if pkg not in requested]
+    assert not missing, (
+        f"[sim-isaac] ships the move_to primitive but does not declare {missing}; "
+        f"move_to then returns 'IK bridge unavailable'. Declared: {sorted(requested)}"
+    )
+    assert "daqp" in requested["qpsolvers"], "qpsolvers without a backend solves nothing"
 
 
 def test_all_extra_can_run_the_move_to_primitive() -> None:

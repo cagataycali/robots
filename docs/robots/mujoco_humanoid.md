@@ -19,4 +19,8 @@ robot = Robot("mujoco_humanoid")
 
 Aliases: `humanoid`, `mjc_humanoid`.
 
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
+
 Model: [google-deepmind/mujoco/model/humanoid](https://github.com/google-deepmind/mujoco/tree/ad0dc0de5e10a075a2c65be629e9a8d557d383a6/model/humanoid), scene `humanoid.xml`.
