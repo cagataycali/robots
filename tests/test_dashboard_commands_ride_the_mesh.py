@@ -70,3 +70,47 @@ def test_an_unusable_wait_budget_is_refused_before_publishing(wired, timeout):
 
     assert published == []
     assert result["ok"] is False and "timeout" in result["error"]
+
+
+def test_the_delivery_verdict_reaches_the_dashboard_caller(wired, monkeypatch):
+    """With a direct transport, ``send_cmd`` passes ``delivery`` through on every shape it returns.
+
+    An offline peer arrives as ``status == "error"`` in one round trip and is
+    already reported without waiting the timeout out; the verdict beside it
+    lets the console say "gone" rather than "slow".
+    """
+    bridge, _published, _ = wired
+    mesh = bridge._safety_mesh()
+    answers = iter(
+        [
+            {
+                "status": "error",
+                "error": "peer offline (iot 404)",
+                "peer": "arm",
+                "delivery": {"via": "direct", "confirmed": False, "latency_ms": 81.0, "reason": "offline"},
+            },
+            {"status": "timeout", "delivery": {"via": "direct", "confirmed": True, "latency_ms": 156.0, "reason": ""}},
+            {
+                "type": "response",
+                "responder_id": "arm",
+                "result": {"ok": 1},
+                "delivery": {"via": "publish", "confirmed": False, "latency_ms": 2.0, "reason": "forbidden"},
+            },
+        ]
+    )
+    monkeypatch.setattr(mesh, "send", lambda target, cmd, timeout=30.0: next(answers))
+
+    offline = bridge.send_cmd("arm", {"action": "status"}, timeout=1.0)
+    assert offline["ok"] is False and offline["error"] == "peer offline (iot 404)"
+    assert offline["delivery"]["reason"] == "offline"
+
+    slow = bridge.send_cmd("arm", {"action": "status"}, timeout=1.0)
+    assert slow["ok"] is False and slow["delivery"] == {
+        "via": "direct",
+        "confirmed": True,
+        "latency_ms": 156.0,
+        "reason": "",
+    }
+
+    answered = bridge.send_cmd("arm", {"action": "status"}, timeout=1.0)
+    assert answered["result"] == {"ok": 1} and answered["delivery"]["via"] == "publish"

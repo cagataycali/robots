@@ -274,6 +274,35 @@ def list_policy_aliases() -> dict[str, str]:
 _URL_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*)://")
 
 
+def _url_scheme_refusal(policy: str) -> str | None:
+    """Why :func:`resolve_policy` refuses ``policy`` as an address, or ``None``.
+
+    A string with a ``scheme://`` prefix that no provider's ``url_patterns``
+    matches is refused, naming the schemes that do resolve. The refusal needs
+    neither the network nor the Hub, so the pre-flight checks that answer
+    "would ``create_policy`` accept this?" ask it here instead of guessing.
+
+    Args:
+        policy: The spelling a caller passed to ``create_policy``.
+
+    Returns:
+        The refusal message, or ``None`` when ``policy`` has no scheme or a
+        declared pattern matches it.
+    """
+    url = _with_lowercase_url_scheme(policy.strip())
+    scheme = _URL_SCHEME_RE.match(url)
+    if scheme is None:
+        return None
+    for prov_info in _load("policies").get("providers", {}).values():
+        if any(re.match(pattern, url) for pattern in prov_info.get("url_patterns", [])):
+            return None
+    return (
+        f"No policy provider handles the URL scheme '{scheme.group(1)}://' "
+        f"(from {policy!r}). Declared schemes: "
+        f"{', '.join(f'{s}://' for s in _declared_url_schemes())}."
+    )
+
+
 def _with_lowercase_url_scheme(policy: str) -> str:
     """Fold a leading ``scheme://`` to lowercase, leaving the rest untouched.
 
@@ -457,13 +486,8 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
     # the string as a name - a shorthand, a repo id, a provider - so falling
     # through hands an address to ``lerobot_local`` as a checkpoint id and the
     # caller's next report names a HuggingFace repo it never asked for.
-    if scheme := _URL_SCHEME_RE.match(url):
-        declared = _declared_url_schemes()
-        raise ValueError(
-            f"No policy provider handles the URL scheme '{scheme.group(1)}://' "
-            f"(from {policy!r}). Declared schemes: "
-            f"{', '.join(f'{s}://' for s in declared)}."
-        )
+    if (refusal := _url_scheme_refusal(policy)) is not None:
+        raise ValueError(refusal)
 
     # 2. Shorthand names - built from each provider's shorthands list
     alias_map = _build_alias_map()
