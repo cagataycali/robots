@@ -79,6 +79,10 @@ A few `[sim] action value ... outside the range` warnings on the gripper are exp
 
 The trainers, their fields and what `policy_meta.json` records are on the [RL training](../training/rl.md) page.
 
+## rsl_rl_onnx
+
+`policy="rsl_rl_onnx"` loads an actor exported by the [mjlab](../simulation/mjlab.md) trainer (`train_policy(provider="rsl_rl")`): `onnx_path` (local or `hf://repo/file.onnx`) and `robot`. The ONNX metadata carries joint names, default pose, action scale and the observation terms, so the same file runs on `mujoco`, `mjlab` and hardware; velocity tasks take `target_velocity`, reach tasks `target_pose`.
+
 ## Limits
 
 - The observation must carry every `actor_obs_keys` name. Rolling a checkpoint out on a robot whose joints are named differently is refused, not remapped.

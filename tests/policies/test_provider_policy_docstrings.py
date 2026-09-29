@@ -49,6 +49,7 @@ _PROVIDER_POLICIES = {
     "protomotions/policy.py": "ProtoMotionsPolicy",
     "microduck/policy.py": "MicroduckPolicy",
     "rl.py": "RLCheckpointPolicy",
+    "rsl_rl_onnx/policy.py": "RslRlOnnxPolicy",
 }
 
 # Built-in policy classes documented by test_builtin_policy_docstrings; the

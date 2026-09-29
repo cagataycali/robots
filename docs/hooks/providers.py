@@ -51,11 +51,13 @@ _EXTRA_FOR: dict[str, str] = {
     "protomotions": "protomotions",
     "microduck": "microduck",
     "rl": "rl",
+    "rsl_rl_onnx": "sim-mjlab",
     "remote": "inference",
 }
 
 _PAGE_FOR: dict[str, str] = {
     "lerobot_local": "lerobot-local.md",
+    "rsl_rl_onnx": "../simulation/mjlab.md",
     "wbc_gait": "wbc.md",
 }
 
