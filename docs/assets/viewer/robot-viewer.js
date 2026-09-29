@@ -612,11 +612,14 @@ class RobotViewer extends HTMLElement {
       const matid = m.geom_matid[g];
       if (matid >= 0) rgba = [m.mat_rgba[4 * matid], m.mat_rgba[4 * matid + 1], m.mat_rgba[4 * matid + 2], m.mat_rgba[4 * matid + 3]];
       const isPlane = type === G.PLANE;
+      // A manifest palette rule swaps a model colour for one of the site's (the SO-101's printed parts
+      // become Strands green); the token resolves against the theme, so it follows the palette toggle.
+      const brand = this._brandToken(rgba);
       // The floor only catches the shadow; the stage colour behind it is the page's CSS.
       const material = isPlane
         ? new THREE.ShadowMaterial({ color: 0x000000, opacity: theme.shadow, transparent: true, side: THREE.DoubleSide })
         : new THREE.MeshStandardMaterial({
-            color: new THREE.Color(rgba[0], rgba[1], rgba[2]),
+            color: brand ? this._brandColor(THREE, theme, brand) : new THREE.Color(rgba[0], rgba[1], rgba[2]),
             roughness: 0.5,
             metalness: 0.1,
             envMapIntensity: theme.env,
@@ -627,7 +630,7 @@ class RobotViewer extends HTMLElement {
       mesh.castShadow = !isPlane;
       mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;
-      mesh.userData = { geom: g, group, collision: HIDDEN_GROUPS.has(group), plane: isPlane };
+      mesh.userData = { geom: g, group, collision: HIDDEN_GROUPS.has(group), plane: isPlane, brand };
       scene.add(mesh);
       geomMeshes.push(mesh);
     }
@@ -690,7 +693,22 @@ class RobotViewer extends HTMLElement {
       shadow: dark ? 0.55 : 0.22,
       env: dark ? 1.25 : 0.85,
       exposure: dark ? 1.05 : 0.88,
+      accent: v("--sr-accent-bright", dark ? "#00cc60" : "#02a435"),
     };
+  }
+
+  /** A brand token as a lit material colour: the dark stage's lights lift it, so it starts a little deeper there. */
+  _brandColor(THREE, theme, token) {
+    return new THREE.Color(theme[token]).multiplyScalar(theme.dark ? 0.62 : 1);
+  }
+
+  /** The palette token a geom colour maps to (manifest `palette` rules), or null to keep the model's own. */
+  _brandToken(rgba) {
+    for (const rule of this._entry?.palette ?? []) {
+      const [r, g, b] = rule.from;
+      if (Math.abs(r - rgba[0]) < 0.02 && Math.abs(g - rgba[1]) < 0.02 && Math.abs(b - rgba[2]) < 0.02) return rule.to;
+    }
+    return null;
   }
 
   /** Re-read the theme after a palette toggle and recolour the grid, floor shadow and reflections. */
@@ -714,6 +732,7 @@ class RobotViewer extends HTMLElement {
     for (const mesh of this._three.geomMeshes) {
       if (mesh.userData.plane) mesh.material.opacity = theme.shadow;
       else if (mesh.material.envMapIntensity !== undefined) mesh.material.envMapIntensity = theme.env;
+      if (mesh.userData.brand) mesh.material.color.copy(this._brandColor(THREE, theme, mesh.userData.brand));
     }
   }
 
