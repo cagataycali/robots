@@ -28,12 +28,13 @@
         "port",
         "host",
         "data_config",
-        "strict_keys",
-        "api_token",
+        "groot_version",
         "observation_mapping",
         "action_mapping",
         "language_key",
+        "strict_keys",
         "timeout_ms",
+        "api_token",
         "strict"
       ],
       "defaults": {

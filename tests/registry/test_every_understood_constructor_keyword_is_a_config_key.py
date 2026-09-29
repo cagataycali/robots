@@ -46,7 +46,6 @@ EXCLUDED: dict[str, dict[str, str]] = {
         "model_path": "GR00T local mode, removed in 0.7 (R-P1); use lerobot_local policy_type='groot'",
         "embodiment_tag": "GR00T local mode, removed in 0.7 (R-P1)",
         "device": "GR00T local mode, removed in 0.7 (R-P1)",
-        "groot_version": "GR00T local mode, removed in 0.7 (R-P1); service mode reads it from the server",
     },
     "curobo": {
         "motion_gen": "an injected cuRobo MotionGen instance, not JSON",
