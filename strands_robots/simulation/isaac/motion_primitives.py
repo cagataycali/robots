@@ -351,7 +351,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
         (isaacsim runtime not importable). Returns ``None`` on success.
         """
         try:
-            from isaacsim.core.utils.types import (  # type: ignore[import-not-found]
+            from strands_robots.simulation.isaac._deprecated_api import (
                 ArticulationAction,
             )
 
