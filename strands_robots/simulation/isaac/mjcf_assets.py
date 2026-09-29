@@ -322,7 +322,7 @@ def _importer_version() -> str:
 
 
 #: Bumped when the post-import fix-ups below change what a cache entry holds.
-_POSTPROCESS_VERSION = "drives-v1"
+_POSTPROCESS_VERSION = "drives-v3"
 
 
 def _position_servo_gains(mjcf_path: str) -> dict[str, tuple[float, float, float | None]]:
@@ -360,7 +360,14 @@ def _position_servo_gains(mjcf_path: str) -> dict[str, tuple[float, float, float
         if not joint:
             continue
         force = float(model.actuator_forcerange[i][1]) if bool(model.actuator_forcelimited[i]) else None
-        gains[joint] = (kp, max(0.0, -float(bias[2])), force)
+        # The joint's own passive damping (``<joint damping=>``) is velocity
+        # damping MuJoCo applies alongside the servo; a PhysX drive has one
+        # damping term, so it carries both. so101 declares kv=0 and puts all of
+        # its damping on the joint - without this its drives had damping 0 and
+        # the arm rang around its targets.
+        joint_id = int(model.actuator_trnid[i][0])
+        passive = float(model.dof_damping[int(model.jnt_dofadr[joint_id])])
+        gains[joint] = (kp, max(0.0, -float(bias[2])) + passive, force)
     return gains
 
 
@@ -398,9 +405,15 @@ def _author_position_drives(usd_file: str, mjcf_path: str) -> list[str]:
             if not vset.GetVariantSelection():
                 vset.SetVariantSelection("physx" if "physx" in vset.GetVariantNames() else "physics")
     stage.SetEditTarget(stage.GetRootLayer())
+    # A joint whose MJCF name is not a valid USD identifier (so101: "1") is
+    # transcoded by the converter (``tn__1_``); decode the prim names onto the
+    # MJCF vocabulary the gains are keyed by.
+    from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names
+
+    joint_prims = [p for p in stage.Traverse() if p.IsA(UsdPhysics.RevoluteJoint) or p.IsA(UsdPhysics.PrismaticJoint)]
+    decoded, _ = demangle_usd_joint_names([p.GetName() for p in joint_prims], list(gains))
     written: list[str] = []
-    for prim in stage.Traverse():
-        name = prim.GetName()
+    for prim, name in zip(joint_prims, decoded, strict=True):
         if name not in gains:
             continue
         if prim.IsA(UsdPhysics.RevoluteJoint):

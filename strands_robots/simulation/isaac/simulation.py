@@ -39,7 +39,7 @@ import numpy as np
 
 from strands_robots.simulation.base import SimEngine, unknown_kwargs_error, unknown_model_msg
 from strands_robots.simulation.isaac.config import IsaacConfig
-from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, urdf_joint_names
+from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, mjcf_joint_names, urdf_joint_names
 from strands_robots.simulation.isaac.loaders import mjcf_declares_floating_base
 from strands_robots.simulation.isaac.mjcf_assets import MJCF_EXTENSIONS, convert_mjcf_to_usd
 from strands_robots.simulation.isaac.motion_primitives import IsaacMotionPrimitivesMixin
@@ -3134,6 +3134,16 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
                 self._prim_registry.append(prim_path)
 
+                # A converted MJCF's joint names come back USD-transcoded when
+                # they are not valid identifiers (so101: "1" -> "tn__1_"); map
+                # them onto the MJCF vocabulary MuJoCo reports, as the URDF
+                # path does with its URDF (same helper, same guarantees).
+                usd_to_mjcf: dict[str, str] = {}
+                if source_mjcf:
+                    joint_names, usd_to_mjcf = demangle_usd_joint_names(
+                        list(joint_names), mjcf_joint_names(source_mjcf)
+                    )
+
                 robot_state = _RobotState(
                     name=name,
                     prim_path=prim_path,
@@ -3141,6 +3151,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     articulation=articulation,
                     actual_prim_path=getattr(articulation, "_strands_actual_prim_path", None),
                     data_config=data_config,
+                    usd_to_urdf_joint_names=usd_to_mjcf,
                     # The MJCF this USD was converted from, when there is one:
                     # it is the MuJoCo-compilable truth about the kinematics on
                     # the stage, and move_to's IK solve prefers it over a
