@@ -1,5 +1,5 @@
 ---
-description: The Newton backend: NVIDIA Warp and MuJoCo-Warp GPU physics on the same MJCF assets, with ray-traced tiled cameras.
+description: "The Newton backend: NVIDIA Warp and MuJoCo-Warp GPU physics on the same MJCF assets, with ray-traced tiled cameras."
 ---
 
 # Newton

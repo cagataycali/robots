@@ -1,5 +1,5 @@
 ---
-description: The MuJoCo backend: install, offscreen rendering, physics queries, scene export and the MJCF editing surface.
+description: "The MuJoCo backend: install, offscreen rendering, physics queries, scene export and the MJCF editing surface."
 ---
 
 # MuJoCo

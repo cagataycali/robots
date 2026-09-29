@@ -1,5 +1,5 @@
 ---
-description: Reinforcement learning from a reward: SimEnv over any SimEngine, the PPO, FastSAC and FastTD3 trainers, every RLTrainSpec field, the checkpoint format and how the rl policy provider reads it.
+description: "Reinforcement learning from a reward: SimEnv over any SimEngine, the PPO, FastSAC and FastTD3 trainers, every RLTrainSpec field, the checkpoint format and how the rl policy provider reads it."
 ---
 
 # RL training
