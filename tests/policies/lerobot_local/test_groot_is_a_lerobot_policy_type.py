@@ -114,5 +114,8 @@ def test_n17_loads_and_emits_a_chunk_on_a_gpu(monkeypatch: pytest.MonkeyPatch) -
         embodiment="so101",
         device="cuda",
     )
+    from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
+
+    assert isinstance(policy, LerobotLocalPolicy)
     assert policy.policy_type == "groot"
     assert type(policy._policy).__name__ == "GrootPolicy"
