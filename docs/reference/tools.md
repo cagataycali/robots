@@ -6,7 +6,7 @@ description: Every agent-callable tool, one table per area, with the action valu
 
 Every agent-callable tool, one table per area, read from the `@tool` decorators at build time. After this page you know which tool does what, where it lives, and the action values a dispatching tool accepts, so you can hand an `Agent` the right subset.
 
-Pass tools to an agent as functions:
+Tools are passed as functions:
 
 ```python title="sketch"
 from strands import Agent

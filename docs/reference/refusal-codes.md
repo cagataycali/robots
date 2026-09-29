@@ -13,7 +13,7 @@ for code in REFUSAL_CODES:
     print(f"{code:28} lifted by {REFUSAL_GRANTS[code]}")
 ```
 
-Only continuable refusals get a code. A refusal nothing can lift (an instruction over the length limit, an unknown joint name) stays a plain error naming the valid set. A coded refusal's message may change between releases; its code and `subject` attribute do not.
+Only continuable refusals get a code; one nothing can lift (an instruction over the length limit, an unknown joint name) stays a plain error naming the valid set. A coded refusal's message may change between releases; its code and `subject` attribute do not.
 
 Three grants are allowlists the refusal's `subject` is appended to (`HF_REPO_NOT_ALLOWED`, `POLICY_TYPE_NOT_ALLOWED`, `POLICY_HOST_NOT_ALLOWED`). The other two are not: `STRANDS_TRUST_REMOTE_CODE` takes `1`, `STRANDS_MESH_INPUT_VALUE_ABS` a bound above the refused magnitude; a subject applied to those is a silent no-op, so read the `meaning` column before wiring a consent flow.
 

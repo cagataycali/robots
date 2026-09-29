@@ -59,4 +59,4 @@ The package installs with no heavy dependency. Each lane pulls its own extra: `[
 
 ## What changes in 1.0
 
-1.0 keeps this layer DAG and changes the size of the layers and the number of contracts ([roadmap](roadmap.md)).
+1.0 keeps this layer DAG and changes the layers' size and the number of contracts ([roadmap](roadmap.md)).

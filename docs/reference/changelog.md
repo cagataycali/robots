@@ -8,7 +8,7 @@ Release notes live on GitHub; this page is the map to them: where the full notes
 
 - Full notes: [github.com/strands-labs/robots/releases](https://github.com/strands-labs/robots/releases)
 - Assembled file: [`CHANGELOG.md`](https://github.com/strands-labs/robots/blob/main/CHANGELOG.md) in the repository root
-- Between releases: every pull request adds one fragment under `changelog.d/`; the file is assembled at tag time with `python scripts/assemble_changelog.py --apply`
+- Between releases: every pull request adds one fragment under `changelog.d/`, assembled at tag time with `python scripts/assemble_changelog.py --apply`
 
 The site documents `main` at the commit it was built from, ahead of the newest tag; a feature on these pages missing from your install is in the next release.
 

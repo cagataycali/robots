@@ -50,7 +50,7 @@ Every pull request that changes behaviour adds one file under `changelog.d/`, `<
 
 1. Branch on your fork: a ruleset refuses branch creation in `strands-labs/robots` for every account, with a rule violation that does not name the rule.
 2. Check that no open PR claims the issue or edits the file: `python3 .github/scripts/check_duplicate_claim.py --repo strands-labs/robots --issue <N>` and `python3 scripts/check_merge_base_overlap.py --github-repo strands-labs/robots --paths <files>`.
-3. Put `Closes #N` in the PR body, not the title.
+3. `Closes #N` goes in the PR body, not the title.
 4. The required check evaluates the merge commit: ruff, mypy, the unit suite, the whole-tree graders, the guards, lockfile parity and CodeQL (`ci.yml`).
 
 Security findings do not go through issues: [security policy](security-policy.md).

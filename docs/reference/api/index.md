@@ -17,6 +17,6 @@ The public Python surface of `strands_robots` at this commit, rendered from the 
 | [Data](data.md) | streaming datasets, bucket sync, episode judging | `strands_robots` |
 | [Mesh](mesh.md) | `Mesh`, `init_mesh`, sessions, peers, ROS and RTPS bridges, device connect | `strands_robots.mesh` |
 
-Heavy names are lazy: `import strands_robots` does not import torch, lerobot, numpy or mujoco. The first attribute access (`strands_robots.Robot`) imports for real and raises `AttributeError` naming the missing dependency when an extra is not installed.
+Heavy names are lazy: `import strands_robots` loads no torch, lerobot, numpy or mujoco; the first attribute access (`strands_robots.Robot`) imports for real and raises `AttributeError` naming the missing dependency when an extra is absent.
 
 mkdocstrings generates the pages from the source by static analysis, so they cannot drift from the code; signatures show the code's defaults. The tool catalog with action lists is [Tools](../tools.md); environment variables are [Configuration](../configuration.md).

@@ -61,7 +61,7 @@ strands-robots dashboard --host 0.0.0.0 --port 8090 --log-level debug
 | flag | default | effect |
 |---|---|---|
 | `--host ADDR` | `127.0.0.1` | bind address |
-| `--port N` | `8090` | TCP port, 1 to 65535; anything else exits 2 |
+| `--port N` | `8090` | TCP port, 1 to 65535; else exit 2 |
 | `--open` | off | open the default browser after binding |
 | `--log-level L` | `info` | uvicorn log level: `critical`, `error`, `warning`, `info`, `debug` |
 
@@ -85,4 +85,4 @@ strands-robots iot teardown so101-arm-01
 | `reprovision THING` | rotate the certificate: the new one is active before the old ones are deleted; Thing, attributes and policies stay; a running peer's MQTT session ends, so restart it |
 | `teardown THING` | delete the Thing, its certificates and the local files |
 
-Every verb takes `--region` and `--cert-dir` (default `~/.strands_robots/iot`) and prints the `export` lines. `reprovision` gives a robot provisioned before the CSR default (certificate CN `AWS IoT Certificate`) the direct-reply grant ([direct messaging](../learn/mesh/direct.md)).
+Every verb takes `--region` and `--cert-dir` (default `~/.strands_robots/iot`) and prints `export` lines. `reprovision` gives a robot provisioned before the CSR default (certificate CN `AWS IoT Certificate`) the direct-reply grant ([direct messaging](../learn/mesh/direct.md)).

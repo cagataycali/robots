@@ -4,7 +4,7 @@ description: Every keyword the Robot factory accepts and every method the engine
 
 # Robot and factory
 
-`Robot(name, mode=...)` is a factory function, not a class. It returns a simulation engine in `mode="sim"` (the default) or a `strands_robots.hardware_robot.Robot` in `mode="real"`; both expose the same agent-facing surface: `send_action`, `get_robot_state`, `get_observation`, `run_policy`, `cleanup`. Below: every keyword the factory accepts and every method the returned object has.
+`Robot(name, mode=...)` is a factory function, not a class. It returns a simulation engine in `mode="sim"` (the default) or a `strands_robots.hardware_robot.Robot` in `mode="real"`; both expose the same agent-facing surface: `send_action`, `get_robot_state`, `get_observation`, `run_policy`, `cleanup`. Below: every factory keyword and every method the returned object has.
 
 ## The factory
 

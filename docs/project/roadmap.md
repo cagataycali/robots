@@ -8,7 +8,7 @@ description: What 1.0 keeps, what it replaces, where it is built, and what chang
 
 ## Why a rewrite
 
-The 0.5.x package is {{module_map_total}} lines of Python. It grew by adding: every provider, driver and simulation feature has a module, and the tool layer carries the agent envelope in many places. The layers hold ([architecture](architecture.md)), but the surface is wide and one idea (a driver, a unit conversion, a refusal) is spelled several ways. 1.0 works backwards from what a user needs: one `Robot`, six contracts, a small package a team can hold in its head, and one command that proves it against real backends.
+The 0.5.x package is {{module_map_total}} lines of Python. It grew by adding: every provider, driver and simulation feature has a module, and the tool layer carries the agent envelope in many places. The layers hold ([architecture](architecture.md)), but the surface is wide and one idea (a driver, a unit conversion, a refusal) is spelled several ways. 1.0 works backwards from what a user needs: one `Robot`, six contracts, a package a team can hold in its head, and one command that proves it against real backends.
 
 ## What 1.0 is
 
