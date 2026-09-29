@@ -3733,7 +3733,7 @@ class Robot(TeleopMixin, AgentTool):
                         "policy_provider": {
                             "type": "string",
                             "description": (
-                                "Which policy backend runs: one of cosmos3, curobo, groot, kimodo, "
+                                "Which policy backend runs: one of cosmos3, curobo, flux3_action, groot, kimodo, "
                                 "lerobot_local, microduck, mock, moveit2, protomotions, "
                                 "remote, rl, wbc, wbc_gait. "
                                 "groot (default, needs policy_port) and moveit2 dial a server; "
