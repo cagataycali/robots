@@ -39,6 +39,7 @@ import numpy as np
 
 from strands_robots.simulation.base import SimEngine, unknown_kwargs_error, unknown_model_msg
 from strands_robots.simulation.isaac.config import IsaacConfig
+from strands_robots.simulation.isaac.introspection import IsaacIntrospectionMixin
 from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, mjcf_joint_names, urdf_joint_names
 from strands_robots.simulation.isaac.loaders import mjcf_declares_floating_base
 from strands_robots.simulation.isaac.mjcf_assets import MJCF_EXTENSIONS, convert_mjcf_to_usd
@@ -1179,7 +1180,9 @@ class _ObjectState:
         self.handle = handle
 
 
-class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, IsaacRecordingMixin, SimEngine):
+class IsaacSimulation(
+    IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, IsaacRecordingMixin, IsaacIntrospectionMixin, SimEngine
+):
     """GPU-native simulation backend built on NVIDIA Isaac Sim.
 
     Implements the ``SimEngine`` ABC. Provides photorealistic rendering,
