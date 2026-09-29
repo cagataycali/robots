@@ -37,7 +37,7 @@ print(sorted(agent.tool_names))   # ['pose_tool', 'robot_mesh', 'so101_sim']
 | `run_policy`, `train_policy` | build a policy from any provider, run or train it | no |
 | `pose_tool` | named poses and joint moves on a Feetech arm | motion verbs |
 | `serial_tool` | raw servo bus reads and writes | writes |
-| `robot_mesh` | the fleet ([fleet](mesh/fleet.md)): read with `peers`, `status`, `inbox`; act with `tell`, `send`, `rpc`, `stop`, `broadcast`, `emergency_stop` | the acting verbs |
+| `robot_mesh` | the fleet ([fleet](mesh/fleet.md)): read with `peers`, `status`, `inbox`; act with the six verbs in the gate table | those six |
 | `use_ros`, `use_rosbridge`, `use_rtps` | a ROS 2 graph, three transports ([ROS 2](ros2.md)) | blocklisted surfaces |
 | `use_unitree`, `g1_*` | Unitree G1 locomotion and arm verbs ([unitree](hardware/unitree.md)) | motion RPCs |
 | `reachy_*` | Reachy Mini head, antennas, sound ([reachy](hardware/reachy-mini.md)) | no |
@@ -61,7 +61,7 @@ Reading and stopping are never gated; nor, at this commit, is the native drivers
 | `serial_tool` | bus writes | `STRANDS_SERIAL_COMMAND_ALLOW` |
 | `use_unitree` | motion RPCs (`loco.SetVelocity`, ...) | `STRANDS_UNITREE_COMMAND_ALLOW` |
 | `use_ros`, `use_rosbridge`, `use_rtps` | `publish`, `service_call`, `action_send_goal` on a blocklisted name (`/cmd_vel`, `/e_stop`, ...) | `STRANDS_ROS2_COMMAND_ALLOW` (by base name: `/cmd_vel` covers every namespace) |
-| `robot_mesh` | the six acting verbs above | `STRANDS_MESH_HITL_ACTIONS` selects the set |
+| `robot_mesh` | `emergency_stop`, `broadcast`, `tell`, `send`, `stop`, `rpc` | `STRANDS_MESH_HITL_ACTIONS` selects the set |
 
 Values are the verbs or targets the tool matches (`execute`, `/cmd_vel`, `loco.SetVelocity`), comma-separated; `*` pre-approves every command where the tool honours it; `=1` or `=true` pre-approve nothing.
 
