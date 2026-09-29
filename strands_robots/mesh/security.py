@@ -424,6 +424,8 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         # WBCGaitPolicy
         "wbc_gait",
         "sonic_gait",
+        # HolosomaPolicy (Amazon FAR Holosoma locomotion)
+        "holosoma",
         # KimodoPolicy
         "kimodo",
         "kimodo_g1",

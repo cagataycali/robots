@@ -47,6 +47,7 @@ _EXTRA_FOR: dict[str, str] = {
     "curobo": "curobo",
     "wbc": "wbc",
     "wbc_gait": "wbc",
+    "holosoma": "holosoma",
     "kimodo": "kimodo",
     "protomotions": "protomotions",
     "microduck": "microduck",

@@ -48,6 +48,7 @@ _NONE = "-"
 EMBODIMENT_WITNESSES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     ("wbc", ("unitree_g1",), "policies/wbc/policy.py", "WBC_G1_ALL_JOINTS"),
     ("wbc_gait", ("unitree_g1",), "policies/wbc/gait.py", "single_obs_dim=95 for the G1"),
+    ("holosoma", ("unitree_g1",), "policies/holosoma/policy.py", "load unitree_g1"),
     ("kimodo", ("unitree_g1",), "policies/kimodo/policy.py", "load the full unitree_g1 model"),
     ("protomotions", ("unitree_g1",), "policies/protomotions/policy.py", "load unitree_g1"),
     ("microduck", ("microduck",), "policies/microduck/policy.py", 'return "microduck"'),

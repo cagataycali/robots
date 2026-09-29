@@ -36,6 +36,6 @@ Aliases: `g1`, `g1_wbc`, `real_g1_relative_eef_relative_joints`, `unitree_g1_ful
 |---|---|---|---|
 | NVlabs GR00T-WholeBodyControl G1 (two ONNX files, local directory) (whole-body controller, SONIC) | `wbc` | sim, laptop CPU | 100 steps at 50 Hz in 2.0 s, 1.7 ms inference, the G1 walked 0.665 m and stayed upright (pelvis 0.793 to 0.747 m); drives 15 of 29 actuators by design, so partial_action_failure_rate reads 0.48 on a healthy rollout. A HuggingFace id is refused (#4161): pass the local directory. Source: interface sweep 2026-09-28 script sim-policies/06b and issue #4161 |
 
-Providers written for this body: `wbc`, `wbc_gait`, `kimodo`, `protomotions`; the rest are in the [policy matrix](../learn/policies/index.md).
+Providers written for this body: `wbc`, `holosoma`, `wbc_gait`, `kimodo`, `protomotions`; the rest are in the [policy matrix](../learn/policies/index.md).
 
 Model: [google-deepmind/mujoco_menagerie/unitree_g1](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/unitree_g1), scene `scene.xml`.

@@ -449,6 +449,7 @@ nav:
           - cuRobo: learn/policies/curobo.md
           - MoveIt2: learn/policies/moveit2.md
           - WBC: learn/policies/wbc.md
+          - Holosoma: learn/policies/holosoma.md
           - Kimodo: learn/policies/kimodo.md
           - ProtoMotions: learn/policies/protomotions.md
           - Microduck: learn/policies/microduck.md
