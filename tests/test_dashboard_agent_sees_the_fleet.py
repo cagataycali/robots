@@ -141,7 +141,7 @@ def test_sim_proxy_advertises_only_what_the_wire_carries() -> None:
         cmd, err = peer_tools.map_invocation(
             "p", peer_tools.KIND_SIM, {"action": a, "instruction": "go", "target_joints": {"a": 1.0}}
         )
-        assert err is None, (a, err)
+        assert err is None and cmd is not None, (a, err)
         security.validate_command(cmd)  # the wire accepts every advertised action
 
 
