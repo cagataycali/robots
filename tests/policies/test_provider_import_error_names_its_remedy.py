@@ -44,7 +44,7 @@ from strands_robots.policies import create_policy
 _LEROBOT_EXTRA = "lerobot"
 
 #: Providers whose module needs an optional dependency, so a substitution could hide there.
-_SUBSTITUTION_CANDIDATES = ("lerobot_local", "groot", "cosmos3", "wbc")
+_SUBSTITUTION_CANDIDATES = ("lerobot_local", "moveit2", "cosmos3", "wbc")
 
 
 def _absent(module: str) -> Any:
@@ -112,9 +112,9 @@ class TestAMissingDependencyReportsItsRemedy:
         """Without a declared extra the module is still named, not swallowed."""
         monkeypatch.setattr(factory_mod.importlib, "import_module", _absent("pyzmq_stand_in"))
         with pytest.raises(ImportError) as excinfo:
-            factory_mod.import_policy_class("groot")
+            factory_mod.import_policy_class("moveit2")
         message = str(excinfo.value)
-        assert "groot" in message, message
+        assert "moveit2" in message, message
         assert "pyzmq_stand_in" in message, message
 
 
