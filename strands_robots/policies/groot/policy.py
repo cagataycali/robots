@@ -24,6 +24,7 @@ import logging
 import os
 import re
 import warnings
+from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -1019,6 +1020,9 @@ class Gr00tPolicy(Policy):
         # prefix so a single dir holds both paths' payloads side-by-side
         # for offline diff.
         self._wire_log_call_count: int = 0
+        # Per-camera frame history for embodiments whose video horizon is more
+        # than one frame - see :meth:`_video_frames` and :meth:`reset`.
+        self._video_history: dict[str, deque[np.ndarray]] = {}
         # Track whether we've already logged a "diagnostic disabled"
         # warning so we don't spam the eval log with one-warning-per-step
         # if the dump dir is unwritable.
@@ -1336,6 +1340,10 @@ class Gr00tPolicy(Policy):
             seed: Master seed for the per-episode reset. When ``None``,
                 no seed is forwarded (server uses its compiled-in default).
         """
+        # A new episode starts with no frames behind it: the first observation
+        # is repeated up to the horizon rather than continued from the last
+        # episode's camera (see :meth:`_video_frames`).
+        self._video_history.clear()
         if self._mode == "service":
             assert self._client is not None, "service mode requires a client"
             try:
@@ -1400,6 +1408,47 @@ class Gr00tPolicy(Policy):
 
         return self._unpack_actions(actions_raw)
 
+    @property
+    def video_horizon(self) -> int:
+        """How many frames per camera one observation carries, from ``data_config``.
+
+        ``len(observation_indices)`` - the same number the server checks a video
+        tensor's time axis against (``Gr00tPolicy.check_observation`` compares
+        ``shape[1]`` with ``len(modality_configs["video"].delta_indices)``).
+        ``1`` when the config declares no indices.
+        """
+        return max(1, len(self.data_config.observation_indices))
+
+    def _video_frames(self, robot_key: str, value: Any) -> np.ndarray:
+        """One camera's frames for this step, ``(T, H, W, C)`` uint8 with ``T`` = :attr:`video_horizon`.
+
+        A caller that already stacks frames (a 4-D value) is passed through
+        unchanged, so a robot that keeps its own history keeps working. A single
+        frame is appended to this camera's history and the last ``T`` frames are
+        returned; until ``T`` frames have been seen, the oldest one is repeated,
+        which is how Isaac-GR00T's own evaluation loops pad the start of an
+        episode. :meth:`reset` clears the history.
+
+        Pre-fix a single frame was always sent as ``T=1``, whatever the config
+        declared: the shipped ``unitree_g1_real`` config carries
+        ``observation_indices [-20, 0]`` because the base model's
+        ``real_g1_relative_eef_relative_joints`` tag was trained on two frames,
+        and an N1.7 server refused the first request with ``Video key
+        'ego_view's horizon must be 2. Got 1``. The horizon was declared, read by
+        nothing, and reported as a server-side error.
+        """
+        arr = np.asarray(value, dtype=np.uint8)
+        horizon = self.video_horizon
+        if arr.ndim != 3 or horizon == 1:
+            return arr if arr.ndim == 4 else arr[np.newaxis, ...] if arr.ndim == 3 else arr
+        history = self._video_history.get(robot_key)
+        if history is None:
+            history = self._video_history[robot_key] = deque(maxlen=horizon)
+        history.append(arr)
+        frames = list(history)
+        frames = [frames[0]] * (horizon - len(frames)) + frames
+        return np.stack(frames)
+
     def _prepare_observation(self, robot_obs: dict[str, Any], instruction: str) -> dict:
         """Build the model's native nested-dict observation.
 
@@ -1422,7 +1471,7 @@ class Gr00tPolicy(Policy):
         mapped_video_keys = set(self._obs_mapping.video.keys())
         for robot_key, model_key in self._obs_mapping.video.items():
             if robot_key in robot_obs:
-                video_dict[model_key] = _to_video_batch(robot_obs[robot_key])
+                video_dict[model_key] = _to_video_batch(self._video_frames(robot_key, robot_obs[robot_key]))
             else:
                 logger.warning("Robot key '%s' missing in obs", robot_key)
 
@@ -1541,7 +1590,13 @@ class Gr00tPolicy(Policy):
         for vk in self.data_config.video_keys:
             bare = vk.removeprefix("video.")
             if bare in robot_obs:
-                obs[vk] = robot_obs[bare]
+                # ``(T, H, W, C)`` when the config declares a horizon and the
+                # N1.7 wire carries a time axis; the single frame as given
+                # otherwise, so the legacy ``(B, H, W, C)`` wire is unchanged.
+                frame = robot_obs[bare]
+                if self._groot_version == "n1.7":
+                    frame = self._video_frames(bare, frame)
+                obs[vk] = frame
                 video_keys.append(vk)
         # Match Isaac-GR00T training preprocessing for embodiments that need
         # it - see :func:`_apply_image_rotation_180_inplace` for the algebra.
@@ -1572,7 +1627,10 @@ class Gr00tPolicy(Policy):
         for k in list(obs.keys()):
             v = obs[k]
             if isinstance(v, np.ndarray):
-                for _ in range(n_lead):
+                # A video tensor that already carries its time axis (from
+                # :meth:`_video_frames`) needs only the batch axis.
+                lead = 1 if k in video_keys and n_lead == 2 and v.ndim == 4 else n_lead
+                for _ in range(lead):
                     v = v[np.newaxis, ...]
                 obs[k] = v
             else:

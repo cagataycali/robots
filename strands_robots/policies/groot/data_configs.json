@@ -970,7 +970,8 @@
       ]
     },
     "oxe_droid_relative_eef_relative_joint": {
-      "_extends": "oxe_droid"
+      "_extends": "oxe_droid",
+      "observation_indices": [-15, 0]
     },
     "unitree_g1_sonic": {
       "video_keys": [
