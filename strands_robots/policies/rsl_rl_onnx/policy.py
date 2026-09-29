@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -242,8 +243,9 @@ class RslRlOnnxPolicy(Policy):
         self.robot_state_keys = list(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:
-        """Clear the previous-action term at an episode boundary."""
+        """Clear the previous-action term at an episode boundary (single world and batch)."""
         self._last_action[:] = 0.0
+        self._last_action_batch = None
 
     # ------------------------------------------------------------ observation
 
@@ -311,6 +313,65 @@ class RslRlOnnxPolicy(Policy):
         """One-tick chunk of ``{joint: target}``; ``target_velocity`` / ``target_pose`` kwargs feed the command terms."""
         target = self.act(observation_dict, **kwargs)
         return [{j: float(target[i]) for i, j in enumerate(self.spec.joint_names)}]
+
+    def act_batch(
+        self, observations: Sequence[dict[str, Any]], kwargs_per_world: Sequence[dict[str, Any]] | None = None
+    ) -> np.ndarray:
+        """One ONNX call for N worlds: ``(N, nu)`` absolute joint targets in the actor's joint order.
+
+        Used by the vectorized evaluator (``strands_robots.training.mjlab_tasks.vec_eval``):
+        the observation vectors are built per world (cheap numpy) and the actor
+        runs once on the stacked ``(N, obs_dim)`` batch instead of N times.
+        """
+        n = len(observations)
+        kw = kwargs_per_world or [{}] * n
+        # The "actions" term is the previous action OF THAT WORLD: keep an (N, nu) history
+        # instead of the single-world ``_last_action`` (sharing it across worlds silently
+        # feeds world N-1's action to every world and costs ~half the reach success rate).
+        hist = getattr(self, "_last_action_batch", None)
+        if hist is None or hist.shape[0] != n:
+            hist = np.zeros((n, self.spec.num_actions), dtype=np.float32)
+        rows = []
+        for i, (o, k) in enumerate(zip(observations, kw, strict=True)):
+            self._last_action = hist[i]
+            rows.append(self.build_observation(o, **k))
+        vecs = np.stack(rows)
+        if self._fixed_batch_one() and n > 1:
+            # mjlab's own exporter bakes obs: [1, obs_dim] (dynamic_axes={}); score row by row.
+            raw = np.concatenate([self._sess.run(None, {self._input_name: v[None, :]})[0] for v in vecs]).astype(
+                np.float32
+            )
+        else:
+            raw = self._sess.run(None, {self._input_name: vecs})[0].astype(np.float32)
+        self._last_action_batch = raw
+        self._last_action = np.zeros(self.spec.num_actions, dtype=np.float32)
+        return self._default[None, :] + self._scale[None, :] * raw
+
+    def _fixed_batch_one(self) -> bool:
+        """True when the ONNX graph's batch axis is the literal 1 (mjlab default export)."""
+        cached = getattr(self, "_fixed_batch", None)
+        if cached is None:
+            shape = self._sess.get_inputs()[0].shape
+            cached = bool(shape) and shape[0] == 1
+            self._fixed_batch = cached
+            if cached:
+                logger.warning(
+                    "%s: ONNX batch axis is fixed at 1 (mjlab exports with dynamic_axes={}); "
+                    "act_batch falls back to N single calls. Re-export with "
+                    "strands_robots.training.mjlab_tasks.export for one batched call.",
+                    Path(self.spec.path).name,
+                )
+        return cached
+
+    async def get_actions_batch(
+        self,
+        observations: Sequence[dict[str, Any]],
+        instruction: str,
+        kwargs_per_world: Sequence[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Batched :meth:`get_actions`: one ``{joint: target}`` dict per world, from one forward pass."""
+        targets = self.act_batch(observations, kwargs_per_world)
+        return [{j: float(row[i]) for i, j in enumerate(self.spec.joint_names)} for row in targets]
 
 
 class _SiteFK:

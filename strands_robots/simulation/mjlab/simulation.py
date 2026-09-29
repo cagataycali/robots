@@ -41,6 +41,7 @@ from strands_robots.simulation.base import (
     reject_misspelled_kwargs,
     reject_setup_kwargs,
 )
+from strands_robots.simulation.mjlab.randomization import MjlabRandomizationMixin
 from strands_robots.simulation.mjlab.recording import MjlabRecordingMixin
 from strands_robots.utils import coerce_pose_vector, entity_name_error, positive_count_error
 
@@ -102,7 +103,7 @@ class _ObjectSpec:
     static: bool
 
 
-class MjlabEngine(MjlabRecordingMixin, SimEngine):
+class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
     """GPU-vectorized MuJoCo backend built on mjlab / MuJoCo-Warp.
 
     Args:
@@ -193,6 +194,7 @@ class MjlabEngine(MjlabRecordingMixin, SimEngine):
         self._renderer: Any = None
         self._render_data: Any = None
         self._build_seconds = 0.0
+        self._dr_applied: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------ world
 

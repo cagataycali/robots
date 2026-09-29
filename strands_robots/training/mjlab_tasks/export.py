@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 
 def export_checkpoint(
@@ -48,7 +49,7 @@ def export_checkpoint(
         runner_cls = load_runner_cls(task) or MjlabOnPolicyRunner
         runner = runner_cls(wrapped, asdict(agent_cfg), device=device)
         runner.load(str(checkpoint), load_cfg={"actor": True}, strict=True, map_location=device)
-        runner.export_policy_to_onnx(str(out.parent), out.name)
+        _export_dynamic_batch(runner, out)
         attach_metadata_to_onnx(str(out), get_base_metadata(env, run_name))
     finally:
         env.close()
@@ -66,6 +67,36 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--device", default="cuda:0")
     a = p.parse_args(argv)
     print(export_checkpoint(a.task, a.checkpoint, a.out, device=a.device))
+
+
+def _export_dynamic_batch(runner: Any, out: Path) -> None:
+    """``runner.export_policy_to_onnx`` with a dynamic batch axis.
+
+    mjlab exports with ``dynamic_axes={}``, which bakes ``obs: [1, obs_dim]`` into
+    the graph, so one session call can only score one world. The vectorized
+    evaluator (``vec_eval``) feeds ``(N, obs_dim)``; exporting the batch axis as
+    dynamic costs nothing at N=1 and lets ``rsl_rl_onnx.act_batch`` run once per tick.
+    """
+    import os
+
+    import torch
+
+    onnx_model = runner.alg.get_policy().as_onnx(verbose=False)
+    onnx_model.to("cpu")
+    onnx_model.eval()
+    os.makedirs(out.parent, exist_ok=True)
+    dyn = {name: {0: "batch"} for name in [*onnx_model.input_names, *onnx_model.output_names]}
+    torch.onnx.export(
+        onnx_model,
+        onnx_model.get_dummy_inputs(),
+        str(out),
+        export_params=True,
+        opset_version=18,
+        input_names=onnx_model.input_names,
+        output_names=onnx_model.output_names,
+        dynamic_axes=dyn,
+        dynamo=False,
+    )
 
 
 if __name__ == "__main__":
