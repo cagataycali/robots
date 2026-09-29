@@ -324,6 +324,7 @@ def _sending_mesh(published: list[tuple[str, dict[str, Any]]]) -> Any:
     mesh._pending = {}
     mesh._responses = {}
     mesh._expected_responders = {}
+    mesh._turn_sources = {}
     mesh.publish = lambda key, payload: published.append((key, payload))  # type: ignore[method-assign]
     return mesh
 
