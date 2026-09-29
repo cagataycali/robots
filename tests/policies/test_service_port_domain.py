@@ -29,6 +29,7 @@ import pytest
 
 from strands_robots.policies.factory import create_policy
 from strands_robots.utils import tcp_port_error
+from tests._package_ast import parse_file
 
 # Ports no TCP transport can address. ``0`` asks the kernel for an ephemeral
 # port instead of naming one; ``65536``/``99999`` are outside the 16-bit space;
@@ -274,7 +275,7 @@ class TestNoProviderShipsAnUnguardedPort:
         offenders = []
         seen = []
         for path in _policy_module_paths():
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
             for cls in _classes_taking_a_port(tree):
                 seen.append(cls.name)
                 if not _calls_the_shared_domain(cls):

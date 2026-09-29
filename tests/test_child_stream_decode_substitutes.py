@@ -44,6 +44,7 @@ import pytest
 
 import strands_robots
 from strands_robots import dataset_transfer as transfer_mod
+from tests._package_ast import parse_file
 
 PACKAGE = pathlib.Path(strands_robots.__file__).parent
 
@@ -93,7 +94,7 @@ def _scan() -> tuple[list[str], list[str]]:
     strict: list[str] = []
     reads: list[str] = []
     for path in sorted(PACKAGE.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or ast.unparse(node.func) not in SPAWNERS:
                 continue

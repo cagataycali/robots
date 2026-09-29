@@ -47,6 +47,7 @@ import pytest
 import strands_robots.simulation as simulation_pkg
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import tcp_port_error
+from tests._package_ast import parse_file
 
 NAN = float("nan")
 INF = float("inf")
@@ -300,7 +301,7 @@ class TestNoSimulationSurfaceShipsAnUnguardedPort:
         offenders = []
         seen = []
         for path in _simulation_module_paths():
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
             for func in _functions_taking_a_port(tree):
                 seen.append(func.name)
                 if not _calls_the_shared_domain(func):

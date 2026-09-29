@@ -164,6 +164,7 @@ from packaging.requirements import Requirement  # noqa: E402
 from packaging.version import Version  # noqa: E402
 
 from tests._blocked_module import blocked  # noqa: E402
+from tests._package_ast import parse_file  # noqa: E402
 
 
 def _lerobot_extra_requirement() -> Requirement:
@@ -1063,7 +1064,7 @@ def test_require_optional_call_sites_name_declared_extras() -> None:
     for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -1095,7 +1096,7 @@ def _literal_extra_call_sites() -> list[tuple[str, str]]:
     for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -1637,7 +1638,7 @@ def _require_optional_call_sites() -> list[tuple[str, int, str, dict[str, ast.ex
     for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue

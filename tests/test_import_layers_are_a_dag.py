@@ -42,6 +42,8 @@ from typing import Any
 
 import pytest
 
+from tests._package_ast import parse_file
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPT = _REPO_ROOT / "scripts" / "check_import_layers.py"
 _PACKAGE_ROOT = _REPO_ROOT / "strands_robots"
@@ -390,7 +392,7 @@ class TestTheContract:
         offenders = sorted(
             (path.relative_to(_PACKAGE_ROOT).as_posix(), node.value)
             for path in (_PACKAGE_ROOT / "drivers").rglob("*.py")
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            for node in ast.walk(parse_file(path))
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and sibling.fullmatch(node.value)
         )
         assert offenders == []

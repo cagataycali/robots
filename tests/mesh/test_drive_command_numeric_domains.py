@@ -38,6 +38,7 @@ from strands_robots.utils import (
     positive_finite_number_error,
     positive_whole_number_error,
 )
+from tests._package_ast import parse_file
 from tests.mesh._transport_stand_in import stands_in_for
 
 #: The wire fields a bridge publishes for the usable probe command below
@@ -312,7 +313,7 @@ def _inline_finiteness_calls(node: ast.AST) -> list[str]:
 def _drive_owning_modules() -> list[tuple[Path, ast.Module, ast.ClassDef]]:
     owners: list[tuple[Path, ast.Module, ast.ClassDef]] = []
     for path in _mesh_modules():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         owners.extend((path, tree, cls) for cls in _bridge_classes_defining_drive(tree))
     return owners
 

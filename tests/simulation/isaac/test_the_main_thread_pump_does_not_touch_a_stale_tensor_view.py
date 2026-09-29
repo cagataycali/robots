@@ -58,6 +58,7 @@ pytest.importorskip("strands_robots.simulation.isaac")
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402 - after importorskip
     _RobotState,
 )
+from tests._package_ast import parse_file
 from tests.simulation._isaac_engine import isaac_engine
 
 #: What ``remove_object`` measured the backend raising when it does not hang. Not a
@@ -480,7 +481,7 @@ class TestEveryArticulationTouchConsultsTheGate:
         touched: dict[str, set[str]] = {}
         gated: set[str] = set()
         for path in self._sources():
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = parse_file(path)
             funcs = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)]
             for node in ast.walk(tree):
                 if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):

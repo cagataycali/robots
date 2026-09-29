@@ -39,6 +39,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots.tools.robot_mesh as rmt
+from tests._package_ast import parse_file
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MESH_TOOL_SOURCE = Path(inspect.getsourcefile(rmt) or "")
@@ -215,7 +216,7 @@ def test_rpc_is_a_gated_actuation_action_the_dispatcher_audits() -> None:
     """Premise: ``rpc`` really is gated by default and really is audited."""
     assert "rpc" in rmt._GATEABLE_ACTIONS
     assert "rpc" in rmt._DEFAULT_INTERRUPT_ACTIONS
-    tree = ast.parse(_MESH_TOOL_SOURCE.read_text(encoding="utf-8"))
+    tree = parse_file(_MESH_TOOL_SOURCE)
     branches = [
         node
         for node in ast.walk(tree)

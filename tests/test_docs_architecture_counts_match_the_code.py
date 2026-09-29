@@ -46,6 +46,7 @@ from types import ModuleType
 import pytest
 
 from strands_robots.policies.base import Policy
+from tests._package_ast import parse_file
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = REPO_ROOT / "strands_robots"
@@ -91,7 +92,7 @@ def _tool_count() -> int:
     """``@tool``-decorated functions anywhere under ``strands_robots/``."""
     total = 0
     for path in sorted(PACKAGE.rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(parse_file(path)):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             if any(ast.unparse(d).split("(")[0].strip() == "tool" for d in node.decorator_list):
@@ -144,7 +145,7 @@ def _policy_implementations() -> frozenset[str]:
     """
     bases: dict[str, set[str]] = {}
     for path in sorted((PACKAGE / "policies").rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(parse_file(path)):
             if isinstance(node, ast.ClassDef):
                 bases[node.name] = {ast.unparse(b).split(".")[-1] for b in node.bases}
     reached = {"Policy"}

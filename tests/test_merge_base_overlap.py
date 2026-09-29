@@ -39,6 +39,8 @@ from typing import cast
 
 import pytest
 
+from tests._package_ast import parse_file
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SCRIPT_PATH = _REPO_ROOT / "scripts" / "check_merge_base_overlap.py"
 
@@ -1283,7 +1285,7 @@ def test_the_sweep_budget_is_the_graders_budget() -> None:
     raising either literal without the other fails the suite, from the same
     source text the grader runs.
     """
-    tree = ast.parse(_GRADER_PATH.read_text(encoding="utf-8"))
+    tree = parse_file(_GRADER_PATH)
     assignments = [
         node.value
         for node in tree.body
@@ -1965,7 +1967,7 @@ def test_both_modes_read_module_literals_through_one_extractor() -> None:
     assert "module_literals(" in branch_side
     assert "diff_entries(" in branch_side
     # One definition of the pattern, so a change to it moves both modes together.
-    tree = ast.parse(_SCRIPT_PATH.read_text(encoding="utf-8"))
+    tree = parse_file(_SCRIPT_PATH)
     compiled = [
         node
         for node in ast.walk(tree)

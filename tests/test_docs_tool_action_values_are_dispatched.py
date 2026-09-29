@@ -47,6 +47,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_file
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _TOOLS_DIR = _REPO_ROOT / "strands_robots" / "tools"
@@ -139,7 +140,7 @@ def _dispatched_actions(source: Path) -> set[str]:
     remainder to a delegate module dispatches every name in it, and quotes
     none of them here.
     """
-    tree = ast.parse(source.read_text(encoding="utf-8"))
+    tree = parse_file(source)
     rosters = _module_string_rosters(tree)
     found: set[str] = set()
     for node in ast.walk(tree):

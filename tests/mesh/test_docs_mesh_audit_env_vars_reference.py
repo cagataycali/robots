@@ -41,6 +41,7 @@ import re
 import sys
 
 from strands_robots import audit as _audit_module
+from tests._package_ast import parse_file
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "audit.py"
@@ -65,7 +66,7 @@ def _audit_env_reads() -> frozenset[str]:
     Derived from the module's own source so a variable added later is held to
     the same documentation rule without editing a list here.
     """
-    tree = ast.parse(_MODULE.read_text(encoding="utf-8"))
+    tree = parse_file(_MODULE)
     names: set[str] = set()
     for node in ast.walk(tree):
         literal = None
