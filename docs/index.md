@@ -8,7 +8,7 @@ template_class: sr-home
 <div class="sr-hero" markdown>
 <div markdown>
 <p class="sr-hero__title">One <em>Robot</em> object. Any robot.</p>
-<p class="sr-hero__lead">Simulated or physical, arm or humanoid, the same call. Hand it to a Strands Agent and it becomes a tool the model can use. Learned policies from the Hugging Face Hub run through the same call, in MuJoCo and on the physical robot. A real arm does not move until an operator says yes.</p>
+<p class="sr-hero__lead">Simulated or physical, arm or humanoid, the same call. Hand it to a Strands Agent and it becomes a tool the model can use. Learned policies from the Hugging Face Hub run through the same call, in MuJoCo and on the physical robot. A policy does not reach a real arm until an operator says yes.</p>
 <div class="sr-hero__actions">
 <a class="sr-btn sr-btn--primary" href="start/">Start</a>
 <a class="sr-btn" href="robots/">Pick a robot</a>
@@ -38,7 +38,7 @@ The catalog: arms, hands, humanoids, quadrupeds, mobile bases. Which ones simula
 </div>
 <div class="sr-card" markdown>
 ### [Agents](learn/agents.md)
-`Agent(tools=[robot])`. What the model sees, what it can call, and the approval gate in front of real motion.
+`Agent(tools=[robot])`. What the model sees, what it can call, and the operator gate in front of real motion.
 </div>
 <div class="sr-card" markdown>
 ### [Simulation](learn/simulation/index.md)

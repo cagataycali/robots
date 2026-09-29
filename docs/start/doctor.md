@@ -1,3 +1,7 @@
+---
+description: Read a strands-robots doctor report row by row: what each check probed and what to change when it is not PASS.
+---
+
 # Doctor
 
 At the end of this page you can read a `strands-robots doctor` report line by line and know, for each row, what was probed and what to change when it is not `PASS`.

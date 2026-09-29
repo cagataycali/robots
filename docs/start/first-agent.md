@@ -1,6 +1,10 @@
+---
+description: A Strands Agent moves the simulated SO-101 from a sentence, then stops at the operator gate in front of a real arm.
+---
+
 # First agent
 
-At the end of this page a Strands Agent has moved the simulated arm from a sentence you typed, and you have watched the same agent stop at the approval gate in front of a real one. The sim fences run without a model. The two fences that call `agent("...")` need a model provider configured for `strands-agents`; Bedrock is the default.
+At the end of this page a Strands Agent has moved the simulated arm from a sentence you typed, and you have watched the same agent stop at the operator gate in front of a real one. The sim fences run without a model. The two fences that call `agent("...")` need a model provider configured for `strands-agents`; Bedrock is the default.
 
 ## The robot is a tool
 
@@ -117,7 +121,7 @@ error
  available for operator approval. Set STRANDS_ROBOT_COMMAND_ALLOW=execute (or STRANDS_ROBOT_COMMAND_ALLOW=* for every robot command; comma-separated) or BYPASS_TOOL_CONSENT=true to allow in headless mode.
 ```
 
-The order of the decision is fixed and shared by every tool that can move a robot: `STRANDS_ROBOT_COMMAND_ALLOW` names pre-approved actions (`execute`, `start`, or `*`), `BYPASS_TOOL_CONSENT=true` lifts the gate with a warning in the log, otherwise the operator is asked, and with nobody to ask the call fails closed. Every answer is written to the audit log. The ROS tools, `serial_tool`, `pose_tool` and `use_unitree` use the same path with their own allow variable. The native drivers' `move_to` action does not pass through this gate at this commit.
+`STRANDS_ROBOT_COMMAND_ALLOW` names pre-approved actions (`execute`, `start`, or `*`); with nobody to ask the call fails closed; every answer lands in the audit log. [The operator gate](../learn/agents.md#the-operator-gate) gives the full order, the other tools' allow variables, and the one path that is not gated yet.
 
 ## Where next
 

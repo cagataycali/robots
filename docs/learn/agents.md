@@ -1,3 +1,7 @@
+---
+description: Mount a robot and the @tool functions in a Strands Agent, and what happens when the model asks a real robot to move.
+---
+
 # Agents
 
 At the end of this page you have a Strands `Agent` that holds a robot as one of its tools, know which of the {{n:tools}} `@tool` functions to mount next to it, and know what happens when the model asks a real robot to move: the operator gate, the variable that pre-approves it, the audit row it leaves.
@@ -41,14 +45,14 @@ print(sorted(agent.tool_names))            # ['pose_tool', 'robot_mesh', 'so101_
 
 ## The operator gate
 
-Every path from the model to an actuator goes through `strands_robots._command_gate.gate_motion`, which decides in order:
+Every policy rollout, ROS command, serial write and pose move the model asks for goes through `strands_robots._command_gate.gate_motion`, which decides in order:
 
 1. The tool's allowlist variable names the command: allow silently.
 2. `BYPASS_TOOL_CONSENT=true`: allow, and log a WARNING.
 3. No `tool_context` (outside an agent, or the host cannot interrupt): refuse, naming the variable and value that pre-approve the call.
 4. Otherwise raise a Strands interrupt named `<tool>-command-approval`. The operator answers out of band: `y`, `yes`, `approve` or `approved` proceeds, anything else declines; the model never sees the reply.
 
-Reading and stopping are never gated.
+Reading and stopping are never gated. The native drivers' `move_to` (`driver="strands"`) is not gated either at this commit; [first real arm](../start/first-real-arm.md#the-operator-gate) says so where it is taught.
 
 | caller | gated verbs | allowlist variable |
 |---|---|---|

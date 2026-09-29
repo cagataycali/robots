@@ -1,3 +1,7 @@
+---
+description: Predicate verdicts on every episode, a judge agent's grade and failure tag on top, and a filter for the episodes worth training on.
+---
+
 # Label and judge
 
 At the end of this page every episode in a dataset carries a verdict the simulator's own predicates decided, a quality grade and failure-mode tag a judge agent added on top, and a filter that picks the episodes worth training on. The judge can annotate a verdict; it can never overturn one.

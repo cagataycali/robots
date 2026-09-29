@@ -1,3 +1,7 @@
+---
+description: A Python environment where Robot imports, MuJoCo renders offscreen and the robot model files are on disk.
+---
+
 # Install
 
 At the end of this page you have a Python environment where `from strands_robots import Robot` works, a MuJoCo robot renders offscreen, and the robot model files are on disk.

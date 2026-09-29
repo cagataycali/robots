@@ -1,3 +1,7 @@
+---
+description: A control loop in sim or on hardware writes a LeRobot v3 dataset that lerobot-train and every policy provider read.
+---
+
 # Record
 
 At the end of this page a control loop, in simulation or on hardware, writes a LeRobot v3 dataset (parquet plus one MP4 per camera per episode) that `lerobot-train` and every policy provider here can read, and you know where it lands on disk and how to keep episodes distinct.

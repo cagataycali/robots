@@ -4,7 +4,7 @@ description: One run_policy call runs a learned policy from the Hugging Face Hub
 
 # First learned policy
 
-By the end of this page a vision-language-action model from the Hub has driven the simulated SO-101 from its cameras, you have the same call for the physical arm, and you have watched an agent stop at the approval gate naming the checkpoint. The sim fences run on a laptop with no GPU; the first downloads about 865 MB once.
+By the end of this page a vision-language-action model from the Hub has driven the simulated SO-101 from its cameras, you have the same call for the physical arm, and you have watched an agent stop at the operator gate naming the checkpoint. The sim fences run on a laptop with no GPU; the first downloads about 865 MB once.
 
 The page uses a vision-language-action checkpoint because the SO-101 has several; the same shape, one provider name and one `policy_config`, runs a world foundation model through [cosmos3](../learn/policies/cosmos3.md) or a whole-body controller through [wbc](../learn/policies/wbc.md).
 

@@ -1,3 +1,7 @@
+---
+description: Prove from the parquet on disk that a dataset holds the episodes you intended, with frames, matching videos and live control columns.
+---
+
 # Verify
 
 At the end of this page you can prove, from the parquet on disk and not from anyone's narration, that a recorded dataset holds the episodes you intended, with frames in every one, video files that match, and no dead control column.

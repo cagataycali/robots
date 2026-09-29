@@ -1,3 +1,7 @@
+---
+description: Put a recorded dataset on the Hub or an HF Storage Bucket and read frames back without downloading all of it.
+---
+
 # Stream and sync
 
 At the end of this page a recorded dataset is somewhere other than one laptop's disk (the Hub as a repo, or an HF Storage Bucket as a mutable dump) and you can read frames back from either without downloading the whole thing, in a notebook, an eval loop or a DataLoader.

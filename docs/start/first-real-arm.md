@@ -1,3 +1,7 @@
+---
+description: Find the SO-101's USB port, rehearse the driver against the model, then move the physical arm through the native driver or lerobot.
+---
+
 # First real arm
 
 At the end of this page you know which USB port your SO-101 is on, you have rehearsed the exact hardware driver against the arm's model, and you have the two lines that move the physical arm: one through the native Feetech driver, one through lerobot.
@@ -109,6 +113,6 @@ The lerobot driver looks the file up by id, and the id it uses is the tool name,
 | a keyword the driver does not declare (`prot=`) | `ValueError` listing what `FeetechDriver` accepts |
 | a port that cannot be opened | `connect_eagerly()` returns the OS error as a string; `is_connected` stays `False` |
 
-## The approval gate
+## The operator gate
 
 When the lerobot-driver `Robot` is mounted as an agent tool, its `execute` and `start` actions stop for operator approval before any rollout is dispatched, and refuse when no operator can be reached. The native driver's `move_to` action does not ask at this commit. [First agent](first-agent.md) shows the gate; [Drivers](../learn/hardware/drivers.md) covers the other {{n:native_drivers}} native drivers.
