@@ -2482,26 +2482,6 @@
    "viewer": true,
    "viewer_note": null
   },
-  "tiago": {
-   "aliases": [],
-   "base_url": null,
-   "category": "mobile_manip",
-   "description": "tiago (mobile_manipulator URDF from robot_descriptions)",
-   "driver": null,
-   "joints": 48,
-   "lfs_url": null,
-   "model": null,
-   "name": "tiago",
-   "palette": null,
-   "raw_url": null,
-   "real": false,
-   "scene": null,
-   "sim": true,
-   "source": "urdf",
-   "thumbnail": "assets/img/robots/tiago.webp",
-   "viewer": false,
-   "viewer_note": "compiled from its robot_descriptions URDF on first use; the meshes are converted locally, so there is no upstream MJCF to stream and the thumbnail is a local render"
-  },
   "tiago_dual": {
    "aliases": [
     "pal_tiago_dual",

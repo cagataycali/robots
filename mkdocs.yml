@@ -511,7 +511,6 @@ nav:
           - robots/stretch.md
           - robots/stretch3.md
           - robots/stretch_se3.md
-          - robots/tiago.md
           - robots/tiago_dual.md
           - robots/yahboom_m3pro.md
       - Aerial:

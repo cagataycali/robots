@@ -970,24 +970,6 @@
     "mobile_manipulator"
    ]
   },
-  "tiago": {
-   "category": "mobile_manip",
-   "commit": "d0d9098d752014aec3725b07766962acf06c5418",
-   "floating": true,
-   "has_sim": true,
-   "joints": 48,
-   "mesh_formats": [
-    ".dae",
-    ".stl"
-   ],
-   "module": "tiago_description",
-   "nq": 55,
-   "repository": "Gepetto/example-robot-data",
-   "streamable": false,
-   "tags": [
-    "mobile_manipulator"
-   ]
-  },
   "toddlerbot": {
    "category": "humanoid",
    "commit": "067f9dc4f50143e36334877b9395b9c5c29ee30c",
