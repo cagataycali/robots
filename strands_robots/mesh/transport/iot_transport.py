@@ -242,9 +242,8 @@ class _X509DirectClient:
                     resp = self._conn.getresponse()
                     return resp.status, resp.read()
                 except (
-                    http.client.RemoteDisconnected,
                     BrokenPipeError,
-                    ConnectionResetError,
+                    ConnectionResetError,  # http.client.RemoteDisconnected is one
                     http.client.CannotSendRequest,
                 ):
                     try:

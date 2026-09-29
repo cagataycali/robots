@@ -1106,6 +1106,7 @@ def _build_csr(thing_name: str, key_path: Path) -> str:
             ],
             capture_output=True,
             text=True,
+            errors="replace",
             check=False,
         )
         if proc.returncode != 0:
