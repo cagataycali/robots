@@ -123,8 +123,9 @@ def train_policy(
             - ``"list"``     : list available training providers.
         provider: Training backend / policy family - ``"lerobot_local"`` (act,
             diffusion, smolvla, pi0, pi05, ...), ``"groot"`` (NVIDIA GR00T),
-            ``"cosmos3"`` (NVIDIA Cosmos3), or ``"mock"``. Same name as the
-            inference provider in ``create_policy``.
+            ``"cosmos3"`` (NVIDIA Cosmos3), ``"isaaclab"`` (GPU-parallel RL in
+            a separate Isaac Lab install; needs no dataset), or ``"mock"``. Same
+            name as the inference provider in ``create_policy``.
         dataset_root: Path to a LeRobotDataset v3 root (has ``meta/info.json``) -
             exactly what ``Robot.stop_recording`` writes. Optional when
             ``dataset_repo_id`` is set (then it is the local cache root).
@@ -195,6 +196,10 @@ def train_policy(
         extra: Backend-specific passthrough. lerobot: ``policy_type``,
             ``job_name``, any ``--key=value``. GR00T: ``groot_root``,
             ``modality_config_path``. Cosmos: ``cosmos_root``, ``sft_toml``.
+            Isaac Lab: ``task`` (required, e.g. ``"Isaac-Cartpole"``),
+            ``num_envs``, ``physics`` (``"newton_mjwarp"`` / ``"isaacsim_physx"``),
+            ``wait`` (block until the run ends), ``timeout_s``; ``steps`` is the
+            PPO iteration count and ``status`` polls the returned ``job_id``.
         job_id: Job identifier for ``action="status"``.
 
     Returns:
@@ -221,6 +226,10 @@ def train_policy(
         - torchcodec's ``.so`` must match the installed torch build exactly; a
           torch nightly load-fails a stable torchcodec (``undefined symbol``)
           and lerobot silently yields zero frames. See docs/reference/training/overview.md.
+        - ``isaaclab``: nothing in THIS interpreter. Install Isaac Lab in its own
+          virtual environment and set ``ISAACLAB_PYTHON`` to its python and
+          ``OMNI_KIT_ACCEPT_EULA=YES``; the trainer runs its CLI as a subprocess.
+          See docs/learn/training/isaaclab.md.
     """
     try:
         # Graded first: an action this tool does not know is a mistake in the
@@ -247,17 +256,22 @@ def train_policy(
                             "job_id": job_id,
                             "provider": provider,
                             "status": res.status,
+                            "checkpoint_dir": res.checkpoint_dir,
+                            "exported_model": res.exported_model,
                             "metrics": dict(res.metrics),
                         }
                     },
                 ],
             }
 
-        # All remaining actions need a spec.
-        if not (dataset_root or dataset_repo_id) or not output_dir:
+        # All remaining actions need a spec. The data source is required only
+        # of a trainer whose runs read one (Trainer.requires_dataset).
+        trainer = create_trainer(provider)
+        if not output_dir:
+            return _err("output_dir is required")
+        if getattr(trainer, "requires_dataset", True) and not (dataset_root or dataset_repo_id):
             return _err("a data source (dataset_root or dataset_repo_id) and output_dir are required")
 
-        trainer = create_trainer(provider)
         spec = TrainSpec(
             dataset_root=dataset_root or "",
             dataset_repo_id=dataset_repo_id,
