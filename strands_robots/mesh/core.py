@@ -3482,6 +3482,13 @@ class Mesh(SensorLoopsMixin):
                 self._responses.pop(turn, None)
                 self._expected_responders.pop(turn, None)
             return {"status": "error", "error": size_problem}
+        # One deadline for the whole call: the direct delivery (its
+        # confirmation window and socket timeouts) and the wait for the
+        # response both draw on it, so ``timeout`` is a budget and not a
+        # floor. Before this, a confirmed send followed by a fresh
+        # ``event.wait(timeout)`` made a 0.5 s budget last 1.5 s and the
+        # default 30 s last 40 s.
+        deadline = time.monotonic() + timeout
         try:
             # Point-to-point first when the transport can address the target
             # (AWS IoT Core Direct Messaging); an offline target answers here
@@ -3492,6 +3499,8 @@ class Mesh(SensorLoopsMixin):
                 return {"status": "error", "error": "peer offline (iot 404)", "peer": target}
             if direct != "delivered":
                 self.publish(f"strands/{target}/cmd", msg)
+            # What is left of the budget after the delivery leg.
+            timeout = max(0.0, deadline - time.monotonic())
             event.wait(timeout=timeout)
         finally:
             with self._rpc_lock:
@@ -3527,16 +3536,45 @@ class Mesh(SensorLoopsMixin):
             f"strands/{target}/cmd",
             msg,
             confirm=True,
-            timeout=max(1.0, min(float(timeout), 10.0)),
+            # The transport derives the broker's confirmation window (1 to 10
+            # whole seconds) and its socket timeouts from this budget.
+            timeout=float(timeout),
             response_key=f"strands/{self.peer_id}/response/{target}/{turn}",
             correlation=turn,
         )
         if result.delivered:
             return "delivered"
         if result.reason == "offline":
-            return "offline"
+            if self._offline_verdict_is_final(target):
+                return "offline"
+            logger.debug(
+                "[mesh] %s: %s has no IoT session under its own client id but is still reachable over "
+                "publish/subscribe; publishing",
+                self.peer_id,
+                target,
+            )
+            return "publish"
         self._note_direct_fallback(target, result.reason, result.detail)
         return "publish"
+
+    def _offline_verdict_is_final(self, target: str) -> bool:
+        """Whether a 404 from the broker means *target* cannot be reached at all.
+
+        The broker answers 404 when no client with id *target* is connected to
+        AWS IoT. That is the whole story only on the pure ``iot`` backend, and
+        only for a peer nobody has heard from: on ``bridge`` the target may be
+        a LAN peer that lives on Zenoh alone, and on either backend a peer
+        whose MQTT client id is not its peer id (the ``robot_mesh`` gateway is
+        one) still answers a publish on ``strands/{target}/cmd``. In those
+        cases the send falls back to publish exactly as ``main`` did; the
+        short-circuit is kept for the case it was measured on, a robot that
+        has left.
+        """
+        from strands_robots.mesh.transport.factory import current_backend
+
+        if current_backend() != "iot":
+            return False
+        return _session_get_peer(target) is None
 
     @staticmethod
     def _direct_known_forbidden(direct: DirectSender, target: str) -> bool:

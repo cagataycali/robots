@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -50,6 +51,18 @@ class _FakeRobot:
 
     def get_task_status(self) -> dict[str, Any]:
         return {"status": "idle"}
+
+
+def _pure_iot_with_unknown_peer(monkeypatch, backend: str = "iot", peer_known: bool = False) -> None:
+    """The 404 short-circuit applies only on the pure iot backend for a peer nobody has heard from."""
+    from strands_robots.mesh.transport import factory
+
+    monkeypatch.setattr(factory, "current_backend", lambda: backend)
+    monkeypatch.setattr(
+        mesh_core,
+        "_session_get_peer",
+        lambda peer_id, max_age_s=None: {"peer_id": peer_id} if peer_known else None,
+    )
 
 
 class _DirectTransport:
@@ -199,18 +212,40 @@ class TestSendGoesDirectFirst:
         assert call["data"]["command"] == {"action": "status"}
         assert [k for k, _ in puts if k.endswith("/cmd")] == []
 
-    @pytest.mark.parametrize(("timeout", "expected"), [(0.3, 1.0), (30.0, 10.0), (4.0, 4.0)])
-    def test_confirmation_timeout_is_clamped_to_one_to_ten(self, puts, timeout, expected):
-        # ``offline`` so the call returns at once instead of waiting the budget.
+    @pytest.mark.parametrize("timeout", [0.3, 30.0, 4.0])
+    def test_the_whole_budget_is_handed_to_the_transport(self, puts, timeout, monkeypatch):
+        # The transport derives the broker's 1 to 10 s confirmation window and
+        # its socket timeouts from this one number (pinned in its own tests).
+        _pure_iot_with_unknown_peer(monkeypatch)
         t = _DirectTransport([_fail("offline")])
         m = _start(t)
         try:
             m.send("so101", {"action": "status"}, timeout=timeout)
         finally:
             _stop(m)
-        assert t.direct_calls[0]["timeout"] == expected
+        assert t.direct_calls[0]["timeout"] == timeout
 
-    def test_offline_target_answers_at_once_and_publishes_nothing(self, puts):
+    def test_the_wait_is_what_is_left_of_the_budget(self, puts):
+        # A delivery that consumed most of the budget leaves only the rest for
+        # the response: total stays within timeout, never confirm + timeout.
+        class _Slow(_DirectTransport):
+            def send_direct(self, *a: Any, **kw: Any) -> DirectResult:
+                time.sleep(0.6)
+                return super().send_direct(*a, **kw)
+
+        t = _Slow([_ok()])
+        m = _start(t)
+        try:
+            t0 = time.monotonic()
+            out = m.send("so101", {"action": "status"}, timeout=1.0)
+            elapsed = time.monotonic() - t0
+        finally:
+            _stop(m)
+        assert out == {"status": "timeout"}
+        assert elapsed <= 1.0 + 0.1, elapsed
+
+    def test_offline_target_answers_at_once_and_publishes_nothing(self, puts, monkeypatch):
+        _pure_iot_with_unknown_peer(monkeypatch)
         t = _DirectTransport([_fail("offline", "not connected")])
         m = _start(t)
         try:
@@ -220,6 +255,42 @@ class TestSendGoesDirectFirst:
         finally:
             _stop(m)
         assert [k for k, _ in puts if k.endswith("/cmd")] == []
+
+    def test_a_404_on_the_bridge_backend_publishes_instead(self, puts, monkeypatch):
+        # A LAN peer that lives on Zenoh alone has no IoT client; main reached it.
+        _pure_iot_with_unknown_peer(monkeypatch, backend="bridge")
+        t = _DirectTransport([_fail("offline")])
+        m = _start(t)
+        try:
+            out = m.send("so101", {"action": "status"}, timeout=0.05)
+        finally:
+            _stop(m)
+        assert out == {"status": "timeout"}
+        assert len([k for k, _ in puts if k == "strands/so101/cmd"]) == 1
+
+    def test_a_404_for_a_peer_still_in_presence_publishes_instead(self, puts, monkeypatch):
+        # Its MQTT client id is not its peer id (the robot_mesh gateway), so
+        # the direct address misses while the topic still reaches it.
+        _pure_iot_with_unknown_peer(monkeypatch, backend="iot", peer_known=True)
+        t = _DirectTransport([_fail("offline")])
+        m = _start(t)
+        try:
+            out = m.send("so101", {"action": "status"}, timeout=0.05)
+        finally:
+            _stop(m)
+        assert out == {"status": "timeout"}
+        assert len([k for k, _ in puts if k == "strands/so101/cmd"]) == 1
+
+    def test_a_404_with_no_factory_backend_publishes_instead(self, puts):
+        # No transport backend registered (a hand-built session): never a verdict.
+        t = _DirectTransport([_fail("offline")])
+        m = _start(t)
+        try:
+            out = m.send("so101", {"action": "status"}, timeout=0.05)
+        finally:
+            _stop(m)
+        assert out == {"status": "timeout"}
+        assert len([k for k, _ in puts if k == "strands/so101/cmd"]) == 1
 
     @pytest.mark.parametrize("reason", ["throttled", "unconfirmed", "error", "unavailable", "too_large"])
     def test_other_failures_fall_back_to_publish_for_this_call(self, puts, reason):
