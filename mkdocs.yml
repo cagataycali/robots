@@ -42,6 +42,8 @@ theme:
     - navigation.top
     - navigation.footer
     - navigation.tracking
+    - navigation.instant
+    - navigation.instant.progress
     - content.code.copy
     - content.code.annotate
     - content.tabs.link
@@ -55,6 +57,7 @@ extra_css:
 extra_javascript:
   - path: assets/viewer/robot-viewer.js
     type: module
+  - assets/motion.js
 
 extra:
   generator: false
