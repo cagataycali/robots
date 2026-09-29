@@ -136,6 +136,31 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         ``render_mode='headless'`` does not change even though it records none."""
         return list(self._cameras)
 
+    def _recording_unknown_cameras_refusal(self, unknown: list[str]) -> dict[str, Any] | None:
+        """Name ``render_mode`` when the requested cameras exist but record nothing.
+
+        In ``render_mode="headless"`` the schema probe returns no images, so a
+        camera just added with ``add_camera`` is absent from the recordable set
+        and the generic refusal told the caller to add it again.
+        """
+        if getattr(self._config, "render_mode", None) != "headless":
+            return None
+        if not set(unknown) <= set(self._recording_scene_cameras()):
+            return None
+        from strands_robots.simulation.isaac.simulation import _HEADLESS_RENDER_REMEDY
+
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"start_recording: camera(s) {unknown} are in the scene but record no "
+                        f"frames: {_HEADLESS_RENDER_REMEDY}."
+                    )
+                }
+            ],
+        }
+
     def _probe_recording_scene(self) -> dict[str, Any]:
         """One observation, taken BEFORE the start lock: routed to the pump
         thread, holding ``self._lock`` across that handoff would deadlock."""

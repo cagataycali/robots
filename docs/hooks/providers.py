@@ -52,10 +52,12 @@ _EXTRA_FOR: dict[str, str] = {
     "microduck": "microduck",
     "rl": "rl",
     "remote": "inference",
+    "flux3_action": "flux3",
 }
 
 _PAGE_FOR: dict[str, str] = {
     "lerobot_local": "lerobot-local.md",
+    "flux3_action": "flux3-action.md",
     "wbc_gait": "wbc.md",
 }
 

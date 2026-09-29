@@ -5,12 +5,12 @@ At the end of this page you can list the peers on a mesh, ask one for its state,
 Continuing from the [mesh index](index.md) fence (two sims, `arm-a` and `arm-b`, `STRANDS_MESH_LOCAL_DEV=true`):
 
 ```python title="sketch"
-peers = a.mesh.peers                                       # list of presence dicts: peer_id, robot, last_seen, ...
+peers = a.mesh.peers                                       # presence dicts: peer_id, robot, last_seen, ...
 one = a.mesh.get_peer("arm-b", max_age_s=5.0)              # None if stale
-a.mesh.send("arm-b", {"action": "state"})                  # joints and sim time
+a.mesh.send("arm-b", {"action": "state"})                  # joints, sim time
 a.mesh.tell("arm-b", "stack the cubes", policy_provider="lerobot_local",
             pretrained_name_or_path="lerobot/smolvla_base", duration=10.0)
-a.mesh.broadcast({"action": "status"}, timeout=5.0)        # one reply per peer
+a.mesh.broadcast({"action": "status"}, timeout=5.0)        # a reply per peer
 a.mesh.subscribe("arm-b-state", "strands/arm-b/state", lambda key, payload: print(payload["joints"]))
 a.mesh.unsubscribe("arm-b-state")
 ```
@@ -31,7 +31,7 @@ Every command is a JSON dict with an `action` from `ALLOWED_ACTIONS`, validated 
 | `state`, `features` | the joint state; the observation and action feature schema |
 | `execute` | run a policy to completion: `instruction`, `policy_provider` (required, no silent default), `duration`, checkpoint as a Hub id |
 | `start` | the same, in the background |
-| `step`, `reset`, `set_joints` | step once; reset; write `target_joints` (simulation peers) |
+| `step`, `reset`, `set_joints`, `call`, `describe_tool` | step once; reset; write `target_joints`; one advertised function (`function`, `params`); the served spec (simulation peers) |
 | `stop` | halt the rollout; admitted under lockout |
 | `teleop_status`, `teleop_receive`, `teleop_stop` | follow a remote input stream ([teleoperation](../hardware/teleoperation.md)) |
 | `resume` | clear the e-stop lockout with the override code ([safety](safety-and-estop.md)) |
@@ -52,9 +52,9 @@ agent = Agent(tools=[robot_mesh])
 agent("Which robots are online? Ask arm-b to wave for two seconds with the mock policy.")
 ```
 
-`robot_mesh(action, target=, instruction=, command=, policy_provider=, duration=, timeout=, name=, limit=, function=)` answers `peers`, `status`, `tell`, `send`, `ping`, `rpc`, `broadcast`, `stop`, `emergency_stop`, `subscribe`, `unsubscribe`, `watch`, `inbox`. `ping` reports whether one peer is reachable and how fast; over AWS IoT an offline peer answers in one round trip ([direct messaging](direct.md)). It needs a mesh in the process (a `Robot(mesh=True)` or a gateway).
+`robot_mesh(action, target=, instruction=, command=, policy_provider=, duration=, timeout=, name=, limit=, function=)` answers `peers`, `status`, `tell`, `send`, `ping`, `rpc`, `broadcast`, `stop`, `emergency_stop`, `subscribe`, `unsubscribe`, `watch`, `inbox`. `ping` reports whether one peer is reachable and how fast; over AWS IoT an offline peer answers in one round trip ([direct messaging](direct.md)). It needs a mesh in the process (`Robot(mesh=True)` or a gateway).
 
-Six actions pause for operator approval by default: `emergency_stop`, `broadcast`, `tell`, `send`, `stop`, `rpc`. `STRANDS_MESH_HITL_ACTIONS` widens or narrows that set (an unknown token is a structured error, not a silent downgrade); `subscribe` and `watch` can be added for operators who treat telemetry as sensitive. Fleet-wide actions (`emergency_stop`, `broadcast`) say so in the prompt. Each action has a sliding-window rate limit (`emergency_stop` at 3 per minute) and the refusal names the wait. `rpc` calls a device-native function on a Device Connect peer (`function=`), validated for charset and bounded parameters.
+Six actions pause for operator approval by default: `emergency_stop`, `broadcast`, `tell`, `send`, `stop`, `rpc`. `STRANDS_MESH_HITL_ACTIONS` widens or narrows that set (an unknown token is a structured error, not a silent downgrade); `subscribe` and `watch` can be added for operators who treat telemetry as sensitive. Fleet-wide actions (`emergency_stop`, `broadcast`) say so in the prompt. Each action has a sliding-window rate limit (`emergency_stop` at 3 per minute) and the refusal names the wait. `rpc` calls a device-native function on a Device Connect peer (`function=`), charset-checked with bounded parameters.
 
 `subscribe` and `watch` are bounded by `STRANDS_MESH_SUBSCRIBE_ALLOW`; `inbox` reads what a subscription collected, `limit` rows at a time.
 

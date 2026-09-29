@@ -6,7 +6,8 @@ names its joints ``1``..``6`` and nothing in the sim mapped them to the
 ``shoulder_pan .. gripper`` the same arm's driver and datasets use. The agent
 exported the 14 KB MJCF to guess. The registry now carries ``joint_labels``
 for the SO arms; ``get_robot_state`` prints ``1 (shoulder_pan)`` and the joint
-write paths accept the label (bare, ``<robot>/<label>``, any case).
+write paths and ``send_action`` accept the label (bare, ``<robot>/<label>``,
+any case).
 """
 
 from __future__ import annotations
@@ -144,6 +145,27 @@ class TestJointWrites:
             assert "(" not in _text(sim._dispatch_action("get_robot_state", {})).split("\n")[1]
         finally:
             sim.destroy()
+
+
+class TestSendAction:
+    """``send_action`` takes the label ``set_joint_positions`` takes, for the same joint."""
+
+    @pytest.mark.parametrize("key", ["shoulder_lift", "Shoulder_Lift", "so101/shoulder_lift"])
+    def test_a_label_writes_the_same_ctrl_as_the_servo_id(self, so101, key):
+        data = so101._world._data
+        assert so101.send_action({"2": 0.3}, robot_name="so101")["status"] == "success"
+        by_id = data.ctrl.copy()
+        data.ctrl[:] = 0.0
+        result = so101.send_action({key: 0.3}, robot_name="so101")
+        assert result["status"] == "success", _text(result)
+        assert list(data.ctrl) == list(by_id)
+
+    def test_an_unknown_key_is_refused_and_the_error_teaches_the_labels(self, so101):
+        result = so101.send_action({"elbow": 0.3}, robot_name="so101")
+        assert result["status"] == "error"
+        assert _json(result)["unresolved_keys"] == ["elbow"]
+        assert "may also be written by label" in _text(result)
+        assert "3=elbow_flex" in _text(result)
 
 
 class TestTheShortFormIsLabelledToo:

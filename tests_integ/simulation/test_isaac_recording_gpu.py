@@ -46,11 +46,8 @@ def _skip_if_isaac_unavailable() -> None:
 
 
 def _assets_root_path() -> str:
-    """Resolve the Isaac Sim bundled-assets root (modern then legacy path)."""
-    try:
-        from isaacsim.storage.native import get_assets_root_path  # type: ignore[import-not-found]
-    except ImportError:
-        from omni.isaac.nucleus import get_assets_root_path  # type: ignore[import-not-found]
+    """Resolve the Isaac Sim bundled-assets root. A Kit extension: call after create_world."""
+    from isaacsim.storage.native import get_assets_root_path  # type: ignore[import-not-found]
 
     assets_root = get_assets_root_path()
     assert assets_root, "get_assets_root_path() returned empty"
@@ -73,15 +70,15 @@ class TestIsaacDatasetRecording:
         from strands_robots.simulation.isaac import IsaacConfig, IsaacSimulation
 
         _skip_if_isaac_unavailable()
-        assets_root = _assets_root_path()
         root = str(tmp_path / "isaac_gpu_ds")
 
         sim = IsaacSimulation(IsaacConfig(num_envs=1, headless=False, render_mode="rtx_realtime"))
         try:
             r = sim.create_world()
             assert r["status"] == "success", f"create_world: {r}"
+            assets_root = _assets_root_path()
 
-            usd_path = f"{assets_root}/Isaac/Robots/Franka/franka.usd"
+            usd_path = f"{assets_root}/Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd"
             r = sim.add_robot("franka", usd_path=usd_path)
             assert r["status"] == "success", f"add_robot: {r}"
 
@@ -152,12 +149,13 @@ class TestIsaacDatasetRecording:
             assert set(declared) == keys, declared
             reader = sim.stream_dataset("local/isaac_gpu_rec", root=root, shuffle=False)
             frame = next(iter(reader))
-            for key, (c, h, w) in declared.items():
+            for key, (h, w, c) in declared.items():
                 emitted = tuple(int(d) for d in frame[key].shape[-3:])
-                # DatasetRecorder declares (C, H, W); tolerate either layout
-                # from the streaming decoder, but H/W/C must be the probed ones.
+                # DatasetRecorder declares (H, W, C) - the LeRobot info.json
+                # convention (dataset_recorder.py); the streaming decoder emits
+                # (C, H, W). Tolerate either layout, but H/W/C must be the probed ones.
                 assert emitted in ((c, h, w), (h, w, c)), (
-                    f"{key}: schema declares CHW {(c, h, w)} but stream_dataset "
+                    f"{key}: schema declares HWC {(h, w, c)} but stream_dataset "
                     f"emitted {emitted} - RTX probe shape and read-back shape diverged"
                 )
         finally:
@@ -187,7 +185,7 @@ class TestIsaacDatasetRecording:
         root = str(tmp_path / "isaac_factory_ds")
 
         # Factory route: same call the notebook makes; returns the backend sim.
-        sim = Robot("so100", backend="isaac", mesh=False)
+        sim = Robot("so100", backend="isaac", mesh=False, render_mode="rtx_realtime")
         try:
             r = sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0.0, 0.05])
             assert r["status"] == "success", f"add_camera: {r}"
@@ -248,10 +246,10 @@ class TestIsaacDatasetRecording:
             assert set(declared) == keys, declared
             reader = sim.stream_dataset("local/nb5_isaac", root=root, shuffle=False)
             frame = next(iter(reader))
-            for key, (c, h, w) in declared.items():
+            for key, (h, w, c) in declared.items():
                 emitted = tuple(int(d) for d in frame[key].shape[-3:])
                 assert emitted in ((c, h, w), (h, w, c)), (
-                    f"{key}: schema declares CHW {(c, h, w)} but stream_dataset "
+                    f"{key}: schema declares HWC {(h, w, c)} but stream_dataset "
                     f"emitted {emitted} - factory-path probe and read-back shape diverged"
                 )
         finally:
@@ -270,12 +268,12 @@ class TestIsaacDatasetRecording:
         from strands_robots.simulation.isaac import IsaacConfig, IsaacSimulation
 
         _skip_if_isaac_unavailable()
-        assets_root = _assets_root_path()
 
         sim = IsaacSimulation(IsaacConfig(num_envs=1, headless=False, render_mode="rtx_realtime"))
         try:
             assert sim.create_world()["status"] == "success"
-            usd_path = f"{assets_root}/Isaac/Robots/Franka/franka.usd"
+            assets_root = _assets_root_path()
+            usd_path = f"{assets_root}/Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd"
             assert sim.add_robot("franka", usd_path=usd_path)["status"] == "success"
             assert sim.add_camera("cam1")["status"] == "success"
             assert sim.add_camera("cam2", position=[0.0, 2.5, 1.5], target=[0.0, 0.0, 0.5])["status"] == "success"
