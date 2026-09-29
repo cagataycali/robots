@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
+from strands_robots.mesh import security as _security
+
 
 @dataclass(frozen=True)
 class Lockout:
@@ -106,7 +108,11 @@ def note_command_accepted(current: Lockout, *, now: float) -> Lockout:
 
 
 #: Actions a locked-out peer still answers, so accepting one proves nothing.
-LOCKOUT_EXEMPT_ACTIONS = frozenset({"status", "resume"})
+#: This is the peer's own list (:data:`strands_robots.mesh.security.LOCKOUT_ADMITTED_ACTIONS`),
+#: not a copy: it once named only ``status`` and ``resume`` while the peer also
+#: admitted ``stop`` and ``ping``, so STOP ALL against an already locked fleet
+#: collected an acknowledgement from every peer and painted each card clear (f033).
+LOCKOUT_EXEMPT_ACTIONS: frozenset[str] = _security.LOCKOUT_ADMITTED_ACTIONS
 
 
 def proves_clear(action: str) -> bool:

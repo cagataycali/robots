@@ -2675,16 +2675,15 @@ class Mesh(SensorLoopsMixin):
         action = cmd.get("action", "status")
         r = self.robot
 
-        # While the emergency-stop lockout is engaged, only ``status`` and
-        # ``resume`` are permitted. Raise so _exec_cmd handles the rejection
+        # While the emergency-stop lockout is engaged, only the actions
+        # ``security.LOCKOUT_ADMITTED_ACTIONS`` names are permitted (the
+        # dashboard reads the same set: answering one of them is not proof
+        # the lockout cleared). Raise so _exec_cmd handles the rejection
         # symmetrically with ValidationError -- emitting type="error" on the
         # response topic and recording an audit entry. The wire response is
         # intentionally generic so a remote caller cannot use it to map the
         # lockout window.
-        # ``stop`` is admitted too: it only ever de-energizes, and a second
-        # e-stop arriving while the lockout is already engaged must still halt
-        # a rollout the first one missed rather than be "rejected".
-        if self._estop_lockout.is_set() and action not in ("status", "resume", "stop", "ping"):
+        if self._estop_lockout.is_set() and action not in _security.LOCKOUT_ADMITTED_ACTIONS:
             raise _security.LockoutError("command rejected")
 
         if action == "resume":
