@@ -160,6 +160,27 @@ def test_a_board_without_a_serial_is_reported_not_matched(manager: _Manager) -> 
     assert did["unidentified"] == ["/dev/ttyACM0"]
 
 
+def test_a_board_without_a_serial_is_reported_once_while_it_stays_plugged_in(manager: _Manager) -> None:
+    """A no-serial board is a steady state (CH34x adapters), not a two-second drumbeat.
+
+    The trail is a bounded deque; one entry per poll would rotate the proposal
+    and hold evidence out of it. The path is announced when it appears, kept on
+    the watcher while it stays, and announced again only after it left.
+    """
+    no_serial = {"device": "/dev/ttyACM0", "vid": "1a86", "pid": "55d3"}
+    ports: list[dict[str, Any]] = [no_serial]
+    w = AutoSpawnWatcher(manager, list_ports=lambda: list(ports), peer_ids=lambda: ())
+    assert w.poll()["unidentified"] == ["/dev/ttyACM0"]
+    assert w.poll()["unidentified"] == [], "the same plugged-in board was announced a second time"
+    assert w.poll()["unidentified"] == []
+    assert w.unidentified == {"/dev/ttyACM0"}, "the devices screen still needs to know the board is there"
+    ports.clear()
+    assert w.poll()["unidentified"] == []
+    assert w.unidentified == set(), "a board that left the scan is still remembered as present"
+    ports.append(no_serial)
+    assert w.poll()["unidentified"] == ["/dev/ttyACM0"], "re-plugging the board is a new event the trail should hear"
+
+
 def test_a_claimed_peer_is_held_out_loud(manager: _Manager) -> None:
     manager.profiles.save(SERIAL, SIM_PROFILE)
     w = _watcher(manager, BOARD, peers=("bench-sim",))

@@ -972,6 +972,10 @@ class AutoSpawnWatcher:
         self.pending: dict[str, dict[str, Any]] = {}
         # key -> the reason a board was held back, so the trail hears it once, not every poll
         self.held: dict[str, str] = {}
+        # device paths that report no USB serial and are plugged in right now; the trail hears
+        # each once when it appears (a CH34x adapter with no serial is a steady state, and one
+        # entry every poll would rotate the proposal and hold evidence out of the bounded trail)
+        self.unidentified: set[str] = set()
         self._missing: dict[str, int] = {}
         self._stop = threading.Event()
         # While True the watcher observes but never spawns/despawns.
@@ -1047,8 +1051,9 @@ class AutoSpawnWatcher:
     def poll(self) -> dict[str, Any]:
         """One appear/disappear pass. Returns what it did, for tests and logs.
 
-        ``proposed`` and ``held`` carry only what is NEW this pass; ``pending`` and
-        ``held`` on the instance keep the current state for the devices screen.
+        ``proposed``, ``held`` and ``unidentified`` carry only what is NEW this pass;
+        ``pending``, ``held`` and ``unidentified`` on the instance keep the current
+        state for the devices screen.
         """
         if not self.enabled():
             return {"skipped": "autospawn disabled"}
@@ -1056,12 +1061,17 @@ class AutoSpawnWatcher:
             return {"skipped": "autospawn suspended (record session owns the ports)"}
         boards: dict[str, list[dict[str, Any]]] = {}
         unidentified: list[str] = []
+        present_without_serial: set[str] = set()
         for p in self.list_ports():
             key = profile_key(p)
             if key:
                 boards.setdefault(key, []).append(p)
             elif p.get("device"):
-                unidentified.append(str(p["device"]))
+                path = str(p["device"])
+                present_without_serial.add(path)
+                if path not in self.unidentified:
+                    unidentified.append(path)
+        self.unidentified = present_without_serial
         spawned: list[str] = []
         spawned_from: dict[str, dict[str, Any]] = {}
         despawned: list[str] = []
