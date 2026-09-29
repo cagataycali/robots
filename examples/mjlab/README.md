@@ -178,7 +178,7 @@ rotates or lifts its first body.
 
 ## 03 Humanoid beyond velocity
 
-Results so far (rough done, getup training):
+Results so far (rough done, get-up v1 done, get-up v2 training):
 
 **Rough terrain, 1500 iterations, 4096 envs, 2 h 39 min on Thor** (`results/g1_rough`, shared GPU). Training ended at
 mean reward 15.66 and mean episode length 926 of 1000 ticks under the terrain curriculum. Native mjlab play at the
@@ -194,6 +194,19 @@ terrains. So the classic replay is a true negative: the 1500-iteration rough act
 band it ended in (F18). Two core paths had to be bypassed to get here
 (F17): the exporter's one-world env overflows mjwarp's contact budget on rough terrain (`nconmax must be >= 72`), and
 the provider refuses the `height_scan` term before any builder can be supplied.
+
+**Get-up, 1000 iterations, 2048 envs, 45.7 min on the shared GPU** (`results/g1_getup`,
+[`assets/g1_getup_v1_eval_native.json`](assets/g1_getup_v1_eval_native.json)). The flat velocity task with the
+tracking and gait rewards removed, a height bell (target 0.72 m, std 0.3) plus a `standing` bonus (pelvis above
+0.62 m and torso within 20 deg of upright), the fall termination removed, the robot dropped supine from 0.35 to
+0.45 m. Mean reward went -1.3 to 17.1, and the four native play episodes tell the same story: the pelvis sits at
+0.525 m from second 1 to second 9, torso not upright, 0 of 4 stood up. The reason is arithmetic, not physics: at
+0.525 m the height bell still pays 66 percent, the standing bonus pays nothing until 0.62 m, so a stable crouch is
+a local optimum PPO has no gradient out of (F21). `--getup-reward v2` (std 0.15, so the crouch is worth 18 percent;
+standing bonus 5.0 from 0.57 m; upright weight 3.0) is the one retry, running as phase 9; its row lands here.
+`eval-native` now records `z_per_second`, `base_z_max` and `upright_final` per episode so the next attempt is
+readable at a glance (the v1 trace also shows the pelvis reaching 0.85 to 1.25 m inside the first second after
+the drop, a launch that was not diagnosed).
 
 ## 04 Extreme domain randomisation
 

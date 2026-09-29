@@ -52,6 +52,14 @@ COMMANDS = {
     "yaw_0.5": (0.0, 0.0, 0.5),
 }
 STAND_Z = 0.72  # pelvis height of a standing G1 (deep lane native harness: 0.755-0.764)
+# Get-up reward shapes. v1 (std 0.3) pays 66 percent of the height term for a 0.525 m crouch and PPO
+# settled there (0/4 stood up at 1000 iterations); v2 sharpens the height bell, raises the standing bonus
+# and the upright weight so a crouch is worth 18 percent and only an upright stand collects the rest.
+GETUP_REWARDS = {
+    "v1": {"height_std": 0.3, "height_w": 2.0, "standing_w": 3.0, "standing_dz": 0.1, "upright_w": 2.0},
+    "v2": {"height_std": 0.15, "height_w": 2.0, "standing_w": 5.0, "standing_dz": 0.15, "upright_w": 3.0},
+}
+GETUP_REWARD = os.environ.get("GETUP_REWARD", "v1")
 FALL_Z = 0.35
 
 
@@ -111,10 +119,15 @@ def getup_env_cfg(play: bool = False):
         "pose",
     ):
         cfg.rewards.pop(name, None)
-    cfg.rewards["height"] = RewardTermCfg(func=height_reward, weight=2.0, params={"target": STAND_Z, "std": 0.3})
-    cfg.rewards["standing"] = RewardTermCfg(func=standing, weight=3.0, params={"target": STAND_Z - 0.1})
+    shape = GETUP_REWARDS[GETUP_REWARD]
+    cfg.rewards["height"] = RewardTermCfg(
+        func=height_reward, weight=shape["height_w"], params={"target": STAND_Z, "std": shape["height_std"]}
+    )
+    cfg.rewards["standing"] = RewardTermCfg(
+        func=standing, weight=shape["standing_w"], params={"target": STAND_Z - shape["standing_dz"]}
+    )
     if "upright" in cfg.rewards:
-        cfg.rewards["upright"].weight = 2.0
+        cfg.rewards["upright"].weight = shape["upright_w"]
     # Falling is the start state, so it cannot be a termination.
     cfg.terminations.pop("fell_over", None)
     cfg.terminations.pop("out_of_terrain_bounds", None)
@@ -260,7 +273,11 @@ def eval_native(task: str, onnx: str, out: Path, ticks: int, seed: int, terrain:
     v_err = torch.zeros(len(commands), device=env.device)
     z_sum = torch.zeros(len(commands), device=env.device)
     stood = torch.zeros(len(commands), device=env.device)
-    for _ in range(ticks):
+    z_max = torch.zeros(len(commands), device=env.device)
+    upright_final = torch.zeros(len(commands), dtype=torch.bool, device=env.device)
+    hz_int = int(round(1.0 / (env.cfg.sim.mujoco.timestep * env.cfg.decimation)))
+    z_trace: list[list[float]] = [[] for _ in commands]
+    for tick in range(ticks):
         twist.vel_command_b[:] = cmd_t
         act = sess.run(None, {in_name: obs["actor"].cpu().numpy().astype(np.float32)})[0]
         obs, _, terminated, time_out, _ = env.step(torch.as_tensor(act, device=env.device))
@@ -274,6 +291,11 @@ def eval_native(task: str, onnx: str, out: Path, ticks: int, seed: int, terrain:
             stood,
             ((z > STAND_Z - 0.1) & (robot.data.projected_gravity_b[:, 2] < -math.cos(math.radians(20.0)))).float(),
         )
+        z_max = torch.maximum(z_max, z)
+        upright_final = robot.data.projected_gravity_b[:, 2] < -math.cos(math.radians(20.0))
+        if (tick + 1) % hz_int == 0:  # one pelvis height per second, so a trace reads as a story
+            for i in range(len(commands)):
+                z_trace[i].append(round(float(z[i]), 3))
     env.close()
     hz = 1.0 / (env.cfg.sim.mujoco.timestep * env.cfg.decimation)
     eps = {}
@@ -285,6 +307,9 @@ def eval_native(task: str, onnx: str, out: Path, ticks: int, seed: int, terrain:
             "fell": bool(survived[i] < ticks),
             "v_xy_err_mean": round(float(v_err[i]) / n, 4),
             "base_z_mean": round(float(z_sum[i]) / n, 4),
+            "base_z_max": round(float(z_max[i]), 4),
+            "upright_final": bool(upright_final[i]),
+            "z_per_second": z_trace[i],
             "stood_up": bool(stood[i] > 0),
         }
     rec = {
@@ -380,6 +405,7 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("--iterations", type=int, default=1500)
     t.add_argument("--run-dir", required=True)
     t.add_argument("--seed", type=int, default=42)
+    t.add_argument("--getup-reward", choices=GETUP_REWARDS, default=GETUP_REWARD, help="reward shape for --task getup")
     e = sub.add_parser("export")
     e.add_argument("--task", choices=TASKS, required=True)
     e.add_argument("--checkpoint", required=True)
@@ -398,6 +424,7 @@ def main(argv: list[str] | None = None) -> None:
     a = p.parse_args(argv)
     os.environ.setdefault("MUJOCO_GL", "egl")
     if a.cmd == "train":
+        globals()["GETUP_REWARD"] = a.getup_reward
         train(a.task, a.num_envs, a.iterations, Path(a.run_dir), a.seed)
     elif a.cmd == "export":
         export(a.task, Path(a.checkpoint), Path(a.onnx))
