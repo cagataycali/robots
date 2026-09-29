@@ -362,19 +362,22 @@ def test_a_leader_drives_the_native_driver_and_stop_joins_it_before_torque_off(
     import asyncio
     import time
 
-    follower = Robot("so101", mode="real", driver="strands", transport="twin")
+    follower: Any = Robot("so101", mode="real", driver="strands", transport="twin")
     commanded: list[dict[str, float]] = []
     torque: list[bool] = []
     send = follower.send_action
-    monkeypatch.setattr(
-        follower, "send_action", lambda action, robot_name=None: commanded.append(action) or send(action)
-    )
     set_torque = follower._set_torque_envelope
-    monkeypatch.setattr(
-        follower,
-        "_set_torque_envelope",
-        lambda on: torque.append(bool(follower._teleop_running)) or set_torque(on),
-    )
+
+    def record_send(action: dict[str, float], robot_name: str | None = None) -> Any:
+        commanded.append(action)
+        return send(action)
+
+    def record_torque(on: bool) -> Any:
+        torque.append(bool(follower._teleop_running))
+        return set_torque(on)
+
+    monkeypatch.setattr(follower, "send_action", record_send)
+    monkeypatch.setattr(follower, "_set_torque_envelope", record_torque)
 
     assert follower.attach_teleop(_ScriptedLeader(), name="leader") is follower
     assert follower.teleoperate(duration=5.0)["status"] == "success"
@@ -421,7 +424,7 @@ def test_the_native_driver_refuses_a_leader_that_reports_another_unit(
     follower: str, build_leader: Any, accepted: bool
 ) -> None:
     """Degrees in, degrees out: a -100..100 leader would be read as degrees on the native bus."""
-    driver = Robot(follower, mode="real", driver="strands", port="/dev/null")
+    driver: Any = Robot(follower, mode="real", driver="strands", port="/dev/null")
     leader = build_leader()
     if accepted:
         driver.attach_teleop(leader, name="leader")
