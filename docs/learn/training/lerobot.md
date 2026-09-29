@@ -84,5 +84,5 @@ GR00T N1.7 trains through `lerobot_local` with `extra={"policy_type": "groot"}` 
 ## Limits
 
 - `LerobotTrainer` and `train_policy` are single-node; `num_nodes > 1` is refused. Use `sagemaker` or `lerobot_train` with `accelerate` for scale-out.
-- The trainer imports lerobot in this process; the `[groot]` extra adds the transformers, peft and diffusers pins GR00T N1.7 needs.
+- The trainer imports lerobot in this process, which pins `transformers>=5`; the `[groot]` extra adds the peft, diffusers and timm pins GR00T N1.7 needs on top.
 - No training runs on this documentation machine; every fence above is a sketch by design.

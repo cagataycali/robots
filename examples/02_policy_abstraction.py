@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One function to load any policy - mock, GR00T, ACT, MolmoAct2, Cosmos3.
+"""One function to load any policy - mock, ACT, GR00T N1.7, MolmoAct2, Cosmos3.
 
 Goal: Demonstrate create_policy() as the universal entry point. The provider
 is auto-resolved from the string: "mock", an HF repo, or a ZMQ URL.
@@ -17,7 +17,8 @@ sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0, 0.05])
 
 # create_policy("mock") -> MockPolicy (sinusoidal test actions)
 # create_policy("lerobot/act_aloha_sim_transfer_cube_human") -> LerobotLocalPolicy
-# create_policy("zmq://localhost:5555") -> Gr00tPolicy (ZMQ client)
+# create_policy("nvidia/GR00T-N1.7-3B", policy_type="groot") -> LerobotLocalPolicy (GR00T N1.7)
+# create_policy("ws://gpu-box:8765") -> RemotePolicy (a PolicyServer elsewhere)
 # create_policy("allenai/MolmoAct2-SO100_101", embodiment="so100") -> LerobotLocalPolicy
 # The embodiment names the robot BELOW, not a physical arm: a "*_real"
 # embodiment declares the driver's "<motor>.pos" keys, which bind none of
