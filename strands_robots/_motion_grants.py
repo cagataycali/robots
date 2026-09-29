@@ -71,7 +71,10 @@ DIRECT_SERIAL_TOOLS: frozenset[str] = frozenset({"pose_tool", "serial_tool"})
 #: rendered as an empty detail line. ``duration`` is here for the same reason on
 #: the ``fleet`` surface: it is shown to the operator, and how long a robot moves
 #: is part of what they said yes to, so a yes for a five-second task was
-#: otherwise spendable by a ten-minute one.
+#: otherwise spendable by a ten-minute one. ``source_peer_id`` and
+#: ``device_name`` are the whole payload of the mesh ``teleop_receive`` verb,
+#: which leader the robot will follow: a yes for one leader must not be
+#: spendable by another.
 DETAIL_FIELDS = (
     "pose_name",
     "motor_name",
@@ -84,6 +87,8 @@ DETAIL_FIELDS = (
     "data",
     "hex_data",
     "duration",
+    "source_peer_id",
+    "device_name",
 )
 
 _grants_lock = threading.Lock()

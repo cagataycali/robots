@@ -69,7 +69,10 @@ def test_dispatch_teleop_status_forwarded_to_robot() -> None:
     assert out == {"inputs": ["leader"], "publishers": {"leader": 1}, "receivers": {}}
 
 
-def test_dispatch_teleop_receive_forwards_source_and_device() -> None:
+def test_dispatch_teleop_receive_forwards_source_and_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The operator on the robot host pre-approves wire motion; without it a
+    # hardware peer refuses execute/start/teleop_receive (f011).
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
     robot = _TeleopRobot()
     m = Mesh(robot, peer_id="p")
 
@@ -79,7 +82,10 @@ def test_dispatch_teleop_receive_forwards_source_and_device() -> None:
     assert robot.received == ("leader-1", "leader")
 
 
-def test_dispatch_teleop_receive_device_defaults_to_leader() -> None:
+def test_dispatch_teleop_receive_device_defaults_to_leader(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The operator on the robot host pre-approves wire motion; without it a
+    # hardware peer refuses execute/start/teleop_receive (f011).
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
     robot = _TeleopRobot()
     m = Mesh(robot, peer_id="p")
 
