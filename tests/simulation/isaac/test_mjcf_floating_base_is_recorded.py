@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import os
 import tempfile
-import threading
 import types
 from typing import Any
 
@@ -49,9 +48,9 @@ import pytest
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac import simulation as sim_mod  # noqa: E402
-from strands_robots.simulation.isaac.config import IsaacConfig  # noqa: E402
 from strands_robots.simulation.isaac.loaders import mjcf_declares_floating_base  # noqa: E402
 from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 #: The four entries the ``SimEngine.get_observation`` schema reserves for a base.
 _BASE_KEYS = ("base_pos", "base_quat", "base_lin_vel", "base_ang_vel")
@@ -108,20 +107,9 @@ def _write(xml: str, name: str = "robot.xml") -> str:
 
 
 def _engine() -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world = types.SimpleNamespace()
     engine._world_created = True
-    engine._robots = {}
-    engine._objects = {}
-    engine._cameras = {}
-    engine._prim_registry = []
-    engine._action_controllers = {}
-    engine._replicated = False
-    engine._recording_state_dict = {}
-    engine._main_tid = threading.get_ident()
-    engine._pump_running = False
     # The USD leaf is stood in: what these grade is what ``fixed_base`` RECORDS,
     # not the stage authoring, which needs Kit.
     engine._load_usd_robot = lambda prim_path, usd_path, position: (  # type: ignore[method-assign]

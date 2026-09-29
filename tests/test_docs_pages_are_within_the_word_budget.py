@@ -58,8 +58,15 @@ _BUDGET: int = _hook().LIMIT
 #: to 48,896 when the per-driver facts moved to one section on the drivers page, and
 #: to 47,845 when the robot pages dropped the back-link footer the nav already gives, and
 #: to 46,418 when they dropped the lines their chips and the nav already state; the old
-#: site was 112,416.
-_SITE_BUDGET = 46_418
+#: site was 112,416. Raised once, to 49,800, when the site started saying where readers
+#: look that learned policies run on real robots: a new Start page (First learned
+#: policy) and a generated "Policies verified on this robot" section on every robot
+#: page, each row carrying the source of its numbers (docs/hooks/data/checkpoints.json).
+#: Then lowered to 49,002 when the robot pages' chips became one {{robot_chips:<name>}} token the hook expands (798 words the chips no longer repeat).
+#: Raised to 49,508 when the mesh gained its direct messaging page (one new page under
+#: learn/mesh, a variable row and a sentence on the pages that point at it, and the `iot`
+#: verbs on the command line page).
+_SITE_BUDGET = 49_508
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

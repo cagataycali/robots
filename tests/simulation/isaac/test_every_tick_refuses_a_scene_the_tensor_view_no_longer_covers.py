@@ -42,7 +42,6 @@ graded is which paths refuse and what they say.
 
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 import pytest
@@ -50,11 +49,10 @@ import pytest
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402 - after importorskip
-    IsaacConfig,
-    IsaacSimulation,
     _physics_view_stale_error,
     _RobotState,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 #: The remedy every refusal owes its caller.
 _REMEDY = "reset()"
@@ -108,22 +106,9 @@ class _Articulation:
 
 def _engine(*, stale: bool) -> Any:
     """A skeleton engine whose world is live and whose view may be stale."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world = _World()
     engine._world_created = True
-    engine._objects = {}
-    engine._cameras = {}
-    engine._scene_objects = set()
-    engine._prim_registry = []
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._recording_state_dict = {}
-    engine._applied_wrenches = {}
-    engine._action_controllers = {}
-    engine._main_tid = threading.get_ident()
-    engine._pump_running = False
     engine._physics_view_stale = stale
     robot = _RobotState(name="arm", prim_path="/World/Robots/arm", joint_names=["j0"])
     robot.articulation = _Articulation()

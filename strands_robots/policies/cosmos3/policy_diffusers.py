@@ -153,6 +153,35 @@ def _image_keys(server_key_iter: Any) -> list[str]:
     return out
 
 
+def _dtype_kwarg(diffusers_version: str) -> str:
+    """The ``from_pretrained`` keyword that carries the load dtype on this diffusers.
+
+    diffusers 0.40 renamed ``torch_dtype`` to ``dtype`` and warns
+    (``FutureWarning: torch_dtype is deprecated``) on every load that still
+    passes the old name; 0.39, the extra's floor, pops only ``torch_dtype`` and
+    would forward an unknown ``dtype`` keyword into the component loaders. The
+    keyword is therefore chosen from the installed version rather than fixed,
+    so the load is silent on both ends of the supported range.
+
+    Args:
+        diffusers_version: ``importlib.metadata.version("diffusers")`` or any
+            ``"<major>.<minor>..."`` string. Unparseable input selects the floor's
+            keyword, which every supported diffusers still accepts.
+
+    Returns:
+        ``"dtype"`` from 0.40.0 on, ``"torch_dtype"`` before.
+    """
+    parts: list[int] = []
+    for piece in diffusers_version.split(".")[:2]:
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    if len(parts) == 2 and tuple(parts) >= (0, 40):
+        return "dtype"
+    return "torch_dtype"
+
+
 def _resolve_torch_dtype(torch_mod: Any, dtype: str) -> Any:
     """Map a dtype string (``"bfloat16"``) to the matching ``torch`` dtype."""
     resolved = getattr(torch_mod, dtype, None)
@@ -261,7 +290,11 @@ class Cosmos3DiffusersBackend:
         # default so the in-process backend loads without that extra; callers who
         # installed ``cosmos_guardrail`` can opt back in via
         # ``enable_safety_checker=True``.
-        from_pretrained_kwargs: dict[str, Any] = {"torch_dtype": torch_dtype}
+        try:
+            installed = _metadata.version("diffusers")
+        except Exception:  # pragma: no cover - metadata is present wherever diffusers imports
+            installed = "0"
+        from_pretrained_kwargs: dict[str, Any] = {_dtype_kwarg(installed): torch_dtype}
         if not self.enable_safety_checker:
             from_pretrained_kwargs["enable_safety_checker"] = False
         pipe = Cosmos3OmniPipeline.from_pretrained(self.model, **from_pretrained_kwargs)

@@ -10,7 +10,6 @@ point the state applies to must answer with the same refusal (after its own
 from __future__ import annotations
 
 import asyncio
-import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -18,8 +17,7 @@ import pytest
 from strands.types._events import ToolResultEvent
 
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState
-from tests._daemon_executor import DaemonThreadExecutor
+from tests._hardware_robot import hardware_robot_on
 
 
 class _Arm:
@@ -37,19 +35,8 @@ class _Arm:
 
 
 def _hw() -> HwRobot:
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "so101"
-    hw.data_config = None
-    hw._task_state = RobotTaskState()
-    hw._executor = DaemonThreadExecutor(max_workers=1, thread_name_prefix="t")
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
-    hw.mesh = None
-    hw.peer_id = None
-    hw.robot = _Arm()
     # A call that passes every check reaches the operator; say so distinctly.
+    hw = hardware_robot_on(_Arm(), tool_name="so101")
     hw._gate_motion = lambda *a, **k: "GATED"  # type: ignore[method-assign]
     return hw
 

@@ -2,7 +2,7 @@
 
 All three transports publish a *latching* velocity command: with no ``duration``
 a single ``cmd_vel`` message leaves the base moving until another command
-arrives. :class:`~strands_robots.mesh.RosbridgeRobot`'s own drive tool
+arrives. :class:`~strands_robots.drivers.ros.RosbridgeRobot`'s own drive tool
 description states that contract - "without duration the last command latches
 until stop" - and every bridge carries a public ``stop()`` that publishes a zero
 ``Twist``.
@@ -29,10 +29,10 @@ from typing import Any
 
 import pytest
 
-import strands_robots.mesh.ros_bridge as ros_mod
-import strands_robots.mesh.rosbridge_robot as rbr_mod
-import strands_robots.mesh.rtps_robot as rtps_mod
-from strands_robots.mesh import RosBridgedRobot, RosbridgeRobot, RtpsRobot
+import strands_robots.drivers.ros.ros_bridge as ros_mod
+import strands_robots.drivers.ros.rosbridge_robot as rbr_mod
+import strands_robots.drivers.ros.rtps_robot as rtps_mod
+from strands_robots.drivers.ros import RosBridgedRobot, RosbridgeRobot, RtpsRobot
 from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 ZERO_TWIST = {"linear": {"x": 0.0}, "angular": {"z": 0.0}}

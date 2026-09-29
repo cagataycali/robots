@@ -241,11 +241,16 @@ def _compile_call(entry: Any, *, context: str, require_kind: str | None = None) 
     kwargs = {k: v for k, v in entry.items() if k != "predicate"}
     try:
         return make_predicate(pred_name, **kwargs)
-    except ValueError:
-        # Unknown predicate; surface verbatim (already carries the valid list).
-        raise
+    except ValueError as e:
+        if str(e).startswith("Unknown predicate"):
+            # Surface verbatim (already carries the valid list).
+            raise
+        # A keyword or value refusal: it already names the predicate and the accepted
+        # keywords; the clause it sits in is what the caller still needs.
+        raise ValueError(f"{context}: {e}") from e
     except TypeError as e:
-        # Bad kwargs; wrap so the caller knows which predicate failed to compile.
+        # A factory with no readable signature refused the call itself; wrap so the caller
+        # knows which predicate failed to compile.
         raise ValueError(f"{context}: predicate '{pred_name}' compilation failed: {e}") from e
 
 

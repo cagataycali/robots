@@ -313,8 +313,8 @@ class TestTheAgentPathConnectsLazily:
         driver = ReachyDriver()
         result = _run_tool(driver, action="status")
         assert result["status"] == "success"
-        # The verb nests the whole ``get_status`` envelope in one json block.
-        assert result["content"][0]["json"]["content"][0]["json"]["connected"] is False
+        # The verb answers with ``get_status``'s envelope itself: one level (#4151).
+        assert result["content"][0]["json"]["connected"] is False
         assert driver._connected is False
         assert table.calls == []
 

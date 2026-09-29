@@ -45,6 +45,7 @@ import pytest
 from strands_robots.simulation import predicates
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.policy_runner import PolicyRunner
+from tests.simulation._isaac_engine import isaac_engine
 
 
 def _implement_abstracts(namespace: dict[str, Any]) -> dict[str, Any]:
@@ -183,16 +184,10 @@ class TestTheShippedBackendsAdvertiseHonestly:
         X" assertion turns a correct advertisement into a red test. What is
         actually owed is the equivalence: advertised iff overridden."""
         pytest.importorskip("strands_robots.simulation.isaac")
-        import threading
 
-        from strands_robots.simulation.isaac.simulation import IsaacConfig, IsaacSimulation
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
 
-        engine = IsaacSimulation.__new__(IsaacSimulation)
-        engine._lock = threading.RLock()
-        engine._robots = {}
-        engine._cameras = {}
-        engine._config = IsaacConfig()
-        engine._world_created = False
+        engine = isaac_engine()
         methods = engine.describe()["methods"]
         for name in ("load_scene", "randomize", "set_obs_noise", "get_contacts"):
             overridden = getattr(IsaacSimulation, name) is not getattr(SimEngine, name)

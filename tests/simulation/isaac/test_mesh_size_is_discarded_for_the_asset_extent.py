@@ -56,13 +56,13 @@ import inspect
 import math
 import pathlib
 import sys
-import threading
 import types
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
+from tests.simulation._isaac_engine import isaac_engine
 from tests.simulation.test_mesh_size_docs_match_backend_divergence import MESH_SIZE
 
 pytest.importorskip("strands_robots.simulation.isaac")
@@ -230,11 +230,8 @@ def asset(tmp_path: pathlib.Path, monkeypatch) -> pathlib.Path:
 def _engine() -> Any:
     """A stand-in engine whose world is present, so ``add_object`` reaches the
     success path instead of the "No world created" gate."""
-    from strands_robots.simulation.isaac.simulation import IsaacConfig, IsaacSimulation
 
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig()
+    engine = isaac_engine()
 
     class _Scene:
         def add(self, handle: Any) -> None:

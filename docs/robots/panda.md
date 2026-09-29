@@ -7,7 +7,7 @@ description: "Franka Emika Panda (7-DOF + gripper)"
 
 # Franka Emika Panda (7-DOF + gripper)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:panda}}
 
 <robot-viewer name="panda"></robot-viewer>
 
@@ -28,5 +28,9 @@ Gripper actuator `actuator8`: closed at the low end of travel, open at the high 
 ## Hardware
 
 **`FrankaDriver`** (selected with `driver="strands"`) speaks Franka Control Interface (FCI) through `panda-py`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#frankadriver).
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 
 Model: [google-deepmind/mujoco_menagerie/franka_emika_panda](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/franka_emika_panda), scene `scene.xml`.

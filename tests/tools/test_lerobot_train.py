@@ -23,6 +23,7 @@ and ``psutil`` in the session lifecycle. They pin:
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -74,7 +75,7 @@ def test_build_single_gpu_command_emits_core_flags() -> None:
         save_freq=1000,
         device="cuda",
     )
-    assert cmd[:3] == ["python", "-m", "lerobot.scripts.lerobot_train"]
+    assert cmd[:3] == [sys.executable, "-m", "lerobot.scripts.lerobot_train"]
     assert "--dataset.repo_id=local" in cmd
     assert "--dataset.root=/data/cubes" in cmd
     assert "--policy.type=act" in cmd
@@ -99,7 +100,7 @@ def test_build_multi_gpu_command_prepends_accelerate_launch() -> None:
         output_dir="/out/act",
         num_gpus=4,
     )
-    assert cmd[:2] == ["accelerate", "launch"]
+    assert cmd[0] == train_mod._accelerate_launcher() and cmd[1] == "launch"
     assert "--multi_gpu" in cmd
     assert "--num_processes=4" in cmd
     assert "--num_machines=1" in cmd

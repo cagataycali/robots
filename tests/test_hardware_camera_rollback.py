@@ -40,8 +40,6 @@ cameras are in-memory fakes that mirror lerobot's connect ordering and its
 from __future__ import annotations
 
 import asyncio
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -51,7 +49,7 @@ pytest.importorskip("lerobot")  # the fakes below mirror lerobot's own error typ
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError  # noqa: E402
 
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState
+from tests._hardware_robot import hardware_robot_on
 
 
 class _FakeCamera:
@@ -147,21 +145,7 @@ class _FakeCameraRobot:
 
 def _make_robot(fake: Any) -> HwRobot:
     """Construct a Robot around ``fake``, bypassing hardware init."""
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "test_arm"
-    hw.action_horizon = 8
-    hw.data_config = None
-    hw.control_frequency = 1000.0
-    hw.action_sleep_time = 0.001
-    hw._task_state = RobotTaskState()
-    hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
-    hw.mesh = None
-    hw.peer_id = None
-    hw.robot = fake
+    hw = hardware_robot_on(fake, tool_name="test_arm", control_frequency=1000.0)
     return hw
 
 

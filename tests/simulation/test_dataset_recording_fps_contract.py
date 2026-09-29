@@ -161,8 +161,7 @@ class TestRunPolicyToolForwardsTheGuard:
 def _start_recording_calls_the_shared_guard(module_path: Path) -> bool:
     """True when the module's ``start_recording`` calls the shared fps guard.
 
-    Parsed by AST so backends whose optional dependencies (Isaac Sim, Newton)
-    are not installed are still checked. It proves the guard is *called*, never
+    Parsed by AST. It proves the guard is *called*, never
     that its refusal is *returned* - a copy that keeps the call and drops the
     ``return`` satisfies it - so the returned refusal is driven per backend in
     ``test_recording_preflight_refusals_across_backends.py``.
@@ -178,10 +177,9 @@ def _start_recording_calls_the_shared_guard(module_path: Path) -> bool:
     return False
 
 
-@pytest.mark.parametrize("backend", ["mujoco", "newton", "isaac"])
-def test_every_backend_start_recording_shares_the_guard(backend):
-    """No backend may accept a dataset rate the others refuse."""
-    module_path = Path(simulation_pkg.__file__).parent / backend / "recording.py"
+def test_the_shared_start_recording_calls_the_guard():
+    """The one ``start_recording`` every backend inherits refuses the rate."""
+    module_path = Path(simulation_pkg.__file__).parent / "recording.py"
     assert _start_recording_calls_the_shared_guard(module_path), (
-        f"{backend}/recording.py start_recording must call dataset_recording_option_error"
+        "simulation/recording.py start_recording must call dataset_recording_option_error"
     )

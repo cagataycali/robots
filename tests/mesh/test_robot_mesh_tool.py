@@ -142,6 +142,54 @@ def test_send_invokes_mesh_send(fake_local_mesh):
     assert args.kwargs["timeout"] == 5.0
 
 
+def test_send_reports_sends_own_error_envelope_as_an_error(fake_local_mesh):
+    # ``{"status": "error"}`` is Mesh.send's own verdict (an offline peer over
+    # AWS IoT, a refused precondition): nothing executed, so the tool must not
+    # wrap it in a success an agent would read as a robot that did the thing.
+    fake_local_mesh.send.return_value = {
+        "status": "error",
+        "error": "peer offline (iot 404)",
+        "peer": "peer-b",
+        "delivery": {"via": "direct", "confirmed": False, "latency_ms": 81.0, "reason": "offline"},
+    }
+    out = _strands_call(action="send", target="peer-b", command='{"action": "status"}', timeout=5.0)
+    assert out["status"] == "error"
+    text = out["content"][0]["text"]
+    assert "peer offline (iot 404)" in text and '"via": "direct"' in text
+
+
+def test_send_passes_the_delivery_verdict_through(fake_local_mesh):
+    fake_local_mesh.send.return_value = {
+        "type": "response",
+        "result": {"ok": 1},
+        "delivery": {"via": "direct", "confirmed": True, "latency_ms": 156.0, "reason": ""},
+    }
+    out = _strands_call(action="send", target="peer-b", command='{"action": "status"}', timeout=5.0)
+    assert out["status"] == "success"
+    assert '"confirmed": true' in out["content"][0]["text"]
+
+
+def test_ping_requires_target(fake_local_mesh):
+    out = _strands_call(action="ping")
+    assert out["status"] == "error"
+    assert "target" in out["content"][0]["text"]
+
+
+def test_ping_reports_a_reachable_peer_as_success(fake_local_mesh):
+    fake_local_mesh.ping.return_value = {"status": "ok", "latency_ms": 156.2, "via": "direct", "confirmed": True}
+    out = _strands_call(action="ping", target="peer-b", timeout=2.0)
+    assert out["status"] == "success"
+    assert '"via": "direct"' in out["content"][0]["text"]
+    fake_local_mesh.ping.assert_called_once_with("peer-b", timeout=2.0)
+
+
+def test_ping_reports_an_unreachable_peer_as_an_error(fake_local_mesh):
+    fake_local_mesh.ping.return_value = {"status": "offline", "latency_ms": 81.0, "via": "direct", "reason": "offline"}
+    out = _strands_call(action="ping", target="peer-b", timeout=2.0)
+    assert out["status"] == "error"
+    assert "offline" in out["content"][0]["text"]
+
+
 def test_broadcast_invokes_mesh_broadcast(fake_local_mesh):
     fake_local_mesh.broadcast.return_value = [{"a": 1}, {"b": 2}]
     out = _strands_call(action="broadcast", command='{"action":"status"}')

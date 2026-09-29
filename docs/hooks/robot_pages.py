@@ -9,11 +9,18 @@ Two jobs, both filesystem only (no ``strands_robots`` import):
    when the registry is unchanged. The output is committed: the nav names the
    files, graders can grep them, and a reviewer sees the diff a registry change
    makes.
-2. ``on_page_markdown`` substitutes three tokens: ``{{robot_cards}}`` (every
-   robot as a card), ``{{robot_cards:<family>}}`` (one family) and
-   ``{{robot_family_table:<family>}}`` (the family's rows as a table) and
-   ``{{driver_facts}}`` (every native driver's facts, rendered once on the
-   drivers page that each robot page links to).
+2. ``on_page_markdown`` substitutes the tokens: ``{{robot_cards}}`` (every
+   robot as a card), ``{{robot_cards:<family>}}`` (one family),
+   ``{{robot_family_table:<family>}}`` (the family's rows as a table),
+   ``{{robot_chips:<name>}}`` (one robot page's family, joints, sim, real and
+   driver chips) and ``{{driver_facts}}`` (every native driver's facts, rendered
+   once on the drivers page that each robot page links to).
+
+The "Policies verified on this robot" section is read from
+``docs/hooks/data/checkpoints.json``: one row per checkpoint that was run on the
+robot first-hand, each with the script or public artifact that produced its
+numbers in ``source``. A robot without rows states that no checkpoint has been
+verified on it and links the recording page, so no page implies a policy ran.
 
 Hardware facts come from :data:`DRIVERS`, one entry per native driver class,
 each line re-read from the driver module it names, and from the registry's
@@ -40,11 +47,13 @@ _DOCS = _REPO / "docs"
 _OUT = _DOCS / "robots"
 _MANIFEST = _DOCS / "assets" / "viewer" / "robots.json"
 _REGISTRY = _REPO / "strands_robots" / "registry" / "robots.json"
+_CHECKPOINTS = _HERE / "data" / "checkpoints.json"
 _CDN = "https://cdn.jsdelivr.net/gh/"
 
 _TOKEN_CARDS = re.compile(r"^\{\{\s*robot_cards(?::([a-z_]+))?\s*\}\}\s*$", re.M)
 _TOKEN_TABLE = re.compile(r"^\{\{\s*robot_family_table:([a-z_]+)\s*\}\}\s*$", re.M)
 _TOKEN_FACTS = re.compile(r"^\{\{\s*driver_facts\s*\}\}\s*$", re.M)
+_TOKEN_CHIPS = re.compile(r"^\{\{\s*robot_chips:([A-Za-z0-9_.-]+)\s*\}\}\s*$", re.M)
 
 _GENERATED = "<!-- generated: docs/hooks/robot_pages.py -->"
 
@@ -277,6 +286,40 @@ def manifest() -> dict[str, dict]:
     return json.loads(_MANIFEST.read_text(encoding="utf-8"))["robots"]
 
 
+@lru_cache(maxsize=1)
+def checkpoints() -> dict[str, list[dict[str, str]]]:
+    """Checkpoints run on each robot, from ``docs/hooks/data/checkpoints.json``."""
+    rows: dict[str, list[dict[str, str]]] = json.loads(_CHECKPOINTS.read_text(encoding="utf-8"))["robots"]
+    return rows
+
+
+def _policies_section(name: str, cov) -> str:  # noqa: ANN001
+    """The section that says which checkpoints ran on this robot, or that none did."""
+    out: list[str] = ["## Policies verified on this robot", ""]
+    rows = checkpoints().get(name, ())
+    if rows:
+        out += ["| Checkpoint | Provider | Where | What happened |", "|---|---|---|---|"]
+        for row in rows:
+            out.append(
+                f"| {row['checkpoint']} ({row['kind']}) | `{row['provider']}` | {row['where']} | {row['result']}. "
+                f"Source: {row['source']} |"
+            )
+        out.append("")
+    else:
+        none_yet = (
+            "No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then "
+            "[train](../learn/training/lerobot.md) and run it with `run_policy`."
+        )
+        out += [none_yet, ""]
+    if cov.policies:
+        providers = ", ".join(f"`{p}`" for p in cov.policies)
+        out += [
+            f"Providers written for this body: {providers}; the rest are in the [policy matrix](../learn/policies/index.md).",
+            "",
+        ]
+    return "\n".join(out)
+
+
 def _families_in_order() -> list[str]:
     seen: list[str] = []
     for spec in registry().values():
@@ -317,6 +360,11 @@ def _chips(name: str, spec: dict, cov, entry: dict) -> str:  # noqa: ANN001
     if cov.drivers:
         parts.append(f'<span class="sr-chip sr-chip-driver">driver: {", ".join(cov.drivers)}</span>')
     return '<p class="sr-chips">' + "".join(parts) + "</p>"
+
+
+def chips(name: str) -> str:
+    """One robot page's chips as HTML, what ``{{robot_chips:<name>}}`` renders to."""
+    return _chips(name, registry()[name], _load_coverage().row(name), manifest().get(name, {}))
 
 
 # lerobot's bimanual configs declare no ``port``: each takes ``left_arm_config`` and
@@ -443,7 +491,7 @@ def robot_page(name: str) -> str:
         "",
         f"# {description}",
         "",
-        _chips(name, spec, cov, entry),
+        f"{{{{robot_chips:{name}}}}}",
         "",
     ]
     if sim:
@@ -503,10 +551,7 @@ def robot_page(name: str) -> str:
         ]
     if cov.real or spec.get("hardware"):
         lines += [_hardware_section(name, spec, cov)]
-    matrix = "[policy matrix](../learn/policies/index.md)"
-    if cov.policies:
-        providers = ", ".join(f"`{p}`" for p in cov.policies)
-        lines += ["## Policies", "", f"Providers written for this body: {providers}; the rest are in the {matrix}.", ""]
+    lines += [_policies_section(name, cov)]
     model = _model_link(entry.get("base_url"))
     if model:
         lines += [f"Model: {model}, scene `{entry.get('scene')}`.", ""]
@@ -624,9 +669,10 @@ def family_table(category: str, link_prefix: str = "") -> str:
 
 
 def substitute(markdown: str, prefix: str, link_prefix: str = "") -> str:
-    """Expand the robot cards and family table tokens in ``markdown``."""
+    """Expand the robot cards, chips, driver facts and family table tokens in ``markdown``."""
     markdown = _TOKEN_CARDS.sub(lambda m: cards(m.group(1), prefix), markdown)
     markdown = _TOKEN_FACTS.sub(lambda _m: driver_facts(), markdown)
+    markdown = _TOKEN_CHIPS.sub(lambda m: chips(m.group(1)), markdown)
     return _TOKEN_TABLE.sub(lambda m: family_table(m.group(1), link_prefix), markdown)
 
 

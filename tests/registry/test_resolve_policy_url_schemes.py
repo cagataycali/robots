@@ -264,17 +264,39 @@ class TestASchemeNoProviderDeclaresIsRefused:
     ``("lerobot_local", {"pretrained_name_or_path": "grpc://gpu-box:8080"})``
     under a warning, so the caller's next report was a HuggingFace lookup
     failure for a repo id nobody wrote, nowhere near the server they named.
+
+    The refusal must reach the caller through every door, not only
+    ``resolve_policy``: ``create_policy`` used to log it at WARNING and raise
+    "Unknown policy provider ... Available: [13 names]" instead, and the
+    hardware pre-flight passed the address through to be refused only after
+    the arm was claimed.
     """
 
+    @staticmethod
+    def _refusal_through(door: str, url: str) -> str:
+        if door == "resolve_policy":
+            with pytest.raises(ValueError) as exc:
+                resolve_policy(url)
+            return str(exc.value)
+        if door == "create_policy":
+            with pytest.raises(ValueError) as exc:
+                factory_mod.create_policy(url)
+            return str(exc.value)
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        assert factory_mod.provider_can_be_created(url) is False
+        err = HwRobot._policy_provider_error(url, "start_task")
+        assert err is not None and err["status"] == "error"
+        return err["content"][0]["text"]
+
+    @pytest.mark.parametrize("door", ["resolve_policy", "create_policy", "hardware_preflight"])
     @pytest.mark.parametrize(
         "url",
         ["grpc://gpu-box:8080", "http://gpu-box:8000", "https://gpu-box", "tcp://10.0.0.5:5555", "zzz://h:1"],
     )
-    def test_it_is_refused_naming_the_schemes_that_do_resolve(self, url):
+    def test_it_is_refused_naming_the_schemes_that_do_resolve(self, url, door):
         """The refusal carries the scheme, the caller's string, and the alternatives."""
-        with pytest.raises(ValueError) as exc:
-            resolve_policy(url)
-        text = str(exc.value)
+        text = self._refusal_through(door, url)
         assert f"'{url.split('://', 1)[0]}://'" in text, text
         assert url in text, text
         for scheme in policies_mod._declared_url_schemes():
