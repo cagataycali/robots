@@ -726,6 +726,24 @@ def _wire_safe_block(block: Any) -> Any:
     return block
 
 
+def _routable_target_error(target: Any) -> str | None:
+    """Why *target* may not become the peer segment of a key expression, or ``None``.
+
+    The rule is the inbound one, :func:`~strands_robots.mesh.security.validate_mesh_identifier`
+    (``[A-Za-z0-9_.-]``, at most ``MAX_PEER_ID_LEN``): a peer id the receive
+    side would refuse in ``sender_id`` is one the send side must not address,
+    because ``strands/{target}/cmd`` with ``*`` or ``**`` in the segment is a
+    Zenoh key expression that reaches every peer, and ``a/b`` adds a segment.
+    Both presence registries apply it before a learned id is stored, so an
+    announced ``robot_id`` never widens a later ``send`` on its own.
+    """
+    try:
+        _security.validate_mesh_identifier(target, "target")
+    except _security.ValidationError as exc:
+        return f"target is not a routable peer id: {exc}"
+    return None
+
+
 def _responder_segment(key: str, me: str) -> str | None:
     """The ``<responder>`` of ``strands/<me>/response/<responder>/<turn>``, or ``None``.
 
@@ -1539,6 +1557,11 @@ class Mesh(SensorLoopsMixin):
             return
         peer_id = data.get("robot_id")
         if not isinstance(peer_id, str) or peer_id == self.peer_id:
+            return
+        # A learned id is a future ``send`` target: refuse one the outbound
+        # rule could not address before it enters the registry (f012).
+        if (why := _routable_target_error(peer_id)) is not None:
+            logger.debug("[mesh] %s: presence dropped: %s", self.peer_id, why)
             return
 
         # M-3: presence-freshness check. Presence heartbeats carry a
@@ -3960,6 +3983,11 @@ class Mesh(SensorLoopsMixin):
                 "status": "error",
                 "error": "send: target may not contain NUL or equal the BROADCAST_RESPONDER sentinel",
             }
+        # The target is interpolated into ``strands/{target}/cmd``; a wildcard
+        # or a slash there widens one robot's command to the fleet (f012).
+        if (why := _routable_target_error(target)) is not None:
+            logger.warning("[mesh] %s: send refused: %s", self.peer_id, why)
+            return {"status": "error", "error": f"send: {why}"}
         # client-side validate before publishing. Prior to this fix,
         # programmatic callers (tests, third-party integrations, anything
         # that imports Mesh directly) skipped validate_command -- only the
