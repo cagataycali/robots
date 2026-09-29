@@ -1792,8 +1792,8 @@ def robot_mesh(
         # equality / trailing-`/**` and reach ``mesh.on_stream("*")`` -
         # subscribing to every peer's stream (the cross-peer telemetry-leak
         # this surface exists to close). Require a literal peer id BEFORE
-        # interpolating, mirroring the ``_REPO_TAG_RE`` shape-validation
-        # pattern in ``strands_robots.tools.gr00t_inference`` for the same
+        # interpolating: validate the shape of an operand before it is
+        # interpolated into a pattern, the same defence against the same
         # class of attack.
         if not _PEER_ID_RE.match(target):
             _audit_tool_action(action, target, False, "watch target not a literal peer id")

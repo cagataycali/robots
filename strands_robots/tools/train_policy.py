@@ -2,7 +2,7 @@
 
 Exposes the :class:`~strands_robots.training.base.Trainer` abstraction to an
 agent. One tool, provider-agnostic: the ``provider`` argument selects the
-backend (``lerobot_local`` / ``groot`` / ``cosmos3`` / ``mock``) and the SAME
+backend (``lerobot_local`` / ``cosmos3`` / ``mock``) and the SAME
 arguments map onto each backend's native pipeline via ``create_trainer`` +
 ``TrainSpec``.
 
@@ -122,7 +122,7 @@ def train_policy(
                                (needs ``output_dir``; uses the run's last checkpoint).
             - ``"list"``     : list available training providers.
         provider: Training backend / policy family - ``"lerobot_local"`` (act,
-            diffusion, smolvla, pi0, pi05, ...), ``"groot"`` (NVIDIA GR00T),
+            diffusion, smolvla, pi0, pi05, groot for NVIDIA GR00T N1.7, ...),
             ``"cosmos3"`` (NVIDIA Cosmos3), ``"isaaclab"`` (GPU-parallel RL in
             a separate Isaac Lab install; needs no dataset), or ``"mock"``. Same
             name as the inference provider in ``create_policy``.
@@ -136,19 +136,19 @@ def train_policy(
             ``StreamingLeRobotDataset``). With ``dataset_repo_id`` this streams
             Hub shards with bounded disk; with a local ``dataset_root`` it
             streams from disk with bounded RAM. lerobot only; ignored elsewhere.
-        base_model: HF id or local checkpoint to post-tune from. For GR00T this
-            is required (``--base_model_path``); ACT-from-scratch leaves it "".
+        base_model: HF id or local checkpoint to post-tune from. For GR00T N1.7
+            this is required (``nvidia/GR00T-N1.7-3B``); ACT-from-scratch leaves it "".
         output_dir: Where checkpoints + logs go.
         embodiment: Embodiment tag - which state/action projector head the run
-            trains. REQUIRED for GR00T, and read by any lerobot policy whose
-            config declares ``embodiment_tag`` (lerobot's native GR00T port);
+            trains. Read by any lerobot policy whose config declares
+            ``embodiment_tag`` (GR00T N1.7, where it is required);
             refused for a lerobot policy that has no such field, since those
             take their state/action shape from the dataset features.
         steps: Total optimizer steps.
         batch_size: Global batch size (summed across GPUs).
         learning_rate: Optimizer learning rate. ``None`` (default) uses the
             backend's own default (the policy training preset for lerobot,
-            GR00T's FinetuneConfig default, Cosmos's TOML default); an explicit
+            Cosmos's TOML default); an explicit
             value must be a positive finite number and is honored by every
             backend. ``0`` and ``inf`` are refused up front: the first trains
             for the whole run without updating a weight, the second writes a
@@ -176,9 +176,8 @@ def train_policy(
             attached to, read only when ``method="lora"``. Omit to keep the
             backend's default target set.
         tune: Fine-grained component toggles for GR00T
-            (``{"llm","visual","projector","diffusion"}``), honoured by the
-            ``groot`` provider and by ``lerobot_local`` with
-            ``extra={"policy_type": "groot"}``. A key naming no component
+            (``{"llm","visual","projector","diffusion"}``), honoured by
+            ``lerobot_local`` with ``extra={"policy_type": "groot"}``. A key naming no component
             (``vision`` for ``visual``) or a component the policy cannot freeze
             is refused by preflight, because an unforwarded toggle trains the
             config default and reports success.
@@ -194,8 +193,7 @@ def train_policy(
         augmentation: Backend-specific augmentation dict.
         fps: Dataset control rate (when a backend needs it).
         extra: Backend-specific passthrough. lerobot: ``policy_type``,
-            ``job_name``, any ``--key=value``. GR00T: ``groot_root``,
-            ``modality_config_path``. Cosmos: ``cosmos_root``, ``sft_toml``.
+            ``job_name``, any ``--key=value``. Cosmos: ``cosmos_root``, ``sft_toml``.
             Isaac Lab: ``task`` (required, e.g. ``"Isaac-Cartpole"``),
             ``num_envs``, ``physics`` (``"newton_mjwarp"`` / ``"isaacsim_physx"``),
             ``wait`` (block until the run ends), ``timeout_s``; ``steps`` is the
@@ -218,11 +216,12 @@ def train_policy(
           ``transformers>=5.4.0,<5.6.0`` (plus num2words / scipy); do NOT pin
           ``transformers==5.3.0`` - it conflicts with lerobot 0.6's transformers
           floor.
-        - ``groot``/``cosmos3``: install the upstream package into THIS
-          interpreter (the trainer imports it and calls its library functions
-          in-process - no subprocess). Point ``extra['groot_root']``/``GR00T_ROOT``
-          or ``extra['cosmos_root']``/``COSMOS_ROOT`` at the checkout for runtime
-          config/recipe resolution.
+        - ``lerobot_local`` + ``groot`` (GR00T N1.7): add lerobot's ``[groot]``
+          extra (``pip install 'strands-robots[groot]'``).
+        - ``cosmos3``: install the upstream package into THIS interpreter (the
+          trainer imports it and calls its library functions in-process - no
+          subprocess). Point ``extra['cosmos_root']``/``COSMOS_ROOT`` at the
+          checkout for runtime config/recipe resolution.
         - torchcodec's ``.so`` must match the installed torch build exactly; a
           torch nightly load-fails a stable torchcodec (``undefined symbol``)
           and lerobot silently yields zero frames. See docs/reference/training/overview.md.

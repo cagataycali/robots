@@ -1,7 +1,7 @@
 """Abstract base class for robot policies (VLA, motion planners, MPC, scripted).
 
 The :class:`Policy` ABC is intentionally agnostic about *how* actions are
-produced.  Built-in providers (`mock`, `groot`, `lerobot_local`) are VLA-style,
+produced.  Built-in providers (`mock`, `lerobot_local`, `remote`) are VLA-style,
 but the same interface is the right shape for:
 
 * **Classical motion planners** - cuRobo, MoveIt2, OMPL, RRT*: take a goal
@@ -267,8 +267,8 @@ class Policy(ABC):
         state (e.g. diffusion sampler RNG, action chunk caches, KV-caches)
         should override to apply the reset.
 
-        For SERVICE-mode policies (e.g. ``Gr00tPolicy(host=...)`` over
-        ZMQ), the override forwards the call to the server so its
+        For SERVICE-mode policies (e.g. ``Cosmos3Policy(host=...)`` over
+        WebSocket), the override forwards the call to the server so its
         per-episode RNG state can be re-initialised - without this,
         ``set_eval_seed`` only seeds the client-side process, leaving
         the server's diffusion sampler RNG drifting across calls and

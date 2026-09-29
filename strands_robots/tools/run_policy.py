@@ -222,7 +222,7 @@ def run_policy(
             Required when the simulation hosts more than one robot.
         policy_provider: Provider name passed to ``create_policy``
             inside the engine (``"mock"`` / ``"lerobot_local"`` /
-            ``"groot"`` / ``"molmoact2"`` / ...).
+            ``"remote"`` / ``"wbc"`` / ...).
         policy_config: Provider-specific kwargs forwarded verbatim.
         instruction: Natural-language instruction for the policy.
         n_episodes: Number of reset -> rollout episodes. MUST be a

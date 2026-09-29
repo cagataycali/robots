@@ -21,7 +21,7 @@ from strands_robots.registry import (
 # The one canonicalisation rule, shared rather than restated: a decision keyed
 # on a provider name has to resolve the caller's spelling first, and a second
 # copy of that rule here is a second thing to keep in step with policies.json.
-from strands_robots.registry.policies import _canonical_provider_name
+from strands_robots.registry.policies import _canonical_provider_name, removed_provider_error
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +193,6 @@ def _is_smart_string(provider: str) -> bool:
         or (":" in provider and not provider.replace("_", "").isalpha())
         or provider.startswith("ws://")
         or provider.startswith("grpc://")
-        or provider.startswith("zmq://")
     )
 
 
@@ -226,6 +225,8 @@ def provider_can_be_created(provider: Any) -> bool:
         return False
     if _runtime_aliases.get(provider, provider) in _runtime_registry:
         return True
+    if removed_provider_error(provider) is not None:
+        return False
     if _is_smart_string(provider):
         return True
     from strands_robots.registry.policies import policy_provider_resolves
@@ -286,13 +287,18 @@ def import_policy_class(provider: str) -> type:
         The Policy subclass.
 
     Raises:
-        ValueError: If the provider does not exist.
+        ValueError: If the provider does not exist, or was removed - a removed
+            spelling (``groot``) is refused with the sentence
+            :data:`~strands_robots.registry.policies.REMOVED_PROVIDERS` holds
+            for it, never rerouted to another provider.
         ImportError: If the provider exists but its module cannot be imported,
             naming the provider, the missing module and the remedy (see
             :func:`_provider_import_error`). A provider whose module is present
             but whose optional dependency is missing reports that rather than
             being misreported as an unknown provider.
     """
+    if (removed := removed_provider_error(provider)) is not None:
+        raise ValueError(removed)
     config = get_policy_provider(provider)
     if config:
         # get_policy_provider already keyed the lookup on the canonical name,
@@ -566,7 +572,7 @@ def policy_kwargs_error(provider: str, PolicyClass: type, kwargs: Mapping[str, A
 
     One rule for every provider, applied before construction. Pre-fix each
     provider had its own: a constructor with ``**kwargs`` dropped
-    ``create_policy("groot", hots="x")`` silently (the client dialled the
+    ``create_policy("moveit2", hots="x")`` silently (the client dialled the
     default host under ``status="success"``), ``remote`` logged
     "ignoring unexpected constructor kwarg(s)" where no agent reads it,
     and a constructor without a sink raised CPython's
@@ -634,8 +640,8 @@ def create_policy(provider: str, **kwargs) -> Policy:
 
     Accepts either a provider name or a smart string:
 
-    - Provider name: ``create_policy("groot", port=5555)``
-    - ZMQ URL: ``create_policy("zmq://localhost:5555")``
+    - Provider name: ``create_policy("lerobot_local", pretrained_name_or_path="lerobot/act_aloha_sim")``
+    - Server URL: ``create_policy("ws://gpu-box:8765")``
     - Shorthand: ``create_policy("mock")``
 
     All provider definitions live in ``registry/policies.json``.
@@ -825,7 +831,7 @@ def policy_provider_error(provider: str, **kwargs) -> str | None:
 
     Probes the SAME resolution path :func:`create_policy` uses, without
     instantiating anything, so every spelling that provider accepts -- a
-    registered name, a HuggingFace model ID, a ``zmq://`` / ``ws://`` URL --
+    registered name, a HuggingFace model ID, a ``ws://`` / ``cosmos3://`` URL --
     resolves here too. Only a name no spelling can reach yields a reason. A
     scheme-less ``host:port`` is not among them: no shipped provider declares a
     scheme-less ``url_patterns`` entry, so such a string is resolvable only as a

@@ -90,10 +90,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-groot-service = [
-    "pyzmq>=27.0.0,<28.0.0",
-    "msgpack>=1.0.0,<2.0.0",
-]
 cosmos3-service = [
     # Self-contained msgpack+NumPy WebSocket client for the Cosmos 3 RoboLab
     # policy server (cosmos_framework.scripts.action_policy_server_robolab).
@@ -398,6 +394,21 @@ molmoact2 = [
 smolvla = [
     "strands-robots[lerobot]",
     "lerobot[smolvla]>=0.6.1,<0.7.0",
+]
+# GR00T N1.7 (nvidia/GR00T-N1.7-3B and its fine-tunes) as a first-class
+# `lerobot_local` policy type: lerobot >= 0.6 ships the N1.7 port in
+# lerobot/policies/groot (self-contained, no Isaac-GR00T checkout), so
+# `create_policy("lerobot_local", pretrained_name_or_path=..., policy_type="groot")`
+# resolves through the same generic path as act/smolvla. Like [molmoact2] and
+# [smolvla], defer to lerobot's own [groot] extra for the aux-dep pins
+# (transformers, peft, diffusers, timm, dm-tree; decord on x86_64 only). The
+# base strands-robots[lerobot] pin (>=0.6.1,<0.7.0) already fixes the floor.
+# There is no ZMQ service mode any more: a GPU box elsewhere runs
+# `strands_robots.inference.server.PolicyServer` and the robot uses the
+# `remote` provider.
+groot = [
+    "strands-robots[lerobot]",
+    "lerobot[groot]>=0.6.1,<0.7.0",
 ]
 sim = [
     # 1.23.0 is the oldest release that ships a description module for every
@@ -704,7 +715,6 @@ voice = [
     "strands-agents[bidi]>=1.57.0,<2.0.0",
 ]
 all = [
-    "strands-robots[groot-service]",
     "strands-robots[moveit2]",
     "strands-robots[lerobot]",
     "strands-robots[sim-mujoco]",
@@ -717,6 +727,7 @@ all = [
     "strands-robots[protomotions]",
     "strands-robots[molmoact2]",
     "strands-robots[smolvla]",
+    "strands-robots[groot]",
     "strands-robots[ollama]",
     "strands-robots[inference]",
     "strands-robots[rosbridge]",
@@ -774,7 +785,7 @@ features = ["all"]
 # a second copy of a bound that can drift from the one an install resolves --
 # with this environment (which is what `hatch run test` runs) staying green over
 # the drift. Pillow, msgpack, pyzmq and requests were such copies; they are
-# declared in [project.dependencies] and the [groot-service], [moveit2] and
+# declared in [project.dependencies] and the [moveit2] and
 # [earthrover] extras respectively. Graded by
 # tests/test_earthrover_http_extra_is_declared.py.
 dependencies = [
@@ -1035,7 +1046,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "tyro", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "roslibpy", "roslibpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*", "unitree_sdk2py.*", "booster_robotics_sdk_python", "booster_robotics_sdk_python.*", "webauthn", "webauthn.*", "requests", "requests.*"]
+module = ["lerobot.*", "tyro", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "roslibpy", "roslibpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*", "unitree_sdk2py.*", "booster_robotics_sdk_python", "booster_robotics_sdk_python.*", "webauthn", "webauthn.*", "requests", "requests.*"]
 ignore_missing_imports = true
 
 # Device Connect drivers - thin wrappers over the untyped device_connect_edge

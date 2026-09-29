@@ -59,7 +59,7 @@ from strands_robots.utils import (
 if TYPE_CHECKING:
     from strands_robots.training.base import TrainSpec
 
-# ``extra`` keys are interpolated into argv as ``--{key}=...`` (lerobot/groot)
+# ``extra`` keys are interpolated into argv as ``--{key}=...`` (lerobot)
 # or ``{key}=...`` (cosmos hydra). The key FORMAT is allowlisted, not the key
 # set: lowercase and dotted, no leading dash, no ``=``, no whitespace.
 _EXTRA_KEY_RE = re.compile(r"^[a-z][a-z0-9_.]*\Z")

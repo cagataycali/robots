@@ -4337,7 +4337,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 # renders with stale joint reads, `send_action` targets a
                 # view that never integrates -- and every envelope still
                 # reports success, so the eval reads green with a
-                # motionless robot (measured: 5-episode groot evals at
+                # motionless robot (measured: 5-episode GR00T evals at
                 # success_rate=0.00 with byte-similar videos).
                 #
                 # `world.play()` rather than `timeline.play()`: on 6.0.x a
