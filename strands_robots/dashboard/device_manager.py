@@ -673,13 +673,24 @@ os._exit(0)
 
 
 def profile_key(port: dict[str, Any]) -> str:
-    """Stable identity for a detected serial board. The USB serial number survives replug and port
-    renumbering, so it is the key.
+    """Stable identity for a detected serial board, or ``""`` when it has none.
+
+    The USB serial number survives replug and port renumbering, so it is the
+    key. A board that reports no serial has no identity to match a remembered
+    profile against: a ``/dev`` name is reassigned by the OS, so keying on it
+    would hand one board's profile to whatever lands on that path next
+    (``measure_arm_role`` reaches the same conclusion for the same board).
     """
     serial = port.get("serial_number")
-    if serial:
-        return str(serial)
-    return str(port.get("device") or "")
+    return str(serial) if serial else ""
+
+
+def usb_identity(port: Mapping[str, Any]) -> str | None:
+    """``vid:pid`` of a scanned board, or ``None`` when the scan did not carry both."""
+    vid, pid = port.get("vid"), port.get("pid")
+    if not vid or not pid:
+        return None
+    return f"{str(vid).lower()}:{str(pid).lower()}"
 
 
 def remembered_spawn(profile: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -919,8 +930,30 @@ def autospawn_veto(env: Mapping[str, str]) -> str | None:
     return None
 
 
+#: Serial numbers (comma separated) of the REAL arms an operator lets the watcher bring up without a
+#: click. A serial is a string the device chooses, so the list is the operator's word that these
+#: boards are theirs; the watcher still requires the board's vid:pid to match what the profile
+#: recorded when the operator first spawned it.
+AUTOSPAWN_REAL_ALLOWLIST_ENV = "STRANDS_DASHBOARD_AUTOSPAWN_REAL_SERIALS"
+
+
+def _real_autospawn_allowlist(env: Mapping[str, str] | None = None) -> frozenset[str]:
+    env = os.environ if env is None else env
+    raw = str(env.get(AUTOSPAWN_REAL_ALLOWLIST_ENV, ""))
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
 class AutoSpawnWatcher:
-    """Brings known USB boards up (and unplugged ones down) on its own."""
+    """Brings known USB boards up (and unplugged ones down) on its own.
+
+    Sim profiles come up on their own. A board matching a ``mode=real`` profile
+    is PROPOSED (``pending``), not started: the serial it was matched on is a
+    string the device chose, and what would start is a real arm under a
+    remembered peer id with a remembered calibration. The operator confirms
+    through ``spawn-remembered``, or lists the serial in
+    :data:`AUTOSPAWN_REAL_ALLOWLIST_ENV`, in which case the board's vid:pid
+    must also match what the profile recorded.
+    """
 
     def __init__(
         self,
@@ -935,6 +968,10 @@ class AutoSpawnWatcher:
         self.missing_polls = max(1, int(missing_polls))
         # key -> peer_id we auto-spawned for it
         self.adopted: dict[str, str] = {}
+        # key -> the real-hardware adoption waiting for the operator (what was seen, what it would be)
+        self.pending: dict[str, dict[str, Any]] = {}
+        # key -> the reason a board was held back, so the trail hears it once, not every poll
+        self.held: dict[str, str] = {}
         self._missing: dict[str, int] = {}
         self._stop = threading.Event()
         # While True the watcher observes but never spawns/despawns.
@@ -968,29 +1005,105 @@ class AutoSpawnWatcher:
                 return f"mesh peer list unavailable, refusing to spawn {peer_id}"
         return None
 
+    def _seen(self, key: str, port: Mapping[str, Any], profile: Mapping[str, Any] | None) -> dict[str, Any]:
+        """What the trail and the devices screen say about a board: seen and remembered, side by side."""
+        profile = profile or {}
+        return {
+            "serial": key,
+            "device": port.get("device"),
+            "usb": usb_identity(port),
+            "peer_id": profile.get("peer_id"),
+            "robot_name": profile.get("robot_name"),
+            "mode": profile.get("mode") or "real",
+        }
+
+    def _real_verdict(self, key: str, port: Mapping[str, Any], profile: Mapping[str, Any]) -> tuple[str, str] | None:
+        """Why a real-mode match may not start by itself: ``("propose", why)`` when the operator can
+        confirm it, ``("hold", why)`` when the board contradicts what was remembered, ``None`` when the
+        operator's allowlist covers it and the chip matches."""
+        device = port.get("device") or "the board"
+        if key not in _real_autospawn_allowlist():
+            return "propose", (
+                f"real hardware is proposed, not started: {device} reports the serial of {profile.get('peer_id')}, "
+                f"and a serial is a string the device chooses. To confirm, spawn the remembered profile for "
+                f"{device} on the devices screen, or list the serial in {AUTOSPAWN_REAL_ALLOWLIST_ENV} to let it "
+                f"come up on its own."
+            )
+        remembered = profile.get("usb")
+        seen = usb_identity(port)
+        if not remembered:
+            return "propose", (
+                f"{key} is on {AUTOSPAWN_REAL_ALLOWLIST_ENV} but its profile recorded no usb identity to check the "
+                f"board against; to confirm, spawn the remembered profile for {device} once and it will remember "
+                f"{seen or 'the chip'}."
+            )
+        if seen != remembered:
+            return "hold", (
+                f"{device} reports the serial of {profile.get('peer_id')} but is a different chip: remembered "
+                f"{remembered}, seen {seen or 'no vid:pid'}. Not started."
+            )
+        return None
+
     def poll(self) -> dict[str, Any]:
-        """One appear/disappear pass. Returns what it did, for tests and logs."""
+        """One appear/disappear pass. Returns what it did, for tests and logs.
+
+        ``proposed`` and ``held`` carry only what is NEW this pass; ``pending`` and
+        ``held`` on the instance keep the current state for the devices screen.
+        """
         if not self.enabled():
             return {"skipped": "autospawn disabled"}
         if self.suspended:
             return {"skipped": "autospawn suspended (record session owns the ports)"}
-        ports = {profile_key(p): p for p in self.list_ports() if profile_key(p)}
+        boards: dict[str, list[dict[str, Any]]] = {}
+        unidentified: list[str] = []
+        for p in self.list_ports():
+            key = profile_key(p)
+            if key:
+                boards.setdefault(key, []).append(p)
+            elif p.get("device"):
+                unidentified.append(str(p["device"]))
         spawned: list[str] = []
+        spawned_from: dict[str, dict[str, Any]] = {}
         despawned: list[str] = []
         ignored: list[str] = []
+        proposed: list[dict[str, Any]] = []
+        held: list[dict[str, Any]] = []
 
-        for key, port in ports.items():
+        def hold(key: str, port: Mapping[str, Any], profile: Mapping[str, Any] | None, reason: str) -> None:
+            self.pending.pop(key, None)
+            if self.held.get(key) != reason:
+                self.held[key] = reason
+                held.append({**self._seen(key, port, profile), "reason": reason})
+                logger.info("autospawn: %s held: %s", key, reason)
+
+        for key, ports in boards.items():
             self._missing.pop(key, None)
             if key in self.adopted:
                 continue
+            port = ports[0]
             profile = self.manager.profiles.get(key)
             if profile is None:
                 ignored.append(key)
                 continue
+            if len(ports) > 1:
+                paths = ", ".join(str(p.get("device")) for p in ports)
+                hold(key, port, profile, f"{len(ports)} boards report the same serial ({paths}); none was started")
+                continue
             reason = self._claimed(port, profile)
             if reason is not None:
-                logger.debug("autospawn: %s", reason)
-                ignored.append(key)
+                hold(key, port, profile, reason)
+                continue
+            if (profile.get("mode") or "real") == "real" and (verdict := self._real_verdict(key, port, profile)):
+                kind, why = verdict
+                if kind == "hold":
+                    hold(key, port, profile, why)
+                    continue
+                self.held.pop(key, None)
+                proposal = {**self._seen(key, port, profile), "reason": why}
+                if self.pending.get(key) != proposal:
+                    self.pending[key] = proposal
+                    proposed.append(proposal)
+                    logger.info("autospawn: %s proposed, not started: %s", key, why)
                 continue
             res = self._spawn_from_profile(port, profile)
             peer_id = res.get("peer_id")
@@ -998,11 +1111,21 @@ class AutoSpawnWatcher:
                 logger.warning("autospawn: spawning %s failed: %s", key, res.get("error"))
                 continue
             self.adopted[key] = peer_id
+            self.pending.pop(key, None)
+            self.held.pop(key, None)
             spawned.append(peer_id)
+            spawned_from[peer_id] = self._seen(key, port, profile)
             logger.info("autospawn: %s appeared, spawned %s", key, peer_id)
 
+        for key in list(self.pending):
+            if key not in boards:
+                self.pending.pop(key, None)
+        for key in list(self.held):
+            if key not in boards:
+                self.held.pop(key, None)
+
         for key, peer_id in list(self.adopted.items()):
-            if key in ports:
+            if key in boards:
                 continue
             misses = self._missing.get(key, 0) + 1
             self._missing[key] = misses
@@ -1014,7 +1137,15 @@ class AutoSpawnWatcher:
             despawned.append(peer_id)
             logger.info("autospawn: %s unplugged, stopped %s", key, peer_id)
 
-        return {"spawned": spawned, "despawned": despawned, "detected_unknown": ignored}
+        return {
+            "spawned": spawned,
+            "spawned_from": spawned_from,
+            "despawned": despawned,
+            "detected_unknown": ignored,
+            "proposed": proposed,
+            "held": held,
+            "unidentified": unidentified,
+        }
 
     def _spawn_from_profile(self, port: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
         return self.manager.spawn(
@@ -2090,7 +2221,10 @@ class DeviceManager:
         key = profile_key(info)
         if not key:
             return None
-        return self.profiles.save(key, payload)
+        # The chip behind the serial, so a later hotplug can be checked against more than a string
+        # the device chose.
+        usb = usb_identity(info)
+        return self.profiles.save(key, {**payload, "usb": usb} if usb else payload)
 
     def start_autospawn(
         self,
