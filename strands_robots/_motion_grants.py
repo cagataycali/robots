@@ -40,8 +40,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import math
+import os
+import re
 import threading
+import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -50,13 +56,28 @@ from strands_robots.utils import refusal_repr, refusal_str
 __all__ = [
     "DETAIL_FIELDS",
     "DIRECT_SERIAL_TOOLS",
+    "GRANT_TTL_ENV",
     "calibration_identity",
     "consume_grant",
     "deposit_grant",
+    "forget_grants_for_peer",
     "grant_key",
+    "grant_ttl_s",
     "motion_fields",
+    "pending_grants",
     "resolve_target",
 ]
+
+logger = logging.getLogger(__name__)
+
+#: How long a human's yes stays spendable, in seconds. A grant is a decision
+#: about one motion at one moment; an operator who approved a move at 09:00
+#: did not approve the same numbers at 17:00 for whoever drives the agent then.
+#: The approved call can also fail ABOVE the gate (a calibration file that will
+#: not load, a target outside the arm's travel) and leave its grant unspent,
+#: which is the shape that makes a stale grant reachable at all.
+GRANT_TTL_ENV = "STRANDS_DASH_MOTION_GRANT_TTL_S"
+DEFAULT_GRANT_TTL_S = 900.0
 
 #: Tools whose gated input names the motion in FIELDS, not an instruction string.
 DIRECT_SERIAL_TOOLS: frozenset[str] = frozenset({"pose_tool", "serial_tool"})
@@ -103,8 +124,51 @@ DETAIL_FIELDS = (
     "duration",
 )
 
+
+@dataclass(frozen=True)
+class _Grant:
+    """One deposited yes: who it is about and when it was given (monotonic seconds)."""
+
+    tool: str
+    action: str
+    target: str
+    deposited_at: float
+
+
 _grants_lock = threading.Lock()
-_grants: set[str] = set()
+_grants: dict[str, _Grant] = {}
+
+#: The characters a peer id loses on its way to a tool name (``peer_tools.sanitize_tool_name``).
+_TOOL_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9_]")
+
+
+def grant_ttl_s() -> float:
+    """The grant lifetime the operator set, or the default when they set nothing usable.
+
+    Read at every spend, so a tightened window applies to grants already given.
+    A value that is not a finite positive number falls back to the default
+    rather than being used: ``nan`` would make the age comparison False for
+    every grant and remove the bound instead of widening it, the same failure
+    ``mesh.core._parse_positive_float_env`` documents for the mesh knobs.
+    """
+    raw = os.getenv(GRANT_TTL_ENV)
+    if raw is None or not raw.strip():
+        return DEFAULT_GRANT_TTL_S
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a number; using %.0f s", GRANT_TTL_ENV, raw, DEFAULT_GRANT_TTL_S)
+        return DEFAULT_GRANT_TTL_S
+    if not math.isfinite(value) or value <= 0:
+        logger.warning("%s=%r is not a finite positive number; using %.0f s", GRANT_TTL_ENV, raw, DEFAULT_GRANT_TTL_S)
+        return DEFAULT_GRANT_TTL_S
+    return value
+
+
+def _sweep_expired_locked(now: float, ttl: float) -> None:
+    """Drop every grant older than *ttl*. Caller holds ``_grants_lock``."""
+    for key in [k for k, g in _grants.items() if now - g.deposited_at > ttl]:
+        _grants.pop(key, None)
 
 
 def motion_fields(tool_input: Mapping[str, Any]) -> tuple[str, ...]:
@@ -259,8 +323,16 @@ def deposit_grant(tool_name: str, tool_input: Mapping[str, Any] | None) -> None:
         tool_name: The tool the operator answered for.
         tool_input: The call they were shown.
     """
+    tool_input = tool_input or {}
+    record = _Grant(
+        tool=tool_name,
+        action=str(tool_input.get("action") or "").strip(),
+        target=resolve_target(tool_name, tool_input, None),
+        deposited_at=time.monotonic(),
+    )
     with _grants_lock:
-        _grants.add(grant_key(tool_name, tool_input))
+        _sweep_expired_locked(record.deposited_at, grant_ttl_s())
+        _grants[grant_key(tool_name, tool_input)] = record
 
 
 def consume_grant(tool_name: str, tool_input: Mapping[str, Any] | None) -> bool:
@@ -280,8 +352,65 @@ def consume_grant(tool_name: str, tool_input: Mapping[str, Any] | None) -> bool:
         True when a grant for this exact call existed and was spent.
     """
     key = grant_key(tool_name, tool_input)
+    now = time.monotonic()
+    ttl = grant_ttl_s()
     with _grants_lock:
-        if key in _grants:
-            _grants.discard(key)
-            return True
-    return False
+        record = _grants.pop(key, None)
+        if record is None:
+            return False
+        if now - record.deposited_at > ttl:
+            logger.info(
+                "motion grant for %s %s on %s expired unspent after %.0f s (window %.0f s)",
+                record.tool,
+                record.action,
+                record.target or "(no target)",
+                now - record.deposited_at,
+                ttl,
+            )
+            return False
+        return True
+
+
+def forget_grants_for_peer(peer_id: str) -> int:
+    """Drop every grant about *peer_id*: the ones that name it as their target, and the ones
+    given to its bound proxy tool, whose name IS the peer (``sanitize_tool_name``).
+
+    Called when a peer leaves the fleet snapshot or the mesh is re-pointed. A yes
+    about a robot that is no longer there is not a yes about the robot that
+    comes back under that name.
+
+    Returns:
+        How many grants were dropped.
+    """
+    peer_id = str(peer_id or "").strip()
+    if not peer_id:
+        return 0
+    tool_name = _TOOL_NAME_UNSAFE.sub("_", peer_id)
+    with _grants_lock:
+        doomed = [
+            k
+            for k, g in _grants.items()
+            if g.target == peer_id or (g.tool == tool_name and g.tool not in DIRECT_SERIAL_TOOLS)
+        ]
+        for key in doomed:
+            _grants.pop(key, None)
+    return len(doomed)
+
+
+def pending_grants() -> list[dict[str, Any]]:
+    """The unspent grants, oldest first, without their keys: what is outstanding, for an operator screen."""
+    now = time.monotonic()
+    ttl = grant_ttl_s()
+    with _grants_lock:
+        _sweep_expired_locked(now, ttl)
+        records = sorted(_grants.values(), key=lambda g: g.deposited_at)
+    return [
+        {
+            "tool": g.tool,
+            "action": g.action,
+            "target": g.target,
+            "age_s": round(now - g.deposited_at, 3),
+            "expires_in_s": round(ttl - (now - g.deposited_at), 3),
+        }
+        for g in records
+    ]
