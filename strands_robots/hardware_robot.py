@@ -2617,21 +2617,18 @@ class Robot(TeleopMixin, AgentTool):
             resolve, or ``None`` when a policy can be resolved from the value.
         """
         from strands_robots.policies.factory import list_providers, provider_can_be_created
+        from strands_robots.registry.policies import _url_scheme_refusal
 
         if not policy_provider or provider_can_be_created(refusal_str(policy_provider)):
             return None
+        reason = _url_scheme_refusal(refusal_str(policy_provider)) or (
+            f"unknown policy_provider {refusal_repr(policy_provider)}. "
+            f"Available: {', '.join(list_providers())} "
+            "(declared aliases such as 'lerobot' for 'lerobot_local' also resolve)."
+        )
         return {
             "status": "error",
-            "content": [
-                {
-                    "text": (
-                        f"{method}: unknown policy_provider {refusal_repr(policy_provider)}. "
-                        f"Available: {', '.join(list_providers())} "
-                        "(declared aliases such as 'lerobot' for 'lerobot_local' also resolve). "
-                        "Nothing was dispatched and the arm was not energized."
-                    )
-                }
-            ],
+            "content": [{"text": f"{method}: {reason} Nothing was dispatched and the arm was not energized."}],
         }
 
     @staticmethod
