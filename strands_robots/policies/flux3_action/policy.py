@@ -51,7 +51,7 @@ FLUX3_SYSTEM_INSTALL_HINT = (
     "Install the inference library and the NATTEN wheel matching your torch/CUDA build, then retry:\n"
     "  pip install 'flux-action[encoders] @ git+https://github.com/black-forest-labs/flux-action'\n"
     "  pip install natten==0.21.6 -f https://whl.natten.org\n"
-    "docs/reference/policies/flux3_action.md has the prerequisites (a CUDA GPU with ~22 GB free)."
+    "docs/learn/policies/flux3-action.md has the prerequisites (a CUDA GPU with ~22 GB free)."
 )
 
 DEFAULT_CHECKPOINT = "black-forest-labs/flux-3-action-so101"
@@ -178,6 +178,12 @@ class Flux3ActionPolicy(Policy):
         self.device = device
         self.mode = mode
         self.execute_steps = int(execute_steps)
+        # In "chunk" mode get_actions hands back execute_steps actions from one
+        # stateless call; declaring that as the trained chunk makes
+        # Policy.execution_horizon (and so resolve_chunk_length) consume the
+        # whole chunk instead of 1, which would re-query the same chunk every
+        # action_horizon steps and drop its tail.
+        self.actions_per_step = self.execute_steps if mode == "chunk" else 1
         self.task = task
         self.warn_outside_training_range = warn_outside_training_range
         self.robot_state_keys: list[str] = []

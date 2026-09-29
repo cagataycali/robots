@@ -50,9 +50,15 @@ PROMPT_SIM = (
     "one sentence whether the arm moved and how many actions were applied."
 )
 
+# A lerobot-calibrated SO-101 reports degrees with no sign flips or offsets and a
+# 0..100 gripper; the constructor defaults are the MuJoCo frame (radians, the
+# sim's signs and offsets), so the real arm must name its frame or the policy
+# reads degrees as radians.
 PROMPT_REAL = (
     "Execute the policy provider 'flux3_action' with policy_config "
-    '{"device": "cuda", "mode": "queued"} and instruction "pick up the red cube" '
+    '{"device": "cuda", "mode": "queued", "joint_units": "deg", '
+    '"joint_signs": [1, 1, 1, 1, 1], "joint_offsets_deg": [0, 0, 0, 0, 0], '
+    '"gripper_range": [0, 100]} and instruction "pick up the red cube" '
     "for 4 seconds at 30 Hz. Quote the result, then say whether the arm moved."
 )
 

@@ -111,3 +111,26 @@ def test_construction_does_not_load_the_checkpoint(monkeypatch: pytest.MonkeyPat
     with pytest.raises(RuntimeError, match="must not run at construction"):
         policy.load()
     assert calls == [module.DEFAULT_CHECKPOINT]
+
+
+@pytest.mark.parametrize(("mode", "execute_steps", "expected"), [("queued", 32, 1), ("chunk", 32, 32), ("chunk", 8, 8)])
+def test_chunk_mode_declares_the_chunk_it_returns(
+    monkeypatch: pytest.MonkeyPatch, mode: str, execute_steps: int, expected: int
+) -> None:
+    """Fails before the fix: ``resolve_chunk_length`` handed the runner 8 of the 32 actions.
+
+    ``"chunk"`` mode returns ``execute_steps`` actions from one stateless call, so
+    that is the trained chunk the consumer executes before re-querying; ``"queued"``
+    mode is one action per tick.
+    """
+    from strands_robots.policies.base import resolve_chunk_length
+
+    for name in ("flux_action", "flux_action.inference", "flux_action.inference.so101"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    monkeypatch.setattr(module, "require_optional", lambda name, **kwargs: types.ModuleType(name))
+    monkeypatch.setattr(module, "_forward_natten_backend_to_neighborhood_calls", lambda: None)
+    monkeypatch.setattr(module.Flux3ActionPolicy, "_select_natten_backend", lambda self, override: "flex-fna")
+    policy = module.Flux3ActionPolicy(device="cpu", mode=mode, execute_steps=execute_steps)
+    assert policy.actions_per_step == expected
+    assert policy.execution_horizon == expected
+    assert resolve_chunk_length(policy, 8) == max(8, expected)
