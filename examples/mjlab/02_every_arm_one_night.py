@@ -38,6 +38,14 @@ from pathlib import Path
 import numpy as np
 
 SUCCESS_M = 0.03
+REFERENCE_REACH_M = 0.40  # the so101 recipe was tuned on a ~0.4 m arm; stds and success scale with reach beyond that
+
+
+def reward_scale(reach_m: float) -> float:
+    """Reach-normalised reward scale: 1.0 up to the reference arm, linear beyond (an 0.8 m arm gets 2x wider stds)."""
+    return max(1.0, reach_m / REFERENCE_REACH_M)
+
+
 ACTION_SCALE = 0.25
 EE_PATTERN = re.compile(r"(gripper|tcp|ee|end_effector|attachment|tool|flange|pinch|hand|grasp)", re.I)
 METRIC = "Metrics/reach/at_goal"
@@ -162,8 +170,8 @@ class ArmFK:
 # ------------------------------------------------------------- mjlab task
 
 
-def build_task(info: ArmInfo, cloud: np.ndarray, *, play: bool = False):
-    """The so101 reach task on ``info``'s robot, targets drawn from ``cloud``."""
+def build_task(info: ArmInfo, cloud: np.ndarray, *, play: bool = False, scale: float = 1.0):
+    """The so101 reach task on ``info``'s robot, targets drawn from ``cloud``; ``scale`` widens stds + success."""
     import torch
     from mjlab.envs import ManagerBasedRlEnvCfg
     from mjlab.envs.mdp.actions import JointPositionActionCfg
@@ -237,7 +245,11 @@ def build_task(info: ArmInfo, cloud: np.ndarray, *, play: bool = False):
             entity_name="robot", actuator_names=(".*",), scale=ACTION_SCALE, use_default_offset=True
         )
     }
-    commands = {"reach": CloudReachCommandCfg(resampling_time_range=(3.0, 5.0), debug_vis=play)}
+    commands = {
+        "reach": CloudReachCommandCfg(
+            resampling_time_range=(3.0, 5.0), debug_vis=play, success_threshold=SUCCESS_M * scale
+        )
+    }
     events = {
         "reset_base": EventTermCfg(
             func=mdp.reset_root_state_uniform, mode="reset", params={"pose_range": {}, "velocity_range": {}}
@@ -249,8 +261,8 @@ def build_task(info: ArmInfo, cloud: np.ndarray, *, play: bool = False):
         ),
     }
     rewards = {
-        "reach_coarse": RewardTermCfg(func=base.reach_reward, weight=1.0, params={"std": 0.15}),
-        "reach_fine": RewardTermCfg(func=base.reach_reward, weight=2.0, params={"std": 0.03}),
+        "reach_coarse": RewardTermCfg(func=base.reach_reward, weight=1.0, params={"std": 0.15 * scale}),
+        "reach_fine": RewardTermCfg(func=base.reach_reward, weight=2.0, params={"std": 0.03 * scale}),
         "success": RewardTermCfg(func=base.reach_success, weight=1.0),
         "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
         "joint_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=-0.001),
@@ -279,7 +291,9 @@ def build_task(info: ArmInfo, cloud: np.ndarray, *, play: bool = False):
 # ----------------------------------------------------------------- train
 
 
-def train_and_export(info: ArmInfo, cloud: np.ndarray, *, num_envs: int, iterations: int, seed: int, out: Path) -> dict:
+def train_and_export(
+    info: ArmInfo, cloud: np.ndarray, *, num_envs: int, iterations: int, seed: int, out: Path, scale: float = 1.0
+) -> dict:
     import torch
     from mjlab.envs import ManagerBasedRlEnv
     from mjlab.rl import RslRlVecEnvWrapper
@@ -289,7 +303,7 @@ def train_and_export(info: ArmInfo, cloud: np.ndarray, *, num_envs: int, iterati
     from strands_robots.training.mjlab_tasks.export import _export_dynamic_batch
     from strands_robots.training.mjlab_tasks.so101_reach import so101_reach_ppo_runner_cfg
 
-    env_cfg = build_task(info, cloud)
+    env_cfg = build_task(info, cloud, scale=scale)
     env_cfg.scene.num_envs = num_envs
     env_cfg.seed = seed
     agent_cfg = so101_reach_ppo_runner_cfg()
@@ -354,8 +368,10 @@ def train_and_export(info: ArmInfo, cloud: np.ndarray, *, num_envs: int, iterati
 # --------------------------------------------------------------- sim2sim
 
 
-async def sim2sim(info: ArmInfo, onnx: str, targets: np.ndarray, *, ticks: int = 150, hz: float = 50.0) -> dict:
-    """Play the ONNX actor on the classic MuJoCo backend for each target; success = ee within SUCCESS_M."""
+async def sim2sim(
+    info: ArmInfo, onnx: str, targets: np.ndarray, *, ticks: int = 150, hz: float = 50.0, success_m: float = SUCCESS_M
+) -> dict:
+    """Play the ONNX actor on the classic MuJoCo backend for each target; success = ee within ``success_m``."""
     import strands_robots.policies.rsl_rl_onnx.policy as provider_module
     from strands_robots import Robot
     from strands_robots.policies import create_policy
@@ -386,12 +402,13 @@ async def sim2sim(info: ArmInfo, onnx: str, targets: np.ndarray, *, ticks: int =
             sim.send_action(chunk[0], info.robot, n_substeps=n_sub)
         obs = sim.get_observation(info.robot)
         final = float(np.linalg.norm(fk.site_pos([float(obs[j]) for j in joints]) - target))
-        eps.append({"final_err_m": final, "min_err_m": float(min(errs + [final])), "success": final < SUCCESS_M})
+        eps.append({"final_err_m": final, "min_err_m": float(min(errs + [final])), "success": final < success_m})
     sim.cleanup()
     succ = sum(e["success"] for e in eps)
     return {
         "backend": "mujoco",
         "n": len(eps),
+        "success_m": success_m,
         "success": f"{succ}/{len(eps)}",
         "success_rate": succ / len(eps),
         "final_err_median_m": float(np.median([e["final_err_m"] for e in eps])),
@@ -430,11 +447,15 @@ def run_robot(robot: str, *, num_envs: int, iterations: int, seed: int, out: Pat
             "max": np.round(cloud.max(0), 3).tolist(),
             "reach_m": round(float(np.linalg.norm(cloud, axis=1).max()), 3),
         }
+        scale = reward_scale(rec["reachable"]["reach_m"])
+        rec["reachable"]["reward_scale"] = round(scale, 3)
         rec["stage"] = "train"
-        rec["train"] = train_and_export(info, cloud, num_envs=num_envs, iterations=iterations, seed=seed, out=out)
+        rec["train"] = train_and_export(
+            info, cloud, num_envs=num_envs, iterations=iterations, seed=seed, out=out, scale=scale
+        )
         rec["stage"] = "sim2sim"
         eval_targets = cloud[np.random.default_rng(seed + 1).choice(len(cloud), n_eval, replace=False)]
-        rec["sim2sim"] = asyncio.run(sim2sim(info, rec["train"]["onnx"], eval_targets))
+        rec["sim2sim"] = asyncio.run(sim2sim(info, rec["train"]["onnx"], eval_targets, success_m=SUCCESS_M * scale))
         rec["stage"] = "done"
     except Exception as exc:  # a failed robot is a finding, not a crash of the night
         rec["error"] = f"{type(exc).__name__}: {str(exc)[:400]}"
@@ -451,7 +472,7 @@ def table(out: Path) -> str:
         rows.append(
             f"| {r['robot']} | {r.get('dof', '')} | {r.get('ee', '')} | "
             f"{round(tr['train_s'] / 60, 1) if tr else ''} | {tr.get('fps_median', '') if tr else ''} | "
-            f"{tr.get('at_goal_last10', '') if tr else ''} | {s2.get('success', '')} | "
+            f"{tr.get('at_goal_last10', '') if tr else ''} | {s2.get('success', '')} @{round(s2['success_m'] * 1000) if s2 else ''}mm | "
             f"{round(s2['final_err_median_m'] * 1000) if s2 else ''} | {r.get('error', '') if 'error' in r else 'ok'} |"
         )
     head = "| robot | DoF | end effector | train min | env-steps/s | at_goal (last 10 its) | s2s mujoco | median err mm | status |\n|---|---|---|---|---|---|---|---|---|"
