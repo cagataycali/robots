@@ -75,7 +75,7 @@ What each call did:
 | `render()` | a PNG from the free camera in the same envelope an agent tool returns |
 | `cleanup()` | frees the world and the renderer |
 
-Every method returns the same envelope: `status` and a `content` list of `text`, `json` or `image` blocks. That envelope is what an agent reads when the same object is mounted as a tool, so what you print here is what the model would see.
+Every agent-facing method that reports a *result* returns the same envelope: `status` and a `content` list of `text`, `json` or `image` blocks. That envelope is what an agent reads when the same object is mounted as a tool, so what you print here is what the model would see. Two calls in the table above are exceptions - both by design, both consumed by the caller rather than an agent: `get_observation()` returns a flat dict (`"<joint>"`, `"<joint>.vel"`, `"<camera>"` -> ndarray) that a policy reads directly, and `cleanup()` returns `None` because it only releases resources. Indexing either as an envelope raises.
 
 A label works as a key: `send_action({"shoulder_pan": 0.5})` writes joint `1`. A key the robot does not have is not silently dropped: it returns `status="error"` naming the valid keys and labels.
 
