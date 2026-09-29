@@ -447,6 +447,7 @@ nav:
           - LeRobot local: learn/policies/lerobot-local.md
           - GR00T: learn/policies/groot.md
           - Cosmos 3: learn/policies/cosmos3.md
+          - FLUX 3 Action: learn/policies/flux3-action.md
           - cuRobo: learn/policies/curobo.md
           - MoveIt2: learn/policies/moveit2.md
           - WBC: learn/policies/wbc.md

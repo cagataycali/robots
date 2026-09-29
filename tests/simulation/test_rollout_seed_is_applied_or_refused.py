@@ -165,7 +165,7 @@ class _Jitter(Policy):
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
     ) -> list[dict[str, float]]:
         if self._rng is None:
-            # An unseeded rollout forwards no seed and so calls no reset. A
+            # A policy used before any reset draws from a generator of its own. A
             # private generator from entropy keeps the global object unread here
             # too, so the unseeded cell's count of reseed calls is not disturbed.
             self._rng = random.Random()
@@ -411,7 +411,7 @@ class TestTheSeedIsAppliedOnTheEvalPath:
         )
         sim.cleanup()
         assert result["status"] == "success", _text(result)
-        assert policy.reset_seeds == [], "no seed was supplied, so none is forwarded"
+        assert policy.reset_seeds == [None, None], "every episode resets the policy, and no seed is forwarded"
         assert reseeded == [], f"an unseeded eval reseeded a process-global RNG: {reseeded}"
 
     def test_the_seeded_eval_matches_its_sibling_run_policy_contract(self, arm_xml: Path) -> None:
