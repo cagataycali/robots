@@ -223,8 +223,12 @@ def main(argv: list[str] | None = None) -> int:
         model_desc = "none (--no-llm)"
     else:
         from strands import Agent
+        from strands.tools.executors import SequentialToolExecutor
 
-        agent = Agent(tools=[train_policy, evaluate_policy, write_leaderboard])
+        # The default executor runs the model's tool calls concurrently. Two mjlab trainers in one
+        # process both start a CUDA graph capture on the default stream and the second one dies with
+        # "Graph capture already in progress on this stream", so this agent trains one arm at a time.
+        agent = Agent(tools=[train_policy, evaluate_policy, write_leaderboard], tool_executor=SequentialToolExecutor())
         result = agent(prompt)
         final = str(result)
         model_desc = str(getattr(getattr(agent, "model", None), "config", None))
