@@ -35,3 +35,21 @@ def test_a_moved_mesh_path_resolves_to_the_driver_and_warns(stem: str, names: tu
     sys.modules.pop(f"strands_robots.mesh.{stem}", None)
     with pytest.warns(DeprecationWarning, match=rf"strands_robots\.drivers\.ros\.{stem}\b"):
         assert importlib.import_module(f"strands_robots.mesh.{stem}") is moved
+
+
+@pytest.mark.parametrize("stem", [move[0] for move in _MOVES])
+def test_the_alias_import_leaves_the_driver_module_its_own_spec(stem: str) -> None:
+    """importlib sets ``__spec__`` on what ``create_module`` returns; the alias must not keep it.
+
+    Otherwise the real module's spec names the mesh path and
+    ``importlib.reload(<driver module>)`` becomes a silent no-op that renames it.
+    """
+    moved = importlib.import_module(f"strands_robots.drivers.ros.{stem}")
+    sys.modules.pop(f"strands_robots.mesh.{stem}", None)
+    with pytest.warns(DeprecationWarning):
+        importlib.import_module(f"strands_robots.mesh.{stem}")
+
+    assert moved.__spec__ is not None
+    assert moved.__spec__.name == moved.__name__ == f"strands_robots.drivers.ros.{stem}"
+    assert moved.__spec__.origin is not None
+    assert importlib.reload(moved).__name__ == f"strands_robots.drivers.ros.{stem}"

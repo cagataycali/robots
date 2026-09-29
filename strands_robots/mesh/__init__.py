@@ -94,15 +94,33 @@ class _MovedModule(importlib.abc.MetaPathFinder, importlib.abc.Loader):
             return None
         return importlib.util.spec_from_loader(fullname, self)
 
+    #: The moved module's own spec, keyed by the alias name, kept across the
+    #: create/exec pair because importlib rebinds ``__spec__`` in between.
+    _real_specs: dict[str, ModuleSpec | None]
+
+    def __init__(self) -> None:
+        self._real_specs = {}
+
     def create_module(self, spec: ModuleSpec) -> ModuleType:
         stem = spec.name.removeprefix(f"{__name__}.")
         warnings.warn(
             f"{spec.name} moved to {_DRIVERS_ROS}.{stem} and is removed in 0.7", DeprecationWarning, stacklevel=2
         )
-        return importlib.import_module(f"{_DRIVERS_ROS}.{stem}")
+        module = importlib.import_module(f"{_DRIVERS_ROS}.{stem}")
+        # importlib's ``_init_module_attrs`` sets ``__spec__`` on whatever
+        # ``create_module`` returns, which here is the real driver module; a
+        # clobbered spec makes ``importlib.reload(<driver module>)`` a no-op
+        # that renames the module to the alias path. Stash it to restore below.
+        self._real_specs[spec.name] = module.__spec__
+        return module
 
     def exec_module(self, module: ModuleType) -> None:
-        """The module is the moved one, already executed."""
+        """The module is the moved one, already executed: give it its own spec back."""
+        alias = next(
+            (name for name, spec in self._real_specs.items() if spec is not None and spec.name == module.__name__), None
+        )
+        if alias is not None:
+            module.__spec__ = self._real_specs.pop(alias)
 
 
 if not any(type(finder).__qualname__ == _MovedModule.__qualname__ for finder in sys.meta_path):  # a reload adds none
