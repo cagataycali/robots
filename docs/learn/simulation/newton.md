@@ -48,4 +48,4 @@ sim.destroy()
 
 - NVIDIA GPU and CUDA-capable Warp. There is no CPU device for the articulated solvers at useful speed.
 - Pinned to `mujoco>=3.11,<3.12` and `mujoco-warp` of the same series, while `[sim-mujoco]` allows any 3.5+. Install `[sim-newton]` in its own environment if you also want the newest MuJoCo release.
-- Rendering is ray-traced and tiled; per-frame cost is higher than MuJoCo's rasteriser, per-batch cost lower.
+- Rendering is ray-traced and tiled: per-frame cost above MuJoCo's rasteriser, per-batch cost below.

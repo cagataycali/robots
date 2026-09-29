@@ -68,4 +68,4 @@ The scene is an `MjSpec` that is recompiled after every structural change, so `a
 
 - CPU only. One process steps one world; for batched environments use `newton` or `isaac`.
 - Offscreen rendering needs a working GL backend. On a headless Linux box without EGL, set `MUJOCO_GL=osmesa` and accept slow frames.
-- `mjx` is accepted as an alias but resolves to the same CPU engine; there is no JAX path.
+- `mjx` is an alias for the same CPU engine; there is no JAX path.
