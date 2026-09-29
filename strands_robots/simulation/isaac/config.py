@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -278,8 +279,28 @@ class IsaacConfig:
     verbose : bool
         Enable verbose logging from Isaac Sim/Kit. Default False. Must be a
         boolean on :func:`strands_robots.utils.boolean_flag_error`.
+    kit_args : tuple[str, ...]
+        Extra Kit command-line settings forwarded to ``SimulationApp`` as its
+        ``extra_args`` - e.g. ``("--/app/renderer/sleepMsOnFocus=0",)``. Each
+        must start with ``--``. Applied when the first world is created (the
+        ``SimulationApp`` is a process-wide singleton).
+    task_threads : int | None
+        Worker threads of Kit's ``carb.tasking`` scheduler (the
+        ``--/plugins/carb.tasking.plugin/threadCount`` setting). ``None``
+        (default) keeps Kit's default, one per CPU core. Several Isaac
+        processes on one machine each start that many: measured on a 32-core
+        L40S host, 2 of 6 processes started together hung for over 6 minutes
+        in ``SimulationApp`` start-up; with ``task_threads=4`` all 6 booted in
+        17-18 s.
+    boot_timeout_s : float | None
+        Seconds ``create_world`` waits for ``SimulationApp`` to start before it
+        gives up. A hung start-up cannot be interrupted from Python, so on
+        timeout every thread's stack is written to stderr and the process
+        exits with status 70, instead of blocking forever. ``None`` (default)
+        waits indefinitely, as before.
     extra : dict
-        Escape-hatch for Isaac-specific or experimental options.
+        Escape-hatch for Isaac-specific or experimental options. Not forwarded
+        to Kit; use ``kit_args`` for Kit settings.
     """
 
     num_envs: int = 1
@@ -295,6 +316,9 @@ class IsaacConfig:
     camera_width: int = 640
     camera_height: int = 480
     verbose: bool = False
+    kit_args: Sequence[str] = ()
+    task_threads: int | None = None
+    boot_timeout_s: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -380,6 +404,32 @@ class IsaacConfig:
         for param, value in (("camera_width", self.camera_width), ("camera_height", self.camera_height)):
             if (dim_err := positive_count_error(value, param, type(self).__name__)) is not None:
                 raise ValueError(dim_err)
+
+        # Kit settings reach SimulationApp's command line, so each is refused
+        # here rather than handed to Kit, which ignores a malformed one.
+        if isinstance(self.kit_args, str) or not isinstance(self.kit_args, (tuple, list)):
+            raise ValueError(
+                f"{type(self).__name__}: kit_args must be a sequence of '--setting=value' strings, "
+                f"got {type(self.kit_args).__name__}"
+            )
+        bad_args = [a for a in self.kit_args if not isinstance(a, str) or not a.startswith("--")]
+        if bad_args:
+            raise ValueError(
+                f"{type(self).__name__}: every kit_args entry must be a string starting with '--' "
+                f"(e.g. '--/plugins/carb.tasking.plugin/threadCount=4'), got {bad_args!r}"
+            )
+        self.kit_args = tuple(self.kit_args)
+        if (
+            self.task_threads is not None
+            and (tt_err := positive_count_error(self.task_threads, "task_threads", type(self).__name__)) is not None
+        ):
+            raise ValueError(tt_err)
+        if (
+            self.boot_timeout_s is not None
+            and (bt_err := positive_finite_number_error(self.boot_timeout_s, "boot_timeout_s", type(self).__name__))
+            is not None
+        ):
+            raise ValueError(bt_err)
 
         # Validate stage_path. It is the other half of every prim path this
         # backend interpolates; the name half is already refused on the shared

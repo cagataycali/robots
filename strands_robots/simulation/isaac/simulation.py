@@ -27,13 +27,14 @@ Environment variables:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import os
 import queue
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
@@ -945,6 +946,65 @@ def _get_or_create_simulation_app(
 # importers, ``omni.usd``, ``pxr``) is imported directly. Unit tests that
 # ``monkeypatch.setitem(sys.modules, "isaacsim.core.api", fake)`` still reach
 # their fake: the compat module resolves each name at import time.
+
+
+def _kit_args(config: IsaacConfig) -> list[str]:
+    """The Kit command-line settings ``config`` asks for: ``kit_args`` plus ``task_threads``."""
+    args = list(getattr(config, "kit_args", ()) or ())
+    threads = getattr(config, "task_threads", None)
+    if threads is not None:
+        args.append(f"--/plugins/carb.tasking.plugin/threadCount={int(threads)}")
+    return args
+
+
+#: Exit status of a process whose ``SimulationApp`` did not start within
+#: ``IsaacConfig.boot_timeout_s`` (EX_SOFTWARE).
+BOOT_TIMEOUT_EXIT_STATUS = 70
+
+
+@contextlib.contextmanager
+def _boot_watchdog(timeout_s: float | None) -> Iterator[None]:
+    """Exit the process with its stacks if the block does not finish within ``timeout_s``.
+
+    ``SimulationApp`` start-up can hang inside Kit (measured: waiting for the
+    viewport, with other Isaac processes starting on the same host), in native
+    code no Python exception can interrupt. A caller who set a timeout would
+    rather have a dead process with a stack than a live one that never
+    answers. ``None`` watches nothing.
+    """
+    if timeout_s is None:
+        yield
+        return
+    done = threading.Event()
+
+    def _watch() -> None:
+        if done.wait(timeout_s):
+            return
+        import faulthandler
+        import sys
+
+        sys.stderr.write(
+            f"strands_robots: Isaac SimulationApp did not start within boot_timeout_s={timeout_s:g}; "
+            "exiting with status 70. Several Isaac processes starting at once on one host is the "
+            "known cause: set IsaacConfig(task_threads=4) or start them one after another. "
+            "Thread stacks follow.\n"
+        )
+        try:
+            faulthandler.dump_traceback(all_threads=True)
+        except (ValueError, OSError, AttributeError):  # a stderr without a file descriptor
+            pass
+        try:
+            sys.stderr.flush()
+        except (ValueError, OSError):
+            pass
+        os._exit(BOOT_TIMEOUT_EXIT_STATUS)
+
+    watcher = threading.Thread(target=_watch, name="isaac-boot-watchdog", daemon=True)
+    watcher.start()
+    try:
+        yield
+    finally:
+        done.set()
 
 
 def _accepts_config_kw(cls: Any) -> bool:
@@ -1904,10 +1964,14 @@ class IsaacSimulation(
                 # maps to no ``renderer`` key: no frames are rendered, so
                 # Kit's default is left alone.
                 renderer = _RENDERER_BY_MODE.get(self._config.render_mode)
-                self._app = _get_or_create_simulation_app(
-                    headless=self._config.headless,
-                    launch_config={"renderer": renderer} if renderer is not None else None,
-                )
+                launch: dict[str, Any] = {"renderer": renderer} if renderer is not None else {}
+                if kit_args := _kit_args(self._config):
+                    launch["extra_args"] = kit_args
+                with _boot_watchdog(self._config.boot_timeout_s):
+                    self._app = _get_or_create_simulation_app(
+                        headless=self._config.headless,
+                        launch_config=launch or None,  # type: ignore[arg-type]
+                    )
 
                 # Now safe to import Isaac core modules. Isaac Sim 6.0
                 # exposes ``World`` under ``isaacsim.core.api``; the legacy
