@@ -41,6 +41,7 @@ from fastapi.staticfiles import StaticFiles
 from strands_robots.dashboard import (
     access,
     build_info,
+    config_api,
     fleet,
     log_redaction,
     routes_agent,
@@ -196,7 +197,11 @@ def create_app() -> FastAPI:
         unknown = settings.unknown_keys(body)
         if unknown:
             raise HTTPException(400, f"unknown settings: {', '.join(unknown)}")
-        changed, errors = settings.update_strict(body)
+        # The same fence ``POST /api/config`` applies: a credential such as
+        # ``security.auth_token`` is set on the host, never by a settings write.
+        errors = config_api.refuse_settings_credentials(body)
+        changed, coercion_errors = settings.update_strict(body)
+        errors.extend(coercion_errors)
         return JSONResponse({"changed": changed, "errors": errors}, status_code=422 if errors else 200)
 
     @app.get("/api/whoami")

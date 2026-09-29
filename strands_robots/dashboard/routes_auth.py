@@ -143,7 +143,12 @@ async def login_finish(request: Request, response: Response) -> dict[str, Any]:
 
 @router.post("/logout")
 async def logout(response: Response) -> dict[str, Any]:
-    """Drop the session cookie. The token itself simply expires."""
+    """Drop the session cookie.
+
+    The token itself lives until its ``exp`` or until the passkey it was minted
+    for is removed (``auth.verify_token`` refuses a token whose passkey is no
+    longer enrolled); to end every session of a device, remove its passkey.
+    """
     response.delete_cookie(access.COOKIE, path="/")
     return {"ok": True}
 
