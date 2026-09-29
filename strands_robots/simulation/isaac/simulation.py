@@ -6602,7 +6602,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         if meta.get("json", {}).get("rtx") and want != native:
             from PIL import Image
 
-            rgb = np.asarray(Image.fromarray(np.ascontiguousarray(rgb)).resize(tuple(want), Image.Resampling.BILINEAR))
+            rgb = np.asarray(
+                Image.fromarray(np.ascontiguousarray(rgb)).resize((want[0], want[1]), Image.Resampling.BILINEAR)
+            )
             meta = {**meta, "text": f"{meta.get('text', '')} (resampled to {want[0]}x{want[1]})"}
             meta["json"] = {**meta["json"], "resolution": want, "native_resolution": native}
         block = _rgb_png_block(rgb)
