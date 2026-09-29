@@ -943,6 +943,13 @@ body {
 .ckpt-meta { display: flex; gap: 8px; align-items: center; flex-shrink: 0; color: var(--dim); font-size: 10.5px; }
 .ckpt-local { color: var(--green); font-weight: 700; }
 .ckpt-meta em { color: var(--amber); font-style: normal; }
+/* Keyboard focus lives on the input; the active row is painted, not focused (aria-activedescendant). */
+.ckpt-row.active, .ckpt-row[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ckpt-robot { color: var(--accent); font-weight: 700; }
+/* The fit pill: the colour is the outline and the text (a mismatch is a refusal the run would hit anyway, so it borrows the danger red honestly). */
+.ckpt-fit { border: 1px solid currentColor; border-radius: var(--rpill); padding: 0 6px; font-size: 10px; line-height: 1.5; }
+.ckpt-fit.fits { color: var(--ok); }
+.ckpt-fit.mismatch { color: var(--danger); }
 
 /* ── training tab ──────────────────────────────────── */
 .train-sheet {

@@ -3453,7 +3453,38 @@ function emptyNote({ query, hubProblem }) {
   }
   return q ? `no checkpoints match ${named} (local cache + Hub).` : "type part of a checkpoint name — local cache and the Hub are both searched.";
 }
-function CheckpointPicker({ value, onPick, disabled }) {
+function robotHint(peerId, presence) {
+  var _a;
+  const child = peerId.split("__")[1];
+  if (child) return child;
+  const body = (_a = presence == null ? void 0 : presence.sim_robots) == null ? void 0 : _a[0];
+  if (body) return body;
+  const hw = String((presence == null ? void 0 : presence.hw) ?? "").trim().split(/[\s@]/)[0];
+  if (hw && /^[a-z0-9_.-]+$/i.test(hw)) return hw;
+  return "";
+}
+function nextActive(key, active, count) {
+  if (count <= 0) return null;
+  switch (key) {
+    case "ArrowDown":
+      return active < 0 ? 0 : Math.min(active + 1, count - 1);
+    case "ArrowUp":
+      return active <= 0 ? 0 : active - 1;
+    case "Home":
+      return 0;
+    case "End":
+      return count - 1;
+    default:
+      return null;
+  }
+}
+function fitVerdict(fit) {
+  var _a;
+  if (!fit || fit.evidence === false || !((_a = fit.checked) == null ? void 0 : _a.length)) return "unknown";
+  return fit.blocking ? "mismatch" : "fits";
+}
+const FIT_ROWS = 6;
+function CheckpointPicker({ value, onPick, disabled, robot, peerId }) {
   const [query, setQuery] = reactExports.useState(value);
   const [rows, setRows] = reactExports.useState([]);
   const [open, setOpen] = reactExports.useState(false);
@@ -3461,10 +3492,13 @@ function CheckpointPicker({ value, onPick, disabled }) {
   const [hubProblem, setHubProblem] = reactExports.useState(null);
   const [hfAuth, setHfAuth] = reactExports.useState(null);
   const [failed, setFailed] = reactExports.useState(null);
+  const [active, setActive] = reactExports.useState(-1);
+  const [fits, setFits] = reactExports.useState({});
   const debounce = reactExports.useRef();
   const seq = reactExports.useRef(0);
   const [shownQuery, setShownQuery] = reactExports.useState("");
   const rootRef = reactExports.useRef(null);
+  const listId = reactExports.useRef(`ckpt-list-${Math.random().toString(36).slice(2, 8)}`).current;
   reactExports.useEffect(() => {
     setQuery(value);
   }, [value]);
@@ -3475,19 +3509,37 @@ function CheckpointPicker({ value, onPick, disabled }) {
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, []);
+  reactExports.useEffect(() => {
+    if (!peerId || !open) return;
+    const want = rows.slice(0, FIT_ROWS).map((r) => r.repo_id).filter((id) => fits[id] === void 0);
+    if (!want.length) return;
+    let alive = true;
+    for (const id of want) {
+      void api(`/api/robots/${encodeURIComponent(peerId)}/policy-fit?repo_id=${encodeURIComponent(id)}`).then((v) => {
+        if (alive) setFits((f) => ({ ...f, [id]: fitVerdict(v) }));
+      }).catch(() => {
+        if (alive) setFits((f) => ({ ...f, [id]: "unknown" }));
+      });
+    }
+    return () => {
+      alive = false;
+    };
+  }, [rows, peerId, open, fits]);
   const searchNow = (q) => {
     clearTimeout(debounce.current);
     const mine = ++seq.current;
     debounce.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const j = await api(`/api/checkpoints/search?q=${encodeURIComponent(q)}&limit=12`);
+        const robotParam = robot ? `&robot=${encodeURIComponent(robot)}` : "";
+        const j = await api(`/api/checkpoints/search?q=${encodeURIComponent(q)}&limit=12${robotParam}`);
         if (!isLatestRequest(mine, seq.current)) return;
         setRows(j.results ?? []);
         setHubProblem(j.hub_problem ?? null);
         setHfAuth(j.hf_auth ?? null);
         setFailed(null);
         setShownQuery(q);
+        setActive(-1);
         setOpen(true);
       } catch (e) {
         if (!isLatestRequest(mine, seq.current)) return;
@@ -3500,13 +3552,49 @@ function CheckpointPicker({ value, onPick, disabled }) {
       }
     }, 300);
   };
+  const pick = (r) => {
+    onPick(r.repo_id, r.policy_type);
+    setQuery(r.repo_id);
+    setOpen(false);
+    setActive(-1);
+  };
+  const onKeyDown = (e) => {
+    if (e.key === "Escape") {
+      if (open) {
+        e.preventDefault();
+        setOpen(false);
+      }
+      return;
+    }
+    if (e.key === "Enter") {
+      if (open && active >= 0 && rows[active]) {
+        e.preventDefault();
+        pick(rows[active]);
+      }
+      return;
+    }
+    const next = nextActive(e.key, active, rows.length);
+    if (next === null) return;
+    e.preventDefault();
+    if (!open) {
+      if (rows.length) setOpen(true);
+      else searchNow(query);
+    }
+    setActive(next);
+  };
   const fmt2 = (n) => n == null ? "" : n >= 1e3 ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k` : String(n);
+  const activeId = open && active >= 0 && rows[active] ? `${listId}-${active}` : void 0;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "ckpt", ref: rootRef, children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       "input",
       {
-        placeholder: "search checkpoints… (e.g. smolvla, act so101)",
+        placeholder: robot ? `search checkpoints for ${robot}…` : "search checkpoints… (e.g. smolvla, act so101)",
         "aria-label": "search checkpoints",
+        role: "combobox",
+        "aria-expanded": open,
+        "aria-controls": listId,
+        "aria-autocomplete": "list",
+        "aria-activedescendant": activeId,
         value: query,
         onChange: (e) => {
           setQuery(e.target.value);
@@ -3517,11 +3605,12 @@ function CheckpointPicker({ value, onPick, disabled }) {
           if (rows.length) setOpen(true);
           else searchNow(query);
         },
+        onKeyDown,
         disabled
       }
     ),
     loading && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ckpt-spin", children: "…" }),
-    open && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "ckpt-menu", children: [
+    open && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "ckpt-menu", id: listId, role: "listbox", "aria-label": "checkpoints", children: [
       failed && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "ckpt-note bad", children: [
         "✗ search failed: ",
         failed
@@ -3535,30 +3624,35 @@ function CheckpointPicker({ value, onPick, disabled }) {
       // local cache answered, and "no checkpoints match" would be a claim
       // about a catalogue nobody asked.
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: hubProblem ? "ckpt-note warn" : "ckpt-note", children: emptyNote({ query: shownQuery, hubProblem }) }),
-      rows.map((r) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
-        {
-          className: "ckpt-row",
-          onMouseDown: (e) => e.preventDefault(),
-          onClick: () => {
-            onPick(r.repo_id, r.policy_type);
-            setQuery(r.repo_id);
-            setOpen(false);
-          },
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ckpt-id", children: r.repo_id }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "ckpt-meta", children: [
-              r.local && /* @__PURE__ */ jsxRuntimeExports.jsx("b", { className: "ckpt-local", children: "local" }),
-              r.policy_type && /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: r.policy_type }),
-              r.downloads != null && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-                "↓",
-                fmt2(r.downloads)
+      rows.map((r, i) => {
+        const fit = peerId ? fits[r.repo_id] : void 0;
+        return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            id: `${listId}-${i}`,
+            role: "option",
+            "aria-selected": i === active,
+            className: `ckpt-row${i === active ? " active" : ""}`,
+            onMouseDown: (e) => e.preventDefault(),
+            onMouseEnter: () => setActive(i),
+            onClick: () => pick(r),
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ckpt-id", children: r.repo_id }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "ckpt-meta", children: [
+                r.local && /* @__PURE__ */ jsxRuntimeExports.jsx("b", { className: "ckpt-local", children: "local" }),
+                r.robot_match && robot && /* @__PURE__ */ jsxRuntimeExports.jsx("b", { className: "ckpt-robot", title: `named after ${robot}`, children: robot }),
+                r.policy_type && /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: r.policy_type }),
+                r.downloads != null && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+                  "↓",
+                  fmt2(r.downloads)
+                ] }),
+                fit && fit !== "unknown" && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `ckpt-fit ${fit}`, title: fit === "fits" ? "declared features match this robot" : "declared features do not fit this robot", children: fit === "fits" ? "✓ fits" : "✗ mismatch" })
               ] })
-            ] })
-          ]
-        },
-        r.repo_id
-      ))
+            ]
+          },
+          r.repo_id
+        );
+      })
     ] })
   ] });
 }
@@ -4102,6 +4196,8 @@ function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop }) {
             {
               value: value(f.key, f.default),
               disabled: blocked,
+              robot: robotHint(peerId, presence),
+              peerId,
               onPick: (repoId, policyType) => setFields((s) => {
                 const next = { ...s, [f.key]: repoId };
                 if (policyType && wireFields.some((w) => w.key === "policy_type") && !s.policy_type) {
