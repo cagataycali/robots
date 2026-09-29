@@ -93,6 +93,27 @@ def _load_msgpack():
     return require_optional("msgpack", extra="groot-service", purpose="GR00T service inference")
 
 
+#: The map keys that mark a ``ModalityConfig`` on the wire, in every spelling a
+#: reference server has used.
+#:
+#: ``gr00t.policy.server_client.MsgSerializer`` packs ``__ModalityConfig__``
+#: since the N1.7 server that ships ``get_modality_config`` with the
+#: ``action_configs`` field (Isaac-GR00T 51d4c89 and later) and still reads the
+#: older ``__ModalityConfig_class__`` - which is the only spelling this client
+#: read. So against a current server every ``get_modality_config`` reply came
+#: back as the raw marker map, ``{'__ModalityConfig__': True, 'as_json': {...}}``,
+#: and nothing in service mode could learn which keys the server declares: the
+#: one endpoint that would let a mapping be checked before the first
+#: ``get_action`` was unreadable. Both spellings are read, as the server does;
+#: the byte forms cover a peer that packs its keys as bytes.
+_MODALITY_CONFIG_MARKERS: tuple[str | bytes, ...] = (
+    "__ModalityConfig__",
+    "__ModalityConfig_class__",
+    b"__ModalityConfig__",
+    b"__ModalityConfig_class__",
+)
+
+
 class MsgSerializer:
     """(De)serialization helpers for ZMQ communication with GR00T services.
 
@@ -133,14 +154,22 @@ class MsgSerializer:
         """Decode custom types from msgpack wire format."""
         if not isinstance(obj, dict):
             return obj
-        if "__ModalityConfig_class__" in obj:
+        if any(marker in obj for marker in _MODALITY_CONFIG_MARKERS):
             # N1.6 serialized `as_json` as a JSON string (Pydantic `model_dump_json`).
             # N1.7 serializes `as_json` as a plain dict (via `to_json_serializable`)
             # and adds fields (sin_cos_embedding_keys, mean_std_embedding_keys, action_configs)
             # that our minimal ModalityConfig dataclass does not track.
             # Accept both wire forms AND tolerate unknown N1.7 fields so a single
-            # client can talk to either server version.
-            payload = obj["as_json"]
+            # client can talk to either server version. The marker itself has two
+            # spellings as well - see :data:`_MODALITY_CONFIG_MARKERS`.
+            payload = obj.get("as_json", obj.get(b"as_json"))
+            if payload is None:
+                raise ValueError(
+                    "Malformed ModalityConfig payload: marker present but 'as_json' missing. "
+                    f"keys={sorted(repr(k) for k in obj)}"
+                )
+            if isinstance(payload, bytes | bytearray):
+                payload = bytes(payload).decode()
             if isinstance(payload, str):
                 payload = json.loads(payload)
             # Forward-compat: drop fields our dataclass does not know about.
