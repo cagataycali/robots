@@ -8,7 +8,14 @@
  *
  * One finger orbits, two fingers pan and zoom. Sliders move joints through
  * mj_forward; the Physics switch steps mj_step at real time with the sliders as
- * actuator targets. The code panel mirrors the sliders as robot.act({...}).
+ * actuator targets and a clock reads the simulated time. The code panel mirrors
+ * the sliders as robot.act({...}), flashing the line a slider just changed.
+ *
+ * Arrival: while the meshes stream, the robot's thumbnail is revealed bottom-up
+ * in step with the download; on the first load the camera starts a fifth farther
+ * out and eases in, the joints wake from the default pose into the rest pose one
+ * after another, and the stage orbits slowly until the first touch. Every one of
+ * those is skipped under prefers-reduced-motion.
  *
  * Dependencies resolve through the import map in overrides/main.html:
  *   three, three/addons/, @mujoco/mujoco  (all pinned on cdn.jsdelivr.net)
@@ -81,6 +88,7 @@ class Engine {
   }
 
   setQpos(qadr, value, act) { this._worker.postMessage({ type: "setQpos", qadr, value, act }); }
+  setQposAll(qpos) { this._worker.postMessage({ type: "setQposAll", qpos }); }
   reset() { this._worker.postMessage({ type: "reset" }); }
   physics(on) { this._worker.postMessage({ type: "physics", on }); }
   dispose() { try { this._worker.postMessage({ type: "dispose" }); } catch { /* already gone */ } this._worker.terminate(); }
@@ -155,6 +163,14 @@ const TEMPLATE = `
   button:hover { border-color: var(--_accent); background: var(--_accent); color: var(--sr-on-accent, #06210f); }
   .bar { height:4px; border-radius:2px; background: var(--_border); overflow:hidden; margin-top:.5rem; }
   .bar i { display:block; height:100%; width:0; background: var(--_accent); transition: width 120ms linear; }
+  /* Streaming: the thumbnail is revealed bottom-up as the meshes arrive (--p is the download fraction). */
+  .status.reveal { display:block; padding:0; }
+  .status.reveal img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .status.reveal .ghost { opacity:.14; }
+  .status.reveal .cut { opacity:.62; clip-path: inset(calc(100% - var(--p, 0%)) 0 0 0); transition: clip-path 160ms linear; }
+  .status.reveal .caption { position:absolute; left:.7rem; right:.7rem; bottom:.6rem; margin:0; font-family: "JetBrains Mono", ui-monospace, monospace; font-size:.62rem; color: var(--_muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-variant-numeric: tabular-nums; }
+  .clock { font-family: "JetBrains Mono", ui-monospace, monospace; font-size:.62rem; color: var(--_muted); font-variant-numeric: tabular-nums; padding:.3rem .2rem; }
+  .clock[hidden] { display:none; }
   .chrome { position:absolute; left:0; right:0; bottom:0; display:flex; gap:.4rem; align-items:center; padding:.5rem .6rem; pointer-events:none; }
   .chrome > * { pointer-events:auto; }
   .chrome .spacer { flex:1; }
@@ -171,6 +187,8 @@ const TEMPLATE = `
   .code { position:absolute; top:.6rem; left:.6rem; max-width: calc(100% - 15.5rem); font-family: "JetBrains Mono", ui-monospace, monospace; font-size:.62rem; line-height:1.45; color: var(--sr-fg, #15171a); background: color-mix(in srgb, var(--_card) 88%, transparent); backdrop-filter: blur(8px); border:1px solid var(--_border); border-radius:10px; padding:.5rem .7rem; white-space:pre; overflow:auto; max-height: 40%; }
   .code[hidden] { display:none; }
   .code b { color: var(--_accent); font-weight:600; }
+  .code .flash { animation: flash 400ms ease-out; border-radius:3px; }
+  @keyframes flash { from { background: color-mix(in srgb, var(--_accent) 38%, transparent); } to { background: transparent; } }
   .sheet-head { display:none; }
   /* Narrow stage (a phone, or a small column): the panels become bottom sheets over the chrome,
      the pills grow to finger size and wrap onto a second row, and nothing sits over the robot by default. */
@@ -192,7 +210,8 @@ const TEMPLATE = `
   :host([narrow]) .sheet-head h5 { margin:0; }
   :host([narrow]) .sheet-head button { min-height: 40px; min-width: 40px; padding:.3rem .7rem; border-radius:999px; font-size:.72rem; }
   :host([narrow]) .joints > h5 { display:none; }
-  @media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
+  /* The page's reduced-motion override stops at the shadow boundary, so the stage carries its own. */
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; } }
 </style>
 <canvas tabindex="0" aria-label="3D robot viewer"></canvas>
 <div class="poster" part="poster"></div>
@@ -201,6 +220,7 @@ const TEMPLATE = `
 <div class="chrome" hidden>
   <button class="pill" data-act="reset" title="Reset pose (R)">Reset</button>
   <button class="pill" data-act="physics" aria-pressed="false" title="Step MuJoCo at real time">Physics</button>
+  <span class="clock" hidden aria-live="off">t = 0.00 s</span>
   <button class="pill" data-act="collision" aria-pressed="false" title="Show collision geometry">Collision</button>
   <span class="spacer"></span>
   <button class="pill" data-act="joints" aria-pressed="true">Joints</button>
@@ -223,6 +243,8 @@ class RobotViewer extends HTMLElement {
     this._raf = null;
     this._joints = [];
     this._onKey = (e) => { if (e.key === "r" || e.key === "R") this.resetPose(); };
+    this._arrived = false; // the cinematic first frame plays once per element
+    this._orbitStopped = false; // the idle orbit ends for good at the first touch
   }
 
   connectedCallback() {
@@ -243,6 +265,9 @@ class RobotViewer extends HTMLElement {
       if (b) this._action(b.dataset.act, b);
     });
     this.$("canvas").addEventListener("keydown", this._onKey);
+    for (const ev of ["pointerdown", "wheel", "keydown"]) {
+      this.$("canvas").addEventListener(ev, () => this._stopOrbit(), { passive: true });
+    }
     this._ro = new ResizeObserver(() => { this._syncNarrow(); this._resize(); });
     this._ro.observe(this);
     this._syncNarrow();
@@ -335,6 +360,27 @@ class RobotViewer extends HTMLElement {
   }
   _clearStatus() { this.$(".status")?.remove(); }
 
+  /**
+   * Loading as the robot's own silhouette: the thumbnail is revealed from the floor up in step
+   * with the download, over a faint ghost of the whole robot, with a one-line caption instead of
+   * a card. Falls back to the card when the registry has no thumbnail for this robot.
+   */
+  _progress(caption, fraction) {
+    const thumb = this._entry?.thumbnail;
+    if (!thumb) return this._status(caption, "", fraction);
+    let s = this.$(".status");
+    if (!s || !s.classList.contains("reveal")) {
+      this._clearStatus();
+      s = document.createElement("div");
+      s.className = "status reveal";
+      const src = new URL("../../" + thumb, import.meta.url);
+      s.innerHTML = `<img class="ghost" alt="" src="${src}"><img class="cut" alt="" src="${src}"><p class="caption"></p>`;
+      this.shadowRoot.appendChild(s);
+    }
+    s.querySelector(".cut").style.setProperty("--p", `${(Math.max(0, Math.min(1, fraction)) * 100).toFixed(1)}%`);
+    s.querySelector(".caption").textContent = caption;
+  }
+
   _fail(msg) {
     this._state = "error";
     this.$(".poster").hidden = true;
@@ -348,7 +394,9 @@ class RobotViewer extends HTMLElement {
       case "reset": this.resetPose(); return;
       case "physics":
         this._physics = !this._physics; btn.setAttribute("aria-pressed", String(this._physics));
+        this._cancelWake();
         this._engine?.physics(this._physics);
+        this.$(".clock").hidden = !this._physics;
         return;
       case "collision":
         this._showCollision = !this._showCollision; btn.setAttribute("aria-pressed", String(this._showCollision)); this._applyVisibility(); return;
@@ -387,14 +435,14 @@ class RobotViewer extends HTMLElement {
       }
       const e = this._entry;
       this.$(".poster").hidden = true;
-      this._status("Loading MuJoCo", "The WebAssembly engine is 10 MB and cached after the first robot.");
+      this._progress("Loading MuJoCo, 10 MB once, cached after the first robot", 0);
       this._engine?.dispose();
       this._engine = new Engine((pose) => this._onPose(pose));
       const [three] = await Promise.all([loadThree(), this._engine.ready()]);
       if (stale()) return;
       const files = await this._fetchAssets(e);
       if (stale()) return;
-      this._status("Compiling model", `${files.count} files, ${fmtMB(files.bytes)}. The page stays yours meanwhile.`);
+      this._progress(`Compiling ${files.count} files, ${fmtMB(files.bytes)}. The page stays yours meanwhile`, 1);
       await this._compile(files);
       if (stale()) return;
       await this._buildScene(three);
@@ -412,6 +460,7 @@ class RobotViewer extends HTMLElement {
       this._syncSheet();
       this._state = "ready";
       this._loop();
+      this._wake();
       this.dispatchEvent(new CustomEvent("robot-loaded", { detail: { name: this._entry.name } }));
     } catch (err) {
       if (stale()) return;
@@ -432,7 +481,7 @@ class RobotViewer extends HTMLElement {
     const dec = new TextDecoder();
     const fetched = new Map();
     let bytes = 0, done = 0, total = 1;
-    const progress = (label) => this._status("Streaming meshes", `${label} ${fmtMB(bytes)}, ${done}/${total} files`, done / total);
+    const progress = (label) => this._progress(`Streaming ${label ? label + ", " : ""}${done}/${total} files, ${fmtMB(bytes)}`, done / total);
     const LFS = new Uint8Array([118, 101, 114, 115, 105, 111, 110, 32, 104, 116, 116, 112, 115, 58, 47, 47, 103, 105, 116, 45, 108, 102, 115]); // "version https://git-lfs"
     const isLfsPointer = (b) => b.length < 400 && LFS.every((c, i) => b[i] === c);
     const tryFetch = async (url) => {
@@ -521,14 +570,84 @@ class RobotViewer extends HTMLElement {
     this._pose = pose;
     if (this._poseWaiter) { const w = this._poseWaiter; this._poseWaiter = null; w(); }
     if (this._state !== "ready") return;
-    if (this._physics || this._poseDirty) {
+    if (this._physics) this.$(".clock").textContent = `t = ${pose.time.toFixed(2)} s`;
+    if (this._physics || this._poseDirty || this._wakeTween) {
+      const follow = this._poseDirty || this._wakeTween;
       for (const jt of this._joints) {
         const o = this.shadowRoot.getElementById(`o${jt.j}`);
         if (o) o.textContent = pose.qpos[jt.qadr].toFixed(2);
-        if (this._poseDirty) { const inp = this.shadowRoot.getElementById(`j${jt.j}`); if (inp) inp.value = pose.qpos[jt.qadr]; }
+        if (follow) { const inp = this.shadowRoot.getElementById(`j${jt.j}`); if (inp) inp.value = pose.qpos[jt.qadr]; }
       }
       if (this._poseDirty) { this._poseDirty = false; this._renderCode(); }
     }
+  }
+
+  /**
+   * Wake-up: the joints tween into the rest pose over 1.2 s, ease-in-out, one joint starting
+   * after another. A model with a keyframe wakes from its default pose (a humanoid's arms settle
+   * into "stand"); one without wakes from a fold a fifth of the way to each joint's lower limit,
+   * since default and rest coincide there (the SO-101 reaches up, then settles forward, and stays
+   * inside the frame). Any slider, Reset or Physics cancels it.
+   */
+  _wake() {
+    if (this._reducedMotion() || !this._model || !this._pose) return;
+    const m = this._model, rest = this._qpos0, nq = m.nq;
+    const from = Float64Array.from(m.nkey > 0 ? m.qpos0 : rest);
+    if (m.nkey === 0) {
+      for (const jt of this._joints) {
+        const lo = m.jnt_range[2 * jt.j], hi = m.jnt_range[2 * jt.j + 1];
+        if (lo < hi) from[jt.qadr] = rest[jt.qadr] + 0.2 * (lo - rest[jt.qadr]);
+      }
+    }
+    let moving = false;
+    for (let i = 0; i < nq; i++) if (Math.abs(from[i] - rest[i]) > 1e-4) moving = true;
+    if (!moving) return;
+    // One (start, width) per qpos entry: joint j starts at j/njnt of a 0.4 s stagger and takes 0.8 s.
+    const spans = new Float64Array(nq * 2);
+    for (let j = 0; j < m.njnt; j++) {
+      const a = m.jnt_qposadr[j], n = (j + 1 < m.njnt ? m.jnt_qposadr[j + 1] : nq) - a;
+      const start = m.njnt > 1 ? 0.4 * (j / (m.njnt - 1)) : 0;
+      for (let i = a; i < a + n; i++) { spans[2 * i] = start; spans[2 * i + 1] = 0.8; }
+    }
+    this._wakeTween = { t0: performance.now(), from, to: rest, spans, q: new Float64Array(nq) };
+  }
+  _cancelWake() {
+    if (!this._wakeTween) return;
+    this._wakeTween = null;
+    this._poseDirty = true; // sliders and the code card settle on whatever pose the worker reports next
+  }
+  _stepWake(now) {
+    const w = this._wakeTween;
+    if (!w) return;
+    const t = (now - w.t0) / 1000;
+    let done = true;
+    for (let i = 0; i < w.q.length; i++) {
+      const k = Math.max(0, Math.min(1, (t - w.spans[2 * i]) / w.spans[2 * i + 1]));
+      if (k < 1) done = false;
+      const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; // ease-in-out quad
+      w.q[i] = w.from[i] + (w.to[i] - w.from[i]) * e;
+    }
+    // Quaternion entries (ball and free joints) are interpolated component-wise, so renormalise them.
+    const m = this._model;
+    for (let j = 0; j < m.njnt; j++) {
+      const type = m.jnt_type[j];
+      if (type === m.enums.HINGE || type === m.enums.SLIDE) continue;
+      const a = m.jnt_qposadr[j] + (type === m.enums.BALL ? 0 : 3);
+      const n = Math.hypot(w.q[a], w.q[a + 1], w.q[a + 2], w.q[a + 3]) || 1;
+      for (let i = a; i < a + 4; i++) w.q[i] /= n;
+    }
+    this._engine.setQposAll(w.q);
+    if (done) { this._wakeTween = null; this._poseDirty = true; }
+  }
+  /** Idle orbit, ~0.08 rad/s, until the first pointer, wheel or key on the stage. */
+  _startOrbit() {
+    if (!this._three || this._orbitStopped || this._reducedMotion()) return;
+    this._three.controls.autoRotate = true;
+    this._three.controls.autoRotateSpeed = 0.75; // OrbitControls: 2.0 is one orbit per 30 s
+  }
+  _stopOrbit() {
+    this._orbitStopped = true;
+    if (this._three) this._three.controls.autoRotate = false;
   }
 
   async _buildScene({ THREE, OrbitControls, RoomEnvironment }) {
@@ -657,6 +776,16 @@ class RobotViewer extends HTMLElement {
     const shift = right.multiplyScalar(w >= 640 && !this.hasAttribute("compact") ? radius * 0.45 : 0);
     controls.target.copy(center).add(shift);
     camera.position.add(shift);
+    if (!this._arrived && !this._reducedMotion()) {
+      // First load: arrive from a fifth farther out over 900 ms; the controls wait for the landing.
+      const to = camera.position.clone();
+      camera.position.copy(controls.target).addScaledVector(to.clone().sub(controls.target), 1.2);
+      controls.enabled = false;
+      this._flight = { t0: null, from: camera.position.clone(), to, dur: 900 };
+    } else {
+      this._startOrbit();
+    }
+    this._arrived = true;
     key.shadow.camera.left = key.shadow.camera.bottom = -radius * 1.6;
     key.shadow.camera.right = key.shadow.camera.top = radius * 1.6;
     key.shadow.camera.near = radius * 0.5; key.shadow.camera.far = radius * 8;
@@ -698,6 +827,7 @@ class RobotViewer extends HTMLElement {
     if (!this._three) return;
     const theme = this._theme();
     const { THREE } = this._three;
+    this._exposureRamp = null;
     this._three.renderer.toneMappingExposure = theme.exposure;
     if (this._grid) {
       const colors = this._grid.geometry.attributes.color;
@@ -783,6 +913,7 @@ class RobotViewer extends HTMLElement {
       if (!inp) return;
       const jt = this._joints.find((x) => x.j === Number(inp.dataset.j));
       const v = Number(inp.value);
+      if (this._wakeTween) this._wakeTween = null;
       this._pose.qpos[jt.qadr] = v; // optimistic, so the code card follows the finger before the worker answers
       this._engine.setQpos(jt.qadr, v, jt.act);
       this.shadowRoot.getElementById(`o${jt.j}`).textContent = v.toFixed(2);
@@ -794,14 +925,22 @@ class RobotViewer extends HTMLElement {
   _renderCode() {
     const q = this._pose.qpos;
     const moved = this._joints.filter((jt) => Math.abs(q[jt.qadr] - this._qpos0[jt.qadr]) > 1e-3);
+    // The line whose number just changed flashes, so the slider to action-key mapping is legible.
+    const prev = this._codeLines || new Map();
+    const lines = new Map(moved.map((jt) => [jt.name, q[jt.qadr].toFixed(3)]));
+    this._codeLines = lines;
     const body = moved.length
-      ? moved.map((jt) => `    <b>"${jt.name}"</b>: ${q[jt.qadr].toFixed(3)},`).join("\n")
+      ? moved.map((jt) => {
+          const v = lines.get(jt.name), line = `<b>"${jt.name}"</b>: ${v},`;
+          return `    ${prev.size && prev.get(jt.name) !== v ? `<span class="flash">${line}</span>` : line}`;
+        }).join("\n")
       : `    <span style="opacity:.55"># move a slider</span>`;
     this.$(".code").innerHTML = `<div class="sheet-head"><h5>robot.act</h5><button class="pill" data-act="close" aria-label="Close code">Close</button></div>from strands_robots import Robot\n\nrobot = Robot(<b>"${this._entry.name}"</b>)\nrobot.act({\n${body}\n})`;
   }
 
   resetPose() {
     if (!this._engine || !this._pose) return;
+    this._wakeTween = null;
     this._poseDirty = true; // sliders and the code card follow the worker's reply
     this._engine.reset();
   }
@@ -819,12 +958,34 @@ class RobotViewer extends HTMLElement {
   _loop() {
     // Physics steps in the worker and arrives as poses; this loop only draws the latest one.
     this._framesDrawn = 0;
-    const tick = () => {
+    const easeOut = (k) => 1 - Math.pow(1 - k, 3);
+    const tick = (now) => {
       if (this._state !== "ready") return;
-      this._three.controls.update();
+      const { controls, camera, renderer, scene } = this._three;
+      const f = this._flight;
+      if (f) {
+        f.t0 ??= now;
+        const k = Math.min(1, (now - f.t0) / f.dur);
+        camera.position.lerpVectors(f.from, f.to, easeOut(k));
+        if (k >= 1) { this._flight = null; controls.enabled = true; this._startOrbit(); }
+      }
+      this._stepWake(now);
+      const r = this._exposureRamp;
+      if (r) {
+        r.t0 ??= now;
+        const k = Math.min(1, (now - r.t0) / 400);
+        renderer.toneMappingExposure = r.from + (r.to - r.from) * easeOut(k);
+        if (k >= 1) this._exposureRamp = null;
+      }
+      controls.update();
       this._syncPoses();
-      this._three.renderer.render(this._three.scene, this._three.camera);
-      if (this._pendingEnvironment && this._framesDrawn++ >= 1) { const build = this._pendingEnvironment; this._pendingEnvironment = null; build(); }
+      renderer.render(scene, camera);
+      if (this._pendingEnvironment && this._framesDrawn++ >= 1) {
+        const build = this._pendingEnvironment; this._pendingEnvironment = null; build();
+        // The sheen lands a frame late; fade the exposure up over 400 ms so it reads as a reveal, not a pop.
+        const to = renderer.toneMappingExposure;
+        if (!this._reducedMotion()) { renderer.toneMappingExposure = to * 0.6; this._exposureRamp = { t0: null, from: to * 0.6, to }; }
+      }
       this._raf = requestAnimationFrame(tick);
     };
     this._raf = requestAnimationFrame(tick);
@@ -843,6 +1004,11 @@ class RobotViewer extends HTMLElement {
       this._three = null;
     }
     this._pendingEnvironment = null;
+    this._exposureRamp = null;
+    this._flight = null;
+    this._wakeTween = null;
+    this._codeLines = null;
+    this.$(".clock").hidden = true;
     this._engine?.dispose();
     this._engine = null;
     this._model = null;
