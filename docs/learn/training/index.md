@@ -20,7 +20,7 @@ with open(f"{root}/meta/info.json", "w") as fh:
     json.dump({"codebase_version": "v3.0", "total_episodes": 10, "total_frames": 3000, "fps": 30}, fh)
 
 trainer = create_trainer("mock")
-spec = TrainSpec(dataset_root=root, base_model="lerobot/act_base", output_dir=tempfile.mkdtemp(), steps=10)
+spec = TrainSpec(dataset_root=root, base_model="lerobot/smolvla_base", output_dir=tempfile.mkdtemp(), steps=10)
 print(trainer.validate(spec))
 result = trainer.train(spec)
 print(result.status, sorted(os.listdir(result.checkpoint_dir)), sorted(result.metrics))

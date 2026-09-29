@@ -9,7 +9,7 @@ At the end of this page a Franka Emika Panda or a Franka Research 3 accepts join
 This needs an arm with FCI enabled in Desk, a workstation on the arm's network, and `panda-py`:
 
 ```bash
-pip install panda-py              # the panda-py binding over libfranka (MIT); not a strands-robots extra
+pip install panda-python          # the panda-py binding over libfranka (MIT); not a strands-robots extra
 ```
 
 ```python title="sketch"

@@ -9,12 +9,12 @@ At the end of this page you can list the peers on a mesh, ask one for its state,
 Continuing from the [mesh index](index.md) fence (two sims, `arm-a` and `arm-b`, `STRANDS_MESH_LOCAL_DEV=true`):
 
 ```python title="sketch"
-peers = a.mesh.peers                                       # list of presence dicts: peer_id, robot, last_seen, ...
+peers = a.mesh.peers                                       # presence dicts: peer_id, robot, last_seen, ...
 one = a.mesh.get_peer("arm-b", max_age_s=5.0)              # None if stale
-a.mesh.send("arm-b", {"action": "state"})                  # joints and sim time
+a.mesh.send("arm-b", {"action": "state"})                  # joints, sim time
 a.mesh.tell("arm-b", "stack the cubes", policy_provider="lerobot_local",
             pretrained_name_or_path="lerobot/smolvla_base", duration=10.0)
-a.mesh.broadcast({"action": "status"}, timeout=5.0)        # one reply per peer
+a.mesh.broadcast({"action": "status"}, timeout=5.0)        # a reply per peer
 a.mesh.subscribe("arm-b-state", "strands/arm-b/state", lambda key, payload: print(payload["joints"]))
 a.mesh.unsubscribe("arm-b-state")
 ```
@@ -35,7 +35,7 @@ Every command is a JSON dict with an `action` from `ALLOWED_ACTIONS`, validated 
 | `state`, `features` | the joint state; the observation and action feature schema |
 | `execute` | run a policy to completion: `instruction`, `policy_provider` (required, no silent default), `duration`, checkpoint as a Hub id |
 | `start` | the same, in the background |
-| `step`, `reset`, `set_joints` | step once; reset; write `target_joints` (simulation peers) |
+| `step`, `reset`, `set_joints`, `call`, `describe_tool` | step once; reset; write `target_joints`; one advertised function (`function`, `params`); the served spec (simulation peers) |
 | `stop` | halt the rollout; admitted under lockout |
 | `teleop_status`, `teleop_receive`, `teleop_stop` | follow a remote input stream ([teleoperation](../hardware/teleoperation.md)) |
 | `resume` | clear the e-stop lockout with the override code ([safety](safety-and-estop.md)) |
