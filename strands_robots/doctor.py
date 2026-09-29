@@ -23,6 +23,8 @@ import os
 import platform
 import re
 import sys
+import time
+import uuid
 import warnings
 from pathlib import Path
 
@@ -1067,6 +1069,128 @@ def check_mesh() -> str:
     return _warn(f"mesh: {summary}", note="; ".join(notes)) if notes else _pass(f"mesh: {summary}")
 
 
+def _certificate_cn(cert_path: Path) -> str | None:
+    """The subject CN of the PEM certificate at *cert_path*, or ``None`` when unreadable.
+
+    Uses ``cryptography`` when importable (it is part of ``[all]`` but not of
+    ``[mesh-iot]``); without it the doctor still reports the 403, just without
+    naming the CN.
+    """
+    try:
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+
+        cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+        attrs = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+        return str(attrs[0].value) if attrs else ""
+    except Exception:  # noqa: BLE001 - a diagnostic aid, never a failure of its own
+        return None
+
+
+def check_iot_direct() -> str:
+    """Whether this identity may send AWS IoT Core direct messages, over HTTPS alone.
+
+    Only meaningful with ``STRANDS_MESH_BACKEND=iot`` or ``bridge``; any other
+    backend is a SKIP. With one configured, the probe makes ONE HTTPS
+    ``SendDirectMessage`` call with the identity's own certificate (or IAM
+    credentials under ``STRANDS_IOT_DIRECT_AUTH=sigv4``) to its own client id
+    on its own reply topic, and never opens an MQTT session: connecting here
+    under the robot's client id would take the running robot's session over
+    (AWS IoT keeps one session per client id). The broker checks the grant
+    before the connection, so every answer is informative: 200 means the
+    robot is live and reachable (the probe was delivered to it, harmlessly, on
+    a reply topic no turn is waiting on); 404 means the grant is in place and
+    no session holds that id right now, the expected verdict on a machine that
+    is not currently running the robot; 403 means the policy grants no
+    ``iot:SendDirectMessage`` for this identity, and the certificate CN is
+    named when it is not the Thing name (a certificate issued before the CSR
+    default carries ``AWS IoT Certificate``: re-run ``provision_robot``).
+    ``STRANDS_MESH_IOT_DIRECT=0`` is reported as a deliberate SKIP.
+    """
+    from strands_robots.mesh._backend_select import select_backend
+
+    backend = select_backend()
+    if backend not in ("iot", "bridge"):
+        return _skip(f"iot direct: STRANDS_MESH_BACKEND={backend} (no AWS IoT leg)")
+
+    from strands_robots.mesh.transport.iot_transport import (
+        DIRECT_AUTH_ENV_VAR,
+        DIRECT_ENV_VAR,
+        IotMqttTransport,
+        direct_messaging_enabled,
+    )
+
+    if not direct_messaging_enabled():
+        return _skip(f"iot direct: {DIRECT_ENV_VAR}=0 (commands go over publish/subscribe)")
+
+    transport = IotMqttTransport(connect_timeout=10.0)
+    thing = transport.thing_name
+    if not thing or not transport._endpoint:
+        return _fail(
+            "iot direct: STRANDS_IOT_THING_NAME and STRANDS_IOT_ENDPOINT are required",
+            fix="run provision_robot(<thing>) and export the lines it prints",
+        )
+    role = "robot"
+    try:
+        # HTTPS only: no connect(). First the topic a ROBOT identity may
+        # address itself on (its own reply path, scoped to the certificate
+        # CN); on 403, the topic an OPERATOR identity may (any cmd topic). The
+        # broker checks the grant before the connection, so 404 on either
+        # means that grant is in place.
+        probe_turn = uuid.uuid4().hex
+        result = transport.send_direct(
+            thing,
+            f"strands/{thing}/response/{thing}/{probe_turn}",
+            {"responder_id": thing, "turn_id": probe_turn, "type": "doctor-probe"},
+            confirm=True,
+            timeout=5.0,
+        )
+        if result.reason == "forbidden":
+            as_operator = transport.send_direct(
+                thing,
+                f"strands/{thing}/cmd",
+                {"sender_id": thing, "turn_id": probe_turn, "command": {"action": "ping"}, "timestamp": time.time()},
+                confirm=True,
+                timeout=5.0,
+            )
+            if as_operator.reason != "forbidden":
+                result, role = as_operator, "operator"
+    finally:
+        transport.close()
+
+    auth = os.environ.get(DIRECT_AUTH_ENV_VAR, "").strip() or "x509"
+    if result.delivered:
+        return _pass(
+            f"iot direct: {role} grant OK, {thing} is connected and answered in {result.latency_ms:.0f} ms ({auth})"
+        )
+    if result.reason == "offline":
+        return _pass(
+            f"iot direct: {role} grant OK for {thing} in {result.latency_ms:.0f} ms ({auth}); no session holds "
+            "that client id right now (this peer is not running here)"
+        )
+    if result.reason == "forbidden":
+        cn = _certificate_cn(transport._cert_dir / f"{thing}.cert.pem")
+        if cn is not None and cn != thing:
+            return _fail(
+                f"iot direct: certificate CN is {cn!r}, the robot grant needs CN={thing!r}",
+                fix=f"re-run provision_robot({thing!r}) to issue a certificate from a CSR with that CN",
+            )
+        return _fail(
+            f"iot direct: {thing} may send a direct message neither as a robot (its reply topic) nor as an "
+            f"operator (a cmd topic) ({result.detail or '403'})",
+            fix=(
+                f"re-run provision_robot({thing!r}) or provision_operator({thing!r}): the account's policy "
+                "version predates the direct messaging grants"
+            ),
+        )
+    if result.reason == "unavailable":
+        return _fail(
+            f"iot direct: no credential for the HTTPS call ({result.detail})",
+            fix=f"{DIRECT_AUTH_ENV_VAR}=x509 needs the certificate files; sigv4 needs AWS credentials",
+        )
+    return _warn(f"iot direct: {result.reason} ({result.detail or 'no detail'})", note="transient; re-run")
+
+
 #: The doctor's table: one ``(label, probe)`` row per check, in print order.
 #: Probes are looked up by name at run time so a test (or an operator's
 #: ``python -c``) can replace one without rebuilding the table.
@@ -1085,6 +1209,7 @@ CHECKS: tuple[tuple[str, str], ...] = (
     ("HF Auth", "check_hf_auth"),
     ("Device Connect", "check_device_connect"),
     ("Mesh", "check_mesh"),
+    ("IoT Direct", "check_iot_direct"),
     ("Sim Test", "check_sim_smoke"),
 )
 

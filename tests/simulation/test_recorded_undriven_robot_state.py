@@ -499,6 +499,21 @@ class TestEveryRecordingEntryPointConsultsTheSharedOwner:
             "the robots it does not drive as add_frame's 0.0 fill"
         )
 
+    def test_the_step_clock_writes_through_the_shared_owner(self) -> None:
+        """MuJoCo's ``step`` under an open recording writes its frames here too.
+
+        ``step`` records the whole scene at the dataset rate without a policy,
+        so it is a third entry point beside the rollout hook and the merge
+        loop; a second writer there is one more copy of the frame schema.
+        """
+        from strands_robots.simulation.mujoco.simulation import MuJoCoSimulation
+
+        assert _calls_the_shared_owner(MuJoCoSimulation._record_step_frame), (
+            "MuJoCo's _record_step_frame does not write its frames through RecordedFrame "
+            "alone, so a frame recorded by step() is assembled by a second copy of the "
+            "schema start_recording declared"
+        )
+
 
 class TestASynchronizedLoopThatDrivesASubsetFillsTheRest:
     """The regression: ``run_multi_policy`` need not name every robot in the scene."""

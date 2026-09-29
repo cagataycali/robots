@@ -64,3 +64,4 @@ Presence at 2 Hz, state at 10 Hz, camera off until `STRANDS_MESH_CAMERA_HZ` is s
 - [safety and e-stop](safety-and-estop.md): `emergency_stop`, the lockout, the override code, the audit trail.
 - [topics](topics.md): every key and its rate.
 - [bridges](bridges.md): the IoT and bridge transports, the ACL file.
+- [direct messaging](direct.md): point-to-point commands over AWS IoT Core.

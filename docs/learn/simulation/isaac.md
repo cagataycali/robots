@@ -27,8 +27,8 @@ from strands_robots.simulation.isaac import IsaacConfig, IsaacSimulation
 ok, msg = IsaacSimulation.is_available()      # cheap probe, no stage created
 print(ok, msg)
 
-sim = create_simulation("isaac", num_envs=1, headless=True)          # shortcut kwargs
-sim = IsaacSimulation(IsaacConfig(num_envs=1, headless=True, physics_dt=1 / 120))   # same thing
+sim = create_simulation("isaac", headless=True, render_mode="rtx_realtime")  # shortcut kwargs
+sim = IsaacSimulation(IsaacConfig(headless=True, render_mode="rtx_realtime"))      # same thing
 sim.create_world()
 sim.add_robot("so101")
 sim.add_camera(name="front", position=[0.6, 0.0, 0.5], target=[0.2, 0.0, 0.0])
@@ -57,5 +57,6 @@ sim.destroy()
 
 - Python 3.12 only, an RTX-class GPU, and a multi-gigabyte install. There is no CPU fallback; `is_available()` says why before anything is built.
 - Physics runs on **CPU PhysX**: `device` is reported as `device_requested` but not forwarded, because the GPU pipeline breaks incremental `add_robot`. Rendering uses the GPU.
+- `render_mode="headless"` (the default) renders nothing; pass `render_mode="rtx_realtime"` (also with `headless=True`).
 - Rendering is slower per frame than MuJoCo's offscreen path and faster per batch: use it for fidelity and scale, not unit-test loops.
 - `remove_robot`, like a dynamic `remove_object`, invalidates the tensor view: `step()` and `send_action()` refuse until the next `reset()`. Build the scene, then reset.
