@@ -23,6 +23,7 @@ else's page), and the posture still closes on its own once a passkey exists.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -171,9 +172,20 @@ class TestTheRoutesFollow:
         assert response.status_code == 200
         assert response.json()["via"] == "loopback"
 
-    def test_a_consent_grant_needs_the_proof(self, client, fresh_install: Path) -> None:
+    def test_a_consent_grant_needs_the_proof(
+        self, client, fresh_install: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The grant the finding's chain ends in. The consent store is pointed into the
+        sandbox first: on the old code this very request wrote
+        ``STRANDS_DASH_AGENT_PHYSICAL_MOTION=1`` into the working tree's ``.env``."""
+        from strands_robots.dashboard import config_api
+
+        monkeypatch.setattr(config_api, "ENV_FILE", fresh_install / ".env")
+        monkeypatch.delenv("STRANDS_DASH_AGENT_PHYSICAL_MOTION", raising=False)
         response = client.post("/api/consent", json={"kind": "agent_physical_motion"})
         assert response.status_code == 401
+        assert not (fresh_install / ".env").exists()
+        assert "STRANDS_DASH_AGENT_PHYSICAL_MOTION" not in os.environ
 
     def test_the_login_screen_still_gets_its_fields(self, client) -> None:
         body = client.get("/api/auth/status").json()
