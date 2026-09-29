@@ -996,6 +996,19 @@ def _anchor_fixed_base_articulation(prim_path: str) -> str | None:
     return None
 
 
+#: What a caller of a camera in ``render_mode="headless"`` needs to hear.
+#: ``headless=True`` (no window) and ``render_mode="headless"`` (no rendering at
+#: all) are different switches, and the second is the default: a camera added
+#: under it renders all-zero frames with ``status: success``, and
+#: ``get_observation`` carries no images, so a rollout or recording silently
+#: trains on black. Measured on an L40S: ``headless=True`` with
+#: ``render_mode="rtx_realtime"`` renders real frames at ~50 ms each.
+_HEADLESS_RENDER_REMEDY = (
+    'render_mode="headless" renders no pixels (all-zero frames, no images in observations); '
+    'pass render_mode="rtx_realtime" (works with headless=True) for real camera frames'
+)
+
+
 def _import_articulation_cls() -> Any:
     """Resolve the single-prim articulation wrapper across Isaac 6.x builds.
 
@@ -6612,11 +6625,21 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
             if self._config.render_mode == "headless":
                 # Return blank frames in headless mode. Most CI flows
-                # land here; Isaac's RTX path-tracer is unavailable.
+                # land here; Isaac's RTX path-tracer is unavailable. The json
+                # says so in fields, so a consumer need not parse the text to
+                # learn the pixels are not a measurement.
                 return (
                     np.zeros((h, w, 3), dtype=np.uint8),
                     np.zeros((h, w), dtype=np.float32),
-                    {"text": f"Rendered (headless, no RTX): {w}x{h}"},
+                    {
+                        "text": f"Rendered (headless, no RTX): {w}x{h}",
+                        "json": {
+                            "rtx": False,
+                            "blank_frame": True,
+                            "render_mode": "headless",
+                            "remedy": _HEADLESS_RENDER_REMEDY,
+                        },
+                    },
                 )
 
             if not registered(self._cameras, camera_name):
@@ -7413,6 +7436,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             cam_info = {
                 "name": name,
                 "prim_path": prim_path,
+                "renders_pixels": self._config.render_mode != "headless",
                 "position": pos,
                 "target": tgt,
                 "resolution": [w, h],
@@ -7432,7 +7456,10 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 "status": "success",
                 "content": [
                     {
-                        "text": (f"Camera '{name}' added at {pos}, resolution={w}x{h}, fov={fov_deg}"),
+                        "text": (
+                            f"Camera '{name}' added at {pos}, resolution={w}x{h}, fov={fov_deg}"
+                            + (f". NOTE: {_HEADLESS_RENDER_REMEDY}" if self._config.render_mode == "headless" else "")
+                        ),
                         "json": cam_info,
                     }
                 ],
