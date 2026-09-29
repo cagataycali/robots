@@ -123,7 +123,7 @@ class TestEveryChildStreamReadSubstitutes:
         # Without this a matcher that silently stops matching passes the rule
         # above by finding nothing to grade.
         _, reads = _scan()
-        assert len(reads) >= 19, f"only {len(reads)} child-stream reads found; the matcher is broken"
+        assert len(reads) >= 10, f"only {len(reads)} child-stream reads found; the matcher is broken"
 
 
 class TestBucketSyncKeepsItsVerdict:

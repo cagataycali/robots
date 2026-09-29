@@ -23,7 +23,7 @@ Upstream reference:
     https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/vla_workflow.html
 
 Dependencies:
-    pip install "strands-robots[sim-mujoco,lerobot,wbc]"
+    pip install "strands-robots[sim-mujoco,lerobot,wbc]" "lerobot[training]"
     # For stage 2 (fine-tuning): GPU + pip install "strands-robots[groot]"
 
 Usage:

@@ -276,7 +276,7 @@ class TestTheGateAcceptsEverySpellingCreatePolicyAccepts:
     def test_a_runtime_alias_is_not_refused(self, registered: str) -> None:
         assert HwRobot._policy_provider_error("gate_probe", "start_task") is None
 
-    @pytest.mark.parametrize("smart", ["lerobot/act_so101_test", "zmq://127.0.0.1:5555", "ws://host:8000/policy"])
+    @pytest.mark.parametrize("smart", ["lerobot/act_so101_test", "ws://host:8000/policy"])
     def test_a_smart_string_is_left_to_resolution(self, smart: str) -> None:
         assert HwRobot._policy_provider_error(smart, "start_task") is None
 

@@ -42,11 +42,6 @@ EXCLUDED: dict[str, dict[str, str]] = {
         "transport": "deprecated compatibility knob; the only transport is 'raw'",
         "diffusers_backend": "an injected Cosmos3DiffusersBackend object (tests), not JSON",
     },
-    "groot": {
-        "model_path": "GR00T local mode, removed in 0.7 (R-P1); use lerobot_local policy_type='groot'",
-        "embodiment_tag": "GR00T local mode, removed in 0.7 (R-P1)",
-        "device": "GR00T local mode, removed in 0.7 (R-P1)",
-    },
     "curobo": {
         "motion_gen": "an injected cuRobo MotionGen instance, not JSON",
     },
