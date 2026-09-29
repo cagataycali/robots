@@ -80,7 +80,63 @@ Results follow (running).
 
 ## 04 Extreme domain randomisation
 
-Results follow (running).
+Two so101 reach actors, same recipe (N=1,024, 300 iterations, seed 42): `none` on
+the stock task (591 s) and `extreme` with every physics term redrawn per world on
+every reset (958 s; kp and kd x0.4 to x1.8, effort x0.4 to x1.0, body mass x0.5
+to x2.0, friction 0.1 to 2.0, joint damping x0.3 to x4.0, encoder bias +/-50
+mrad, observation noise x3). Both are then judged on classic MuJoCo (a backend
+neither saw), 20 targets, seed 7, 200 ticks at 50 Hz, success = final tcp error
+under 3 cm, one fresh model per episode so perturbations never stack. Data:
+[`assets/dr_eval.json`](assets/dr_eval.json).
+
+| perturbation (classic MuJoCo, unseen) | nominal success | dr success | nominal median err mm | dr median err mm |
+|---|---|---|---|---|
+| nominal | 12/20 | 11/20 | 13 | 19 |
+| payload_100g | 12/20 | 12/20 | 13 | 19 |
+| payload_250g | 12/20 | 12/20 | 13 | 19 |
+| mass_x2 | 12/20 | 12/20 | 13 | 19 |
+| friction_0.1 | 12/20 | 11/20 | 13 | 19 |
+| kp_x0.5 | 12/20 | 12/20 | 13 | 19 |
+| kp_x1.8 | 12/20 | 11/20 | 12 | 19 |
+| damping_x4 | 12/20 | 11/20 | 13 | 19 |
+| everything | 12/20 | 12/20 | 12 | 19 |
+| encoder_bias_50mrad | 7/20 | 9/20 | 35 | 32 |
+| encoder_bias_100mrad | 0/20 | 1/20 | 62 | 54 |
+| obs_noise_20mrad | 12/20 | 11/20 | 14 | 19 |
+| action_delay_2 | 1/20 | 4/20 | 58 | 46 |
+| action_delay_5 | 0/20 | 0/20 | 160 | 146 |
+| hostile | 3/20 | 5/20 | 48 | 49 |
+
+- **Physics perturbations do not separate the actors.** Nine cells, one number:
+  12/20 for `none` in every one, 11 or 12 for `extreme`. The same eight targets
+  fail in every cell, with final errors of 48 to 144 mm and no approach at all
+  (min error equals final error): they are outside what 300 iterations taught,
+  not victims of the perturbation. The perturbations are real (a 250 g payload
+  sags the held pose by 21 to 31 mrad, kp x0.5 by 5 to 20 mrad, measured on the
+  stepped model), but an actor that observes joint positions and `ee_to_target`
+  every 20 ms integrates a static sag away within a few ticks.
+- **Extreme DR costs precision and buys nothing here.** On the successful
+  episodes `extreme` lands at 9.4 mm median, `none` at 10.7 mm, but its
+  distribution has a longer tail (19 mm vs 13 mm over all 20), and it needed
+  62 % more wall clock for the same iterations (`set_const` per world after
+  every reset).
+- **What breaks a closed loop is the loop.** The second wave attacks the
+  observation and the timing instead of the body: a constant 50 mrad encoder
+  bias (inside the DR training range) drops `none` to 7/20 and `extreme` to
+  9/20; 100 mrad kills both. Two ticks of action latency (40 ms) take `none`
+  to 1/20 and `extreme` to 4/20, and the failures there pass *through* the
+  target (min error 3 to 9 mm) and oscillate, the signature of a controller
+  tuned for zero latency. Five ticks is 0/20 for both. Gaussian observation
+  noise of 20 mrad per tick changes nothing (12/20 vs 11/20): noise averages
+  out, bias and delay do not.
+- **So the honest thesis is narrower than the title.** Per-world physics DR at
+  this scale is cheap to run (1,024 different robots in one `step`) and the
+  trained actor is a little more tolerant of encoder bias and latency, which it
+  never saw explicitly. If sim-to-real is the goal, randomise the things the
+  grid shows matter: observation bias, action delay and, with those, the
+  gains; body mass and friction can stay nominal for a position-controlled
+  reach. The delay term is the one missing from `EXTREME` today.
+
 
 ## 05 Curriculum goal box
 

@@ -63,7 +63,24 @@ PERTURBATIONS = {
     "kp_x1.8": {"kp_scale": 1.8},
     "damping_x4": {"damping_scale": 4.0},
     "everything": {"payload_kg": 0.1, "mass_scale": 1.5, "friction": 0.3, "kp_scale": 0.6, "damping_scale": 3.0},
+    # Second wave, added after the first nine cells came back flat (F10): a
+    # position-observed actor integrates any static sag away, so these cells
+    # attack the loop itself - what the observation says and when the action lands.
+    "encoder_bias_50mrad": {"encoder_bias_rad": 0.05},
+    "encoder_bias_100mrad": {"encoder_bias_rad": 0.10},
+    "obs_noise_20mrad": {"obs_noise_rad": 0.02},
+    "action_delay_2": {"action_delay_ticks": 2},
+    "action_delay_5": {"action_delay_ticks": 5},
+    "hostile": {
+        "payload_kg": 0.1,
+        "kp_scale": 0.6,
+        "encoder_bias_rad": 0.05,
+        "obs_noise_rad": 0.02,
+        "action_delay_ticks": 2,
+    },
 }
+# Keys of PERTURBATIONS that live in the observation/action loop, not the MjModel.
+LOOP_KEYS = ("encoder_bias_rad", "obs_noise_rad", "action_delay_ticks")
 
 
 # ------------------------------------------------------------------- tasks
@@ -230,16 +247,34 @@ async def rollout(sim, policy, fk, target, ticks: int, hz: float, spec: dict) ->
     from strands_robots.training.mjlab_tasks.so101_reach import SUCCESS_M
 
     sim.reset()
-    perturb(sim, spec)
+    perturb(sim, {k: v for k, v in spec.items() if k not in LOOP_KEYS})
     policy.reset()
     n_sub = max(1, int(round(sim.physics_timestep() ** -1 / hz)))
+    bias = float(spec.get("encoder_bias_rad", 0.0))
+    noise = float(spec.get("obs_noise_rad", 0.0))
+    delay = int(spec.get("action_delay_ticks", 0))
+    rng = np.random.default_rng(int(round(1000 * float(target[0]) + 7)))
+    queue: list = []  # actions in flight when the loop has latency
     errs = []
     for _ in range(ticks):
         obs = sim.get_observation(ROBOT)
         q = [float(obs[j]) for j in JOINTS]
         errs.append(float(np.linalg.norm(fk.site_pos(q) - target)))
-        chunk = await policy.get_actions(obs, "", target_pose=target.tolist())
-        sim.send_action(chunk[0], ROBOT, n_substeps=n_sub)
+        if bias or noise:
+            # The policy sees a corrupted encoder; the truth (errs above) stays uncorrupted.
+            seen = dict(obs)
+            for j in JOINTS:
+                seen[j] = float(obs[j]) + bias + (float(rng.normal(0.0, noise)) if noise else 0.0)
+        else:
+            seen = obs
+        chunk = await policy.get_actions(seen, "", target_pose=target.tolist())
+        queue.append(chunk[0])
+        if len(queue) > delay:
+            sim.send_action(queue.pop(0), ROBOT, n_substeps=n_sub)
+        else:
+            sim.send_action(
+                {j: float(obs[j]) for j in JOINTS}, ROBOT, n_substeps=n_sub
+            )  # nothing has arrived yet: hold
     obs = sim.get_observation(ROBOT)
     q = [float(obs[j]) for j in JOINTS]
     final = float(np.linalg.norm(fk.site_pos(q) - target))
@@ -250,7 +285,9 @@ async def rollout(sim, policy, fk, target, ticks: int, hz: float, spec: dict) ->
     }
 
 
-async def evaluate(onnx_by_name: dict[str, str], n: int, seed: int, ticks: int, hz: float, out: Path) -> dict:
+async def evaluate(
+    onnx_by_name: dict[str, str], n: int, seed: int, ticks: int, hz: float, out: Path, only: tuple[str, ...] = ()
+) -> dict:
     import sys
 
     from strands_robots import Robot
@@ -264,7 +301,14 @@ async def evaluate(onnx_by_name: dict[str, str], n: int, seed: int, ticks: int, 
     targets = sample_targets(n, seed)
     fk = _SiteFK(ROBOT, "gripper", JOINTS)
     table: dict[str, dict[str, dict]] = {}
+    if out.exists():
+        # Resume / extend: cells already measured are kept, only missing ones run.
+        table = json.loads(out.read_text(encoding="utf-8")).get("table", {})
     for pname, spec in PERTURBATIONS.items():
+        if only and pname not in only:
+            continue
+        if pname in table and all(p in table[pname] for p in onnx_by_name):
+            continue
         table[pname] = {}
         for label, onnx in onnx_by_name.items():
             policy = create_policy("rsl_rl_onnx", onnx_path=onnx, robot=ROBOT)
@@ -324,6 +368,9 @@ def main(argv: list[str] | None = None) -> None:
     v.add_argument("--seed", type=int, default=7)
     v.add_argument("--ticks", type=int, default=200)
     v.add_argument("--hz", type=float, default=50.0)
+    v.add_argument(
+        "--only", nargs="*", default=(), help="restrict to these perturbation names (cells already in --out are kept)"
+    )
     a = p.parse_args(argv)
     os.environ.setdefault("MUJOCO_GL", "egl")
     if a.cmd == "train":
@@ -331,7 +378,9 @@ def main(argv: list[str] | None = None) -> None:
     elif a.cmd == "export":
         export(a.dr, Path(a.checkpoint), Path(a.onnx))
     else:
-        asyncio.run(evaluate({"nominal": a.nominal, "dr": a.dr}, a.n, a.seed, a.ticks, a.hz, Path(a.out)))
+        asyncio.run(
+            evaluate({"nominal": a.nominal, "dr": a.dr}, a.n, a.seed, a.ticks, a.hz, Path(a.out), tuple(a.only))
+        )
 
 
 if __name__ == "__main__":
