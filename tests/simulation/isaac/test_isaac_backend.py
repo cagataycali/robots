@@ -27,6 +27,14 @@ import threading
 import pytest
 
 
+def _heavy_modules_loaded() -> list[str]:
+    """omni/isaacsim modules actually imported. A ``None`` entry is an import
+    *block* (conftest's ``_no_real_isaac_sim``), not an import."""
+    return [
+        m for m, mod in sys.modules.items() if mod is not None and (m.startswith("omni") or m.startswith("isaacsim"))
+    ]
+
+
 class TestLazyImport:
     """Importing the sim package must not pull in Isaac Sim / Omniverse."""
 
@@ -68,7 +76,7 @@ class TestLazyImport:
         from strands_robots.simulation.isaac.config import IsaacConfig  # noqa: F401
         from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: F401
 
-        assert not any(m.startswith("omni") or m.startswith("isaacsim") for m in sys.modules)
+        assert not _heavy_modules_loaded()
 
 
 class TestPackageLazyExport:
@@ -101,7 +109,7 @@ class TestPackageLazyExport:
         # Attribute access triggers __getattr__ -> _lazy_isaac_simulation; still
         # no omni/isaacsim import (heavy imports live inside methods).
         assert isaac_pkg.IsaacSimulation is SimViaSubmodule
-        assert not any(m.startswith("omni") or m.startswith("isaacsim") for m in sys.modules)
+        assert not _heavy_modules_loaded()
 
     def test_public_names_match_all(self):
         import strands_robots.simulation.isaac as isaac_pkg
