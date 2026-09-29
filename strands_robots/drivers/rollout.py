@@ -36,7 +36,7 @@ from typing import Any
 
 from strands_robots._pacing import Ticker
 from strands_robots.drivers.base import policy_step
-from strands_robots.registry.policies import policy_requires_error
+from strands_robots.registry.policies import list_policy_aliases, policy_requires_error
 
 
 def policy_from_provider(
@@ -94,6 +94,13 @@ def policy_from_provider(
     # model loading, then exited at ``steps: 0`` with "Robot supplies 0
     # camera(s) but the policy requires image input(s)".
     if (reason := preflight_reason(provider, lambda: set(observe()), **kwargs)) is not None:
+        # The hook speaks for the class, so it names the canonical provider; a
+        # caller who spelled an alias (``f3a`` for ``flux3_action``) is told
+        # which provider that spelling reached, so the refusal names what they
+        # passed. Spelled canonically, the text is the hook's alone.
+        canonical = list_policy_aliases().get(provider)
+        if canonical is not None and provider not in reason:
+            reason = f"{reason} (policy_provider {provider!r} is {canonical!r})"
         return None, f"{verb}: {reason}"
     try:
         return create_policy(provider, **kwargs), None
