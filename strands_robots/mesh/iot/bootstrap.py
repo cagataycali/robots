@@ -69,6 +69,13 @@ PROVISIONING_TEMPLATE = "strands-mesh-fleet-provisioning"
 PROVISIONING_ROLE = "strands-mesh-provisioning-role"
 PROVISIONING_HOOK_LAMBDA_NAME = "strands-mesh-provisioning-hook"
 PROVISIONING_HOOK_ROLE = "strands-mesh-provisioning-hook-role"
+#: IAM customer managed policy for processes that command robots with IAM
+#: credentials instead of a device certificate (an agent, a dashboard, a
+#: notebook): ``iot:SendDirectMessage`` to any connected client, on
+#: ``strands/*/cmd`` only. Attach it to the role or user the process runs as.
+#: It mirrors the ``AllowDirectCommandToAnyRobot`` statement of the operator
+#: IoT policy for the SigV4 path (``STRANDS_IOT_DIRECT_AUTH=sigv4``).
+OPERATOR_DIRECT_POLICY = "strands-operator-direct"
 #: Bump whenever _PROVISIONING_HOOK_SOURCE changes.
 _PROVISIONING_HOOK_VERSION = 1
 LOG_GROUP_NAME = "/aws/iot/strands-mesh"
@@ -283,6 +290,7 @@ class BootstrappedAccount:
     log_group_arn: str = ""
     provisioning_template_arn: str = ""
     provisioning_hook_lambda_arn: str = ""
+    operator_direct_policy_arn: str = ""
     skipped: list[str] = field(default_factory=list)
     created: list[str] = field(default_factory=list)
 
@@ -1062,6 +1070,7 @@ def bootstrap_account(
             f"  - Lambda: {PROVISIONING_HOOK_LAMBDA_NAME} (Fleet Provisioning gate)\n"
             f"  - IAM Role: {PROVISIONING_ROLE}\n"
             f"  - IoT Fleet Provisioning Template: {PROVISIONING_TEMPLATE}\n"
+            f"  - IAM Managed Policy: {OPERATOR_DIRECT_POLICY} (SigV4 direct commands)\n"
             f"\nPass dry_run=False, confirm=True to create.",
             file=sys.stderr,
         )
@@ -1103,6 +1112,9 @@ def bootstrap_account(
     out.provisioning_template_arn = _ensure_provisioning_template(iot, iam, out, hook_lambda_arn=hook_arn)
     _grant_iot_invoke_provisioning_hook(lam, hook_arn, out)
 
+    # Direct commands from IAM principals (no device certificate).
+    out.operator_direct_policy_arn = _ensure_operator_direct_policy(iam, account_id, out)
+
     logger.info(
         "[bootstrap] account %s in %s - created %d, skipped %d",
         account_id,
@@ -1111,6 +1123,49 @@ def bootstrap_account(
         len(out.skipped),
     )
     return out
+
+
+_OPERATOR_DIRECT_POLICY_DOC: dict[str, Any] = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowDirectCommandToAnyRobot",
+            "Effect": "Allow",
+            "Action": "iot:SendDirectMessage",
+            "Resource": "arn:aws:iot:*:*:client/*",
+            "Condition": {"StringLike": {"iot:Topic": "strands/*/cmd"}},
+        }
+    ],
+}
+
+
+def _ensure_operator_direct_policy(iam: Any, account_id: str, account: BootstrappedAccount) -> str:
+    """Create the :data:`OPERATOR_DIRECT_POLICY` IAM managed policy if absent.
+
+    The IoT operator policy grants ``iot:SendDirectMessage`` to a certificate;
+    this is the same grant for an IAM principal, so an agent process with only
+    AWS credentials can command robots over the SigV4 path. Nothing is
+    attached here: which role or user runs the agent is the account owner's
+    call, so the ARN is returned and recorded for them.
+
+    Returns:
+        The policy ARN.
+    """
+    arn = f"arn:aws:iam::{account_id}:policy/{OPERATOR_DIRECT_POLICY}"
+    try:
+        iam.get_policy(PolicyArn=arn)
+        account.skipped.append(f"iam-policy:{OPERATOR_DIRECT_POLICY}")
+        return arn
+    except iam.exceptions.NoSuchEntityException:
+        pass  # expected: created below
+    resp = iam.create_policy(
+        PolicyName=OPERATOR_DIRECT_POLICY,
+        PolicyDocument=json.dumps(_OPERATOR_DIRECT_POLICY_DOC),
+        Description="strands-mesh: iot:SendDirectMessage on strands/*/cmd for IAM operators",
+        Tags=[{"Key": "strands-mesh", "Value": "managed"}],
+    )
+    account.created.append(f"iam-policy:{OPERATOR_DIRECT_POLICY}")
+    return str(resp["Policy"]["Arn"])
 
 
 def teardown_account(*, region: str | None = None, profile: str | None = None) -> None:
@@ -1168,6 +1223,18 @@ def teardown_account(*, region: str | None = None, profile: str | None = None) -
             logger.info("[teardown] role %s removed", role)
         except Exception as exc:
             logger.debug("[teardown] role %s: %s", role, exc)
+
+    try:
+        account_id = session.client("sts").get_caller_identity()["Account"]
+        policy_arn = f"arn:aws:iam::{account_id}:policy/{OPERATOR_DIRECT_POLICY}"
+        for ent in iam.list_entities_for_policy(PolicyArn=policy_arn).get("PolicyRoles", []):
+            iam.detach_role_policy(RoleName=ent["RoleName"], PolicyArn=policy_arn)
+        for ent in iam.list_entities_for_policy(PolicyArn=policy_arn).get("PolicyUsers", []):
+            iam.detach_user_policy(UserName=ent["UserName"], PolicyArn=policy_arn)
+        iam.delete_policy(PolicyArn=policy_arn)
+        logger.info("[teardown] managed policy %s removed", OPERATOR_DIRECT_POLICY)
+    except Exception as exc:
+        logger.debug("[teardown] managed policy %s: %s", OPERATOR_DIRECT_POLICY, exc)
 
     try:
         ddb.delete_table(TableName=SAFETY_TABLE_NAME)

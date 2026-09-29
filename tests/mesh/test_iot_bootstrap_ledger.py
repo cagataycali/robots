@@ -37,6 +37,7 @@ from strands_robots.mesh.iot.bootstrap import (
     ESTOP_LAMBDA_ROLE,
     IOT_ACTION_ROLE,
     LOG_GROUP_NAME,
+    OPERATOR_DIRECT_POLICY,
     PROVISIONING_HOOK_INVOKE_PERMISSION,
     PROVISIONING_HOOK_LAMBDA_NAME,
     PROVISIONING_HOOK_ROLE,
@@ -68,6 +69,7 @@ LEDGER_NAME = {
     "prov_role": f"iam:{PROVISIONING_ROLE}",
     "prov_template": f"iot-prov-template:{PROVISIONING_TEMPLATE}",
     "hook_permission": PROVISIONING_HOOK_INVOKE_PERMISSION,
+    "direct_policy": f"iam-policy:{OPERATOR_DIRECT_POLICY}",
 }
 
 ROLE_KEY = {
@@ -139,6 +141,16 @@ class _FakeAws:
         c.get_role.side_effect = get_role
         c.create_role.side_effect = lambda RoleName, **_kw: {  # noqa: N803
             "Role": {"Arn": f"arn:aws:iam::{ACCOUNT}:role/{RoleName}"}
+        }
+
+        def get_policy(PolicyArn: str, **_kw: Any) -> Any:  # noqa: N803 - boto3 casing
+            if "direct_policy" not in self.present:
+                raise c.exceptions.NoSuchEntityException(PolicyArn)
+            return {"Policy": {"Arn": PolicyArn}}
+
+        c.get_policy.side_effect = get_policy
+        c.create_policy.side_effect = lambda PolicyName, **_kw: {  # noqa: N803
+            "Policy": {"Arn": f"arn:aws:iam::{ACCOUNT}:policy/{PolicyName}"}
         }
         return c
 
@@ -266,6 +278,7 @@ FRESH_ACCOUNT_RESOURCES = (
     "prov_role",
     "prov_template",
     "hook_permission",
+    "direct_policy",
 )
 
 # A fully provisioned account. The two roles nested inside the safety rule and
