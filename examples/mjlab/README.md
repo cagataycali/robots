@@ -337,4 +337,33 @@ Run 2 with both fixes follows.
 
 ## 07 Dataset factory
 
-Results follow (queued).
+Two 30-minute runs on Thor, 1,024 worlds in lockstep, 150 ticks (3 s) per episode,
+fresh seeded targets and fresh per-world physics randomisation every batch, every
+episode streamed into one LeRobot v3 dataset (`results/factory/*.json`; GPU shared
+with the every-arm sweep and the G1 training the whole time):
+
+| policy | minutes | episodes | frames | success | GB | episodes/h | frames/h | GB/h | rollout s | flush s | randomize s |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| scripted | 31.0 | 21,504 | 3,225,600 | 0.69 | 0.34 | 41,661 | 6,249,087 | 0.66 | 383.9 | 1468.0 | 5.8 |
+| onnx | 31.0 | 23,552 | 3,532,800 | 0.69 | 0.37 | 45,620 | 6,842,951 | 0.72 | 274.8 | 1577.0 | 6.1 |
+
+The ONNX run is on the Hub as `cagataydev/mjlab-factory-so101-20260929` (private,
+sha `3e23649c`, 9 files, 374 MB); the episode count in the table is the one
+`repo_info` reads back, not the one the process believed.
+
+- **45,000 episodes an hour is the writer's number, not the physics'.** Per
+  1,024-episode batch the ONNX actor needs 10.6 s of rollout and the recorder 66 to 69 s
+  of flush; over the run 79 % (scripted) and 85 % (onnx) of the wall clock is the
+  LeRobot writer. The 6,370 episodes/min rollout ceiling from the deep lane holds
+  here (rollout alone would give ~330,000 episodes/h); the next 10x is a parallel or
+  asynchronous writer, not a faster simulator.
+- **The scripted expert is not faster than the actor.** Batched damped-least-squares IK
+  on the CPU FK costs 15 to 17 s per batch (the `policy_s` column), the ONNX actor
+  6.5 to 7 s; with the same 69 % success rate (731 vs 727 of the first 1,024) the
+  learned policy is the cheaper data source once it exists, and the two datasets
+  are the paired expert / self-play rows a DAgger loop would consume.
+- **Per-world randomisation is free at this scale**: 0.06 to 0.29 s per batch
+  (5.8 s of 31 min) for friction, mass, inertia and target pose across 1,024 worlds.
+- Success is flat across batches (721 to 731 of 1,024, median final error 12 to 15 mm),
+  so the randomisation is not drifting the distribution within a run; the 31 % of
+  failures are the same actor-coverage limit seen in 04 (targets never approached).
