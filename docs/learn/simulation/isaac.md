@@ -7,7 +7,7 @@ description: The Isaac Sim backend: what it needs, how to construct it, USD and 
 By the end of this page you know exactly what the `isaac` backend requires, how to construct it, and which MuJoCo habits do not carry over.
 
 ```bash
-pip install 'strands-robots[sim-isaac]'                                            # usd-core + imageio; not Isaac Sim itself
+pip install 'strands-robots[sim-isaac]'                                            # usd-core, imageio, mujoco+mink IK (not Isaac Sim)
 pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url https://pypi.nvidia.com   # Isaac Sim, Python 3.12 only
 export OMNI_KIT_ACCEPT_EULA=YES                                                     # first import
 ```
