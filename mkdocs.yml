@@ -441,7 +441,6 @@ nav:
           - robots/reachy_mini.md
   - Learn:
       - learn/index.md
-      - Agents: learn/agents.md
       - Policies:
           - learn/policies/index.md
           - LeRobot local: learn/policies/lerobot-local.md
@@ -455,6 +454,7 @@ nav:
           - Microduck: learn/policies/microduck.md
           - RL checkpoint: learn/policies/rl.md
           - Remote: learn/policies/remote.md
+      - Agents: learn/agents.md
       - Simulation:
           - learn/simulation/index.md
           - MuJoCo: learn/simulation/mujoco.md

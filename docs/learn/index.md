@@ -4,13 +4,13 @@ description: Each page answers one workflow question and ends with something tha
 
 # Learn
 
-## Agents
+## Policies
+
+- [Policies](policies/index.md): which VLAs run where, the three known gaps, the provider matrix and one page per provider; [lerobot_local](policies/lerobot-local.md) runs a Hub checkpoint in process.
+
+## Agents, simulation, training
 
 - [Agents](agents.md): a `Robot` as a Strands tool, the tools around it, the operator gate, what a refusal looks like.
-
-## Policies, simulation, training
-
-- [Policies](policies/index.md): the provider matrix and one page per provider.
 - [Simulation](simulation/index.md): MuJoCo, Isaac, Newton, worlds and objects, predicates and rollouts, randomization.
 - [Training](training/lerobot.md): LeRobot and [RL](training/rl.md).
 
