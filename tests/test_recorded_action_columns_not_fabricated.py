@@ -306,8 +306,8 @@ class TestEveryRecordingHookDeclaresItsActionColumns:
     """
 
     HOOK_MODULES = [
-        "strands_robots/simulation/mujoco/simulation.py",
-        # The one writer Isaac Sim, Newton and the MuJoCo policy loops share.
+        # The one writer every backend's rollout hook, merge loop and MuJoCo's
+        # step clock share.
         "strands_robots/simulation/recording.py",
     ]
 

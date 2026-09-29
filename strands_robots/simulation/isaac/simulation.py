@@ -3808,11 +3808,25 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # envelope) and in ``tests_integ/simulation/test_isaac_body_state_gpu``.
             if not is_static:
                 self._physics_view_stale = True
+            # Said at add time, where the caller can still act on it: the next
+            # step()/send_action() refuses until reset() rebuilds the view, and
+            # a caller that discards that refusal (a loop over step() that never
+            # reads the envelope) otherwise watches a dynamic body hang in the
+            # air with nothing having told it why. MuJoCo needs no reset
+            # here; resetting implicitly is not an option because reset()
+            # returns every robot to its default pose.
+            obj_info["requires_reset"] = not is_static
+            note = (
+                " Dynamic body: call reset() before step()/send_action() - PhysX's tensor view "
+                "must be rebuilt to simulate it (reset() returns robots to their default pose)."
+                if not is_static
+                else ""
+            )
             return {
                 "status": "success",
                 "content": [
                     {
-                        "text": f"Object '{name}' added (shape={shape}, pos={pos}).",
+                        "text": f"Object '{name}' added (shape={shape}, pos={pos}).{note}",
                         "json": obj_info,
                     }
                 ],
