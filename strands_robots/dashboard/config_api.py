@@ -58,8 +58,45 @@ INTERESTING_ENV = [
 
 
 def is_secret(key: str) -> bool:
-    """Whether an env key names a credential and so is masked in every view."""
+    """Whether an env key NAMES a credential and so is masked in every view.
+
+    A backstop behind :data:`SHOWN_ENV_KEYS`, never the sole decision: the read path
+    asks :func:`is_displayable`, which fails closed on a name this module has not seen.
+    """
     return bool(SECRET_RX.search(key))
+
+
+#: The CLOSED set of env keys whose value the page may show in full. The read path used to
+#: decide by name alone, masking a key that contained KEY, TOKEN, PASSWORD and the like and
+#: returning every other key verbatim, so ``STRANDS_MESH_AUDIT_PSK``, the HMAC key that makes
+#: the safety audit log tamper evident, came back in clear text to any admitted session.
+#: A value is shown only when its key is here AND its name does not read as a credential;
+#: everything else reports whether it is set and a mask carrying no character of the value.
+#: Add a key here only if its value is configuration, never material an attacker could use.
+SHOWN_ENV_KEYS: frozenset[str] = frozenset(
+    {
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_PROFILE",
+        "VOICE_MODEL",
+        "VOICE_PROVIDER",
+        "VOICE_NAME",
+        "STRANDS_MODEL_ID",
+        "OPENAI_BASE_URL",
+        "DASHBOARD_VOICE_PROMPT",
+        "STRANDS_DASH_RECORD_CRUMB",
+        "STRANDS_DASH_TASK_REQUIRES_CONFIRM",
+        "STRANDS_MESH_LOCAL_DEV",
+        "STRANDS_MESH_MULTICAST",
+        "STRANDS_ROBOTS_VIDEO_ROOT",
+        "STRANDS_ROBOTS_NO_DYLD_SHIM",
+    }
+)
+
+
+def is_displayable(key: str) -> bool:
+    """Whether the page may show this env key's value in full (allowlist, then the name backstop)."""
+    return key in SHOWN_ENV_KEYS and not is_secret(key)
 
 
 # .env is read by every process the dashboard spawns, so an unrestricted upsert is
@@ -150,12 +187,16 @@ def env_entry_error(key: str, value: str, *, allowed_keys: frozenset[str] | None
 
 
 def mask(value: str) -> str:
-    """``sk-abc...xyz`` -> ``sk-••••••yz``. Short values are fully hidden."""
+    """A set value -> ``••••••``; an unset one -> ``""``.
+
+    No prefix, no suffix, no length: a masked row says only that the value exists. The
+    row's ``set`` flag carries the same fact for a UI that wants a word instead. An
+    operator who needs to recognise a credential has the fingerprint in the logs
+    (:func:`~strands_robots.dashboard.log_redaction.fingerprint`), not the API document.
+    """
     if not value:
         return ""
-    if len(value) <= 6:
-        return "•" * 6
-    return f"{value[:3]}{'•' * 6}{value[-2:]}"
+    return "•" * 6
 
 
 def looks_masked(value: Any) -> bool:
@@ -321,7 +362,9 @@ def env_view() -> list[dict[str, Any]]:
         in_file = key in from_file
         raw = live if live else from_file.get(key, "")
         shadowed = bool(in_file and live and live != from_file.get(key))
-        secret = is_secret(key)
+        # Shown in full only for a key on the closed allowlist; a name this module has not
+        # seen is hidden, the same fail-closed rule the write path applies to its keys.
+        secret = not is_displayable(key)
         rows.append(
             {
                 "key": key,
