@@ -35,6 +35,7 @@ Aliases: `g1`, `g1_wbc`, `real_g1_relative_eef_relative_joints`, `unitree_g1_ful
 | Checkpoint | Provider | Where | What happened |
 |---|---|---|---|
 | NVlabs GR00T-WholeBodyControl G1 (two ONNX files, local directory) (whole-body controller, SONIC) | `wbc` | sim, laptop CPU | 100 steps at 50 Hz in 2.0 s, 1.7 ms inference, the G1 walked 0.665 m and stayed upright (pelvis 0.793 to 0.747 m); drives 15 of 29 actuators by design, so partial_action_failure_rate reads 0.48 on a healthy rollout. A HuggingFace id is refused (#4161): pass the local directory. Source: interface sweep 2026-09-28 script sim-policies/06b and issue #4161 |
+| amazon-far/holosoma fastsac_g1_29dof.onnx (Apache-2.0) (whole-body controller, Holosoma) | `holosoma` | sim, laptop CPU | 0.5 m/s for 5 s at 50 Hz: walked 1.892 m with 0.036 m of drift, pelvis 0.789 m, real time on the CPU; ppo 1.721 m; wbc on the same scene 1.888 m. Drives all 29 actuators. Source: PR #4249 body, rollouts 2026-09-29 |
 
 Providers written for this body: `wbc`, `holosoma`, `wbc_gait`, `kimodo`, `protomotions`; the rest are in the [policy matrix](../learn/policies/index.md).
 
