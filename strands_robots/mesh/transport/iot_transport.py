@@ -45,18 +45,264 @@ the host.
 
 from __future__ import annotations
 
+import base64
+import http.client
 import json
 import logging
 import os
+import random
+import ssl
 import threading
+import time
+import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from strands_robots.mesh.session import _report_unencodable_payload
+from strands_robots.mesh.transport.base import DirectResult
 from strands_robots.utils import positive_finite_number_error
 
 logger = logging.getLogger(__name__)
+
+#: Opt-out switch for AWS IoT Core Direct Messaging on the ``iot`` and ``bridge``
+#: backends. Domain ``"0"`` / ``"1"``; unset means on. Anything else is refused
+#: at connect with a WARNING and treated as on, the posture the other mesh
+#: switches take (``STRANDS_MESH_BRIDGE_DEDUP_STRICT``): a typo must not change
+#: how commands reach a robot, and the correct value is the one that works.
+DIRECT_ENV_VAR = "STRANDS_MESH_IOT_DIRECT"
+
+#: Which credential signs the HTTPS ``SendDirectMessage`` call. ``x509`` uses the
+#: robot's own certificate over port 8443 (the same identity as the MQTT
+#: session, so the IoT policy's ``${iot:Certificate.Subject.CommonName}``
+#: resolves); ``sigv4`` uses the process's IAM credentials through boto3 (an
+#: agent or dashboard that has no device certificate). Unset picks ``x509``
+#: when the certificate files are present, else ``sigv4``.
+DIRECT_AUTH_ENV_VAR = "STRANDS_IOT_DIRECT_AUTH"
+DIRECT_AUTH_MODES = ("x509", "sigv4")
+
+#: The port AWS IoT Core serves X.509 authenticated HTTPS on.
+_DIRECT_X509_PORT = 8443
+
+#: Payload cap of the Direct Messaging API (and of an MQTT publish): 128 KB
+#: exactly, measured on 2026-09-29 (128 KB accepted, 129 KB refused with 413).
+DIRECT_PAYLOAD_CAP = 128 * 1024
+
+#: The acknowledgement wait the API accepts, whole seconds. The documented
+#: example is 10; a value below 1 cannot be honoured.
+_DIRECT_MIN_TIMEOUT_S = 1
+
+#: One MQTT5 user property that marks a message as a strands mesh envelope.
+#: The API wants a JSON array of ONE-KEY objects (a name/value shape is refused).
+_DIRECT_USER_PROPERTIES: list[dict[str, str]] = [{"strands-mesh": "1"}]
+
+_DIRECT_STATUS_REASON: dict[int, str] = {
+    404: "offline",
+    403: "forbidden",
+    401: "forbidden",
+    429: "throttled",
+    413: "too_large",
+    504: "unconfirmed",
+}
+
+_DIRECT_BOTO_REASON: dict[str, str] = {
+    "ResourceNotFoundException": "offline",
+    "ForbiddenException": "forbidden",
+    "UnauthorizedException": "forbidden",
+    "ThrottlingException": "throttled",
+    "RequestEntityTooLargeException": "too_large",
+    "GatewayTimeoutException": "unconfirmed",
+}
+
+
+def direct_messaging_enabled() -> bool:
+    """Resolve :data:`DIRECT_ENV_VAR`. Unset and ``"1"`` mean on, ``"0"`` off.
+
+    Any other spelling is reported at WARNING and treated as on: the switch
+    selects how a command reaches a robot, and the value that works is the one
+    a typo must not take away. Read once per connect, like the bridge's
+    dedup switch.
+
+    Returns:
+        ``True`` when direct messaging may be used.
+    """
+    raw = os.getenv(DIRECT_ENV_VAR, "1").strip()
+    if raw == "1":
+        return True
+    if raw == "0":
+        return False
+    logger.warning(
+        "%s=%r is not one of '0' or '1' - direct messaging stays ON (the default). "
+        "Set '0' to route every command over publish/subscribe instead.",
+        DIRECT_ENV_VAR,
+        raw,
+    )
+    return True
+
+
+def direct_auth_mode(cert_present: bool) -> str:
+    """Resolve :data:`DIRECT_AUTH_ENV_VAR` to one of :data:`DIRECT_AUTH_MODES`.
+
+    Args:
+        cert_present: Whether this transport has a certificate and key on disk,
+            which decides the default (``x509`` with, ``sigv4`` without).
+
+    Returns:
+        ``"x509"`` or ``"sigv4"``. An unrecognised value is reported at WARNING
+        and the default applies.
+    """
+    default = "x509" if cert_present else "sigv4"
+    raw = os.getenv(DIRECT_AUTH_ENV_VAR, "").strip().lower()
+    if not raw:
+        return default
+    if raw in DIRECT_AUTH_MODES:
+        return raw
+    logger.warning(
+        "%s=%r is not one of %s - using %r",
+        DIRECT_AUTH_ENV_VAR,
+        raw,
+        ", ".join(DIRECT_AUTH_MODES),
+        default,
+    )
+    return default
+
+
+def _region_from_endpoint(endpoint: str) -> str | None:
+    """Pull the region out of an ATS endpoint like ``xxx-ats.iot.us-west-2.amazonaws.com``."""
+    parts = endpoint.split(".")
+    if len(parts) >= 4 and parts[1] == "iot":
+        return parts[2]
+    return None
+
+
+def _confirm_timeout_seconds(timeout: float) -> int:
+    """Whole seconds for the API's ``timeout`` query parameter, at least 1."""
+    return max(_DIRECT_MIN_TIMEOUT_S, int(timeout))
+
+
+def _parse_direct_error_body(body: bytes) -> tuple[str, str]:
+    """Return ``(message, traceId)`` from a Direct Messaging error body, tolerant of non-JSON."""
+    try:
+        doc = json.loads(body.decode("utf-8", "replace") or "{}")
+    except ValueError:
+        return body.decode("utf-8", "replace")[:200], ""
+    if not isinstance(doc, dict):
+        return str(doc)[:200], ""
+    return str(doc.get("message") or "")[:200], str(doc.get("traceId") or "")
+
+
+class _X509DirectClient:
+    """Persistent mTLS HTTPS connection to the Direct Messaging API on :8443.
+
+    A fresh TLS handshake per call costs about 320 ms against the same
+    endpoint; a kept connection answers in about 80 ms, so the connection is
+    held open behind a lock and rebuilt once when the broker closes it
+    (``RemoteDisconnected`` / ``BrokenPipeError`` / ``ConnectionResetError``).
+    The certificate is the same one the MQTT session authenticates with, so
+    the IoT policy sees one identity for both legs.
+    """
+
+    def __init__(self, endpoint: str, cert_path: str, key_path: str, ca_path: str, timeout: float = 15.0) -> None:
+        self._endpoint = endpoint
+        self._cert_path = cert_path
+        self._key_path = key_path
+        self._ca_path = ca_path
+        self._timeout = timeout
+        self._conn: http.client.HTTPSConnection | None = None
+        self._lock = threading.Lock()
+
+    def _open(self) -> http.client.HTTPSConnection:
+        ctx = ssl.create_default_context(cafile=self._ca_path)
+        ctx.load_cert_chain(self._cert_path, self._key_path)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        return http.client.HTTPSConnection(self._endpoint, _DIRECT_X509_PORT, context=ctx, timeout=self._timeout)
+
+    def close(self) -> None:
+        with self._lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                except Exception as exc:  # noqa: BLE001 - closing a dead socket is not news
+                    logger.debug("direct HTTPS close: %s", exc)
+                self._conn = None
+
+    def post(self, path: str, body: bytes, headers: dict[str, str]) -> tuple[int, bytes]:
+        """POST once, reconnecting a single time if the kept connection was dropped.
+
+        Returns:
+            ``(status, body)``. Raises ``OSError`` / ``http.client.HTTPException``
+            when the second attempt fails too; the caller maps that to ``error``.
+        """
+        with self._lock:
+            for attempt in (0, 1):
+                if self._conn is None:
+                    self._conn = self._open()
+                try:
+                    self._conn.request("POST", path, body=body, headers=headers)
+                    resp = self._conn.getresponse()
+                    return resp.status, resp.read()
+                except (
+                    http.client.RemoteDisconnected,
+                    BrokenPipeError,
+                    ConnectionResetError,
+                    http.client.CannotSendRequest,
+                ):
+                    try:
+                        self._conn.close()
+                    finally:
+                        self._conn = None
+                    if attempt == 1:
+                        raise
+            raise http.client.HTTPException(
+                "direct HTTPS: no attempt made"
+            )  # pragma: no cover - loop always returns or raises
+
+
+class _SigV4DirectClient:
+    """``SendDirectMessage`` through boto3's ``iot-data`` client (IAM credentials).
+
+    For a process with no device certificate: an agent, a dashboard, a
+    notebook. boto3 signs the call with whatever credential chain the process
+    has; the IAM grant is ``iot:SendDirectMessage`` on ``client/*`` with the
+    ``iot:Topic`` condition (``bootstrap_account`` creates it).
+    """
+
+    def __init__(self, endpoint: str) -> None:
+        self._endpoint = endpoint
+        self._client: Any | None = None
+        self._lock = threading.Lock()
+
+    def _get(self) -> Any:
+        with self._lock:
+            if self._client is None:
+                import boto3
+
+                region = (
+                    os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or _region_from_endpoint(self._endpoint)
+                )
+                self._client = boto3.client("iot-data", region_name=region, endpoint_url=f"https://{self._endpoint}")
+            return self._client
+
+    def close(self) -> None:
+        with self._lock:
+            self._client = None
+
+    def send(self, params: dict[str, Any]) -> tuple[int, bytes, str]:
+        """Call the API. Returns ``(status, message_bytes, trace_id)``; maps ``ClientError`` to a status."""
+        from botocore.exceptions import ClientError
+
+        try:
+            out = self._get().send_direct_message(**params)
+        except ClientError as exc:
+            err = exc.response.get("Error", {})
+            code = str(err.get("Code", ""))
+            meta = exc.response.get("ResponseMetadata", {})
+            status = int(meta.get("HTTPStatusCode", 0) or 0)
+            reason = _DIRECT_BOTO_REASON.get(code)
+            if reason and status == 0:
+                status = next(k for k, v in _DIRECT_STATUS_REASON.items() if v == reason)
+            return status or 500, str(err.get("Message", code)).encode(), str(exc.response.get("traceId", ""))
+        return 200, b"", str(out.get("traceId", ""))
 
 
 # Default per-topic QoS / retain map.
@@ -390,6 +636,17 @@ class IotMqttTransport:
         self._lock = threading.Lock()
         # topic_filter -> list of handlers (multiple subs to same topic OK)
         self._handlers: dict[str, list[Callable[[Any], None]]] = {}
+        # Direct Messaging state. The HTTPS client is built lazily on the first
+        # send_direct so a transport that never addresses a peer opens no
+        # second connection. ``_direct_forbidden`` remembers the peers whose
+        # first direct attempt came back 403 so Mesh decides the publish
+        # fallback once per peer per connection; ``_unmatched_inbound`` counts
+        # the messages no filter claimed (see ``_on_publish_received``).
+        self._direct_client: _X509DirectClient | _SigV4DirectClient | None = None
+        self._direct_lock = threading.Lock()
+        self._direct_forbidden: set[str] = set()
+        self._unmatched_inbound = 0
+        self.direct_stats: dict[str, int] = {"sent": 0, "delivered": 0, "failed": 0}
 
     # Lifecycle
 
@@ -540,6 +797,7 @@ class IotMqttTransport:
             self._connected.clear()
             self._handlers.clear()
             logger.info("IoT mesh session closed (thing=%s)", self._thing_name)
+        self._close_direct()
 
     # Inspection
 
@@ -553,6 +811,215 @@ class IotMqttTransport:
         if unset. Used as the MQTT client id and mTLS identity.
         """
         return self._thing_name or ""
+
+    @property
+    def unmatched_inbound(self) -> int:
+        """Messages that arrived on a topic no subscription or direct key claimed."""
+        return self._unmatched_inbound
+
+    # Direct Messaging
+
+    def direct_forbidden(self, peer_id: str) -> bool:
+        """True once a direct send to *peer_id* came back 403 on this connection."""
+        with self._direct_lock:
+            return peer_id in self._direct_forbidden
+
+    def _direct_inbound_keys(self, topic: str) -> tuple[str, ...]:
+        """The registered filter keys an unsubscribed direct message on *topic* belongs to."""
+        thing = self._thing_name
+        if not thing:
+            return ()
+        if topic == f"strands/{thing}/cmd":
+            return (topic,)
+        if topic.startswith(f"strands/{thing}/response/"):
+            return (f"strands/{thing}/response/#",)
+        return ()
+
+    def _cert_files_present(self) -> bool:
+        return (self._cert_dir / f"{self._thing_name}.cert.pem").exists() and (
+            self._cert_dir / f"{self._thing_name}.private.key"
+        ).exists()
+
+    def _direct_sender(self) -> _X509DirectClient | _SigV4DirectClient | None:
+        with self._direct_lock:
+            if self._direct_client is not None:
+                return self._direct_client
+            if not self._endpoint:
+                return None
+            mode = direct_auth_mode(self._cert_files_present())
+            if mode == "x509":
+                if not self._cert_files_present():
+                    logger.warning(
+                        "%s=x509 but no certificate for thing %r under %s - direct messaging unavailable",
+                        DIRECT_AUTH_ENV_VAR,
+                        self._thing_name,
+                        self._cert_dir,
+                    )
+                    return None
+                self._direct_client = _X509DirectClient(
+                    self._endpoint,
+                    str(self._cert_dir / f"{self._thing_name}.cert.pem"),
+                    str(self._cert_dir / f"{self._thing_name}.private.key"),
+                    self._ca_file,
+                )
+            else:
+                self._direct_client = _SigV4DirectClient(self._endpoint)
+            return self._direct_client
+
+    def _close_direct(self) -> None:
+        with self._direct_lock:
+            client, self._direct_client = self._direct_client, None
+            self._direct_forbidden.clear()
+        if client is not None:
+            client.close()
+
+    def send_direct(
+        self,
+        peer_id: str,
+        key: str,
+        data: dict[str, Any],
+        *,
+        confirm: bool = False,
+        timeout: float = 5.0,
+        response_key: str | None = None,
+        correlation: str | None = None,
+    ) -> DirectResult:
+        """Deliver *data* on *key* to the one connected client *peer_id*.
+
+        The :class:`~strands_robots.mesh.transport.base.DirectSender` contract:
+        never raises, one :class:`DirectResult` per call. The HTTP outcome maps
+        to the result's ``reason`` (404 offline, 403 forbidden, 429 throttled
+        with one jittered retry, 413 too_large, 504 unconfirmed, any other 5xx
+        or a socket failure ``error`` with one retry). A 403 is remembered per
+        peer for this connection so the caller can decide its fallback once.
+
+        The payload is encoded before anything is sent, and an unencodable one
+        is reported through the same channel ``put`` uses; a payload over
+        :data:`DIRECT_PAYLOAD_CAP` is refused here as ``too_large`` without a
+        round trip.
+        """
+        started = time.monotonic()
+
+        def _done(delivered: bool, reason: str, trace_id: str = "", detail: str = "") -> DirectResult:
+            self.direct_stats["sent"] += 1
+            self.direct_stats["delivered" if delivered else "failed"] += 1
+            return DirectResult(
+                delivered=delivered,
+                reason=reason,
+                latency_ms=(time.monotonic() - started) * 1000.0,
+                trace_id=trace_id,
+                detail=detail,
+            )
+
+        if not isinstance(peer_id, str) or not peer_id or peer_id.startswith("$") or len(peer_id) > 128:
+            return _done(False, "error", detail="peer_id must be 1 to 128 characters and not start with '$'")
+        try:
+            encoded = json.dumps(data).encode()
+        except Exception as exc:  # noqa: BLE001 - the encoder's raise set is payload-defined
+            _report_unencodable_payload("MQTT direct", key, exc)
+            return _done(False, "error", detail=f"payload not JSON encodable: {exc}")
+        if len(encoded) > DIRECT_PAYLOAD_CAP:
+            return _done(False, "too_large", detail=f"payload {len(encoded)} bytes exceeds {DIRECT_PAYLOAD_CAP}")
+
+        sender = self._direct_sender()
+        if sender is None:
+            return _done(False, "unavailable", detail="no direct sender configured (endpoint or credentials missing)")
+
+        for attempt in (0, 1):
+            try:
+                if isinstance(sender, _X509DirectClient):
+                    status, body = self._post_x509(
+                        sender, peer_id, key, encoded, confirm, timeout, response_key, correlation
+                    )
+                    message, trace_id = ("", "") if status == 200 else _parse_direct_error_body(body)
+                else:
+                    status, body, trace_id = self._post_sigv4(
+                        sender, peer_id, key, encoded, confirm, timeout, response_key, correlation
+                    )
+                    message = body.decode("utf-8", "replace")
+            except Exception as exc:  # noqa: BLE001 - socket, TLS, botocore: all map to "error"
+                logger.debug("direct send to %s on %s failed (attempt %d): %s", peer_id, key, attempt, exc)
+                if attempt == 0:
+                    time.sleep(0.05 + random.random() * 0.1)  # noqa: S311 - jitter, not security
+                    continue
+                return _done(False, "error", detail=f"{type(exc).__name__}: {exc}"[:200])
+
+            reason = _direct_reason_for_status(status)
+            if reason == "":
+                return _done(True, "", trace_id)
+            if reason == "forbidden":
+                with self._direct_lock:
+                    self._direct_forbidden.add(peer_id)
+            retryable = reason == "throttled" or (reason == "error" and status >= 500)
+            if retryable and attempt == 0:
+                time.sleep(0.1 + random.random() * 0.2)  # noqa: S311 - jitter, not security
+                continue
+            return _done(False, reason, trace_id, message)
+        return _done(False, "error", detail="exhausted retries")  # pragma: no cover - loop returns
+
+    @staticmethod
+    def _direct_query(key: str, confirm: bool, timeout: float, response_key: str | None) -> dict[str, str]:
+        query = {
+            "topic": key,
+            "contentType": "application/json",
+            "confirmation": "true" if confirm else "false",
+        }
+        if confirm:
+            query["timeout"] = str(_confirm_timeout_seconds(timeout))
+        if response_key:
+            query["responseTopic"] = response_key
+        return query
+
+    def _post_x509(
+        self,
+        sender: _X509DirectClient,
+        peer_id: str,
+        key: str,
+        encoded: bytes,
+        confirm: bool,
+        timeout: float,
+        response_key: str | None,
+        correlation: str | None,
+    ) -> tuple[int, bytes]:
+        path = f"/connections/{urllib.parse.quote(peer_id, safe='')}/messages?" + urllib.parse.urlencode(
+            self._direct_query(key, confirm, timeout, response_key), quote_via=urllib.parse.quote
+        )
+        headers = {
+            "Content-Type": "application/json",
+            "x-amz-mqtt5-payload-format-indicator": "UTF8_DATA",
+            "x-amz-mqtt5-user-properties": base64.b64encode(json.dumps(_DIRECT_USER_PROPERTIES).encode()).decode(),
+        }
+        if correlation:
+            headers["x-amz-mqtt5-correlation-data"] = base64.b64encode(correlation.encode()).decode()
+        return sender.post(path, encoded, headers)
+
+    def _post_sigv4(
+        self,
+        sender: _SigV4DirectClient,
+        peer_id: str,
+        key: str,
+        encoded: bytes,
+        confirm: bool,
+        timeout: float,
+        response_key: str | None,
+        correlation: str | None,
+    ) -> tuple[int, bytes, str]:
+        params: dict[str, Any] = {
+            "clientId": peer_id,
+            "topic": key,
+            "contentType": "application/json",
+            "payloadFormatIndicator": "UTF8_DATA",
+            "userProperties": _DIRECT_USER_PROPERTIES,
+            "payload": encoded,
+            "confirmation": bool(confirm),
+        }
+        if confirm:
+            params["timeout"] = _confirm_timeout_seconds(timeout)
+        if response_key:
+            params["responseTopic"] = response_key
+        if correlation:
+            params["correlationData"] = base64.b64encode(correlation.encode()).decode()
+        return sender.send(params)
 
     # Pub/Sub
 
@@ -681,6 +1148,10 @@ class IotMqttTransport:
     def _on_connection_success(self, data: Any) -> None:
         logger.info("IoT MQTT connected (thing=%s)", self._thing_name)
         self._connected.set()
+        # A policy change is picked up at the next connect, so the per-peer 403
+        # memo is scoped to one connection.
+        with self._direct_lock:
+            self._direct_forbidden.clear()
 
     def _on_connection_failure(self, data: Any) -> None:
         logger.warning("IoT MQTT connection failure: %s", data.exception)
@@ -700,8 +1171,22 @@ class IotMqttTransport:
         # we need to test each registered filter for a topic match.
         with self._lock:
             matching = [(f, list(handlers)) for f, handlers in self._handlers.items() if _mqtt_topic_matches(f, topic)]
+            if not matching:
+                # A direct message needs no subscription on this side, so it
+                # can arrive on a topic no filter claims. The two addressed
+                # topics of the mesh scheme, this thing's ``cmd`` and its
+                # ``response/#``, are routed to whichever handlers were
+                # registered for those keys even when the broker-side
+                # subscription is gone; anything else is counted and logged
+                # at debug rather than dropped in silence.
+                for key in self._direct_inbound_keys(topic):
+                    handlers = self._handlers.get(key)
+                    if handlers:
+                        matching.append((key, list(handlers)))
 
         if not matching:
+            self._unmatched_inbound += 1
+            logger.debug("IoT inbound on %s matched no subscription (thing=%s); dropped", topic, self._thing_name)
             return
 
         sample = _MqttSample(topic, payload, *_mqtt5_reply_properties(data.publish_packet))
@@ -711,6 +1196,13 @@ class IotMqttTransport:
                     handler(sample)
                 except Exception as exc:
                     logger.debug("IoT handler error on %s: %s", topic, exc)
+
+
+def _direct_reason_for_status(status: int) -> str:
+    """Map an HTTP status of the Direct Messaging API to a :data:`DIRECT_REASONS` entry."""
+    if status == 200:
+        return ""
+    return _DIRECT_STATUS_REASON.get(status, "error")
 
 
 def _mqtt5_reply_properties(packet: Any) -> tuple[str | None, str | None]:
