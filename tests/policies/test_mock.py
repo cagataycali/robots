@@ -15,6 +15,7 @@ from strands_robots.policies import (
     create_policy,
 )
 
+
 class TestMockPolicy:
     """MockPolicy should produce deterministic sinusoidal trajectories."""
 
