@@ -21,7 +21,7 @@ can get wrong, the operator gate, and the tool docstring a model reads. The
 participant itself - the shared ``DomainParticipant``, the cached writers and
 readers, the IDL sample builder - is
 :mod:`strands_robots.rtps.participant`, which
-:class:`~strands_robots.mesh.rtps_robot.RtpsRobot` publishes through as well.
+:class:`~strands_robots.drivers.ros.rtps_robot.RtpsRobot` publishes through as well.
 
 Actions:
     status      - report whether the cyclonedds backend is available.

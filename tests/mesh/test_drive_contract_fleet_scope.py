@@ -48,11 +48,11 @@ from typing import Any
 
 import pytest
 
-import strands_robots.mesh as mesh_pkg
-import strands_robots.mesh.ackermann_robot as ackermann_mod
-import strands_robots.mesh.ros_bridge as ros_bridge_mod
-import strands_robots.mesh.rosbridge_robot as rosbridge_mod
-import strands_robots.mesh.rtps_robot as rtps_mod
+import strands_robots.drivers.ros as ros_pkg
+import strands_robots.drivers.ros.ackermann_robot as ackermann_mod
+import strands_robots.drivers.ros.ros_bridge as ros_bridge_mod
+import strands_robots.drivers.ros.rosbridge_robot as rosbridge_mod
+import strands_robots.drivers.ros.rtps_robot as rtps_mod
 from tests.mesh._transport_stand_in import stands_in_for
 
 #: (label, module, forwarded transport symbol, robot factory). One publish rate
@@ -115,12 +115,12 @@ def _drive_owning_mesh_classes() -> dict[str, type]:
     lookup is by attribute, so a bridge that inherits ``drive`` from such a
     base is still found.
     """
-    package = Path(inspect.getfile(mesh_pkg)).parent
+    package = Path(inspect.getfile(ros_pkg)).parent
     owners: dict[str, type] = {}
     for path in sorted(package.glob("*.py")):
         if path.name.startswith("_"):
             continue
-        module = importlib.import_module(f"{mesh_pkg.__name__}.{path.stem}")
+        module = importlib.import_module(f"{ros_pkg.__name__}.{path.stem}")
         for name, obj in vars(module).items():
             if name.startswith("_") or not inspect.isclass(obj) or obj.__module__ != module.__name__:
                 continue

@@ -67,6 +67,7 @@ from typing import Any, Protocol, cast, runtime_checkable
 from strands import tool
 from strands.types.tools import AgentTool, ToolContext
 
+from strands_robots.drivers.base import refuse
 from strands_robots.utils import (
     finite_number_error,
     partial_construction_repr,
@@ -383,10 +384,6 @@ class MobileBaseRobot:
         """
         return callable(getattr(self.transport, capability, None))
 
-    @staticmethod
-    def _error(text: str) -> dict[str, Any]:
-        return {"status": "error", "content": [{"text": text}]}
-
     # -- command shape (the kinematics seam) --------------------------------
 
     def _cmd_fields(self, linear: float, angular: float, lateral: float = 0.0) -> dict[str, Any]:
@@ -511,9 +508,9 @@ class MobileBaseRobot:
             )
         )
         if request_error:
-            return self._error(request_error)
+            return refuse(request_error)
         if duration is not None and self.max_duration is not None and duration > self.max_duration:
-            return self._error(
+            return refuse(
                 f"drive: duration {duration}s exceeds max_duration {self.max_duration}s "
                 "- issue shorter commands instead of one long hold"
             )
@@ -544,7 +541,7 @@ class MobileBaseRobot:
             if (duration is not None or n > 1) and (v or w):
                 halt = self._publish_cmd(0.0, 0.0, count=1, tool_context=tool_context)
         latched = failed_halt_error(result, halt, topic=self.cmd_vel_topic, subject=LATCHED_VELOCITY)
-        return self._error(latched) if latched else result
+        return refuse(latched) if latched else result
 
     def stop(self, tool_context: ToolContext | None = None) -> dict[str, Any]:
         """Publish a single zero-velocity command.
@@ -574,9 +571,9 @@ class MobileBaseRobot:
         connected transport and be reported as a successful read of no samples.
         """
         if not self.odom_topic:
-            return self._error("get_pose: no odom_topic configured for this robot")
+            return refuse("get_pose: no odom_topic configured for this robot")
         if wait_err := positive_finite_number_error(timeout, "timeout", "get_pose"):
-            return self._error(wait_err)
+            return refuse(wait_err)
         return self.transport.echo(topic=self.odom_topic, type=self.odom_type, count=1, timeout=timeout)
 
     def get_scan(self, timeout: float = 5.0) -> dict[str, Any]:
@@ -585,9 +582,9 @@ class MobileBaseRobot:
         Grades ``timeout`` on the same domain as :meth:`get_pose`.
         """
         if not self.scan_topic:
-            return self._error("get_scan: no scan_topic configured for this robot")
+            return refuse("get_scan: no scan_topic configured for this robot")
         if wait_err := positive_finite_number_error(timeout, "timeout", "get_scan"):
-            return self._error(wait_err)
+            return refuse(wait_err)
         return self.transport.echo(topic=self.scan_topic, type=self.scan_type, count=1, timeout=timeout)
 
     # -- agent tools --------------------------------------------------------
