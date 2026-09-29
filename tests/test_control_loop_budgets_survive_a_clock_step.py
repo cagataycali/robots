@@ -62,9 +62,7 @@ from __future__ import annotations
 
 import importlib
 import math
-import threading
 import time as real_time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
 import pytest
@@ -74,6 +72,7 @@ from strands_robots import teleop_mixin as teleop_mixin_module
 from strands_robots.hardware_robot import Robot as HardwareRobot
 from strands_robots.hardware_robot import RobotTaskState, TaskStatus
 from strands_robots.mesh.session import stream_min_period_from_env
+from tests._hardware_robot import hardware_robot_on
 from tests.test_hardware_control_loop_rate_guard import _FakeArm
 from tests.test_teleop import FakeHost, FakeTeleop
 
@@ -187,27 +186,14 @@ class _RecordingMesh:
 
 def _hardware_robot(mesh: Any = None, stream_min_period: float = 0.05) -> HardwareRobot:
     """A ``Robot`` wired to an in-memory arm, with the connect path stubbed."""
-    robot = HardwareRobot.__new__(HardwareRobot)
-    robot.tool_name_str = "test_arm"
-    robot.action_horizon = 1
-    robot.data_config = None
-    robot.control_frequency = 1.0 / PERIOD
+    robot = hardware_robot_on(_RecordingArm(), tool_name="test_arm", control_frequency=1.0 / PERIOD, action_horizon=1)
     robot.action_sleep_time = PERIOD
-    robot._task_state = RobotTaskState()
-    robot._executor = ThreadPoolExecutor(max_workers=1)
-    robot._shutdown_event = threading.Event()
-    robot._stop_requested = threading.Event()
-    robot._task_admission = threading.Lock()
-    robot._task_claimed = False
     robot.mesh = mesh
     robot.peer_id = "probe" if mesh is not None else None
-    robot.robot = _RecordingArm()
-    robot._last_stream_pub = float("-inf")
     robot._stream_min_period = stream_min_period
-    # Derived here the way ``Robot.__init__`` derives it, because this harness
-    # builds the robot through ``__new__``. That the constructor really does
-    # derive it from the environment is pinned separately, against a real
-    # ``HardwareRobot``, in ``TestAnOperatorsOptOutPublishesNothing``.
+    # The constructor derived the gate from the environment; re-derive it from
+    # the period this harness pins. ``TestAnOperatorsOptOutPublishesNothing``
+    # grades the constructor's own derivation.
     robot._stream_enabled = math.isfinite(stream_min_period)
 
     async def _connected() -> tuple[bool, str]:
@@ -519,8 +505,8 @@ class TestAnOperatorsOptOutPublishesNothing:
     ):
         """The flag the loop reads is decided once, in ``__init__``, from the env.
 
-        The harness above builds its robot through ``__new__``, so this is the
-        cell that grades the real constructor.
+        The harness above overrides the period after construction, so this is
+        the cell that grades the constructor's own reading of the environment.
         """
         monkeypatch.setenv("STRANDS_MESH_STREAM_HZ", raw)
         monkeypatch.setattr(HardwareRobot, "_initialize_robot", lambda self, robot, cameras, **kw: _FakeArm())

@@ -31,7 +31,6 @@ pose and twist.
 from __future__ import annotations
 
 import math
-import threading
 import types
 from typing import Any
 
@@ -40,8 +39,7 @@ import pytest
 
 pytest.importorskip("strands_robots.simulation.isaac")
 
-from strands_robots.simulation.isaac.config import IsaacConfig  # noqa: E402
-from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 
 def _world_to_body_frame(quat, vec):
@@ -90,19 +88,10 @@ class _Articulation:
 
 
 def _observe(quat: list[float], ang_world: list[float]) -> dict[str, Any]:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world_created = True
     engine._world = types.SimpleNamespace()
-    engine._cameras = {}
-    engine._objects = {}
     engine._obs_noise = {}
-    engine._obs_noise_rng = None
-    engine._recording_state_dict = {}
-    engine._applied_wrenches = {}
-    engine._pump_running = False
-    engine._main_tid = threading.get_ident()
     engine._robots = {
         "bot": types.SimpleNamespace(  # type: ignore[dict-item]
             name="bot",
@@ -246,19 +235,10 @@ class TestAFixedBaseStillReportsNothing:
     """The control from the original feature: these keys are for a base that moves."""
 
     def test_no_base_keys_for_a_welded_root(self) -> None:
-        engine = IsaacSimulation.__new__(IsaacSimulation)
-        engine._lock = threading.RLock()
-        engine._config = IsaacConfig(render_mode="headless")
+        engine = isaac_engine()
         engine._world_created = True
         engine._world = types.SimpleNamespace()
-        engine._cameras = {}
-        engine._objects = {}
         engine._obs_noise = {}
-        engine._obs_noise_rng = None
-        engine._recording_state_dict = {}
-        engine._applied_wrenches = {}
-        engine._pump_running = False
-        engine._main_tid = threading.get_ident()
         engine._robots = {
             "arm": types.SimpleNamespace(  # type: ignore[dict-item]
                 name="arm",

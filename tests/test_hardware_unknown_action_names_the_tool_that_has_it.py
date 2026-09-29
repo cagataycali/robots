@@ -28,15 +28,14 @@ from __future__ import annotations
 
 import asyncio
 import re
-import threading
 from pathlib import Path
 
 import pytest
 from strands.types._events import ToolResultEvent
 
-from strands_robots.hardware_robot import _PUBLISHED_ACTIONS, RobotTaskState
+from strands_robots.hardware_robot import _PUBLISHED_ACTIONS
 from strands_robots.hardware_robot import Robot as HwRobot
-from tests._daemon_executor import DaemonThreadExecutor
+from tests._hardware_robot import hardware_robot_on
 
 DOCS = Path(__file__).resolve().parents[1] / "docs"
 #: The page the old quickstart's real-robot agent prompt lives on now.
@@ -60,18 +59,7 @@ class _Arm:
 
 
 def _hw() -> HwRobot:
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "so101"
-    hw.data_config = None
-    hw._task_state = RobotTaskState()
-    hw._executor = DaemonThreadExecutor(max_workers=1, thread_name_prefix="t")
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
-    hw.mesh = None
-    hw.peer_id = None
-    hw.robot = _Arm()
+    hw = hardware_robot_on(_Arm(), tool_name="so101")
     return hw
 
 

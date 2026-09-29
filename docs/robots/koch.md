@@ -7,7 +7,7 @@ description: "Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel)"
 
 # Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot, strands</span></p>
+{{robot_chips:koch}}
 
 <robot-viewer name="koch"></robot-viewer>
 
@@ -29,5 +29,9 @@ Aliases: `koch_follower`, `koch_v1.1`, `low_cost_robot_arm`.
 **lerobot.** `Robot("koch", mode="real")` builds lerobot's `koch_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
 **`DynamixelDriver`** (selected with `driver="strands"`) speaks Dynamixel Protocol 2.0 serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#dynamixeldriver).
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 
 Model: [google-deepmind/mujoco_menagerie/low_cost_robot_arm](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/low_cost_robot_arm), scene `scene.xml`.

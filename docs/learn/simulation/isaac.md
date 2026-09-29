@@ -9,6 +9,8 @@ By the end of this page you know exactly what the `isaac` backend requires, how 
 ```bash
 pip install 'strands-robots[sim-isaac]'                                            # usd-core, imageio, mujoco+mink IK (not Isaac Sim)
 pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url https://pypi.nvidia.com   # Isaac Sim, Python 3.12 only
+# under uv, both extra flags are required (see _install.py):
+# uv pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url https://pypi.nvidia.com --index-strategy unsafe-best-match --prerelease=allow
 export OMNI_KIT_ACCEPT_EULA=YES                                                     # first import
 ```
 
@@ -50,8 +52,6 @@ sim.destroy()
 | WBC | cannot install the MuJoCo torque shim; a policy declaring `requires_action_controller` (`wbc`) is refused rather than rolled out without it |
 | motion primitives | its own implementation in `isaac/motion_primitives.py` |
 | randomization | `IsaacRandomizationMixin`, same `randomize` / `set_obs_noise` names |
-
-`docs-old/reference/simulation/isaac-parity.md` tracked what matched and what did not at the time of writing; the table above is what the code says at this commit.
 
 ## Limits
 

@@ -1,0 +1,81 @@
+{
+  "__doc__": [
+    "Checkpoints that were RUN on a robot in this registry, first-hand, and what happened. Read by docs/hooks/robot_pages.py",
+    "into the 'Policies that ran on this robot' section of every robot page; a robot without a row gets the honest line",
+    "'No checkpoint verified on this robot yet'. Every number carries the script or public artifact that produced it in",
+    "`source`; a row without a source is refused by tests/test_docs_robot_pages_state_verified_checkpoints.py. Nothing here",
+    "is a benchmark score: `result` says what the rollout did, not that a task was performed."
+  ],
+  "robots": {
+    "so101": [
+      {
+        "checkpoint": "lerobot/smolvla_base",
+        "kind": "SmolVLA",
+        "provider": "lerobot_local",
+        "where": "sim, laptop (Apple GPU) and NVIDIA L40S",
+        "result": "60 of 60 actions applied, 0 errors, 1.2 s inference per 50-action chunk on the laptop, 300 ms on the L40S. Needs the inline native embodiment: the base checkpoint ships no SO-101 stats, so the motion shows the plumbing, not a task",
+        "source": "docs/start/first-policy.md fence 1 (runs under docs/hooks/check_fences.py); interface sweep 2026-09-28 script sim-policies/03c and issue #4157; policy matrix 2026-09-28 smolvla-01.log"
+      },
+      {
+        "checkpoint": "robotfuel/act_so101_t16b",
+        "kind": "ACT, trained on a real SO-101",
+        "provider": "lerobot_local",
+        "where": "sim, laptop and L40S; also through the agent tool",
+        "result": "300 of 300 actions applied at 30 Hz with embodiment so101 converting degrees to radians, 405 ms per 30-action chunk on the laptop, 15 ms on the L40S; wrist camera routed with obs_rename_override. The report says instruction_read=True for a policy that has no language input (#4159)",
+        "source": "docs/index.md sim fence (check_fences.py); interface sweep 2026-09-28 script sim-policies/03e-routed and issues #4158, #4159; policy matrix 2026-09-28 act-02.log, tool-01.log"
+      },
+      {
+        "checkpoint": "allenai/MolmoAct2-SO100_101",
+        "kind": "MolmoAct2, VLA, 11 GB bf16",
+        "provider": "lerobot_local",
+        "where": "sim, L40S",
+        "result": "embodiment so101 (degrees, gripper 0 to 100) with no joint pinned and no unit warning, 173 ms per 30-action chunk",
+        "source": "policy matrix 2026-09-28 on main 9e4f0a3d0, molmoact2-01.log; caveat #4192 (EGL render differs by 1 LSB, so seeded camera rollouts are not bit-identical)"
+      },
+      {
+        "checkpoint": "lerobot/pi0_base",
+        "kind": "Pi0, 15 GB fp32, 32-wide state and action",
+        "provider": "lerobot_local",
+        "where": "sim, L40S",
+        "result": "runs through camera_key_map (base_0_rgb, left_wrist_0_rgb, right_wrist_0_rgb) at 345 ms per 50-action chunk; embodiment= is refused by the action-width check after the load (#4193)",
+        "source": "policy matrix 2026-09-28 on main 9e4f0a3d0, pi0-02.log; issue #4193"
+      },
+      {
+        "checkpoint": "lerobot/pi05_base",
+        "kind": "Pi0.5, 17 GB fp32",
+        "provider": "lerobot_local",
+        "where": "sim, L40S",
+        "result": "crashes at the first inference on main ('numpy.ndarray' has no attribute 'cpu'); 416 ms per chunk with the fix in PR #4203, which is in review",
+        "source": "policy matrix 2026-09-28 on main 9e4f0a3d0, pi05-01.log (crash) and pi05-02.log (patched); PR #4203"
+      },
+      {
+        "checkpoint": "BFL FLUX 3 Action, SO-101 weights on request",
+        "kind": "FLUX 3 Action, VLA, 22 GB bf16, provider in review",
+        "provider": "flux3_action (PR #4199, not on main)",
+        "where": "sim, Jetson AGX Thor",
+        "result": "4,500 of 4,500 actions applied over ten 15 s episodes with 0 errors; zero-shot in the default MuJoCo scene it lifted the cube 0 of 10 times, the converted rest pose sitting at the edge of the checkpoint's calibration window",
+        "source": "PR #4199 body, datasets under hf.co/datasets/cagataydev (private)"
+      }
+    ],
+    "unitree_g1": [
+      {
+        "checkpoint": "NVlabs GR00T-WholeBodyControl G1 (two ONNX files, local directory)",
+        "kind": "whole-body controller, SONIC",
+        "provider": "wbc",
+        "where": "sim, laptop CPU",
+        "result": "100 steps at 50 Hz in 2.0 s, 1.7 ms inference, the G1 walked 0.665 m and stayed upright (pelvis 0.793 to 0.747 m); drives 15 of 29 actuators by design, so partial_action_failure_rate reads 0.48 on a healthy rollout. A HuggingFace id is refused (#4161): pass the local directory",
+        "source": "interface sweep 2026-09-28 script sim-policies/06b and issue #4161"
+      }
+    ],
+    "unitree_go2": [
+      {
+        "checkpoint": "none: builtin benchmark go2_walk_forward with the mock policy",
+        "kind": "benchmark plumbing, not a trained policy",
+        "provider": "mock",
+        "where": "sim, laptop CPU",
+        "result": "evaluate_benchmark ran one episode in 1.19 s and ended it at step 27 of 1000 on the failure clause (the test motion tips the robot), avg_reward 0.49, pass 0 of 1. The scene robot must be spelled unitree_go2: the alias go2 is refused by the benchmark (#4160)",
+        "source": "interface sweep 2026-09-28 scripts sim-policies/04 and 04b and issue #4160"
+      }
+    ]
+  }
+}

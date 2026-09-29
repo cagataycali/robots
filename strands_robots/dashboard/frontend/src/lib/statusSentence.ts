@@ -3,6 +3,8 @@
  * DOING and whether it is safe to approach.
  */
 
+import { simActivityStatus } from './taskPhase'
+
 export type Severity = 'ok' | 'active' | 'warn' | 'danger'
 
 export interface StatusFacts {
@@ -213,7 +215,7 @@ export function ribbonDetail(line: StatusLine): string {
 }
 
 export function peerStatusFields(
-  peer: { last_seen?: number | null; stale?: boolean | null; state?: any; lockout?: any; presence?: any },
+  peer: { peer_id?: string; last_seen?: number | null; stale?: boolean | null; state?: any; lockout?: any; presence?: any },
   telemetry: { moving?: boolean | null; jointsSeen?: boolean | null; stateAgeS?: number | null },
   hostsChildren?: string[] | null,
 ): StatusFacts {
@@ -222,7 +224,7 @@ export function peerStatusFields(
     stale: !!peer.stale,
     lastSeenAgoS: peer.last_seen ? Date.now() / 1000 - peer.last_seen : null,
     hwConnected: p?.connected ?? null,
-    taskStatus: peer.state?.task?.status ?? p?.task_status ?? null,
+    taskStatus: peer.state?.task?.status ?? p?.task_status ?? simActivityStatus(peer.state?.robots, peer.peer_id) ?? null,
     instruction: peer.state?.task?.instruction || p?.instruction || null,
     taskDurationS: peer.state?.task?.duration ?? null,
     moving: telemetry.moving ?? null,

@@ -7,7 +7,7 @@ description: "Fourier N1 / GR-1 Humanoid (26-DOF)"
 
 # Fourier N1 / GR-1 Humanoid (26-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">26 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:fourier_n1}}
 
 <robot-viewer name="fourier_n1"></robot-viewer>
 
@@ -18,5 +18,9 @@ robot = Robot("fourier_n1")
 ```
 
 Aliases: `fourier_gr1`, `fourier_gr1_arms_only`, `fourier_gr1_arms_waist`, `fourier_gr1_full_upper_body`, `gr1`.
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 
 Model: [google-deepmind/mujoco_menagerie/fourier_n1](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/fourier_n1), scene `scene.xml`.

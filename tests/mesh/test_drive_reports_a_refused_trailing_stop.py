@@ -46,7 +46,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from strands_robots.mesh._mobile_base import LATCHED_VELOCITY, failed_halt_error
+from strands_robots.drivers.ros._mobile_base import LATCHED_VELOCITY, failed_halt_error
 from tests.mesh.test_drive_contract_fleet_scope import _drive_owning_mesh_classes
 from tests.mesh.test_rosbridge_robot_command_gate import (
     _BLOCKED_CMD_VEL,
@@ -290,7 +290,7 @@ class TestTheProseMatchesTheMeasurement:
     """The guarantee is stated where a reader learns the contract."""
 
     def test_the_shared_safety_contract_says_the_verdict_is_read(self) -> None:
-        import strands_robots.mesh._mobile_base as base
+        import strands_robots.drivers.ros._mobile_base as base
 
         doc = " ".join((base.__doc__ or "").split())
         assert "verdict is therefore read, not dropped" in doc

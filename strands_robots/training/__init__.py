@@ -82,3 +82,15 @@ def _load_sagemaker_trainer() -> type[Trainer]:
 
 
 register_trainer("sagemaker", _load_sagemaker_trainer)
+
+
+# Register the Isaac Lab transport. Like "sagemaker" it has no paired inference
+# provider, so registration is what lists it. The trainer imports no Isaac Lab
+# code at all - it launches the CLI of a separate interpreter ($ISAACLAB_PYTHON).
+def _load_isaaclab_trainer() -> type[Trainer]:
+    from strands_robots.training.isaaclab import IsaacLabTrainer
+
+    return IsaacLabTrainer
+
+
+register_trainer("isaaclab", _load_isaaclab_trainer)

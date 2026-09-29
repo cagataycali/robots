@@ -47,6 +47,15 @@ _REPO_MOVES: dict[str, str] = {"asimovinc/asimov-v0": "menloresearch/asimov-v0"}
 #: aero_hand: the registry says scene_left.xml, the menagerie ships scene_right.xml.
 _SCENE_OVERRIDES: dict[str, str] = {"aero_hand": "scene_right.xml"}
 
+#: Colours the viewer swaps for the site's own. Every value is one rule per source colour
+#: (the MJCF material's rgb, as the model file spells it) and a token the viewer resolves
+#: against the page theme: ``accent`` is the Strands green (``--sr-accent-bright``). The
+#: SO-101's printed parts are whatever colour the kit was printed in; the menagerie model
+#: prints them yellow, the docs print them green, and the STS3215 servos stay black.
+_BRAND_PALETTES: dict[str, list[dict[str, object]]] = {
+    "so101": [{"from": [1.0, 0.82, 0.12], "to": "accent"}],
+}
+
 #: Models the browser build cannot compile, with the reason the viewer shows.
 _VIEWER_UNSUPPORTED: dict[str, str] = {
     "rby1": "its MJCF includes the same file twice with merge=true, which the WebAssembly build refuses",
@@ -75,6 +84,8 @@ _DESCRIPTION_REPOS: dict[str, tuple[str, str, str]] = {
     ),
     "aliengo": ("unitreerobotics/unitree_mujoco", "f3300ff1bf0ab9efbea0162717353480d9b05d73", "data/aliengo"),
     "unitree_a1": ("unitreerobotics/unitree_mujoco", "f3300ff1bf0ab9efbea0162717353480d9b05d73", "data/a1"),
+    # robot_descriptions 1.23.0 pins google-deepmind/mujoco (model/humanoid) to this commit.
+    "mujoco_humanoid": ("google-deepmind/mujoco", "ad0dc0de5e10a075a2c65be629e9a8d557d383a6", "model/humanoid"),
 }
 
 
@@ -153,6 +164,7 @@ def build_manifest() -> dict:
             "scene": _SCENE_OVERRIDES.get(name, asset.get("scene_xml")) if base else None,
             "model": asset.get("model_xml") if base else None,
             "thumbnail": f"assets/img/robots/{name}.webp" if thumb.exists() else None,
+            "palette": _BRAND_PALETTES.get(name),
         }
         out[name] = entry
     return {"menagerie_ref": MENAGERIE_REF, "robots": out}

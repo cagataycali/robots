@@ -134,7 +134,7 @@ class TestTheTwoScansAgree:
     def test_this_scan_also_reaches_the_families_the_sibling_cannot(self) -> None:
         """``pkgutil.iter_modules`` does not descend, so subpackages need this scan."""
         directories = {pathlib.PurePosixPath(module).parent.as_posix() for module, _name, _func in _AGENT_TOOLS}
-        assert {"strands_robots/tools/g1", "strands_robots/tools/reachy", "strands_robots/mesh"} <= directories
+        assert {"strands_robots/tools/g1", "strands_robots/tools/reachy", "strands_robots/drivers/ros"} <= directories
 
 
 class TestTheRuleIsWhatTheModelCanObserve:

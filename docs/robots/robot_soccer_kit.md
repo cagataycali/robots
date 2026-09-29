@@ -7,7 +7,7 @@ description: "Robot Soccer Kit (multi-robot soccer, 65-DOF total)"
 
 # Robot Soccer Kit (multi-robot soccer, 65-DOF total)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">65 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:robot_soccer_kit}}
 
 <robot-viewer name="robot_soccer_kit"></robot-viewer>
 
@@ -18,5 +18,9 @@ robot = Robot("robot_soccer_kit")
 ```
 
 Aliases: `rsk`.
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 
 Model: [google-deepmind/mujoco_menagerie/robot_soccer_kit](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/robot_soccer_kit), scene `scene.xml`.

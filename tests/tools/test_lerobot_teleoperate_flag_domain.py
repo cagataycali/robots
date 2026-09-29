@@ -457,7 +457,7 @@ class TestPlaySoundsReachesTheArgv:
         importlib.import_module("lerobot.policies")  # registers the policy choices
         module = "lerobot.scripts." + ("lerobot_record" if config == "RecordConfig" else "lerobot_replay")
         config_class = getattr(importlib.import_module(module), config)
-        argv = builder(play_sounds=supplied)[3:]  # drop ["python", "-m", <module>]
+        argv = builder(play_sounds=supplied)[3:]  # drop [sys.executable, "-m", <module>]
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             parsed = draccus.parse(config_class=config_class, args=argv)
         assert parsed.play_sounds is supplied

@@ -37,7 +37,6 @@ connect path is a recording stub.
 
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 import pytest
@@ -50,6 +49,7 @@ from strands_robots.registry.policies import (
     policy_provider_resolves,
     provider_reads_a_port,
 )
+from tests._hardware_robot import hardware_robot_on
 from tests.test_hardware_policy_port_domain import _text, hw  # noqa: F401 - fixture reuse
 
 # The RPCs graded here run as an allowlisted operator: authorization fails
@@ -84,9 +84,7 @@ def gateable(monkeypatch: pytest.MonkeyPatch) -> Any:
     """A ``Robot`` that can build an approval prompt, with no operator reachable."""
     for var in ("BYPASS_TOOL_CONSENT", "STRANDS_ROBOT_COMMAND_ALLOW"):
         monkeypatch.delenv(var, raising=False)
-    robot = HwRobot.__new__(HwRobot)
-    robot.tool_name_str = "so101"
-    robot._shutdown_event = threading.Event()
+    robot = hardware_robot_on(None, tool_name="so101")
     # No operator grant is on deposit, so the gate asks rather than spending one.
     monkeypatch.setattr(hw_mod, "consume_grant", lambda tool, tool_input: False)
     return robot

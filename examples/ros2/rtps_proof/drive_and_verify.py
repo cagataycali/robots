@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 
-from strands_robots.mesh import RtpsRobot
+from strands_robots.drivers.ros import RtpsRobot
 
 
 def _ros_pose() -> tuple[float, float, float] | None:

@@ -314,6 +314,7 @@ def _sending_mesh(published: list[tuple[str, dict[str, Any]]]) -> Any:
     mesh._rpc_lock = threading.Lock()
     mesh._cmd_pace_lock = threading.Lock()
     mesh._last_cmd_publish_mono = None
+    mesh._direct = None  # a Zenoh session: no point-to-point sender
     mesh._stop_event = threading.Event()
     mesh._pending = {}
     mesh._responses = {}

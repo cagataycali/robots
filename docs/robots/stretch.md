@@ -7,7 +7,7 @@ description: "Hello Robot Stretch (original, mobile manipulator)"
 
 # Hello Robot Stretch (original, mobile manipulator)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile_manip">Mobile manipulators</span><span class="sr-chip">18 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:stretch}}
 
 <robot-viewer name="stretch"></robot-viewer>
 
@@ -18,5 +18,9 @@ robot = Robot("stretch")
 ```
 
 Aliases: `hello_robot_stretch_original`.
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 
 Model: [google-deepmind/mujoco_menagerie/hello_robot_stretch](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/hello_robot_stretch), scene `scene.xml`.

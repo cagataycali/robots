@@ -10,6 +10,9 @@ See :mod:`strands_robots.mesh.transport.base` for the protocol details and
 """
 
 from strands_robots.mesh.transport.base import (
+    DIRECT_REASONS,
+    DirectResult,
+    DirectSender,
     MeshTransport,
     Sample,
     SubHandle,
@@ -25,6 +28,9 @@ from strands_robots.mesh.transport.iot_transport import IotMqttTransport
 from strands_robots.mesh.transport.zenoh_transport import ZenohTransport
 
 __all__ = [
+    "DIRECT_REASONS",
+    "DirectResult",
+    "DirectSender",
     "MeshTransport",
     "Sample",
     "SubHandle",

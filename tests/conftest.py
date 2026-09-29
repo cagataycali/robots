@@ -212,6 +212,35 @@ def _mesh_rate_limit_history_is_left_empty() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _strands_environment_is_left_as_found() -> Iterator[None]:
+    """Every ``STRANDS_*`` environment variable reads after a test as it did before.
+
+    ``monkeypatch.setenv`` already restores what a test sets through it. The
+    leak this closes is the other path: shipped code that writes
+    ``os.environ`` itself. ``strands_robots.dashboard.settings.apply_mesh_env``
+    pushes the saved mesh settings into the environment (``MeshBridge.start``
+    calls it), so a test that starts a bridge with a camera rate in its
+    settings leaves ``STRANDS_MESH_CAMERA_HZ`` set for every later test on
+    that xdist worker. Measured on #4200: ``Mesh.start()`` then launched the
+    opt-in camera loop, and ``test_the_roster_holds_every_loop_start_launched``
+    (which grades the always-on loops) failed with ``mesh-camera-peer-a`` as an
+    extra thread, once per few thousand runs and never in the file's own run.
+
+    Snapshotting only the ``STRANDS_`` prefix keeps the fixture cheap on a
+    55,000-test session and leaves the interpreter's own variables alone.
+    Writes a test makes on purpose *inside* itself are the test's subject and
+    still land; they are undone once it returns, which is the property.
+    """
+    before = {k: v for k, v in os.environ.items() if k.startswith("STRANDS_")}
+    yield
+    for key in [k for k in os.environ if k.startswith("STRANDS_") and k not in before]:
+        del os.environ[key]
+    for key, value in before.items():
+        if os.environ.get(key) != value:
+            os.environ[key] = value
+
+
+@pytest.fixture(autouse=True)
 def _optional_module_memo_holds_no_stand_in() -> Iterator[None]:
     """Leave no stand-in module memoised once a test is over.
 

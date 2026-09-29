@@ -199,9 +199,15 @@ async def training_export(body: dict[str, Any], _: dict = Depends(access.require
 
 
 @router.get("/checkpoints/search")
-async def checkpoints_search(q: str = "", limit: int = 15, _: dict = Depends(access.require_session)) -> dict[str, Any]:
-    """Type-ahead checkpoint search: trained here, the local HF cache, then the Hub."""
-    return await asyncio.to_thread(checkpoints.search, q, checkpoints.clamp_limit(limit))
+async def checkpoints_search(
+    q: str = "", limit: int = 15, robot: str = "", _: dict = Depends(access.require_session)
+) -> dict[str, Any]:
+    """Type-ahead checkpoint search: trained here, the local HF cache, then the Hub.
+
+    ``robot`` (a registry name such as ``so101``) puts checkpoints that name that robot
+    first and marks them ``robot_match``; the fit itself is the policy-fit route's verdict.
+    """
+    return await asyncio.to_thread(checkpoints.search, q, checkpoints.clamp_limit(limit), robot[:64] or None)
 
 
 @router.get("/checkpoints/features")

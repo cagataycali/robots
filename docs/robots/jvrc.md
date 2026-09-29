@@ -7,7 +7,7 @@ description: "JVRC-1 Humanoid (HRP-based, 45-DOF)"
 
 # JVRC-1 Humanoid (HRP-based, 45-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">45 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:jvrc}}
 
 <robot-viewer name="jvrc"></robot-viewer>
 
@@ -18,5 +18,9 @@ robot = Robot("jvrc")
 ```
 
 Aliases: `jvrc1`.
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 
 Model: [isri-aist/jvrc_mj_description](https://github.com/isri-aist/jvrc_mj_description/tree/0f0ce7daefdd66c54e0909a6bf2c22154844f5f3), scene `xml/jvrc1.xml`.

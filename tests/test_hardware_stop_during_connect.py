@@ -32,14 +32,14 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from typing import Any
 
 import pytest
 
-from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState, TaskStatus
+from strands_robots.hardware_robot import TaskStatus
 from strands_robots.policies import Policy
+from tests._hardware_robot import hardware_robot_on
 
 # Generous ceiling for every bounded wait: each is satisfied by an event the
 # test itself sets, so reaching it means the contract is broken, not that the
@@ -89,21 +89,7 @@ class _Rig:
         self.policy_initialized: list[str] = []
         self.result: dict[str, Any] | None = None
 
-        hw = HwRobot.__new__(HwRobot)
-        hw.tool_name_str = "test_arm"
-        hw.action_horizon = 1
-        hw.data_config = None
-        hw.control_frequency = 500.0
-        hw.action_sleep_time = 1.0 / 500.0
-        hw._task_state = RobotTaskState()
-        hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
-        hw._shutdown_event = threading.Event()
-        hw._stop_requested = threading.Event()
-        hw._task_admission = threading.Lock()
-        hw._task_claimed = False
-        hw.mesh = None
-        hw.peer_id = None
-        hw.robot = self.arm
+        hw = hardware_robot_on(self.arm, tool_name="test_arm", control_frequency=500.0, action_horizon=1)
 
         async def connect() -> tuple[bool, str]:
             await asyncio.to_thread(self.connect_gate.wait, DEADLINE)
