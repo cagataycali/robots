@@ -77,7 +77,7 @@ PROVISIONING_HOOK_ROLE = "strands-mesh-provisioning-hook-role"
 #: IoT policy for the SigV4 path (``STRANDS_IOT_DIRECT_AUTH=sigv4``).
 OPERATOR_DIRECT_POLICY = "strands-operator-direct"
 #: Bump whenever _PROVISIONING_HOOK_SOURCE changes.
-_PROVISIONING_HOOK_VERSION = 1
+_PROVISIONING_HOOK_VERSION = 2
 LOG_GROUP_NAME = "/aws/iot/strands-mesh"
 
 #: Ledger names for the two Lambda resource policy statements the bootstrap
@@ -213,8 +213,20 @@ _ESTOP_LAMBDA_SOURCE = textwrap.dedent(
 #   * The serial must be pre-seeded by the operator in SSM Parameter
 #     Store at /strands-mesh/provisioning/allow/<serial>. Sites with a
 #     CMDB can swap this lookup for their own API.
+#   * The certificate being registered must not carry a subject CN that
+#     names ANOTHER identity. The robot IoT policy grants direct replies on
+#     ``${iot:Certificate.Subject.CommonName}``, so a claim-cert device that
+#     submitted a CSR with ``CN=<existing robot>`` would inherit that robot's
+#     grant even though its Thing name differs. Accepted: CN equal to the
+#     ThingName, or the CN AWS writes into a certificate it generated the key
+#     for ("AWS IoT Certificate"), which matches no robot grant.
+#
+# The CN is read with a small DER walk rather than ``cryptography``: the
+# hook runs in Lambda with only the runtime's boto3 available, and adding a
+# layer for one field is a heavier dependency than thirty lines of stdlib.
 _PROVISIONING_HOOK_SOURCE = textwrap.dedent(
     """
+    import base64
     import logging
     import re
 
@@ -227,6 +239,49 @@ _PROVISIONING_HOOK_SOURCE = textwrap.dedent(
 
     _SERIAL_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
     _ALLOW_PREFIX = "/strands-mesh/provisioning/allow/"
+    # The subject CN AWS writes into a certificate whose key it generated
+    # (CreateKeysAndCertificate). It names no robot, so it inherits no grant.
+    _AWS_GENERATED_CN = "AWS IoT Certificate"
+    _OID_CN = bytes.fromhex("550403")
+
+    def _der_tlv(buf, i):
+        # One DER TLV at buf[i:]: returns (tag, value_start, value_end).
+        tag = buf[i]
+        length = buf[i + 1]
+        j = i + 2
+        if length & 0x80:
+            n = length & 0x7F
+            length = int.from_bytes(buf[j:j + n], "big")
+            j += n
+        return tag, j, j + length
+
+    def _der_children(buf, start, end):
+        i = start
+        while i < end:
+            tag, vs, ve = _der_tlv(buf, i)
+            yield tag, vs, ve
+            i = ve
+
+    def certificate_cn(pem):
+        # Subject CN of a PEM X.509 certificate, or None when unreadable.
+        try:
+            body = "".join(l for l in pem.splitlines() if l and not l.startswith("-----"))
+            der = base64.b64decode(body)
+            _, cs, ce = _der_tlv(der, 0)                 # Certificate
+            _, ts, te = _der_tlv(der, cs)                # TBSCertificate
+            fields = list(_der_children(der, ts, te))
+            # [0] version (optional, context tag 0xA0), serial, sigalg, issuer, validity, subject
+            idx = 1 if fields[0][0] == 0xA0 else 0
+            _, ss, se = fields[idx + 4]                  # subject Name
+            for _rtag, rs, re_ in _der_children(der, ss, se):        # RDN SETs
+                for _atag, as_, ae in _der_children(der, rs, re_):   # AttributeTypeAndValue SEQs
+                    parts = list(_der_children(der, as_, ae))
+                    oid = der[parts[0][1]:parts[0][2]]
+                    if oid == _OID_CN:
+                        return der[parts[1][1]:parts[1][2]].decode("utf-8", "replace")
+            return ""
+        except Exception:
+            return None
 
     def lambda_handler(event, context):
         # AWS IoT Fleet Provisioning PreProvisioningHook.
@@ -238,6 +293,16 @@ _PROVISIONING_HOOK_SOURCE = textwrap.dedent(
         if not isinstance(serial, str) or not _SERIAL_RE.fullmatch(serial):
             log.warning("provisioning DENY: bad/missing SerialNumber %r", serial)
             return {"allowProvisioning": False}
+
+        pem = (event or {}).get("certificatePem")
+        if isinstance(pem, str) and pem:
+            cn = certificate_cn(pem)
+            if cn is None:
+                log.warning("provisioning DENY: certificate for %r is unreadable", thing_name)
+                return {"allowProvisioning": False}
+            if cn not in (thing_name, _AWS_GENERATED_CN):
+                log.warning("provisioning DENY: certificate CN %r does not name Thing %r", cn, thing_name)
+                return {"allowProvisioning": False}
 
         iot = boto3.client("iot")
         try:
