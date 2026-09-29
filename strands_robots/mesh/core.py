@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import math
@@ -552,6 +553,90 @@ def _sensor_present(robot: Any, *attrs: str) -> bool:
         except Exception:  # noqa: BLE001
             logger.debug("[mesh] capability probe %r is unreadable", attr, exc_info=True)
     return False
+
+
+#: Per-image cap for a ``sim_call`` result on the wire: the camera topic's own
+#: default cap (``STRANDS_MESH_MAX_CAMERA_BYTES``), so a render travels the way
+#: a frame does. Over it, the block is replaced by a sentence naming the size.
+SIM_CALL_MAX_IMAGE_BYTES: int = 1024 * 1024
+
+#: Cap on one text block of a ``sim_call`` result on the wire (an exported XML
+#: can run to megabytes); the tail is dropped and the cut is named.
+SIM_CALL_MAX_TEXT_CHARS: int = 256 * 1024
+
+
+def _sim_action_takes(sim: Any, sim_action: str, param: str) -> bool:
+    """Whether the simulation method behind *sim_action* declares *param*.
+
+    Read off the class the way the simulation's own router resolves a name
+    (its alias table first), never off the instance, so no engine code runs
+    to answer a question about a signature.
+    """
+    aliases = getattr(type(sim), "_ACTION_ALIASES", {}) or {}
+    method = getattr(type(sim), aliases.get(sim_action, sim_action), None)
+    if not callable(method):
+        return False
+    try:
+        return param in inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _wire_safe_result(result: Any) -> dict[str, Any]:
+    """The simulation tool's envelope with every block JSON-encodable.
+
+    An ``image`` block carries raw PNG bytes (the Bedrock shape); on the wire
+    they become ``{"format", "base64", "bytes_len"}`` under the same ``image``
+    key, or a text sentence when the image is over
+    :data:`SIM_CALL_MAX_IMAGE_BYTES`. Text blocks are cut at
+    :data:`SIM_CALL_MAX_TEXT_CHARS`. Anything else the encoder cannot carry is
+    rendered with ``str``.
+    """
+    if not isinstance(result, dict):
+        return {"result": result}
+    out = dict(result)
+    content = out.get("content")
+    if isinstance(content, list):
+        blocks: list[Any] = []
+        for block in content:
+            blocks.append(_wire_safe_block(block))
+        out["content"] = blocks
+    try:
+        json.dumps(out)
+    except (TypeError, ValueError):
+        out = json.loads(json.dumps(out, default=str))
+    return out
+
+
+def _wire_safe_block(block: Any) -> Any:
+    if not isinstance(block, dict):
+        return block
+    image = block.get("image")
+    if isinstance(image, dict):
+        source = image.get("source") or {}
+        raw = source.get("bytes") if isinstance(source, dict) else None
+        if isinstance(raw, (bytes, bytearray)):
+            if len(raw) > SIM_CALL_MAX_IMAGE_BYTES:
+                return {
+                    "text": (
+                        f"[image {image.get('format', 'png')} of {len(raw)} bytes not carried: over the "
+                        f"{SIM_CALL_MAX_IMAGE_BYTES}-byte wire cap; render at a smaller width/height or "
+                        "watch the peer's camera topic]"
+                    )
+                }
+            return {
+                "image": {
+                    "format": image.get("format", "png"),
+                    "base64": base64.b64encode(bytes(raw)).decode("ascii"),
+                    "bytes_len": len(raw),
+                }
+            }
+        return block
+    text = block.get("text")
+    if isinstance(text, str) and len(text) > SIM_CALL_MAX_TEXT_CHARS:
+        cut = len(text) - SIM_CALL_MAX_TEXT_CHARS
+        return {"text": text[:SIM_CALL_MAX_TEXT_CHARS] + f"\n[... {cut} more characters not carried over the wire]"}
+    return block
 
 
 class Mesh(SensorLoopsMixin):
@@ -2155,6 +2240,8 @@ class Mesh(SensorLoopsMixin):
             if _action not in _READONLY:
                 refused = isinstance(result, dict) and ("error" in result or _reports_failure_to_stop(result))
                 payload: dict[str, Any] = {"sender": sender, "turn_id": turn, "action": _action}
+                if _action == "sim_call":
+                    payload["sim_action"] = cmd.get("sim_action")
                 if refused:
                     # A tool-envelope refusal (``{"status": "error", "content":
                     # [...]}``) carries no ``error`` key: name the shape that
@@ -2537,6 +2624,8 @@ class Mesh(SensorLoopsMixin):
                 )
         if action == "set_joints":
             return self._dispatch_set_joints(cmd)
+        if action == "sim_call":
+            return self._dispatch_sim_call(cmd)
         if action == "step" and hasattr(r, "step"):
             return dict(r.step(cmd.get("steps", 1)))
         if action == "reset" and hasattr(r, "reset"):
@@ -2616,6 +2705,43 @@ class Mesh(SensorLoopsMixin):
             params["robot_name"] = robot_name
         result = target._dispatch_action("set_joint_positions", params)
         return dict(result) if isinstance(result, dict) else {"result": result}
+
+    def _dispatch_sim_call(self, cmd: dict[str, Any]) -> dict[str, Any]:
+        """``sim_call``: one published action of the simulation tool, on a SIMULATION peer.
+
+        The peer is resolved the way ``set_joints`` resolves it: a child SimRobot
+        peer (``<sim>__<robot>``) delegates to its parent Simulation with
+        ``robot_name`` bound to itself whenever the action takes one and the
+        caller named none; a Simulation peer is the target itself; a hardware
+        peer refuses with a sentence. ``validate_command`` has already refused
+        the actions and params the wire does not carry, so what reaches the
+        simulation is one of its own published calls, routed through
+        ``__call__`` exactly as an in-process agent's call is: the same alias
+        rewriting, signature validation, lock and refusal wording. The result is
+        the tool's own envelope, made wire-safe by :func:`_wire_safe_result`.
+        """
+        r = self.robot
+        parent = getattr(r, "_sim_parent", None)
+        target: Any
+        bound_robot: str | None = None
+        if parent is not None:
+            target = parent
+            bound_robot = getattr(r, "name", None)
+        elif callable(getattr(r, "__call__", None)) and hasattr(r, "_world") and hasattr(r, "list_robots"):
+            target = r
+        else:
+            return {
+                "error": (
+                    "sim_call is a simulation-only action; a real robot is driven through "
+                    "execute/start, which ask the operator first"
+                )
+            }
+        sim_action = str(cmd.get("sim_action") or "")
+        params: dict[str, Any] = dict(cmd.get("params") or {})
+        if bound_robot and "robot_name" not in params and _sim_action_takes(target, sim_action, "robot_name"):
+            params["robot_name"] = bound_robot
+        result = target(action=sim_action, **params)
+        return _wire_safe_result(result)
 
     # allowlist is derived from the registry (see
     # ``strands_robots.mesh.security``), so a locomotion peer can be told to

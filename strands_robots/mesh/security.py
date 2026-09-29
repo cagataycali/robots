@@ -55,6 +55,7 @@ import math
 import os
 import re
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from strands_robots import refusal_codes
@@ -473,6 +474,10 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
         # ``target_joints`` dict is the one ``start`` already carries); a
         # hardware peer refuses it, real motion rides execute/start only.
         "set_joints",
+        # ``sim_call`` carries one published action of the simulation tool
+        # (``sim_action`` + ``params``) to a SIMULATION peer; the wire admits
+        # the subset :func:`sim_call_allowed_actions` names. Hardware refuses.
+        "sim_call",
         "teleop_status",
         "teleop_receive",
         "teleop_stop",
@@ -497,6 +502,169 @@ MAX_DC_RPC_FUNC_LEN: int = 64
 #: native-function call from becoming a DoS vector, mirroring
 #: :data:`MAX_WORLD_UPDATE_BYTES`.
 MAX_DC_RPC_PARAMS_BYTES: int = 64 * 1024
+
+#: Max JSON-encoded byte size of a ``sim_call`` params object, the bound
+#: :data:`MAX_WORLD_UPDATE_BYTES` and :data:`MAX_DC_RPC_PARAMS_BYTES` share. The
+#: transport's cmd cap (``STRANDS_MESH_MAX_CMD_BYTES``, 16 KiB by default) is
+#: the tighter bound in practice; :meth:`Mesh.send` reports it before sending.
+MAX_SIM_CALL_PARAMS_BYTES: int = 64 * 1024
+
+#: Max length of a ``sim_call`` action name or params key.
+MAX_SIM_CALL_NAME_LEN: int = 64
+
+#: Published simulation actions the wire refuses even on a simulation peer, each
+#: for one reason: it replaces or destroys the world the peer's mesh robots live
+#: in (``create_world`` ``load_scene`` ``replace_scene_mjcf`` ``destroy``), it
+#: opens a window or reads a path on the peer host (``open_viewer``
+#: ``close_viewer`` ``register_urdf`` ``register_benchmark_from_file``), it is a
+#: policy rollout whose own rail carries the allowlists (``run_policy`` ->
+#: ``execute``, ``start_policy`` -> ``start``, ``stop_policy`` -> ``stop``,
+#: ``eval_policy`` and ``evaluate_benchmark`` -> ``execute``), or it reads a
+#: dataset from the peer's disk or the Hub (``replay_episode``).
+SIM_CALL_DENIED_ACTIONS: frozenset[str] = frozenset(
+    {
+        "create_world",
+        "load_scene",
+        "replace_scene_mjcf",
+        "destroy",
+        "open_viewer",
+        "close_viewer",
+        "register_urdf",
+        "register_benchmark_from_file",
+        "run_policy",
+        "start_policy",
+        "stop_policy",
+        "eval_policy",
+        "evaluate_benchmark",
+        "replay_episode",
+    }
+)
+
+#: The rail a denied rollout action rides instead, named in the refusal.
+SIM_CALL_RAIL_FOR: dict[str, str] = {
+    "run_policy": "execute",
+    "start_policy": "start",
+    "stop_policy": "stop",
+    "eval_policy": "execute",
+    "evaluate_benchmark": "execute",
+}
+
+#: Published simulation params the wire refuses on EVERY ``sim_call`` action: a
+#: path on the peer host (``urdf_path`` ``spec_path`` ``scene_path``
+#: ``mesh_path`` ``output_path`` ``output_dir`` ``root``), raw MJCF (``xml``),
+#: or an egress switch (``push_to_hub``). Without them a recording or a render
+#: lands where the peer's own defaults put it.
+SIM_CALL_DENIED_PARAMS: frozenset[str] = frozenset(
+    {
+        "urdf_path",
+        "spec_path",
+        "scene_path",
+        "mesh_path",
+        "output_path",
+        "output_dir",
+        "root",
+        "xml",
+        "push_to_hub",
+    }
+)
+
+_SIM_CALL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
+
+#: The simulation tool's published schema, read once. A JSON file, not an
+#: import: the mesh layer must not load MuJoCo to validate a command.
+_SIM_TOOL_SPEC_PATH = Path(__file__).resolve().parent.parent / "simulation" / "mujoco" / "tool_spec.json"
+
+
+@functools.lru_cache(maxsize=1)
+def _sim_tool_spec() -> dict[str, Any]:
+    with open(_SIM_TOOL_SPEC_PATH, encoding="utf-8") as handle:
+        spec: dict[str, Any] = json.load(handle)
+    return spec
+
+
+@functools.lru_cache(maxsize=1)
+def sim_call_published_actions() -> frozenset[str]:
+    """Every action the simulation tool publishes (its ``tool_spec.json`` enum)."""
+    return frozenset(_sim_tool_spec()["properties"]["action"]["enum"])
+
+
+@functools.lru_cache(maxsize=1)
+def sim_call_published_params() -> frozenset[str]:
+    """Every param name the simulation tool publishes, ``action`` excluded."""
+    return frozenset(_sim_tool_spec()["properties"]) - {"action"}
+
+
+@functools.lru_cache(maxsize=1)
+def sim_call_allowed_actions() -> frozenset[str]:
+    """The published actions ``sim_call`` carries: the enum minus :data:`SIM_CALL_DENIED_ACTIONS`."""
+    return sim_call_published_actions() - SIM_CALL_DENIED_ACTIONS
+
+
+@functools.lru_cache(maxsize=1)
+def sim_call_allowed_params() -> frozenset[str]:
+    """The published params ``sim_call`` carries: the schema minus :data:`SIM_CALL_DENIED_PARAMS`."""
+    return sim_call_published_params() - SIM_CALL_DENIED_PARAMS
+
+
+def _validate_sim_call(cmd: dict[str, Any], out: dict[str, Any]) -> None:
+    """``sim_call``: a published, admitted ``sim_action`` and a bounded ``params`` object.
+
+    Values inside ``params`` are left to the simulation's own router, which
+    validates each action's signature, vector arity and string fields and
+    refuses by the published spelling; the wire bounds the shape, the names
+    and the size. ``robot_name`` rides inside ``params`` like every other key.
+    """
+    sim_action = cmd.get("sim_action")
+    if not isinstance(sim_action, str) or not sim_action:
+        raise ValidationError("sim_call requires `sim_action` (a published simulation action name)")
+    if len(sim_action) > MAX_SIM_CALL_NAME_LEN:
+        raise ValidationError(f"sim_action length {len(sim_action)} > MAX_SIM_CALL_NAME_LEN ({MAX_SIM_CALL_NAME_LEN}).")
+    if not _SIM_CALL_NAME_RE.fullmatch(sim_action):
+        raise ValidationError(
+            "sim_action must match [A-Za-z_][A-Za-z0-9_]* (no dots, slashes, whitespace, control chars, "
+            "or shell metacharacters)."
+        )
+    if sim_action in SIM_CALL_DENIED_ACTIONS:
+        rail = SIM_CALL_RAIL_FOR.get(sim_action)
+        hint = f" It rides the `{rail}` action instead." if rail else " It is not carried over the mesh."
+        raise ValidationError(f"sim_action {sim_action!r} is refused on the wire.{hint}")
+    if sim_action not in sim_call_published_actions():
+        raise ValidationError(f"sim_action {sim_action!r} is not a published simulation action")
+    params = cmd.get("params", {})
+    if params is None:
+        params = {}
+    if not isinstance(params, dict):
+        raise ValidationError("sim_call params must be a JSON object (dict) or null")
+    for key in params:
+        if not isinstance(key, str) or not key:
+            raise ValidationError("sim_call params keys must be non-empty strings")
+        if len(key) > MAX_SIM_CALL_NAME_LEN:
+            raise ValidationError(
+                f"sim_call params key length {len(key)} > MAX_SIM_CALL_NAME_LEN ({MAX_SIM_CALL_NAME_LEN})."
+            )
+        if not _SIM_CALL_NAME_RE.fullmatch(key):
+            raise ValidationError(
+                f"sim_call params key {key!r} must match [A-Za-z_][A-Za-z0-9_]* "
+                "(no dots, slashes, whitespace, control chars, or shell metacharacters)."
+            )
+        if key in SIM_CALL_DENIED_PARAMS:
+            raise ValidationError(
+                f"sim_call params key {key!r} is refused on the wire: a peer-host path, raw MJCF or an egress "
+                "switch. Leave it out and the peer's own default applies."
+            )
+        if key not in sim_call_published_params():
+            raise ValidationError(f"sim_call params key {key!r} is not a published simulation param")
+    try:
+        encoded = json.dumps(params)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(f"sim_call params is not JSON-serialisable: {exc}") from exc
+    if len(encoded.encode("utf-8")) > MAX_SIM_CALL_PARAMS_BYTES:
+        raise ValidationError(
+            f"sim_call params encoded size > MAX_SIM_CALL_PARAMS_BYTES ({MAX_SIM_CALL_PARAMS_BYTES})."
+        )
+    out["sim_action"] = sim_action
+    out["params"] = dict(params)
+
 
 #: Default allowlist for VLA policy server targets (loopback only).
 _DEFAULT_POLICY_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -1194,6 +1362,8 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             out["hold"] = cmd["hold"]
         if "robot_name" in cmd:
             out["robot_name"] = _coerce_robot_name(cmd["robot_name"])
+    if action == "sim_call":
+        _validate_sim_call(cmd, out)
     if action in ("execute", "start"):
         instruction = cmd.get("instruction", "")
         if not isinstance(instruction, str) or not instruction.strip():
@@ -1731,5 +1901,14 @@ __all__ = [
     "validate_mesh_identifier",
     "MAX_DC_RPC_FUNC_LEN",
     "MAX_DC_RPC_PARAMS_BYTES",
+    "MAX_SIM_CALL_NAME_LEN",
+    "MAX_SIM_CALL_PARAMS_BYTES",
+    "SIM_CALL_DENIED_ACTIONS",
+    "SIM_CALL_DENIED_PARAMS",
+    "SIM_CALL_RAIL_FOR",
+    "sim_call_allowed_actions",
+    "sim_call_allowed_params",
+    "sim_call_published_actions",
+    "sim_call_published_params",
     "LockoutError",
 ]
