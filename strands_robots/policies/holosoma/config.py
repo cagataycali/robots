@@ -15,6 +15,7 @@ metadata > error") and so does :class:`~strands_robots.policies.holosoma.Holosom
 from __future__ import annotations
 
 import dataclasses
+import math
 from dataclasses import dataclass, field
 
 # Joint count of the Unitree G1 29-DOF model the released checkpoints drive.
@@ -115,7 +116,7 @@ class HolosomaConfig:
                 )
         for name in ("action_scale", "rl_rate", "gait_period", "height_cmd", "action_clip"):
             value = getattr(self, name)
-            if not isinstance(value, (int, float)) or isinstance(value, bool) or not value > 0 or value != value:
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or math.isnan(value) or not value > 0:
                 raise ValueError(f"HolosomaConfig.{name} must be a positive finite number, got {value!r}")
 
     @property

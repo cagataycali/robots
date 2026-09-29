@@ -160,12 +160,14 @@ def test_metadata_gains_fill_the_config_and_config_gains_win() -> None:
     with pytest.raises(RuntimeError, match="no PD gains"):
         pol.compute_torques(np.zeros(29), np.zeros(29), np.zeros(29))
     pol.apply_metadata({"kp": list(KP), "kd": list(KD), "dof_names": list(HOLOSOMA_G1_JOINTS)})
-    np.testing.assert_allclose(pol.kps, KP)
+    assert pol.kps is not None
+    np.testing.assert_allclose(pol.kps, np.asarray(KP))
     tau = pol.compute_torques(np.ones(29), np.zeros(29), np.full(29, 2.0))
     np.testing.assert_allclose(tau, np.asarray(KP) - 2.0 * np.asarray(KD))
     override = HolosomaPolicy(allow_missing_models=True, config=HolosomaConfig(kps=KD, kds=KP))
     override.apply_metadata({"kp": list(KP), "kd": list(KD)})
-    np.testing.assert_allclose(override.kps, KD)
+    assert override.kps is not None
+    np.testing.assert_allclose(override.kps, np.asarray(KD))
 
 
 def test_metadata_with_foreign_joint_names_is_refused() -> None:
@@ -210,7 +212,7 @@ def test_target_velocity_domain(bad: Any) -> None:
     ],
 )
 def test_constructor_flag_domains(kwargs: dict[str, Any], match: str) -> None:
-    base = {"allow_missing_models": True}
+    base: dict[str, Any] = {"allow_missing_models": True}
     base.update(kwargs)
     with pytest.raises(ValueError, match=match):
         HolosomaPolicy(**base)
