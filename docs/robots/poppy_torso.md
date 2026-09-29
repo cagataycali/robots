@@ -9,11 +9,9 @@ description: "poppy_torso (dual_arm URDF from robot_descriptions)"
 
 <p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="bimanual">Bimanual</span><span class="sr-chip">13 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
 
-A URDF from [poppy-project/poppy_torso_description](https://github.com/poppy-project/poppy_torso_description/tree/6beeec3d76fb72b7548cce7c73aad722f8884522), compiled for MuJoCo by `strands_robots` on first use: 13 position actuators sized from the URDF effort limits, a fixed base, a floor and a light. See [URDF robots](../learn/simulation/urdf.md).
+URDF from [poppy-project/poppy_torso_description@6beeec3](https://github.com/poppy-project/poppy_torso_description/tree/6beeec3d76fb72b7548cce7c73aad722f8884522), [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: 13 position actuators, fixed base.
 
-<img class="sr-thumb" src="../assets/img/robots/poppy_torso.webp" alt="poppy_torso rendered in MuJoCo" width="400">
-
-The MJCF is compiled on your machine, so this page has no 3D view; the thumbnail is a local render.
+<img class="sr-thumb" src="../assets/img/robots/poppy_torso.webp" alt="poppy_torso, a local MuJoCo render" loading="lazy" width="640" height="480">
 
 ```python
 from strands_robots import Robot

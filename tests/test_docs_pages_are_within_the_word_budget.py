@@ -59,7 +59,16 @@ _BUDGET: int = _hook().LIMIT
 #: to 47,845 when the robot pages dropped the back-link footer the nav already gives, and
 #: to 46,418 when they dropped the lines their chips and the nav already state; the old
 #: site was 112,416.
-_SITE_BUDGET = 46_418
+#:
+#: One exception to "never raise it", stated here so it is a decision and not a
+#: drift: the registry gained the 81 robot_descriptions URDF robots the MuJoCo
+#: backend compiles on first use (urdf_robots.json), and the catalog generates one
+#: page per registry robot, so 81 pages of 64 words each (5,215 words: title,
+#: chips, one provenance line, the thumbnail, the constructor) plus the 890-word
+#: learn page that explains the loader once arrived with them. Raised from 46,418
+#: to 52,524 for exactly that content; the per-robot template is the leanest the
+#: catalog has and any further robot rides at the same 64 words.
+_SITE_BUDGET = 52_524
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

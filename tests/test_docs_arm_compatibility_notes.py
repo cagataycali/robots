@@ -34,7 +34,6 @@ drive hardware.
 from __future__ import annotations
 
 import importlib.util
-import json
 import re
 import sys
 from pathlib import Path
@@ -42,7 +41,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ROBOTS_JSON = REPO_ROOT / "strands_robots" / "registry" / "robots.json"
+_REPO = REPO_ROOT
 ROBOTS_DIR = REPO_ROOT / "docs" / "robots"
 ARMS_PAGE = ROBOTS_DIR / "arm" / "index.md"
 HOOK = REPO_ROOT / "docs" / "hooks" / "robot_pages.py"
@@ -67,8 +66,24 @@ def _hook():
 
 
 def _registry() -> dict[str, dict]:
-    """Return the built-in robot registry, keyed by canonical name."""
-    return json.loads(ROBOTS_JSON.read_text(encoding="utf-8"))["robots"]
+    """Every shipped robot: ``robots.json`` plus the ``robot_descriptions`` URDF tail (``registry_view.py``)."""
+    return dict(_registry_view().merged())
+
+
+def _registry_view():  # noqa: ANN202 - the docs hook, loaded by path: the docs venv is not the test venv
+    """``docs/hooks/registry_view.py``: robots.json merged with the robot_descriptions URDF tail."""
+    import importlib.util
+    import sys
+
+    name = "docs_hooks_registry_view"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, _REPO / "docs" / "hooks" / "registry_view.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _arm_names() -> set[str]:

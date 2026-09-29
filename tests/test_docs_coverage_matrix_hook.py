@@ -75,9 +75,29 @@ def _published() -> dict[str, dict[str, str | None]]:
 
 
 def _registry() -> dict[str, dict]:
-    """The built-in robot registry, read the way the hook reads it."""
-    path = _REPO / "strands_robots" / "registry" / "robots.json"
-    return json.loads(path.read_text(encoding="utf-8"))["robots"]
+    """The built-in robot registry, read the way the hook reads it.
+
+    ``robots.json`` plus ``urdf_robots.json``, the ``robot_descriptions`` URDF
+    robots the MuJoCo backend compiles on first use: both ship in the package
+    and both are rows of ``list_robots()``, so both are rows of the matrix.
+    """
+    return dict(_registry_view().merged())
+
+
+def _registry_view():  # noqa: ANN202 - the docs hook, loaded by path: the docs venv is not the test venv
+    """``docs/hooks/registry_view.py``: robots.json merged with the robot_descriptions URDF tail."""
+    import importlib.util
+    import sys
+
+    name = "docs_hooks_registry_view"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, _REPO / "docs" / "hooks" / "registry_view.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _live_coverage() -> dict[str, tuple[str, ...]]:

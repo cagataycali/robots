@@ -427,17 +427,14 @@ def driver_facts() -> str:
 
 
 def _urdf_provenance(name: str, spec: dict) -> str:
-    """One sentence on where a URDF robot's model comes from and what the loader adds."""
+    """One line on where a URDF robot's model comes from and what the loader adds."""
     repo, commit = spec.get("repository"), spec.get("commit")
     module = (spec.get("asset") or {}).get("robot_descriptions_module") or f"{name}_description"
-    src = f"[{repo}](https://github.com/{repo}/tree/{commit})" if repo and commit else f"`robot_descriptions.{module}`"
-    base = "a free-floating base" if spec.get("floating") else "a fixed base"
+    src = f"[{repo}@{commit[:7]}](https://github.com/{repo}/tree/{commit})" if repo and commit else f"`{module}`"
+    base = "floating base" if spec.get("floating") else "fixed base"
     joints = spec.get("joints")
     drive = f"{joints} position actuators" if joints else "position actuators"
-    return (
-        f"A URDF from {src}, compiled for MuJoCo by `strands_robots` on first use: {drive} sized from the "
-        f"URDF effort limits, {base}, a floor and a light. See [URDF robots](../learn/simulation/urdf.md)."
-    )
+    return f"URDF from {src}, [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: {drive}, {base}."
 
 
 def robot_page(name: str) -> str:
@@ -481,14 +478,14 @@ def robot_page(name: str) -> str:
         elif spec.get("source") == "urdf":
             thumb = entry.get("thumbnail")
             lines += (
-                [f'<img class="sr-thumb" src="../{thumb}" alt="{name} rendered in MuJoCo" width="400">', ""]
+                [
+                    f'<img class="sr-thumb" src="../{thumb}" alt="{html.escape(name)}, a local MuJoCo render" '
+                    'loading="lazy" width="640" height="480">',
+                    "",
+                ]
                 if thumb
                 else []
             )
-            lines += [
-                "The MJCF is compiled on your machine, so this page has no 3D view; the thumbnail is a local render.",
-                "",
-            ]
         else:
             lines += [
                 "The model has no public source to stream, so this page has no 3D view; the thumbnail is a local render.",
