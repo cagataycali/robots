@@ -184,7 +184,7 @@ _SIM_PARAM_DESCRIPTION_CHARS = 140
 
 def _first_sentence(text: str) -> str:
     flat = " ".join(text.split())
-    match = re.match(r"(.+?\.)(\s|$)", flat)
+    match = re.match(r"(.+?\.)(\s|\Z)", flat)
     return (match.group(1) if match else flat)[:_SIM_PARAM_DESCRIPTION_CHARS]
 
 
