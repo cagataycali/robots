@@ -12,8 +12,8 @@ By the end of this page you can name every provider the package ships, build one
 class Policy(ABC):
     control_frequency: float | None = None          # set by the runtime before the loop
     rtc_observed_delay_steps: int | None = None      # runtime sets it before each call
-    reads_instruction: ClassVar[bool] = True         # False: the words never shape actions
-    instruction_free_actions: ClassVar[str | None] = None   # what a non-reader's actions are
+    reads_instruction: bool = True                   # False: the words never shape actions
+    instruction_free_actions: str | None = None             # what a non-reader's actions are
     requires_action_controller: ClassVar[str | None] = None # a controller the engine must install, else it refuses
 
     @abstractmethod
