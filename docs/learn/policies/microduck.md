@@ -12,7 +12,7 @@ pip install 'strands-robots[microduck]'    # onnxruntime + huggingface_hub; CPU 
 
 ## What it is
 
-The Microduck is Pollen Robotics' open 14-DOF biped. Its skills ship as ONNX actors (`alpha_walking`, `alpha_stand`, `alpha_sitstand`, `roulade`, `ball_kick_*`, `roller*`, `alpha_ground_pick`) with the input normaliser fused into the graph. `MicroduckPolicy` adapts one export to the `Policy` contract with almost no configuration: `session.get_modelmeta().custom_metadata_map` carries `joint_names`, `default_joint_pos`, `action_scale` and `command_names`, so pointing the policy at a different file reconfigures it. The observation is fed raw, never re-normalised, and the decode is `motor_target = DEFAULT_POSE + action * action_scale`. The raw action feeds the next tick's `last_action` block, matching Pollen's reference deployment. `requires_images` is `False`.
+The Microduck is Pollen Robotics' open 14-DOF biped. Its skills ship as ONNX actors (`alpha_walking`, `alpha_stand`, `alpha_sitstand`, `roulade`, `ball_kick_*`, `roller*`, `alpha_ground_pick`) with the input normaliser fused into the graph. `MicroduckPolicy` adapts one export to the `Policy` contract: the ONNX metadata carries `joint_names`, `default_joint_pos`, `action_scale` and `command_names`, so pointing the policy at a different file reconfigures it. The observation is fed raw, never re-normalised, and the decode is `motor_target = DEFAULT_POSE + action * action_scale`. The raw action feeds the next tick's `last_action` block, matching Pollen's reference deployment. `requires_images` is `False`.
 
 A bare filename such as `alpha_walking.onnx` is fetched from `pollen-robotics/microduck-policies` on first use when it is not in the working directory.
 
@@ -60,7 +60,7 @@ sim.run_policy(robot_name="microduck", policy_object=bundle, policy_kwargs={"tar
 
 ## Skill scenes
 
-A weight and the scene it was trained in are one pair. `Robot("microduck")` resolves the entry's declared asset, flat ground with no props; four skills need more, shipped in the same asset directory. Running a skill on the wrong scene is not an error: a roller policy without wheels stands, a ball kick swings at nothing, and both report success.
+A weight and the scene it was trained in are one pair. `Robot("microduck")` resolves the entry's declared asset, flat ground with no props; four skills need more, shipped in the same asset directory. A skill on the wrong scene is not an error: a roller policy without wheels stands, a ball kick swings at nothing, both report success.
 
 | skill | scene | the scene adds |
 |---|---|---|

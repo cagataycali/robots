@@ -38,7 +38,7 @@ policy = create_policy("zmq://10.0.0.5:5555", data_config="so101_dualcam")   # s
 
 ## Mappings
 
-`observation_mapping` is `{robot_key: "video.X" | "state.X"}`. A state target may name one slot of a grouped vector, `"state.single_arm[3]"`, so several per-joint scalars compose it. `action_mapping` is `{"action.X": robot_key}` and accepts the same slot syntax for columns. Both are honoured in either mode; with a local checkpoint loaded, a key the model does not declare is refused by name, while in service mode the server reports it.
+`observation_mapping` is `{robot_key: "video.X" | "state.X"}`. A state target may name one slot of a grouped vector, `"state.single_arm[3]"`, so several per-joint scalars compose it. `action_mapping` is `{"action.X": robot_key}` and accepts the same slot syntax for columns. Both are honoured in either mode; with a local checkpoint a key the model does not declare is refused by name, in service mode the server reports it.
 
 ```python title="sketch"
 policy_config = {
@@ -51,7 +51,7 @@ policy_config = {
 
 ## Run it
 
-Needs a GR00T server listening. The `gr00t_inference` tool starts NVIDIA's container for you; its `deterministic=True` flag bind-mounts `strands_robots/policies/groot/server_wrapper.py` so the server reseeds on every `reset`. Without the tool, run NVIDIA's own server entrypoint from an Isaac-GR00T checkout on the same port.
+Needs a GR00T server listening. The `gr00t_inference` tool starts NVIDIA's container; its `deterministic=True` flag bind-mounts `strands_robots/policies/groot/server_wrapper.py` so the server reseeds on every `reset`. Without the tool, run NVIDIA's server entrypoint from an Isaac-GR00T checkout on the same port.
 
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
@@ -75,4 +75,4 @@ print(result["status"])
 
 - Service mode cannot check `observation_mapping` against the server. A wrong key is a server error, not a client refusal.
 - Local mode and `lerobot` cannot coexist in one interpreter.
-- The default `data_config` is `so100_dualcam`; a checkpoint trained on another layout returns garbage silently unless you name its config.
+- The default `data_config` is `so100_dualcam`; a checkpoint trained on another layout returns garbage silently until you name its config.

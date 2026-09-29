@@ -13,7 +13,7 @@ pip install 'lerobot[training]'          # accelerate for train(); add peft for 
 
 ## Python: TrainSpec and LerobotTrainer
 
-`LerobotTrainer` builds a typed `lerobot.configs.train.TrainPipelineConfig` and calls lerobot's `train(cfg)` in this interpreter. The training logic is lerobot's; the adapter translates the spec, manages resume, and parses the run for a verdict. Needs a GPU for anything past a smoke test.
+`LerobotTrainer` builds a typed `lerobot.configs.train.TrainPipelineConfig` and calls lerobot's `train(cfg)` in this interpreter. The training logic is lerobot's; the adapter translates the spec, manages resume and parses the run for a verdict. A GPU is needed past a smoke test.
 
 ```python title="sketch"
 from strands_robots.training import TrainSpec, create_trainer
@@ -85,4 +85,4 @@ The boolean levers are checked, not read by truthiness: `"false"` is refused rat
 
 - `LerobotTrainer` and `train_policy` are single-node; `num_nodes > 1` is refused. Use `sagemaker` or `lerobot_train` with `accelerate` for scale-out.
 - The trainer imports lerobot in this process, which pins `transformers>=5`; the in-process `groot` trainer needs `transformers==4.57.3`. Keep them in separate environments.
-- No training runs on this documentation machine; every fence above is a sketch by design.
+- No training runs on the documentation machine; every fence above is a sketch.

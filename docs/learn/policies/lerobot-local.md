@@ -15,7 +15,7 @@ export STRANDS_TRUST_REMOTE_CODE=1             # required: models load with trus
 
 ## What it is
 
-`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works without a change here. The model's processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations and unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the steps consumed during inference, and the policy blends the next chunk onto the seam.
+`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works here unchanged. The processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations and unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the steps consumed by inference, and the policy blends the next chunk onto the seam.
 
 Build it by name or smart string; a non-`nvidia` HuggingFace id resolves here.
 
@@ -30,7 +30,7 @@ policy = create_policy("robotfuel/act_so101_t16b", embodiment="so101")   # same 
 
 {{providers:kwargs:lerobot_local}}
 
-The remedy for inert normalization has two halves: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and `state_units` / `action_units` (`degrees` or `radians`) say which unit they were recorded in. `so100` and `so101` declare `state_units='degrees'`, which is correct only against degree-recorded stats; a checkpoint whose stats are in radians needs the unit half beside the stats half.
+The remedy for inert normalization has two halves: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and `state_units` / `action_units` (`degrees` or `radians`) say the unit they were recorded in. `so100` and `so101` declare `state_units='degrees'`, which is correct only against degree-recorded stats; a checkpoint whose stats are in radians needs the unit half beside the stats half.
 
 The registry marks `pretrained_name_or_path` as required for `run_policy`. `actions_per_step` left at `1` is auto-raised to the model's trained `n_action_steps`; pass a value above 1 to pin it. `cache_model=True` keeps loaded weights across policies in this process; `clear_model_cache()` and `list_cached_models()` in `strands_robots.policies.lerobot_local` manage that cache.
 
@@ -42,11 +42,11 @@ An embodiment is a declared key map between what the robot emits and what the mo
 
 ## Rule 1: state keys
 
-Without `set_robot_state_keys`, the policy infers the state vector from the observation's insertion order over its numeric scalars. The sim backends write `obs[joint]` then `obs[f"{joint}.vel"]`, so `strands_robots.policies._state_keys.drop_velocity_siblings` removes each `.vel` whose position companion is present and keeps one that has none (LeKiwi declares `x.vel`, `y.vel`, `theta.vel` as state). Every provider that infers an ordering shares this rule; an explicit `robot_state_keys` list is never filtered.
+Without `set_robot_state_keys`, the policy infers the state vector from the observation's insertion order over its numeric scalars. The sim backends write `obs[joint]` then `obs[f"{joint}.vel"]`, so `drop_velocity_siblings` removes each `.vel` whose position companion is present and keeps one that has none (LeKiwi declares `x.vel`, `y.vel`, `theta.vel` as state). Every inferring provider shares this rule; an explicit `robot_state_keys` list is never filtered.
 
 ## Rule 2: camera names
 
-A checkpoint declares image features such as `observation.images.image`. The embodiment's `obs_rename` maps the camera key you attach onto that feature. If you name a sim camera after the model card (`realsense_top`) instead of the embodiment's source key (`front`), the rename never fires and inference fails late. `preflight` runs before any weights download and refuses with the expected source keys.
+A checkpoint declares image features such as `observation.images.image`; the embodiment's `obs_rename` maps the camera key you attach onto that feature. Name a sim camera after the model card (`realsense_top`) instead of the embodiment's source key (`front`) and the rename never fires. `preflight` runs before any weights download and refuses with the expected source keys.
 
 Generated from `embodiments.json`:
 

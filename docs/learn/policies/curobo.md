@@ -69,7 +69,7 @@ print(result["status"])
 
 ## Limits
 
-- No CPU fallback. Without CUDA the import fails, and `create_policy` reports the provider and the missing module rather than an unknown provider.
+- No CPU fallback. Without CUDA the import fails, and `create_policy` names the provider and the missing module.
 - One `CuroboPolicy` per worker. The planner state lives on one CUDA device and is not shared across processes.
-- The trajectory is cached on the first call. A new goal needs a new `get_actions` call with the new keyword, which re-plans.
+- The trajectory is cached on the first call; a new goal keyword on a later `get_actions` re-plans.
 - The `[curobo]` extra is empty on purpose: cuRobo is not on PyPI in a form the lockfile can pin.

@@ -29,14 +29,14 @@ Radians, in the order the wire and the MuJoCo assets both use: `shoulder_pan_joi
 
 A UR controller does not refuse the way a servo bus does: it accepts the register write and does nothing. So the driver checks before it writes:
 
-1. **Controller mode.** `connect_eagerly` opens the receive interface first because it answers whether commanding is possible at all. A controller in `PROTECTIVE_STOP` accepts an RTDE connection and moves nothing, so the driver refuses there and names the mode.
+1. **Controller mode.** `connect_eagerly` opens the receive interface first because it answers whether commanding is possible. A controller in `PROTECTIVE_STOP` accepts an RTDE connection and moves nothing, so the driver refuses there and names the mode.
 2. **Step size.** The commanded step is checked against the model's per-joint maximum speed at `control_frequency` (default 125 Hz). A step the arm cannot make in one period is refused, not queued.
 
 `send_action` uses `servoJ` (speed `0.5`, acceleration `0.5`, lookahead `0.1` s, gain `300`) rather than `moveJ`, because a policy streams setpoints and a stream of planned trajectories fights itself.
 
 ## Rollouts
 
-`run_policy(policy)` rolls a caller-built policy at `control_frequency`; `start_task(instruction, ...)`, removed in 0.8, builds one from the provider registry on a background thread. `get_task_status()` reports the live snapshot, `stop_task()` halts the loop. Both share the rollout class with the Feetech driver rather than copying it.
+`run_policy(policy)` rolls a caller-built policy at `control_frequency`; `start_task(instruction, policy_provider=...)`, which built one in the driver, is removed in 0.8. `get_task_status()` reports the live snapshot, `stop_task()` halts the loop. Both share the rollout class with the Feetech driver.
 
 ## Deliberately absent
 

@@ -15,7 +15,7 @@ pip install 'strands-robots[moveit2]'    # pyzmq + msgpack; ROS 2 stays in the s
 
 ## What it is
 
-`MoveIt2Policy` is a ZMQ and msgpack client. A sidecar ROS 2 node running `moveit_py` receives a goal and returns a joint trajectory; this process unpacks it into per-tick action dicts. The reference sidecar is import-only Python under `strands_robots/policies/moveit2/server/`, with a `docker-compose.yml` beside it as the recommended deployment. One sidecar can serve several agent processes.
+`MoveIt2Policy` is a ZMQ and msgpack client. A sidecar ROS 2 node running `moveit_py` receives a goal and returns a joint trajectory; this process unpacks it into per-tick action dicts. The reference sidecar is import-only Python under `strands_robots/policies/moveit2/server/`, with a `docker-compose.yml` beside it; one sidecar serves several agent processes.
 
 ```python title="sketch"
 from strands_robots.policies import create_policy
@@ -32,7 +32,7 @@ actions = policy.get_actions_sync(
 
 {{providers:kwargs:moveit2}}
 
-`host` defaults to loopback; you opt into network exposure. `port` is an `int` in `[1, 65535]`. `api_token` falls back to `MOVEIT2_API_TOKEN`. `joint_name_map` renames the planner's joint names onto the robot's action keys when the MoveIt config and the driven robot describe one arm in two vocabularies: MoveIt's panda config plans `panda_joint1`, the MuJoCo Panda drives `joint1`. Values must be distinct, because they key the action dict.
+`host` defaults to loopback; you opt into network exposure. `port` is an `int` in `[1, 65535]`. `api_token` falls back to `MOVEIT2_API_TOKEN`. `joint_name_map` renames the planner's joint names onto the robot's action keys when the two describe one arm in two vocabularies: MoveIt's panda config plans `panda_joint1`, the MuJoCo Panda drives `joint1`. Values must be distinct; they key the action dict.
 
 ## Wire protocol
 

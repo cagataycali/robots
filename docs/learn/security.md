@@ -1,3 +1,7 @@
+---
+description: Every control between a model and a motor on one page: the gate, allowlists, transport auth, path checks and the audit log.
+---
+
 # Security
 
 At the end of this page you can name every control between a language model and a moving robot, the environment variable that widens or narrows each one, and where the evidence is written.
@@ -8,7 +12,7 @@ The posture in one sentence: an agent may read anything; a command that can move
 
 | layer | what it decides | where |
 |---|---|---|
-| operator gate | whether this command may move a robot at all | `_command_gate.gate_motion`, [agents](agents.md) |
+| operator gate | whether this command may move a robot | `_command_gate.gate_motion`, [agents](agents.md#the-operator-gate) |
 | motion grants | that a browser "yes" is spent once, for the exact tool input it approved | `_motion_grants` |
 | command validation | that a mesh command names an allowed action, provider, host and checkpoint | `mesh.security.validate_command` |
 | wire auth | who may publish on the mesh | mTLS, `STRANDS_MESH_AUTH_MODE` |
@@ -34,11 +38,11 @@ Teleoperation frames are bounded too: `STRANDS_MESH_INPUT_VALUE_ABS` (720), `STR
 
 ## The wire
 
-`STRANDS_MESH_AUTH_MODE=mtls` is the default and cannot be turned off without a second factor (`STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`, or the one-machine preset `STRANDS_MESH_LOCAL_DEV=true`). Multicast discovery is off by default. A permissive ACL under mTLS refuses to start until acknowledged. The IoT leg binds each robot's X.509 CN to its Thing name and scopes its topics with `${iot:Connection.Thing.ThingName}`; a direct reply goes only to `strands/<sender>/response/<self>/<turn>` ([direct](mesh/direct.md)). The pure-RTPS ROS 2 bridge refuses an inbound command surface without DDS Security unless `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1` ([ROS 2](ros2.md)). rosbridge is unauthenticated by design, for trusted networks.
+`STRANDS_MESH_AUTH_MODE=mtls` is the default; turning it off needs a second factor (`STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`, or the one-machine preset `STRANDS_MESH_LOCAL_DEV=true`). Multicast discovery is off by default. A permissive ACL under mTLS refuses to start until acknowledged. The IoT leg binds each robot's X.509 CN to its Thing name and scopes its topics with `${iot:Connection.Thing.ThingName}`; a direct reply goes only to `strands/<sender>/response/<self>/<turn>` ([direct](mesh/direct.md)). The pure-RTPS ROS 2 bridge refuses an inbound command surface without DDS Security unless `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1` ([ROS 2](ros2.md)). rosbridge is unauthenticated by design, for trusted networks only.
 
 ## Paths, buses, subprocesses
 
-`validate_save_path` refuses a write into `/etc/`, `/usr/`, `/dev/`, `/proc/` and their macOS and Windows equivalents; `resolve_output_path` refuses a file name that leaves its directory. Every tool that writes a caller-supplied path (`lerobot_camera`, `reachy_camera`, the judge's `write_label`, training) runs both. Dataset ids, bucket names and `run_id`s that reach the `hf` CLI are matched against allowlists before any subprocess. `use_lerobot` refuses `lerobot.scripts`, `push_to_hub`, `upload_folder` and `save_to_disk` by name so a prompt-injected call cannot push or spawn training. `lerobot_train`'s `extra_flags` are gated by `STRANDS_TRAIN_EXTRA_FLAGS_ALLOW`; GR00T container images by `STRANDS_GR00T_IMAGE_ALLOW`.
+`validate_save_path` refuses a write into `/etc/`, `/usr/`, `/dev/`, `/proc/` and their macOS and Windows equivalents; `resolve_output_path` refuses a file name that leaves its directory. Every tool that writes a caller-supplied path (`lerobot_camera`, `reachy_camera`, the judge's `write_label`, training) runs both. Dataset ids, bucket names and `run_id`s that reach the `hf` CLI are matched against allowlists before any subprocess. `use_lerobot` refuses `lerobot.scripts`, `push_to_hub`, `upload_folder` and `save_to_disk` by name, so a prompt-injected call cannot push or spawn training. `lerobot_train`'s `extra_flags` are gated by `STRANDS_TRAIN_EXTRA_FLAGS_ALLOW`; GR00T container images by `STRANDS_GR00T_IMAGE_ALLOW`.
 
 `bus_access.bus_lock` is an `RLock` on the device, held by every reader (state probe, camera publisher, sensors, IoT offload), the teleop writer and a rollout, so a serial bus is one conversation.
 

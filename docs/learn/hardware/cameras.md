@@ -4,7 +4,7 @@ description: Cameras on a real robot for policies and recordings, one frame from
 
 # Cameras
 
-At the end of this page you can attach cameras to a real robot so a policy and a recording see them, read one frame from an agent without moving anything, discover what is plugged in, and add the equivalent virtual camera to a simulation so the same policy runs on both.
+At the end of this page cameras are attached to a real robot so a policy and a recording see them, an agent reads one frame without moving anything, you can discover what is plugged in, and the same camera exists in simulation so one policy runs on both.
 
 This runs without hardware:
 
@@ -43,7 +43,7 @@ Native drivers address cameras through their own SDK (Reachy Mini, EarthRover `c
 
 ## Look without moving
 
-The real robot tool exposes `list_cameras` and `render` next to `execute`. Neither writes a servo register: `render` opens the camera under the bus lock, returns one PNG, and `list_cameras` reports each configured camera and whether it is open. An agent asked to "look at the table" does not need a rollout to do it.
+The real robot tool exposes `list_cameras` and `render` next to `execute`. Neither writes a servo register: `render` opens the camera under the bus lock and returns one PNG, `list_cameras` reports each configured camera and whether it is open. An agent asked to "look at the table" needs no rollout.
 
 ## Discover and test
 
@@ -62,7 +62,7 @@ Actions: `discover`, `list`, `capture`, `capture_batch`, `record`, `preview`, `t
 
 ## Simulation cameras
 
-In `mode="sim"` cameras are not a constructor argument; add them after creation with `add_camera(name, position=, target=, fov=60.0, width=640, height=480)` or through the robot tool's `add_camera` action. `render(camera_name=)` returns the PNG, `render_depth` the depth map, `render_all` every camera at once, and `start_cameras_recording` writes them into a dataset (see [record](../data/record.md)). The `default` camera always exists.
+In `mode="sim"` cameras are not a constructor argument; add them after creation with `add_camera(name, position=, target=, fov=60.0, width=640, height=480)` or through the robot tool's `add_camera` action. `render(camera_name=)` returns the PNG, `render_depth` the depth map, `render_all` every camera at once, `start_cameras_recording` writes them into a dataset ([record](../data/record.md)). The `default` camera always exists.
 
 A sim camera named `front` produces `observation.images.front`, the same column a real `front` camera does, which is what lets one policy checkpoint run in both modes.
 

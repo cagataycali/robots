@@ -13,7 +13,7 @@ pip install 'strands-robots[cosmos3-diffusers]'  # diffusers + torch + transform
 
 ## What it is
 
-`Cosmos3Policy` wraps the Cosmos 3 action surface (`nvidia/Cosmos3-Nano-Policy-DROID` and friends): image plus instruction in, a `[T, D]` action chunk out. The default `backend="service"` talks to `cosmos_framework.scripts.action_policy_server_robolab` over a self-contained msgpack and NumPy WebSocket client (no `openpi-client`). `backend="diffusers"` loads the checkpoint in process and is the route for `forward_dynamics` and `inverse_dynamics`; a non-`policy` mode under the service backend is refused. In process the chunk is the raw unified action (`tx..r5, grasp`, quantile normalised), not joint targets, so `run_policy` cannot consume it: the sim route is `decode_cosmos_chunk_to_targets` plus `MinkIKBridge` (`cosmos3-sim` extra), as `examples/vla/cosmos3_diffusers_mujoco_rollout.py` shows. Its defaults (35 steps, guidance 6) are video defaults; the server runs 4 steps at guidance 3.
+`Cosmos3Policy` wraps the Cosmos 3 action surface (`nvidia/Cosmos3-Nano-Policy-DROID` and friends): image plus instruction in, a `[T, D]` action chunk out. The default `backend="service"` talks to `cosmos_framework.scripts.action_policy_server_robolab` over a self-contained msgpack and NumPy WebSocket client (no `openpi-client`). `backend="diffusers"` loads the checkpoint in process and is the only route for `forward_dynamics` and `inverse_dynamics`. In process the chunk is the raw unified action (`tx..r5, grasp`, quantile normalised), not joint targets, so `run_policy` cannot consume it: the sim route is `decode_cosmos_chunk_to_targets` plus `MinkIKBridge` (`cosmos3-sim` extra), as `examples/vla/cosmos3_diffusers_mujoco_rollout.py` shows. Its defaults (35 steps, guidance 6) are video defaults; the server runs 4 steps at guidance 3.
 
 ```python title="sketch"
 from strands_robots.policies import create_policy
@@ -31,11 +31,11 @@ No `**kwargs` absorber: an unknown keyword is a `TypeError`. `host` is a bare ho
 
 ## Embodiments
 
-`embodiment` selects domain, layout and defaults: `droid`, `umi`, `av`, `bridge`, `openarm`. `droid` drives the `franka` or `panda` asset; its `joint_pos` layout is `[joint_0..joint_6, gripper]`. `openarm` is post-training only (a checkpoint post-trained on OpenArm episodes, not a released model); `diffusers` 0.40 knows no `openarm_lerobot` domain, so it needs the service backend. Layouts live in `strands_robots/policies/cosmos3/embodiments.py`.
+`embodiment` selects domain, layout and defaults: `droid`, `umi`, `av`, `bridge`, `openarm`. `droid` drives the `franka` or `panda` asset; its `joint_pos` layout is `[joint_0..joint_6, gripper]`. `openarm` is post-training only (a checkpoint post-trained on OpenArm episodes, not a released model) and needs the service backend: `diffusers` 0.40 knows no `openarm_lerobot` domain. Layouts live in `strands_robots/policies/cosmos3/embodiments.py`.
 
 ## Cameras
 
-This client requires every declared view before it sends anything (the server also accepts a lone `observation/image`). `observation_mapping` (`{robot_key: "observation/<server_key>"}`) must cover the embodiment's camera set; every target carries the `observation/` prefix. For `droid` that is `observation/wrist_image_left`, `observation/exterior_image_1_left` and `observation/exterior_image_2_left`. A mapping that omits a key, or whose camera is absent, is a `ValueError` naming the missing keys before any request leaves. State follows `policies/_state_keys.py`: the flat `observation.state` wins, else the per-joint scalars minus `.vel` siblings.
+This client requires every declared view before it sends anything (the server also accepts a lone `observation/image`). `observation_mapping` (`{robot_key: "observation/<server_key>"}`) must cover the embodiment's camera set; every target carries the `observation/` prefix. For `droid` that is `observation/wrist_image_left`, `observation/exterior_image_1_left` and `observation/exterior_image_2_left`. A mapping that omits a key, or names an absent camera, is a `ValueError` naming the missing keys before any request leaves. State follows `policies/_state_keys.py`: the flat `observation.state` wins, else the per-joint scalars minus `.vel` siblings.
 
 ## Run it
 

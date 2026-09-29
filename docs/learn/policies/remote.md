@@ -37,7 +37,7 @@ sim.cleanup()
 
 {{providers:kwargs:remote}}
 
-`endpoint` supersedes `host` and `port`; without it the client dials `ws://host:port`. `host` is checked for delimiters and `port` must be an `int` in `[1, 65535]` before the URI exists, so a bad value is refused while you still hold it. `connect_timeout` and `request_timeout` are seconds and must be positive; `0`, a negative or `True` is a `ValueError` at construction.
+`endpoint` supersedes `host` and `port`; without it the client dials `ws://host:port`. `host` is checked for delimiters and `port` must be an `int` in `[1, 65535]` before the URI exists. `connect_timeout` and `request_timeout` are positive seconds; `0`, a negative or `True` is a `ValueError` at construction.
 
 ## The server
 

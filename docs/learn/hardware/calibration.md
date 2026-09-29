@@ -35,7 +35,7 @@ records = load_calibration(path)                                  # {motor: Moto
 arm = Robot("so101", mode="real", driver="strands", port="/dev/ttyACM0", calibration=records)
 ```
 
-`load_calibration` refuses a file with a missing or non-integer field instead of filling it from defaults: a completed record would report degrees against a travel nobody measured. Both names passed to `lerobot_calibration_path` must be bare path segments; a `..` or a separator is refused because both reach it from a tool call.
+`load_calibration` refuses a file with a missing or non-integer field instead of filling it from defaults: a completed record would report degrees against a travel nobody measured. Both names passed to `lerobot_calibration_path` must be bare path segments; `..` or a separator is refused, since both arrive from tool calls.
 
 ## Without a file
 
@@ -46,7 +46,7 @@ The two drivers behave differently, and both say so:
 
 ## Why it matters for data
 
-A dataset recorded with one calibration and replayed on an arm with another moves to different physical positions for the same numbers. Keep the `id` stable per physical arm, record it in the dataset's metadata (see [record](../data/record.md)), and recalibrate only when you change a servo, because that changes the counts at the stops.
+A dataset recorded with one calibration and replayed on an arm with another moves to different physical positions for the same numbers. Keep the `id` stable per physical arm, record it in the dataset's metadata ([record](../data/record.md)), and recalibrate only when you change a servo, which changes the counts at the stops.
 
 ## Other robots
 

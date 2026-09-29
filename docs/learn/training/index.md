@@ -72,4 +72,4 @@ artifact = trainer.export(spec, result.checkpoint_dir)   # a path create_policy 
 
 ## From an agent
 
-`train_policy(action="train" | "validate" | "status" | "export" | "list", provider=..., ...)` mirrors `TrainSpec` and returns the same verdicts. `lerobot_train(action="start" | "status" | "stop" | "list", ...)` runs `lerobot-train` detached, for a run that outlives the agent turn. See [lerobot](lerobot.md) and the [tool reference](../../reference/tools.md).
+`train_policy(action="train" | "validate" | "status" | "export" | "list", provider=..., ...)` mirrors `TrainSpec` and returns the same verdicts. `lerobot_train(action="start" | "status" | "stop" | "list", ...)` runs `lerobot-train` detached, outliving the agent turn ([lerobot](lerobot.md), [tool reference](../../reference/tools.md)).

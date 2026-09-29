@@ -4,7 +4,7 @@ description: How Robot(name, mode="real") picks its driver, the native drivers t
 
 # Drivers
 
-At the end of this page you know how `Robot(name, mode="real")` picks the code that talks to your robot, which of the {{n:native_drivers}} native drivers ship in the package and over which wire each one speaks, and what a driver must implement so the agent, the mesh and the teleop loop can use it.
+At the end of this page you know how `Robot(name, mode="real")` picks the code that talks to your robot, which of the {{n:native_drivers}} native drivers ship and over which wire, and what a driver must implement so the agent, the mesh and the teleop loop can use it.
 
 ```python
 from strands_robots.drivers import list_native_drivers, list_driver_coverage
@@ -77,10 +77,10 @@ register_native_driver("koch_follower", MyKochDriver)   # refuses a class missin
 robot = Robot("koch_follower", mode="real", driver="strands", port="/dev/ttyUSB0")
 ```
 
-`register_native_driver` binds a driver class to a registry robot name and checks `missing_driver_members(cls)` first; it refuses double registration unless `overwrite=True`. It does not make a new name known: for a robot the registry has never heard of, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` from `strands_robots.registry` first, then register the driver under the same name. A package outside this repo registers at import time; the shipped table tolerates a caller registering first.
+`register_native_driver` binds a driver class to a registry robot name after `missing_driver_members(cls)` passes; double registration is refused unless `overwrite=True`. It does not make a new name known: for a robot the registry has never heard of, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` first, then register the driver under that name. A package outside this repo registers at import time; the shipped table tolerates a caller registering first.
 
 ## Where the gates are
 
-A driver refuses before it writes: the Feetech bus refuses a target outside the servo's travel, the G1 refuses outside its FSM handshake states or under 15 percent battery, the Go2 refuses until sport mode is released, the Booster T1 refuses until upper-body control is enabled, the Robotiq refuses until activation completes, the UR refuses in `PROTECTIVE_STOP`. Those are driver-level facts about the hardware. The operator approval that sits above all of them is the [agents](../agents.md) gate.
+A driver refuses before it writes: the Feetech bus refuses a target outside the servo's travel, the G1 refuses outside its FSM handshake states or under 15 percent battery, the Go2 refuses until sport mode is released, the Booster T1 refuses until upper-body control is enabled, the Robotiq refuses until activation completes, the UR refuses in `PROTECTIVE_STOP`. Those are facts about the hardware; the operator approval above all of them is [the operator gate](../agents.md#the-operator-gate).
 
 Next: [feetech-arms](feetech-arms.md), [teleoperation](teleoperation.md), [cameras](cameras.md), [calibration](calibration.md).

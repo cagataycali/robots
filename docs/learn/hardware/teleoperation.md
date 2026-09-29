@@ -4,7 +4,7 @@ description: A leader arm, a gamepad or any get_action() object drives a followe
 
 # Teleoperation
 
-At the end of this page a leader arm, a gamepad or any object with a `get_action()` drives a follower, in simulation or on hardware, at a fixed rate, with a per-joint speed bound that refuses glitch frames instead of clamping them, and optionally mirrored to remote followers over the mesh.
+At the end of this page a leader arm, a gamepad or any object with a `get_action()` drives a follower, in simulation or on hardware, at a fixed rate, under a per-joint speed bound that refuses glitch frames instead of clamping them, optionally mirrored to remote followers over the mesh.
 
 This runs without hardware: the "teleoperator" is a sine wave.
 
@@ -58,7 +58,7 @@ follower.teleoperate(block=True)          # Ctrl+C to stop
 
 ## The slew bound
 
-Every merged frame is held to `STRANDS_TELEOP_SLEW_ABS` units per second per joint (default 500, wide enough for degree-valued arms and 0 to 100 grippers). A frame that exceeds it is refused and counted in `slew_rejected`, not clamped: clamping silently alters an actuator command. A physical leader cannot produce that speed; an encoder glitch or a USB re-enumerate can. A session with any refusal does not report `success`. The mesh receive path applies the same bound, so a local and a remote follower judge a frame identically.
+Every merged frame is held to `STRANDS_TELEOP_SLEW_ABS` units per second per joint (default 500, wide enough for degree arms and 0 to 100 grippers). A frame that exceeds it is refused and counted in `slew_rejected`, not clamped: clamping silently alters an actuator command. A physical leader cannot produce that speed; an encoder glitch or a USB re-enumerate can. A session with any refusal does not report `success`. The mesh receive path applies the same bound, so a local and a remote follower judge a frame identically.
 
 ## Over the mesh
 

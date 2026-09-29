@@ -67,7 +67,7 @@ Episodes: 2 | Success: 2 | Failure: 0 (100.0% success)
 
 ## Predicates
 
-`strands_robots/simulation/predicates.py` is a closed registry of factories: `make_predicate(name, **kwargs)` returns a `(sim) -> bool | float` callable and nothing here reaches `eval`, so a clause is safe to accept from an LLM tool call. Each factory checks its own keyword names and values; a wrong keyword is a `ValueError` naming the accepted ones.
+`strands_robots/simulation/predicates.py` is a closed registry of factories: `make_predicate(name, **kwargs)` returns a `(sim) -> bool | float` callable and nothing reaches `eval`, so a clause is safe to accept from an LLM tool call. A wrong keyword is a `ValueError` naming the accepted ones.
 
 | kind | predicates |
 |---|---|
@@ -82,7 +82,7 @@ Joint predicates resolve names scene-wide, so a task object loaded with `add_rob
 
 ## stop_when and success_when
 
-`run_policy(stop_when=...)` ends a rollout early on a bool clause: a single call `{"predicate": ..., **kwargs}` or an `all` / `any` group of them. Float-valued terms are rejected (a non-zero float reads as always true), and so is an empty clause. If the clause already holds at reset, the result says `stop_when_true_at_reset` rather than crediting the policy. `eval_policy(success_when=...)` takes the same shape and counts episodes; `success_fn` takes a callable instead.
+`run_policy(stop_when=...)` ends a rollout early on a bool clause: one call `{"predicate": ..., **kwargs}` or an `all` / `any` group. Float-valued terms are rejected (a non-zero float reads as always true), and so is an empty clause. A clause that already holds at reset yields `stop_when_true_at_reset` rather than crediting the policy. `eval_policy(success_when=...)` takes the same shape and counts episodes; `success_fn` takes a callable instead.
 
 ## Observers
 
@@ -100,4 +100,4 @@ The four **posture** flags of `run_policy` and `eval_policy` (`fast_mode`, `rese
 
 Every rollout returns `{"status", "content": [{"text"}, {"json"}]}`. The `json` block of `eval_policy` and `evaluate_benchmark` carries `success_rate`, `n_success`, `episodes_completed`, `avg_steps`, `actions_applied`, `stopped_early`, `pass_hat_k` (the probability that `k` consecutive attempts all succeed, `k` up to 8, estimated as `C(c, k) / C(n, k)`), inference timing (`avg_inference_ms`, `max_inference_ms`, RTC counters), `policy_load_time_s`, and a per-episode list. Read `pass_hat_k` before deploying: a policy at 60% clears five in a row about 8% of the time.
 
-`seed` reseeds the client RNGs once and derives a per-episode seed from a master RNG, so two evaluations with the same seed replay the same episodes. `video={"path": "out.mp4", "fps": 30, "camera": "front", "width": 640, "height": 480}` records an MP4 per episode (`fps` is capped at the control frequency); `video_paths` in the `json` block lists them.
+`seed` reseeds the client RNGs once and derives a per-episode seed from a master RNG, so two evaluations with one seed replay the same episodes. `video={"path": "out.mp4", "fps": 30, "camera": "front", "width": 640, "height": 480}` records an MP4 per episode (`fps` is capped at the control frequency); `video_paths` in the `json` block lists them.

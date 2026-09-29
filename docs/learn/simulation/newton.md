@@ -12,7 +12,7 @@ pip install 'strands-robots[sim-newton]'   # newton 1.5, warp-lang, mujoco 3.11,
 
 ## What it is
 
-`NewtonSimEngine` (`strands_robots/simulation/newton/simulation.py`) implements `SimEngine` on newton-physics/newton, NVIDIA Warp plus MuJoCo-Warp. It ingests the same MJCF assets the MuJoCo backend uses, builds a GPU model, and steps it with one of Newton's rigid-body solvers. Rendering is headless through Newton's ray-traced `SensorTiledCamera`, so no display server is involved. Policy orchestration (`run_policy`, `eval_policy`, `replay_episode`, recording in `newton/recording.py`) is inherited from the base class.
+`NewtonSimEngine` (`strands_robots/simulation/newton/simulation.py`) implements `SimEngine` on newton-physics/newton, NVIDIA Warp plus MuJoCo-Warp. It ingests the same MJCF assets the MuJoCo backend uses, builds a GPU model, and steps it with one of Newton's rigid-body solvers. Rendering is headless through Newton's ray-traced `SensorTiledCamera`. Policy orchestration (`run_policy`, `eval_policy`, `replay_episode`, recording in `newton/recording.py`) is inherited from the base class.
 
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
@@ -42,7 +42,7 @@ sim.destroy()
 
 ## Same API, same rules
 
-`add_camera(parent_body=...)` works here as on MuJoCo; a policy declaring `requires_action_controller` (the WBC torque shim) is refused rather than rolled out without it. On Newton a mesh `size` scales the mesh per axis (default `[1, 1, 1]`); MuJoCo and Isaac ignore it and still report success (#2300). `set_obs_noise` mirrors the MuJoCo signature so an identical call behaves the same. Terrain, task objects and the predicate DSL read the same observation surface. The `wbc` torque shim is MuJoCo-only, so a WBC rollout on Newton refuses unless `wbc_install_torque_control=False` against a torque-actuated scene.
+`add_camera(parent_body=...)` works here as on MuJoCo; a policy declaring `requires_action_controller` (the WBC torque shim) is refused rather than rolled out without it. On Newton a mesh `size` scales the mesh per axis (default `[1, 1, 1]`); MuJoCo and Isaac ignore it and still report success (#2300). `set_obs_noise` mirrors the MuJoCo signature. Terrain, task objects and the predicate DSL read the same observation surface. The `wbc` torque shim is MuJoCo-only, so a WBC rollout on Newton refuses unless `wbc_install_torque_control=False` against a torque-actuated scene.
 
 ## Limits
 

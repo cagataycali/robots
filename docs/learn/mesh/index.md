@@ -4,7 +4,7 @@ description: Two robots see each other on the mesh; three switches decide whethe
 
 # Mesh
 
-At the end of this page two robots in one process see each other on the mesh, one asks the other for its status and hands it a task, and you know the three switches that decide whether the mesh is on, how it is secured, and which wire it rides.
+At the end of this page two robots in one process see each other on the mesh, one asks the other for its status and hands it a task, and you know the three switches: whether the mesh is on, how it is secured, which wire it rides.
 
 This runs without hardware. `STRANDS_MESH_LOCAL_DEV=true` is the single-machine preset (no TLS, no ACL, loud warnings); it must be set before the first `Robot(mesh=True)`.
 
@@ -30,7 +30,7 @@ A simulation appears twice: the session peer (`arm-b`) and one child peer per ro
 
 ## What it is
 
-Every `Robot` and every simulation can own a `Mesh`: a peer that broadcasts presence, publishes state and sensors, answers RPC commands, and relays teleoperation frames. The wire is Zenoh on the LAN (`[mesh]` extra, `eclipse-zenoh`), optionally bridged to AWS IoT Core for the cloud ([bridges](bridges.md)). Every message is JSON on a key like `strands/<peer>/state` ([topics](topics.md)).
+Every `Robot` and every simulation can own a `Mesh`: a peer that broadcasts presence, publishes state and sensors, answers commands and relays teleoperation frames. The wire is Zenoh on the LAN (`[mesh]` extra, `eclipse-zenoh`), optionally bridged to AWS IoT Core for the cloud ([bridges](bridges.md)). Every message is JSON on a key like `strands/<peer>/state` ([topics](topics.md)).
 
 The mesh is enrichment. A Zenoh session that fails to open leaves the robot working without it; the mesh never crashes the host.
 
@@ -56,7 +56,7 @@ Under `mtls` with no ACL file and no acknowledgement, `Mesh.start` refuses and p
 
 The mTLS trio is required together: with any of the three unset or pointing at a missing file or a symlink, session open refuses with the variable names; the loader never downgrades to plain TCP. The key file must be mode `0600` on POSIX, checked on the real file. On Windows the mode check is skipped and the loader logs one WARNING per key file, so restrict the key with an NTFS ACL instead.
 
-Discovery: the first process on a host listens on `tcp/127.0.0.1:<STRANDS_MESH_PORT>` (default 7447) and later ones connect to it, so every mesh process on one machine sees every other, including a dashboard you left running. Across hosts set `ZENOH_CONNECT=tcp/10.0.0.1:7447` (comma-separated) or `ZENOH_LISTEN`. `STRANDS_MESH_MULTICAST=true` opens UDP `224.0.0.224:7446` so any device on the LAN can find your fleet; it is off by default and logs a warning when on.
+Discovery: the first process on a host listens on `tcp/127.0.0.1:<STRANDS_MESH_PORT>` (default 7447) and later ones connect to it, so every mesh process on one machine sees every other, a forgotten dashboard included. Across hosts set `ZENOH_CONNECT=tcp/10.0.0.1:7447` (comma-separated) or `ZENOH_LISTEN`. `STRANDS_MESH_MULTICAST=true` opens UDP `224.0.0.224:7446` so any device on the LAN can find your fleet; it is off by default and logs a warning when on.
 
 ## Rates and caps
 

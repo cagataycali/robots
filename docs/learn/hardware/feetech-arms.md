@@ -4,7 +4,7 @@ description: An SO-100 or SO-101 on a serial port: which driver talks to it, wha
 
 # Feetech arms
 
-At the end of this page an SO-100 or SO-101 (and the LeKiwi it rides on) is open on a serial port, you know which of the two drivers is talking to it, what units a command takes, and how to check the bus before you trust a policy with it. Koch arms are Dynamixel and appear here only to say where they go.
+At the end of this page an SO-100 or SO-101 (and the LeKiwi it rides on) is open on a serial port, you know which of the two drivers is talking to it, what units a command takes, and how to check the bus before you trust a policy with it. Koch arms are Dynamixel and appear only to say where they go.
 
 This needs an arm on USB. Find the port first:
 
@@ -86,4 +86,4 @@ arm.cleanup()
 
 ## Koch and other Dynamixel arms
 
-`Robot("koch", mode="real", driver="strands", port=...)` builds `DynamixelDriver`: the verbs, units and refusals above over a Protocol 2.0 bus, with the `koch_follower` calibration file. Without `driver=`, koch resolves to lerobot's `koch_follower`. The ViperX, WidowX and ALOHA arms have no verified motor map and are refused.
+`Robot("koch", mode="real", driver="strands", port=...)` builds `DynamixelDriver`: the verbs, units and refusals above over a Protocol 2.0 bus, with the `koch_follower` calibration file; without `driver=`, koch resolves to lerobot's `koch_follower`. ViperX, WidowX and ALOHA have no verified motor map and are refused.

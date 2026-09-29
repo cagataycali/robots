@@ -137,4 +137,4 @@ Note: HoldPolicy does not read the instruction. Its actions - a fixed pose on ev
 
 The notes come from `reads_instruction = False`: a policy that never reads the words says so in every report, so an agent cannot relay a test motion as done.
 
-On hardware, `start_task(instruction, policy_provider=..., **policy_config)` takes the provider string and `run_policy(create_policy(...))` a built object; [Agents](../agents.md) covers the approval gate.
+On hardware, `start_task(instruction, policy_provider=..., **policy_config)` takes the provider string and `run_policy(create_policy(...))` a built object; [the operator gate](../agents.md#the-operator-gate) sits in front of both.

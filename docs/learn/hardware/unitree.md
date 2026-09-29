@@ -4,9 +4,9 @@ description: Install the Unitree SDK the way that works, reach a G1 or Go2 over 
 
 # Unitree G1 and Go2
 
-At the end of this page the vendor SDK is installed the one way that works, `Robot("g1", mode="real")` or `Robot("unitree_go2", mode="real")` reaches the robot over CycloneDDS, you know which safety gate each driver enforces before it writes a motor frame, and which agent verbs sit on top.
+At the end of this page the vendor SDK is installed the one way that works, `Robot("g1", mode="real")` or `Robot("unitree_go2", mode="real")` reaches the robot over CycloneDDS, and you know the safety gate each driver enforces before a motor frame and the agent verbs on top.
 
-This needs the robot on the same Ethernet segment and the SDK below. Nothing in the package imports `unitree_sdk2py` at module load; a missing SDK is a refusal with this recipe in it.
+This needs the robot on the same Ethernet segment and the SDK below. Nothing imports `unitree_sdk2py` at module load; a missing SDK is a refusal carrying this recipe.
 
 ```python title="sketch"
 from strands_robots import Robot
@@ -18,7 +18,7 @@ print(g1.connect_eagerly())          # None, or a reason string
 
 ## Install the SDK
 
-`unitree_sdk2py` is not an extra of this package because the PyPI `unitree-sdk2` wheel lacks its `g1` and `comm` packages and pins `cyclonedds==0.10.2`, which has no Python 3.12 wheel. The `[ros2]` extra carries the `cyclonedds` binding at the range this project bounds; the SDK comes from the vendor checkout. On macOS arm64 and x86_64 Linux:
+`unitree_sdk2py` is not an extra: the PyPI `unitree-sdk2` wheel lacks its `g1` and `comm` packages and pins `cyclonedds==0.10.2`, which has no Python 3.12 wheel. The `[ros2]` extra carries the `cyclonedds` binding at the range this project bounds; the SDK comes from the vendor checkout. On macOS arm64 and x86_64 Linux:
 
 ```bash
 pip install 'strands-robots[ros2]'
@@ -38,7 +38,7 @@ git clone https://github.com/unitreerobotics/unitree_sdk2_python
 pip install --no-deps -e ./unitree_sdk2_python
 ```
 
-A partial install (bindings and IDL present, no `comm`) lets `connect_eagerly()` succeed and fails only at the motion switcher; the G1 reports it as `motion_switcher_open_error` in `get_status()`, the Go2 as the refusal from `release_sport_mode()`. Point `CYCLONEDDS_URI` at the robot's `cyclonedds.xml` when multicast discovery does not find it.
+A partial install (bindings and IDL, no `comm`) lets `connect_eagerly()` succeed and fails at the motion switcher; the G1 reports `motion_switcher_open_error` in `get_status()`, the Go2 the refusal from `release_sport_mode()`. Point `CYCLONEDDS_URI` at the robot's `cyclonedds.xml` when multicast discovery does not find it.
 
 ## Two drivers, two gates
 
@@ -51,7 +51,7 @@ A partial install (bindings and IDL present, no `comm`) lets `connect_eagerly()`
 | control loop | `run_policy` at 500 Hz, per-step FSM re-gate, zero-torque frame on exit | `run_policy` at 500 Hz |
 | joints | 29, by name in `g1.py` | 12, by name in `GO2_JOINT_INDEX`; an index is never accepted because the SDK's `LegID` order differs from the URDF order |
 
-Both refuse rather than warn: publishing `rt/lowcmd` while the onboard controller still holds the motors means two controllers fighting over one robot. `send_action` takes joint targets keyed by name; a frame arrives at the motors only after the gate passes.
+Both refuse rather than warn: publishing `rt/lowcmd` while the onboard controller holds the motors is two controllers fighting over one robot. `send_action` takes joint targets keyed by name; a frame reaches the motors only after the gate passes.
 
 ## Agent verbs
 
