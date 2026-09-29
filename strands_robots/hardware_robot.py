@@ -2617,9 +2617,14 @@ class Robot(TeleopMixin, AgentTool):
             resolve, or ``None`` when a policy can be resolved from the value.
         """
         from strands_robots.policies.factory import list_providers, provider_can_be_created
+        from strands_robots.registry.policies import removed_provider_error
 
         if not policy_provider or provider_can_be_created(refusal_str(policy_provider)):
             return None
+        if (removed := removed_provider_error(policy_provider)) is not None:
+            # A removed provider is not a typo: its sentence names the
+            # replacement, which the registry listing cannot.
+            return {"status": "error", "content": [{"text": f"{method}: {removed}"}]}
         return {
             "status": "error",
             "content": [
