@@ -32,7 +32,7 @@ import json
 import os
 import re
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -177,6 +177,44 @@ class ArmFK:
 # ------------------------------------------------------------- mjlab task
 
 
+MIN_ARMATURE = 0.1  # kg m^2; the Menagerie fr3 convention for arms whose MJCF declares none
+
+
+def zero_armature_joints(info: ArmInfo) -> list[str]:
+    """Actuated joints whose MJCF gives them no rotor inertia (armature 0)."""
+    import mujoco
+
+    m = mujoco.MjModel.from_xml_path(info.path)
+    out = []
+    for j in info.actuated_joints:
+        jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, j)
+        if jid >= 0 and float(m.dof_armature[m.jnt_dofadr[jid]]) == 0.0:
+            out.append(j)
+    return out
+
+
+def _with_min_armature(entity, info: ArmInfo):
+    """Give zero-armature actuated joints ``MIN_ARMATURE`` before mjlab compiles the spec.
+
+    A stiff position actuator (kp 500-2000) on a massless-rotor distal joint rings at dt 0.002 in
+    BOTH engines (kinova_gen3 joint_7: 194 rad/s classic MuJoCo, 347 rad/s mjlab, under +-0.25 rad
+    random targets); joint_vel_l2 then dwarfs the reach reward and PPO learns to freeze.
+    """
+    names = set(zero_armature_joints(info))
+    if not names:
+        return entity
+    inner = entity.spec_fn
+
+    def spec_fn(*a, **k):
+        s = inner(*a, **k)
+        for j in s.joints:
+            if j.name in names:
+                j.armature = MIN_ARMATURE
+        return s
+
+    return replace(entity, spec_fn=spec_fn)
+
+
 def build_task(info: ArmInfo, cloud: np.ndarray, *, play: bool = False, scale: float = 1.0):
     """The so101 reach task on ``info``'s robot, targets drawn from ``cloud``; ``scale`` widens stds + success."""
     import torch
@@ -231,6 +269,7 @@ def build_task(info: ArmInfo, cloud: np.ndarray, *, play: bool = False, scale: f
         actuator_names=list(info.actuators),
     )
     entity = MjlabEngine._robot_entity_cfg(None, spec)  # type: ignore[arg-type]
+    entity = _with_min_armature(entity, info)
     # Natural (MJCF) joint order, the order the ONNX metadata and the provider use.
     act_cfg = SceneEntityCfg("robot", joint_names=tuple(f"^{re.escape(j)}$" for j in info.actuated_joints))
     actor_terms = {
@@ -441,6 +480,11 @@ def run_robot(robot: str, *, num_envs: int, iterations: int, seed: int, out: Pat
         )
         if not info.actuated_joints:
             raise RuntimeError("no scalar-joint actuators in the MJCF")
+        za = zero_armature_joints(info)
+        if za:
+            rec["notes"] = list(info.notes) + [
+                f"armature 0 on {len(za)} joints; trained with armature {MIN_ARMATURE}: {', '.join(za)}"
+            ]
         if info.free_base:
             raise RuntimeError("floating base; not an arm reach setup")
         rec["stage"] = "reachable_set"
