@@ -616,6 +616,8 @@ _PYTHON_ONLY_ACTIONS = frozenset(
         "robot_joint_names",
         "run_multi_policy",
         "send_action",
+        # The served mesh spec: read by the mesh layer, not an agent verb.
+        "wire_tool_spec",
         # RenderingMixin - return arrays / camera intrinsics rather than text.
         "get_camera_params",
         "get_frame",
