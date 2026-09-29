@@ -321,6 +321,106 @@ def _importer_version() -> str:
     return ",".join(parts)
 
 
+#: Bumped when the post-import fix-ups below change what a cache entry holds.
+_POSTPROCESS_VERSION = "drives-v1"
+
+
+def _position_servo_gains(mjcf_path: str) -> dict[str, tuple[float, float, float | None]]:
+    """``{joint: (kp, kd, force_limit)}`` for every MuJoCo position servo in *mjcf_path*.
+
+    Read from the COMPILED model, not the XML: ``dampratio`` and class-default
+    ``kp`` are resolved only by MuJoCo's compiler (a ``dampratio="1"`` servo is
+    authored as ``biasprm[2]=+1`` and compiles to ``-kd``). A position servo is
+    ``gaintype=fixed``, ``biastype=affine``, ``biasprm[1] == -gainprm[0]``;
+    anything else (motors, velocity servos) is left out. ``{}`` when MuJoCo is
+    not importable or the model does not compile - the vendor conversion then
+    stands as it is.
+    """
+    try:
+        import mujoco
+    except ImportError:
+        return {}
+    try:
+        model = mujoco.MjModel.from_xml_path(mjcf_path)
+    except (ValueError, OSError, RuntimeError):
+        return {}
+    gains: dict[str, tuple[float, float, float | None]] = {}
+    for i in range(model.nu):
+        if int(model.actuator_trntype[i]) != int(mujoco.mjtTrn.mjTRN_JOINT):
+            continue
+        if int(model.actuator_gaintype[i]) != int(mujoco.mjtGain.mjGAIN_FIXED):
+            continue
+        if int(model.actuator_biastype[i]) != int(mujoco.mjtBias.mjBIAS_AFFINE):
+            continue
+        kp = float(model.actuator_gainprm[i][0])
+        bias = model.actuator_biasprm[i]
+        if kp <= 0 or float(bias[1]) != -kp:
+            continue
+        joint = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, int(model.actuator_trnid[i][0]))
+        if not joint:
+            continue
+        force = float(model.actuator_forcerange[i][1]) if bool(model.actuator_forcelimited[i]) else None
+        gains[joint] = (kp, max(0.0, -float(bias[2])), force)
+    return gains
+
+
+def _author_position_drives(usd_file: str, mjcf_path: str) -> list[str]:
+    """Give the converted robot's PhysX joint drives its MJCF position-servo gains.
+
+    The Isaac Sim MJCF importer (6.0.x and 6.1.x) converts a ``<position>``
+    actuator to a PhysX drive only when ``biasprm[2] < 0`` - i.e. an explicit
+    ``kv``. A servo that states ``dampratio`` (every Menagerie arm: so100/so101,
+    panda, ...) stores ``biasprm[2] = +dampratio``, fails that check, and the
+    drive is left at ``stiffness=0, damping=0``: measured on so100, every joint
+    hung limp under gravity (Wrist_Pitch 1.3 rad off a 0.3 rad target, Jaw
+    resting on its lower limit). The vendor path also writes MuJoCo's N*m/rad
+    gains unconverted into USD's per-DEGREE drive units, 57x too stiff.
+
+    Authors ``stiffness = kp * pi/180`` and ``damping = kd * pi/180`` on each
+    revolute joint's angular drive (prismatic joints: linear drive, m units, no
+    conversion) as opinions in the entry's ROOT layer, which are stronger than
+    the ``Physics`` variant the drives live in. Returns the joints written.
+    """
+    import math
+
+    gains = _position_servo_gains(mjcf_path)
+    if not gains:
+        return []
+    from pxr import Usd, UsdPhysics  # type: ignore[import-not-found]
+
+    stage = Usd.Stage.Open(usd_file)
+    # Compose with the PhysX flavour selected (session layer: not saved), so the
+    # joints the simulation will see are the ones found and edited.
+    default = stage.GetDefaultPrim()
+    if default and default.GetVariantSets().HasVariantSet("Physics"):
+        with Usd.EditContext(stage, stage.GetSessionLayer()):
+            vset = default.GetVariantSets().GetVariantSet("Physics")
+            if not vset.GetVariantSelection():
+                vset.SetVariantSelection("physx" if "physx" in vset.GetVariantNames() else "physics")
+    stage.SetEditTarget(stage.GetRootLayer())
+    written: list[str] = []
+    for prim in stage.Traverse():
+        name = prim.GetName()
+        if name not in gains:
+            continue
+        if prim.IsA(UsdPhysics.RevoluteJoint):
+            instance, scale = "angular", math.pi / 180.0
+        elif prim.IsA(UsdPhysics.PrismaticJoint):
+            instance, scale = "linear", 1.0
+        else:
+            continue
+        kp, kd, force = gains[name]
+        drive = UsdPhysics.DriveAPI.Apply(prim, instance)
+        drive.CreateStiffnessAttr().Set(kp * scale)
+        drive.CreateDampingAttr().Set(kd * scale)
+        if force is not None:
+            drive.CreateMaxForceAttr().Set(force)
+        written.append(name)
+    if written:
+        stage.GetRootLayer().Save()
+    return written
+
+
 def convert_mjcf_to_usd(
     mjcf_path: str,
     cache_dir: str | None = None,
@@ -396,7 +496,7 @@ def convert_mjcf_to_usd(
     # same description converted with fix_base=None, and a cache keyed on the
     # bytes alone would serve whichever was built first.
     key = hashlib.sha256(
-        f"{_asset_digest(mjcf_path)}|fix_base={fix_base}|import_scene={import_scene}|importer={_importer_version()}".encode()
+        f"{_asset_digest(mjcf_path)}|fix_base={fix_base}|import_scene={import_scene}|importer={_importer_version()}|post={_POSTPROCESS_VERSION}".encode()
     ).hexdigest()
     out_dir = cache_dir if cache_dir is not None else robot_usd_cache_dir()
     os.makedirs(out_dir, exist_ok=True)
@@ -459,6 +559,12 @@ def convert_mjcf_to_usd(
             f"USD file under {staging!r} (it returned {produced!r}). Refusing to "
             f"return a path nothing can reference."
         )
+
+    try:
+        _author_position_drives(resolved, mjcf_path)
+    except BaseException:
+        _remove_tree(staging)
+        raise
 
     final = os.path.join(target_root, os.path.relpath(resolved, staging))
     # The marker goes INSIDE staging, naming the path it will have once installed,

@@ -111,8 +111,8 @@ SUBSCRIBE_TOPICS: tuple[str, ...] = (
 
 # Command-capable Mesh methods a read-only peer must not hold. Every one of
 # these is reachable only from caller code: the mesh's own loops never call
-# them (``tell`` delegates to ``send`` and ``emergency_stop`` to
-# ``broadcast``, and both callers are themselves refused), so removing them
+# them (``tell`` and ``ping`` delegate to ``send`` and ``emergency_stop`` to
+# ``broadcast``, and those callers are themselves refused), so removing them
 # cannot break the peer.
 #
 # Two write-capable methods are deliberately absent, because the peer's own
@@ -127,7 +127,7 @@ SUBSCRIBE_TOPICS: tuple[str, ...] = (
 #                              only (TypeError, ValueError, OSError). Adding
 #                              it here raises inside a Zenoh subscription
 #                              callback on the safety path.
-_COMMAND_METHODS: tuple[str, ...] = ("send", "tell", "broadcast", "emergency_stop", "publish_step")
+_COMMAND_METHODS: tuple[str, ...] = ("send", "tell", "ping", "broadcast", "emergency_stop", "publish_step")
 
 
 def restrict_to_subscribe_only(mesh: Any) -> Any:
