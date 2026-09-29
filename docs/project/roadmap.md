@@ -30,7 +30,7 @@ The stobor `DESIGN.md` is the build contract. Its shape:
 | refusals are messages, five carry codes | every refusal carries a code from `core/refusals.py` and names the value, the cause and the remedy |
 | one extra per feature area in `pyproject.toml`, `[all]` a curated subset | one extra per backend or driver, `[sim]` for MuJoCo, base install is numpy only |
 
-The registry rows, the robot names and aliases, the wire protocols and the safety postures carry over unchanged. A script that uses `Robot("so101")` and `act` / `observe` keeps working.
+The registry rows, the robot names and aliases, the wire protocols and the safety postures carry over unchanged. A script that uses `Robot("so101")`, `send_action` and `get_observation` keeps working.
 
 ## How it lands
 
