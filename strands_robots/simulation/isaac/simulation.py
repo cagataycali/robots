@@ -3002,7 +3002,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 try:
                     usd_path = convert_mjcf_to_usd(mjcf_path)
                 except (RuntimeError, ValueError, OSError, ImportError) as e:
-                    logger.error("add_robot: converting MJCF %r for robot %r failed: %s", mjcf_path, name, e)
+                    logger.error(
+                        "add_robot: converting MJCF %r for robot %r failed: %s", mjcf_path, name, e, exc_info=True
+                    )
                     return {
                         "status": "error",
                         "content": [
@@ -3038,10 +3040,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                         name,
                         usd_path,
                         e,
+                        exc_info=True,
                     )
                     return {
                         "status": "error",
-                        "content": [{"text": f"Failed to load USD robot '{name}': {e}"}],
+                        "content": [{"text": f"Failed to load USD robot '{name}': {type(e).__name__}: {e}"}],
                     }
 
                 self._prim_registry.append(prim_path)
@@ -3119,10 +3122,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                         name,
                         urdf_path,
                         e,
+                        exc_info=True,
                     )
                     return {
                         "status": "error",
-                        "content": [{"text": f"Failed to load URDF robot '{name}': {e}"}],
+                        "content": [{"text": f"Failed to load URDF robot '{name}': {type(e).__name__}: {e}"}],
                     }
 
                 self._prim_registry.append(prim_path)
@@ -6090,7 +6094,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         held across a marshal hop; each hop takes ``self._lock`` itself.
 
         **Recording**: when a dataset recording session is active
-        (:meth:`~strands_robots.simulation.isaac.recording.IsaacRecordingMixin.start_recording`),
+        (:meth:`~strands_robots.simulation.recording.DatasetRecordingMixin.start_recording`),
         each loop iteration records exactly ONE merged frame containing every
         driven robot's prefixed state/action columns (``alice__shoulder_pan``
         ...) plus all camera images - mirroring the MuJoCo merged-frame

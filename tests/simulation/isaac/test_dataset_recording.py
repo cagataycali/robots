@@ -23,8 +23,6 @@ GPU integration coverage (real SimulationApp + RTX frames) lives in
 
 from __future__ import annotations
 
-import threading
-
 import numpy as np
 import pytest
 
@@ -70,24 +68,11 @@ def _make_engine(
     test does not need; ``__new__`` + the exact attributes the recording path
     reads keeps the fixture honest about what the mixin depends on.
     """
-    engine = IsaacSimulation.__new__(IsaacSimulation)
+    engine = isaac_engine()
     engine._config = IsaacConfig(render_mode=render_mode)
-    engine._lock = threading.RLock()
-    engine._world = None
     engine._world_created = True
     engine._robots = robots if robots is not None else {}
     engine._cameras = cameras if cameras is not None else {}
-    engine._objects = {}
-    engine._prim_registry = []
-    engine._cams_rec_state = None
-    engine._recording_state_dict = {}
-    engine._action_controllers = {}  # cleared by destroy() (#1812)
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._replicated = False
-    engine._num_envs_active = 1
-    engine._pump_running = False
-    engine._main_tid = threading.get_ident()
     return engine
 
 
@@ -283,6 +268,7 @@ pq = pytest.importorskip("pyarrow.parquet")
 from pathlib import Path  # noqa: E402
 
 from strands_robots.dataset_metadata import read_dataset_episode_indices  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine  # noqa: E402
 
 
 def test_three_episode_rollout_parquet_correctness(tmp_path) -> None:

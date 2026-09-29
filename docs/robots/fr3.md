@@ -7,7 +7,7 @@ description: "Franka Research 3 (7-DOF + gripper)"
 
 # Franka Research 3 (7-DOF + gripper)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">8 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:fr3}}
 
 <robot-viewer name="fr3"></robot-viewer>
 

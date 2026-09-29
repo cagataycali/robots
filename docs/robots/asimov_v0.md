@@ -7,7 +7,7 @@ description: "Asimov V0 Bipedal Legs (12-DOF + 2 passive toes)"
 
 # Asimov V0 Bipedal Legs (12-DOF + 2 passive toes)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">15 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:asimov_v0}}
 
 <robot-viewer name="asimov_v0"></robot-viewer>
 

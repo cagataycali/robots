@@ -7,7 +7,7 @@ description: "ALOHA Bimanual (2x ViperX 300s, 14-DOF + 2 grippers)"
 
 # ALOHA Bimanual (2x ViperX 300s, 14-DOF + 2 grippers)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="bimanual">Bimanual</span><span class="sr-chip">28 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:aloha}}
 
 <robot-viewer name="aloha"></robot-viewer>
 

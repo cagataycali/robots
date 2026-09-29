@@ -7,7 +7,7 @@ description: "Kinova Gen3 (7-DOF lightweight)"
 
 # Kinova Gen3 (7-DOF lightweight)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:kinova_gen3}}
 
 <robot-viewer name="kinova_gen3"></robot-viewer>
 
