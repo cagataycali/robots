@@ -6619,9 +6619,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         * ``Rendered (RTX <render_mode>)`` -- Phase-2 path: real
           frames pulled from the Camera handle. ``rgb`` / ``depth``
           are the actual array shapes returned by Isaac (matching
-          the camera's resolved resolution; not necessarily the
-          ``width`` / ``height`` arguments passed to this method,
-          which are only used to size the blank-frame fallbacks).
+          the camera's resolved resolution), resampled to ``width`` /
+          ``height`` when either is given; the json then carries both
+          ``resolution`` and ``native_resolution``).
 
         Parameters
         ----------
@@ -6630,11 +6630,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             Default ``"default"``.
         width : int, optional
             Frame width for blank-frame fallbacks. Default from
-            ``IsaacConfig.camera_width``. Ignored on the RTX path
-            (the camera's own resolution wins).
+            ``IsaacConfig.camera_width``. On the RTX path the camera's
+            native frame is resampled to it (MuJoCo parity).
         height : int, optional
             Frame height for blank-frame fallbacks. Default from
-            ``IsaacConfig.camera_height``. Ignored on the RTX path.
+            ``IsaacConfig.camera_height``. Resampled to on the RTX path.
 
         Returns
         -------
@@ -6663,6 +6663,20 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 "content": [{"text": meta.get("error", "render failed")}],
             }
         content: list[dict[str, Any]] = [{"text": meta.get("text", "")}]
+        # The RTX product renders at the resolution fixed by add_camera, and the
+        # requested width/height were silently dropped: render(width=320,
+        # height=240) answered 640x480 where MuJoCo answers 320x240. The
+        # public frame is resampled to the request; the internal _render_frame
+        # consumers (recording, get_frame) keep the native frame, and the json
+        # says both sizes.
+        native = [int(rgb.shape[1]), int(rgb.shape[0])]
+        want = [native[0] if width is None else int(width), native[1] if height is None else int(height)]
+        if meta.get("json", {}).get("rtx") and want != native:
+            from PIL import Image
+
+            rgb = np.asarray(Image.fromarray(np.ascontiguousarray(rgb)).resize(tuple(want), Image.Resampling.BILINEAR))
+            meta = {**meta, "text": f"{meta.get('text', '')} (resampled to {want[0]}x{want[1]})"}
+            meta["json"] = {**meta["json"], "resolution": want, "native_resolution": native}
         block = _rgb_png_block(rgb)
         if block is not None:
             content.append(block)
