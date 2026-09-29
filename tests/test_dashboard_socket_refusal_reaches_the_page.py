@@ -93,8 +93,12 @@ class TestARefusedSocketSaysWhy:
         ("code", "headers", "auth_on"),
         [
             pytest.param(4401, {"host": HOST, "origin": f"http://{HOST}"}, True, id="sign-in-required"),
-            pytest.param(4401, {"host": HOST, "origin": f"http://{HOST}"}, False, id="fresh-install-without-the-bootstrap-proof"),
-            pytest.param(4404, {"host": HOST, "origin": f"http://{HOST}", **bootstrap_headers()}, False, id="no-such-session"),
+            pytest.param(
+                4401, {"host": HOST, "origin": f"http://{HOST}"}, False, id="fresh-install-without-the-bootstrap-proof"
+            ),
+            pytest.param(
+                4404, {"host": HOST, "origin": f"http://{HOST}", **bootstrap_headers()}, False, id="no-such-session"
+            ),
         ],
     )
     def test_the_socket_is_accepted_first_so_the_close_code_reaches_the_page(
