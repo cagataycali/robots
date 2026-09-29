@@ -28,7 +28,7 @@ from fastapi import HTTPException
 from strands_robots.dashboard import routes_record
 from strands_robots.dashboard.record_worker import recorder_error_summary, upload_verdict
 
-SECRET = "hf_secret_token_in_url /Users/someone/private/path Traceback (most recent call last)"
+SECRET = "hf_secret_token_in_url /srv/datasets/private/path Traceback (most recent call last)"
 
 
 class TestTheRecorderNamesItsErrorsTwice:
