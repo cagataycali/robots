@@ -17,7 +17,7 @@ from strands_robots import Robot
 robot = Robot("kuka_iiwa")
 ```
 
-Aliases: `kuka_iiwa_14`.
+Aliases: `iiwa`, `iiwa14`, `kuka_iiwa_14`.
 
 ## Policies verified on this robot
 
