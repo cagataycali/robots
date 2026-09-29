@@ -737,13 +737,8 @@ async def frame(request: Request, peer_id: str, cam: str, _: dict = Depends(acce
 
 
 async def _admit(ws: WebSocket) -> bool:
-    """Same admission as every route; a stranger is closed with 4401 and False is returned."""
-    try:
-        access.caller(ws)  # type: ignore[arg-type]  # WebSocket answers headers like a Request
-    except HTTPException:
-        await access.refuse_socket(ws, 4401)
-        return False
-    return True
+    """Same admission as every socket: Origin first, then the credential; a refused handshake returns False."""
+    return await access.admit_socket(ws) is not None
 
 
 async def _client_gone(ws: WebSocket) -> None:
