@@ -42,7 +42,7 @@ Physics steps per second, so101, Jetson AGX Thor: mujoco CPU 50,500 at N=1; mjla
 
 ## Training and the way back
 
-`train_policy(provider="rsl_rl", extra={"task": "Strands-Reach-SO101"}, batch_size=512, steps=300, output_dir=...)` runs mjlab's PPO in-process and exports ONNX with a dynamic batch axis. `Robot(...).execute(policy="rsl_rl_onnx", onnx_path=...)` loads it on `mujoco`, `mjlab` or hardware (see [rl](../policies/rl.md)). `examples/mjlab/train_then_deploy_tools.py` is the two-tool transcript.
+`train_policy(provider="rsl_rl", extra={"task": "Strands-Reach-SO101"}, batch_size=512, steps=300, output_dir=...)` runs mjlab's PPO in-process and exports ONNX with a dynamic batch axis. `Robot(...).execute(policy="rsl_rl_onnx", onnx_path=...)` loads it on `mujoco`, `mjlab` or hardware (see [rl](../policies/rl.md)). `examples/mjlab/train_then_deploy_tools.py` is the transcript.
 
 ## Limits
 

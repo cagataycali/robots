@@ -7,7 +7,7 @@ description: "Hello Robot Stretch 3 (mobile manipulator)"
 
 # Hello Robot Stretch 3 (mobile manipulator)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile_manip">Mobile manipulators</span><span class="sr-chip">41 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:stretch3}}
 
 <robot-viewer name="stretch3"></robot-viewer>
 

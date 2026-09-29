@@ -15,7 +15,7 @@ stack (rviz, nav2) treats the agent as hardware.
 Typical usage::
 
     from strands import Agent
-    from strands_robots.mesh import RtpsRobot
+    from strands_robots.drivers.ros import RtpsRobot
 
     turtle = RtpsRobot.from_rtps(
         node_name="turtlesim",
@@ -42,7 +42,7 @@ from typing import Any, cast
 from strands.types.tools import ToolContext
 
 from strands_robots._command_gate import gate_command
-from strands_robots.mesh._mobile_base import MobileBaseRobot
+from strands_robots.drivers.ros._mobile_base import MobileBaseRobot
 from strands_robots.rtps.mangling import ROS_TOPIC_RE
 from strands_robots.rtps.participant import GATE_TOOL, never_gated, rtps_action
 from strands_robots.utils import partial_construction_repr
@@ -62,7 +62,7 @@ class _RtpsTransport:
 
     Resolves :func:`~strands_robots.rtps.participant.rtps_action` through this
     module's globals on every call so the seam stays patchable at
-    ``strands_robots.mesh.rtps_robot.rtps_action``.
+    ``strands_robots.drivers.ros.rtps_robot.rtps_action``.
 
     Deliberately implements only ``publish`` and ``echo``: RTPS carries no
     service or action protocol, and declaring ``service_call`` here would let a

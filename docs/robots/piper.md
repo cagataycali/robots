@@ -7,7 +7,7 @@ description: "AgileX Piper (6-DOF + gripper)"
 
 # AgileX Piper (6-DOF + gripper)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">11 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:piper}}
 
 <robot-viewer name="piper"></robot-viewer>
 

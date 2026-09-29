@@ -7,7 +7,7 @@ description: "PAL Robotics TIAGo++ Dual-Arm Mobile (26-DOF)"
 
 # PAL Robotics TIAGo++ Dual-Arm Mobile (26-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile_manip">Mobile manipulators</span><span class="sr-chip">26 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:tiago_dual}}
 
 <robot-viewer name="tiago_dual"></robot-viewer>
 
@@ -17,7 +17,7 @@ from strands_robots import Robot
 robot = Robot("tiago_dual")
 ```
 
-Aliases: `tiago++`, `pal_tiago_dual`.
+Aliases: `pal_tiago_dual`, `tiago`, `tiago++`, `tiago_pp`.
 
 ## Policies verified on this robot
 

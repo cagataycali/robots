@@ -7,7 +7,7 @@ description: "PAL Robotics TALOS Humanoid (32-DOF)"
 
 # PAL Robotics TALOS Humanoid (32-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">45 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:talos}}
 
 <robot-viewer name="talos"></robot-viewer>
 

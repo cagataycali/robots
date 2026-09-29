@@ -7,7 +7,7 @@ description: "Yahboom ROSMASTER M3 Pro (mecanum base + DOFBOT-Pro 6-DOF arm: 5 s
 
 # Yahboom ROSMASTER M3 Pro (mecanum base + DOFBOT-Pro 6-DOF arm: 5 servos + gripper, 9 actuators)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile_manip">Mobile manipulators</span><span class="sr-chip">10 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:yahboom_m3pro}}
 
 <robot-viewer name="yahboom_m3pro"></robot-viewer>
 

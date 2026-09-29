@@ -141,19 +141,19 @@ def open_recorder(engine: Any, repo_id: str, root: str | Path, fps: int, task: s
     """A classic ``DatasetRecorder`` whose schema is the engine's live scene (proprio only)."""
     from strands_robots.dataset_recorder import DatasetRecorder
 
-    joint_names, action_names, _cams, _dims, robot_type, _rec_cams, base_specs = engine._collect_recording_schema()
+    schema = engine._collect_recording_schema()
     return DatasetRecorder.create(
         repo_id=repo_id,
         fps=int(fps),
-        robot_type=robot_type,
+        robot_type=schema.robot_type,
         camera_keys=[],
         camera_dims={},
-        joint_names=joint_names,
-        action_names=action_names,
+        joint_names=schema.joint_names,
+        action_names=schema.action_names,
         root=str(root),
         use_videos=False,
         task=task,
-        extra_state_specs=base_specs or None,
+        extra_state_specs=schema.base_state_specs or None,
     )
 
 

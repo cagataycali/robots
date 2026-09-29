@@ -7,7 +7,7 @@ description: "i2rt YAM Arm (8-DOF)"
 
 # i2rt YAM Arm (8-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">8 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:yam}}
 
 <robot-viewer name="yam"></robot-viewer>
 

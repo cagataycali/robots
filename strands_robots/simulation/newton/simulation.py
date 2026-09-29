@@ -1259,7 +1259,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # companions, split by suffix inside the helper; camera frames are added
         # afterwards (and carry their own jitter via the render path), so the
         # result holds mixed float/ndarray values.
-        obs_out: dict[str, Any] = dict(self._apply_joint_noise(obs))
+        obs_out: dict[str, Any] = dict(self._apply_obs_noise(obs))
         # Floating-base IMU-style signals for a robot with a free root (a
         # humanoid / mobile base): ``base_quat`` (orientation, w,x,y,z) and
         # ``base_ang_vel`` (rad/s), consumed by WBC / locomotion controllers.
@@ -2612,6 +2612,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             "available_solvers": sorted(articulated_solvers()),
             "device": device,
             "robots": self.list_robots(),
+            "capabilities": self._described_capabilities(),
             "objects": list(self._world.objects) if self._world else [],
             "bodies": bodies,
             "cameras": self.list_cameras(),

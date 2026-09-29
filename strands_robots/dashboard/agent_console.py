@@ -10,6 +10,15 @@ interrupt the real-hardware hook uses (:mod:`strands_robots.dashboard.agent_hitl
 so the browser shows a consent card and the same turn resumes on a yes. The
 operator can grant one call or the rest of the conversation; the grant lives
 in this object and dies with the socket. Stopping is never gated.
+
+The agent also sees the FLEET when the server hands it its mesh bridge: a
+``fleet`` tool lists every robot on the mesh with its state, ``spawn_robot``
+starts a registry robot in simulation as a mesh peer (so its card appears on
+the dashboard at once), ``despawn_robot`` stops one, and every tool-worthy peer
+is a native tool of its own (:mod:`strands_robots.dashboard.peer_tools`) whose
+motion verbs on a real arm go through :class:`~strands_robots.dashboard.agent_hitl.MotionInterruptHook`.
+The tool list follows the mesh: when the fleet signature changes between
+turns, the agent is rebuilt with the new tools and its conversation carried over.
 """
 
 from __future__ import annotations
@@ -17,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -30,11 +40,19 @@ INTERRUPT_NAME = "sim_motion"
 MODEL_ENV = "STRANDS_MODEL_ID"
 MAX_PROMPT_CHARS = 8_000
 
-SYSTEM_PROMPT = """You are the strands-robots dashboard agent. You operate simulated robots for an operator
-who is watching the same screen. Be brief. Before moving a robot, know which session you are
-moving (sim_sessions) and what its joints are (sim_state). Joint positions are radians; joints
-are addressed by name or by 1-based index as strings. A move you request may be put to the
-operator first; if they decline, say so and stop. Never work around a refusal or an e-stop."""
+SYSTEM_PROMPT = """You are the strands-robots dashboard agent. You operate robots for an operator who is
+watching the same screen. Be brief.
+
+Two kinds of robot exist here. In-process simulation sessions (sim_sessions, sim_start, sim_state,
+sim_set_joints, sim_reset, sim_stop) render in the Sim tab. Fleet robots are peers on the zenoh mesh
+and appear as cards on the dashboard: `fleet` lists them with their state, `spawn_robot` creates a new
+simulated robot as a mesh peer (its card appears within seconds), `despawn_robot` removes one, and
+each peer is also a tool named after it (dashes become underscores) whose actions are what that peer
+accepts: status, state, set_joints (target_joints, radians), reset, step, stop, and execute/start for
+policy rollouts. When the operator says "create a robot", use spawn_robot. When they name a robot,
+use that robot's own tool. Joint positions are radians unless the peer's state says otherwise; joints
+are addressed by name or by 1-based index as strings. A move you request may be put to the operator
+first; if they decline, say so and stop. Never work around a refusal or an e-stop."""
 
 #: agent tool name -> does it move the robot (and so asks the operator first)?
 MOTION_TOOLS: frozenset[str] = frozenset({"sim_set_joints"})
@@ -261,22 +279,248 @@ def build_tools(safety: Any) -> list[Any]:
     return [robots, sim_sessions, sim_start, sim_state, sim_set_joints, sim_reset, sim_stop, emergency_stop]
 
 
-class Console:
-    """One operator conversation."""
+#: How long ``spawn_robot`` waits for the new peer's presence on the mesh before
+#: reporting it as started-but-not-yet-seen. A MuJoCo so101 announces in 2-5 s
+#: on a laptop; the settle window the Devices panel uses is the same order.
+SPAWN_PRESENCE_TIMEOUT_S = 20.0
+SPAWN_POLL_S = 0.25
 
-    def __init__(self, safety: Any, model: Any | None = None) -> None:
+#: Names the fixed fleet tools take, so ``expected_tool_names`` and the badge agree.
+FLEET_TOOL_NAMES: tuple[str, ...] = ("fleet", "spawn_robot", "despawn_robot")
+
+
+def peer_summary(peer_id: str, peer: Mapping[str, Any]) -> dict[str, Any]:
+    """One fleet row for the agent: what the peer is, whether it is fresh, and its joints."""
+    from strands_robots.dashboard.peer_tools import classify_peer, sanitize_tool_name
+
+    presence = peer.get("presence") or {}
+    state = peer.get("state") or {}
+    joints = state.get("joints")
+    row: dict[str, Any] = {
+        "peer_id": peer_id,
+        "tool": sanitize_tool_name(peer_id),
+        "kind": classify_peer(peer_id, peer),
+        "robot_type": presence.get("robot_type"),
+        "hostname": presence.get("hostname"),
+        "stale": bool(peer.get("stale")),
+        "origin": peer.get("origin"),
+    }
+    if isinstance(joints, Mapping):
+        row["joints"] = {str(k): v for k, v in joints.items()}
+    if state.get("task") is not None:
+        row["task"] = state.get("task")
+    if state.get("status") is not None:
+        row["status"] = state.get("status")
+    if peer.get("cameras"):
+        row["cameras"] = sorted(peer["cameras"])
+    return row
+
+
+def build_fleet_tools(bridge: Any, devices: Any | None) -> list[Any]:
+    """The fleet tools: list the mesh, create a sim robot on it, remove one. Bridge-less = none."""
+    if bridge is None:
+        return []
+
+    def _peers() -> dict[str, Any]:
+        snap = bridge.snapshot()
+        peers = snap.get("peers") if isinstance(snap, Mapping) else None
+        return dict(peers) if isinstance(peers, Mapping) else {}
+
+    @tool
+    def fleet() -> dict[str, Any]:
+        """Every robot on the mesh right now: peer id, the tool that drives it, kind (sim/real/host),
+        freshness, joint positions and any running task. Stale peers are listed, marked stale."""
+        from strands_robots.dashboard.peer_tools import KIND_SKIP
+
+        peers = _peers()
+        rows = [peer_summary(pid, p) for pid, p in peers.items()]
+        rows = [r for r in rows if r["kind"] != KIND_SKIP]
+        managed = []
+        if devices is not None:
+            try:
+                managed = list(devices.managed_children())
+            except Exception:  # noqa: BLE001 - the roster is a courtesy, the mesh is the truth
+                managed = []
+        return {"robots": rows, "count": len(rows), "managed_by_this_dashboard": managed}
+
+    @tool
+    def spawn_robot(robot: str, peer_id: str | None = None) -> dict[str, Any]:
+        """Create a simulated robot as a mesh peer, so it appears on the dashboard fleet at once.
+
+        Args:
+            robot: a registry name with a simulation asset, e.g. so101, franka_panda, unitree_go2.
+            peer_id: optional mesh name for it (letters, digits, - _ .); default <robot>-sim-<n>.
+
+        Returns the peer id, the child peer that publishes its joints (<peer>__<robot>) and the
+        tool names the agent can use for them on the next turn. Simulation only: a real robot needs
+        a serial port and is started from the Devices panel.
+        """
+        if devices is None:
+            raise RuntimeError("this dashboard has no device manager, so it cannot start robot processes")
+        result = devices.spawn(str(robot).strip(), "sim", peer_id=peer_id or None)
+        if not isinstance(result, dict):
+            return {"result": result}
+        if result.get("error"):
+            raise ValueError(str(result["error"]))
+        pid = str(result.get("peer_id") or peer_id or "")
+        deadline = time.monotonic() + SPAWN_PRESENCE_TIMEOUT_S
+        seen: list[str] = []
+        while time.monotonic() < deadline:
+            peers = _peers()
+            seen = sorted(p for p in peers if p == pid or p.startswith(f"{pid}__"))
+            if any("__" in p for p in seen):
+                break
+            time.sleep(SPAWN_POLL_S)
+        from strands_robots.dashboard.peer_tools import sanitize_tool_name
+
+        out = {
+            **result,
+            "peer_id": pid,
+            "on_mesh": seen,
+            "tools": [sanitize_tool_name(p) for p in seen],
+            "note": (
+                "the robot's card is on the dashboard now; its joints publish on the child peer"
+                if seen
+                else f"the process started but no presence arrived within {SPAWN_PRESENCE_TIMEOUT_S:g}s; "
+                "call fleet again in a moment"
+            ),
+        }
+        return out
+
+    @tool
+    def despawn_robot(peer_id: str) -> dict[str, Any]:
+        """Stop a robot this dashboard started and remove it from the mesh. Never refused."""
+        if devices is None:
+            raise RuntimeError("this dashboard has no device manager")
+        result = devices.despawn(str(peer_id).strip())
+        return dict(result) if isinstance(result, dict) else {"result": result}
+
+    return [fleet, spawn_robot, despawn_robot]
+
+
+def expected_tool_names(bridge: Any | None) -> list[str]:
+    """The tool names a console over this bridge would carry, without building an agent."""
+    from strands_robots.dashboard.peer_tools import expected_tool_names as proxy_names
+
+    names = [
+        "robots",
+        "sim_sessions",
+        "sim_start",
+        "sim_state",
+        "sim_set_joints",
+        "sim_reset",
+        "sim_stop",
+        "emergency_stop",
+    ]
+    if bridge is None:
+        return names
+    names.extend(FLEET_TOOL_NAMES)
+    try:
+        snap = bridge.snapshot()
+        peers = snap.get("peers") if isinstance(snap, Mapping) else {}
+        names.extend(proxy_names(peers or {}))
+    except Exception:  # noqa: BLE001 - a badge must not fail on a bridge hiccup
+        logger.debug("expected_tool_names: bridge snapshot unreadable", exc_info=True)
+    return names
+
+
+class Console:
+    """One operator conversation.
+
+    ``bridge`` (the server's :class:`~strands_robots.dashboard.mesh_bridge.MeshBridge`) and
+    ``devices`` (its :class:`~strands_robots.dashboard.device_manager.DeviceManager`) are optional:
+    without them the console is the sim-only agent it always was, which is also what the tests
+    that install their own factory get.
+    """
+
+    def __init__(
+        self, safety: Any, model: Any | None = None, bridge: Any | None = None, devices: Any | None = None
+    ) -> None:
         self.grants = Grants()
-        self.agent = Agent(
-            model=model if model is not None else default_model(),
-            tools=build_tools(safety),
-            hooks=[MotionGate(self.grants)],
+        self._safety = safety
+        self._model = model if model is not None else default_model()
+        self._bridge = bridge
+        self._devices = devices
+        self._signature: frozenset[tuple[str, str]] = frozenset()
+        self.agent = self._build(messages=None)
+
+    def _peers(self) -> dict[str, Any]:
+        if self._bridge is None:
+            return {}
+        try:
+            snap = self._bridge.snapshot()
+        except Exception:  # noqa: BLE001 - an unreadable mesh means no proxies, not no agent
+            logger.debug("console: bridge snapshot unreadable", exc_info=True)
+            return {}
+        peers = snap.get("peers") if isinstance(snap, Mapping) else None
+        return dict(peers) if isinstance(peers, Mapping) else {}
+
+    def _build(self, messages: list[Any] | None) -> Any:
+        """An Agent over the fleet as it is now; ``messages`` carries a conversation across a rebuild."""
+        from strands_robots.dashboard.agent_hitl import MotionInterruptHook
+        from strands_robots.dashboard.peer_tools import build_peer_tools, fleet_signature, motion_actions_for
+
+        tools: list[Any] = build_tools(self._safety)
+        hooks: list[Any] = [MotionGate(self.grants)]
+        if self._bridge is not None:
+            peers = self._peers()
+            self._signature = fleet_signature(peers)
+            bridge = self._bridge
+            proxies = build_peer_tools(peers, bridge.send_cmd, peer_state=lambda pid: bridge.peers.get(pid))
+            tools.extend(build_fleet_tools(bridge, self._devices))
+            tools.extend(proxies)
+            hooks.append(
+                MotionInterruptHook(
+                    peers_snapshot=lambda: bridge.peers,
+                    proxy_motion=motion_actions_for(proxies),
+                    proxy_targets={t.tool_name: t.peer_id for t in proxies},
+                )
+            )
+        return Agent(
+            model=self._model,
+            messages=messages,
+            tools=tools,
+            hooks=hooks,
             system_prompt=SYSTEM_PROMPT,
             callback_handler=None,
         )
 
+    def tool_names(self) -> list[str]:
+        """The tools the agent holds right now."""
+        registry: Any = getattr(self.agent, "tool_registry", None)
+        if registry is None:
+            return []
+        try:
+            return sorted(str(spec["name"]) for spec in registry.get_all_tool_specs())
+        except Exception:  # noqa: BLE001 - a name list is a courtesy
+            return []
+
+    def refresh(self) -> bool:
+        """Rebuild the agent if the fleet changed since it was built. Returns True when it did.
+
+        The conversation survives: the new agent starts from the old one's messages. A
+        pending interrupt is never rebuilt across (the resume must land on the agent that raised it).
+        """
+        if self._bridge is None:
+            return False
+        from strands_robots.dashboard.peer_tools import fleet_signature
+
+        signature = fleet_signature(self._peers())
+        if signature == self._signature:
+            return False
+        logger.info(
+            "console: fleet changed (%d -> %d tool-worthy peers); rebuilding tools",
+            len(self._signature),
+            len(signature),
+        )
+        self.agent = self._build(messages=list(getattr(self.agent, "messages", []) or []))
+        return True
+
     async def run(self, prompt: Any) -> AsyncIterator[dict[str, Any]]:
         """Stream one turn as flat JSON events: text, tool_use, tool_result, interrupt, done, error."""
         try:
+            if not _is_resume(prompt) and self.refresh():
+                yield {"type": "tools", "names": self.tool_names()}
             async for event in self.agent.stream_async(prompt):
                 for out in _translate(event):
                     yield out
@@ -303,6 +547,11 @@ class Console:
                 }
             }
         ]
+
+
+def _is_resume(prompt: Any) -> bool:
+    """Is this prompt the answer to an interrupt (so the agent that raised it must stay)?"""
+    return isinstance(prompt, list) and any(isinstance(b, Mapping) and "interruptResponse" in b for b in prompt)
 
 
 def _translate(event: Mapping[str, Any]) -> list[dict[str, Any]]:

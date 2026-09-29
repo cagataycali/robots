@@ -4,7 +4,7 @@ The DDS mechanics behind ``use_rtps``: one process-wide ``DomainParticipant``,
 writers and readers cached per (topic, type), and the IDL sample builder that
 turns a JSON field dict into a cyclonedds dataclass. Two surfaces need them -
 the agent-facing :mod:`~strands_robots.tools.use_rtps` tool and
-:class:`~strands_robots.mesh.rtps_robot.RtpsRobot`, which drives a ROS 2 base
+:class:`~strands_robots.drivers.ros.rtps_robot.RtpsRobot`, which drives a ROS 2 base
 over the same wire - so they live here, beside the mangling and the IDL bundle
 they are built on, rather than inside one of the two callers.
 
@@ -220,7 +220,7 @@ def rtps_action(
             :mod:`strands_robots._command_gate` exists to prevent. The numeric
             domains of ``count`` / ``rate`` / ``timeout`` belong to the caller
             too - an agent tool reports a malformed option, while a
-            :class:`~strands_robots.mesh._mobile_base.MobileBaseRobot` has
+            :class:`~strands_robots.drivers.ros._mobile_base.MobileBaseRobot` has
             already refused one at its own seam.
 
     Returns:

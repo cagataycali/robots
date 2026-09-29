@@ -11,8 +11,9 @@ the MuJoCo, Newton, and Isaac backends all mix it in unchanged.
 
 Each backend supplies the engine-specific half separately:
 
-* ``start_recording`` - declares the dataset schema (joint names + cameras)
-  from the live scene, which requires reading the engine's model.
+* ``_collect_recording_schema`` - the dataset schema (joint names + cameras)
+  the live scene declares, which requires reading the engine's model;
+  ``start_recording`` itself is shared.
 * ``_make_run_policy_hook`` - captures per-step observations/cameras and feeds
   them to the active recorder.
 
@@ -31,14 +32,16 @@ import math
 import numbers
 import shutil
 from collections.abc import Collection, Iterable, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 from strands_robots.dataset_transfer import sync_dataset_to_bucket
 from strands_robots.utils import (
     boolean_flag_error,
     camera_schema_key,
     is_boolean,
+    name_list_error,
     positive_whole_number_error,
 )
 
@@ -827,6 +830,87 @@ def requested_rate_mismatch_reason(method: str, fps: Any, control_frequency: Any
     )
 
 
+class RecordedFrame:
+    """Write one rollout step to a recorder in the schema ``start_recording`` declared.
+
+    Every recording entry point - each backend's single-policy hook and
+    ``run_multi_policy``'s synchronized loop - drives some robots of a scene
+    whose dataset schema covers all of them, and owes the recorder the same
+    frame for it: the driven robots' state and action, prefixed
+    ``<robot>__<key>`` once the scene holds more than one robot; every other
+    robot's measured state (:func:`undriven_robot_state`); the scoped camera
+    arrays under their schema names; and the action columns the driven robots'
+    actuators declare, so a column the policy never produced is refused rather
+    than zero-filled. The backends differ only in how they read state and
+    cameras, so they build the parts and this writes the frame.
+
+    Args:
+        engine: The simulation engine, read for ``robot_action_keys`` and,
+            through :func:`undriven_robot_state`, for undriven robots' state.
+        driven_robots: The robots this rollout commands, in schema order.
+        robot_names: Every robot in the scene, read at each frame.
+    """
+
+    def __init__(self, engine: Any, driven_robots: Sequence[str], robot_names: Collection[str]) -> None:
+        self._engine = engine
+        self._driven = tuple(driven_robots)
+        self._robot_names = robot_names
+        self._action_keys: dict[bool, list[str]] = {}
+
+    def required_action_keys(self) -> list[str]:
+        """Return the action columns a frame owes the recorder, resolved once.
+
+        Resolved on first use rather than at construction: ``robot_action_keys``
+        is best-effort for a rollout that is not recording (a backend quirk or a
+        mid-rollout teardown may make it raise, and that must not mask the
+        runner's "robot has not moved" signal). Where a recording is attached the
+        keys are load-bearing, so a raise here correctly fails the recording; a
+        caller that wants it to fail the call instead resolves it up front.
+        """
+        multi = len(self._robot_names) > 1
+        keys = self._action_keys.get(multi)
+        if keys is None:
+            keys = [
+                f"{name}__{key}" if multi else key
+                for name in self._driven
+                for key in self._engine.robot_action_keys(name)
+            ]
+            self._action_keys[multi] = keys
+        return keys
+
+    def write(
+        self,
+        recorder: Any,
+        states: Mapping[str, Mapping[str, Any]],
+        actions: Mapping[str, Mapping[str, Any]],
+        images: Mapping[str, Any],
+        task: str | None,
+    ) -> None:
+        """Hand one step to ``recorder.add_frame``.
+
+        Args:
+            recorder: The open :class:`~strands_robots.dataset_recorder.DatasetRecorder`.
+            states: Each driven robot's state observation, keyed by robot.
+            actions: Each driven robot's action, keyed by robot.
+            images: Camera arrays already under their schema names and scope.
+            task: The task label the frame is recorded under.
+        """
+        multi = len(self._robot_names) > 1
+        observation = undriven_robot_state(self._engine, self._driven, self._robot_names)
+        action: dict[str, Any] = {}
+        for name in self._driven:
+            prefix = f"{name}__" if multi else ""
+            observation.update({prefix + key: value for key, value in states[name].items()})
+            action.update({prefix + key: value for key, value in actions[name].items()})
+        observation.update(images)
+        recorder.add_frame(
+            observation=observation,
+            action=action,
+            task=task,
+            required_action_keys=self.required_action_keys(),
+        )
+
+
 def _camera_height_width(shape: Sequence[Any], names: Sequence[str] | None) -> tuple[Any, Any]:
     """Read ``(height, width)`` from a camera feature declared in either layout.
 
@@ -967,14 +1051,53 @@ def undriven_robot_state(engine: Any, driven_robots: Collection[str], robot_name
     return merged
 
 
+class RecordingSchema(NamedTuple):
+    """The dataset schema a backend declares from its live scene.
+
+    Returned by ``DatasetRecordingMixin._collect_recording_schema``, the one
+    engine-specific read :meth:`DatasetRecordingMixin.start_recording` makes.
+    """
+
+    joint_names: list[str]
+    """Scalar ``observation.state`` joint ids (``robot__joint`` when several robots)."""
+    action_names: list[str]
+    """Action column ids, from ``robot_action_keys`` (namespaced like the joints)."""
+    base_state_specs: list[tuple[str, list[str]]]
+    """Floating-base ``(source key, components)`` state columns (:func:`floating_base_state_specs`)."""
+    cameras: list[tuple[str, str, int, int]]
+    """``(scene name, column key, width, height)`` per camera, in column order."""
+    robot_type: str
+    """The dataset ``robot_type``."""
+    video_size: tuple[int, int]
+    """Default ``(width, height)`` of the per-camera video streams."""
+
+
+def floating_base_state_specs(prefix: str) -> list[tuple[str, list[str]]]:
+    """The four floating-base state columns a free-base robot records.
+
+    ``get_observation`` reports a floating base's position, orientation and
+    velocities as vector keys; declared as per-component columns they reach
+    ``observation.state``, so a locomotion or whole-body policy trained on the
+    dataset is not base-blind. ``prefix`` is ``"<robot>__"`` in a multi-robot
+    scene, matching the prefixed observation keys the recording hook emits.
+    """
+    return [
+        (f"{prefix}base_pos", ["x", "y", "z"]),
+        (f"{prefix}base_quat", ["w", "x", "y", "z"]),
+        (f"{prefix}base_lin_vel", ["x", "y", "z"]),
+        (f"{prefix}base_ang_vel", ["x", "y", "z"]),
+    ]
+
+
 class DatasetRecordingMixin:
     """Engine-independent recording lifecycle shared by sim backends.
 
     Provides ``stop_recording`` / ``save_episode`` / ``get_recording_status`` /
     ``stream_dataset`` plus the ``_is_recording`` / ``_active_recorder`` /
     ``_active_dataset_root`` overrides the base :class:`SimEngine` run-policy
-    loop reads. Backends mix this in and add their own ``start_recording``
-    (schema declaration) and ``_make_run_policy_hook`` (per-step capture).
+    loop reads, and the one ``start_recording``. Backends mix this in and
+    supply the schema their scene declares (``_collect_recording_schema``) and
+    ``_make_run_policy_hook`` (per-step capture).
     """
 
     if TYPE_CHECKING:
@@ -988,10 +1111,7 @@ class DatasetRecordingMixin:
         def _validate_recording_start_rate(self, fps: Any, method: str) -> dict[str, Any] | None:
             """Type-only stub for the engine-provided rate guard.
 
-            Declared once here rather than in each backend mixin: all three
-            ``start_recording`` implementations call it and all three inherit
-            this class, so one declaration keeps the contract in a single
-            place. Implemented by
+            The shared :meth:`start_recording` calls it. Implemented by
             :meth:`~strands_robots.simulation.base.SimEngine._validate_recording_start_rate`.
             """
 
@@ -1017,6 +1137,307 @@ class DatasetRecordingMixin:
         if world is None:
             return None
         return world._backend_state
+
+    #: The plain-video alternative a missing-lerobot refusal names (see
+    #: :meth:`_dataset_recorder_or_refusal`); each backend names its own.
+    _RECORDING_VIDEO_HINT: ClassVar[str] = "For plain MP4 video, use start_cameras_recording instead."
+    #: First and last lines of the ``start_recording`` success reply (the last
+    #: is formatted with ``fps``).
+    _RECORDING_REPLY_LABEL: ClassVar[str] = "Recording to LeRobotDataset"
+    _RECORDING_REPLY_TAIL: ClassVar[str] = "Run policies to capture frames, then stop_recording to save the episode"
+
+    def _recording_start_error(self, state: dict[str, Any] | None) -> dict[str, Any] | None:
+        """The refusal ``start_recording`` returns before anything else, or ``None``.
+
+        The default refuses when there is no world. A backend whose scene needs
+        more than a world to declare a schema (a compiled model, a robot)
+        overrides this.
+        """
+        if state is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        return None
+
+    def _recording_scene_cameras(self) -> list[str]:
+        """Every camera name in the scene, in scene order (backend hook)."""
+        raise NotImplementedError
+
+    def _probe_recording_scene(self) -> Any:
+        """Engine read the schema is sized from, taken before the start lock.
+
+        The default reads nothing. Isaac probes one observation here, because
+        its RTX cameras emit frames at a native size that can differ from the
+        requested one.
+        """
+        return None
+
+    def _recording_start_lock(self) -> AbstractContextManager[Any]:
+        """Lock held while a recording session is armed (default: none)."""
+        return nullcontext()
+
+    def _collect_recording_schema(self, probe: Any = None) -> RecordingSchema:
+        """The dataset schema the live scene declares (backend hook)."""
+        raise NotImplementedError
+
+    def _recording_cameras_scope(self, cameras: list[tuple[str, str, int, int]], selected: set[str] | None) -> Any:
+        """What ``state["recording_cameras"]`` holds for the per-step capture hook.
+
+        The default keeps the ``(scene name, column, width, height)`` tuples the
+        hook renders, narrowed to ``selected`` scene names when ``cameras=`` was
+        passed.
+        """
+        return [cam for cam in cameras if selected is None or cam[0] in selected]
+
+    def _recording_cameras_refusal(self, camera_keys: list[str], cameras: list[str] | None) -> dict[str, Any] | None:
+        """A backend refusal of the scoped camera columns, or ``None`` (default)."""
+        return None
+
+    def start_recording(
+        self,
+        repo_id: str = "local/sim_recording",
+        task: str = "",
+        fps: int = 30,
+        root: str | None = None,
+        push_to_hub: bool = False,
+        vcodec: str = "h264",
+        overwrite: bool = False,
+        cameras: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Start recording the scene to LeRobotDataset format (parquet + per-camera MP4).
+
+        One implementation for every backend: each supplies only the schema its
+        live scene declares (:meth:`_collect_recording_schema`) and the camera
+        names it holds (:meth:`_recording_scene_cameras`). Requires the
+        ``lerobot`` extra; for plain MP4 video without a dataset schema, the
+        refusal names the backend's own alternative.
+
+        Frame/action alignment: while this session is open, :meth:`run_policy`
+        records one ``(observation, action)`` frame per control step with the
+        observation re-sampled at that step, so each recorded image + state
+        pairs with the action actually taken from it - also for chunk-emitting
+        policies, whose action chunk drains across many steps from a single
+        ``get_actions`` call.
+
+        Multi-robot schema: the dataset declares state and action columns for
+        EVERY robot in the scene, prefixed with the robot's name
+        (``alice__shoulder_pan``). A single-policy rollout drives one of them,
+        and the state columns of the others are filled from the engine at each
+        step - so a declared ``observation.state`` column is a measurement,
+        never a zero pose the robot is not in
+        (:func:`~strands_robots.simulation.recording.undriven_robot_state`).
+        Their *action* columns are unchanged: no command was issued to a robot
+        this rollout does not drive. A floating-base robot adds ``base_pos`` /
+        ``base_quat`` / ``base_lin_vel`` / ``base_ang_vel`` state columns
+        (:func:`floating_base_state_specs`).
+
+        Args:
+            repo_id: HuggingFace dataset id (``owner/name``) or a local path. The
+                directory it records into is resolved by
+                :func:`~strands_robots.dataset_source.resolve_dataset_dir` -
+                the same resolver ``DatasetRecorder.create`` uses - so an
+                ``owner/name`` id lands in ``$HF_LEROBOT_HOME/{repo_id}`` while a
+                value that is itself a path is taken as the directory.
+            task: Task description for frames that do not carry their own. It
+                is the middle of a three-level chain owned by
+                :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame`:
+                the task passed with a frame wins, then this value, then the
+                literal ``"untitled"``. Every rollout hook passes
+                ``run_policy(instruction=...)`` as the frame task.
+            fps: Dataset frame rate recorded in the LeRobot metadata. Must be a
+                positive whole number, refused up front
+                (:func:`dataset_recording_option_error`). It must EQUAL the
+                rollout's ``control_frequency``: the recorder captures one frame
+                per control step and never decimates, so the disagreement is
+                refused before any frame is written whichever call comes first.
+                When an existing dataset is RESUMED (``overwrite=False``) it must
+                equal that dataset's on-disk rate.
+            root: Explicit on-disk dataset directory, used verbatim - it replaces
+                the ``repo_id`` resolution above rather than being joined to it.
+            push_to_hub: Publish to the Hub at ``stop_recording``. Must be a
+                boolean - a publication posture is not read by truthiness
+                (:func:`dataset_recording_posture_error`).
+            vcodec: Video codec for the per-camera MP4 streams. Defaults to
+                "h264", which decodes everywhere including OpenCV's
+                VideoCapture. "libsvtav1" (AV1) gives smaller files; LeRobot
+                read-back handles it, but OpenCV wheels commonly cannot decode it
+                and silently yield 0 frames.
+            overwrite: When True, wipe any existing dataset at the resolved
+                directory and record from scratch. When False (default) an
+                existing dataset is RESUMED (episodes appended), a pre-existing
+                EMPTY directory is cleared and recorded into, and a non-empty
+                non-dataset directory is reported as an error rather than
+                clobbered - the four outcomes of :meth:`_prepare_dataset_target`.
+                Must be a boolean (:func:`dataset_recording_posture_error`).
+            cameras: Camera names to record into the dataset. When ``None``
+                (default) every scene camera is recorded. Pass a subset to record
+                exactly the views a policy declares. Names may be raw
+                (``arm0/wrist_cam``) or schema-safe (``arm0__wrist_cam``); an
+                unknown name fails loudly listing what exists, before any dataset
+                is created, resumed or wiped. Two scene cameras whose names
+                collapse onto one dataset column are refused
+                (:func:`camera_schema_key_collision_error`).
+
+        Returns:
+            Standard status dict. Every refusal is made before any dataset is
+            created, resumed or wiped.
+        """
+        state = self._recording_state()
+        if error := self._recording_start_error(state):
+            return error
+        assert state is not None  # refused by _recording_start_error
+
+        # Every refusal the arguments alone decide comes before the lerobot-extra
+        # probe, so the same caller mistake reports the same way on every
+        # install: an unwritable rate, a posture flag read by truthiness (which
+        # failed toward the branch the caller opted out of: ``overwrite="false"``
+        # wiped, ``push_to_hub="false"`` published), a camera list that is a bare
+        # string or repeats a name, and a rate a rollout in flight is not
+        # capturing at.
+        if error := dataset_recording_option_error("start_recording", fps):
+            return error
+        for _flag, _value in (("push_to_hub", push_to_hub), ("overwrite", overwrite)):
+            if error := dataset_recording_posture_error("start_recording", _flag, _value):
+                return error
+        if cameras and (text := name_list_error(cameras, "cameras", "start_recording")):
+            return {"status": "error", "content": [{"text": text}]}
+        if error := self._validate_recording_start_rate(fps, "start_recording"):
+            return error
+
+        _DatasetRecorder, refusal = self._dataset_recorder_or_refusal(self._RECORDING_VIDEO_HINT)
+        if refusal is not None:
+            return refusal
+
+        # A column is named by camera_schema_key, which is not injective, so two
+        # scene cameras can name one column. The ambiguity belongs to the scene,
+        # so it is refused once here - after the dataset-stack probe (reachable
+        # with no engine at all) and before any session state or dataset target.
+        if error := camera_schema_key_collision_error("start_recording", self._recording_scene_cameras()):
+            return error
+
+        # A second start while one recording is live would replace the recorder
+        # and drop the frames buffered since the last save_episode.
+        if error := self._already_recording_error("start_recording", repo_id):
+            return error
+
+        probe = self._probe_recording_scene()
+        with self._recording_start_lock():
+            state["recording"] = True
+            state["trajectory"] = []
+            state["push_to_hub"] = push_to_hub
+            # ``step`` feeds the recording at this rate and labels its frames
+            # with this task; the due-time clock starts fresh every session.
+            state["recording_fps"] = fps
+            state["recording_task"] = task
+            state.pop("step_recording_due", None)
+            dataset_dir = self._stash_dataset_target(repo_id, root)
+
+            try:
+                schema = self._collect_recording_schema(probe)
+                raw_to_safe = {src: safe for src, safe, _w, _h in schema.cameras}
+                recorded = list(schema.cameras)
+                selected: set[str] | None = None
+                if cameras is not None:
+                    safe_to_raw = {safe: src for src, safe in raw_to_safe.items()}
+                    by_safe = {cam[1]: cam for cam in schema.cameras}
+                    selected_safe: list[str] = []
+                    selected = set()
+                    unknown: list[str] = []
+                    for requested in cameras:
+                        if requested in raw_to_safe:  # raw camera name
+                            raw, safe = requested, raw_to_safe[requested]
+                        elif requested in safe_to_raw:  # already schema-safe
+                            raw, safe = safe_to_raw[requested], requested
+                        else:
+                            unknown.append(requested)
+                            continue
+                        if safe not in selected_safe:
+                            selected_safe.append(safe)
+                            selected.add(raw)
+                    if unknown:
+                        state["recording"] = False
+                        return {
+                            "status": "error",
+                            "content": [
+                                {
+                                    "text": (
+                                        f"start_recording: unknown camera(s) {unknown} in cameras=. "
+                                        f"Available scene cameras: {sorted(raw_to_safe)}. Add them with "
+                                        "add_camera(...) before recording, or omit cameras= to "
+                                        "record all of them."
+                                    )
+                                }
+                            ],
+                        }
+                    recorded = [by_safe[safe] for safe in selected_safe]
+                state["recording_cameras"] = self._recording_cameras_scope(schema.cameras, selected)
+                camera_keys = [safe for _src, safe, _w, _h in recorded]
+                camera_dims = {safe: (height, width) for _src, safe, width, height in recorded}
+                if error := self._recording_cameras_refusal(camera_keys, cameras):
+                    state["recording"] = False
+                    return error
+
+                # Create-vs-resume, and the wipe ``overwrite=True`` performs, come
+                # after every refusal above: nothing before this line reads or
+                # writes the dataset directory, so a refused call leaves the
+                # dataset it addressed intact.
+                resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
+                joint_names, action_names = schema.joint_names, schema.action_names
+                base_state_specs = schema.base_state_specs
+                if resume_existing:
+                    logger.info("Resuming existing dataset for append: %s", dataset_dir)
+                    recorder = _DatasetRecorder.resume(
+                        repo_id=repo_id,
+                        root=root,
+                        task=task,
+                        vcodec=vcodec,
+                        joint_names=joint_names,
+                        extra_state_specs=base_state_specs,
+                    )
+                    # resume() inherits the schema from disk without checking it
+                    # against the scene; the on-disk state includes the base
+                    # columns, so compare against the expanded names.
+                    state_names_full = list(joint_names) + [
+                        f"{src}.{comp}" for src, comps in base_state_specs for comp in comps
+                    ]
+                    self._verify_resume_schema(
+                        recorder, state_names_full, camera_keys, camera_dims, action_names, fps=fps
+                    )
+                else:
+                    recorder = _DatasetRecorder.create(
+                        repo_id=repo_id,
+                        fps=fps,
+                        robot_type=schema.robot_type,
+                        joint_names=joint_names,
+                        action_names=action_names,
+                        extra_state_specs=base_state_specs,
+                        camera_keys=camera_keys,
+                        camera_dims=camera_dims,
+                        task=task,
+                        root=root,
+                        vcodec=vcodec,
+                        video_width=schema.video_size[0],
+                        video_height=schema.video_size[1],
+                    )
+                resumed_line = self._arm_dataset_recorder(state, recorder, resumed=resume_existing)
+                recorded_cameras = {src: safe for src, safe, _w, _h in recorded}
+                scene_cameras = [name for name in self._recording_scene_cameras() if name]
+                return {
+                    "status": "success",
+                    "content": [
+                        {
+                            "text": (
+                                f"{self._RECORDING_REPLY_LABEL}: {repo_id}\n"
+                                f"{resumed_line}"
+                                f"{recorded_cameras_line(joint_names, recorded_cameras, scene_cameras, cameras, fps)}"
+                                f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
+                                f"{self._RECORDING_REPLY_TAIL.format(fps=fps)}"
+                            )
+                        }
+                    ],
+                }
+            except Exception as e:
+                state["recording"] = False
+                logger.error("Dataset recorder init failed: %s", e)
+                return {"status": "error", "content": [{"text": f"Dataset init failed: {e}"}]}
 
     @staticmethod
     def _dataset_recorder_or_refusal(alternative: str) -> tuple[Any, dict[str, Any] | None]:

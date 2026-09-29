@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import math
 import sys
-import threading
 import types
 from typing import Any
 
@@ -61,16 +60,14 @@ from strands_robots.simulation.isaac.simulation import (  # noqa: E402
     _ObjectState,
     _RobotState,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 
 def _engine(objects: bool = False) -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig()
+    engine = isaac_engine()
     engine._world = types.SimpleNamespace()
     engine._world_created = True
     engine._robots = {"arm": _RobotState(name="arm", prim_path="/World/Robots/arm", joint_names=["j0"])}
-    engine._objects = {}
     if objects:
         engine._objects["cube"] = _ObjectState(
             name="cube", prim_path="/World/Objects/cube", shape="box", is_static=False

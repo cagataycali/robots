@@ -28,14 +28,8 @@ from strands_robots.simulation.newton.recording import NewtonRecordingMixin
 if TYPE_CHECKING:
     from strands_robots.simulation.models import SimWorld
 
-#: Every backend that implements ``start_recording``. A fourth one that forgets
-#: the refusal silently reintroduces the frame loss, which is what the audit
-#: cell below grades - the guard is a contract of the surface, not of one engine.
-ENGINE_MIXINS = (
-    "strands_robots.simulation.mujoco.recording",
-    "strands_robots.simulation.isaac.recording",
-    "strands_robots.simulation.newton.recording",
-)
+#: The one module that implements ``start_recording`` for every backend.
+ENGINE_MIXINS = ("strands_robots.simulation.recording",)
 
 
 def _text(result: dict[str, Any]) -> str:
@@ -195,9 +189,7 @@ def test_newton_refuses_a_second_start_and_keeps_the_live_session(tmp_path):
 def test_every_backend_refuses_before_it_touches_the_recording_state(module_name: str) -> None:
     """``start_recording`` asks for the refusal before writing any session state.
 
-    Two of the three backends carried the guard and Newton did not, so the
-    silent frame loss survived on the engine whose own docstring says it matches
-    MuJoCo. The order is the substance: the call has to come before the first
+    The order is the substance: the call has to come before the first
     write to the recording state, because it is those writes (``recording``,
     ``trajectory``, and the recorder that replaces the live one) that lose the
     frames.

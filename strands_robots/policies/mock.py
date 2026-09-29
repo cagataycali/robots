@@ -2,7 +2,7 @@
 
 import logging
 import math
-from typing import Any, ClassVar
+from typing import Any
 
 from strands_robots.policies.base import Policy
 from strands_robots.utils import finite_number_error, name_list_error, sequence_length
@@ -58,9 +58,9 @@ class MockPolicy(Policy):
         return False
 
     #: ``False``: every joint follows a sinusoid; ``instruction`` is never read.
-    reads_instruction: ClassVar[bool] = False
+    reads_instruction: bool = False
     #: The words the task envelope uses for that sinusoid.
-    instruction_free_actions: ClassVar[str | None] = "a test motion on every joint"
+    instruction_free_actions: str | None = "a test motion on every joint"
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
         """Record the ordered joint keys used to name the sinusoidal action dict.
@@ -77,6 +77,19 @@ class MockPolicy(Policy):
         ):
             raise ValueError(error)
         self.robot_state_keys = robot_state_keys
+
+    def reset(self, seed: int | None = None) -> None:
+        """Rewind the sinusoid to its first step.
+
+        The mock is deterministic but not stateless: ``_step`` advances by one
+        chunk per :meth:`get_actions`, and it is the only per-episode state the
+        mock holds. Left where the previous episode ended, two episodes seeded
+        alike began at different phases of the sinusoid, so the reference
+        implementation of the ABC broke the reproducibility its own
+        :meth:`Policy.reset` docstring asks providers to keep. The seed is not
+        read: the trajectory has no random draw for it to reach.
+        """
+        self._step = 0
 
     def set_sim_context(self, model: Any, namespace: str) -> None:
         """Learn the range each driven actuator is held to, so the sinusoid stays inside it.

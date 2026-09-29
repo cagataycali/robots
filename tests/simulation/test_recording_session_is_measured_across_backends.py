@@ -1,8 +1,8 @@
 """Every backend measures the recording SESSION, not the dataset it resumed.
 
 ``stop_recording`` is shared: :class:`DatasetRecordingMixin` implements the whole
-lifecycle once and the MuJoCo, Newton and Isaac backends mix it in unchanged.
-Only ``start_recording`` is per-backend, and each of the four resolves
+lifecycle once and the MuJoCo, Newton, Isaac and mjlab backends mix it in
+unchanged. Only ``start_recording`` is per-backend, and each of the four resolves
 create-vs-resume itself and installs the recorder it built.
 
 That split is why a session-scoped count cannot be a per-backend detail.
@@ -105,9 +105,9 @@ class TestOneSeamOwnsTheRecorderHandle:
 
 class TestEveryBackendThatResumesSaysSo:
     def test_a_resuming_start_recording_tells_the_caller(self) -> None:
-        """``start_recording`` read identically fresh or resumed on every backend."""
+        """The one ``start_recording`` every backend inherits says when it resumes."""
         resuming = _functions_resuming_a_dataset()
-        assert len(resuming) == 4, f"expected one resuming start_recording per backend, got {sorted(resuming)}"
+        assert list(resuming) == ["simulation/recording.py:start_recording"], sorted(resuming)
         silent = sorted(where for where, body in resuming.items() if not _announces_a_resume(body))
         assert silent == [], f"these resume a dataset without saying so: {silent}"
 

@@ -61,7 +61,7 @@ Randomization writes the compiled model and survives `reset()`, which is why it 
 
 ## set_obs_noise
 
-`set_obs_noise(joint_pos_std=0.0, joint_vel_std=0.0, camera_jitter_px=0.0, seed=None)` adds Gaussian noise to every joint reading and jitters every rendered frame by up to the given pixels, on `get_observation`, `get_robot_state` and `render`, until reconfigured. All-zero standard deviations are an exact no-op, so an unconfigured engine returns observations byte for byte unchanged. Newton and Isaac carry the same signature (`NewtonSimEngine.set_obs_noise`, `IsaacRandomizationMixin.set_obs_noise`), so one call behaves the same on each.
+`set_obs_noise(joint_pos_std=0.0, joint_vel_std=0.0, camera_jitter_px=0.0, seed=None)` adds Gaussian noise to every joint reading and jitters every rendered frame by up to the given pixels, on `get_observation`, `get_robot_state` and `render`, until reconfigured. All-zero standard deviations are an exact no-op, so an unconfigured engine returns observations byte for byte unchanged. MuJoCo, Newton and Isaac share one implementation (`ObservationNoiseMixin`), so one call behaves the same on each.
 
 ## From randomization to sim to real
 
