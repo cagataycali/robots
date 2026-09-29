@@ -702,7 +702,7 @@ def load_mjcf(path: str) -> ProceduralRobot:
                         lower = float(parts[0])
                         upper = float(parts[1])
                 except (ValueError, TypeError):
-                    pass
+                    pass  # best effort: an unparsable MJCF range keeps the +-pi default above
 
             damping = _safe_float(jattrs.get("damping"), 0.1)
             armature = _safe_float(jattrs.get("armature"), 0.01)

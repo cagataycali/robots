@@ -35,7 +35,7 @@
 </div>
 
 <p align="center">
-  <img src="docs/assets/hero_loop.svg" alt="Strands Robots - perceive, reason, act, world: the closed control loop around a Strands Agent core" width="100%">
+  <img src="docs/assets/hero_loop.svg" alt="Strands Robots: one Robot object, any robot. A Strands Agent perceives, reasons and acts; the world, MuJoCo or a real arm, answers" width="100%">
 </p>
 
 `strands-robots` gives a [Strands Agent](https://github.com/strands-agents/harness-sdk)
@@ -66,7 +66,7 @@ see [Installation](docs/start/install.md) for the full table.
 ## How it works
 
 <p align="center">
-  <img src="docs/assets/architecture_flow.svg" alt="Strands Robots architecture - Agent, Policies, Backends, Robots; actions flow down, observations flow up" width="100%">
+  <img src="docs/assets/architecture_flow.svg" alt="How strands-robots is layered: Strands Agent, policies, backends, robots; actions flow down, observations flow up" width="100%">
 </p>
 
 A prompt reaches the agent; the agent calls the robot tool; a policy turns the
@@ -89,7 +89,7 @@ in sim runs on the metal by changing `mode`.
 | **Configure** every environment variable the package reads, with its default and its guard | [Configuration](docs/reference/configuration.md) |
 
 <p align="center">
-  <img src="docs/assets/mesh_network.svg" alt="Strands Robots mesh - robot peers discovering and coordinating over the Zenoh mesh" width="100%">
+  <img src="docs/assets/mesh_network.svg" alt="Strands Robots mesh: every Robot(mesh=True) is a Zenoh peer; an agent lists peers, tells one what to do, and an emergency stop reaches all of them" width="100%">
 </p>
 
 Real servos never move by accident: `mode="real"` is an explicit opt-in.

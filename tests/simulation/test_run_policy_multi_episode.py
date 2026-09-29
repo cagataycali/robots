@@ -23,7 +23,7 @@ These tests pin the first-class multi-episode API:
 
 from __future__ import annotations
 
-import sys
+import importlib
 
 import pytest
 
@@ -106,17 +106,18 @@ def _json(result: dict) -> dict:
 def _patch_runner(monkeypatch, run_fn):
     """Patch ``PolicyRunner.run`` on the class ``run_policy`` actually instantiates.
 
-    ``SimEngine.run_policy`` builds ``runner = PolicyRunner(self)`` from the
-    ``PolicyRunner`` symbol bound in its OWN module namespace. Patching the name
-    imported from elsewhere (e.g. ``policy_runner.PolicyRunner``) silently misses
-    that instance whenever another test has reloaded the ``policy_runner`` module:
-    the reload rebinds ``sys.modules[...policy_runner].PolicyRunner`` to a fresh
-    class object while ``base`` keeps its original import, so the two diverge and
-    the real rollout runs unpatched. Resolving the class from the live module that
-    owns ``run_policy`` keeps the seam effective regardless of such reloads.
+    ``SimEngine.run_policy`` builds ``runner = PolicyRunner(self)`` from a
+    deferred ``from strands_robots.simulation.policy_runner import PolicyRunner``
+    inside the method (``base`` has no module-level import of ``policy_runner``;
+    ``tests/simulation/test_no_import_cycle.py`` pins that). A deferred import
+    resolves through ``sys.modules`` at call time, so the class bound on the live
+    ``policy_runner`` module entry is the one every rollout constructs - including
+    after another test has reloaded that module, when a name captured at import
+    time by ``base`` would have diverged from it. Resolving the class from the live
+    module entry keeps the seam effective regardless of such reloads.
     """
 
-    runner_module = sys.modules[SimEngine.run_policy.__module__]
+    runner_module = importlib.import_module("strands_robots.simulation.policy_runner")  # the sys.modules entry
     monkeypatch.setattr(runner_module.PolicyRunner, "run", run_fn)
 
 
