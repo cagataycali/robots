@@ -9,8 +9,12 @@ credentials runs::
 ...and the function:
 
 1. Creates an AWS IoT Thing named ``so100-arm-01``.
-2. Generates an X.509 keypair + cert (AWS-issued, ``CreateKeysAndCertificate``).
-3. Creates the canonical strands-robot IoT Policy if it doesn't exist (idempotent).
+2. Generates an RSA key on this machine and has AWS sign a certificate for it
+   (``CreateCertificateFromCsr``, subject ``CN=so100-arm-01, O=strands-robots``).
+   The private key never leaves the machine, and the CN is what the policy's
+   direct-messaging grant is scoped on.
+3. Creates the canonical strands-robot IoT Policy if it doesn't exist, or
+   publishes a new default version when the shipped document changed.
 4. Attaches policy → cert → Thing.
 5. Writes ``cert.pem`` / ``private.key`` / ``AmazonRootCA1.pem`` to
    ``~/.strands_robots/iot/`` with mode 0o600.
@@ -20,9 +24,9 @@ After provisioning, the next ``Robot("so100", peer_id="so100-arm-01")`` call
 with ``STRANDS_MESH_BACKEND=iot`` joins the AWS IoT mesh transparently.
 
 All operations are idempotent: re-running ``provision_robot("so100-arm-01")``
-re-uses the existing Thing and policy if they're there. A new cert is created
-each time (you can't list private keys after the fact, so re-running
-generates fresh credentials and keeps the file naming stable).
+re-uses the existing Thing and policy if they're there. A new key and cert are
+created each time and the previous cert is revoked, so re-running rotates the
+credential and keeps the file naming stable.
 
 Operator provisioning
 ---------------------
@@ -48,6 +52,9 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -133,6 +140,12 @@ class ProvisionedThing:
         endpoint: The IoT Data ATS endpoint to connect to.
         policy_name: The policy attached (``strands-robot`` or ``strands-operator``).
         region: The AWS region these resources live in.
+        subject_cn: The certificate's subject Common Name. Equal to
+            ``thing_name``: the certificate is issued from a CSR built here,
+            so the IoT policy can scope a direct message grant on
+            ``${iot:Certificate.Subject.CommonName}`` (an HTTPS call carries
+            no MQTT connection for ``${iot:Connection.Thing.ThingName}`` to
+            resolve from).
     """
 
     thing_name: str
@@ -145,6 +158,7 @@ class ProvisionedThing:
     endpoint: str
     policy_name: str
     region: str
+    subject_cn: str = ""
 
     def env_vars(self) -> dict[str, str]:
         """Return env vars a process can export to use these artefacts."""
@@ -194,6 +208,29 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             "Resource": [
                 "arn:aws:iot:*:*:topic/strands/*/response/${iot:Connection.Thing.ThingName}/*",
             ],
+        },
+        {
+            # The same reply, delivered as an AWS IoT Core direct message
+            # (HTTPS ``SendDirectMessage`` with this certificate, port 8443)
+            # to the one operator that asked. The topic condition mirrors
+            # ``AllowResponseToAnyOperator`` but pins the robot segment with
+            # ``${iot:Certificate.Subject.CommonName}``: an HTTPS call has no
+            # MQTT connection, so ``${iot:Connection.Thing.ThingName}`` is
+            # not substituted there (it evaluates to a literal and the call
+            # is refused). The CN equals the Thing name because the cert is
+            # issued from a CSR built by :func:`_create_cert`. A robot
+            # provisioned before that change carries the CN ``AWS IoT
+            # Certificate`` and gets 403 here, which the mesh reports once
+            # and answers over ``AllowResponseToAnyOperator`` instead.
+            "Sid": "AllowDirectResponseToAnyOperator",
+            "Effect": "Allow",
+            "Action": "iot:SendDirectMessage",
+            "Resource": "arn:aws:iot:*:*:client/*",
+            "Condition": {
+                "StringLike": {
+                    "iot:Topic": "strands/*/response/${iot:Certificate.Subject.CommonName}/*",
+                },
+            },
         },
         {
             # Both halves of the safety cycle, gated together by
@@ -330,7 +367,7 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             # threat model of a compromised operator is equivalent to a
             # compromised fleet command authority. Mitigations: short-
             # lived certs (rotation via ``provision_operator`` re-run),
-            # the OperatorShadow attribute condition that gates shadow
+            # the ``strands-`` Thing-name prefix that scopes shadow
             # reads, and operational audit (``mesh_audit.jsonl`` logs
             # every command dispatch). A per-robot operator scope would
             # require a per-robot policy document, which explodes the
@@ -346,6 +383,39 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
                 # The operator is the role that clears a fleet lockout; the
                 # release was the only half of the cycle it could not publish.
                 "arn:aws:iot:*:*:topic/strands/safety/resume",
+            ],
+        },
+        {
+            # The same command, delivered as a direct message to the one
+            # robot it names (no subscription needed on the robot, an offline
+            # robot answers 404 at once). Scoped by topic pattern alone, so
+            # it needs no identity variable and works with a certificate of
+            # any subject. ``strands/broadcast`` is deliberately absent:
+            # broadcast stays publish/subscribe.
+            "Sid": "AllowDirectCommandToAnyRobot",
+            "Effect": "Allow",
+            "Action": "iot:SendDirectMessage",
+            "Resource": "arn:aws:iot:*:*:client/*",
+            "Condition": {
+                "StringLike": {
+                    "iot:Topic": "strands/*/cmd",
+                },
+            },
+        },
+        {
+            # An operator that joins as a Mesh peer announces itself on its
+            # OWN presence and health topics like every other peer. Without
+            # this grant the broker refuses the first presence publish and
+            # drops the MQTT session, which then reconnects every few
+            # seconds: direct replies aimed at the operator land in the gap
+            # and come back 404. Own topics only: an operator still cannot
+            # publish state, sensors or another peer's presence.
+            "Sid": "OperatorAnnounceSelf",
+            "Effect": "Allow",
+            "Action": ["iot:Publish", "iot:RetainPublish"],
+            "Resource": [
+                "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}/presence",
+                "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}/health",
             ],
         },
         {
@@ -389,20 +459,21 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
-            # AWS does not apply the attribute
-            # condition to the shadow data-plane resource, so the practical
-            # fix is a resource-name prefix: strands robots are provisioned
-            # with ``strands-`` ThingName prefixes (see PROVISIONING
-            # template + _validate_thing_name).
+            # Scoped by resource-name prefix: strands robots are provisioned
+            # with ``strands-`` ThingName prefixes (see PROVISIONING template
+            # + _validate_thing_name). This statement used to carry a
+            # ``Condition`` on ``iot:Connection.Thing.Attributes.strands-mesh-role``
+            # as well; AWS IoT rejects that key in a policy document
+            # (``MalformedPolicyException: Unsupported iot variables``), so
+            # the document could never be published as a policy version. It
+            # went unnoticed because the account's copy had been created from
+            # an earlier revision and ``_ensure_policy`` did not re-publish a
+            # changed document until it did. The prefix is the control that
+            # was ever enforced.
             "Sid": "OperatorShadow",
             "Effect": "Allow",
             "Action": ["iot:GetThingShadow", "iot:UpdateThingShadow"],
             "Resource": ["arn:aws:iot:*:*:thing/strands-*"],
-            "Condition": {
-                "StringEquals": {
-                    "iot:Connection.Thing.Attributes.strands-mesh-role": "robot",
-                },
-            },
         },
     ],
 }
@@ -425,9 +496,8 @@ _THING_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}\Z")
 #: Thing attribute the provisioners inject to route fleet safety. The e-stop
 #: fan-out (:data:`~strands_robots.mesh.iot.bootstrap._ESTOP_LAMBDA_SOURCE`)
 #: enumerates every Thing and publishes ``{"action": "stop"}`` only to those
-#: whose value is exactly ``"robot"``, and the ``OperatorShadow`` statement in
-#: :data:`_OPERATOR_POLICY_DOC` reads the same attribute. It is therefore the
-#: module's own routing key rather than a caller-supplied label.
+#: whose value is exactly ``"robot"``. It is therefore the module's own
+#: routing key rather than a caller-supplied label.
 _MESH_ROLE_ATTRIBUTE = "strands-mesh-role"
 
 
@@ -569,8 +639,8 @@ def provision_robot(
     iot = boto3.client("iot", region_name=region)
     region = iot.meta.region_name
 
-    # Inject strands-mesh-role attribute for ACL - the OperatorShadow policy
-    # uses an attribute condition to scope shadow access to robot Things only.
+    # Inject strands-mesh-role attribute: the e-stop fan-out publishes only to
+    # Things whose value is exactly "robot".
     attributes = dict(attributes) if attributes else {}
     attributes[_MESH_ROLE_ATTRIBUTE] = "robot"
 
@@ -594,15 +664,15 @@ def provision_robot(
 
     # 3. Cert + key
     # Clean up stale certs from prior provision_robot runs on the same Thing.
-    # Each call to AWS IoT CreateKeysAndCertificate yields a brand-new cert
-    # (private keys cannot be recovered after issuance), so without cleanup
+    # Each run issues a brand-new cert from a fresh local key (the old key is
+    # overwritten on disk), so without cleanup
     # the Thing would accumulate certs across re-runs - every leftover is
     # an active credential that could impersonate the robot.
     _cleanup_stale_certs(iot, thing_name)
 
     cert_path = cert_dir / f"{thing_name}.cert.pem"
     key_path = cert_dir / f"{thing_name}.private.key"
-    cert_arn, cert_id = _create_cert(iot, cert_path, key_path)
+    cert_arn, cert_id = _create_cert(iot, cert_path, key_path, thing_name)
 
     # 4. Attach policy → cert → thing
     iot.attach_policy(policyName=policy_name, target=cert_arn)
@@ -626,6 +696,7 @@ def provision_robot(
         endpoint=endpoint,
         policy_name=policy_name,
         region=region,
+        subject_cn=thing_name,
     )
 
 
@@ -665,7 +736,7 @@ def provision_operator(
     region = iot.meta.region_name
 
     # Inject strands-mesh-role attribute - operators get role=operator so the
-    # OperatorShadow attribute condition (role=robot) excludes their shadows.
+    # e-stop fan-out (which stops every "robot") leaves them alone.
     attributes = dict(attributes) if attributes else {}
     attributes[_MESH_ROLE_ATTRIBUTE] = "operator"
 
@@ -685,7 +756,7 @@ def provision_operator(
 
     cert_path = cert_dir / f"{thing_name}.cert.pem"
     key_path = cert_dir / f"{thing_name}.private.key"
-    cert_arn, cert_id = _create_cert(iot, cert_path, key_path)
+    cert_arn, cert_id = _create_cert(iot, cert_path, key_path, thing_name)
 
     iot.attach_policy(policyName=OPERATOR_POLICY_NAME, target=cert_arn)
     iot.attach_thing_principal(thingName=thing_name, principal=cert_arn)
@@ -706,6 +777,7 @@ def provision_operator(
         endpoint=endpoint,
         policy_name=OPERATOR_POLICY_NAME,
         region=region,
+        subject_cn=thing_name,
     )
 
 
@@ -821,15 +893,55 @@ def _ensure_thing(iot: Any, thing_name: str, attributes: dict[str, str] | None) 
     return resp["thingArn"]
 
 
+#: AWS IoT keeps at most this many versions of one policy.
+_POLICY_VERSION_CAP = 5
+
+
 def _ensure_policy(iot: Any, name: str, document: dict[str, Any]) -> str:
-    """Create the policy if absent. Idempotent - does not update an existing
-    policy; users who want to update should bump the policy version manually."""
+    """Create the policy if absent, or publish *document* as its new default version.
+
+    Idempotent: an existing policy whose default document already equals
+    *document* (compared as parsed JSON, so key order and whitespace do not
+    count) is left alone. One that differs gets a new version set as default,
+    which every certificate the policy is attached to picks up at its next
+    connect. That is how a fleet provisioned before a statement existed gets
+    the statement without re-provisioning. AWS keeps five versions per
+    policy; when the cap is reached the oldest non-default version is deleted
+    first.
+
+    Returns:
+        The policy ARN.
+    """
     try:
         existing = iot.get_policy(policyName=name)
-        logger.info("[provision] policy %s already exists (v%s)", name, existing.get("defaultVersionId", "?"))
-        return existing["policyArn"]
     except iot.exceptions.ResourceNotFoundException:
-        pass  # expected: the policy does not exist yet, so it is created below
+        existing = None  # expected: the policy does not exist yet, so it is created below
+
+    if existing is not None:
+        current_version = str(existing.get("defaultVersionId", "?"))
+        try:
+            current_doc = json.loads(existing.get("policyDocument") or "{}")
+        except ValueError:
+            current_doc = None
+        if current_doc == document:
+            logger.info("[provision] policy %s already exists (v%s), document unchanged", name, current_version)
+            return str(existing["policyArn"])
+        versions = iot.list_policy_versions(policyName=name).get("policyVersions", [])
+        if len(versions) >= _POLICY_VERSION_CAP:
+            stale = sorted(
+                (v for v in versions if not v.get("isDefaultVersion")),
+                key=lambda v: int(v.get("versionId", "0")),
+            )
+            if stale:
+                iot.delete_policy_version(policyName=name, policyVersionId=stale[0]["versionId"])
+        resp = iot.create_policy_version(policyName=name, policyDocument=json.dumps(document), setAsDefault=True)
+        logger.info(
+            "[provision] policy %s updated: v%s -> v%s (new default; connected clients pick it up on reconnect)",
+            name,
+            current_version,
+            resp.get("policyVersionId", "?"),
+        )
+        return str(existing["policyArn"])
 
     resp = iot.create_policy(
         policyName=name,
@@ -888,19 +1000,137 @@ def _cleanup_stale_certs(iot: Any, thing_name: str) -> int:
     return cleaned
 
 
-def _create_cert(iot: Any, cert_path: Path, key_path: Path) -> tuple[str, str]:
-    """Issue a fresh cert+key and write them to disk with mode 0o600."""
-    resp = iot.create_keys_and_certificate(setAsActive=True)
+#: Organisation name written into every CSR this module builds.
+CSR_ORGANIZATION = "strands-robots"
+
+#: RSA modulus size for the locally generated private key. RSA 2048 is what
+#: AWS IoT documents for CSR issuance and what awscrt's mTLS accepts on every
+#: platform it ships for; verified live against the ATS endpoint.
+_KEY_BITS = 2048
+
+
+def _write_private(path: Path, data: str) -> None:
+    """Write *data* to *path* created owner-only (0600), replacing any old file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(data)
+    try:
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        logger.warning("[provision] could not chmod %s: %s", path, exc)
+
+
+def _build_csr(thing_name: str, key_path: Path) -> str:
+    """Generate a private key at *key_path* and return a CSR PEM with ``CN=<thing_name>``.
+
+    The key never leaves the machine; only the request goes to AWS. Two
+    builders, tried in order, produce byte-equivalent requests (RSA 2048,
+    SHA-256, subject ``CN=<thing_name>, O=strands-robots``):
+
+    1. ``cryptography``, when importable. It is not a dependency of the
+       ``[mesh-iot]`` extra (nothing in that extra needs it), but it is
+       present in every ``[all]`` install through pyopenssl and webauthn, and
+       on most machines besides.
+    2. The ``openssl`` command line, which every Linux and macOS image ships.
+
+    ``awscrt`` is always present with the extra, but its crypto module
+    exposes keys and signatures only, no X.509 request builder, so adding a
+    hand-rolled ASN.1 encoder for the sake of avoiding one subprocess was not
+    worth the surface. When neither builder is available the caller gets a
+    :class:`RuntimeError` naming both, before any AWS call is made.
+
+    Args:
+        thing_name: Becomes the subject CN. Already validated against
+            :data:`_THING_NAME_RE`, whose charset needs no escaping in either
+            builder.
+        key_path: Where the PEM private key is written (mode 0600).
+
+    Returns:
+        The CSR as PEM text.
+
+    Raises:
+        RuntimeError: When no builder is available or ``openssl`` fails.
+    """
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+    except ImportError:
+        x509 = None  # type: ignore[assignment]
+
+    if x509 is not None:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=_KEY_BITS)
+        _write_private(
+            key_path,
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            ).decode(),
+        )
+        subject = x509.Name(
+            [
+                x509.NameAttribute(NameOID.COMMON_NAME, thing_name),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, CSR_ORGANIZATION),
+            ]
+        )
+        csr = x509.CertificateSigningRequestBuilder().subject_name(subject).sign(key, hashes.SHA256())
+        return csr.public_bytes(serialization.Encoding.PEM).decode()
+
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        raise RuntimeError(
+            "provisioning needs a CSR builder: install the 'cryptography' package "
+            "(pip install cryptography) or put the 'openssl' command on PATH"
+        )
+    with tempfile.TemporaryDirectory() as tmp:
+        csr_path = Path(tmp) / "request.csr"
+        tmp_key = Path(tmp) / "key.pem"
+        proc = subprocess.run(  # noqa: S603 - fixed argv, no shell, validated thing name
+            [
+                openssl,
+                "req",
+                "-new",
+                "-newkey",
+                f"rsa:{_KEY_BITS}",
+                "-nodes",
+                "-sha256",
+                "-keyout",
+                str(tmp_key),
+                "-out",
+                str(csr_path),
+                "-subj",
+                f"/CN={thing_name}/O={CSR_ORGANIZATION}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"openssl req failed ({proc.returncode}): {proc.stderr.strip()[:400]}")
+        _write_private(key_path, tmp_key.read_text(encoding="utf-8"))
+        return csr_path.read_text(encoding="utf-8")
+
+
+def _create_cert(iot: Any, cert_path: Path, key_path: Path, thing_name: str) -> tuple[str, str]:
+    """Issue a certificate for *thing_name* from a locally built CSR; write both files 0600.
+
+    The private key is generated on this machine by :func:`_build_csr` and
+    only the signing request goes to AWS (``CreateCertificateFromCsr``), so
+    the key is never in an API response or a CloudTrail body. The subject CN
+    equals the Thing name, which is what lets the robot policy grant
+    ``iot:SendDirectMessage`` on ``${iot:Certificate.Subject.CommonName}``.
+
+    Returns:
+        ``(certificate_arn, certificate_id)``.
+    """
+    csr_pem = _build_csr(thing_name, key_path)
+    resp = iot.create_certificate_from_csr(certificateSigningRequest=csr_pem, setAsActive=True)
     cert_arn = resp["certificateArn"]
     cert_id = resp["certificateId"]
-
-    cert_path.write_text(resp["certificatePem"], encoding="utf-8")
-    key_path.write_text(resp["keyPair"]["PrivateKey"], encoding="utf-8")
-    try:
-        os.chmod(cert_path, 0o600)
-        os.chmod(key_path, 0o600)
-    except OSError as exc:
-        logger.warning("[provision] could not chmod certs: %s", exc)
+    _write_private(cert_path, resp["certificatePem"])
     return cert_arn, cert_id
 
 

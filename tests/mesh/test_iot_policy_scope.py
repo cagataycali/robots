@@ -214,7 +214,7 @@ class TestOperatorPolicy:
         The system has no per-operator-to-per-robot binding. A compromised
         operator credential has equivalent scope to a compromised fleet
         command authority. Mitigations are short-lived certs, the
-        OperatorShadow attribute condition, and the operational audit log.
+        ``strands-`` Thing-name prefix on shadows, and the operational audit log.
         A per-robot operator scope would require one policy document per
         robot, scaling policy count linearly with fleet size.
 
