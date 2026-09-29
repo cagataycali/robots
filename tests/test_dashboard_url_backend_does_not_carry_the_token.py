@@ -43,6 +43,7 @@ await m.api('/api/fleet').catch(() => null)
 out({
   base: m.backendBase(),
   stored_base: localStorage.getItem('strands.backend'),
+  stored_token: localStorage.getItem('strands.token'),
   urls: sent.map(s => s.url),
   authorization: sent.map(s => s.headers.Authorization ?? null),
   replaced,
@@ -89,10 +90,17 @@ class TestAUrlBackendDoesNotTakeTheTokenWithIt:
         assert got["stored_base"] == EVIL
         assert got["authorization"] == [None]
 
-    def test_a_token_handed_over_with_its_backend_is_sent_to_that_backend(self) -> None:
-        """``?backend=X&token=T`` is the LAN hand-off the AuthGate advertises: T was minted for X."""
+    def test_a_token_beside_a_backend_that_moves_the_page_is_dropped(self) -> None:
+        """One link may not choose both the server and the credential: neither host sees T."""
         got = _authorization_sent_to("", page=f"http://robot.lan:8090/?backend={EVIL}&token={TOKEN}")
         assert got["urls"] == [f"{EVIL}/api/fleet"]
+        assert got["authorization"] == [None], got
+        assert got["stored_token"] is None, f"the token beside a moving backend was kept: {got}"
+
+    def test_a_token_handed_off_to_this_page_is_sent_to_this_page_s_backend(self) -> None:
+        """The LAN hand-off the AuthGate advertises names no backend; the page it opens is the robot."""
+        got = _authorization_sent_to("", page=f"http://robot.lan:8090/?token={TOKEN}")
+        assert got["urls"] == ["/api/fleet"]
         assert got["authorization"] == [f"Bearer {TOKEN}"]
 
     def test_the_stored_token_is_still_sent_to_the_host_it_was_given_for(self) -> None:

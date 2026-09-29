@@ -346,9 +346,10 @@ function absorbUrl() {
     const stored = normalize(localStorage.getItem(BASE_KEY) ?? "");
     const next = fromBackend === null ? null : normalize(fromBackend);
     if (storedToken() && !(localStorage.getItem(TOKEN_HOST_KEY) ?? "").trim()) bindToken(stored);
-    if (fromToken) {
+    const moves = next !== null && next !== stored;
+    if (fromToken && !moves) {
       localStorage.setItem(TOKEN_KEY, fromToken);
-      bindToken(next || stored);
+      bindToken(stored);
     }
     let scrubBackend = fromBackend !== null;
     if (next) {

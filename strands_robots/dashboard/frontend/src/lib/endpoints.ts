@@ -82,10 +82,13 @@ function absorbUrl(): void {
     // A token already here with no recorded issuer was minted for the backend this browser has
     // been talking to; decide that BEFORE the URL is allowed to move the page.
     if (storedToken() && !(localStorage.getItem(TOKEN_HOST_KEY) ?? '').trim()) bindToken(stored)
-    if (fromToken) {
-      // The hand-off the AuthGate advertises: `?backend=X&token=T` means T was minted for X.
+    // One link may not choose both the server and the credential: a `?token=` beside a
+    // `?backend=` that moves the page is dropped unseen. (The hand-off link the AuthGate
+    // advertises names no backend; the page it opens IS the robot.)
+    const moves = next !== null && next !== stored
+    if (fromToken && !moves) {
       localStorage.setItem(TOKEN_KEY, fromToken)
-      bindToken(next || stored)
+      bindToken(stored)
     }
     let scrubBackend = fromBackend !== null
     if (next) {
