@@ -186,12 +186,23 @@ def list_things(region: str | None = None, *, prefix: str | None = None, max_thi
             if not token:
                 break
     except NoCredentialsError:
-        return RegistryView(status="no-credentials", detail="no AWS credentials in the environment", region=resolved_region)
+        return RegistryView(
+            status="no-credentials", detail="no AWS credentials in the environment", region=resolved_region
+        )
     except ClientError as exc:
         code = str(exc.response.get("Error", {}).get("Code") or "")
-        if code in ("AccessDeniedException", "UnauthorizedException", "UnrecognizedClientException", "ExpiredTokenException"):
-            return RegistryView(status="denied", detail=f"iot:ListThings refused: {refusal_str(code)}", region=resolved_region)
-        return RegistryView(status="error", detail=f"iot:ListThings failed: {refusal_str(code or exc)}", region=resolved_region)
+        if code in (
+            "AccessDeniedException",
+            "UnauthorizedException",
+            "UnrecognizedClientException",
+            "ExpiredTokenException",
+        ):
+            return RegistryView(
+                status="denied", detail=f"iot:ListThings refused: {refusal_str(code)}", region=resolved_region
+            )
+        return RegistryView(
+            status="error", detail=f"iot:ListThings failed: {refusal_str(code or exc)}", region=resolved_region
+        )
     except BotoCoreError as exc:
         return RegistryView(status="error", detail=f"iot:ListThings failed: {refusal_str(exc)}", region=resolved_region)
     if prefix:
@@ -202,7 +213,8 @@ def list_things(region: str | None = None, *, prefix: str | None = None, max_thi
     things = tuple(_thing_row(r, (index or {}).get(str(r.get("thingName") or "")) if index else None) for r in rows)
     return RegistryView(
         status="ok",
-        detail=f"{len(things)} things" + ("" if index is not None else "; fleet indexing is off, so no connectivity verdict"),
+        detail=f"{len(things)} things"
+        + ("" if index is not None else "; fleet indexing is off, so no connectivity verdict"),
         region=resolved_region,
         things=things,
         indexed=index is not None,
