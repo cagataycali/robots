@@ -284,14 +284,24 @@ class TestTheLandingPageShowsTheProduct:
             )
 
     def test_the_two_fences_spell_one_api(self) -> None:
-        """The sim fence and the real fence call the same verbs on the same object.
+        """The sim fence and the real fence run the same checkpoint through the same verb.
 
-        The section is titled "One API, sim or real"; the claim is graded on the
-        method names each fence uses, so a verb renamed in one fence fails here.
+        The section is titled "One checkpoint, sim or real"; the claim is graded on
+        the method names each fence uses (``run_policy`` on both, then ``cleanup``)
+        and on the checkpoint id both name, so a fence that quietly drops back to
+        poking joints, or runs a different checkpoint on the arm, fails here.
         """
         calls = {mode: names for mode, _, names in _attribute_uses_per_fence()}
         assert {"sim", "real"} <= set(calls), f"the page carries fences for {sorted(calls)}; it promises sim and real"
-        shared = {"send_action", "cleanup"}
+        checkpoints = [
+            set(re.findall(r"pretrained_name_or_path\W+([\w.-]+/[\w.-]+)", source))
+            for source in _PYTHON_FENCE.findall(LANDING_PAGE.read_text(encoding="utf-8"))
+        ]
+        checkpoints = [c for c in checkpoints if c]
+        assert len(checkpoints) == 2 and checkpoints[0] == checkpoints[1], (
+            f"the two fences name different Hub checkpoints: {checkpoints}; the section promises one checkpoint"
+        )
+        shared = {"run_policy", "cleanup"}
         for mode in ("sim", "real"):
             assert shared <= set(calls[mode]), f"the {mode} fence does not call {sorted(shared - set(calls[mode]))}"
 
