@@ -441,6 +441,10 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         "remote",
         # RLCheckpointPolicy
         "rl",
+        # Flux3ActionPolicy
+        "flux3_action",
+        "flux3",
+        "f3a",
     }
 )
 
