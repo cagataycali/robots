@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="374" viewBox="0 0 1180 374" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+<rect width="1180" height="374" fill="#fff"/>
+<text x="20" y="32" font-size="18" font-weight="600" fill="#202124">After remove_object(dynamic) or remove_robot, before the next reset() - one L40S, Isaac Sim 6.1</text>
+<text x="20" y="74" font-size="14" font-weight="600" fill="#5f6368">call</text><text x="400" y="74" font-size="14" font-weight="600" fill="#b3261e">before</text><text x="800" y="74" font-size="14" font-weight="600" fill="#1e8e3e">now</text>
+<rect x="10" y="90" width="1160" height="44" fill="#f8f9fa"/>
+<text x="20" y="117" font-size="13" fill="#202124" font-family="ui-monospace, Menlo, monospace">add_robot</text>
+<text x="400" y="117" font-size="13" fill="#a50e0e">error: &#x27;NoneType&#x27; object has no attribute &#x27;link_names&#x27;</text>
+<text x="800" y="117" font-size="13" fill="#0d652d">error: add_robot: ... call reset() first</text>
+<text x="20" y="161" font-size="13" fill="#202124" font-family="ui-monospace, Menlo, monospace">get_body_state (dynamic object)</text>
+<text x="400" y="161" font-size="13" fill="#a50e0e">raised Exception: Failed to get rigid body transforms</text>
+<text x="800" y="161" font-size="13" fill="#0d652d">success: pose read off the USD stage</text>
+<rect x="10" y="178" width="1160" height="44" fill="#f8f9fa"/>
+<text x="20" y="205" font-size="13" fill="#202124" font-family="ui-monospace, Menlo, monospace">move_object (dynamic object)</text>
+<text x="400" y="205" font-size="13" fill="#a50e0e">raised Exception: Failed to get rigid body transforms</text>
+<text x="800" y="205" font-size="13" fill="#0d652d">error: move_object: ... call reset() first</text>
+<text x="20" y="249" font-size="13" fill="#202124" font-family="ui-monospace, Menlo, monospace">set_robot_pose</text>
+<text x="400" y="249" font-size="13" fill="#a50e0e">raised Exception: Failed to get root link transforms</text>
+<text x="800" y="249" font-size="13" fill="#0d652d">error: set_robot_pose: ... call reset() first</text>
+<rect x="10" y="266" width="1160" height="44" fill="#f8f9fa"/>
+<text x="20" y="293" font-size="13" fill="#202124" font-family="ui-monospace, Menlo, monospace">get_jacobian</text>
+<text x="400" y="293" font-size="13" fill="#a50e0e">read the dead view, unchecked</text>
+<text x="800" y="293" font-size="13" fill="#0d652d">error: get_jacobian: ... call reset() first</text>
+<text x="20" y="337" font-size="13" fill="#202124" font-family="ui-monospace, Menlo, monospace">step / send_action / move_to / set_gripper /</text>
+<text x="400" y="337" font-size="13" fill="#a50e0e">error: ... call reset() first</text>
+<text x="800" y="337" font-size="13" fill="#0d652d">unchanged</text>
+</svg>
