@@ -169,8 +169,8 @@ class HolosomaPolicy(Policy):
     """
 
     requires_images = False
-    reads_instruction: ClassVar[bool] = False
-    instruction_free_actions: ClassVar[str | None] = "the gait commanded by target_velocity"
+    reads_instruction: bool = False
+    instruction_free_actions: str | None = "the gait commanded by target_velocity"
     #: Selects the MuJoCo PD-to-torque shim shared with the GR00T-WBC provider.
     pd_torque_shim: ClassVar[bool] = True
     requires_action_controller: ClassVar[str | None] = (
