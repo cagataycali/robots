@@ -53,9 +53,18 @@ def card(task: str, onnx: Path, evals: list[Path], note: str) -> str:
             lines.append(f"| `{k}` | `{md[k][:120]}` |")
     for ev in evals:
         d = json.loads(ev.read_text())
+        if not (isinstance(d, dict) and isinstance(d.get("runs"), list)):
+            # Not the sim2sim_reach shape (example 03/04/05 jsons): link the file, no table.
+            lines += [
+                "",
+                f"## Eval `{ev.name}`",
+                "",
+                f"Raw result file: `eval/{ev.name}` (see examples/mjlab/README.md for the reading).",
+            ]
+            continue
         lines += [
             "",
-            f"## Sim-to-sim eval `{ev.name}` (n={d['n']}, seed={d['seed']}, {d['ticks']} ticks @ {d['hz']} Hz)",
+            f"## Sim-to-sim eval `{ev.name}` (n={d.get('n')}, seed={d.get('seed')}, {d.get('ticks')} ticks @ {d.get('hz')} Hz)",
             "",
             "| backend | policy | success | final err median (m) | min err median (m) | ticks/s |",
             "|---|---|---|---|---|---|",
