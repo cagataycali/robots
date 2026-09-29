@@ -146,8 +146,9 @@ plugins:
         policies/cosmos3-diffusers.md: learn/policies/cosmos3.md
         policies/cosmos3.md: learn/policies/cosmos3.md
         policies/curobo.md: learn/policies/curobo.md
+        policies/groot.md: learn/policies/lerobot-local.md
+        learn/policies/groot.md: learn/policies/lerobot-local.md
         policies/custom-policies.md: reference/api/policies.md
-        policies/groot.md: learn/policies/groot.md
         policies/kimodo-sampling.md: learn/policies/kimodo.md
         policies/kimodo.md: learn/policies/kimodo.md
         policies/lerobot-local-observations.md: learn/policies/lerobot-local.md
@@ -207,8 +208,8 @@ plugins:
         reference/policies/cosmos3-diffusers.md: learn/policies/cosmos3.md
         reference/policies/cosmos3.md: learn/policies/cosmos3.md
         reference/policies/curobo.md: learn/policies/curobo.md
+        reference/policies/groot.md: learn/policies/lerobot-local.md
         reference/policies/custom-policies.md: reference/api/policies.md
-        reference/policies/groot.md: learn/policies/groot.md
         reference/policies/kimodo-sampling.md: learn/policies/kimodo.md
         reference/policies/kimodo.md: learn/policies/kimodo.md
         reference/policies/lerobot-local-observations.md: learn/policies/lerobot-local.md
@@ -444,7 +445,6 @@ nav:
       - Policies:
           - learn/policies/index.md
           - LeRobot local: learn/policies/lerobot-local.md
-          - GR00T: learn/policies/groot.md
           - Cosmos 3: learn/policies/cosmos3.md
           - cuRobo: learn/policies/curobo.md
           - MoveIt2: learn/policies/moveit2.md

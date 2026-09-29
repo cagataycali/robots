@@ -62,7 +62,9 @@ _BUDGET: int = _hook().LIMIT
 #: look that learned policies run on real robots: a new Start page (First learned
 #: policy) and a generated "Policies verified on this robot" section on every robot
 #: page, each row carrying the source of its numbers (docs/hooks/data/checkpoints.json).
-_SITE_BUDGET = 49_800
+#: Lowered to 49,103 when the GR00T provider page left with the provider (GR00T N1.7
+#: is a section of lerobot-local now).
+_SITE_BUDGET = 49_103
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
