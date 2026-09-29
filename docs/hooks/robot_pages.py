@@ -106,7 +106,7 @@ DRIVERS: dict[str, dict[str, object]] = {
         "link": "Franka Control Interface (FCI) through `panda-py`",
         "port": "IP address of the arm's control box",
         "example": '"172.16.0.2"',
-        "sdk": "`panda-py` (`pip install panda-py`); resolved on connect, never at import",
+        "sdk": "`panda-py` (`pip install panda-python`); resolved on connect, never at import",
         "kwargs": "`speed_factor=0.2`, `stream_rate_hz=30.0`",
         "units": "radians; Panda joints `joint1..joint7`, FR3 `fr3_joint1..`, FR3 v2 `fr3v2_joint1..`, the names the arm's own MuJoCo asset uses",
         "checks": (

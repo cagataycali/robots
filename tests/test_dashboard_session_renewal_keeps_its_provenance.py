@@ -34,6 +34,13 @@ import jwt
 import pytest
 
 import strands_robots.dashboard.auth as auth
+from tests._dashboard_passkeys import enroll
+
+
+@pytest.fixture(autouse=True)
+def _cred1_is_enrolled():
+    """Every session here is cred1's; a token is only honoured while its passkey is enrolled."""
+    enroll("cred1")
 
 
 def claims_of(token: str) -> dict:

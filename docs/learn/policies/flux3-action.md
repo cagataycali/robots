@@ -16,7 +16,7 @@ pip install natten==0.21.6 -f https://whl.natten.org   # the wheel for your torc
 
 ## What it is
 
-`Flux3ActionPolicy` wraps the FLUX 3 Action inference library (Apache 2.0): a 3.9B flow-matching transformer over a video VAE that reads eight steps of two camera views plus joint state and an instruction, returning 42 absolute targets for the six SO-101 joints, replanning every 32 ticks at 30 Hz. It loads in process; weights arrive on `load()`, the first `reset()` or the first `get_actions()`.
+`Flux3ActionPolicy` wraps the FLUX 3 Action inference library (Apache 2.0): a 3.9B flow-matching transformer over a video VAE that reads eight steps of two camera views plus joint state and an instruction, returning 42 absolute targets for the six SO-101 joints, replanning every 32 ticks at 30 Hz. Weights load in process on `load()`, the first `reset()` or `get_actions()`.
 
 ## Constructor keywords
 
@@ -59,7 +59,7 @@ robot.stop_recording()
 
 ## Jetson Thor
 
-The published NATTEN wheels carry kernels for sm_75 through sm_120 but not sm_110, so on Thor the default `cutlass-fna` dies mid-rollout with `no kernel image is available`. The provider reads the arch list off `libnatten` with `cuobjdump`, selects `flex-fna` when this device is missing (`natten_backend` or `F3_NATTEN_BACKEND` override it) and forwards the choice to `na2d` / `na3d` as `backend=`, which `flux_action` alone does not. Measured on Thor: 24 s warm load, about 5 s per replan, so sim time runs about 8x slower than wall clock.
+The published NATTEN wheels carry kernels for sm_75 through sm_120 but not sm_110, so on Thor the default `cutlass-fna` dies mid-rollout with `no kernel image is available`. The provider reads the arch list off `libnatten` with `cuobjdump`, selects `flex-fna` when this device is missing (`natten_backend` or `F3_NATTEN_BACKEND` override it) and forwards the choice to `na2d` / `na3d` as `backend=`, which `flux_action` alone does not. Measured on Thor: 24 s warm load, about 5 s per replan, so sim runs about 8x slower than wall clock.
 
 ## Limits
 
