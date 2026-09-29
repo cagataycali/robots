@@ -46,7 +46,7 @@ from strands_robots.simulation.isaac.motion_primitives import IsaacMotionPrimiti
 from strands_robots.simulation.isaac.randomization import IsaacRandomizationMixin
 from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
 from strands_robots.simulation.models import registered, registry_entry
-from strands_robots.simulation.recording import undriven_robot_state
+from strands_robots.simulation.recording import RecordedFrame
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
@@ -6351,21 +6351,14 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             except Exception as exc:  # noqa: BLE001 - non-fatal, mirrors run_policy defensiveness
                 logger.debug("set_robot_state_keys(%s) failed: %s", rname, exc)
 
-        # Merged-frame recording wiring (MuJoCo parity). Namespacing follows
-        # the schema start_recording declared: prefixed ``robot__column`` when
-        # the WORLD holds more than one robot (not merely this call), so the
-        # merged frame always matches the declared columns. Every robot driven
-        # here contributes to the one merged frame, so the merged action owes a
-        # value for each of their actuators - resolved once rather than per
-        # frame, and only when a recorder will consume it (robot_action_keys is
-        # best-effort for unrecorded rollouts; where a recording is attached
-        # the keys are load-bearing, so a raise here correctly fails the call).
-        multi_robot = len(self._robots) > 1
-        merged_required_action_keys = (
-            [f"{rname}__{key}" if multi_robot else key for rname in policies for key in self.robot_action_keys(rname)]
-            if recording
-            else []
-        )
+        # Merged-frame recording wiring (MuJoCo parity). Every robot driven here
+        # contributes to the one merged frame, so the merged action owes a value
+        # for each of their actuators - resolved up front, and only when a
+        # recorder will consume it: where a recording is attached the keys are
+        # load-bearing, so a raise here correctly fails the call.
+        frame = RecordedFrame(self, tuple(policies), self._robots)
+        if recording:
+            frame.required_action_keys()
         # Camera frames ride the observation keyed by RAW camera name; the
         # schema declared the safe names (``/`` -> ``__``), scoped to
         # start_recording(cameras=...). Same rename+scope the single-robot
@@ -6528,40 +6521,13 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     # the consistent state snapshot was already taken inside the
                     # two hops above.
                     if recording and recorder is not None:
-                        merged_obs: dict[str, Any] = {}
-                        merged_act: dict[str, Any] = {}
-                        # The schema declares a state column for every robot in the
-                        # scene, and ``policies`` need only name robots that exist -
-                        # not all of them. A robot this call does not drive is a
-                        # readable measurement, so its columns are filled from the
-                        # engine at this step rather than left to add_frame's 0.0
-                        # fill, which records them as a zero pose the robot is not
-                        # in. Merged first, so driven keys win any collision.
-                        merged_obs.update(undriven_robot_state(self, policies, self._robots))
-                        for rname in policies:
-                            if multi_robot:
-                                for k, v in per_robot_obs[rname].items():
-                                    merged_obs[f"{rname}__{k}"] = v
-                                for k, v in per_robot_action[rname].items():
-                                    merged_act[f"{rname}__{k}"] = v
-                            else:
-                                merged_obs.update(per_robot_obs[rname])
-                                merged_act.update(per_robot_action[rname])
                         # Cameras are scene-global: rename raw -> schema-safe and
                         # drop any outside the start_recording(cameras=...) scope.
-                        for k, v in camera_imgs.items():
-                            safe = raw_to_safe.get(k)
-                            if safe is not None:
-                                merged_obs[safe] = v
                         # LeRobot stores ONE task per frame: the first robot's
                         # instruction (the shared normalizer already warned when
                         # per-robot instructions are distinct).
-                        recorder.add_frame(
-                            observation=merged_obs,
-                            action=merged_act,
-                            task=instr_map[next(iter(policies))],
-                            required_action_keys=merged_required_action_keys,
-                        )
+                        images = {raw_to_safe[k]: v for k, v in camera_imgs.items() if k in raw_to_safe}
+                        frame.write(recorder, per_robot_obs, per_robot_action, images, instr_map[next(iter(policies))])
 
                     step_count += 1
                     for rname in policies:
