@@ -315,6 +315,7 @@ def _sending_mesh(published: list[tuple[str, dict[str, Any]]]) -> Any:
 
     mesh = mesh_core.Mesh.__new__(mesh_core.Mesh)
     mesh.peer_id = "dash"
+    mesh._direct = None
     mesh._running = True
     mesh._rpc_lock = threading.Lock()
     mesh._cmd_pace_lock = threading.Lock()

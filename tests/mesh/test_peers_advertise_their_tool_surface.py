@@ -153,6 +153,7 @@ def _mesh_with(robot: Any, *, lockout: bool = False) -> Any:
     mesh.robot = robot
     mesh.peer_id = "sim-1"
     mesh.peer_type = "so101"
+    mesh._direct = None
     mesh._estop_lockout = MagicMock(is_set=lambda: lockout)
     return mesh
 
