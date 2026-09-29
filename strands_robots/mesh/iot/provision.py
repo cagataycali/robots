@@ -918,7 +918,7 @@ def _ensure_ca(ca_path: Path) -> None:
       untouched -- the caller decides whether to delete and retry.
     * Otherwise download the CA over HTTPS, cap the body at
       :data:`_CA_FETCH_MAX_BYTES`, verify the pin, and write the result
-      with mode ``0o644``.
+      owner-only (mode ``0o600``, created atomically with that mode).
 
     Pinning defeats a network-level adversary (DNS hijack, captive portal,
     BGP route attacks, malicious corporate proxy) that could substitute a
@@ -1040,11 +1040,26 @@ def _ensure_ca(ca_path: Path) -> None:
             "anything on its own."
         )
 
-    ca_path.write_bytes(body)
+    # Owner-only, created atomically: ``os.open`` with ``O_CREAT`` applies the
+    # mode as the file comes into being, so there is no write-then-chmod
+    # window in which the CA sits at the umask default. The bytes are public
+    # (Amazon's root), but the file is what the TLS client trusts, and the
+    # only reader is this user's own process inside the 0o700 cert_dir; a
+    # world-readable copy grants nothing and is what the scanner flags.
+    # ``O_NOFOLLOW`` refuses to write through a pre-planted symlink, as the
+    # marker below does.
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(ca_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow, 0o600)
     try:
-        os.chmod(ca_path, 0o644)
+        os.write(fd, body)
+    finally:
+        os.close(fd)
+    try:
+        # O_CREAT does not apply the mode to a file that already existed
+        # (a zero-byte CA left by an interrupted download); re-assert it.
+        os.chmod(ca_path, 0o600)
     except OSError:
-        logger.debug("could not chmod 0o644 %s", ca_path, exc_info=True)
+        logger.debug("could not chmod 0o600 %s", ca_path, exc_info=True)
 
     # Issue #261: when the break-glass STRANDS_MESH_DISABLE_CA_PIN was
     # active during this download, write a sidecar marker so future

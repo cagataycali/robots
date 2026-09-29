@@ -27,7 +27,7 @@ import json
 import logging
 from pathlib import Path
 
-from ._overlay import parse_user_robots, user_registry_source
+from ._overlay import parse_user_robots, user_registry_path, user_registry_source
 
 #: The driver a robot gets when nothing says otherwise. Every robot in the
 #: package registry is a lerobot robot today, so the default keeps them working
@@ -70,7 +70,9 @@ def normalize_robot_name(name: str) -> str:
     uniqueness constraints :func:`_validate_robots` enforces over both. A
     consumer that folds while a producer or a validator does not is how
     ``"Franka-Panda"`` becomes a lookup nobody can satisfy, or worse, one that
-    lands on a different robot.
+    lands on a different robot. A ``user_robots.json`` key that is not already
+    its own fold is refused when the registry loads, naming the spelling to
+    rename it to.
 
     Args:
         name: A robot name or alias, in any spelling.
@@ -131,13 +133,22 @@ def _load(name: str) -> dict:
 def _merge_user_robots(data: dict, overlay_source: bytes | None) -> dict:
     """Merge user-local robot registry on top of package robots.json.
 
-    User entries override package entries on name collision.
+    User entries override package entries on name collision. A user key that
+    is not its own :func:`normalize_robot_name` fold is refused rather than
+    merged: every lookup folds its query, so no lookup could reach it.
 
     Args:
         data: Parsed package ``robots.json``.
         overlay_source: Contents of ``user_robots.json``, or None when the
             overlay is absent.  Taken from the caller rather than re-read so
             the merged value and the cache signature describe the same bytes.
+
+    Returns:
+        *data* with the user robots merged into its ``robots`` table.
+
+    Raises:
+        ValueError: On a user key that is not already folded. The message names
+            the overlay file and the spelling to rename the key to.
     """
     user_robots = parse_user_robots(overlay_source)
     if not user_robots:
@@ -148,8 +159,45 @@ def _merge_user_robots(data: dict, overlay_source: bytes | None) -> dict:
     merged_robots.update(user_robots)
     merged["robots"] = merged_robots
 
+    # ``register_robot`` folds before it writes, but a hand-written overlay is
+    # read verbatim, and a key like ``rover-001`` then answers no query - not even
+    # its own spelling, which is folded before it is looked up. The key is
+    # refused here, where it is known to come from the overlay, rather than
+    # folded: folding could collapse two keys (or an overlay key and a package
+    # key) onto one entry and keep whichever merged last. The package's own
+    # robots.json keys are already folded, so only the overlay is checked here.
+    _refuse_unfolded_user_keys(user_robots, merged_robots)
+
     logger.debug("Merged %d user-registered robot(s) into registry", len(user_robots))
     return merged
+
+
+def _refuse_unfolded_user_keys(user_robots: dict, merged_robots: dict) -> None:
+    """Refuse a user-overlay key that is not its own lookup fold.
+
+    Shared by the loader's merge and the user registry's write-time check, so a
+    write cannot persist into an overlay the next read refuses.
+
+    Args:
+        user_robots: The user overlay's robot table.
+        merged_robots: The package table overlaid with *user_robots*.
+
+    Raises:
+        ValueError: On a key that is not already folded, naming the overlay
+            file and the spelling to rename it to.
+    """
+    for robot_name in user_robots:
+        folded = normalize_robot_name(robot_name)
+        if folded != robot_name:
+            taken = (
+                f" (a robot named '{folded}' already exists; renaming replaces it, so choose another name to keep both)"
+                if folded in merged_robots
+                else ""
+            )
+            raise ValueError(
+                f"Robot key '{robot_name}' in {user_registry_path()} is not a lookup key: every lookup folds it "
+                f"to '{folded}', so the entry can never be found; rename it to '{folded}'{taken}"
+            )
 
 
 def _validate(name: str, data: dict) -> None:

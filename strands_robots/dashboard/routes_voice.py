@@ -53,7 +53,7 @@ async def voice_socket(ws: WebSocket) -> None:
     try:
         await run_voice_session(ws, bridge=bridge)
     except (WebSocketDisconnect, RuntimeError):
-        pass
+        pass  # best effort: the browser closed the socket, there is nobody left to tell
     except ImportError as exc:  # a provider package missing behind the SDK surface
         await _voice_error(ws, f"voice unavailable: {exc}. Needs {_VOICE_EXTRA}.", code=4503)
         return
