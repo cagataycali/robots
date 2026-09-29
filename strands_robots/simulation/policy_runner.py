@@ -1540,7 +1540,33 @@ class PolicyRunner:
         except Exception:  # noqa: BLE001 - never fail a run on a probe
             dt = None
         if dt and dt > 0 and control_frequency > 0:
-            return max(1, round((1.0 / control_frequency) / dt))
+            ratio = (1.0 / control_frequency) / dt
+            substeps = max(1, round(ratio))
+            # A control period that is not a whole number of physics steps is
+            # rounded, so simulated time per action is substeps*dt, not
+            # 1/control_frequency. Isaac's default physics_dt=1/120 against the
+            # default 50 Hz is 2.4 -> 2 steps: every action covers 16.7 ms of sim
+            # time, a 30-step rollout ends at sim_t=0.5 s instead of 0.6 s, and a
+            # recording labelled 50 fps holds frames 1/60 s apart. Said
+            # rather than silently absorbed: the remedy is a physics_dt that
+            # divides the control period.
+            if abs(ratio - substeps) > 1e-6 * max(1.0, ratio):
+                effective = 1.0 / (substeps * dt)
+                logger.warning(
+                    "PolicyRunner: control period 1/%g s is %.4g physics steps of %.6g s; "
+                    "rounding to %d, so each action advances %.6g s of sim time (an effective "
+                    "%.4g Hz, not %g Hz). Pick a physics_dt that divides 1/control_frequency "
+                    "(e.g. 1/%d s) or a control_frequency that divides 1/physics_dt.",
+                    control_frequency,
+                    ratio,
+                    dt,
+                    substeps,
+                    substeps * dt,
+                    effective,
+                    control_frequency,
+                    int(round(control_frequency)) * max(1, math.ceil(ratio)),
+                )
+            return substeps
         return 1
 
     def _reject_recording_rate_mismatch(self, control_frequency: float, method: str) -> None:
