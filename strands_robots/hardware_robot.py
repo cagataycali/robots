@@ -310,6 +310,19 @@ def _camera_option_vocabulary(camera_name: str, config: Mapping[str, Any]) -> tu
     return ConfigClass, fields
 
 
+def _is_blank_port(name: str, value: object) -> bool:
+    """Whether a port-shaped required field carries a value no bus can open.
+
+    ``port`` and ``*_port`` name a device path or a host. ``None``, a non-string
+    and a blank or whitespace string are not one, and each was accepted as
+    "supplied" by the presence test alone, so the refusal that names this
+    host's serial devices never fired for them.
+    """
+    if not (name == "port" or name.endswith("_port")):
+        return False
+    return not isinstance(value, str) or not value.strip()
+
+
 def _requires_a_caller_value(field: dataclasses.Field) -> bool:
     """Answer whether a config dataclass field is one the caller must supply.
 
@@ -1383,10 +1396,14 @@ class Robot(TeleopMixin, AgentTool):
         # reading the absent default alone: a field the class derives for itself
         # is one the constructor does not accept, so counting it as missing
         # would refuse a call that builds.
+        # A blank or non-string port is as missing as an absent one: ``port=""``
+        # constructed and then called the empty string a network port at the
+        # first bus action (#4168), where an omitted port was refused here.
         missing_required = [
             field.name
             for field in dataclasses.fields(ConfigClass)
-            if _requires_a_caller_value(field) and field.name not in config_data
+            if _requires_a_caller_value(field)
+            and (field.name not in config_data or _is_blank_port(field.name, config_data[field.name]))
         ]
         if missing_required:
             remedy = ", ".join(f"{name}=..." for name in missing_required)
