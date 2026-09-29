@@ -21,12 +21,9 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
 from strands_robots._command_gate import gate_motion
-
-if TYPE_CHECKING:
-    from strands_robots.foxglove.bridge import FoxgloveBridge
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +84,17 @@ def gate_service(name: str) -> str | None:
     )
 
 
-def build_services(bridge: FoxgloveBridge, command_sink: Any) -> list[Any]:
+class _Sink(Protocol):
+    """What the services need from their bridge: the log and event channels."""
+
+    def log(self, level: str, message: str, *, name: str = ...) -> None:
+        """Write one line to ``/strands/log``."""
+
+    def event(self, payload: dict[str, Any]) -> None:
+        """Write one JSON object to ``/strands/events``."""
+
+
+def build_services(bridge: _Sink, command_sink: Any) -> list[Any]:
     """The ``foxglove.Service`` list a bridge registers when services are on.
 
     Args:
