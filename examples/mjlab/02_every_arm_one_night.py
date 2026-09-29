@@ -8,9 +8,9 @@ for a fixed budget, (e) exports ONNX with mjlab metadata, and (f) plays the
 actor on the classic MuJoCo backend for N seeded targets (sim-to-sim). One
 JSON per robot; ``--table`` folds them into the README table.
 
-Install (the lerobot extra first, then this one: mjlab needs torch>=2.14)::
+Install (one step; the lerobot extra is for the recorders)::
 
-    uv pip install "strands-robots[sim-mjlab,rl]" matplotlib
+    uv pip install "strands-robots[lerobot,sim-mjlab]" matplotlib
 
 Usage::
 

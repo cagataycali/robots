@@ -20,9 +20,9 @@ Stages::
     python examples/mjlab/04_extreme_domain_randomisation.py export --dr extreme --checkpoint runs/reach_dr/model_299.pt --onnx runs/reach_dr.onnx
     python examples/mjlab/04_extreme_domain_randomisation.py eval --nominal runs/reach_nominal.onnx --dr runs/reach_dr.onnx --out dr_eval.json
 
-Install (the lerobot extra first, then this one: mjlab needs torch>=2.14)::
+Install (one step; the lerobot extra is for the recorders)::
 
-    uv pip install "strands-robots[sim-mjlab,rl]"
+    uv pip install "strands-robots[lerobot,sim-mjlab]"
 """
 
 from __future__ import annotations

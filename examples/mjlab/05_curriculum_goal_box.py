@@ -22,9 +22,9 @@ Usage::
     python examples/mjlab/05_curriculum_goal_box.py export --checkpoint runs/reach_curriculum/model_399.pt --onnx runs/reach_curriculum.onnx
     python examples/mjlab/05_curriculum_goal_box.py eval --curriculum runs/reach_curriculum.onnx --baseline runs/reach_none.onnx --out curriculum_eval.json
 
-Install (the lerobot extra first, then this one: mjlab needs torch>=2.14)::
+Install (one step; the lerobot extra is for the recorders)::
 
-    uv pip install "strands-robots[sim-mjlab,rl]"
+    uv pip install "strands-robots[lerobot,sim-mjlab]"
 """
 
 from __future__ import annotations

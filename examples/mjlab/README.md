@@ -6,13 +6,17 @@ strands-robots. Every number in this file was measured on one Jetson AGX Thor
 so absolute throughput is a floor, not a ceiling. Raw json and logs behind each
 table are named next to it; a number without a file behind it does not appear here.
 
-Install (two steps, mjlab needs torch>=2.14 while the lerobot extra caps torch lower):
+Install (one step: `[lerobot]` for the recorders, `[sim-mjlab]` for mjlab, mujoco-warp,
+rsl_rl and onnxruntime; `[all]` and `[sim-mjlab]` are a declared conflict, do not combine them):
 
 ```bash
-uv pip install "strands-robots[all]"
-uv pip install "strands-robots[sim-mjlab,rl]"
+uv pip install "strands-robots[lerobot,sim-mjlab]" matplotlib
 export MUJOCO_GL=egl
 ```
+
+The first mjlab build compiles Warp kernels (minutes, once per machine, cached under
+`~/.cache/warp`). Every example below has a "Run it" fence that finishes in under a
+minute on one GPU: the smoke budget to confirm the install before the real run.
 
 | # | File | Question it answers |
 |---|---|---|
@@ -29,6 +33,12 @@ Helper scripts from the backend lane live next to them (`sim2sim_reach.py`,
 `push_run_to_hf.py`).
 
 ## 01 Scale sweep
+
+```bash title="Run it (smoke, 20 s)"
+python examples/mjlab/01_scale_sweep.py --num-envs 64 --graph on --max-iterations 20 \
+    --out /tmp/scale.json --log-root /tmp/runs/scale
+python examples/mjlab/01_scale_sweep.py --plot /tmp/scale.json --png /tmp/scale.png
+```
 
 so101 reach task (`strands_robots.training.mjlab_tasks.so101_reach`), PPO through
 `MjlabOnPolicyRunner`, 24 steps per env per iteration, seed 42, `at_goal` is the
@@ -71,6 +81,11 @@ What the table says:
   CPU MuJoCo backend of strands-robots is faster (see the backend REPORT).
 
 ## 02 Every arm, one night
+
+```bash title="Run it (smoke, 25 s)"
+python examples/mjlab/02_every_arm_one_night.py --robot so101 --num-envs 256 --iterations 20 \
+    --n-eval 4 --out /tmp/arms
+```
 
 `02_every_arm_one_night.py --all-arms --num-envs 1024` walks every arm the registry
 can simulate (20 today), builds an mjlab reach task for each from the registry
@@ -199,6 +214,11 @@ rotates or lifts its first body.
 
 ## 03 Humanoid beyond velocity
 
+```bash title="Run it (smoke, 25 s)"
+python examples/mjlab/03_humanoid_beyond_velocity.py train --task rough --num-envs 256 \
+    --iterations 5 --run-dir /tmp/g1
+```
+
 Results (rough done, get-up v1 and v2 done, both negative; v3 read at checkpoint 400, same crouch):
 
 **Rough terrain, 1500 iterations, 4096 envs, 2 h 39 min on Thor** (`results/g1_rough`, shared GPU). Training ended at
@@ -251,6 +271,11 @@ readable at a glance (the v1 trace also shows the pelvis reaching 0.85 to 1.25 m
 the drop, a launch that was not diagnosed).
 
 ## 04 Extreme domain randomisation
+
+```bash title="Run it (smoke, 20 s)"
+python examples/mjlab/04_extreme_domain_randomisation.py train --dr extreme --num-envs 256 \
+    --iterations 10 --run-dir /tmp/dr
+```
 
 Two so101 reach actors, same recipe (N=1,024, 300 iterations, seed 42): `none` on
 the stock task (591 s) and `extreme` with every physics term redrawn per world on
@@ -312,6 +337,12 @@ under 3 cm, one fresh model per episode so perturbations never stack. Data:
 
 ## 05 Curriculum goal box
 
+```bash title="Run it (smoke, 60 s for the three steps)"
+python examples/mjlab/05_curriculum_goal_box.py train --num-envs 256 --iterations 20 --run-dir /tmp/cur
+python examples/mjlab/05_curriculum_goal_box.py export --checkpoint /tmp/cur/model_19.pt --onnx /tmp/cur/cur.onnx
+python examples/mjlab/05_curriculum_goal_box.py eval --curriculum /tmp/cur/cur.onnx --out /tmp/cur/eval.json --n 4
+```
+
 `05_curriculum_goal_box.py` keeps a level per world. Every world starts with the so101 recipe's 1x goal box
 (0.12..0.30 x -0.20..0.20 x 0.08..0.30 m in the base frame) and is promoted one level (1.5x, 2x, 2.5x, 3x the box
 around its centre) when it reaches its target, demoted when it misses badly; the command term resamples inside the
@@ -346,6 +377,13 @@ most of training (the first world got there at iteration 250). The curriculum is
 workspace a fixed recipe covers; it is not a substitute for a recipe designed for the wider box.
 
 ## 06 Agent trains a fleet
+
+```bash title="Run it (smoke, 35 s, no model)"
+python examples/mjlab/06_agent_trains_a_fleet.py --arms so101 --iterations 20 --num-envs 256 \
+    --output-dir /tmp/fleet --transcript /tmp/fleet.md --no-llm
+```
+
+Drop `--no-llm` to let a Bedrock model (`AWS_BEARER_TOKEN_BEDROCK`) drive the tools.
 
 `06_agent_trains_a_fleet.py --arms so101,koch,arx_l5` hands a Strands `Agent` three
 tools: the stock `train_policy` (provider `rsl_rl`, the MuJoCo-Warp trainer),
@@ -421,6 +459,11 @@ re-exported by hand (17/20 @ 18 mm). Full tool-by-tool transcript:
 [`assets/fleet_leaderboard_run2.md`](assets/fleet_leaderboard_run2.md).
 
 ## 07 Dataset factory
+
+```bash title="Run it (smoke, 55 s, 512 episodes)"
+python examples/mjlab/07_dataset_factory.py --policy scripted --minutes 0.5 --num-envs 256 \
+    --root /tmp/ds07 --out /tmp/ds07.json
+```
 
 Two 30-minute runs on Thor, 1,024 worlds in lockstep, 150 ticks (3 s) per episode,
 fresh seeded targets and fresh per-world physics randomisation every batch, every

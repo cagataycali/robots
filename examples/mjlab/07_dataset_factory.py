@@ -22,9 +22,9 @@ Usage::
     python examples/mjlab/07_dataset_factory.py --policy scripted --minutes 30 --num-envs 1024 --root runs/factory_scripted --out factory_scripted.json
     python examples/mjlab/07_dataset_factory.py --policy onnx --onnx runs/reach.onnx --minutes 30 --num-envs 1024 --root runs/factory_onnx --out factory_onnx.json --push cagataydev/mjlab-factory-so101-20260929
 
-Install (the lerobot extra first, then this one: mjlab needs torch>=2.14)::
+Install (one step; the lerobot extra is for the recorders)::
 
-    uv pip install "strands-robots[sim-mjlab,rl]" huggingface_hub
+    uv pip install "strands-robots[lerobot,sim-mjlab]" huggingface_hub
 """
 
 from __future__ import annotations

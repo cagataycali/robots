@@ -24,9 +24,9 @@ the deep lane's 10 s survive-on-4-commands harness; the height-scan term the
 provider does not know is supplied by a subclass (flat plane: every ray hits
 z = 0, so each height is the pelvis height).
 
-Install (the lerobot extra first, then this one: mjlab needs torch>=2.14)::
+Install (one step; the lerobot extra is for the recorders)::
 
-    uv pip install "strands-robots[sim-mjlab,rl]"
+    uv pip install "strands-robots[lerobot,sim-mjlab]"
 """
 
 from __future__ import annotations
