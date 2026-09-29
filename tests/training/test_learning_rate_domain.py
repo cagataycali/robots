@@ -76,7 +76,9 @@ UNUSABLE = SILENT_NO_OP + SILENT_DIVERGENCE + SILENT_MISREAD + LOUD_BUT_LATE + N
 
 SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, Gr00tTrainer, LerobotTrainer, SagemakerTrainer)
 RL_TRAINER_NAMES = ("FastSacTrainer", "FastTd3Trainer", "PpoTrainer")
-ALL_TRAINER_NAMES = tuple(t.__name__ for t in SUPERVISED_TRAINERS) + RL_TRAINER_NAMES
+# RL transports: the run happens in another interpreter, which receives the rate as an override.
+RL_TRANSPORT_NAMES = ("IsaacLabTrainer",)
+ALL_TRAINER_NAMES = tuple(t.__name__ for t in SUPERVISED_TRAINERS) + RL_TRAINER_NAMES + RL_TRANSPORT_NAMES
 
 
 @pytest.fixture
