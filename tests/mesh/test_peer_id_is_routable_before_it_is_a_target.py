@@ -2,14 +2,15 @@
 
 ``Mesh.send`` interpolated ``target`` straight into ``strands/{target}/cmd``
 after checking only for emptiness, a NUL byte and the broadcast sentinel, and
-both presence paths (``Mesh._on_presence`` and the dashboard's
-``MeshBridge._on_presence``) stored whatever ``robot_id`` a peer announced.
+``Mesh._on_presence`` stored whatever ``robot_id`` a peer announced (the
+dashboard's ``MeshBridge`` now reads identity from the key expression, #4304).
 A peer announcing itself as ``*`` or ``**`` therefore became a fleet-wide
 target for a command the operator aimed at one robot.
 
 The inbound path already refused such identifiers with
-``validate_mesh_identifier``; now the outbound path and both presence
-registries apply the same rule, before publish and before the registry.
+``validate_mesh_identifier``; now the outbound path and the core presence
+registry apply the same rule, before publish and before the registry, and the
+dashboard's behaviour is pinned here too.
 """
 
 from __future__ import annotations
@@ -98,6 +99,8 @@ class TestPresenceRefusesAnUnroutablePeerId:
 
     @pytest.mark.parametrize("peer", [p for p in UNROUTABLE if p])
     def test_dashboard_bridge_never_learns_it(self, peer: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The dashboard reads identity from the key expression's peer segment (#4304); a segment that
+        is not a peer id shape, or a body naming another peer, is dropped before the table."""
         from strands_robots.dashboard.mesh_bridge import MeshBridge
 
         bridge = MeshBridge.__new__(MeshBridge)
@@ -106,6 +109,9 @@ class TestPresenceRefusesAnUnroutablePeerId:
         bridge._peers_lock = threading.Lock()
         emitted: list[dict[str, Any]] = []
         monkeypatch.setattr(bridge, "_emit", emitted.append)
+        # A body that names a different peer than the key expression is an identity
+        # mismatch the bridge records; the bare fixture has no activity trail.
+        monkeypatch.setattr(bridge, "record_activity", lambda *a, **k: None)
 
         bridge._on_presence(_presence(peer))
         bridge._on_state(_presence(peer))
