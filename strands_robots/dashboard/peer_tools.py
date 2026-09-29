@@ -167,7 +167,7 @@ _SIM_INPUT_SCHEMA: dict[str, Any] = {
         "instruction": {"type": "string", "description": "execute/start: natural language task"},
         "policy_provider": {
             "type": "string",
-            "description": "execute/start: which policy backend, e.g. mock, lerobot_local, groot, cosmos3 (default mock)",
+            "description": "execute/start: which policy backend, e.g. mock, lerobot_local, cosmos3 (default mock)",
         },
         "pretrained_name_or_path": {
             "type": "string",
