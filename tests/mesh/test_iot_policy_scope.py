@@ -7,8 +7,9 @@ on the entire fleet's mesh traffic. These tests assert that scope:
 * Robot ``Receive`` covers only the robot's own ``/cmd``, own
   ``/response/*``, ``broadcast``, ``safety/estop``, and ``+/presence``.
 * Operator ``Receive`` covers monitoring topics (``presence``, ``state``,
-  ``health``, ``safety/event``, ``safety/estop``) and not the
-  command/response streams of other operators.
+  ``health``, the sensor topics, ``safety/event``, ``safety/estop``) plus
+  camera reads in a statement of their own, and not the command/response
+  streams of other operators.
 
 A future refactor that re-introduces the wildcard will fail these tests
 loudly, surfacing the regression in code review.
@@ -201,12 +202,23 @@ class TestOperatorPolicy:
         assert "/strands/+/safety/event" in joined
         assert "/strands/safety/estop" in joined
 
-    def test_no_camera_or_input_in_operator_observe(self):
+    def test_cameras_have_their_own_statement_and_input_has_none(self):
+        """Camera reads live in ``OperatorObserveCameras`` only; teleop input is never granted.
+
+        The dashboard fleet view resolves a robot's ``camera/<cam>/ref`` (and an
+        opted-in inline frame) for the operator, so the grant exists, on its own
+        line for review. ``input/`` and ``hand/`` stay LAN-only.
+        """
         sids = _statements_by_sid(_OPERATOR_POLICY_DOC)
-        st = sids["OperatorObserveFleet"]
-        for r in st["Resource"]:
+        for r in sids["OperatorObserveFleet"]["Resource"]:
             assert "/camera/" not in r
-            assert "/input/" not in r
+        cameras = sids["OperatorObserveCameras"]
+        assert set(cameras["Action"]) == {"iot:Subscribe", "iot:Receive"}
+        assert all("/camera/" in r for r in cameras["Resource"])
+        for st in _OPERATOR_POLICY_DOC["Statement"]:
+            for r in st.get("Resource", []) if isinstance(st.get("Resource"), list) else [st.get("Resource", "")]:
+                assert "/input/" not in r
+                assert "/hand/" not in r
 
     def test_publish_to_fleet_wildcard_is_deliberate(self):
         """Pin: OperatorPublishToFleet uses ``strands/*/cmd`` wildcard by design.

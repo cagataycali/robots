@@ -465,6 +465,39 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
                 # fleet as permanently locked out.
                 "arn:aws:iot:*:*:topic/strands/safety/resume",
                 "arn:aws:iot:*:*:topicfilter/strands/safety/resume",
+                # The rest of what the dashboard fleet view subscribes to
+                # (:data:`~strands_robots.dashboard.mesh_bridge.FLEET_SUBSCRIPTIONS`).
+                # Without these the broker accepts the SUBSCRIBE and delivers
+                # nothing, so a robot reached over IoT showed joints and a
+                # health row and never a stream, a pose or a lidar summary.
+                # All of them are telemetry a robot publishes about itself.
+                "arn:aws:iot:*:*:topic/strands/*/stream",
+                "arn:aws:iot:*:*:topicfilter/strands/+/stream",
+                "arn:aws:iot:*:*:topic/strands/*/pose",
+                "arn:aws:iot:*:*:topicfilter/strands/+/pose",
+                "arn:aws:iot:*:*:topic/strands/*/imu",
+                "arn:aws:iot:*:*:topicfilter/strands/+/imu",
+                "arn:aws:iot:*:*:topic/strands/*/odom",
+                "arn:aws:iot:*:*:topicfilter/strands/+/odom",
+                "arn:aws:iot:*:*:topic/strands/*/lidar/*",
+                "arn:aws:iot:*:*:topicfilter/strands/+/lidar/#",
+            ],
+        },
+        {
+            # Camera topics in their own statement so the read scope is
+            # reviewable on its own line. Two payloads travel here: the
+            # S3 reference ``camera/<cam>/ref`` that
+            # :mod:`~strands_robots.mesh.iot.camera_offload` publishes (a
+            # presigned URL the dashboard resolves server side) and, when a
+            # robot opted in with ``STRANDS_MESH_IOT_CAMERA_INLINE=1``, a JPEG
+            # frame under the AWS IoT payload cap. Teleop ``input/`` and
+            # ``hand/`` stay off this list: they never cross the WAN.
+            "Sid": "OperatorObserveCameras",
+            "Effect": "Allow",
+            "Action": ["iot:Subscribe", "iot:Receive"],
+            "Resource": [
+                "arn:aws:iot:*:*:topic/strands/*/camera/*",
+                "arn:aws:iot:*:*:topicfilter/strands/+/camera/#",
             ],
         },
         {

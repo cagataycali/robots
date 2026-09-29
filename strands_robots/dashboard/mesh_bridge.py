@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
@@ -254,6 +254,23 @@ def silent_arms(peers: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None
         **({"stale": stale} if stale else {}),
     }
 
+
+#: Every key expression the fleet view subscribes to, in one place so the IoT operator
+#: policy (:mod:`~strands_robots.mesh.iot.provision`) can be graded against it: a topic
+#: subscribed here but not granted there is a card that stays empty over IoT and says nothing.
+FLEET_SUBSCRIPTIONS: tuple[str, ...] = (
+    "strands/*/presence",
+    "strands/*/state",
+    "strands/*/stream",
+    "strands/*/camera/**",
+    "strands/*/pose",
+    "strands/*/health",
+    "strands/*/imu",
+    "strands/*/odom",
+    "strands/*/lidar/**",
+    "strands/safety/estop",
+    "strands/safety/resume",
+)
 
 #: ``strands/<peer>/<topic>...``: the ``<peer>`` segment of a wildcard-subscribed peer topic.
 #: The peer segment is the shape ``init_mesh`` accepts for a peer id, so a ``*`` from a
@@ -687,23 +704,24 @@ class MeshBridge:
         self._running = True
 
         sub = session.declare_subscriber
-        self._subs = [
-            sub("strands/*/presence", self._on_presence),
-            sub("strands/*/state", self._on_state),
-            sub("strands/*/stream", self._on_stream),
-            sub("strands/*/camera/**", self._on_camera),
+        handlers: dict[str, Callable[[Any], None]] = {
+            "strands/*/presence": self._on_presence,
+            "strands/*/state": self._on_state,
+            "strands/*/stream": self._on_stream,
+            "strands/*/camera/**": self._on_camera,
             # SensorLoops publishes these and nothing here consumed them, so a
             # rover or a humanoid rendered as a name and a camera. Same
             # raw-zenoh shape as state: one subscriber per topic, the payload
             # forwarded as the SDK wrote it.
-            sub("strands/*/pose", self._on_pose),
-            sub("strands/*/health", self._on_health),
-            sub("strands/*/imu", self._on_imu),
-            sub("strands/*/odom", self._on_odom),
-            sub("strands/*/lidar/**", self._on_lidar),
-            sub("strands/safety/estop", self._on_safety),
-            sub("strands/safety/resume", self._on_safety),
-        ]
+            "strands/*/pose": self._on_pose,
+            "strands/*/health": self._on_health,
+            "strands/*/imu": self._on_imu,
+            "strands/*/odom": self._on_odom,
+            "strands/*/lidar/**": self._on_lidar,
+            "strands/safety/estop": self._on_safety,
+            "strands/safety/resume": self._on_safety,
+        }
+        self._subs = [sub(key_expr, handlers[key_expr]) for key_expr in FLEET_SUBSCRIPTIONS]
         self._endpoints = self._read_endpoints()
         logger.info("MeshBridge online as %s", self.peer_id)
         return True
