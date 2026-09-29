@@ -30,17 +30,23 @@ from tests._dashboard_frontend import LIB, requires_node, run_frontend
 
 ENDPOINTS = LIB / "endpoints.ts"
 
-NOW = int(time.time())
-
 
 def _jwt(via: str = "handoff", exp: int | None = None, sub: str = "operator") -> str:
-    payload = json.dumps({"sub": sub, "exp": NOW + 240 if exp is None else exp, "via": via})
+    """A JWT-shaped token the browser can decode, minted at call time (a CI run outlives a module constant)."""
+    now = int(time.time())
+    payload = json.dumps({"sub": sub, "exp": now + 240 if exp is None else exp, "via": via})
     seg = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
     return f"eyJhbGciOiJIUzI1NiJ9.{seg}.c2ln"
 
 
-HANDOFF = _jwt()
-SESSION = _jwt(via="passkey", exp=NOW + 8 * 3600)
+def _handoff() -> str:
+    return _jwt()
+
+
+def _session(exp_in_s: int = 8 * 3600) -> str:
+    return _jwt(via="passkey", exp=int(time.time()) + exp_in_s)
+
+
 STATUS_YES = '{"authenticated": true, "auth_enabled": true}'
 STATUS_NO = '{"authenticated": false, "auth_enabled": true}'
 
@@ -65,74 +71,84 @@ out({{ before, outcome, token: localStorage.getItem('strands.token'), auth: m.au
 class TestAUrlTokenIsNeverTheSignInBeforeTheBackendSaysSo:
     def test_junk_in_the_parameter_does_not_touch_the_stored_sign_in(self) -> None:
         """The denial of service: any non-empty string used to sign the operator out."""
-        got = _redeem("http://robot.lan:8090/?token=junk", stored=SESSION)
-        assert got["before"]["token"] == SESSION, f"the stored sign-in was replaced on load: {got}"
-        assert got["token"] == SESSION
+        session = _session()
+        got = _redeem("http://robot.lan:8090/?token=junk", stored=session)
+        assert got["before"]["token"] == session, f"the stored sign-in was replaced on load: {got}"
+        assert got["token"] == session
         assert got["outcome"] == "refused"
         assert got["sent"] == [], "junk was even tried against the backend"
 
     def test_a_handoff_token_is_not_in_storage_before_it_is_redeemed(self) -> None:
-        got = _redeem(f"http://robot.lan:8090/?token={HANDOFF}")
+        handoff = _handoff()
+        got = _redeem(f"http://robot.lan:8090/?token={handoff}")
         assert got["before"] == {"token": None, "auth": ""}, f"the URL token was believed on load: {got}"
 
     def test_the_backend_is_asked_once_with_the_offered_token_and_no_is_no(self) -> None:
-        got = _redeem(f"http://robot.lan:8090/?token={HANDOFF}", answer_body=STATUS_NO)
-        assert got["sent"] == [{"url": "/api/auth/status", "bearer": f"Bearer {HANDOFF}"}], got
+        handoff = _handoff()
+        got = _redeem(f"http://robot.lan:8090/?token={handoff}", answer_body=STATUS_NO)
+        assert got["sent"] == [{"url": "/api/auth/status", "bearer": f"Bearer {handoff}"}], got
         assert got["outcome"] == "refused"
         assert got["token"] is None and got["auth"] == ""
 
     def test_a_yes_from_the_backend_adopts_the_token(self) -> None:
         """The LAN hand-off still works: the server that minted it says it is good."""
-        got = _redeem(f"http://robot.lan:8090/?token={HANDOFF}", answer_body=STATUS_YES)
+        handoff = _handoff()
+        got = _redeem(f"http://robot.lan:8090/?token={handoff}", answer_body=STATUS_YES)
         assert got["outcome"] == "adopted"
-        assert got["token"] == HANDOFF and got["auth"] == HANDOFF
+        assert got["token"] == handoff and got["auth"] == handoff
 
     def test_an_error_or_a_shapeless_answer_is_a_no(self) -> None:
+        handoff = _handoff()
         for status, body in ((500, STATUS_YES), (200, "{}"), (200, '{"authenticated": "true"}'), (200, "not json")):
-            got = _redeem(f"http://robot.lan:8090/?token={HANDOFF}", answer_status=status, answer_body=body)
+            got = _redeem(f"http://robot.lan:8090/?token={handoff}", answer_status=status, answer_body=body)
             assert got["outcome"] == "refused", (status, body, got)
             assert got["token"] is None, (status, body, got)
 
     def test_the_parameter_is_scrubbed_whatever_the_outcome(self) -> None:
+        handoff = _handoff()
         for body in (STATUS_YES, STATUS_NO):
-            got = _redeem(f"http://robot.lan:8090/?token={HANDOFF}&view=fleet", answer_body=body)
+            got = _redeem(f"http://robot.lan:8090/?token={handoff}&view=fleet", answer_body=body)
             assert got["replaced"] and all("token=" not in u for u in got["replaced"]), got["replaced"]
             assert got["replaced"][-1] == "/?view=fleet", got["replaced"]
 
     def test_no_parameter_is_nothing_to_redeem(self) -> None:
-        got = _redeem("http://robot.lan:8090/", stored=SESSION)
-        assert got["outcome"] == "none" and got["sent"] == [] and got["token"] == SESSION
+        session = _session()
+        got = _redeem("http://robot.lan:8090/", stored=session)
+        assert got["outcome"] == "none" and got["sent"] == [] and got["token"] == session
 
 
 @requires_node
 class TestOnlyAHandoffCanRideInTheUrl:
     def test_a_full_session_token_is_dropped_without_a_probe(self) -> None:
         """The server only ever puts ``via="handoff"`` tokens in a link; anything else did not come from it."""
-        got = _redeem(f"http://robot.lan:8090/?token={SESSION}", answer_body=STATUS_YES)
+        session = _session()
+        got = _redeem(f"http://robot.lan:8090/?token={session}", answer_body=STATUS_YES)
         assert got["outcome"] == "refused" and got["sent"] == [] and got["token"] is None, got
 
     def test_an_expired_handoff_is_dropped_without_a_probe(self) -> None:
-        got = _redeem(f"http://robot.lan:8090/?token={_jwt(exp=NOW - 5)}", answer_body=STATUS_YES)
+        got = _redeem(f"http://robot.lan:8090/?token={_jwt(exp=int(time.time()) - 5)}", answer_body=STATUS_YES)
         assert got["outcome"] == "refused" and got["sent"] == [], got
 
     def test_a_token_beside_a_backend_that_moves_the_page_is_dropped(self) -> None:
         """One link may not choose both the server and the credential."""
-        got = _redeem(f"http://robot.lan:8090/?backend=https://evil.example&token={HANDOFF}", answer_body=STATUS_YES)
+        handoff = _handoff()
+        got = _redeem(f"http://robot.lan:8090/?backend=https://evil.example&token={handoff}", answer_body=STATUS_YES)
         assert got["outcome"] == "refused", got
         assert got["sent"] == [], f"the token was tried somewhere: {got}"
         assert got["token"] is None
 
     def test_a_valid_existing_sign_in_is_kept_over_the_link(self) -> None:
         """Never silently replace a working session; the operator following their own link keeps it."""
-        got = _redeem(f"http://robot.lan:8090/?token={HANDOFF}", answer_body=STATUS_YES, stored=SESSION)
+        session = _session()
+        handoff = _handoff()
+        got = _redeem(f"http://robot.lan:8090/?token={handoff}", answer_body=STATUS_YES, stored=session)
         assert got["outcome"] == "refused" and got["sent"] == [], got
-        assert got["token"] == SESSION
+        assert got["token"] == session
 
     def test_an_expired_existing_sign_in_gives_way_to_a_redeemed_handoff(self) -> None:
-        got = _redeem(
-            f"http://robot.lan:8090/?token={HANDOFF}", answer_body=STATUS_YES, stored=_jwt(via="passkey", exp=NOW - 60)
-        )
-        assert got["outcome"] == "adopted" and got["token"] == HANDOFF, got
+        handoff = _handoff()
+        got = _redeem(f"http://robot.lan:8090/?token={handoff}", answer_body=STATUS_YES, stored=_session(-60))
+        assert got["outcome"] == "adopted" and got["token"] == handoff, got
 
 
 class TestTheUrlPathNeverWritesStorage:
