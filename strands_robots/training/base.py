@@ -531,8 +531,10 @@ class Trainer(ABC):
         A *local* trainer blocks until the run finishes and returns a terminal
         :class:`TrainResult` with ``metrics`` populated. A *transport* trainer
         MAY return ``running`` with a ``job_id`` that :meth:`status` polls and
-        no ``checkpoint_dir`` yet, so a caller must branch on all three
-        ``status`` values rather than read "not ``error``" as finished.
+        no ``checkpoint_dir`` yet, and a run it waits on can end ``stopped``
+        when :meth:`stop` ended it (its checkpoints kept), so a caller must
+        branch on every ``status`` value rather than read "not ``error``" as
+        finished.
         """
 
     def status(self, job_id: str) -> TrainResult:
@@ -540,8 +542,9 @@ class Trainer(ABC):
 
         Two kinds of job reach here: one launched out of band that a caller
         polls by id, and one a *transport* :meth:`train` handed back as
-        ``running`` because it outlives the submitting process. A local trainer
-        produces neither, so
+        ``running`` because it outlives the submitting process - which reads
+        ``stopped`` once :meth:`stop` has ended it. A local trainer produces
+        neither, so
         most backends inherit this default, which returns an informative
         ``error``. Backends that override read the runner's own job API
         (``sagemaker`` -> ``DescribeTrainingJob``) or parse their training logs.
