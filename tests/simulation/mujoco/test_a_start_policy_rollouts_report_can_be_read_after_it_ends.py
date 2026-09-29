@@ -50,7 +50,7 @@ def sim():
 class TestTheResultIsKept:
     def test_nothing_is_reported_before_a_rollout_ran(self, sim) -> None:
         assert sim.policy_result("so101") is None
-        assert _json(sim.stop_policy("so101"))["last_result"] is None
+        assert "last_result" not in _json(sim.stop_policy("so101"))
 
     def test_the_run_policy_envelope_is_readable_after_completion(self, sim) -> None:
         assert (
@@ -88,7 +88,10 @@ class TestTheResultIsKept:
         # In flight: the stale report is not offered as the current one.
         assert sim.policy_result("so101") is None
         stopped = sim.stop_policy("so101")
-        assert _json(stopped)["was_running"] is True
+        verdict = _json(stopped)
+        assert verdict["was_running"] is True
+        # The stop joined the worker, so the report of the run it cut short is there.
+        assert verdict["last_result"]["status"] == "success"
 
     def test_a_rollout_that_died_is_reported_as_an_error_envelope(self, sim) -> None:
         # ``remote`` against nothing: the worker's constructor refuses and the failure

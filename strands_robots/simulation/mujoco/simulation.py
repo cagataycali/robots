@@ -8330,26 +8330,17 @@ class MuJoCoSimEngine(
         # The report of the rollout that just ended, or that ended before this
         # call, travels with the verdict: it is the only place a start_policy
         # caller can read what run_policy would have returned (#4162).
+        # The key is present only when a report exists, so the idle and in-flight
+        # envelopes stay exactly what they were (stand-ins and peers pin them).
+        verdict: dict[str, Any] = {"robot": robot_name, "was_running": was_running, "exited": exited}
         last_result = self.policy_result(robot_name)
         if last_result is not None:
             first_line = str((last_result.get("content") or [{}])[0].get("text", "")).splitlines()[:1]
             msg += f"\nLast rollout on '{robot_name}' ended {last_result.get('status')}" + (
                 f": {first_line[0]}" if first_line else ""
             )
-        return {
-            "status": "success",
-            "content": [
-                {"text": msg},
-                {
-                    "json": {
-                        "robot": robot_name,
-                        "was_running": was_running,
-                        "exited": exited,
-                        "last_result": last_result,
-                    }
-                },
-            ],
-        }
+            verdict["last_result"] = last_result
+        return {"status": "success", "content": [{"text": msg}, {"json": verdict}]}
 
     # Cleanup
 
