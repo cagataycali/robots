@@ -11,10 +11,30 @@ export type TaskPhase = 'idle' | 'starting' | 'running' | 'stopping' | 'failed' 
 /** Statuses the robot uses for "a task is executing right now". */
 const RUNNING = new Set(['running', 'executing'])
 
+/**
+ * A simulation peer publishes no `task` block; its rollouts show as
+ * `state.robots.<name>.active` (mesh/core `_read_state`). Read as a status: any
+ * robot active = running, every robot reported idle = idle, nothing reported =
+ * undefined. A child peer `<sim>__<robot>` is asked about its own robot only.
+ */
+export function simActivityStatus(
+  robots: unknown, peerId?: string,
+): 'running' | 'idle' | undefined {
+  if (!robots || typeof robots !== 'object') return undefined
+  const own = peerId?.split('__')[1]
+  const entries = Object.entries(robots as Record<string, unknown>)
+    .filter(([name]) => !own || name === own)
+  const flags = entries.map(([, v]) => (v as any)?.active).filter(f => typeof f === 'boolean')
+  if (!flags.length) return undefined
+  return flags.some(Boolean) ? 'running' : 'idle'
+}
+
 /** The peer's own words about its task, or undefined when it said nothing. */
-export function reportedTaskStatus(peer: Pick<Peer, 'state' | 'presence'>): string | undefined {
+export function reportedTaskStatus(peer: Pick<Peer, 'state' | 'presence'> & { peer_id?: string }): string | undefined {
   const s = (peer.state as any)?.task?.status ?? (peer.presence as any)?.task_status
-  return typeof s === 'string' ? s : undefined
+  if (typeof s === 'string') return s
+  // #4182: a sim peer never says `task.status`; its `robots.<name>.active` is the same fact.
+  return simActivityStatus((peer.state as any)?.robots, peer.peer_id)
 }
 
 export function isRunningStatus(status: string | undefined): boolean {

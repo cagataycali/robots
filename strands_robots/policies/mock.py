@@ -5,15 +5,43 @@ import math
 from typing import Any, ClassVar
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import name_list_error, sequence_length
+from strands_robots.utils import finite_number_error, name_list_error, sequence_length
 
 logger = logging.getLogger(__name__)
 
 
 class MockPolicy(Policy):
-    """Mock policy for testing - generates smooth sinusoidal trajectories."""
+    """Mock policy for testing - generates smooth sinusoidal trajectories.
 
-    def __init__(self, **kwargs: Any) -> None:
+    Args:
+        amplitude: Peak of the per-joint sinusoid in radians (default ``0.5``),
+            before the actuator range learnt in :meth:`set_sim_context` clips
+            it. Must be a finite number of at least ``0``.
+        seed: Accepted for parity with the other providers' ``policy_config``
+            bags and recorded on the instance; the sinusoid is deterministic,
+            so it changes nothing.
+
+    The constructor declares its keywords, so the factory's near-miss screen
+    applies to the mock as to every other provider: ``policy_config={"amplitud":
+    0.5}`` is refused with a did-you-mean instead of running on the default
+    (#4165); docs/learn/policies/index.md promises a misspelled keyword is
+    refused before anything runs. The ``**kwargs`` sink stays because the
+    hardware drivers hand every provider the server address (``host``, and
+    ``port`` when one is given) whether or not it dials one; a name that is
+    not close to a declared keyword is forwarded there and logged at DEBUG,
+    which is the pass-through contract every provider with a sink has.
+
+    Raises:
+        ValueError: If ``amplitude`` is not a finite number, or is negative.
+    """
+
+    def __init__(self, amplitude: float = 0.5, seed: int | None = None, **kwargs: Any) -> None:
+        if (err := finite_number_error(amplitude, "amplitude", "MockPolicy")) is not None:
+            raise ValueError(err)
+        if float(amplitude) < 0.0:
+            raise ValueError(f"MockPolicy: amplitude must be >= 0, got {amplitude!r}. It is the peak of the sinusoid.")
+        self.amplitude = float(amplitude)
+        self.seed = seed
         self.robot_state_keys: list[str] = []
         self._step = 0
         self._ctrl_bounds: dict[str, tuple[float, float]] = {}
@@ -137,7 +165,7 @@ class MockPolicy(Policy):
             for j, key in enumerate(self.robot_state_keys):
                 freq = 0.3 + j * 0.15
                 phase = j * math.pi / 3
-                value = 0.5 * math.sin(2 * math.pi * freq * t + phase)
+                value = self.amplitude * math.sin(2 * math.pi * freq * t + phase)
                 bound = self._ctrl_bounds.get(key)
                 if bound is not None:
                     value = min(max(value, bound[0]), bound[1])
