@@ -648,7 +648,7 @@ def config_for_untagged_checkpoint(
         # module is imported; resolving the policy class does that import.
         resolve_policy_class_by_name(policy_type)
         config_cls = PreTrainedConfig.get_choice_class(policy_type)
-        with tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False) as handle:
+        with tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False, encoding="utf-8") as handle:
             json.dump(raw, handle)
             temp_path = handle.name
         try:
