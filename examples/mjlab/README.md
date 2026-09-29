@@ -346,7 +346,37 @@ Two things run 1 found, both fixed in the example afterwards:
   `train_policy` call; the proper fix belongs in
   `strands_robots/training/mjlab_tasks/export.py` (FINDINGS F15).
 
-Run 2 with both fixes follows.
+Run 2, same prompt and budget with both fixes in the example (claude-sonnet-4-6,
+7 tool uses, 21.8 min wall, GPU shared with the 02 home-pose re-run and the G1 get-up
+training). The model again asked for all three `train_policy` calls in one turn;
+`SequentialToolExecutor` ran them one after another (checkpoint stamps 04:05, 04:12,
+04:19 UTC, no CUDA-graph error), the trimmed export let arx_l5 evaluate, and the
+agent's table came out complete on the first pass. Unedited:
+
+# MuJoCo-Warp Reach Policy Leaderboard
+**Run date:** 2026-09-29 · **Steps:** 200 PPO iterations · **Envs:** 1 024 · **Eval:** 20 CPU episodes each
+
+| Rank | Arm | DoF | Train time (min) | Train `at_goal` | Eval success | Median final error (mm) | Status |
+|------|---------|-----|-----------------|-----------------|--------------|------------------------|--------|
+| 1 | koch | 6 | 7.46 | 0.6979 | 19/20 | 6.8 | ✅ OK |
+| 2 | arx_l5 | 6 | 5.87 | 0.5646 | 17/20 | 15.0 | ✅ OK |
+| 3 | so101 | 5 | 6.71 | 0.6123 | 14/20 | 12.6 | ✅ OK |
+
+> **DoF** counts actuated joints only (gripper excluded).
+> **Train `at_goal`** = `Metrics/reach/at_goal` reported at the final PPO iteration.
+> **Median final error** = median Euclidean end-effector distance to target at episode tick 150, across 20 seeded episodes.
+> Success threshold: 30 mm for so101 & koch; 61.2 mm for arx_l5 (arm-specific, as returned by `evaluate_policy`).
+
+Two readings of the agent's own footnotes. The DoF column is the agent's choice of
+convention (run 1 wrote 7 for arx_l5, run 2 writes 6 "gripper excluded"; the entity has
+8 joints and 7 actuators either way). The 61.2 mm arx_l5 threshold is the example's
+reach-scaled tolerance (30 mm x 2.04, the arm's reach relative to so101) and the agent
+reported it rather than hiding it. Run to run, koch and so101 land within 1/20 and 3 mm
+of run 1 (19/20 and 14/20 both times); arx_l5 at 17/20 @ 15.0 mm matches the run-1 actor
+re-exported by hand (17/20 @ 18 mm). Full tool-by-tool transcript:
+[`assets/transcript_fleet.md`](assets/transcript_fleet.md); run-1 table kept as
+[`assets/fleet_leaderboard_run1.md`](assets/fleet_leaderboard_run1.md), run 2 as
+[`assets/fleet_leaderboard_run2.md`](assets/fleet_leaderboard_run2.md).
 
 ## 07 Dataset factory
 
