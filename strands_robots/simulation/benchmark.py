@@ -69,6 +69,36 @@ class StepInfo:
     info: dict[str, Any] = field(default_factory=dict)
 
 
+def robot_model_is_supported(data_config: str, supported: list[str] | tuple[str, ...]) -> bool:
+    """Whether the scene robot's model is one of ``supported``, alias or canonical.
+
+    ``add_robot("go2")`` records ``data_config="go2"`` while the builtin
+    benchmark declares ``supported_robots=["unitree_go2"]``; both name the
+    same registry entry, so a literal comparison refused the robot the docs
+    invite the caller to load (#4160). Each side is folded through
+    :func:`~strands_robots.registry.robots.resolve_name`, which returns the
+    canonical name for a registered alias and the normalized spelling for
+    anything else, so a name the registry does not know still only matches
+    itself.
+
+    Args:
+        data_config: The model recorded on the scene robot.
+        supported: The benchmark's ``supported_robots``.
+
+    Returns:
+        ``True`` when ``data_config`` names a supported model.
+    """
+    if data_config in supported:
+        return True
+    from strands_robots.registry.robots import resolve_name  # noqa: PLC0415
+
+    try:
+        wanted = resolve_name(str(data_config))
+        return any(resolve_name(str(name)) == wanted for name in supported)
+    except Exception:  # noqa: BLE001 - a registry that cannot be read leaves the literal verdict
+        return False
+
+
 class BenchmarkProtocol(ABC):
     """Protocol every benchmark (LIBERO, Meta-World, custom) implements.
 
@@ -230,7 +260,7 @@ class BenchmarkProtocol(ABC):
             if robot_obj is None:
                 continue
             data_config = getattr(robot_obj, "data_config", None)
-            if data_config is None or data_config in supported:
+            if data_config is None or robot_model_is_supported(data_config, supported):
                 continue
             raise BenchmarkCompatibilityError(
                 robot_name=rname,
