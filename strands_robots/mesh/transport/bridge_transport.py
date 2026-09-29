@@ -733,6 +733,15 @@ class BridgeTransport:
         return self._iot.direct_forbidden(peer_id)
 
     @property
+    def thing_name(self) -> str:
+        """The IoT leg's MQTT client id (its Thing name), ``""`` when that leg is down.
+
+        Presence carries it as ``iot_client_id`` so a sender knows which client
+        id a 404 from the broker refers to.
+        """
+        return self._iot.thing_name if self._iot.is_alive() else ""
+
+    @property
     def raw_session(self) -> Any | None:
         """The underlying ``zenoh.Session`` for backwards compatibility.
 

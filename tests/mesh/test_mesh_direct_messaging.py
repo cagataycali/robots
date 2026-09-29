@@ -53,16 +53,23 @@ class _FakeRobot:
         return {"status": "idle"}
 
 
-def _pure_iot_with_unknown_peer(monkeypatch, backend: str = "iot", peer_known: bool = False) -> None:
-    """The 404 short-circuit applies only on the pure iot backend for a peer nobody has heard from."""
+def _pure_iot_with_unknown_peer(
+    monkeypatch, backend: str = "iot", peer_known: bool = False, iot_client_id: str | None = None
+) -> None:
+    """Shape the 404 verdict's inputs: the factory backend and the target's last presence."""
     from strands_robots.mesh.transport import factory
 
     monkeypatch.setattr(factory, "current_backend", lambda: backend)
-    monkeypatch.setattr(
-        mesh_core,
-        "_session_get_peer",
-        lambda peer_id, max_age_s=None: {"peer_id": peer_id} if peer_known else None,
-    )
+
+    def _peer(peer_id: str, max_age_s: float | None = None) -> dict[str, Any] | None:
+        if not peer_known:
+            return None
+        rec: dict[str, Any] = {"peer_id": peer_id}
+        if iot_client_id is not None:
+            rec["iot_client_id"] = iot_client_id
+        return rec
+
+    monkeypatch.setattr(mesh_core, "_session_get_peer", _peer)
 
 
 class _DirectTransport:
@@ -268,6 +275,21 @@ class TestSendGoesDirectFirst:
         assert out == {"status": "timeout"}
         assert len([k for k, _ in puts if k == "strands/so101/cmd"]) == 1
 
+    def test_a_404_for_a_peer_that_declared_that_client_id_is_final_even_while_presence_lingers(
+        self, puts, monkeypatch
+    ):
+        # Presence outlives a peer by a few seconds; the id it declared is the
+        # session the broker just said is gone, on either backend.
+        _pure_iot_with_unknown_peer(monkeypatch, backend="bridge", peer_known=True, iot_client_id="so101")
+        t = _DirectTransport([_fail("offline")])
+        m = _start(t)
+        try:
+            out = m.send("so101", {"action": "status"}, timeout=0.05)
+        finally:
+            _stop(m)
+        assert out["error"] == "peer offline (iot 404)"
+        assert [k for k, _ in puts if k == "strands/so101/cmd"] == []
+
     def test_a_404_for_a_peer_still_in_presence_publishes_instead(self, puts, monkeypatch):
         # Its MQTT client id is not its peer id (the robot_mesh gateway), so
         # the direct address misses while the topic still reaches it.
@@ -341,6 +363,21 @@ class TestSendGoesDirectFirst:
             _stop(m)
         assert t.direct_calls == []
         assert len([k for k, _ in puts if k == "strands/so101/cmd"]) == 1
+
+    def test_presence_declares_the_iot_client_id_only_with_a_direct_transport(self, puts):
+        t = _DirectTransport()
+        t.thing_name = "operator-1"  # type: ignore[attr-defined]
+        m = _start(t)
+        try:
+            assert m._build_presence()["iot_client_id"] == "operator-1"
+        finally:
+            _stop(m)
+        sess = MagicMock(spec=["put", "declare_subscriber", "is_alive", "close"])
+        m2 = _start(sess)
+        try:
+            assert "iot_client_id" not in m2._build_presence()
+        finally:
+            _stop(m2)
 
     def test_the_subscriptions_are_kept(self, puts):
         t = _DirectTransport()

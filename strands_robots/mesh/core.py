@@ -1276,6 +1276,14 @@ class Mesh(SensorLoopsMixin):
         if available_topics:
             payload["topics"] = available_topics
 
+        # The MQTT client id this peer answers direct messages under, when it
+        # has an IoT leg. A sender that gets 404 for that exact id knows the
+        # peer is gone; a peer that publishes none (Zenoh only, or a client id
+        # unlike its peer id) is still reached over publish/subscribe.
+        thing = getattr(self._direct, "thing_name", None)
+        if isinstance(thing, str) and thing:
+            payload["iot_client_id"] = thing
+
         return payload
 
     def _heartbeat_loop(self) -> None:
@@ -3548,7 +3556,7 @@ class Mesh(SensorLoopsMixin):
             if self._offline_verdict_is_final(target):
                 return "offline"
             logger.debug(
-                "[mesh] %s: %s has no IoT session under its own client id but is still reachable over "
+                "[mesh] %s: no IoT client %r is connected, but the peer may still be reachable over "
                 "publish/subscribe; publishing",
                 self.peer_id,
                 target,
@@ -3561,20 +3569,22 @@ class Mesh(SensorLoopsMixin):
         """Whether a 404 from the broker means *target* cannot be reached at all.
 
         The broker answers 404 when no client with id *target* is connected to
-        AWS IoT. That is the whole story only on the pure ``iot`` backend, and
-        only for a peer nobody has heard from: on ``bridge`` the target may be
-        a LAN peer that lives on Zenoh alone, and on either backend a peer
-        whose MQTT client id is not its peer id (the ``robot_mesh`` gateway is
-        one) still answers a publish on ``strands/{target}/cmd``. In those
-        cases the send falls back to publish exactly as ``main`` did; the
-        short-circuit is kept for the case it was measured on, a robot that
-        has left.
+        AWS IoT. That settles it in two cases: the target's last presence
+        declared ``iot_client_id == target`` (so that very session is the one
+        that is gone; presence lingers for a few seconds after a peer leaves),
+        or nobody has heard from the target at all on the pure ``iot`` backend
+        (where every peer has an IoT session). Otherwise the send falls back
+        to publish exactly as ``main`` did: on ``bridge`` an unknown target may
+        be a LAN peer that lives on Zenoh alone, and a peer whose MQTT client
+        id is not its peer id (the ``robot_mesh`` gateway) still answers a
+        publish on ``strands/{target}/cmd``.
         """
         from strands_robots.mesh.transport.factory import current_backend
 
-        if current_backend() != "iot":
-            return False
-        return _session_get_peer(target) is None
+        peer = _session_get_peer(target)
+        if peer is not None:
+            return peer.get("iot_client_id") == target
+        return current_backend() == "iot"
 
     @staticmethod
     def _direct_known_forbidden(direct: DirectSender, target: str) -> bool:
