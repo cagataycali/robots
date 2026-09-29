@@ -181,10 +181,44 @@ def train(task: str, num_envs: int, iterations: int, run_dir: Path, seed: int) -
     env.close()
 
 
-def export(task: str, checkpoint: Path, onnx: Path) -> None:
-    from strands_robots.training.mjlab_tasks.export import export_checkpoint
+EXPORT_NCONMAX = 256  # contacts per world for the one-world export env (rough terrain overflows the heuristic)
 
-    print(export_checkpoint(task_id(task), checkpoint, onnx, run_name=f"g1_{task}"))
+
+def export(task: str, checkpoint: Path, onnx: Path, device: str = "cuda:0") -> None:
+    """``strands_robots.training.mjlab_tasks.export.export_checkpoint`` with one change: an explicit nconmax.
+
+    The core exporter builds the play env with ``num_envs = 1`` and leaves ``sim.nconmax`` on
+    mjwarp's heuristic, which the rough-terrain G1 scene overflows at one world ("nconmax must
+    be >= 72"). The dynamic-batch export and the metadata are the core's own helpers.
+    """
+    from dataclasses import asdict
+
+    from mjlab.envs import ManagerBasedRlEnv
+    from mjlab.rl import RslRlVecEnvWrapper
+    from mjlab.rl.exporter_utils import attach_metadata_to_onnx, get_base_metadata
+    from mjlab.rl.runner import MjlabOnPolicyRunner
+    from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
+
+    from strands_robots.training import mjlab_tasks
+    from strands_robots.training.mjlab_tasks.export import _export_dynamic_batch
+
+    mjlab_tasks.register_all()
+    tid = task_id(task)
+    env_cfg = load_env_cfg(tid, play=True)
+    env_cfg.scene.num_envs = 1
+    env_cfg.sim.nconmax = EXPORT_NCONMAX
+    agent_cfg = load_rl_cfg(tid)
+    env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
+    try:
+        wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+        runner_cls = load_runner_cls(tid) or MjlabOnPolicyRunner
+        runner = runner_cls(wrapped, asdict(agent_cfg), device=device)
+        runner.load(str(checkpoint), load_cfg={"actor": True}, strict=True, map_location=device)
+        _export_dynamic_batch(runner, Path(onnx))
+        attach_metadata_to_onnx(str(onnx), get_base_metadata(env, f"g1_{task}"))
+    finally:
+        env.close()
+    print(onnx)
 
 
 # ------------------------------------------------------------ native eval
@@ -293,7 +327,13 @@ async def eval_s2s(onnx: str, out: Path, ticks: int) -> dict:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from sim2sim_g1_velocity import rollout  # the deep lane's harness
 
+    import strands_robots.policies.rsl_rl_onnx.policy as provider_module
+
     sim = Robot(ROBOT, backend="mujoco")
+    # The provider refuses actors with observation terms it has no builder for, before any
+    # instance can be patched; register the name first, then supply the flat-plane builder.
+    if "height_scan" not in provider_module._BUILDERS:
+        provider_module._BUILDERS = (*provider_module._BUILDERS, "height_scan")
     policy = create_policy("rsl_rl_onnx", onnx_path=onnx, robot=ROBOT)
     n_rays = 0
     if "height_scan" in policy.spec.observation_names:
