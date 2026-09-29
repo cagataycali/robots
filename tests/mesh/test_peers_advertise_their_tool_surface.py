@@ -47,6 +47,7 @@ class _Sim:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.tool_name_str: str | None = None
 
     def list_robots(self) -> list[str]:
         return ["so101"]
