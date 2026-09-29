@@ -37,7 +37,7 @@ sim.destroy()
 
 ## Configuration
 
-`IsaacConfig` fields, with defaults: `num_envs=1`, `device="cuda:0"`, `headless=True`, `physics_dt=1/120`, `rendering_dt=1/30`, `render_mode="headless"`, `gravity=(0, 0, -9.81)`, `ground_plane=True`, `stage_path="/World"`, `nucleus_url=None`, `camera_width=640`, `camera_height=480`, `verbose=False`, `extra={}`. Unknown keywords are rejected at construction rather than dropped, so `headles=False` is an error, not a silent default. The legacy `tool_name` and `default_timestep` shortcuts from `create_simulation` are still accepted.
+`IsaacConfig` fields, with defaults: `num_envs=1`, `device="cuda:0"`, `headless=True`, `physics_dt=1/120`, `rendering_dt=1/30`, `render_mode="headless"`, `gravity=(0, 0, -9.81)`, `ground_plane=True`, `stage_path="/World"`, `nucleus_url=None`, `camera_width=640`, `camera_height=480`, `verbose=False`, `extra={}`. Unknown keywords are rejected (`headles=False` is an error). The legacy `tool_name` and `default_timestep` shortcuts are still accepted.
 
 ## Differences from MuJoCo
 
@@ -45,15 +45,34 @@ sim.destroy()
 |---|---|
 | assets | URDF, MJCF (converted, `isaac/mjcf_assets.py`) and USD; meshes through `isaac/mesh_assets.py` |
 | fixed base | robots import with the root welded by default (`fixed_base=True` on the internal robot record) |
-| cameras | prims under the stage camera scope; `add_camera(parent_body=...)` is refused with the world-frame alternative named |
+| cameras | world-frame prims; `add_camera(parent_body=...)` is refused |
 | physics rate | `physics_dt` and `rendering_dt` are separate clocks |
-| WBC | cannot install the MuJoCo torque shim; a policy declaring `requires_action_controller` (`wbc`) is refused rather than rolled out without it |
+| WBC | no MuJoCo torque shim; a policy declaring `requires_action_controller` (`wbc`) is refused |
 | motion primitives | its own implementation in `isaac/motion_primitives.py` |
 | randomization | `IsaacRandomizationMixin`, same `randomize` / `set_obs_noise` names |
+
+## Threading
+
+Kit only updates on the thread that created `SimulationApp`; a worker-thread call with nothing pumping is refused. The agent-driven shape:
+
+```python
+import threading
+
+sim = create_simulation("isaac", headless=True)   # on the main thread
+sim.create_world()
+stop = threading.Event()
+
+def agent_worker():
+    sim.run_on_main(lambda: (sim.add_robot("so100"), sim.reset(), sim.step(60)))
+    stop.set()
+
+threading.Thread(target=agent_worker).start()
+sim.run_pump_forever(stop_event=stop)             # main thread runs worker jobs
+```
 
 ## Limits
 
 - Python 3.12 only, an RTX-class GPU, and a multi-gigabyte install. There is no CPU fallback; `is_available()` tells you why before anything is built.
 - Physics runs on **CPU PhysX**: `device` is reported as `device_requested` but not forwarded, because the GPU pipeline breaks incremental `add_robot`. Rendering uses the GPU.
-- Rendering is slower per frame than MuJoCo's offscreen path and faster per batch; the backend is for fidelity and scale, not for unit-test inner loops.
-- `remove_robot` deletes the articulation prim from the stage, and like a dynamic `remove_object` it invalidates the tensor view: `step()` and `send_action()` refuse until the next `reset()` rebuilds it. Build the scene and reset before posing anything.
+- Rendering is slower per frame than MuJoCo's and faster per batch: use it for fidelity, not unit-test loops.
+- `remove_robot`, like a dynamic `remove_object`, invalidates the tensor view: `step()` and `send_action()` refuse until the next `reset()`. Build the scene, then reset.

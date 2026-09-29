@@ -8916,8 +8916,8 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             "that created SimulationApp, so this call would block forever. Either call "
             "it from the owning thread, or have the owning thread run "
             "`run_pump_forever(stop_event=...)` and submit the call from the worker via "
-            "`run_on_main(lambda: ...)` (see docs/reference/simulation/isaac.md for the "
-            "agent-driven shape)."
+            "`run_on_main(lambda: ...)` (see the Threading section of docs/learn/simulation/isaac.md "
+            "for the agent-driven shape)."
         )
 
     # --- joint targets / kinematic teleport --------------------------------
@@ -9148,7 +9148,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                                 "SimulationApp, so it would sit in a queue nobody drains and never "
                                 "reach the robot. Either call it from the owning thread, or have that "
                                 "thread run run_pump_forever(stop_event=...) and submit from the "
-                                "worker (see docs/reference/simulation/isaac.md for the agent-driven shape). "
+                                "worker (see the Threading section of docs/learn/simulation/isaac.md for the agent-driven shape). "
                                 "The pose was validated and NOT applied."
                             )
                         }

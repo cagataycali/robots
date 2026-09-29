@@ -6,7 +6,7 @@ turns it into a plain ``mjcf -> usd path`` function so the Isaac backend can loa
 the *same* description file the MuJoCo backend loads.
 
 That matters because it is what makes this repository's parity claim true rather
-than aspirational. ``docs/reference/simulation/isaac.md`` promises that "the joint-name and
+than aspirational. ``docs/learn/simulation/isaac.md`` promises that "the joint-name and
 observation contract matches the MuJoCo backend, [so] policies and observation
 mappings transfer unchanged between backends", and the only way to keep that
 promise is for both backends to read one file. Measured on
@@ -402,7 +402,7 @@ def convert_mjcf_to_usd(
             "converting an MJCF description to USD requires Isaac Sim's MJCF "
             "importer extension (isaacsim.asset.importer.mjcf). It is a Kit "
             "extension, so it resolves only inside a running Isaac Sim "
-            "application - install the runtime (see docs/reference/simulation/isaac.md) "
+            "application - install the runtime (see docs/learn/simulation/isaac.md) "
             "and call this from a live simulation.",
             name="isaacsim.asset.importer.mjcf",
         ) from exc
