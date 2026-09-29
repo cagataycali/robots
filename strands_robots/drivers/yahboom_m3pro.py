@@ -49,7 +49,7 @@ node, and every write to ``/cmd_vel`` passes the shared operator gate
 base command is approved by the agent's operator, pre-approved with
 ``STRANDS_ROS2_COMMAND_ALLOW=/cmd_vel``, or refused - and a Python caller with
 no agent sets that variable, exactly as it would for
-:class:`~strands_robots.mesh.RosbridgeRobot`. The arm topics are not on the
+:class:`~strands_robots.drivers.ros.RosbridgeRobot`. The arm topics are not on the
 blocklist, so arm commands pass without a prompt, like every other arm here.
 
 **Sim parity.** :meth:`YahboomM3ProDriver.send_action` speaks the *model's*
@@ -967,7 +967,7 @@ class YahboomM3ProDriver:
         """Command a zero twist - the base's halt. The arm holds its own pose.
 
         Not exempt from the ``/cmd_vel`` gate, for the reason
-        :meth:`~strands_robots.mesh.RosbridgeRobot.stop` gives: the gate is
+        :meth:`~strands_robots.drivers.ros.RosbridgeRobot.stop` gives: the gate is
         keyed on the surface, and a payload-shaped carve-out cannot be written
         correctly. A pre-approved ``/cmd_vel`` covers the halt with the drive.
         """

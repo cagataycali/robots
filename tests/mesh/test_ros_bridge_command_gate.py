@@ -25,11 +25,11 @@ from unittest.mock import MagicMock
 import pytest
 
 import strands_robots.ros as ros_mod
-from strands_robots.mesh import RosBridgedRobot
+from strands_robots.drivers.ros import RosBridgedRobot
 
 _COMMAND_METHODS = frozenset({"drive", "stop", "navigate_to"})
 _COMMAND_ACTIONS = frozenset({"publish", "service_call", "action_send_goal"})
-_MESH_DIR = Path(ros_mod.__file__).parent / "mesh"
+_ROS_DIR = Path(ros_mod.__file__).parent / "drivers" / "ros"
 
 
 def _bridge_sources() -> list[Path]:
@@ -49,7 +49,7 @@ def _bridge_sources() -> list[Path]:
         if not getattr(cls, "__module__", "").startswith("strands_robots."):
             continue
         source = inspect.getsourcefile(cls)
-        if source and Path(source).parent == _MESH_DIR and Path(source) not in sources:
+        if source and Path(source).parent == _ROS_DIR and Path(source) not in sources:
             sources.append(Path(source))
     return sources
 
