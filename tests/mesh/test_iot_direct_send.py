@@ -50,10 +50,12 @@ class _Recorder(_X509DirectClient):
     def __init__(self, script: list[Any]) -> None:  # noqa: D107 - no socket is opened
         self.script = list(script)
         self.calls: list[tuple[str, bytes, dict[str, str]]] = []
+        self.deadlines: list[float] = []
         self.closed = False
 
-    def post(self, path: str, body: bytes, headers: dict[str, str]) -> tuple[int, bytes]:
+    def post(self, path: str, body: bytes, headers: dict[str, str], *, deadline: float = 0.0) -> tuple[int, bytes]:
         self.calls.append((path, body, headers))
+        self.deadlines.append(deadline)
         nxt = self.script.pop(0) if self.script else (200, b"")
         if isinstance(nxt, BaseException):
             raise nxt

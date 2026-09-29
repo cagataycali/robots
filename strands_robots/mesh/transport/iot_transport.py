@@ -89,8 +89,19 @@ _DIRECT_X509_PORT = 8443
 DIRECT_PAYLOAD_CAP = 128 * 1024
 
 #: The acknowledgement wait the API accepts, whole seconds. The documented
-#: example is 10; a value below 1 cannot be honoured.
+#: example is 10; a value below 1 cannot be honoured, and the API caps it at 10.
 _DIRECT_MIN_TIMEOUT_S = 1
+_DIRECT_MAX_TIMEOUT_S = 10
+
+#: MQTT keep-alive interval. The broker declares a client gone about 1.5
+#: intervals after its last packet, which bounds how long a crashed robot still
+#: reads as connected to a direct message (504 after the confirmation window
+#: instead of 404 at once).
+_KEEP_ALIVE_S = 30
+
+#: Idle HTTPS connections kept per transport. Four covers a robot's reply leg
+#: plus the dashboard's fan-out without one slow peer stalling the others.
+_POOL_SIZE = 4
 
 #: One MQTT5 user property that marks a message as a strands mesh envelope.
 #: The API wants a JSON array of ONE-KEY objects (a name/value shape is refused).
@@ -176,8 +187,8 @@ def _region_from_endpoint(endpoint: str) -> str | None:
 
 
 def _confirm_timeout_seconds(timeout: float) -> int:
-    """Whole seconds for the API's ``timeout`` query parameter, at least 1."""
-    return max(_DIRECT_MIN_TIMEOUT_S, int(timeout))
+    """Whole seconds for the API's ``timeout`` query parameter, clamped to ``[1, 10]``."""
+    return max(_DIRECT_MIN_TIMEOUT_S, min(_DIRECT_MAX_TIMEOUT_S, int(timeout)))
 
 
 def _parse_direct_error_body(body: bytes) -> tuple[str, str]:
@@ -192,69 +203,115 @@ def _parse_direct_error_body(body: bytes) -> tuple[str, str]:
 
 
 class _X509DirectClient:
-    """Persistent mTLS HTTPS connection to the Direct Messaging API on :8443.
+    """Pool of mTLS HTTPS connections to the Direct Messaging API on :8443.
 
     A fresh TLS handshake per call costs about 320 ms against the same
-    endpoint; a kept connection answers in about 80 ms, so the connection is
-    held open behind a lock and rebuilt once when the broker closes it
-    (``RemoteDisconnected`` / ``BrokenPipeError`` / ``ConnectionResetError``).
+    endpoint; a kept connection answers in about 80 ms, so idle connections
+    are kept (up to :data:`_POOL_SIZE`) and handed out one per in-flight post.
+    The lock guards only the idle list, never a request: with confirmation on,
+    a post can block for the target's PUBACK, and one lock across that wait
+    serialised every direct send in the process (measured 2, 4, 6 s for three
+    concurrent posts), stalling a robot's replies and the dashboard's fan-out
+    behind one slow peer.
+
+    Every socket or TLS failure drops the connection it happened on: a socket
+    that timed out mid-response is half-open and a later request on it
+    returns the previous response. A request whose connection was already
+    closed by the broker (stale idle connection) is retried once on a fresh
+    one, within the caller's remaining budget. The per-request socket timeout
+    is that remaining budget, so a dead network answers inside the caller's
+    ``timeout`` rather than after a fixed 15 s.
+
     The certificate is the same one the MQTT session authenticates with, so
     the IoT policy sees one identity for both legs.
     """
 
-    def __init__(self, endpoint: str, cert_path: str, key_path: str, ca_path: str, timeout: float = 15.0) -> None:
+    def __init__(self, endpoint: str, cert_path: str, key_path: str, ca_path: str) -> None:
         self._endpoint = endpoint
         self._cert_path = cert_path
         self._key_path = key_path
         self._ca_path = ca_path
-        self._timeout = timeout
-        self._conn: http.client.HTTPSConnection | None = None
+        self._idle: list[http.client.HTTPSConnection] = []
         self._lock = threading.Lock()
+        self._ctx: ssl.SSLContext | None = None
 
-    def _open(self) -> http.client.HTTPSConnection:
-        ctx = ssl.create_default_context(cafile=self._ca_path)
-        ctx.load_cert_chain(self._cert_path, self._key_path)
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-        return http.client.HTTPSConnection(self._endpoint, _DIRECT_X509_PORT, context=ctx, timeout=self._timeout)
+    def _context(self) -> ssl.SSLContext:
+        with self._lock:
+            if self._ctx is None:
+                ctx = ssl.create_default_context(cafile=self._ca_path)
+                ctx.load_cert_chain(self._cert_path, self._key_path)
+                ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+                self._ctx = ctx
+            return self._ctx
+
+    def _take(self) -> tuple[http.client.HTTPSConnection, bool]:
+        """An idle connection (``reused=True``) or a new, not yet connected one."""
+        with self._lock:
+            if self._idle:
+                return self._idle.pop(), True
+        return http.client.HTTPSConnection(self._endpoint, _DIRECT_X509_PORT, context=self._context()), False
+
+    def _give_back(self, conn: http.client.HTTPSConnection) -> None:
+        with self._lock:
+            if len(self._idle) < _POOL_SIZE:
+                self._idle.append(conn)
+                return
+        _close_quietly(conn)
 
     def close(self) -> None:
         with self._lock:
-            if self._conn is not None:
-                try:
-                    self._conn.close()
-                except Exception as exc:  # noqa: BLE001 - closing a dead socket is not news
-                    logger.debug("direct HTTPS close: %s", exc)
-                self._conn = None
+            conns, self._idle = self._idle, []
+        for conn in conns:
+            _close_quietly(conn)
 
-    def post(self, path: str, body: bytes, headers: dict[str, str]) -> tuple[int, bytes]:
-        """POST once, reconnecting a single time if the kept connection was dropped.
+    def post(self, path: str, body: bytes, headers: dict[str, str], *, deadline: float) -> tuple[int, bytes]:
+        """POST once within *deadline* (a ``time.monotonic`` instant).
+
+        A stale idle connection (closed by the broker since its last use) is
+        replaced and the request repeated once, if budget remains. Any other
+        socket, TLS or HTTP failure drops the connection and raises for the
+        caller to map to ``error``; a socket timeout raises ``TimeoutError``.
 
         Returns:
-            ``(status, body)``. Raises ``OSError`` / ``http.client.HTTPException``
-            when the second attempt fails too; the caller maps that to ``error``.
+            ``(status, body)``.
         """
-        with self._lock:
-            for attempt in (0, 1):
-                if self._conn is None:
-                    self._conn = self._open()
-                try:
-                    self._conn.request("POST", path, body=body, headers=headers)
-                    resp = self._conn.getresponse()
-                    return resp.status, resp.read()
-                except (
-                    BrokenPipeError,
-                    ConnectionResetError,  # http.client.RemoteDisconnected is one
-                    http.client.CannotSendRequest,
-                ):
-                    try:
-                        self._conn.close()
-                    finally:
-                        self._conn = None
-                    if attempt == 1:
-                        raise
-            raise http.client.HTTPException(
-                "direct HTTPS: no attempt made"
-            )  # pragma: no cover - loop always returns or raises
+        for attempt in (0, 1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("direct HTTPS: budget exhausted before the request")
+            conn, reused = self._take()
+            conn.timeout = remaining
+            if conn.sock is not None:
+                conn.sock.settimeout(remaining)
+            try:
+                conn.request("POST", path, body=body, headers=headers)
+                resp = conn.getresponse()
+                status, data = resp.status, resp.read()
+            except (ConnectionError, http.client.CannotSendRequest):
+                # ConnectionError covers BrokenPipe, ConnectionReset and
+                # http.client.RemoteDisconnected (a ConnectionResetError).
+                _close_quietly(conn)
+                if reused and attempt == 0:
+                    continue
+                raise
+            except Exception:
+                # Timeout, TLS failure, malformed response: the connection is
+                # in an unknown state and is never handed out again.
+                _close_quietly(conn)
+                raise
+            if resp.will_close:
+                _close_quietly(conn)
+            else:
+                self._give_back(conn)
+            return status, data
+        raise http.client.HTTPException("direct HTTPS: no attempt made")  # pragma: no cover - loop returns or raises
+
+
+def _close_quietly(conn: http.client.HTTPSConnection) -> None:
+    try:
+        conn.close()
+    except Exception as exc:  # noqa: BLE001 - closing a dead socket is not news
+        logger.debug("direct HTTPS close: %s", exc)
 
 
 class _SigV4DirectClient:
@@ -275,23 +332,41 @@ class _SigV4DirectClient:
         with self._lock:
             if self._client is None:
                 import boto3
+                from botocore.config import Config
 
                 region = (
                     os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or _region_from_endpoint(self._endpoint)
                 )
-                self._client = boto3.client("iot-data", region_name=region, endpoint_url=f"https://{self._endpoint}")
+                # botocore's defaults (60 s connect, 60 s read, several
+                # attempts) would let one call outlive any mesh budget; the
+                # per-call deadline below tightens the read timeout further.
+                self._client = boto3.client(
+                    "iot-data",
+                    region_name=region,
+                    endpoint_url=f"https://{self._endpoint}",
+                    config=Config(connect_timeout=5, read_timeout=15, retries={"max_attempts": 1}),
+                )
             return self._client
 
     def close(self) -> None:
         with self._lock:
             self._client = None
 
-    def send(self, params: dict[str, Any]) -> tuple[int, bytes, str]:
-        """Call the API. Returns ``(status, message_bytes, trace_id)``; maps ``ClientError`` to a status."""
+    def send(self, params: dict[str, Any], *, deadline: float) -> tuple[int, bytes, str]:
+        """Call the API within *deadline*. Returns ``(status, message_bytes, trace_id)``.
+
+        ``ClientError`` is mapped to the status the broker returned; a call
+        whose budget is already spent raises ``TimeoutError`` without a
+        request.
+        """
         from botocore.exceptions import ClientError
 
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("direct SigV4: budget exhausted before the request")
+        client = self._get()
         try:
-            out = self._get().send_direct_message(**params)
+            out = client.send_direct_message(**params)
         except ClientError as exc:
             err = exc.response.get("Error", {})
             code = str(err.get("Code", ""))
@@ -719,6 +794,12 @@ class IotMqttTransport:
                     pri_key_filepath=str(key_path),
                     ca_filepath=str(ca_path),
                     client_id=self._thing_name,  # MUST match Thing name
+                    # 30 s instead of the SDK's 1200 s: with direct messaging an
+                    # offline robot is meant to answer 404 in one round trip,
+                    # and the broker only learns a client is gone at the next
+                    # missed keep-alive (about 1.5 intervals). One PINGREQ per
+                    # 30 s is well under the metered message rate.
+                    keep_alive_interval_sec=_KEEP_ALIVE_S,
                     on_lifecycle_connection_success=self._on_connection_success,
                     on_lifecycle_connection_failure=self._on_connection_failure,
                     on_lifecycle_disconnection=self._on_disconnection,
@@ -901,6 +982,10 @@ class IotMqttTransport:
         round trip.
         """
         started = time.monotonic()
+        # ``timeout`` is the whole budget of this call: the confirmation
+        # window asked of the broker, the socket timeouts and any retry all
+        # fit inside it, so the caller's own deadline is never overrun.
+        deadline = started + max(0.0, float(timeout))
 
         def _done(delivered: bool, reason: str, trace_id: str = "", detail: str = "") -> DirectResult:
             self.direct_stats["sent"] += 1
@@ -928,20 +1013,23 @@ class IotMqttTransport:
             return _done(False, "unavailable", detail="no direct sender configured (endpoint or credentials missing)")
 
         for attempt in (0, 1):
+            confirm_window = deadline - time.monotonic()
             try:
                 if isinstance(sender, _X509DirectClient):
                     status, body = self._post_x509(
-                        sender, peer_id, key, encoded, confirm, timeout, response_key, correlation
+                        sender, peer_id, key, encoded, confirm, confirm_window, response_key, correlation, deadline
                     )
                     message, trace_id = ("", "") if status == 200 else _parse_direct_error_body(body)
                 else:
                     status, body, trace_id = self._post_sigv4(
-                        sender, peer_id, key, encoded, confirm, timeout, response_key, correlation
+                        sender, peer_id, key, encoded, confirm, confirm_window, response_key, correlation, deadline
                     )
                     message = body.decode("utf-8", "replace")
+            except TimeoutError as exc:
+                return _done(False, "error", detail=f"TimeoutError: {exc}"[:200])
             except Exception as exc:  # noqa: BLE001 - socket, TLS, botocore: all map to "error"
                 logger.debug("direct send to %s on %s failed (attempt %d): %s", peer_id, key, attempt, exc)
-                if attempt == 0:
+                if attempt == 0 and _budget_allows_retry(deadline):
                     time.sleep(0.05 + random.random() * 0.1)  # noqa: S311 - jitter, not security
                     continue
                 return _done(False, "error", detail=f"{type(exc).__name__}: {exc}"[:200])
@@ -953,7 +1041,7 @@ class IotMqttTransport:
                 with self._direct_lock:
                     self._direct_forbidden.add(peer_id)
             retryable = reason == "throttled" or (reason == "error" and status >= 500)
-            if retryable and attempt == 0:
+            if retryable and attempt == 0 and _budget_allows_retry(deadline):
                 time.sleep(0.1 + random.random() * 0.2)  # noqa: S311 - jitter, not security
                 continue
             return _done(False, reason, trace_id, message)
@@ -982,6 +1070,7 @@ class IotMqttTransport:
         timeout: float,
         response_key: str | None,
         correlation: str | None,
+        deadline: float,
     ) -> tuple[int, bytes]:
         path = f"/connections/{urllib.parse.quote(peer_id, safe='')}/messages?" + urllib.parse.urlencode(
             self._direct_query(key, confirm, timeout, response_key), quote_via=urllib.parse.quote
@@ -993,7 +1082,7 @@ class IotMqttTransport:
         }
         if correlation:
             headers["x-amz-mqtt5-correlation-data"] = base64.b64encode(correlation.encode()).decode()
-        return sender.post(path, encoded, headers)
+        return sender.post(path, encoded, headers, deadline=deadline)
 
     def _post_sigv4(
         self,
@@ -1005,6 +1094,7 @@ class IotMqttTransport:
         timeout: float,
         response_key: str | None,
         correlation: str | None,
+        deadline: float,
     ) -> tuple[int, bytes, str]:
         params: dict[str, Any] = {
             "clientId": peer_id,
@@ -1021,7 +1111,7 @@ class IotMqttTransport:
             params["responseTopic"] = response_key
         if correlation:
             params["correlationData"] = base64.b64encode(correlation.encode()).decode()
-        return sender.send(params)
+        return sender.send(params, deadline=deadline)
 
     # Pub/Sub
 
@@ -1198,6 +1288,15 @@ class IotMqttTransport:
                     handler(sample)
                 except Exception as exc:
                     logger.debug("IoT handler error on %s: %s", topic, exc)
+
+
+#: A retry is attempted only when at least this much of the budget is left:
+#: less than that buys a request that cannot finish before the caller's deadline.
+_RETRY_MIN_REMAINING_S = 0.25
+
+
+def _budget_allows_retry(deadline: float) -> bool:
+    return (deadline - time.monotonic()) >= _RETRY_MIN_REMAINING_S
 
 
 def _direct_reason_for_status(status: int) -> str:
