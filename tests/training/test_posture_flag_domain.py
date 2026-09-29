@@ -45,6 +45,7 @@ from strands_robots.training.cosmos3 import Cosmos3Trainer
 from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
+from strands_robots.training.rsl_rl import RslRlTrainer
 from strands_robots.training.sagemaker import SagemakerTrainer
 from tests.training._spec_field_reads import reads_spec_field
 
@@ -73,10 +74,10 @@ A_BOOLEAN = [
 # Which backend reads which field, by name or through a forwarding table. The
 # one-owner scan at the bottom derives the same sets from the tree, so a
 # backend that starts reading a field is graded on arrival.
-READS_RESUME = (LerobotTrainer, Gr00tTrainer, SagemakerTrainer)
+READS_RESUME = (LerobotTrainer, Gr00tTrainer, RslRlTrainer, SagemakerTrainer)
 READS_STREAMING = (LerobotTrainer, SagemakerTrainer)
 IGNORES_RESUME = (MockTrainer, Cosmos3Trainer)
-IGNORES_STREAMING = (MockTrainer, Cosmos3Trainer, Gr00tTrainer)
+IGNORES_STREAMING = (MockTrainer, Cosmos3Trainer, Gr00tTrainer, RslRlTrainer)
 
 
 @pytest.fixture
@@ -301,7 +302,12 @@ class TestTheListedReadersAgreeWithTheTree:
 
     def test_the_class_of_readers_reads_the_field_in_the_test_table(self) -> None:
         """The hand-written reader tuples above agree with the derived ones."""
-        by_module = {"lerobot.py": LerobotTrainer, "groot.py": Gr00tTrainer, "sagemaker.py": SagemakerTrainer}
+        by_module = {
+            "lerobot.py": LerobotTrainer,
+            "groot.py": Gr00tTrainer,
+            "rsl_rl.py": RslRlTrainer,
+            "sagemaker.py": SagemakerTrainer,
+        }
         for field, listed in (("resume", READS_RESUME), ("streaming", READS_STREAMING)):
             readers = {p.name for p in _trainer_modules() if reads_spec_field(p.read_text(), (field,))}
             assert {by_module[name] for name in readers} == set(listed), field

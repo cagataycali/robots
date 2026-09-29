@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--num-envs", type=int, default=512)
     p.add_argument("--transcript")
     a = p.parse_args(argv)
-    os.environ.setdefault("MUJOCO_GL", "egl")
+    os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
     robot = Robot("so101", backend="mjlab", num_envs=1)
     calls: list[dict[str, Any]] = []

@@ -14,7 +14,8 @@ import pytest
 onnx = pytest.importorskip("onnx")
 pytest.importorskip("onnxruntime")
 
-from tests.policies.rsl_rl_onnx.actor_fixture import JOINTS, write_actor as _write_actor  # noqa: E402
+from tests.policies.rsl_rl_onnx.actor_fixture import JOINTS  # noqa: E402
+from tests.policies.rsl_rl_onnx.actor_fixture import write_actor as _write_actor
 
 
 def test_locomotion_terms_and_frames(tmp_path):

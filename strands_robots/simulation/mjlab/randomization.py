@@ -37,6 +37,8 @@ from strands_robots.utils import boolean_flag_error
 
 logger = logging.getLogger(__name__)
 
+_OBS_NOISE_PARAMS: tuple[str, ...] = ("joint_pos_std", "joint_vel_std", "camera_jitter_px", "seed")
+
 _RANDOMIZE_PARAMS: tuple[str, ...] = (
     "randomize_colors",
     "randomize_lighting",
@@ -78,6 +80,8 @@ class MjlabRandomizationMixin:
         num_envs: int
         device: str
         _dr_applied: dict[str, Any] | None
+        _obs_noise: dict[str, float] | None
+        _obs_noise_rng: np.random.Generator | None
 
         def _ensure_built(self) -> None: ...
 
@@ -254,3 +258,83 @@ class MjlabRandomizationMixin:
         self._sim.forward()
         applied["position_offsets"] = offsets
         return len(offsets)
+
+    def set_obs_noise(
+        self,
+        joint_pos_std: float = 0.0,
+        joint_vel_std: float = 0.0,
+        camera_jitter_px: float = 0.0,
+        seed: int | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Configure additive Gaussian sensor noise on observations (same contract as the other backends).
+
+        Applied to every world in :meth:`get_observation_batch` and to world 0 in
+        :meth:`get_observation`; ``camera_jitter_px`` is accepted for parity but has
+        no effect here because the batched worlds have no camera stream. All zeros
+        (the default) switches the noise off.
+
+        Args:
+            joint_pos_std: Std-dev in radians added to every joint position.
+            joint_vel_std: Std-dev in rad/s added to every joint velocity.
+            camera_jitter_px: Accepted for parity; no camera stream to jitter.
+            seed: Non-negative int for a reproducible noise stream, or None.
+            **kwargs: Any other keyword is rejected by name.
+
+        Returns:
+            Status dict describing the configured noise.
+        """
+        if kwargs_error := unknown_kwargs_error("set_obs_noise", kwargs, _OBS_NOISE_PARAMS):
+            return kwargs_error
+        for label, value in (
+            ("joint_pos_std", joint_pos_std),
+            ("joint_vel_std", joint_vel_std),
+            ("camera_jitter_px", camera_jitter_px),
+        ):
+            if msg := finite_non_negative_error(value, label, "set_obs_noise"):
+                return {"status": "error", "content": [{"text": msg}]}
+        if msg := randomization_seed_error(seed, "set_obs_noise"):
+            return {"status": "error", "content": [{"text": msg}]}
+        with self._lock:
+            if joint_pos_std == 0.0 and joint_vel_std == 0.0 and camera_jitter_px == 0.0:
+                self._obs_noise = None
+                self._obs_noise_rng = None
+                return {"status": "success", "content": [{"text": "Sensor noise disabled."}]}
+            self._obs_noise = {
+                "joint_pos_std": float(joint_pos_std),
+                "joint_vel_std": float(joint_vel_std),
+                "camera_jitter_px": float(camera_jitter_px),
+            }
+            self._obs_noise_rng = np.random.default_rng(seed)
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": (
+                        f"Sensor noise: joint_pos_std={joint_pos_std}, joint_vel_std={joint_vel_std}, "
+                        f"camera_jitter_px={camera_jitter_px} (no camera stream on this backend)"
+                    )
+                }
+            ],
+        }
+
+    def _apply_obs_noise_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
+        """Add the configured Gaussian noise to ``(N, ...)`` joint tensors; base_* keys untouched."""
+        noise = getattr(self, "_obs_noise", None)
+        rng = getattr(self, "_obs_noise_rng", None)
+        if not noise or rng is None:
+            return batch
+        import torch
+
+        out: dict[str, Any] = {}
+        for k, v in batch.items():
+            if k.startswith("base_") or not hasattr(v, "shape"):
+                out[k] = v
+                continue
+            std = noise["joint_vel_std"] if k.endswith(".vel") else noise["joint_pos_std"]
+            if std <= 0.0:
+                out[k] = v
+                continue
+            eps = rng.normal(0.0, std, size=tuple(v.shape)).astype(np.float32)
+            out[k] = v + torch.as_tensor(eps, device=v.device, dtype=v.dtype)
+        return out

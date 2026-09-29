@@ -59,7 +59,7 @@ DEFAULT_TASK_FOR_EMBODIMENT: dict[str, str] = {
     "go1": "Mjlab-Velocity-Flat-Unitree-Go1",
 }
 
-_MODEL_RE = re.compile(r"^model_(\d+)\.pt$")
+_MODEL_RE = re.compile(r"^model_(\d+)\.pt\Z")
 
 #: Scalars read back from the run's TensorBoard log for the metrics verdict.
 _METRIC_TAGS: tuple[str, ...] = (
@@ -79,6 +79,18 @@ def _task_ids() -> list[str]:
 
     mjlab_tasks.register_all()
     return list(list_tasks())
+
+
+def _pin_cuda_device(device: str) -> None:
+    """Point mjlab at ``device`` through ``CUDA_VISIBLE_DEVICES``, which is where it reads it.
+
+    An explicit ``cpu`` hides every GPU; ``cuda:N`` pins ordinal ``N``; a value
+    already in the environment wins, since the operator set it on purpose.
+    """
+    if device == "cpu":
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    elif "CUDA_VISIBLE_DEVICES" not in os.environ:
+        os.environ["CUDA_VISIBLE_DEVICES"] = device.split(":")[-1] if ":" in device else "0"
 
 
 class RslRlTrainer(Trainer):
@@ -164,7 +176,7 @@ class RslRlTrainer(Trainer):
     @staticmethod
     def _read_task(run_dir: Path) -> str | None:
         marker = run_dir / "strands_task.txt"
-        return marker.read_text().strip() if marker.is_file() else None
+        return marker.read_text(encoding="utf-8").strip() if marker.is_file() else None
 
     # ---------------------------------------------------------------- train
     def train(self, spec: TrainSpec) -> TrainResult:
@@ -204,14 +216,10 @@ class RslRlTrainer(Trainer):
         stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
         log_dir = log_root / f"{stamp}_{run_name}"
         log_dir.mkdir(parents=True, exist_ok=True)
-        (log_dir / "strands_task.txt").write_text(task + "\n")
+        (log_dir / "strands_task.txt").write_text(task + "\n", encoding="utf-8")
         job_id = log_dir.name
 
-        # mjlab picks its device from CUDA_VISIBLE_DEVICES; honour an explicit cpu.
-        if device == "cpu":
-            os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        elif "CUDA_VISIBLE_DEVICES" not in os.environ:
-            os.environ["CUDA_VISIBLE_DEVICES"] = device.split(":")[-1] if ":" in device else "0"
+        _pin_cuda_device(device)
 
         t0 = time.monotonic()
         logger.info("rsl_rl: %s num_envs=%d iterations=%d -> %s", task, cfg.env.scene.num_envs, spec.steps, log_dir)

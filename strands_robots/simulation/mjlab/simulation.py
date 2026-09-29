@@ -40,11 +40,21 @@ from strands_robots.simulation.base import (
     own_keyword_names,
     reject_misspelled_kwargs,
     reject_setup_kwargs,
+    unknown_kwargs_error,
 )
 from strands_robots.simulation.mjlab.randomization import MjlabRandomizationMixin
 from strands_robots.simulation.mjlab.recording import MjlabRecordingMixin
+from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.simulation.terrain import validate_difficulty
-from strands_robots.utils import coerce_pose_vector, entity_name_error, positive_count_error, step_aborted_msg
+from strands_robots.utils import (
+    camera_name_error,
+    coerce_orientation_quaternion,
+    coerce_pose_vector,
+    coerce_rgba,
+    entity_name_error,
+    positive_count_error,
+    step_aborted_msg,
+)
 
 if TYPE_CHECKING:
     import mujoco
@@ -101,6 +111,19 @@ class _ObjectSpec:
     mass: float
     color: tuple[float, float, float, float]
     static: bool
+
+
+_ADD_OBJECT_PARAMS: tuple[str, ...] = (
+    "color",
+    "is_static",
+    "mass",
+    "name",
+    "orientation",
+    "position",
+    "shape",
+    "size",
+    "static",
+)
 
 
 class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
@@ -194,6 +217,8 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         self._render_data: Any = None
         self._build_seconds = 0.0
         self._dr_applied: dict[str, Any] | None = None
+        self._obs_noise: dict[str, float] | None = None
+        self._obs_noise_rng: np.random.Generator | None = None
         # Last on purpose: SimEngine.__del__ only runs cleanup on engines that finished __init__.
         self._init_complete = True
 
@@ -594,7 +619,9 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
                 lines.append(f"Bodies: {m.nbody} | Joints: {m.njnt} | Actuators: {m.nu} | nq={m.nq}")
             return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
-    def physics_timestep(self) -> float | None:  # method, like the ABC (base.py) and the MuJoCo backend
+    def physics_timestep(
+        self,
+    ) -> float | None:  # a method, like strands_robots.simulation.base.SimEngine and the MuJoCo backend
         """The physics timestep in seconds (robot MJCF default until ``create_world`` pins one)."""
         return self._timestep if self._timestep is not None else self._default_timestep
 
@@ -617,7 +644,7 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         pos, err = coerce_pose_vector("add_robot", "position", position, 3)
         if err:
             return {"status": "error", "content": [{"text": err}]}
-        quat, err = coerce_pose_vector("add_robot", "orientation", orientation, 4)
+        quat, err = coerce_orientation_quaternion("add_robot", "orientation", orientation)
         if err:
             return {"status": "error", "content": [{"text": err}]}
         with self._lock:
@@ -660,14 +687,12 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
                 "content": [
                     {"text": f"Added robot '{name}' ({len(spec.actuator_names)} actuators) to {self.num_envs} world(s)"}
                 ],
-                "joint_names": list(spec.joint_names),
-                "action_keys": list(spec.actuator_names),
             }
 
     def remove_robot(self, name: str) -> dict[str, Any]:
         """Drop a robot; the scene recompiles on the next physics call."""
         with self._lock:
-            if name not in self._robots:
+            if not registered(self._robots, name):
                 return {"status": "error", "content": [{"text": f"Robot '{name}' not found"}]}
             del self._robots[name]
             self._pending_ctrl.pop(name, None)
@@ -680,14 +705,14 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
 
     def robot_joint_names(self, robot_name: str) -> list[str]:
         """Joint names in MJCF order, free joint first (the recording column order)."""
-        spec = self._robots.get(robot_name)
+        spec = registry_entry(self._robots, robot_name)
         if spec is None:
             raise KeyError(f"Robot '{robot_name}' not found")
         return list(spec.joint_names)
 
     def robot_action_keys(self, robot_name: str) -> list[str]:
         """Actuator names in MJCF order: the order a numeric ``send_action`` vector uses."""
-        spec = self._robots.get(robot_name)
+        spec = registry_entry(self._robots, robot_name)
         if spec is None:
             raise KeyError(f"Robot '{robot_name}' not found")
         return list(spec.actuator_names)
@@ -695,6 +720,7 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
     def actuator_ranges(self, robot_name: str) -> dict[str, tuple[float, float]]:
         """``{action_key: (lo, hi)}`` from the MJCF ctrlrange (unbounded when unlimited)."""
         with self._lock:
+            robot_name = self._default_robot(robot_name)
             self._ensure_built()
             model = self._sim.mj_model
             ids = self._actuator_ids(robot_name)
@@ -732,12 +758,14 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
     ) -> dict[str, Any]:
         """Add a primitive (box/sphere/cylinder/capsule) as a free or static body to every world.
 
-        Parameter order is the one every backend shares (graded by
-        ``tests/simulation/test_backend_shared_parameter_order.py``); ``static`` is
+        Parameter order is the one every backend shares, so a positional call
+        written against one engine means the same on this one; ``static`` is
         accepted as the older spelling of ``is_static``.
         """
         if "static" in kwargs and is_static is None:
             is_static = bool(kwargs.pop("static"))
+        if err := unknown_kwargs_error("add_object", kwargs, _ADD_OBJECT_PARAMS):
+            return err
         static = bool(is_static)
         err = entity_name_error("add_object", "name", name)
         if err:
@@ -750,10 +778,13 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         pos, err = coerce_pose_vector("add_object", "position", position, 3)
         if err:
             return {"status": "error", "content": [{"text": err}]}
-        quat, err = coerce_pose_vector("add_object", "orientation", orientation, 4)
+        quat, err = coerce_orientation_quaternion("add_object", "orientation", orientation)
         if err:
             return {"status": "error", "content": [{"text": err}]}
         size_t = tuple(float(s) for s in (size or (0.02, 0.02, 0.02)))
+        color, _cerr = coerce_rgba("add_object", "color", color)
+        if _cerr is not None:
+            return {"status": "error", "content": [{"text": _cerr}]}
         rgba = tuple(float(c) for c in (color or (0.8, 0.2, 0.2, 1.0)))
         if len(rgba) == 3:
             rgba = (*rgba, 1.0)
@@ -776,7 +807,7 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
     def remove_object(self, name: str) -> dict[str, Any]:
         """Drop an object; the scene recompiles on the next physics call."""
         with self._lock:
-            if name not in self._objects:
+            if not registered(self._objects, name):
                 return {"status": "error", "content": [{"text": f"Object '{name}' not found"}]}
             del self._objects[name]
             self._dirty = True
@@ -793,7 +824,7 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
             if len(self._robots) != 1:
                 raise ValueError("robot_name is required when the scene has 0 or several robots")
             return next(iter(self._robots))
-        if robot_name not in self._robots:
+        if not registered(self._robots, robot_name):
             raise KeyError(f"Robot '{robot_name}' not found")
         return robot_name
 
@@ -811,12 +842,12 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
                 out[f"{j}.vel"] = jv[:, i]
             if spec.free_base:
                 # Same frames as the classic backend's free-joint block
-                # (mujoco/rendering.py): lin vel WORLD, ang vel BODY (IMU gyro).
+                # (strands_robots.simulation.mujoco.rendering): lin vel WORLD, ang vel BODY (IMU gyro).
                 out["base_pos"] = ent.data.root_link_pos_w
                 out["base_quat"] = ent.data.root_link_quat_w
                 out["base_lin_vel"] = ent.data.root_link_lin_vel_w
                 out["base_ang_vel"] = ent.data.root_link_ang_vel_b
-            return out
+            return self._apply_obs_noise_batch(out)
 
     def get_observation(self, robot_name: str | None = None, *, skip_images: bool = False) -> dict[str, Any]:
         """World-0 observation: ``joint``, ``joint.vel`` floats, ``base_*`` lists for a floating base, camera images."""
@@ -945,7 +976,7 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
                     }
                 ],
             }
-        err = entity_name_error("add_camera", "name", name)
+        err = camera_name_error("add_camera", "name", name, routes_free_camera_tokens=False)
         if err:
             return {"status": "error", "content": [{"text": err}]}
         with self._lock:
@@ -967,7 +998,7 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         with self._lock:
             self._ensure_built()
             model = self._sim.mj_model
-            cam_cfg = self._cameras.get(camera_name or "", None)
+            cam_cfg = registry_entry(self._cameras, camera_name) if camera_name is not None else None
             w = int(width or (cam_cfg or {}).get("width", self.default_width))
             h = int(height or (cam_cfg or {}).get("height", self.default_height))
             if self._renderer is None or (self._renderer.width, self._renderer.height) != (w, h):

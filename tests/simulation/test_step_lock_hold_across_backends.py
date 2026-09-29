@@ -82,9 +82,9 @@ import pytest
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
+from strands_robots.simulation.mjlab.simulation import MjlabEngine
 from strands_robots.simulation.models import SimWorld
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
-from strands_robots.simulation.mjlab.simulation import MjlabEngine
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 
 #: Batch size used by the timing tests. Deliberately not

@@ -2,7 +2,7 @@
 
 ``stop_recording`` is shared: :class:`DatasetRecordingMixin` implements the whole
 lifecycle once and the MuJoCo, Newton and Isaac backends mix it in unchanged.
-Only ``start_recording`` is per-backend, and each of the three resolves
+Only ``start_recording`` is per-backend, and each of the four resolves
 create-vs-resume itself and installs the recorder it built.
 
 That split is why a session-scoped count cannot be a per-backend detail.
@@ -81,7 +81,7 @@ def _announces_a_resume(body: str) -> bool:
     """Whether ``body`` tells the caller the dataset is being appended to.
 
     The notice comes back from ``_arm_dataset_recorder`` when the session is
-    armed with ``resumed=``, which is how the three backends keep one wording;
+    armed with ``resumed=``, which is how the four backends keep one wording;
     a backend that resolved a resume and then armed without saying so is what
     this reads for. An inline sentence counts too - what is pinned is that the
     caller is told, not how it is spelled.
@@ -107,7 +107,7 @@ class TestEveryBackendThatResumesSaysSo:
     def test_a_resuming_start_recording_tells_the_caller(self) -> None:
         """``start_recording`` read identically fresh or resumed on every backend."""
         resuming = _functions_resuming_a_dataset()
-        assert len(resuming) == 3, f"expected one resuming start_recording per backend, got {sorted(resuming)}"
+        assert len(resuming) == 4, f"expected one resuming start_recording per backend, got {sorted(resuming)}"
         silent = sorted(where for where, body in resuming.items() if not _announces_a_resume(body))
         assert silent == [], f"these resume a dataset without saying so: {silent}"
 

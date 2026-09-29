@@ -12,6 +12,12 @@ from pathlib import Path
 
 from huggingface_hub import HfApi
 
+PROVENANCE = (
+    "Trained with [mjlab](https://github.com/mujocolab/mjlab) on strands-robots' own MJCF, exported to ONNX "
+    "with mjlab metadata, and played back through `strands_robots.policies.rsl_rl_onnx` on both the "
+    "`mjlab` (MuJoCo-Warp) and `mujoco` (classic) engines."
+)
+
 
 def card(task: str, onnx: Path, evals: list[Path], note: str) -> str:
     import onnx as onnx_lib
@@ -25,9 +31,7 @@ def card(task: str, onnx: Path, evals: list[Path], note: str) -> str:
         "---",
         f"# {task} (mjlab + rsl_rl -> ONNX)",
         "",
-        "Trained with [mjlab](https://github.com/mujocolab/mjlab) on strands-robots' own MJCF, exported to ONNX "
-        "with mjlab metadata, and played back through `strands_robots.policies.rsl_rl_onnx` on both the "
-        "`mjlab` (MuJoCo-Warp) and `mujoco` (classic) engines.",
+        PROVENANCE,
         "",
         note,
         "",

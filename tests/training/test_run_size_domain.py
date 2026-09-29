@@ -39,6 +39,7 @@ from strands_robots.training.cosmos3 import Cosmos3Trainer
 from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
+from strands_robots.training.rsl_rl import RslRlTrainer
 from strands_robots.training.sagemaker import SagemakerTrainer
 
 # The two factors of the run size, and the values no backend can honor. Split
@@ -59,7 +60,8 @@ UNUSABLE = NON_POSITIVE + WRONG_TYPE + NOT_COMPARABLE
 
 # Every backend that reads the run size. The RL trainers are deliberately
 # absent - see TestTheRLTrainersIgnoreAFieldTheyDoNotRead.
-SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, Gr00tTrainer, LerobotTrainer, SagemakerTrainer)
+# RslRlTrainer is RL but reads the run size (steps = PPO iterations, global_batch_size = worlds).
+SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, Gr00tTrainer, LerobotTrainer, RslRlTrainer, SagemakerTrainer)
 
 
 @pytest.fixture

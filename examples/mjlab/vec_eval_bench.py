@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
+from strands_robots.dataset_metadata import read_dataset_episode_indices
 from strands_robots.policies import create_policy
 from strands_robots.policies.rsl_rl_onnx.policy import _SiteFK
 from strands_robots.simulation import create_simulation
@@ -40,14 +41,13 @@ def sample_targets(n: int, seed: int) -> np.ndarray:
 
 
 def dataset_truth(root: Path) -> dict:
-    import pyarrow.parquet as pq
-
-    files = sorted((root / "data").rglob("*.parquet"))
-    frames = sum(pq.read_metadata(f).num_rows for f in files)
+    """What the recorder wrote, read from the episode parquet the package itself trusts."""
+    truth = read_dataset_episode_indices(root)
     meta = json.loads((root / "meta" / "info.json").read_text()) if (root / "meta" / "info.json").exists() else {}
     return {
-        "parquet_files": len(files),
-        "frames": frames,
+        "parquet_files": len(sorted((root / "data").rglob("*.parquet"))),
+        "episodes": truth["total_episodes"],
+        "frames": truth["total_frames"],
         "info_episodes": meta.get("total_episodes"),
         "info_frames": meta.get("total_frames"),
     }
