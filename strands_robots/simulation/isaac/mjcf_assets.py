@@ -302,6 +302,25 @@ def _asset_digest(mjcf_path: str) -> str:
     return manifest.hexdigest()
 
 
+def _importer_version() -> str:
+    """Version of the toolchain that writes the USD, folded into the cache key.
+
+    The converter's output layout is version-specific: Isaac Sim 6.0.x
+    (mujoco-usd-converter 0.2.0) flattens physics inline, 6.1.x (0.5.0) puts it
+    behind a ``Physics`` variantSet. A cache keyed on the MJCF bytes alone served
+    a 6.1 conversion to a 6.0 process sharing ``~/.strands_robots``.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    parts = []
+    for dist in ("isaacsim", "mujoco-usd-converter"):
+        try:
+            parts.append(f"{dist}={version(dist)}")
+        except PackageNotFoundError:
+            parts.append(f"{dist}=?")
+    return ",".join(parts)
+
+
 def convert_mjcf_to_usd(
     mjcf_path: str,
     cache_dir: str | None = None,
@@ -377,7 +396,7 @@ def convert_mjcf_to_usd(
     # same description converted with fix_base=None, and a cache keyed on the
     # bytes alone would serve whichever was built first.
     key = hashlib.sha256(
-        f"{_asset_digest(mjcf_path)}|fix_base={fix_base}|import_scene={import_scene}".encode()
+        f"{_asset_digest(mjcf_path)}|fix_base={fix_base}|import_scene={import_scene}|importer={_importer_version()}".encode()
     ).hexdigest()
     out_dir = cache_dir if cache_dir is not None else robot_usd_cache_dir()
     os.makedirs(out_dir, exist_ok=True)

@@ -17,7 +17,7 @@ from strands_robots import Robot
 robot = Robot("tiago_dual")
 ```
 
-Aliases: `tiago++`, `pal_tiago_dual`.
+Aliases: `pal_tiago_dual`, `tiago`, `tiago++`, `tiago_pp`.
 
 ## Policies verified on this robot
 
