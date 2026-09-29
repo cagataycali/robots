@@ -860,30 +860,35 @@ if (!customElements.get("robot-viewer")) customElements.define("robot-viewer", R
 
 // Robot picker (index.md): a <select data-robot-pick> next to a viewer lists every streamable
 // robot by family; choosing one swaps the viewer's model and loads it (a user gesture, so the
-// phone rule that waits for Load 3D is satisfied).
-for (const pick of document.querySelectorAll("select[data-robot-pick]")) {
-  const viewer = pick.closest(".sr-hero__stage, .sr-hero, body")?.querySelector("robot-viewer");
-  if (!viewer) continue;
-  loadManifest().then((m) => {
-    const families = new Map();
-    for (const r of Object.values(m.robots)) {
-      if (!r.viewer) continue;
-      const fam = r.category || "other";
-      if (!families.has(fam)) families.set(fam, []);
-      families.get(fam).push(r);
-    }
-    const current = viewer.getAttribute("name");
-    pick.innerHTML = [...families.keys()].sort().map((fam) => {
-      const opts = families.get(fam).sort((a, b) => a.name.localeCompare(b.name))
-        .map((r) => `<option value="${r.name}"${r.name === current ? " selected" : ""}>${r.name}</option>`).join("");
-      return `<optgroup label="${fam}">${opts}</optgroup>`;
-    }).join("");
-  });
-  pick.addEventListener("change", () => {
-    viewer.setAttribute("name", pick.value);
-    viewer.load();
-  });
+// phone rule that waits for Load 3D is satisfied). Runs on every page Material paints, since
+// instant navigation swaps the content without reloading this module.
+function wirePickers() {
+  for (const pick of document.querySelectorAll("select[data-robot-pick]:not([data-wired])")) {
+    pick.dataset.wired = "1";
+    const viewer = pick.closest(".sr-hero__stage, .sr-hero, body")?.querySelector("robot-viewer");
+    if (!viewer) continue;
+    loadManifest().then((m) => {
+      const families = new Map();
+      for (const r of Object.values(m.robots)) {
+        if (!r.viewer) continue;
+        const fam = r.category || "other";
+        if (!families.has(fam)) families.set(fam, []);
+        families.get(fam).push(r);
+      }
+      const current = viewer.getAttribute("name");
+      pick.innerHTML = [...families.keys()].sort().map((fam) => {
+        const opts = families.get(fam).sort((a, b) => a.name.localeCompare(b.name))
+          .map((r) => `<option value="${r.name}"${r.name === current ? " selected" : ""}>${r.name}</option>`).join("");
+        return `<optgroup label="${fam}">${opts}</optgroup>`;
+      }).join("");
+    });
+    pick.addEventListener("change", () => {
+      viewer.setAttribute("name", pick.value);
+      viewer.load();
+    });
+  }
 }
+if (window.document$?.subscribe) window.document$.subscribe(wirePickers); else wirePickers();
 
 // Catalog filter chips (robots/index.md): .sr-filter button[data-family] toggles .sr-robot[data-family].
 document.addEventListener("click", (e) => {

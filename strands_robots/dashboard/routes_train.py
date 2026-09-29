@@ -79,7 +79,6 @@ async def training_datasets(
     """Datasets for the submit form's picker: local roots plus a Hub search."""
     from strands_robots.dashboard.dataset_check import mark_live_recording
 
-    active, captured = None, None
     try:
         session = getattr(request.app.state, "record", None)
         live = session.session() if session is not None else {}
@@ -262,7 +261,7 @@ async def validate_policy(
 
             _check_trust_remote_code(provider)
         except ImportError:
-            pass
+            pass  # best effort: without the factory there is no trust gate to consult
         except Exception as exc:  # noqa: BLE001 - the trust gate, verbatim
             return consent.attach_consent({"ok": False, "stage": "trust", "error": str(exc)}, exc, subject=provider)
         try:

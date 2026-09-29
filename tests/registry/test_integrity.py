@@ -387,3 +387,13 @@ def test_joint_labels_shape(registry: dict) -> None:
         if isinstance(joints, int) and len(labels) != joints:
             problems.append(f"{name}.joint_labels has {len(labels)} entries for a {joints}-joint robot")
     assert not problems, "\n".join(problems)
+
+
+def test_every_shipped_robot_key_is_already_folded(registry: dict) -> None:
+    """Every lookup folds its query, so an unfolded package key could never be found.
+
+    The loader refuses such a key only in ``user_robots.json``; the package
+    registry is held to the same rule here.
+    """
+    assert len(registry) >= 50, f"premise: the shipped registry declares few robots ({len(registry)})"
+    assert [key for key in registry if key != normalize_robot_name(key)] == []

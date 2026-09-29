@@ -233,6 +233,50 @@ class TestMultiPinRotation:
         assert provision._hash_matches_pin(b"unrelated bytes") is False
 
 
+class TestDownloadedCaPermissions:
+    """The downloaded Amazon Root CA1 copy is owner-only (mode 0o600), like the cert and key.
+
+    CodeQL py/overly-permissive-file (alert #1343): ``_ensure_ca`` used to
+    ``write_bytes`` then ``chmod 0o644``. The bytes are public, but the file
+    is the TLS trust anchor and its only reader is this user's process inside
+    the 0o700 cert_dir, so world-readable grants nothing. The file is now
+    created with ``os.open(..., O_CREAT, 0o600)`` in one step, and a pre-existing
+    file (a zero-byte CA left by an interrupted download) is re-asserted to 0o600.
+    """
+
+    def test_fresh_download_is_owner_only_and_bytes_intact(self, tmp_path, monkeypatch):
+        import stat
+
+        ca_path = tmp_path / "ca.pem"
+        monkeypatch.delenv("STRANDS_MESH_DISABLE_CA_PIN", raising=False)
+        with patch(
+            "strands_robots.mesh.iot.provision._download_with_per_socket_timeout",
+            return_value=_REAL_CA,
+        ):
+            provision._ensure_ca(ca_path)
+
+        assert ca_path.read_bytes() == _REAL_CA
+        mode = stat.S_IMODE(ca_path.stat().st_mode)
+        assert mode == 0o600, f"CA mode is 0o{mode:o}; must be 0o600 (owner-only)"
+
+    def test_existing_empty_ca_is_replaced_and_tightened(self, tmp_path, monkeypatch):
+        import stat
+
+        ca_path = tmp_path / "ca.pem"
+        ca_path.write_bytes(b"")
+        ca_path.chmod(0o644)
+        monkeypatch.delenv("STRANDS_MESH_DISABLE_CA_PIN", raising=False)
+        with patch(
+            "strands_robots.mesh.iot.provision._download_with_per_socket_timeout",
+            return_value=_REAL_CA,
+        ):
+            provision._ensure_ca(ca_path)
+
+        assert ca_path.read_bytes() == _REAL_CA
+        mode = stat.S_IMODE(ca_path.stat().st_mode)
+        assert mode == 0o600, f"CA mode is 0o{mode:o}; must be 0o600 after re-assert"
+
+
 class TestUnverifiedMarkerPermissions:
     """The CA-unverified sidecar marker must be owner-only (mode 0o600).
 

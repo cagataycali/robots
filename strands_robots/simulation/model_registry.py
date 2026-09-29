@@ -10,6 +10,7 @@ Resolution order for :func:`resolve_model`:
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 
@@ -39,17 +40,23 @@ try:
 except ImportError:
     _HAS_REGISTRY = False
 
-# Logged lazily on first resolution via _log_configuration_once() -
-# avoids noisy INFO on every ``import strands_robots``.
-_CONFIG_LOGGED = False
+
+def _log_safe(value: object) -> str:
+    """One log-line-safe rendering of a caller-supplied value.
+
+    A registry name comes from the agent, so a newline in it could forge a
+    second log record. Escaping the two line terminators keeps every value on
+    the line that logged it.
+    """
+    return str(value).replace("\n", "\\n").replace("\r", "\\r")
 
 
+# Logged lazily on first resolution - avoids noisy INFO on every
+# ``import strands_robots``. ``functools.cache`` is the run-once latch: the
+# function takes no arguments, so its first call is the only one that runs.
+@functools.cache
 def _log_configuration_once() -> None:
-    global _CONFIG_LOGGED
-    if _CONFIG_LOGGED:
-        return
     logger.debug("Asset manager available: %s", _HAS_ASSET_MANAGER)
-    _CONFIG_LOGGED = True
 
 
 # Runtime cache for user-registered URDFs
@@ -118,8 +125,8 @@ def resolve_model(name: str, prefer_scene: bool = True, *, allow_download: bool 
                 if found:
                     logger.info(
                         "resolve_model: '%s' not found; resolved via stripped name '%s'. Prefer the bare registry key.",
-                        name,
-                        stripped,
+                        _log_safe(name),
+                        _log_safe(stripped),
                     )
                     return found
 
@@ -189,7 +196,7 @@ def resolve_urdf(data_config: str) -> str | None:
                 if candidate.exists():
                     return str(candidate)
 
-    logger.debug("URDF not found for '%s' in search paths", data_config)
+    logger.debug("URDF not found for '%s' in search paths", _log_safe(data_config))
     return None
 
 
