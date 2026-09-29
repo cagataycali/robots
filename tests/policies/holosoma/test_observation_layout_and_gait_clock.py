@@ -156,3 +156,10 @@ def test_reset_restarts_the_clock() -> None:
     clock.reset()
     np.testing.assert_allclose(clock.phase, [0.0, np.pi])
     assert clock.is_standing is False
+
+
+@pytest.mark.parametrize("field", ["action_scale", "rl_rate", "gait_period", "height_cmd", "action_clip"])
+@pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf"), True, "1"])
+def test_config_scalars_are_positive_finite_numbers(field: str, bad: object) -> None:
+    with pytest.raises(ValueError, match=f"HolosomaConfig.{field} must be a positive finite number"):
+        HolosomaConfig(**{field: bad})  # type: ignore[arg-type]

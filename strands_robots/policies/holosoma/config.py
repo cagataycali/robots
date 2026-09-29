@@ -116,14 +116,12 @@ class HolosomaConfig:
                 )
         for name in ("action_scale", "rl_rate", "gait_period", "height_cmd", "action_clip"):
             value = getattr(self, name)
-            if not isinstance(value, (int, float)) or isinstance(value, bool) or math.isnan(value) or not value > 0:
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"HolosomaConfig.{name} must be a positive finite number, got {value!r}")
 
     @property
     def phase_dt(self) -> float:
         """Radians the gait phase advances per control tick: ``2*pi / (rl_rate * gait_period)``."""
-        import math
-
         return 2.0 * math.pi / (self.rl_rate * self.gait_period)
 
     def with_gains(self, kps: tuple[float, ...], kds: tuple[float, ...]) -> HolosomaConfig:
