@@ -10,9 +10,13 @@ port with the same sentence, at the same moment.
 
 from __future__ import annotations
 
+import asyncio
+from typing import Any
+
 import pytest
 
 from strands_robots import Robot
+from strands_robots.drivers.feetech import FeetechDriver
 from strands_robots.hardware_robot import _is_blank_port
 
 _MISSING = r"missing required parameter\(s\) \['port'\]"
@@ -44,16 +48,18 @@ def test_the_twin_transport_needs_no_port() -> None:
     pytest.importorskip("mujoco")
     arm = Robot("so101", mode="real", driver="strands", transport="twin", mesh=False)
     try:
+        assert isinstance(arm, FeetechDriver)
         assert arm.transport == "twin"
     finally:
-        arm.stop()
+        asyncio.run(arm.stop())
 
 
 def test_the_lerobot_path_refuses_a_blank_port_like_an_omitted_one(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("lerobot")
     monkeypatch.setattr("strands_robots.hardware_robot.scan_serial_devices", lambda: [])
     messages = []
-    for kwargs in ({}, {"port": ""}):
+    cases: tuple[dict[str, Any], ...] = ({}, {"port": ""})
+    for kwargs in cases:
         with pytest.raises(ValueError, match=_MISSING) as info:
             Robot("so101", mode="real", driver="lerobot", mesh=False, **kwargs)
         messages.append(str(info.value).split(" Config:")[0])
