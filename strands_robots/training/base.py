@@ -212,6 +212,19 @@ class Trainer(ABC):
     def provider_name(self) -> str:
         """Provider identity - MUST match the paired ``Policy.provider_name``."""
 
+    def load_call(self, exported_model: str) -> str:
+        """The ``create_policy`` call that loads *exported_model*, as one line of Python.
+
+        The default is the smart-string form ``create_policy('<path>')``, which
+        resolves to the ``lerobot_local`` provider - right for every trainer
+        whose artifact is a lerobot ``pretrained_model`` directory. A trainer
+        whose artifact belongs to a different provider (the rsl_rl ONNX actor
+        loads through ``rsl_rl_onnx``, not through lerobot) overrides this so
+        the next-step hint in the ``train_policy`` tool names a call that works
+        instead of one that raises.
+        """
+        return f"create_policy('{exported_model}')"
+
     @abstractmethod
     def validate(self, spec: TrainSpec) -> list[str]:
         """Return the problems that make *spec* unlaunchable; empty when it is.

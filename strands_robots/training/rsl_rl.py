@@ -41,6 +41,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,21 @@ DEFAULT_TASK_FOR_EMBODIMENT: dict[str, str] = {
 }
 
 _MODEL_RE = re.compile(r"^model_(\d+)\.pt\Z")
+
+#: One PPO run per process. mjlab captures the whole env step as a CUDA graph
+#: on the default stream; a second ``run_train`` started while one is capturing
+#: dies inside Warp with "Graph capture already in progress on this stream",
+#: seconds in and with no hint at the cause. The Strands default tool executor
+#: runs tool calls concurrently, so two ``train_policy`` calls in one agent turn
+#: hit exactly this. The lock turns that into an immediate, named refusal.
+_TRAIN_LOCK = threading.Lock()
+_ACTIVE_RUN: dict[str, str] = {}
+
+CONCURRENT_TRAIN_MESSAGE = (
+    "rsl_rl: a training run is already active in this process ({active}); mjlab captures CUDA graphs on "
+    "one stream, so runs are one at a time per process. Wait for it, or start the second one in another "
+    "process (an agent: SequentialToolExecutor instead of the concurrent default)."
+)
 
 #: Scalars read back from the run's TensorBoard log for the metrics verdict.
 _METRIC_TAGS: tuple[str, ...] = (
@@ -187,10 +203,22 @@ class RslRlTrainer(Trainer):
         problems = self.validate(spec)
         if problems:
             return TrainResult(status="error", job_id="", message="validation failed: " + "; ".join(problems))
+        if not _TRAIN_LOCK.acquire(blocking=False):
+            active = _ACTIVE_RUN.get("run", "unknown run")
+            return TrainResult(status="error", job_id="", message=CONCURRENT_TRAIN_MESSAGE.format(active=active))
+        try:
+            return self._train_locked(spec)
+        finally:
+            _ACTIVE_RUN.pop("run", None)
+            _TRAIN_LOCK.release()
+
+    def _train_locked(self, spec: TrainSpec) -> TrainResult:
+        """The body of :meth:`train`, entered with :data:`_TRAIN_LOCK` held."""
         self.prepare(spec)
 
         task = self.task_for(spec)
         assert task is not None
+        _ACTIVE_RUN["run"] = f"{task} x {spec.global_batch_size} envs"
         extra = spec.extra or {}
         device = str(extra.get("device", "cuda:0"))
         run_name = str(extra.get("run_name", "strands"))
@@ -276,6 +304,10 @@ class RslRlTrainer(Trainer):
         if out.is_file() and out.stat().st_mtime >= model.stat().st_mtime:
             return str(out)
         return str(export_checkpoint(task, model, out, device=device, run_name=run_dir.name))
+
+    def load_call(self, exported_model: str) -> str:
+        """The actor is ONNX for the ``rsl_rl_onnx`` provider, not a lerobot directory."""
+        return f"create_policy('rsl_rl_onnx', onnx_path='{exported_model}')"
 
     # -------------------------------------------------------------- metrics
     @staticmethod

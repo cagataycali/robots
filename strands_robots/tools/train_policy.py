@@ -47,7 +47,7 @@ def _err(text: str) -> dict[str, Any]:
     return {"status": "error", "content": [{"text": text}]}
 
 
-def _next_step_after_train(provider: str, res: Any) -> str:
+def _next_step_after_train(provider: str, res: Any, trainer: Any = None) -> str:
     """Name the step that fits a train result, never a load of an absent artifact.
 
     A non-error ``train`` result does not always carry a loadable checkpoint.
@@ -73,6 +73,11 @@ def _next_step_after_train(provider: str, res: Any) -> str:
             return unfinished
         poll = f"train_policy(action='status', provider='{provider}', job_id='{res.job_id}')"
         return f"{unfinished}\nPoll it with: {poll}"
+    if res.exported_model and trainer is not None and hasattr(trainer, "load_call"):
+        # The trainer knows which provider consumes its artifact (an rsl_rl ONNX
+        # actor loads through rsl_rl_onnx; the bare-path form would send the
+        # caller into lerobot_local and its trust gate).
+        return f"Load the result with: {trainer.load_call(res.exported_model)}"
     if res.checkpoint_dir:
         return f"Load the result with: create_policy('{res.checkpoint_dir}')"
     return "The run finished but reported no checkpoint path, so there is nothing to load yet."
@@ -318,7 +323,7 @@ def train_policy(
                 return _err(f"no checkpoint found under {output_dir} to export")
             exported = trainer.export(spec, ckpt)
             return _ok(
-                f"[{provider}] exported loadable artifact:\n{exported}\nLoad it with: create_policy('{exported}')",
+                f"[{provider}] exported loadable artifact:\n{exported}\nLoad it with: {trainer.load_call(exported)}",
                 data={"provider": provider, "exported_model": exported},
             )
 
@@ -338,7 +343,7 @@ def train_policy(
                             f"job_id: {res.job_id}\n"
                             f"checkpoint_dir: {res.checkpoint_dir}\n"
                             f"metrics: {res.metrics}\n"
-                            f"{_next_step_after_train(provider, res)}"
+                            f"{_next_step_after_train(provider, res, trainer)}"
                         )
                     },
                     {

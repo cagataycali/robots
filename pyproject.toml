@@ -513,11 +513,11 @@ sim-newton = [
 # on MuJoCo-Warp, rsl_rl training, ONNX export). Selected via
 # create_simulation("mjlab", num_envs=N) / Robot(..., backend="mjlab"). Shares
 # newton's MuJoCo 3.11 pins (mjlab pins mujoco~=3.11 + mujoco-warp~=3.11).
-# GPU/heavy - kept OUT of `[all]`. Known conflict: mjlab needs torch>=2.14
-# while `[lerobot]` (lerobot>=0.6.1) caps torch<2.12, so the two extras do not
-# resolve together in one step; install `[lerobot]` first, then this extra
-# (the LeRobot v3 recorder still imports on torch 2.14). onnxruntime serves
-# the exported policies through strands_robots.policies.rsl_rl_onnx.
+# GPU/heavy - kept OUT of `[all]` (see the `conflicts` table: mjlab's viser
+# viewer wants websockets<17). `[lerobot,sim-mjlab]` resolves in one step
+# since the torch>=2.13 override below (measured: torch 2.14 + lerobot 0.6.1;
+# the LeRobot v3 recorder runs on it). onnxruntime serves the exported
+# policies through strands_robots.policies.rsl_rl_onnx.
 sim-mjlab = [
     "strands-robots[sim-mujoco]",
     "mjlab>=1.6.0,<2.0.0",

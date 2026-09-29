@@ -162,3 +162,88 @@ class TestToolGate:
         res = tp.train_policy(action="validate", provider="mock", output_dir=str(tmp_path))
         assert res["status"] == "error"
         assert "data source" in res["content"][0]["text"]
+
+
+class TestNextStepHint:
+    def test_the_train_result_names_the_rsl_rl_onnx_load(self, monkeypatch, tmp_path):
+        """The next-step line loads the ONNX actor through its own provider.
+
+        ``create_policy('<checkpoint_dir>')`` (the generic hint) resolves to
+        ``lerobot_local`` and raises its trust gate for an rsl_rl run; the hint a
+        user copies must be the call that works.
+        """
+        import importlib
+
+        tp = importlib.import_module("strands_robots.tools.train_policy")
+
+        class _Stub(RslRlTrainer):
+            def train(self, spec):
+                from strands_robots.training.base import TrainResult
+
+                return TrainResult(
+                    status="success", job_id="j", checkpoint_dir="/r/run", exported_model="/r/run/model_29.onnx"
+                )
+
+        monkeypatch.setattr(tp, "create_trainer", lambda provider: _Stub())
+        res = tp.train_policy(
+            action="train",
+            provider="rsl_rl",
+            output_dir=str(tmp_path),
+            steps=3,
+            batch_size=16,
+            extra={"task": "Strands-Reach-SO101"},
+        )
+        text = res["content"][0]["text"]
+        assert "Load the result with: create_policy('rsl_rl_onnx', onnx_path='/r/run/model_29.onnx')" in text
+        assert "create_policy('/r/run')" not in text
+
+    def test_the_default_load_call_is_the_lerobot_path_form(self):
+        from strands_robots.training.mock import MockTrainer
+
+        assert MockTrainer().load_call("/x/pretrained_model") == "create_policy('/x/pretrained_model')"
+
+
+class TestOneRunPerProcess:
+    def test_a_second_concurrent_train_is_refused_with_the_cause(self, monkeypatch, tmp_path):
+        """Two trains in one process: the second returns a named refusal, not a Warp graph-capture error."""
+        import threading
+
+        from strands_robots.training import rsl_rl as mod
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        def fake_locked(self, spec):
+            from strands_robots.training.base import TrainResult
+
+            mod._ACTIVE_RUN["run"] = "Strands-Reach-SO101 x 16 envs"
+            entered.set()
+            release.wait(5)
+            return TrainResult(status="success", job_id="first", checkpoint_dir=str(tmp_path))
+
+        monkeypatch.setattr(RslRlTrainer, "_train_locked", fake_locked)
+        spec = TrainSpec(
+            dataset_root="",
+            output_dir=str(tmp_path),
+            steps=3,
+            global_batch_size=16,
+            extra={"task": "Strands-Reach-SO101"},
+        )
+        trainer = RslRlTrainer()
+        first: dict = {}
+        t = threading.Thread(target=lambda: first.setdefault("res", trainer.train(spec)))
+        t.start()
+        assert entered.wait(5)
+        try:
+            second = RslRlTrainer().train(spec)
+        finally:
+            release.set()
+            t.join(5)
+        assert second.status == "error"
+        assert "already active in this process" in second.message
+        assert "Strands-Reach-SO101 x 16 envs" in second.message
+        assert "SequentialToolExecutor" in second.message
+        assert first["res"].status == "success"
+        # The lock is released once the first run returns: a third run may start.
+        assert mod._TRAIN_LOCK.acquire(blocking=False)
+        mod._TRAIN_LOCK.release()

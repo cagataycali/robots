@@ -24,9 +24,11 @@ Design (see ``docs/reference/backends/mjlab.md`` and the lane STUDY):
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import time
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,7 +85,62 @@ def ensure_mjlab() -> Any:
         ) from exc
     import mjlab
 
+    _quiet_warp()
     return mjlab
+
+
+#: Below this many worlds mjlab is the wrong tool: one world steps ~47x slower
+#: than the classic MuJoCo backend on the same robot (1,100 vs 50,500 steps/s
+#: for so101) and the two cross over near 50 worlds. The docs say so; this is
+#: the code saying it, once, where a user who never read them will see it.
+SMALL_BATCH_WORLDS = 16
+
+SMALL_BATCH_MESSAGE = (
+    "MjlabEngine: num_envs={n} - mjlab steps one world far slower than backend='mujoco' "
+    "(about 47x for so101) and only pays off from ~50 worlds. Use backend='mujoco' for a single "
+    "world, or num_envs>=64 here."
+)
+
+COLD_KERNEL_CACHE_MESSAGE = (
+    "MjlabEngine: compiling MuJoCo-Warp kernels for the first time on this machine (one to three "
+    "minutes with no further output; cached under {cache} so later runs start in seconds)."
+)
+
+
+def _quiet_warp() -> None:
+    """Keep Warp's init banner and per-module ``load on device`` lines off the console.
+
+    Warp logs both at its INFO level (the default), which is 40-odd lines per
+    process before the first observation - none of them something a strands
+    user asked for, and enough to bury the two warnings that matter. Only the
+    default is changed: a caller who set ``warp.config.log_level`` (or asked for
+    DEBUG through ``STRANDS_ROBOTS_LOG_LEVEL``) keeps their setting.
+    """
+    import warp
+
+    if os.environ.get("STRANDS_ROBOTS_LOG_LEVEL", "").upper() == "DEBUG":
+        return
+    if warp.config.log_level == warp.LOG_INFO:
+        warp.config.log_level = warp.LOG_WARNING
+
+
+def warp_kernel_cache_is_cold() -> str | None:
+    """The Warp kernel cache dir when it holds no compiled MuJoCo-Warp module yet, else ``None``.
+
+    The first mjlab step on a machine JIT-compiles mujoco_warp's kernels: about
+    160 s measured on a Jetson Thor, silent. Knowing beforehand lets the engine
+    say so once instead of looking hung.
+    """
+    import warp
+
+    warp.init()
+    cache = getattr(warp.config, "kernel_cache_dir", None) or os.environ.get("WARP_CACHE_PATH")
+    if not cache:
+        return None
+    root = Path(cache)
+    if root.is_dir() and any(child.name.startswith("wp_mujoco_warp") for child in root.iterdir()):
+        return None
+    return str(root)
 
 
 @dataclass
@@ -163,6 +220,8 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         if not isinstance(default_timestep, (int, float)) or not default_timestep > 0:
             raise ValueError(f"MjlabEngine: default_timestep must be a positive number, got {default_timestep!r}")
         self.num_envs = int(num_envs)
+        if self.num_envs < SMALL_BATCH_WORLDS:
+            warnings.warn(SMALL_BATCH_MESSAGE.format(n=self.num_envs), stacklevel=2)
         self.env_spacing = float(env_spacing)
         self.default_width = int(default_width)
         self.default_height = int(default_height)
@@ -366,6 +425,9 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         t0 = time.perf_counter()
         saved = self._snapshot_joint_positions() if self._sim is not None else {}
         self._teardown_built()
+        cold_cache = warp_kernel_cache_is_cold()
+        if cold_cache:
+            logger.warning(COLD_KERNEL_CACHE_MESSAGE.format(cache=cold_cache))
 
         entities: dict[str, Any] = {}
         for name, spec in self._robots.items():

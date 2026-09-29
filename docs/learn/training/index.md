@@ -1,10 +1,10 @@
 ---
-description: What trains where: the Trainer contract, the nine trainers create_trainer knows, TrainSpec, the validate to export lifecycle, and the two agent tools.
+description: What trains where: the Trainer contract, the ten trainers create_trainer knows, TrainSpec, the validate to export lifecycle, and the two agent tools.
 ---
 
 # Training
 
-By the end of this page you can name every trainer, what it drives and on what hardware, and run the `validate` to `export` lifecycle with the mock trainer.
+Every trainer, what it drives and on what hardware, and the `validate` to `export` lifecycle run with the mock trainer.
 
 ```python
 import json
@@ -31,7 +31,7 @@ print({name: create_trainer(name).hardware_floor for name in ("lerobot_local", "
 You should see:
 
 ```text
-['cosmos3', 'fast_sac', 'fast_td3', 'groot', 'isaaclab', 'lerobot_local', 'mock', 'ppo', 'sagemaker']
+['cosmos3', 'fast_sac', 'fast_td3', 'groot', 'isaaclab', 'lerobot_local', 'mjlab', 'mock', 'ppo', 'rsl_rl', 'rsl_rl_onnx', 'sagemaker']
 []
 success ['config.json'] ['latest_loss', 'latest_step', 'learning', 'liveness_ok']
 success True
@@ -40,7 +40,7 @@ success True
 
 ## What trains where
 
-One name owns both halves: `create_policy("lerobot_local")` runs what `create_trainer("lerobot_local")` wrote, and `create_policy("rl", checkpoint_dir=...)` runs the RL trainers' `policy.pt`. Supervised trainers are declared in `registry/policies.json` under a `trainer` block; the rest register through `register_trainer`, as yours can.
+One name owns both halves: `create_policy("lerobot_local")` runs what `create_trainer("lerobot_local")` wrote, `create_policy("rl", checkpoint_dir=...)` runs the RL trainers' `policy.pt`. Supervised trainers are declared in `registry/policies.json` under a `trainer` block; the rest use `register_trainer`, as yours can.
 
 | trainer | drives | in process | floor |
 |---|---|---|---|
@@ -49,10 +49,11 @@ One name owns both halves: `create_policy("lerobot_local")` runs what `create_tr
 | `cosmos3` | `cosmos_framework` SFT: `prepare()` converts the HF checkpoint to DCP, `train()` calls `scripts.train.launch` with a TOML recipe plus overrides | yes | 8 GPUs, 80 GB, multinode |
 | `sagemaker` | submits the same `TrainSpec` to one managed SageMaker job in a caller-supplied `image_uri`; reimplements nothing | no, AWS | `instance_type="ml.g5.xlarge"` default |
 | `isaaclab` | [`isaaclab train`](isaaclab.md) (rsl_rl PPO) in `$ISAACLAB_PYTHON` | no, subprocess | 1 RTX GPU, 8 GB |
-| `mock` | writes a stub checkpoint and a job record | yes | none |
-| `ppo`, `fast_sac`, `fast_td3` | from-scratch actor-critic loops over `SimEnv` / `VecSimEnv` | yes, torch | CPU is declared sufficient for PPO on MuJoCo |
+| `rsl_rl` (alias `mjlab`, `rsl_rl_onnx`) | rsl_rl PPO on [mjlab](../simulation/mjlab.md) worlds (`batch_size`), `extra={"task": ...}`; ONNX out | yes, one run per process | 1 CUDA GPU |
+| `mock` | stub checkpoint and job record | yes | none |
+| `ppo`, `fast_sac`, `fast_td3` | from-scratch actor-critic loops over `SimEnv` / `VecSimEnv` | yes, torch | CPU suffices for PPO on MuJoCo |
 
-`hardware_floor` is advisory; `validate` checks feasibility against it and never launches.
+`hardware_floor` is advisory; `validate` checks it and never launches.
 
 ## TrainSpec
 
@@ -61,15 +62,15 @@ One dataclass for every supervised backend: `dataset_root`, `dataset_repo_id`, `
 ## Lifecycle
 
 ```python title="sketch"
-problems = trainer.validate(spec)            # pure preflight, launches nothing, empty list = launchable
+problems = trainer.validate(spec)            # pure preflight, empty list = launchable
 trainer.prepare(spec)                        # optional; cosmos3 converts the base checkpoint here
 result = trainer.train(spec)                 # TrainResult: status, job_id, checkpoint_dir, exported_model, metrics, message
-trainer.status(result.job_id)                # the "RUNNING != learning" verdict from the run's logs
+trainer.status(result.job_id)                # "RUNNING != learning" verdict from the logs
 artifact = trainer.export(spec, result.checkpoint_dir)   # a path create_policy can load
 ```
 
-`TrainResult.status` is `success`, `running` or `error`; `metrics` (`latest_loss`, `latest_step`, `learning`, `liveness_ok`) tells a live process from a learning one.
+`TrainResult.status` is `success`, `running` or `error`; `metrics` (`latest_loss`, `latest_step`, `learning`, `liveness_ok`) tells live from learning.
 
 ## From an agent
 
-`train_policy(action="train" | "validate" | "status" | "export" | "list", provider=..., ...)` mirrors `TrainSpec` and returns the same verdicts. `lerobot_train(action="start" | "status" | "stop" | "list", ...)` runs `lerobot-train` detached, for a run that outlives the agent turn. See [lerobot](lerobot.md) and the [tool reference](../../reference/tools.md).
+`train_policy(action="train" | "validate" | "status" | "export" | "list", provider=..., ...)` mirrors `TrainSpec` and returns the same verdicts. `lerobot_train(action="start" | "status" | "stop" | "list", ...)` runs `lerobot-train` detached, outliving the agent turn. See [lerobot](lerobot.md) and the [tool reference](../../reference/tools.md).
