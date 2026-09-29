@@ -1,5 +1,5 @@
 ---
-description: The Isaac Sim backend: what it needs, how to construct it, USD and MJCF loading, what differs from MuJoCo.
+description: "The Isaac Sim backend: what it needs, how to construct it, USD and MJCF loading, what differs from MuJoCo."
 ---
 
 # Isaac Sim

@@ -1,5 +1,5 @@
 ---
-description: An SO-101 in a MuJoCo world on your machine: move two joints, read them back, save a camera frame. No hardware, no GPU.
+description: "An SO-101 in a MuJoCo world on your machine: move two joints, read them back, save a camera frame. No hardware, no GPU."
 ---
 
 # First robot

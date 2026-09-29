@@ -1,5 +1,5 @@
 ---
-description: Look something up: API, tools, command line, configuration, refusal codes and changelog, each checked against the source.
+description: "Look something up: API, tools, command line, configuration, refusal codes and changelog, each checked against the source."
 ---
 
 # Reference
