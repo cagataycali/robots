@@ -66,11 +66,13 @@ from strands_robots.utils import positive_finite_number_error
 logger = logging.getLogger(__name__)
 
 #: Opt-out switch for AWS IoT Core Direct Messaging on the ``iot`` and ``bridge``
-#: backends. Domain ``"0"`` / ``"1"``; unset means on. Anything else is refused
-#: at connect with a WARNING and treated as on, the posture the other mesh
-#: switches take (``STRANDS_MESH_BRIDGE_DEDUP_STRICT``): a typo must not change
+#: backends. Same domain as ``STRANDS_MESH_BRIDGE_DEDUP_STRICT``: ``1`` /
+#: ``true`` / ``yes`` on, ``0`` / ``false`` / ``no`` off, unset means on. Anything
+#: else is reported with a WARNING and treated as on: a typo must not change
 #: how commands reach a robot, and the correct value is the one that works.
 DIRECT_ENV_VAR = "STRANDS_MESH_IOT_DIRECT"
+_DIRECT_ON = ("1", "true", "yes")
+_DIRECT_OFF = ("0", "false", "no")
 
 #: Which credential signs the HTTPS ``SendDirectMessage`` call. ``x509`` uses the
 #: robot's own certificate over port 8443 (the same identity as the MQTT
@@ -127,7 +129,7 @@ _DIRECT_BOTO_REASON: dict[str, str] = {
 
 
 def direct_messaging_enabled() -> bool:
-    """Resolve :data:`DIRECT_ENV_VAR`. Unset and ``"1"`` mean on, ``"0"`` off.
+    """Resolve :data:`DIRECT_ENV_VAR`. Unset, ``1``, ``true`` and ``yes`` mean on; ``0``, ``false`` and ``no`` off.
 
     Any other spelling is reported at WARNING and treated as on: the switch
     selects how a command reaches a robot, and the value that works is the one
@@ -137,16 +139,18 @@ def direct_messaging_enabled() -> bool:
     Returns:
         ``True`` when direct messaging may be used.
     """
-    raw = os.getenv(DIRECT_ENV_VAR, "1").strip()
-    if raw == "1":
+    raw = os.getenv(DIRECT_ENV_VAR, "1").strip().lower()
+    if raw in _DIRECT_ON:
         return True
-    if raw == "0":
+    if raw in _DIRECT_OFF:
         return False
     logger.warning(
-        "%s=%r is not one of '0' or '1' - direct messaging stays ON (the default). "
+        "%s=%r is not one of %s or %s - direct messaging stays ON (the default). "
         "Set '0' to route every command over publish/subscribe instead.",
         DIRECT_ENV_VAR,
         raw,
+        "/".join(_DIRECT_ON),
+        "/".join(_DIRECT_OFF),
     )
     return True
 

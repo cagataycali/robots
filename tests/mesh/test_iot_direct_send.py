@@ -333,23 +333,25 @@ class TestSigV4Path:
 
 
 class TestKnobs:
-    def test_direct_enabled_domain(self, monkeypatch, caplog):
+    def test_direct_enabled_domain_matches_the_other_mesh_switches(self, monkeypatch, caplog):
+        # The same words STRANDS_MESH_BRIDGE_DEDUP_STRICT accepts.
         monkeypatch.delenv(DIRECT_ENV_VAR, raising=False)
         assert direct_messaging_enabled() is True
-        monkeypatch.setenv(DIRECT_ENV_VAR, "1")
-        assert direct_messaging_enabled() is True
-        monkeypatch.setenv(DIRECT_ENV_VAR, "0")
-        assert direct_messaging_enabled() is False
-        monkeypatch.setenv(DIRECT_ENV_VAR, " 0 ")
-        assert direct_messaging_enabled() is False
+        for on in ("1", "true", "yes", " TRUE "):
+            monkeypatch.setenv(DIRECT_ENV_VAR, on)
+            assert direct_messaging_enabled() is True, on
+        for off in ("0", "false", "no", " No "):
+            monkeypatch.setenv(DIRECT_ENV_VAR, off)
+            assert direct_messaging_enabled() is False, off
+        assert caplog.text == ""
 
-    @pytest.mark.parametrize("raw", ["true", "false", "yes", "off", "2", ""])
+    @pytest.mark.parametrize("raw", ["off", "on", "2", "", "disabled"])
     def test_direct_enabled_refuses_other_spellings_loudly_and_stays_on(self, monkeypatch, caplog, raw):
         monkeypatch.setenv(DIRECT_ENV_VAR, raw)
         with caplog.at_level(logging.WARNING):
             assert direct_messaging_enabled() is True
         assert DIRECT_ENV_VAR in caplog.text
-        assert "'0' or '1'" in caplog.text
+        assert "1/true/yes" in caplog.text and "0/false/no" in caplog.text
 
     def test_auth_mode_domain(self, monkeypatch, caplog):
         monkeypatch.setenv(DIRECT_AUTH_ENV_VAR, "SigV4")
