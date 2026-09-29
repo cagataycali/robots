@@ -29,7 +29,6 @@ live):
 
 from __future__ import annotations
 
-import threading
 import types
 from typing import Any
 
@@ -40,11 +39,11 @@ pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac import randomization as rnd_module  # noqa: E402
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402
-    IsaacConfig,
     IsaacSimulation,
     _ObjectState,
     _RobotState,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 
 class _Handle:
@@ -81,14 +80,9 @@ class _Handle:
 
 
 def _engine(with_object: bool = True) -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world = types.SimpleNamespace()
     engine._world_created = True
-    engine._robots = {}
-    engine._cameras = {}
-    engine._objects = {}
     if with_object:
         state = _ObjectState(name="cube", prim_path="/World/Objects/cube", shape="box", is_static=False)
         state.handle = _Handle()

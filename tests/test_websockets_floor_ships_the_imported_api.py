@@ -146,6 +146,14 @@ _WEBSOCKETS_BEHAVIOUR_FLOORS: dict[str, str] = {
     # accepted connections too and waits for their handlers, and it is the
     # `close_connections` parameter that arrives with that change.
     "websockets.sync.server.Server.shutdown closes accepted connections (close_connections)": "17.0",
+    # Cosmos3's _RawWebsocketTransport and RemotePolicy each hold ONE client
+    # connection across every request, so neither can be a ``with connect(...)``
+    # block. 17.1 deprecates obtaining a connection without entering it (a
+    # DeprecationWarning on its first read, and connect() is announced to change
+    # behaviour when the period ends) and adds ``legacy=True`` as the supported
+    # spelling of "return the connection directly". Measured: 17.0 has no
+    # ``legacy`` parameter, 17.1 does.
+    "websockets.sync.client.connect accepts legacy=True (a held connection without a DeprecationWarning)": "17.1",
 }
 
 # A refactor that stops the walk from reaching the sources would make the
@@ -346,6 +354,20 @@ class TestTheInstalledWebsocketsShipsTheRequiredBehaviour:
         assert parameter.default is True, (
             f"PolicyServer calls Server.shutdown() with no arguments, so closing the accepted "
             f"connections has to be the default; got {parameter.default!r}"
+        )
+
+    def test_connect_takes_the_legacy_parameter(self) -> None:
+        # The flag arrives with the deprecation of a connection obtained outside
+        # a ``with`` block, which is the shape both held-connection clients use.
+        # Its absence means the installed build is older than the recorded floor
+        # and ``connect(..., legacy=True)`` would raise TypeError on the first
+        # service connect.
+        client_module = pytest.importorskip("websockets.sync.client")
+        parameter = inspect.signature(client_module.connect).parameters.get("legacy")
+        assert parameter is not None, (
+            "the installed websockets connect() takes no legacy parameter, so it is older than the "
+            "floor recorded in _WEBSOCKETS_BEHAVIOUR_FLOORS - Cosmos3's transport and RemotePolicy pass "
+            "legacy=True to hold a connection across requests"
         )
 
 

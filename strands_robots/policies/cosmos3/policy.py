@@ -414,8 +414,11 @@ class Cosmos3Policy(Policy):
     def reset(self, seed: int | None = None) -> None:
         """Per-episode reset.
 
-        Forwards a best-effort ``reset`` hint to the policy server and reseeds
-        the local NumPy RNG when ``seed`` is given.
+        Resets the diffusers backend's per-episode state, or - in service mode -
+        calls the client's ``reset``, which sends NOTHING over the wire (the
+        RoboLab protocol has no reset message; see
+        ``Cosmos3WebsocketClient.reset``), and reseeds the local RNGs when
+        ``seed`` is given.
 
         .. note::
             **The ``seed`` is NOT forwarded to the server's diffusion sampler.**

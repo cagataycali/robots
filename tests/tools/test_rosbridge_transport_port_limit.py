@@ -32,7 +32,7 @@ import pytest
 
 import strands_robots.rosbridge as transport_mod
 import strands_robots.tools.use_rosbridge as ur
-from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
+from strands_robots.drivers.ros.rosbridge_robot import RosbridgeRobot
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.utils import tcp_port_error
 
@@ -160,7 +160,7 @@ class TestTheSharedDomainIsNotNarrowedToMatch:
         root = Path(ur.__file__).resolve().parent.parent
         sources = {
             path.name: path.read_text(encoding="utf-8")
-            for glob in ("tools/*.py", "mesh/*_robot.py", "rosbridge.py")
+            for glob in ("tools/*.py", "drivers/ros/*_robot.py", "rosbridge.py")
             for path in sorted(root.glob(glob))
         }
         carriers = {name for name, text in sources.items() if "_transport_port_error" in text}

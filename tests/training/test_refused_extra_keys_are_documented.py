@@ -39,6 +39,7 @@ _DOCS: tuple[Path, ...] = (
     _REPO_ROOT / "docs" / "learn" / "training" / "index.md",
     _REPO_ROOT / "docs" / "learn" / "training" / "lerobot.md",
     _REPO_ROOT / "docs" / "learn" / "training" / "rl.md",
+    _REPO_ROOT / "docs" / "learn" / "training" / "isaaclab.md",
 )
 
 # ``extra['key']`` / ``extra["key"]`` inside a message, dotted keys included.

@@ -32,10 +32,10 @@ import pytest
 
 import strands_robots._command_gate as gate_mod
 import strands_robots.ros as ros_mod
-from strands_robots.mesh import AckermannRosRobot
+from strands_robots.drivers.ros import AckermannRosRobot
 
-_MESH_DIR = Path(ros_mod.__file__).parent / "mesh"
-_BRIDGE_SOURCE = _MESH_DIR / "ackermann_robot.py"
+_ROS_DIR = Path(ros_mod.__file__).parent / "drivers" / "ros"
+_BRIDGE_SOURCE = _ROS_DIR / "ackermann_robot.py"
 _TESTS_DIR = Path(__file__).parent
 
 _COMMAND_METHODS = frozenset({"drive", "stop", "enable", "_publish_servo"})
@@ -341,7 +341,7 @@ class TestEveryCommandingMeshBridgeHasAGateSuite:
     @staticmethod
     def _modules_sending_commands() -> set[str]:
         found: set[str] = set()
-        for path in sorted(_MESH_DIR.glob("*.py")):
+        for path in sorted(_ROS_DIR.glob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "ros_action"):

@@ -12,6 +12,7 @@ import hashlib
 import logging
 import re
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -356,17 +357,65 @@ def trained_checkpoints(query: str = "") -> list[dict[str, Any]]:
     return out
 
 
-def search(query: str = "", limit: int = 15) -> dict[str, Any]:
-    """Merged checkpoint search: trained here, then local cache, then hub."""
+_ROBOT_SEP_RE = re.compile(r"[^a-z0-9]+")
+_LETTERS_DIGITS_RE = re.compile(r"([a-z]+)(\d+)")
+
+
+def robot_tokens(robot: str) -> tuple[str, ...]:
+    """The spellings a checkpoint name may carry for a robot.
+
+    ``so101`` also matches ``so-101`` and ``so_101``; ``unitree_go2`` matches ``unitree-go2``,
+    ``unitreego2`` and the model part ``go2`` on its own. Tokens shorter than three
+    characters are dropped (``g1`` alone would match half the Hub). An empty robot yields none.
+    """
+    parts = [p for p in _ROBOT_SEP_RE.split((robot or "").strip().lower()) if p]
+    if not parts:
+        return ()
+    tokens = {"_".join(parts), "-".join(parts), "".join(parts)}
+    for part in parts if len(parts) > 1 else []:
+        tokens.add(part)
+    for token in list(tokens):
+        m = _LETTERS_DIGITS_RE.fullmatch(token)
+        if m:
+            tokens.add(f"{m.group(1)}-{m.group(2)}")
+            tokens.add(f"{m.group(1)}_{m.group(2)}")
+    return tuple(sorted((t for t in tokens if len(t) >= 3), key=lambda t: (-len(t), t)))
+
+
+def robot_matches(row: Mapping[str, Any], tokens: tuple[str, ...]) -> bool:
+    """Does this row's id or tags name the robot? A name-level hint, not a features check."""
+    if not tokens:
+        return False
+    hay = " ".join([str(row.get("repo_id") or ""), *(str(t) for t in row.get("tags") or [])]).lower()
+    return any(t in hay for t in tokens)
+
+
+def rank_for_robot(rows: list[dict[str, Any]], robot: str | None) -> list[dict[str, Any]]:
+    """Rows that name the robot first (stable within each half), each row carrying ``robot_match``.
+
+    A hint only: the policy-fit endpoint compares declared features; this orders the menu
+    so a checkpoint trained on the selected robot is what the operator sees first.
+    """
+    tokens = robot_tokens(robot or "")
+    if not tokens:
+        return rows
+    matched = [{**r, "robot_match": True} for r in rows if robot_matches(r, tokens)]
+    rest = [{**r, "robot_match": False} for r in rows if not robot_matches(r, tokens)]
+    return matched + rest
+
+
+def search(query: str = "", limit: int = 15, robot: str | None = None) -> dict[str, Any]:
+    """Merged checkpoint search: trained here, then local cache, then hub; the robot's rows first."""
     limit = clamp_limit(limit)
     trained = trained_checkpoints(query)
     local = local_checkpoints(query)
     local_ids = {r["repo_id"] for r in trained} | {r["repo_id"] for r in local}
     remote_rows, hub_problem = hub_search(query, limit=limit)
     remote = [r for r in remote_rows if r["repo_id"] not in local_ids]
-    rows = trained + local + remote
+    rows = rank_for_robot(trained + local + remote, robot)
     return {
         "query": query,
+        "robot": (robot or "").strip() or None,
         "results": rows[:limit],
         "total_matched": len(rows),
         "hub_problem": hub_problem,

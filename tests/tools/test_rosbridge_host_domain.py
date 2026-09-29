@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 
-from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
+from strands_robots.drivers.ros.rosbridge_robot import RosbridgeRobot
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.utils import dial_host_error
 
@@ -136,7 +136,7 @@ def test_an_empty_host_is_still_refused_by_the_domain_that_replaced_the_falsines
     ("module_name", "owner"),
     [
         ("strands_robots.rosbridge", "rosbridge_action"),
-        ("strands_robots.mesh.rosbridge_robot", "__init__"),
+        ("strands_robots.drivers.ros.rosbridge_robot", "__init__"),
     ],
 )
 def test_both_surfaces_read_the_shared_host_domain(module_name: str, owner: str) -> None:

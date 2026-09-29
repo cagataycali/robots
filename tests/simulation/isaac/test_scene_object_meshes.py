@@ -20,13 +20,13 @@ GPU in ``tests_integ/``.
 
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 import pytest
 
 from strands_robots.simulation.isaac.loaders import load_mjcf_scene_objects
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
+from tests.simulation._isaac_engine import isaac_engine
 
 _TETRA_OBJ = "v 0 0 0\nv 0.1 0 0\nv 0 0.2 0\nv 0 0 0.3\nf 1 2 3\nf 1 2 4\nf 1 3 4\nf 2 3 4\n"
 
@@ -228,8 +228,7 @@ class TestLoaderMeshPassthrough:
 
 
 def _make_engine() -> tuple[IsaacSimulation, dict[str, list[str]]]:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
 
     class _World:
         physics_sim_view = object()

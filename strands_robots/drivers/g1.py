@@ -655,10 +655,8 @@ class G1Driver:
                 ],
             }
         elif action == "status":
-            envelope = {
-                "status": "success",
-                "content": [{"json": await self.get_status()}],
-            }
+            # ``get_status`` already returns the envelope (#4151).
+            envelope = await self.get_status()
         elif action == "stop":
             # Report the halt outcome rather than assert one.  ``stop()`` is
             # the protocol's shutdown hook and returns ``None``, so an

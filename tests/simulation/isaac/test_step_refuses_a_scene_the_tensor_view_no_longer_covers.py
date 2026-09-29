@@ -57,7 +57,6 @@ from __future__ import annotations
 
 import logging
 import sys
-import threading
 import types
 from typing import Any
 
@@ -66,11 +65,11 @@ import pytest
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402 - after importorskip
-    IsaacConfig,
     IsaacSimulation,
     _ObjectState,
     _RobotState,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 #: The remedy every refusal has to name. An agent reads the text and nothing
 #: else, so a refusal that omits the one call that fixes the state is a dead end.
@@ -111,26 +110,14 @@ class _World:
 def _engine(with_robot: bool = False) -> Any:
     """A skeleton engine whose world is present, so the mutation and step paths
     reach their success bodies rather than the "No world created" gate."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig()
+    engine = isaac_engine()
     engine._world = _World()
     engine._world_created = True
-    engine._objects = {}
-    engine._robots = {}
-    engine._scene_objects = set()
-    engine._prim_registry = []
-    engine._cameras = {}
-    engine._sim_time = 0.0
-    engine._step_count = 0
     # ``reset`` flushes an open recording episode first, and the Isaac backend
     # keeps that state in its own dict rather than in ``_backend_state``.
-    engine._recording_state_dict = {}
     # Main-thread affinity (#1896): these pins measure the stale-view gate, not
     # kit-thread marshalling, so the call's own thread is declared the owning
     # one and the genuinely-bound helper stays on its inline path.
-    engine._main_tid = threading.get_ident()
-    engine._pump_running = False
     if with_robot:
         robot = _RobotState(name="arm", prim_path="/World/Robots/arm", joint_names=["j0"])
         engine._robots["arm"] = robot

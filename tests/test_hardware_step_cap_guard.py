@@ -38,16 +38,14 @@ policy is a structural stub.
 
 from __future__ import annotations
 
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import numpy as np
 import pytest
 
-from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState, TaskStatus
+from strands_robots.hardware_robot import TaskStatus
 from strands_robots.simulation.base import SimEngine
+from tests._hardware_robot import hardware_robot_on
 from tests.test_hardware_control_loop_rate_guard import _FakeArm
 
 # Caps the loop cannot count against. ``0`` / negative / ``nan`` / ``False``
@@ -111,21 +109,7 @@ def hw() -> Any:
     command that reached the arm. The control frequency is high so a rollout
     bounded by ``duration`` alone finishes many steps inside a short budget.
     """
-    robot = HwRobot.__new__(HwRobot)
-    robot.tool_name_str = "test_arm"
-    robot.action_horizon = 1
-    robot.data_config = None
-    robot.control_frequency = 200.0
-    robot.action_sleep_time = 1.0 / 200.0
-    robot._task_state = RobotTaskState()
-    robot._executor = ThreadPoolExecutor(max_workers=1)
-    robot._shutdown_event = threading.Event()
-    robot._stop_requested = threading.Event()
-    robot._task_admission = threading.Lock()
-    robot._task_claimed = False
-    robot.mesh = None
-    robot.peer_id = None
-    robot.robot = _FakeArm()
+    robot = hardware_robot_on(_FakeArm(), tool_name="test_arm", control_frequency=200.0, action_horizon=1)
     robot.policy_inits = []  # type: ignore[attr-defined]
 
     async def _connected() -> tuple[bool, str]:

@@ -289,11 +289,34 @@ class TestTheLandingPageShowsTheProduct:
         The section is titled "One API, sim or real"; the claim is graded on the
         method names each fence uses, so a verb renamed in one fence fails here.
         """
-        calls = {mode: names for mode, _, names in _attribute_uses_per_fence()}
+        calls = {mode: names for mode, _, names in _attribute_uses_per_fence() if "send_action" in names}
         assert {"sim", "real"} <= set(calls), f"the page carries fences for {sorted(calls)}; it promises sim and real"
         shared = {"send_action", "cleanup"}
         for mode in ("sim", "real"):
             assert shared <= set(calls[mode]), f"the {mode} fence does not call {sorted(shared - set(calls[mode]))}"
+
+    def test_the_second_pair_runs_one_checkpoint_in_sim_and_on_the_arm(self) -> None:
+        """The section "The same checkpoint, sim or real" is graded on its fences.
+
+        Both fences call ``run_policy`` then ``cleanup`` on the ``Robot`` they
+        bind, and both name the same Hub checkpoint, so a fence that quietly
+        drops back to poking joints, or runs a different checkpoint on the arm,
+        fails here.
+        """
+        calls = {mode: names for mode, _, names in _attribute_uses_per_fence() if "run_policy" in names}
+        assert {"sim", "real"} <= set(calls), (
+            f"the checkpoint pair carries fences for {sorted(calls)}; it promises sim and real"
+        )
+        for mode in ("sim", "real"):
+            assert "cleanup" in calls[mode], f"the {mode} checkpoint fence never calls cleanup"
+        checkpoints = [
+            set(re.findall(r"pretrained_name_or_path\W+([\w.-]+/[\w.-]+)", source))
+            for source in _PYTHON_FENCE.findall(LANDING_PAGE.read_text(encoding="utf-8"))
+        ]
+        checkpoints = [c for c in checkpoints if c]
+        assert len(checkpoints) == 2 and checkpoints[0] == checkpoints[1], (
+            f"the two fences name different Hub checkpoints: {checkpoints}; the section promises one checkpoint"
+        )
 
 
 def _facts() -> dict[str, int]:

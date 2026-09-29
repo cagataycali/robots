@@ -7,7 +7,7 @@ description: "PSYONIC Ability Hand (5-finger prosthetic, 11-DOF)"
 
 # PSYONIC Ability Hand (5-finger prosthetic, 11-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip">11 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:ability_hand}}
 
 <robot-viewer name="ability_hand"></robot-viewer>
 
@@ -18,5 +18,9 @@ robot = Robot("ability_hand")
 ```
 
 Aliases: `psyonic_ability_hand`.
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
 
 Model: [psyonicinc/ability-hand-api/python/ah_simulators/mujoco_xml](https://github.com/psyonicinc/ability-hand-api/tree/89407424edfc22faceaedcd7c3ea2b7947cbbb2c/python/ah_simulators/mujoco_xml), scene `scene.xml`.

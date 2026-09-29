@@ -20,6 +20,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -363,6 +364,19 @@ def _read_total_episodes(dataset_root: str) -> int:
     return declared
 
 
+def _accelerate_launcher() -> str:
+    """The ``accelerate`` console script of this interpreter's environment, else PATH's, else the bare name.
+
+    The bare name is kept as the last answer so a host without accelerate gets
+    the OS error at launch (reported by the tool), not a refusal here that would
+    guess about an environment it cannot see.
+    """
+    beside = Path(sys.executable).with_name("accelerate")
+    if beside.exists():
+        return str(beside)
+    return shutil.which("accelerate") or "accelerate"
+
+
 def _has_resumable_checkpoint(output_dir: str) -> Path | None:
     """Return the ``train_config.json`` to resume from, or None if none exists.
 
@@ -626,10 +640,14 @@ def build_train_command(
     resume_config = _has_resumable_checkpoint(output_dir) if (resume and output_dir) else None
 
     # Launcher prefix: multi-GPU goes through accelerate, single-GPU runs the
-    # module directly. Both end at the lerobot_train entrypoint.
+    # module directly. Both end at the lerobot_train entrypoint. The interpreter
+    # is this one (sys.executable), never a bare ``python`` from PATH: hosts with
+    # only ``python3`` have no such command, and a PATH ``python`` may be an
+    # interpreter without lerobot (#4166). ``accelerate`` is resolved the same
+    # way, next to this interpreter first.
     if num_gpus > 1:
         cmd = [
-            "accelerate",
+            _accelerate_launcher(),
             "launch",
             "--multi_gpu",
             f"--num_processes={num_gpus}",
@@ -639,7 +657,7 @@ def build_train_command(
             "lerobot.scripts.lerobot_train",
         ]
     else:
-        cmd = ["python", "-m", "lerobot.scripts.lerobot_train"]
+        cmd = [sys.executable, "-m", "lerobot.scripts.lerobot_train"]
 
     if resume_config is not None:
         # Resume path: lerobot loads the full config from the checkpoint file and
@@ -1051,15 +1069,23 @@ def lerobot_train(
             env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
             log_file = session_log_path(session_name)
-            with open(log_file, "w", encoding="utf-8") as f:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=f,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    start_new_session=True,
-                    env=env,
-                )
+            try:
+                with open(log_file, "w", encoding="utf-8") as f:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=f,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        start_new_session=True,
+                        env=env,
+                    )
+            except OSError as e:
+                # The launcher could not start (no such executable, permission):
+                # the tool's own error, not a traceback out of the tool runner.
+                return {
+                    "status": "error",
+                    "content": [{"text": f"Could not launch {cmd[0]!r}: {e}. Command: {' '.join(cmd)}"}],
+                }
 
             session_info: dict[str, Any] = {
                 "action": "train",
