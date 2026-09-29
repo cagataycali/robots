@@ -3708,6 +3708,12 @@ class MuJoCoSimEngine(
                     bodies.append(body_name)
         base["bodies"] = bodies
         base["methods"]["list_bodies"] = "(robot_name: str | None = None) -> dict (camera mount points)"
+        # This backend's render() takes one keyword the ABC's does not (#4154):
+        # the PNG is also written to output_path, inside the render sandbox.
+        base["methods"]["render"] = (
+            "(camera_name='default', width=None, height=None, output_path=None) -> dict"
+            "  # output_path also writes the PNG to that file, inside the render sandbox"
+        )
         # Scene-construction + object-manipulation siblings that the base
         # discovery surface omits. describe() already advertises add_object /
         # remove_object and add_robot, but an agent enumerating how to build
