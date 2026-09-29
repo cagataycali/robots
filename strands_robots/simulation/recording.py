@@ -827,6 +827,87 @@ def requested_rate_mismatch_reason(method: str, fps: Any, control_frequency: Any
     )
 
 
+class RecordedFrame:
+    """Write one rollout step to a recorder in the schema ``start_recording`` declared.
+
+    Every recording entry point - each backend's single-policy hook and
+    ``run_multi_policy``'s synchronized loop - drives some robots of a scene
+    whose dataset schema covers all of them, and owes the recorder the same
+    frame for it: the driven robots' state and action, prefixed
+    ``<robot>__<key>`` once the scene holds more than one robot; every other
+    robot's measured state (:func:`undriven_robot_state`); the scoped camera
+    arrays under their schema names; and the action columns the driven robots'
+    actuators declare, so a column the policy never produced is refused rather
+    than zero-filled. The backends differ only in how they read state and
+    cameras, so they build the parts and this writes the frame.
+
+    Args:
+        engine: The simulation engine, read for ``robot_action_keys`` and,
+            through :func:`undriven_robot_state`, for undriven robots' state.
+        driven_robots: The robots this rollout commands, in schema order.
+        robot_names: Every robot in the scene, read at each frame.
+    """
+
+    def __init__(self, engine: Any, driven_robots: Sequence[str], robot_names: Collection[str]) -> None:
+        self._engine = engine
+        self._driven = tuple(driven_robots)
+        self._robot_names = robot_names
+        self._action_keys: dict[bool, list[str]] = {}
+
+    def required_action_keys(self) -> list[str]:
+        """Return the action columns a frame owes the recorder, resolved once.
+
+        Resolved on first use rather than at construction: ``robot_action_keys``
+        is best-effort for a rollout that is not recording (a backend quirk or a
+        mid-rollout teardown may make it raise, and that must not mask the
+        runner's "robot has not moved" signal). Where a recording is attached the
+        keys are load-bearing, so a raise here correctly fails the recording; a
+        caller that wants it to fail the call instead resolves it up front.
+        """
+        multi = len(self._robot_names) > 1
+        keys = self._action_keys.get(multi)
+        if keys is None:
+            keys = [
+                f"{name}__{key}" if multi else key
+                for name in self._driven
+                for key in self._engine.robot_action_keys(name)
+            ]
+            self._action_keys[multi] = keys
+        return keys
+
+    def write(
+        self,
+        recorder: Any,
+        states: Mapping[str, Mapping[str, Any]],
+        actions: Mapping[str, Mapping[str, Any]],
+        images: Mapping[str, Any],
+        task: str | None,
+    ) -> None:
+        """Hand one step to ``recorder.add_frame``.
+
+        Args:
+            recorder: The open :class:`~strands_robots.dataset_recorder.DatasetRecorder`.
+            states: Each driven robot's state observation, keyed by robot.
+            actions: Each driven robot's action, keyed by robot.
+            images: Camera arrays already under their schema names and scope.
+            task: The task label the frame is recorded under.
+        """
+        multi = len(self._robot_names) > 1
+        observation = undriven_robot_state(self._engine, self._driven, self._robot_names)
+        action: dict[str, Any] = {}
+        for name in self._driven:
+            prefix = f"{name}__" if multi else ""
+            observation.update({prefix + key: value for key, value in states[name].items()})
+            action.update({prefix + key: value for key, value in actions[name].items()})
+        observation.update(images)
+        recorder.add_frame(
+            observation=observation,
+            action=action,
+            task=task,
+            required_action_keys=self.required_action_keys(),
+        )
+
+
 def _camera_height_width(shape: Sequence[Any], names: Sequence[str] | None) -> tuple[Any, Any]:
     """Read ``(height, width)`` from a camera feature declared in either layout.
 

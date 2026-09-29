@@ -159,7 +159,7 @@ from strands_robots.simulation.mujoco.spec_builder import (
 )
 from strands_robots.simulation.observers import RunPolicyObserver
 from strands_robots.simulation.policy_runner import CooperativeStop
-from strands_robots.simulation.recording import undriven_robot_state
+from strands_robots.simulation.recording import RecordedFrame
 from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_difficulty, validate_terrain
 from strands_robots.simulation.tool_frame import registry_tool_frame
 from strands_robots.teleop_mixin import TeleopMixin
@@ -6960,29 +6960,7 @@ class MuJoCoSimEngine(
         if world is None or not registered(world.robots, robot_name):
             return None
         lock = self._lock
-
-        # Action columns this rollout is responsible for: the driven robot's own
-        # actuators. A declared column the policy never produced cannot be written
-        # as a placeholder without persisting a command nobody issued, so
-        # ``add_frame`` refuses it.
-        #
-        # Resolved on the first recorded frame and cached, rather than up front:
-        # ``robot_action_keys`` is explicitly best-effort for the runner's
-        # fail-fast probe (a backend quirk or a mid-rollout teardown may make it
-        # raise, and that must not mask the primary "robot has not moved" signal),
-        # so the hook must not call it for a rollout that is not recording. Where a
-        # recording IS attached the keys are load-bearing - without them the frame
-        # cannot be checked - so a raise there correctly fails the recording.
-        action_key_cache: dict[bool, list[str]] = {}
-
-        def _required_action_keys(prefixed: bool) -> list[str]:
-            """Action columns this frame owes the recorder, resolved once."""
-            cached = action_key_cache.get(prefixed)
-            if cached is None:
-                keys = self.robot_action_keys(robot_name)
-                cached = [f"{robot_name}__{key}" for key in keys] if prefixed else list(keys)
-                action_key_cache[prefixed] = cached
-            return cached
+        frame = RecordedFrame(self, (robot_name,), world.robots)
 
         def _record(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             with lock:
@@ -7002,47 +6980,12 @@ class MuJoCoSimEngine(
                         # Honor the start_recording(cameras=...) scope: drop image
                         # arrays for cameras the caller chose not to record so the
                         # frame matches the (already scoped) dataset schema. None
-                        # means record every camera (legacy default).
-                        rec_cams = world._backend_state.get("recording_cameras")
-                        observation = _drop_unrecorded_cameras(observation, rec_cams)
-                        # In multi-robot scenes start_recording() declares
-                        # the dataset schema with per-robot-prefixed joint ids
-                        # (``alice__shoulder_pan``) so each agent has unique state/
-                        # action columns. But _get_sim_observation() and the action
-                        # dict use SHORT joint names (``shoulder_pan``). Without
-                        # remapping here, add_frame() looks up the prefixed schema
-                        # keys, finds nothing, and writes all-zero state/action
-                        # vectors silently. Prefix scalar obs + action keys to match
-                        # the schema. Camera values (ndarray) keep their (already
-                        # namespaced) names - dataset_recorder normalizes '/'->'__'.
-                        if len(world.robots) > 1:
-                            # The schema declares a state column for every robot in the
-                            # scene, and this frame carries only the driven robot's. An
-                            # undriven robot's columns are a readable measurement, so they
-                            # are filled from the engine at this step rather than left to
-                            # add_frame's 0.0 fill, which records them as a zero pose the
-                            # robot is not in. Driven keys win any collision.
-                            obs_keyed = undriven_robot_state(self, (robot_name,), world.robots)
-                            obs_keyed.update(
-                                {
-                                    (k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v
-                                    for k, v in observation.items()
-                                }
-                            )
-                            act_keyed = {f"{robot_name}__{k}": v for k, v in action.items()}
-                            rec.add_frame(
-                                observation=obs_keyed,
-                                action=act_keyed,
-                                task=instruction,
-                                required_action_keys=_required_action_keys(True),
-                            )
-                        else:
-                            rec.add_frame(
-                                observation=observation,
-                                action=action,
-                                task=instruction,
-                                required_action_keys=_required_action_keys(False),
-                            )
+                        # means record every camera (legacy default). Camera
+                        # arrays keep their (already namespaced) names.
+                        scoped = _drop_unrecorded_cameras(observation, world._backend_state.get("recording_cameras"))
+                        state = {k: v for k, v in scoped.items() if not isinstance(v, np.ndarray)}
+                        images = {k: v for k, v in scoped.items() if isinstance(v, np.ndarray)}
+                        frame.write(rec, {robot_name: state}, {robot_name: action}, images, instruction)
 
         return _record
 
@@ -7399,18 +7342,15 @@ class MuJoCoSimEngine(
             except Exception as exc:  # noqa: BLE001 - non-fatal, mirrors run_policy defensiveness
                 logger.debug("set_robot_state_keys(%s) failed: %s", rname, exc)
 
-        multi_robot = len(self._world.robots) > 1
         recorder = self._world._backend_state.get("dataset_recorder")
         recording = bool(self._world._backend_state.get("recording", False)) and recorder is not None
         # Every robot driven here contributes to the one merged frame, so the
-        # merged action owes a value for each of their actuators. Resolved once
-        # rather than per frame, and only when a recorder will consume it (see the
-        # note on ``robot_action_keys`` being best-effort in _make_run_policy_hook).
-        merged_required_action_keys = (
-            [f"{rname}__{key}" if multi_robot else key for rname in policies for key in self.robot_action_keys(rname)]
-            if recording
-            else []
-        )
+        # merged action owes a value for each of their actuators. Resolved up
+        # front, and only when a recorder will consume it (see
+        # RecordedFrame.required_action_keys on why it is best-effort otherwise).
+        frame = RecordedFrame(self, tuple(policies), self._world.robots)
+        if recording:
+            frame.required_action_keys()
 
         # Whether ANY policy needs images (renders are expensive; skip if none
         # need them AND we're not recording - recording always needs frames).
@@ -7554,43 +7494,18 @@ class MuJoCoSimEngine(
                     # definition), but the explicit check narrows the Optional for the
                     # type checker at the add_frame call below.
                     if recording and recorder is not None:
-                        merged_obs: dict[str, Any] = {}
-                        merged_act: dict[str, Any] = {}
-                        # The schema declares a state column for every robot in the
-                        # scene, and ``policies`` need only name robots that exist -
-                        # not all of them. A robot this call does not drive is a
-                        # readable measurement, so its columns are filled from the
-                        # engine at this step rather than left to add_frame's 0.0
-                        # fill, which records them as a zero pose the robot is not
-                        # in. Merged first, so driven keys win any collision.
-                        merged_obs.update(undriven_robot_state(self, policies, self._world.robots))
-                        for rname in policies:
-                            if multi_robot:
-                                for k, v in per_robot_obs[rname].items():
-                                    merged_obs[f"{rname}__{k}"] = v
-                                for k, v in per_robot_action[rname].items():
-                                    merged_act[f"{rname}__{k}"] = v
-                            else:
-                                merged_obs.update(per_robot_obs[rname])
-                                merged_act.update(per_robot_action[rname])
                         # Cameras are scene-global (already namespaced if injected
                         # per-robot); keep ndarray keys as-is, minus any the caller
-                        # excluded via start_recording(cameras=...).
+                        # excluded via start_recording(cameras=...). add_frame writes
+                        # to LeRobot's image-writer queue and parquet buffer; it does
+                        # not touch MuJoCo model/data. The consistent state snapshot
+                        # was already taken under self._lock in steps 1 and 3, so
+                        # holding the physics lock across frame writeout would
+                        # needlessly starve other lock holders (viewer sync,
+                        # concurrent tool reads).
                         rec_cams = self._world._backend_state.get("recording_cameras")
-                        merged_obs.update(_drop_unrecorded_cameras(camera_imgs, rec_cams))
-                        task = instr_map[next(iter(policies))]
-                        # add_frame writes to LeRobot's image-writer queue and parquet
-                        # buffer; it does not touch MuJoCo model/data. The consistent
-                        # state snapshot was already taken under self._lock in steps 1
-                        # and 3, and merged_obs/merged_act are plain copies, so holding
-                        # the physics lock across frame writeout would needlessly starve
-                        # other lock holders (viewer sync, concurrent tool reads).
-                        recorder.add_frame(
-                            observation=merged_obs,
-                            action=merged_act,
-                            task=task,
-                            required_action_keys=merged_required_action_keys,
-                        )
+                        images = _drop_unrecorded_cameras(camera_imgs, rec_cams)
+                        frame.write(recorder, per_robot_obs, per_robot_action, images, instr_map[next(iter(policies))])
 
                     step_count += 1
                     for rname in policies:
