@@ -188,7 +188,11 @@ def test_one_shot_sim_children_get_the_same_env(
     if spawner == "collect":
         out = dm.collect(dataset_root=str(tmp_path), n_episodes=1)
     else:
-        monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path))
+        # lerobot reads HF_LEROBOT_HOME once at import, so the env is not enough on a runner where it
+        # is already imported; pin the home the replay validator resolves against.
+        from strands_robots import dataset_source
+
+        monkeypatch.setattr(dataset_source, "_lerobot_home", lambda: tmp_path)
         (tmp_path / "local" / "x").mkdir(parents=True)
         out = dm.replay("local/x", episode=0, root=str(tmp_path / "local" / "x"))
     assert "error" not in out, out
