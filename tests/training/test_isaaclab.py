@@ -42,8 +42,9 @@ _ITERATION = """\
                     Mean episode length: 10.34
 """
 
-# The fake interpreter. It honours ``-m isaaclab train``, records its argv, and
-# behaves per $FAKE_ISAACLAB_MODE: ok | fail | nan | hang | slow.
+# The fake interpreter. It honours ``-m isaaclab train`` and ``play``, records
+# its argv, and behaves per $FAKE_ISAACLAB_MODE: ok | fail | nan | hang | slow |
+# play_fail.
 _FAKE = textwrap.dedent(
     """\
     #!{python}
@@ -51,6 +52,22 @@ _FAKE = textwrap.dedent(
     from pathlib import Path
 
     argv = sys.argv[1:]
+    if argv[:3] == ["-m", "isaaclab", "play"]:
+        # Playback: write the clip where Isaac Lab writes it, beside the
+        # checkpoint, export the actor, and say so the way its recorder does.
+        Path(os.environ["FAKE_ISAACLAB_ARGV"] + ".play").write_text(json.dumps(argv))
+        if os.environ.get("FAKE_ISAACLAB_MODE") == "play_fail":
+            print("Traceback (most recent call last):\\nRuntimeError: no display", flush=True)
+            sys.exit(2)
+        ckpt = Path(argv[argv.index("--checkpoint") + 1])
+        n = int(argv[argv.index("--video_length") + 1])
+        clip = ckpt.parent / "videos" / "play" / ("clip_" + ckpt.stem + "_0000.mp4")
+        clip.parent.mkdir(parents=True, exist_ok=True)
+        clip.write_bytes(b"mp4")
+        (ckpt.parent / "exported").mkdir(exist_ok=True)
+        (ckpt.parent / "exported" / "policy.pt").write_bytes(b"jit")
+        print("[INFO]: [VideoRecorder] Wrote %d frames to %s" % (n, clip), flush=True)
+        sys.exit(0)
     assert argv[:3] == ["-m", "isaaclab", "train"], argv
     Path(os.environ["FAKE_ISAACLAB_ARGV"]).write_text(json.dumps(argv))
     flags = dict(zip(argv[3::2], argv[4::2]))
@@ -553,6 +570,110 @@ class TestAnUnknownTaskIsRefusedBeforeLaunch:
         spec = TrainSpec(output_dir=str(tmp_path / "out"), steps=3, extra={"task": "Isaac-Anything"})
         assert _trainer().validate(spec) == []
         assert runtime.registered_tasks(str(fake_python)) is None
+
+
+class TestATrainedRunCanBePlayedBack:
+    def test_play_records_a_clip_with_the_physics_the_run_trained_on(self, fake_python: Path, tmp_path: Path) -> None:
+        trainer = _trainer()
+        trained = _poll(trainer, trainer.train(_spec(tmp_path, steps=3, physics="isaacsim_physx")).job_id)
+        assert trained.status == "success"
+        played = trainer.play(trained.job_id, num_envs=4, video_length=30, wait=True)
+        assert played.status == "success", played.message
+        assert played.metrics["video"].endswith("videos/play/clip_model_2_0000.mp4")
+        assert played.metrics["video_frames"] == 30 and Path(played.metrics["video"]).is_file()
+        assert played.exported_model == str(Path(trained.checkpoint_dir) / "exported" / "policy.pt")
+        argv = json.loads((tmp_path / "argv.json.play").read_text())
+        assert argv[argv.index("--checkpoint") + 1] == trained.metrics["latest_model"]
+        assert argv[argv.index("--task") + 1] == "Isaac-Cartpole" and argv[argv.index("--num_envs") + 1] == "4"
+        assert "physics=isaacsim_physx" in argv and argv[argv.index("--visualizer") + 1] == "kit"
+        assert "--video" in argv
+
+    def test_play_through_the_tool_polls_like_a_run(self, fake_python: Path, tmp_path: Path) -> None:
+        trainer = _trainer()
+        trained = _poll(trainer, trainer.train(_spec(tmp_path)).job_id)
+        launched = train_policy(action="play", provider="isaaclab", job_id=trained.job_id, extra={"video_length": 10})
+        assert launched["status"] == "success" and _json_block(launched)["status"] == "running"
+        result = _poll(_trainer(), _json_block(launched)["job_id"])
+        assert (
+            result.status == "success" and result.metrics["kind"] == "play" and result.metrics["of"] == trained.job_id
+        )
+
+    def test_a_failed_playback_names_its_cause(
+        self, fake_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        trainer = _trainer()
+        trained = _poll(trainer, trainer.train(_spec(tmp_path)).job_id)
+        monkeypatch.setenv("FAKE_ISAACLAB_MODE", "play_fail")
+        result = trainer.play(trained.job_id, wait=True)
+        assert result.status == "error" and result.metrics["failure"] == "exception"
+        assert "RuntimeError: no display" in result.message
+
+    def test_a_run_still_training_or_without_a_checkpoint_is_not_played(
+        self, fake_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FAKE_ISAACLAB_MODE", "hang")
+        trainer = _trainer()
+        live = trainer.train(_spec(tmp_path))
+        try:
+            assert "still training" in trainer.play(live.job_id).message
+        finally:
+            trainer.stop(live.job_id)
+        assert trainer.play("isaaclab-20260929-010000-0123456789ab").status == "error"
+
+    @pytest.mark.parametrize(
+        ("extra", "needle"), [({"video_length": 0}, "video_length"), ({"fps": 30}, "does not read")]
+    )
+    def test_bad_play_options_are_refused(
+        self, fake_python: Path, tmp_path: Path, extra: dict[str, Any], needle: str
+    ) -> None:
+        trained = _poll(_trainer(), _trainer().train(_spec(tmp_path)).job_id)
+        result = train_policy(action="play", provider="isaaclab", job_id=trained.job_id, extra=extra)
+        assert result["status"] == "error" and needle in result["content"][0]["text"]
+
+    def test_a_playback_does_not_block_the_next_training_run(self, fake_python: Path, tmp_path: Path) -> None:
+        trainer = _trainer()
+        trained = _poll(trainer, trainer.train(_spec(tmp_path)).job_id)
+        trainer.play(trained.job_id, wait=True)
+        assert trainer.train(_spec(tmp_path)).status == "running"
+
+    def test_a_trainer_without_a_simulator_says_so(self) -> None:
+        result = train_policy(action="play", provider="mock", job_id="job-1")
+        assert result["status"] == "error" and "play() is not supported" in result["content"][0]["text"]
+
+
+class TestATrainedRunExportsWhatCreatePolicyLoads:
+    def test_export_converts_the_newest_checkpoint_and_names_the_rl_provider(
+        self, fake_python: Path, tmp_path: Path
+    ) -> None:
+        torch = pytest.importorskip("torch")
+        from tests.training.test_rsl_rl_actor_export import write_rsl_rl_run
+
+        trainer = _trainer()
+        trained = _poll(trainer, trainer.train(_spec(tmp_path, physics="isaacsim_physx")).job_id)
+        write_rsl_rl_run(Path(trained.checkpoint_dir), iteration=2, normalize=True)
+        exported = train_policy(
+            action="export",
+            provider="isaaclab",
+            output_dir=str(tmp_path / "out"),
+            steps=3,
+            extra={"task": "Isaac-Cartpole"},
+        )
+        assert exported["status"] == "success", exported
+        text = exported["content"][0]["text"]
+        path = _json_block(exported)["exported_model"]
+        assert f"create_policy('rl', checkpoint_dir='{path}')" in text
+        meta = json.loads((Path(path) / "policy_meta.json").read_text())
+        assert meta["provider"] == "rsl_rl" and meta["task"] == "Isaac-Cartpole" and meta["physics"] == "isaacsim_physx"
+        assert meta["source_checkpoint"].endswith("model_2.pt")
+        from strands_robots.policies import create_policy
+
+        policy = create_policy("rl", checkpoint_dir=path)
+        policy.set_robot_state_keys(["cart", "pole"])
+        import asyncio
+
+        action = asyncio.run(policy.get_actions({"policy_obs": [0.1, -0.2, 0.3, 0.0]}, ""))[0]
+        assert set(action) == {"cart", "pole"} and all(isinstance(v, float) for v in action.values())
+        del torch
 
 
 def runtime_strip(text: str) -> str:

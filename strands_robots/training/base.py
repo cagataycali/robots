@@ -574,6 +574,37 @@ class Trainer(ABC):
             ),
         )
 
+    def play(
+        self,
+        job_id: str,
+        *,
+        num_envs: int = 16,
+        video_length: int = 200,
+        timeout_s: float | None = 900.0,
+        wait: bool = False,
+    ) -> TrainResult:
+        """Play a finished job's policy back and record it; the verdict carries the video.
+
+        Only a trainer that owns a simulator to replay in implements this
+        (``isaaclab``). The default returns an informative ``error``.
+
+        Args:
+            job_id: The finished training job.
+            num_envs: Environments to play.
+            video_length: Frames in the clip.
+            timeout_s: Wall-clock limit for the playback.
+            wait: Block until the playback ends.
+        """
+        del num_envs, video_length, timeout_s, wait
+        return TrainResult(
+            status="error",
+            job_id=job_id,
+            message=(
+                f"{self.provider_name}: play() is not supported - roll the exported policy out with "
+                "run_policy / eval_policy instead."
+            ),
+        )
+
     def export(self, spec: TrainSpec, checkpoint_dir: str) -> str:
         """Produce a loadable artifact from *checkpoint_dir* and return its path.
 

@@ -106,6 +106,8 @@ _EXCEPTION_RE = re.compile(
 _LOG_DIR_RE = re.compile(r"Logging experiment in directory: (\S+)")
 _TRAINING_TIME_RE = re.compile(r"Training time: (\d+(?:\.\d+)?) seconds")
 _MODEL_RE = re.compile(r"^model_(\d+)\.pt\Z")
+# Isaac Lab's video recorder: ``[VideoRecorder] Wrote 120 frames to <path>.mp4``.
+_VIDEO_RE = re.compile(r"\[VideoRecorder\] Wrote (\d+) frames to (\S+\.mp4)")
 
 _JOB_FILE = "job.json"
 _LOG_FILE = "train.log"
@@ -346,6 +348,8 @@ class IsaacLabTrainer(Trainer):
 
         text = _read_log(job_dir / _LOG_FILE)
         exit_code = _read_exit_code(job_dir / runtime.EXIT_CODE_FILE)
+        if record.get("kind") == "play":
+            return self._play_status(job_id, job_dir, record, text, exit_code, alive)
         metrics = parse_rsl_rl_log(text)
         metrics.update(
             {
@@ -415,6 +419,209 @@ class IsaacLabTrainer(Trainer):
             ),
         )
 
+    def play(
+        self,
+        job_id: str,
+        *,
+        num_envs: int = 16,
+        video_length: int = 200,
+        timeout_s: float | None = 900.0,
+        wait: bool = False,
+    ) -> TrainResult:
+        """Play a trained run's latest checkpoint back in Isaac Lab and record a video.
+
+        Launches ``python -m isaaclab play`` on the run's newest
+        ``model_<iteration>.pt``, with the same task and the same physics
+        preset the run trained with (read from its record - a policy replayed
+        on another preset can fall at once), rendering with the Kit visualizer
+        so the clip has frames. Isaac Lab also exports the actor it loaded to
+        ``<run>/exported/policy.pt`` (TorchScript) and ``policy.onnx``.
+
+        Args:
+            job_id: The training job whose run to play.
+            num_envs: Environments to play (the video shows the first camera view).
+            video_length: Frames in the clip.
+            timeout_s: Wall-clock limit for the playback, like ``extra['timeout_s']``.
+            wait: Block until the playback ends.
+
+        Returns:
+            ``running`` with the playback's own ``job_id``, whose :meth:`status`
+            reports ``metrics['video']`` once written; or its verdict under ``wait``.
+        """
+        ctx = self.provider_name
+        trained = self.status(job_id)
+        if trained.status == "running":
+            return TrainResult(
+                status="error", job_id=job_id, message=f"{ctx}: job {job_id} is still training; stop it or wait"
+            )
+        if trained.metrics.get("kind") == "play":
+            return TrainResult(
+                status="error", job_id=job_id, message=f"{ctx}: {job_id} is a playback, not a training job"
+            )
+        model = trained.metrics.get("latest_model")
+        if not trained.checkpoint_dir or not model:
+            return TrainResult(
+                status="error",
+                job_id=job_id,
+                message=f"{ctx}: job {job_id} has no checkpoint to play ({trained.message})",
+            )
+        for value, name in ((num_envs, "num_envs"), (video_length, "video_length")):
+            error = positive_count_error(value, name, ctx)
+            if error is not None:
+                return TrainResult(status="error", job_id=job_id, message=error)
+        if timeout_s is not None and (error := positive_finite_number_error(timeout_s, "timeout_s", ctx)):
+            return TrainResult(status="error", job_id=job_id, message=error)
+        problems = runtime.runtime_problems(self._python, context=ctx)
+        if problems:
+            return TrainResult(status="error", job_id=job_id, message="; ".join(problems))
+        record = json.loads((self._jobs_dir / job_id / _JOB_FILE).read_text(encoding="utf-8"))
+        run = record.get("run") or {}
+        cmd = [
+            str(self._python),
+            "-m",
+            "isaaclab",
+            "play",
+            "--rl_library",
+            str(run.get("rl_library", "rsl_rl")),
+            "--task",
+            str(record["task"]),
+            "--num_envs",
+            str(num_envs),
+            "--checkpoint",
+            str(model),
+            "--video",
+            "--video_length",
+            str(video_length),
+            "--visualizer",
+            "kit",
+        ]
+        if run.get("physics"):
+            cmd.append(f"physics={run['physics']}")
+        play_id = f"isaaclab-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{uuid.uuid4().hex[:12]}"
+        play_dir = self._jobs_dir / play_id
+        play_dir.mkdir(parents=True, exist_ok=False)
+        proc = runtime.launch(
+            cmd, cwd=Path(record["cwd"]), log_path=play_dir / _LOG_FILE, exit_file=play_dir / runtime.EXIT_CODE_FILE
+        )
+        _CHILDREN[play_id] = proc
+        started = time.time()
+        (play_dir / _JOB_FILE).write_text(
+            json.dumps(
+                {
+                    "job_id": play_id,
+                    "kind": "play",
+                    "of": job_id,
+                    "pid": proc.pid,
+                    "cmd": cmd,
+                    "cwd": record["cwd"],
+                    "started": started,
+                    "deadline": started + float(timeout_s) if timeout_s is not None else None,
+                    "task": record["task"],
+                    "run_dir": trained.checkpoint_dir,
+                    "checkpoint": model,
+                },
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
+        logger.info("isaaclab: playing %s (pid %d): %s", model, proc.pid, " ".join(cmd))
+        if wait:
+            result = self.status(play_id)
+            while result.status == "running":
+                time.sleep(self._poll_interval_s)
+                result = self.status(play_id)
+            return result
+        return TrainResult(
+            status="running",
+            job_id=play_id,
+            checkpoint_dir=trained.checkpoint_dir,
+            metrics={"pid": proc.pid, "kind": "play", "of": job_id, "checkpoint": model},
+            message=f"playing {Path(model).name} of {job_id} ({record['task']}, {num_envs} envs, {video_length} frames)",
+        )
+
+    def _play_status(
+        self, job_id: str, job_dir: Path, record: dict[str, Any], text: str, exit_code: int | None, alive: bool
+    ) -> TrainResult:
+        """The verdict of a playback launched by :meth:`play`: the video it wrote, or why it did not."""
+        run_dir = record.get("run_dir")
+        videos = _VIDEO_RE.findall(text)
+        exported = Path(run_dir) / "exported" / "policy.pt" if run_dir else None
+        metrics: dict[str, Any] = {
+            "kind": "play",
+            "of": record.get("of"),
+            "checkpoint": record.get("checkpoint"),
+            "video": videos[-1][1] if videos else None,
+            "video_frames": int(videos[-1][0]) if videos else None,
+            "exported_jit": str(exported) if exported and exported.is_file() else None,
+            "pid": int(record["pid"]),
+            "exit_code": exit_code,
+            "liveness_ok": alive,
+            "elapsed_s": round(time.time() - float(record["started"]), 1),
+        }
+        if alive:
+            return TrainResult(
+                status="running", job_id=job_id, checkpoint_dir=run_dir, metrics=metrics, message="playing back"
+            )
+        if exit_code == 0 and metrics["video"] and Path(metrics["video"]).is_file():
+            return TrainResult(
+                status="success",
+                job_id=job_id,
+                checkpoint_dir=run_dir,
+                exported_model=metrics["exported_jit"],
+                metrics=metrics,
+                message=f"wrote {metrics['video_frames']} frames to {metrics['video']}",
+            )
+        failure, error_line = classify_failure(text, metrics)
+        if (job_dir / _TIMED_OUT_FILE).exists():
+            failure = "timeout"
+        elif (job_dir / _STOPPED_FILE).exists():
+            failure = "stopped"
+        elif exit_code is None:
+            failure = failure or "killed"
+        elif failure is None:
+            failure, error_line = "exit_status", f"Isaac Lab play exited {exit_code} without writing a video"
+        metrics["failure"] = failure
+        metrics["error"] = error_line or FAILURE_HINTS[failure]
+        tail = "\n".join(text.strip().splitlines()[-_TAIL_LINES:])
+        return TrainResult(
+            status="stopped" if failure == "stopped" else "error",
+            job_id=job_id,
+            checkpoint_dir=run_dir,
+            metrics=metrics,
+            message=f"{self.provider_name}: playback failed: {metrics['error']} ({FAILURE_HINTS[failure]}); log tail:\n{tail}",
+        )
+
+    def export(self, spec: TrainSpec, checkpoint_dir: str) -> str:
+        """Convert the run's newest rsl_rl checkpoint into what ``create_policy("rl")`` loads.
+
+        Writes ``<run>/strands_policy/policy.pt`` + ``policy_meta.json``
+        (``provider="rsl_rl"``: rsl_rl's MLP with the run's own activation and
+        observation normalizer, rebuilt without rsl_rl or Isaac Lab), with the
+        run record's task and physics preset in the metadata.
+
+        Args:
+            spec: The validated spec (unused beyond the gate ``train_policy`` runs).
+            checkpoint_dir: The run directory :meth:`latest_checkpoint` returned.
+
+        Returns:
+            The ``strands_policy`` directory.
+
+        Raises:
+            FileNotFoundError: If the run directory holds no ``model_<iteration>.pt``.
+        """
+        from strands_robots.training.rl import rsl_rl
+
+        del spec
+        model = latest_model(checkpoint_dir)
+        if model is None:
+            raise FileNotFoundError(f"{self.provider_name}: no model_<iteration>.pt in {checkpoint_dir}")
+        run: dict[str, Any] = {}
+        record_path = Path(checkpoint_dir) / RUN_RECORD_FILE
+        if record_path.is_file():
+            run = json.loads(record_path.read_text(encoding="utf-8"))
+        extra = {k: run[k] for k in ("task", "physics", "num_envs", "job_id", "overrides") if k in run}
+        return rsl_rl.convert_checkpoint(model, str(Path(checkpoint_dir) / "strands_policy"), extra_meta=extra)
+
     def stop(self, job_id: str) -> TrainResult:
         """Stop a running job and return its verdict, ``stopped``.
 
@@ -451,7 +658,7 @@ class IsaacLabTrainer(Trainer):
                 record = json.loads(job_file.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            if record.get("cwd") != str(work_dir) or record.get("task") != task:
+            if record.get("kind") == "play" or record.get("cwd") != str(work_dir) or record.get("task") != task:
                 continue
             if runtime.process_alive(int(record.get("pid", 0))) and not (job_file.parent / _STOPPED_FILE).exists():
                 return str(record.get("job_id"))
