@@ -670,9 +670,17 @@ def create_policy(provider: str, **kwargs) -> Policy:
             DeprecationWarning,
             stacklevel=2,
         )
-    _check_trust_remote_code(canonical)
+    # Kwargs validation is pure (no network, no code execution), so it runs
+    # before the trust-remote-code gate. Otherwise a typo like `pretrained_path`
+    # (a kwarg no provider binds) sends the caller to opt in to remote code
+    # first, and only reveals the typo on the second attempt - a false security
+    # escalation on a call that would have failed regardless. The docstring
+    # above promises the TypeError "before construction, so no model is
+    # downloaded and no server dialled on a typo"; that promise only holds if
+    # the kwargs check gets the chance to fire.
     if (kwargs_error := policy_kwargs_error(canonical, PolicyClass, resolved_kwargs)) is not None:
         raise TypeError(kwargs_error)
+    _check_trust_remote_code(canonical)
     return PolicyClass(**resolved_kwargs)
 
 
