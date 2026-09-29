@@ -1,6 +1,6 @@
 # Robot and factory
 
-`Robot(name, mode=...)` is a factory function, not a class. It returns a simulation engine in `mode="sim"` (the default) or a `strands_robots.hardware_robot.Robot` in `mode="real"`. Both expose the same agent-facing surface: `act`, `observe`, `run_policy`, `cleanup`. After this page you know every keyword the factory accepts and every method the returned object has.
+`Robot(name, mode=...)` is a factory function, not a class. It returns a simulation engine in `mode="sim"` (the default) or a `strands_robots.hardware_robot.Robot` in `mode="real"`. Both expose the same agent-facing verbs — `act`, `observe`, `run_policy`, `cleanup` — but two of them accept different first positional arguments in each mode: `run_policy(robot_name=..., policy_provider=..., policy_config=...)` in sim (a factory of policies), `run_policy(policy_object, ...)` on real hardware (a pre-built policy). See the [sim signature](#simulation-run-policy) and the [hardware signature](#the-hardware-robot). After this page you know every keyword the factory accepts and every method the returned object has.
 
 ## The factory
 
