@@ -30,22 +30,26 @@ from tests._dashboard_frontend import LIB, requires_node, run_frontend
 
 ENDPOINTS = LIB / "endpoints.ts"
 
-NOW = int(time.time())
 
-
-def _jwt(sub: str = "operator", exp: int | None = None, payload: str | None = None) -> str:
-    """A JWT-shaped token whose payload the browser can decode (the signature is opaque to it)."""
+def _jwt(sub: str = "operator", exp_in_s: int = 3600, payload: str | None = None) -> str:
+    """A JWT-shaped token whose payload the browser can decode, minted at call time (the signature is opaque to it)."""
     if payload is None:
-        payload = json.dumps({"sub": sub, "exp": NOW + 3600 if exp is None else exp, "via": "passkey"})
+        payload = json.dumps({"sub": sub, "exp": int(time.time()) + exp_in_s, "via": "passkey"})
     seg = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
     return f"eyJhbGciOiJIUzI1NiJ9.{seg}.c2ln"
 
 
-CURRENT = _jwt(exp=NOW + 1800)
-RENEWED = _jwt(exp=NOW + 7200)
+def _current() -> str:
+    return _jwt(exp_in_s=1800)
 
 
-def _after_answer(path: str, status: int, offered: str | None, *, setup: str = "", stored: str = CURRENT) -> dict:
+def _renewed() -> str:
+    return _jwt(exp_in_s=7200)
+
+
+def _after_answer(path: str, status: int, offered: str | None, *, setup: str = "", stored: str | None = None) -> dict:
+    if stored is None:
+        stored = _current()
     header = {} if offered is None else {"X-Session-Token": offered}
     return run_frontend(
         f"""
@@ -63,21 +67,28 @@ out({{ token: localStorage.getItem('strands.token'), renewed_at: m.lastRenewalAt
 class TestARefusalOrAnUnrelatedAnswerNeverSwapsTheSignIn:
     def test_a_404_carrying_the_header_leaves_the_token_alone(self) -> None:
         """The attack: any status, an empty body, one header. The credential must not move."""
-        got = _after_answer("/api/fleet", 404, RENEWED)
-        assert got["token"] == CURRENT, f"a refused answer replaced the sign-in: {got}"
+        current = _current()
+        renewed = _renewed()
+        got = _after_answer("/api/fleet", 404, renewed, stored=current)
+        assert got["token"] == current, f"a refused answer replaced the sign-in: {got}"
         assert got["renewed_at"] == 0
 
     def test_a_401_carrying_the_header_leaves_the_token_alone(self) -> None:
-        got = _after_answer("/api/fleet", 401, RENEWED)
-        assert got["token"] == CURRENT, got
+        current = _current()
+        renewed = _renewed()
+        got = _after_answer("/api/fleet", 401, renewed, stored=current)
+        assert got["token"] == current, got
 
     def test_a_successful_answer_to_any_other_route_leaves_the_token_alone(self) -> None:
         """Renewal is something the page asks for; a fleet listing is not that request."""
-        got = _after_answer("/api/fleet", 200, RENEWED)
-        assert got["token"] == CURRENT, f"a header on an unrelated route replaced the sign-in: {got}"
+        current = _current()
+        renewed = _renewed()
+        got = _after_answer("/api/fleet", 200, renewed, stored=current)
+        assert got["token"] == current, f"a header on an unrelated route replaced the sign-in: {got}"
 
     def test_a_page_holding_no_token_accepts_none_from_a_header(self) -> None:
-        got = _after_answer("/api/auth/renew", 200, RENEWED, stored="")
+        renewed = _renewed()
+        got = _after_answer("/api/auth/renew", 200, renewed, stored="")
         assert got["token"] in (None, ""), got
 
 
@@ -85,22 +96,26 @@ class TestARefusalOrAnUnrelatedAnswerNeverSwapsTheSignIn:
 class TestARenewalMustBeTheSameSessionExtended:
     def test_a_token_for_another_subject_is_refused(self) -> None:
         """Session fixation proper: the attacker's own identity offered as the operator's renewal."""
-        got = _after_answer("/api/auth/renew", 200, _jwt(sub="attacker", exp=NOW + 7200))
-        assert got["token"] == CURRENT, got
+        current = _current()
+        got = _after_answer("/api/auth/renew", 200, _jwt(sub="attacker", exp_in_s=7200), stored=current)
+        assert got["token"] == current, got
 
     def test_a_token_that_does_not_extend_the_session_is_refused(self) -> None:
-        got = _after_answer("/api/auth/renew", 200, _jwt(exp=NOW + 60))
-        assert got["token"] == CURRENT, got
+        current = _current()
+        got = _after_answer("/api/auth/renew", 200, _jwt(exp_in_s=60), stored=current)
+        assert got["token"] == current, got
 
     def test_a_token_whose_claims_do_not_decode_is_refused(self) -> None:
+        current = _current()
         for offered in ("a.b.c", "x.eyJub3QganNvbg.y", _jwt(payload='{"exp": "soon"}')):
-            got = _after_answer("/api/auth/renew", 200, offered)
-            assert got["token"] == CURRENT, (offered, got)
+            got = _after_answer("/api/auth/renew", 200, offered, stored=current)
+            assert got["token"] == current, (offered, got)
 
     def test_the_renewal_the_page_asked_for_is_accepted(self) -> None:
         """The one legitimate shape: 200 from the token's host on the renewal route, same subject, later expiry."""
-        got = _after_answer("/api/auth/renew", 200, RENEWED)
-        assert got["token"] == RENEWED, got
+        renewed = _renewed()
+        got = _after_answer("/api/auth/renew", 200, renewed)
+        assert got["token"] == renewed, got
         assert got["renewed_at"] > 0
 
 
