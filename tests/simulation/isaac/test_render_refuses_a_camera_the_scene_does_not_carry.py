@@ -62,7 +62,6 @@ fixture shape the sibling ``test_camera_readback_pixel_domain.py`` uses.
 from __future__ import annotations
 
 import inspect
-import threading
 from typing import Any
 
 import numpy as np
@@ -71,6 +70,7 @@ import pytest
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation, _CameraState
 from strands_robots.utils import FREE_CAMERA_TOKENS
+from tests.simulation._isaac_engine import isaac_engine
 
 #: The registered camera's own render size, deliberately different from the
 #: config default below so a frame sized from the wrong source is visible.
@@ -119,19 +119,10 @@ def _engine(
     ``render_mode`` must not be ``"headless"`` for the camera lookup to be
     reached: that mode returns its own documented blank frame first.
     """
-    engine = IsaacSimulation.__new__(IsaacSimulation)
+    engine = isaac_engine()
     engine._config = IsaacConfig(render_mode=render_mode, camera_width=CONFIG_W, camera_height=CONFIG_H)
-    engine._lock = threading.RLock()
-    engine._world = None
     engine._world_created = True
-    engine._robots = {}
-    engine._objects = {}
-    engine._cameras = {}
-    engine._prim_registry = []
     engine._camera_warmup_steps = 0
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._main_tid = threading.get_ident()
 
     cam = _CameraState(CAM, f"/World/cameras/{CAM}", NATIVE_W, NATIVE_H)
     if with_handle:

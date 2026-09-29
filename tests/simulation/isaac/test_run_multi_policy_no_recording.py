@@ -43,8 +43,8 @@ import pytest
 
 from strands_robots.policies.base import Policy
 from strands_robots.policies.mock import MockPolicy
-from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation, _RobotState
+from tests.simulation._isaac_engine import isaac_engine
 from tests.tool_result_contract import tool_json
 
 from .test_backend_parity import fake_isaacsim_types  # noqa: F401 - fixture
@@ -82,25 +82,10 @@ class _StubWorld:
 
 def _make_engine(robots: dict[str, _RobotState]) -> IsaacSimulation:
     """Skeleton IsaacSimulation (no Kit runtime), per the recording-test pattern."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._config = IsaacConfig(render_mode="headless")
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
     engine._world = _StubWorld()
     engine._world_created = True
     engine._robots = robots
-    engine._cameras = {}
-    engine._objects = {}
-    engine._prim_registry = []
-    engine._cams_rec_state = None
-    engine._recording_state_dict = {}
-    engine._action_controllers = {}
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._replicated = False
-    engine._num_envs_active = 1
-    engine._pump_running = False
-    engine._main_tid = threading.get_ident()
-    engine._main_jobs = queue.Queue()
     return engine
 
 

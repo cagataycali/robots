@@ -22,7 +22,6 @@ each of the exception types the handler is written for.
 
 from __future__ import annotations
 
-import threading
 import types
 from typing import Any
 
@@ -30,31 +29,20 @@ import pytest
 
 pytest.importorskip("strands_robots.simulation.isaac")
 
-from strands_robots.simulation.isaac.config import IsaacConfig  # noqa: E402
 from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 #: Every type the handler names. A guard that covered one would leave the rest.
 _RAISES = [RuntimeError, ValueError, OSError, AttributeError, TypeError, ImportError]
 
 
 def _engine(*, construct: Any) -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world_created = True
     engine._world = types.SimpleNamespace(
         scene=types.SimpleNamespace(add=lambda h: None),
         step=lambda **k: None,
     )
-    engine._objects = {}
-    engine._robots = {}
-    engine._prim_registry = []
-    engine._applied_wrenches = {}
-    engine._physics_view_stale = False
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._main_tid = threading.get_ident()
-    engine._pump_running = False
     engine._construct_shape_prim = construct  # type: ignore[method-assign]
     return engine
 

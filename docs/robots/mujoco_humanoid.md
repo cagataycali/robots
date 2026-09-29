@@ -7,7 +7,7 @@ description: "MuJoCo Humanoid (21-DOF reference model)"
 
 # MuJoCo Humanoid (21-DOF reference model)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">22 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:mujoco_humanoid}}
 
 <robot-viewer name="mujoco_humanoid"></robot-viewer>
 

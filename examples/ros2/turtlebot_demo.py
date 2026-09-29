@@ -30,7 +30,7 @@ Expected output: the turtle's pose changes after the drive commands.
 Runtime: ~10 seconds (plus LLM latency for the agent section).
 """
 
-from strands_robots.mesh import RosBridgedRobot
+from strands_robots.drivers.ros import RosBridgedRobot
 
 
 def _check(result: dict, what: str) -> dict:

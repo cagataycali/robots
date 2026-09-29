@@ -7,7 +7,7 @@ description: "PNDbotics Adam Lite Humanoid (26-DOF)"
 
 # PNDbotics Adam Lite Humanoid (26-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">26 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:adam_lite}}
 
 <robot-viewer name="adam_lite"></robot-viewer>
 

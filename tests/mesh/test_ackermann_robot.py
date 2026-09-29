@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
+from strands_robots.drivers.ros.ackermann_robot import _twist_to_servo
 from strands_robots.mesh import ackermann_robot as ack_mod
-from strands_robots.mesh.ackermann_robot import _twist_to_servo
 from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 # Bicycle model ---------------------------------------------------------------
@@ -463,6 +463,6 @@ def test_tools_forward_to_instance(rec: Transport) -> None:
 
 
 def test_exported_from_mesh_package() -> None:
-    from strands_robots.mesh import AckermannRosRobot as exported
+    from strands_robots.drivers.ros import AckermannRosRobot as exported
 
     assert exported is ack_mod.AckermannRosRobot

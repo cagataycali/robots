@@ -7,7 +7,7 @@ description: "Bitcraze Crazyflie 2 Nano-Quadcopter"
 
 # Bitcraze Crazyflie 2 Nano-Quadcopter
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="aerial">Aerial</span><span class="sr-chip">1 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:crazyflie}}
 
 <robot-viewer name="crazyflie"></robot-viewer>
 

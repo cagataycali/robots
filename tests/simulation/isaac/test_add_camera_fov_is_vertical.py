@@ -20,7 +20,6 @@ are pinned to agree at unit level.
 from __future__ import annotations
 
 import sys
-import threading
 import types
 from typing import Any
 
@@ -28,9 +27,9 @@ import numpy as np
 import pytest
 
 from strands_robots.simulation.isaac.simulation import (
-    IsaacSimulation,
     _vertical_fov_lens_mm,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 # The issue scene: a 640x480 camera at the default fov. A deliberately
 # non-24 mm horizontal aperture proves the result is independent of the
@@ -97,8 +96,7 @@ def _make_camera(monkeypatch: pytest.MonkeyPatch) -> _FakeCamera:
         monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
     sys.modules["isaacsim.sensors.camera"].Camera = _factory  # type: ignore[attr-defined]
 
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
     handle, _focal = engine._create_camera_prim(
         name="cam",
         prim_path="/World/cameras/cam",

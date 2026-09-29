@@ -7,7 +7,7 @@ description: "UFactory xArm 7 (7-DOF + gripper)"
 
 # UFactory xArm 7 (7-DOF + gripper)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">13 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:xarm7}}
 
 <robot-viewer name="xarm7"></robot-viewer>
 

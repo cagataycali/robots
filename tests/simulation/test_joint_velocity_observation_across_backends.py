@@ -56,10 +56,9 @@ from strands_robots.simulation.newton.simulation import NewtonSimEngine
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402
-    IsaacConfig,
-    IsaacSimulation,
     _RobotState,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 
 # --------------------------------------------------------------------------- #
@@ -77,13 +76,9 @@ class _IsaacArticulation:
 
 
 def _isaac_engine(articulation: Any = None) -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world = types.SimpleNamespace()
     engine._world_created = True
-    engine._cameras = {}
-    engine._objects = {}
     engine._robots = {
         "arm": _RobotState(
             name="arm",

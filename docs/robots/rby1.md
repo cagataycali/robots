@@ -7,7 +7,7 @@ description: "Rainbow Robotics RB-Y1A Mobile Manipulator (31-DOF)"
 
 # Rainbow Robotics RB-Y1A Mobile Manipulator (31-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">31 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:rby1}}
 
 The model has no public source to stream, so this page has no 3D view; the thumbnail is a local render.
 
