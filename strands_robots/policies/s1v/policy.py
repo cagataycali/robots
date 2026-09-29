@@ -62,7 +62,9 @@ class S1VBrain:
         temperature_scaling: Apply the per-head temperatures fitted after training.
         confidence_gate: When set, hold instead of moving whenever the chosen
             joint's probability or the ``safe`` answer for the chosen primitive is
-            below it.
+            below it. Opt-in and measured to cost success on this rig (reach 15/20
+            ungated, 11/20 at 0.5, 2/20 at 0.7): the joint head's doubt is mostly
+            between two primitives that both progress, and a hold is not free.
         cuda_graph: Capture the decider forward in a CUDA graph (fixed shapes) for
             the lowest tick latency; falls back to eager on CPU.
     """
@@ -221,7 +223,8 @@ class S1VPolicy(Policy):
         step_deg: Arm step per size label in degrees (default 2/5/10).
         gripper_step_pct: Gripper step per primitive in percent of its travel.
         confidence_gate: Hold when the chosen joint's probability or the ``safe``
-            answer is below this; ``None`` disables the gate.
+            answer is below this; ``None`` (default) disables the gate, which is the
+            measured-better setting (see the lane report).
         temperature_scaling: Use the fitted per-head temperatures.
         cuda_graph: Capture the decider forward in a CUDA graph.
         labels: ``{state_key: joint_label}`` for the robot (default so101 sim keys
