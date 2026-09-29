@@ -96,8 +96,8 @@ class TestTheHardwareEnvelope:
 
     def test_a_server_provider_keeps_its_address_and_gets_no_notice(self, hw: HwRobot) -> None:
         _completed(hw, _Reader())
-        text = hw._execute_task_sync("wave", 5555, "localhost", "remote", 0.3)["content"][0]["text"]
-        assert "Policy: remote on localhost:5555" in text
+        text = hw._execute_task_sync("wave", 5555, "localhost", "cosmos3", 0.3)["content"][0]["text"]
+        assert "Policy: cosmos3 on localhost:5555" in text
         assert "Note:" not in text
 
     def test_a_pre_built_object_is_judged_by_its_own_contract(self, hw: HwRobot) -> None:
@@ -115,7 +115,7 @@ class TestTheHardwareEnvelope:
             return False, "no bus in this test"
 
         hw._connect_robot = refuse_to_connect  # type: ignore[method-assign]
-        result = hw._execute_task_sync("wave", 5555, "localhost", "remote", 0.1)
+        result = hw._execute_task_sync("wave", 5555, "localhost", "cosmos3", 0.1)
         assert result["status"] == "error"
         assert hw._task_state.policy is None
         assert "Note:" not in result["content"][0]["text"]

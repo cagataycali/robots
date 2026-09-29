@@ -132,7 +132,15 @@ def _drive_robot(response: object) -> dict[str, Any] | None:
     async def _run() -> list[Any]:
         tool_use = cast(
             ToolUse,
-            {"toolUseId": "tu-1", "input": {"action": "execute", "instruction": "wave", "policy_provider": "mock"}},
+            {
+                "toolUseId": "tu-1",
+                "input": {
+                    "action": "execute",
+                    "instruction": "wave",
+                    "policy_provider": "cosmos3",
+                    "policy_port": 5555,
+                },
+            },
         )
         return [ev async for ev in robot.stream(tool_use, {"agent": agent})]
 
