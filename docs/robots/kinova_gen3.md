@@ -17,4 +17,6 @@ from strands_robots import Robot
 robot = Robot("kinova_gen3")
 ```
 
+Aliases: `gen3`.
+
 Model: [google-deepmind/mujoco_menagerie/kinova_gen3](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/kinova_gen3), scene `scene.xml`.

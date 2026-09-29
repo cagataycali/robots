@@ -75,6 +75,8 @@ _DESCRIPTION_REPOS: dict[str, tuple[str, str, str]] = {
     ),
     "aliengo": ("unitreerobotics/unitree_mujoco", "f3300ff1bf0ab9efbea0162717353480d9b05d73", "data/aliengo"),
     "unitree_a1": ("unitreerobotics/unitree_mujoco", "f3300ff1bf0ab9efbea0162717353480d9b05d73", "data/a1"),
+    # robot_descriptions 1.23.0 pins google-deepmind/mujoco (model/humanoid) to this commit.
+    "mujoco_humanoid": ("google-deepmind/mujoco", "ad0dc0de5e10a075a2c65be629e9a8d557d383a6", "model/humanoid"),
 }
 
 
