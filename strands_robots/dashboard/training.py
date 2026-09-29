@@ -558,7 +558,7 @@ def local_datasets(query: str = "") -> list[dict[str, Any]]:
                 try:
                     stack.extend((c, depth + 1) for c in d.iterdir() if c.is_dir())
                 except OSError:
-                    pass
+                    pass  # an unreadable subtree contributes no datasets; the walk goes on
     return sorted(out, key=lambda r: r["repo_id"])[:50]
 
 

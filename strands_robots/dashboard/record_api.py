@@ -578,7 +578,7 @@ class RecordController:
                     cfg.get("peer_id"),
                     exc,
                 )
-                lost.append(f"{peer} ({exc})")
+                lost.append(f"{peer} ({type(exc).__name__})")
         self._parked = []
         watcher = getattr(self._devices, "autospawn", None)
         if watcher is not None:

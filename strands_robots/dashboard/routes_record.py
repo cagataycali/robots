@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 
 from strands_robots.dashboard import access, record_api
 from strands_robots.dashboard.dataset_check import OUTSIDE_DATASET_HOME
+from strands_robots.utils import log_safe
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +54,11 @@ def contained_path(raw: Any) -> Path:
         real = os.path.normpath(os.path.realpath(os.path.expanduser(raw.strip())))
     except (OSError, RuntimeError):
         raise HTTPException(400, OUTSIDE_DATASET_HOME) from None
-    if real != home and not real.startswith(home + os.sep):
-        raise HTTPException(400, OUTSIDE_DATASET_HOME)
-    return Path(real)
+    # The positive form, one guard on the folded string: the shape the scanner reads as a
+    # barrier (training.contain uses it too); the negated compound it replaced was not.
+    if real == home or real.startswith(home + os.sep):
+        return Path(real)
+    raise HTTPException(400, OUTSIDE_DATASET_HOME)
 
 
 # ---------------------------------------------------------------- controller
@@ -130,7 +133,9 @@ async def collect_episodes(request: Request, body: dict[str, Any]) -> dict[str, 
 
         _training.remember_dataset_root(dataset_root)
     except ImportError:
-        logger.debug("[record] training module absent; %s will not be remembered for the picker", dataset_root)
+        logger.debug(
+            "[record] training module absent; %s will not be remembered for the picker", log_safe(dataset_root)
+        )
     result = await asyncio.to_thread(
         lambda: devices.collect(
             dataset_root=dataset_root,

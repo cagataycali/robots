@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from strands_robots.dashboard import record_motion
+from strands_robots.utils import log_safe
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +303,10 @@ class RecordWorker:
                 return self.session()
             info = self._recorder.save_episode()
             if isinstance(info, dict) and info.get("status") == "error":
-                self._last_error = str(info.get("message", "save_episode failed"))
+                # The recorder's message can carry an exception's words; those go to the log,
+                # the operator's line stays fixed so a stack trace never rides a response.
+                logger.error("save_episode failed: %s", log_safe(info.get("message", "")))
+                self._last_error = "save_episode failed - the dashboard log has the recorder's reason"
                 return self.session()
             ep.duration_s = self._clock() - ep.started_at
             self._episodes.append(ep)
