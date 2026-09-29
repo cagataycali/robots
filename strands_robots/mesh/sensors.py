@@ -481,6 +481,20 @@ class SensorLoopsMixin:
             pass  # best effort: /proc/uptime is Linux-only; the field is simply omitted
 
         _coerce_record(health)
+        # Direct messaging counters, when the transport addresses peers: how
+        # many direct sends this peer made and how many the broker accepted,
+        # and how many inbound messages matched nothing. A fleet console reads
+        # a robot whose replies keep failing (a certificate predating the CSR
+        # default) off its health row instead of its log.
+        direct = getattr(self, "_direct", None)
+        stats = getattr(direct, "direct_stats", None)
+        if isinstance(stats, dict):
+            health["direct"] = dict(stats)
+            unmatched = getattr(direct, "unmatched_inbound", None)
+            if isinstance(unmatched, int):
+                health["direct"]["unmatched_inbound"] = unmatched
+            has_data = True
+
         return health if has_data else None
 
     # IMU
