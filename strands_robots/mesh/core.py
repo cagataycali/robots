@@ -8,6 +8,7 @@ Extended sensor loops (pose, IMU, health, etc.) are provided by
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import hmac
 import json
@@ -292,6 +293,64 @@ def _resume_backoff_s() -> float:
     """Cooldown (seconds) the resume path is refused after the
     fail threshold is hit. Lazy. Defaults to 30s; bad input -> 30."""
     return _parse_positive_float_env("STRANDS_MESH_RESUME_BACKOFF_S", "30")
+
+
+#: Shortest ``STRANDS_MESH_OVERRIDE_CODE`` either side of a resume accepts. The
+#: code is the one secret that clears a fleet lockout, and every field the
+#: proof MAC covers travels on the wire beside the proof, so a captured
+#: envelope is an offline oracle for candidate codes. A code under this length
+#: is treated as unset on both sides (fail closed: remote resume refused, the
+#: reason logged at start) rather than read as a weaker version of the same
+#: authority. Generate one with ``python -c "import secrets;
+#: print(secrets.token_urlsafe(32))"``.
+OVERRIDE_CODE_MIN_LEN = 16
+
+#: Domain-separating salt for :func:`resume_proof_key`. Versioned so a future
+#: change of parameters can be told apart from a wrong code.
+_RESUME_KDF_SALT = b"strands-mesh-resume-proof-v1"
+
+
+def override_code() -> str | None:
+    """The operator override code, or ``None`` when unset or too short to use.
+
+    One reader for both sides of a resume (:meth:`Mesh._resume_lockout` mints
+    the proof, :meth:`Mesh._on_safety_resume` verifies it) so they cannot
+    disagree on what counts as configured. A value shorter than
+    :data:`OVERRIDE_CODE_MIN_LEN` is refused with a once-per-process WARNING
+    that says how to generate a usable one.
+    """
+    code = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
+    if not code:
+        return None
+    if len(code) < OVERRIDE_CODE_MIN_LEN:
+        _warn_posture_once(
+            "override_code_short",
+            "[safety] STRANDS_MESH_OVERRIDE_CODE is too short (%d chars, minimum %d) and is treated as "
+            "unset: remote resume is refused on this peer. A resume proof is checkable offline from one "
+            "captured envelope, so a short code is a guessable one. Generate a code with "
+            "python -c 'import secrets; print(secrets.token_urlsafe(32))' and set the SAME value on every peer.",
+            len(code),
+            OVERRIDE_CODE_MIN_LEN,
+        )
+        return None
+    return code
+
+
+_configured_override_code = override_code
+
+
+@functools.lru_cache(maxsize=8)
+def resume_proof_key(code: str) -> bytes:
+    """The key the resume proof MAC is computed with, derived from *code*.
+
+    scrypt (memory-hard, 16 MiB, about 50 ms) rather than the code itself:
+    every MAC input is public, so the per-guess cost of the derivation is the
+    whole cost of an offline search against a captured proof. Derived once per
+    process per code; the same parameters on every peer, so a proof minted by
+    one verifies on another. A proof keyed with the raw code, as older peers
+    minted, no longer verifies: the two sides of a fleet must upgrade together.
+    """
+    return hashlib.scrypt(code.encode(), salt=_RESUME_KDF_SALT, n=2**14, r=8, p=1, dklen=32)
 
 
 def _evict_replay_cache[K](
@@ -934,7 +993,7 @@ class Mesh(SensorLoopsMixin):
             # (e.g. physical-only recovery) see the warning and accept it.
             # Once per process: the posture is the environment's, and a
             # second Mesh here (a sim's child peer) reads the same one.
-            if not os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip():
+            if override_code() is None and not os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip():
                 _warn_posture_once(
                     "override_code",
                     "[safety:%s] No emergency-stop resume code set. If any peer "
@@ -3547,13 +3606,19 @@ class Mesh(SensorLoopsMixin):
         if bound is None:
             return
         data, wire_zid = bound
-        local_code = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
-        if not local_code:
+        local_code = override_code()
+        if local_code is None:
             logger.warning(
                 "[safety] %s: refusing remote resume -- STRANDS_MESH_OVERRIDE_CODE "
-                "not configured locally (operator code missing)",
+                "not configured locally (operator code missing or too short)",
                 self.peer_id,
             )
+            return
+        # The same brute-force throttle the RPC ``resume`` action honours: this
+        # is the handler that actually clears a lockout, and it had none, so the
+        # wire was a free online oracle for the code.
+        if self._resume_throttled():
+            self._emit_resume_denied("resume rate-limited (brute-force throttle)", "warning")
             return
         proof_nonce = data.get("proof_nonce")
         provided_proof = data.get("override_proof")
@@ -3590,7 +3655,7 @@ class Mesh(SensorLoopsMixin):
             separators=(",", ":"),
         ).encode()
         expected_proof = hmac.new(
-            local_code.encode(),
+            resume_proof_key(local_code),
             mac_input,
             "sha256",
         ).hexdigest()
@@ -3602,6 +3667,8 @@ class Mesh(SensorLoopsMixin):
                 self.peer_id,
                 "+source_zid" if wire_zid is not None else "",
             )
+            self._note_resume_failure()
+            self._emit_resume_denied("override_proof mismatch on strands/safety/resume", "warning")
             return
         # Replay cache keyed per TLS session when known, else per body peer_id;
         # the tagged tuple keeps the two namespaces from colliding.
@@ -4318,6 +4385,47 @@ class Mesh(SensorLoopsMixin):
         logger.critical("[safety] %s: EMERGENCY STOP engaged -- lockout active", self.peer_id)
         return responses
 
+    def _ensure_resume_throttle_state(self) -> None:
+        # Created lazily for Mesh objects built without __init__ (tests).
+        if not hasattr(self, "_resume_bruteforce_lock"):
+            self._resume_bruteforce_lock = threading.Lock()
+            self._resume_fail_count = 0
+            self._resume_locked_until_mono = 0.0
+
+    def _resume_throttled(self) -> bool:
+        """Whether the resume brute-force cooldown is in force right now.
+
+        One counter for both resume paths, the RPC ``resume`` action and the
+        ``strands/safety/resume`` broadcast handler: a prober who is refused on
+        one must not get fresh guesses on the other.
+        """
+        self._ensure_resume_throttle_state()
+        with self._resume_bruteforce_lock:
+            return time.monotonic() < self._resume_locked_until_mono
+
+    def _note_resume_failure(self) -> None:
+        """Count one failed code or proof; engage the cooldown at the threshold."""
+        self._ensure_resume_throttle_state()
+        with self._resume_bruteforce_lock:
+            self._resume_fail_count += 1
+            if self._resume_fail_count >= _resume_max_fails():
+                self._resume_locked_until_mono = time.monotonic() + _resume_backoff_s()
+                self._resume_fail_count = 0
+                logger.warning(
+                    "[safety] %s: resume brute-force threshold hit -- throttling resume for %.0fs",
+                    self.peer_id,
+                    _resume_backoff_s(),
+                )
+
+    def _emit_resume_denied(self, reason_text: str, severity: str) -> None:
+        """Structured reason to the local audit log, generic reason on the wire."""
+        self._audit_local("resume_denied", {"sender_id": self.peer_id, "reason": reason_text, "severity": severity})
+        self._audit(
+            event_type="resume_denied",
+            severity=severity,
+            payload={"sender_id": self.peer_id, "reason_code": "denied"},
+        )
+
     def _resume_lockout(self, override_code: str) -> dict[str, Any]:
         """Clear the emergency-stop lockout if *override_code* matches.
 
@@ -4335,7 +4443,9 @@ class Mesh(SensorLoopsMixin):
         ``lockout_elapsed_s`` is measured on the monotonic clock.
         """
         _generic_error = {"status": "error", "error": "resume rejected"}
-        expected = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
+        # The parameter shadows the module-level reader; ``_configured_override_code``
+        # is that reader under a name the signature cannot hide.
+        expected = _configured_override_code() or ""
         provided = (override_code or "").strip()
         lockout_engaged = self._estop_lockout.is_set()
         # Fixed-length digests on both sides; an unconfigured code still runs the
@@ -4346,24 +4456,8 @@ class Mesh(SensorLoopsMixin):
         else:
             _EXPECTED_HASH = hashlib.sha256(b"\x00" * 32).digest()
         compare_ok = hmac.compare_digest(_EXPECTED_HASH, _PROVIDED_HASH)
-        # Brute-force throttle state is created lazily for Mesh objects built
-        # without __init__ (tests).
-        if not hasattr(self, "_resume_bruteforce_lock"):
-            self._resume_bruteforce_lock = threading.Lock()
-            self._resume_fail_count = 0
-            self._resume_locked_until_mono = 0.0
-        _now_mono_bf = time.monotonic()
-        with self._resume_bruteforce_lock:
-            _throttled = _now_mono_bf < self._resume_locked_until_mono
-
-        # Structured reason locally, generic reason on the wire.
-        def _emit_resume_denied(reason_text: str, severity: str) -> None:
-            self._audit_local("resume_denied", {"sender_id": self.peer_id, "reason": reason_text, "severity": severity})
-            self._audit(
-                event_type="resume_denied",
-                severity=severity,
-                payload={"sender_id": self.peer_id, "reason_code": "denied"},
-            )
+        _throttled = self._resume_throttled()
+        _emit_resume_denied = self._emit_resume_denied
 
         if _throttled:
             _emit_resume_denied("resume rate-limited (brute-force throttle)", "warning")
@@ -4375,16 +4469,7 @@ class Mesh(SensorLoopsMixin):
             _emit_resume_denied("STRANDS_MESH_OVERRIDE_CODE not configured", "warning")
             return _generic_error
         if not compare_ok:
-            with self._resume_bruteforce_lock:
-                self._resume_fail_count += 1
-                if self._resume_fail_count >= _resume_max_fails():
-                    self._resume_locked_until_mono = time.monotonic() + _resume_backoff_s()
-                    self._resume_fail_count = 0
-                    logger.warning(
-                        "[safety] %s: resume brute-force threshold hit -- throttling resume for %.0fs",
-                        self.peer_id,
-                        _resume_backoff_s(),
-                    )
+            self._note_resume_failure()
             _emit_resume_denied("bad override code", "warning")
             return _generic_error
         # Success: clear, reset the throttle, and publish the proof-bearing envelope.
@@ -4415,7 +4500,7 @@ class Mesh(SensorLoopsMixin):
             separators=(",", ":"),
         ).encode()
         override_proof = hmac.new(
-            expected.encode(),
+            resume_proof_key(expected),
             mac_input,
             "sha256",
         ).hexdigest()
