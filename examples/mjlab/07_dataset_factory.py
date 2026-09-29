@@ -24,7 +24,7 @@ Usage::
 
 Install (the lerobot extra first, then this one: mjlab needs torch>=2.14)::
 
-    uv pip install "strands-robots[sim-mjlab,rl]"
+    uv pip install "strands-robots[sim-mjlab,rl]" huggingface_hub
 """
 
 from __future__ import annotations
