@@ -412,14 +412,6 @@ class FoxgloveBridge:
         if topic.endswith("/scene"):
             self._resend_scene.set()
 
-    def __repr__(self) -> str:
-        try:
-            return f"FoxgloveBridge(url={self.url!r}, mcap={self.mcap_path!r}, services={self.services_enabled})"
-        except AttributeError:
-            from strands_robots.utils import partial_construction_repr
-
-            return partial_construction_repr(self)
-
 
 class _Listener:
     """The ``ServerListener`` half: only ``on_subscribe`` does anything."""

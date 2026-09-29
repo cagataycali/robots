@@ -84,7 +84,10 @@ def _episode_count_error(dataset: Any, episode_index: Any) -> str | None:
     if isinstance(episode_index, bool) or not isinstance(episode_index, int) or episode_index < 0:
         return f"export_episode: episode_index must be a non-negative int, got {refusal_repr(episode_index)}."
     if total and episode_index >= total:
-        return f"export_episode: episode_index {episode_index} is past the last episode ({total - 1}) of this dataset."
+        return (
+            f"export_episode: episode_index {refusal_repr(episode_index)} is past the last episode "
+            f"({total - 1}) of this dataset."
+        )
     return None
 
 
