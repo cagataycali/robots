@@ -41,14 +41,19 @@ def test_forwarding_shim_passes_the_chosen_fna_backend_as_the_backend_argument(m
 
     fake_natten = types.ModuleType("natten")
     fake_functional = types.ModuleType("natten.functional")
-    fake_functional.na2d, fake_functional.na3d = na2d, na3d
-    fake_natten.functional = fake_functional
     fake_flux = types.ModuleType("flux_action")
     fake_models = types.ModuleType("flux_action.models")
     fake_vae = types.ModuleType("flux_action.models.video_vae")
-    fake_vae.na2d, fake_vae.na3d = na2d, na3d
-    fake_models.video_vae = fake_vae
-    fake_flux.models = fake_models
+    # ModuleType carries no attribute table for mypy; the fakes are built by name.
+    for mod, attrs in (
+        (fake_functional, {"na2d": na2d, "na3d": na3d}),
+        (fake_natten, {"functional": fake_functional}),
+        (fake_vae, {"na2d": na2d, "na3d": na3d}),
+        (fake_models, {"video_vae": fake_vae}),
+        (fake_flux, {"models": fake_models}),
+    ):
+        for attr, value in attrs.items():
+            setattr(mod, attr, value)
     for name, mod in {
         "natten": fake_natten,
         "natten.functional": fake_functional,
