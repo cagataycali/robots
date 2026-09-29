@@ -568,7 +568,7 @@ async function api(path, init = {}) {
   } catch (e) {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`);
   }
-  absorbRenewedSession(res);
+  if (token) absorbRenewedSession(res);
   const text = await res.text();
   let body = text;
   try {
@@ -599,7 +599,7 @@ async function apiBlob(path) {
   } catch (e) {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`);
   }
-  absorbRenewedSession(res);
+  if (token) absorbRenewedSession(res);
   if (!res.ok) {
     noteAuthRefusal(res.status);
     const text = await res.text();

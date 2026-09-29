@@ -119,6 +119,66 @@ class TestAUrlBackendDoesNotTakeTheTokenWithIt:
 
 
 @requires_node
+class TestABareRequestRenewsNothing:
+    """The unconfirmed host answers the bare probe with a session header of its own.
+
+    ``absorbRenewedSession`` used to run on every response and compare the
+    offered token with whatever storage held, so ``?backend=https://evil.example``
+    could evict the operator's live token and rebind it to the attacker's host
+    with one unauthenticated reply. A renewal answers an authenticated request;
+    a request that carried no bearer has no say over the stored credential.
+    """
+
+    EVIL_ANSWER = """
+answer = { status: 200, headers: { 'X-Session-Token': 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJldmlsIn0.forged' }, body: '{}' }
+"""
+
+    def _after_the_probe(self, script: str, page: str, call: str) -> dict:
+        return run_frontend(
+            script
+            + self.EVIL_ANSWER
+            + f"""
+const m = await import('./endpoints.ts')
+await {call}.catch(() => null)
+out({{
+  stored_token: localStorage.getItem('strands.token'),
+  token_host: localStorage.getItem('strands.token.host'),
+  authorization: sent.map(s => s.headers.Authorization ?? null),
+  renewed_at: m.lastRenewalAt(),
+}})
+""",
+            page=page,
+        )
+
+    def test_the_url_host_s_session_header_does_not_replace_the_stored_token(self) -> None:
+        """The attack link, with the reply carrying ``X-Session-Token``: both token keys are untouched."""
+        script = SIGNED_IN + "localStorage.setItem('strands.token.host', 'robot.lan:8090')\n"
+        got = self._after_the_probe(script, page=f"http://robot.lan:8090/?backend={EVIL}", call="m.api('/api/fleet')")
+        assert got["authorization"] == [None], got
+        assert got["stored_token"] == TOKEN, f"a bare reply from {EVIL} replaced the stored token: {got}"
+        assert got["token_host"] == "robot.lan:8090", f"a bare reply from {EVIL} rebound the token's host: {got}"
+        assert got["renewed_at"] == 0, got
+
+    def test_a_camera_preview_from_the_url_host_renews_nothing_either(self) -> None:
+        """``apiBlob`` shares the rule: the binary route is one more bare request the host may answer."""
+        script = SIGNED_IN + "localStorage.setItem('strands.token.host', 'robot.lan:8090')\n"
+        got = self._after_the_probe(
+            script, page=f"http://robot.lan:8090/?backend={EVIL}", call="m.apiBlob('/api/camera/0')"
+        )
+        assert got["authorization"] == [None], got
+        assert got["stored_token"] == TOKEN, got
+        assert got["token_host"] == "robot.lan:8090", got
+
+    def test_an_authenticated_request_to_the_page_s_own_host_still_renews(self) -> None:
+        """The rule takes nothing from the legitimate path: the bearer went out, the renewal is taken."""
+        script = SIGNED_IN + "localStorage.setItem('strands.token.host', 'robot.lan:8090')\n"
+        got = self._after_the_probe(script, page="http://robot.lan:8090/", call="m.api('/api/fleet')")
+        assert got["authorization"] == [f"Bearer {TOKEN}"], got
+        assert got["stored_token"] == "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJldmlsIn0.forged", got
+        assert got["renewed_at"] > 0, got
+
+
+@requires_node
 class TestTheOperatorsYesIsTheOnlyWayAcross:
     def test_the_pending_verdict_is_the_drawers_token_follows_host(self) -> None:
         """The URL path raises the same question the Settings drawer does, with the hosts named."""

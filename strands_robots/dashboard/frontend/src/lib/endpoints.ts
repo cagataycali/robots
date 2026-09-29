@@ -371,7 +371,10 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
   } catch (e) {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`)
   }
-  absorbRenewedSession(res)
+  // A renewal answers an authenticated request. A request that went out bare (an
+  // unconfirmed ?backend= host, a host the token was not minted for) gets no say
+  // over the stored credential, whatever header it answers with.
+  if (token) absorbRenewedSession(res)
   const text = await res.text()
   let body: any = text
   try { body = text ? JSON.parse(text) : null } catch { /* keep raw text */ }
@@ -406,7 +409,7 @@ export async function apiBlob(path: string): Promise<string> {
   } catch (e) {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`)
   }
-  absorbRenewedSession(res)
+  if (token) absorbRenewedSession(res) // same rule as api(): a bare request renews nothing
   if (!res.ok) {
     noteAuthRefusal(res.status)
     const text = await res.text()
