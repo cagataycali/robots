@@ -41,7 +41,7 @@ from typing import Any
 
 from .._description_cache import import_description
 from ..utils import log_safe
-from .loader import normalize_robot_name
+from .loader import _load, normalize_robot_name
 
 logger = logging.getLogger(__name__)
 
@@ -314,42 +314,74 @@ def discover_urdf_path(name: str) -> str | None:
 URDF_SOURCE_TYPE = "urdf"
 
 
+def urdf_registry() -> dict[str, dict[str, Any]]:
+    """The sweep-generated ``urdf_robots.json`` table, keyed by canonical name.
+
+    Written by ``scripts/build_urdf_registry.py`` from assets the loader built:
+    category, actuated joint count (``joints`` = the compiled model's ``nu``),
+    floating base, upstream pin, mesh formats, ``has_sim`` and the refusal for
+    a description that does not build. Cheap: a JSON read, cached by the
+    registry loader.
+    """
+    table = _load("urdf_robots").get("robots", {})
+    return dict(table) if isinstance(table, dict) else {}
+
+
 def _urdf_entry(norm: str) -> dict[str, Any] | None:
     """Registry-style entry for a URDF-only ``robot_descriptions`` robot, or ``None``.
 
-    Cheap: static tables only. The asset directory is the module name (unique,
-    self-describing, never a Menagerie directory); the model and scene files are
-    the ones :mod:`strands_robots.assets.urdf` writes there on first resolution.
-    ``category`` comes from the description's tags through the same mapping the
-    builder uses, so the docs family and the sim agree.
+    Cheap: static tables and :func:`urdf_registry` only. The asset directory is
+    the module name (unique, self-describing, never a Menagerie directory); the
+    model and scene files are the ones :mod:`strands_robots.assets.urdf` writes
+    there on first resolution. ``category``, ``joints`` and ``floating`` come
+    from the sweep table when the robot is in it, else from the description's
+    tags through the same mapping the builder uses, so the docs family and the
+    sim agree. A robot the sweep could not build has no ``asset`` block and
+    carries the loader's ``refusal`` instead, so ``has_sim`` says no.
     """
     module_name = urdf_descriptions_module(norm)
     if module_name is None:
         return None
     from ..assets.urdf import ASSET_JSON, ROBOT_XML, SCENE_XML, category_for_tags, is_floating
 
-    tags: set[str] = set()
-    try:
-        from robot_descriptions._descriptions import DESCRIPTIONS  # type: ignore[import-not-found]
+    recorded = urdf_registry().get(norm, {})
+    tags: set[str] = set(recorded.get("tags", ()))
+    if not tags:
+        try:
+            from robot_descriptions._descriptions import DESCRIPTIONS  # type: ignore[import-not-found]
 
-        tags = set(getattr(DESCRIPTIONS.get(module_name), "tags", ()) or ())
-    except ImportError:  # pragma: no cover - urdf_descriptions_module already needed the package
-        pass
-    return {
-        "description": f"{norm} (discovered via robot_descriptions:{module_name}, URDF compiled to MJCF)",
-        "category": category_for_tags(tags),
+            tags = set(getattr(DESCRIPTIONS.get(module_name), "tags", ()) or ())
+        except ImportError:  # pragma: no cover - urdf_descriptions_module already needed the package
+            pass
+    entry: dict[str, Any] = {
+        "description": f"{norm} (robot_descriptions:{module_name}, URDF compiled to MJCF by strands_robots)",
+        "category": recorded.get("category") or category_for_tags(tags),
         "discovered": True,
         "source": URDF_SOURCE_TYPE,
-        "floating": is_floating(tags),
-        "asset": {
+        "floating": bool(recorded.get("floating", is_floating(tags))),
+    }
+    if recorded.get("joints") is not None:
+        entry["joints"] = int(recorded["joints"])
+    if recorded.get("has_sim", True):
+        entry["asset"] = {
             "dir": module_name,
             "model_xml": ROBOT_XML,
             "scene_xml": SCENE_XML,
             "info_json": ASSET_JSON,
             "robot_descriptions_module": module_name,
             "source": {"type": URDF_SOURCE_TYPE},
-        },
-    }
+        }
+    else:
+        entry["refusal"] = str(recorded.get("refusal", "the description does not build"))
+    return entry
+
+
+def urdf_registry_entry(name: str) -> dict[str, Any] | None:
+    """The registry entry for a URDF-only robot by name or ``None``; cheap, no import."""
+    norm = normalize_robot_name(name)
+    if not _NAME_RE.match(norm) or not is_urdf_only(norm):
+        return None
+    return _urdf_entry(norm)
 
 
 def list_urdf_only() -> list[str]:
@@ -359,8 +391,6 @@ def list_urdf_only() -> list[str]:
     minus every curated name and alias (curated always wins, and an alias must
     stay unique). Cheap: static tables and the curated registry, no import.
     """
-    from .robots import _load
-
     reg = _load("robots").get("robots", {})
     taken = set(reg)
     for info in reg.values():

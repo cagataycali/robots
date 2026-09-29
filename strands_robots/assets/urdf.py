@@ -770,8 +770,8 @@ def build_from_urdf(
 def _description_pin(mod: Any) -> tuple[str | None, str | None]:
     """``owner/repo`` and commit of a ``robot_descriptions`` module's upstream.
 
-    ``robot_descriptions`` keeps the pins in ``_repositories.REPOSITORIES``, keyed
-    by the cache directory the module's ``REPOSITORY_PATH`` ends in.
+    ``robot_descriptions`` keeps the pins in ``_repositories.REPOSITORIES``; the
+    module's ``REPOSITORY_PATH`` ends in the entry's key or its ``cache_path``.
     """
     repo_path = getattr(mod, "REPOSITORY_PATH", None)
     if not repo_path:
@@ -780,7 +780,13 @@ def _description_pin(mod: Any) -> tuple[str | None, str | None]:
         from robot_descriptions._repositories import REPOSITORIES  # type: ignore[import-not-found]
     except ImportError:  # pragma: no cover - the module import already needed the package
         return None, None
-    entry = REPOSITORIES.get(Path(str(repo_path)).name)
+    leaf = Path(str(repo_path)).name
+    # Keyed by description name, but the directory on disk is ``cache_path``,
+    # which differs for some (Universal_Robots_ROS2_Description clones into
+    # ``ur_description``): match on either.
+    entry = REPOSITORIES.get(leaf)
+    if entry is None:
+        entry = next((r for r in REPOSITORIES.values() if getattr(r, "cache_path", None) == leaf), None)
     if entry is None:
         return None, None
     m = re.search(r"github\.com[/:]([^/]+/[^/]+?)(?:\.git)?/?$", str(getattr(entry, "url", "")))
@@ -826,8 +832,12 @@ def build_urdf_asset(name: str, module: str, dest_dir: str | os.PathLike[str]) -
 
     try:
         mod = import_description(module)
-    except ImportError as exc:
-        raise UrdfBuildError(f"{REFUSAL_CLONE}: {exc}") from exc
+    except Exception as exc:
+        # ImportError for a missing module; GitPython's GitCommandError when the
+        # upstream repository or the pinned commit is gone (eve_r3's Halodi repo
+        # was deleted): both are the same fact to the caller.
+        detail = str(exc).strip().splitlines()
+        raise UrdfBuildError(f"{REFUSAL_CLONE}: {detail[-1][:160] if detail else type(exc).__name__}") from exc
     urdf_path = _urdf_path_of(mod)
     if not urdf_path or not os.path.isfile(str(urdf_path)):
         raise UrdfBuildError(REFUSAL_CLONE)
