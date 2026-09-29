@@ -233,13 +233,13 @@ class TestIsaacGPUIntegration:
         from strands_robots.simulation.isaac import IsaacConfig, IsaacSimulation
 
         _skip_if_isaac_unavailable()
-        assets_root = _assets_root_path()
         sim = IsaacSimulation(IsaacConfig(num_envs=1, headless=False, render_mode="rtx_realtime"))
         try:
             r = sim.create_world()
             assert r["status"] == "success", f"create_world: {r}"
+            assets_root = _assets_root_path()  # after create_world: the resolver is a Kit extension
 
-            usd_path = f"{assets_root}/Isaac/Robots/Franka/franka.usd"
+            usd_path = f"{assets_root}/Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd"
             r = sim.add_robot("robot", usd_path=usd_path)
             assert r["status"] == "success", f"add_robot: {r}"
 
@@ -259,19 +259,19 @@ class TestIsaacGPUIntegration:
         on every ``send_action`` because Isaac Sim 6.0's ``SingleArticulation``
         has no ``set_joint_position_targets``. Loads the bundled Franka, resets
         + steps so it's not an init-timing artefact, then exercises both action
-        forms and asserts a success envelope plus a non-empty flat-dict
-        observation whose keys are a subset of the articulation's joint names.
+        forms and asserts a success envelope plus a flat-dict observation of
+        every joint's position and ``<joint>.vel`` velocity.
         """
         from strands_robots.simulation.isaac import IsaacConfig, IsaacSimulation
 
         _skip_if_isaac_unavailable()
-        assets_root = _assets_root_path()
         sim = IsaacSimulation(IsaacConfig(num_envs=1, headless=True))
         try:
             r = sim.create_world()
             assert r["status"] == "success", f"create_world: {r}"
+            assets_root = _assets_root_path()  # after create_world: the resolver is a Kit extension
 
-            usd_path = f"{assets_root}/Isaac/Robots/Franka/franka.usd"
+            usd_path = f"{assets_root}/Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd"
             r = sim.add_robot("robot", usd_path=usd_path)
             assert r["status"] == "success", f"add_robot: {r}"
 
@@ -293,7 +293,10 @@ class TestIsaacGPUIntegration:
             obs = sim.get_observation("robot")
             assert isinstance(obs, dict), f"get_observation: {obs}"
             assert len(obs) > 0, f"get_observation: {obs}"
-            assert set(obs.keys()).issubset(set(joint_names)), f"unexpected obs keys: {set(obs.keys())}"
+            # Positions under the joint names plus ``<joint>.vel`` velocities -
+            # the same flat vocabulary the MuJoCo backend emits.
+            expected = set(joint_names) | {f"{j}.vel" for j in joint_names}
+            assert set(joint_names) <= set(obs.keys()) <= expected, f"unexpected obs keys: {set(obs.keys()) - expected}"
             assert all(isinstance(v, float) for v in obs.values()), f"obs values: {obs}"
         finally:
             sim.destroy()
@@ -302,15 +305,12 @@ class TestIsaacGPUIntegration:
 def _assets_root_path() -> str:
     """Resolve the Isaac Sim bundled-assets root via the modern-then-legacy path.
 
-    Mirrors the example scripts' ``_resolve_robot_asset`` fallback: Isaac Sim
-    6.0 exposes ``isaacsim.storage.native.get_assets_root_path``; older builds
-    expose ``omni.isaac.nucleus.get_assets_root_path``. Both are imported
-    lazily so module import stays CPU-safe.
+    Isaac Sim 6.x exposes ``isaacsim.storage.native.get_assets_root_path``; it is a
+    Kit extension, so this resolves only AFTER ``create_world`` has booted the
+    app - called first, it raised ``ModuleNotFoundError`` whenever these tests
+    ran without an earlier test having booted Kit.
     """
-    try:
-        from isaacsim.storage.native import get_assets_root_path  # type: ignore[import-not-found]
-    except ImportError:
-        from omni.isaac.nucleus import get_assets_root_path  # type: ignore[import-not-found]
+    from isaacsim.storage.native import get_assets_root_path  # type: ignore[import-not-found]
 
     assets_root = get_assets_root_path()
     assert assets_root, "get_assets_root_path() returned empty"

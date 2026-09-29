@@ -20,7 +20,6 @@ before any dispatcher runs.
 from __future__ import annotations
 
 import asyncio
-import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -32,8 +31,7 @@ from strands.types.tools import ToolUse
 
 from strands_robots import hardware_robot as hardware_robot_module
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState
-from tests._daemon_executor import DaemonThreadExecutor
+from tests._hardware_robot import hardware_robot_on
 
 pytestmark = pytest.mark.usefixtures("named_rpc_caller")
 
@@ -76,21 +74,7 @@ def _drain(agen: Any) -> list:
 
 
 def _make_robot() -> HwRobot:
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "test_arm"
-    hw.action_horizon = 8
-    hw.data_config = None
-    hw.control_frequency = 30.0
-    hw.action_sleep_time = 1.0 / 30.0
-    hw._task_state = RobotTaskState()
-    hw._executor = DaemonThreadExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
-    hw.mesh = None
-    hw.peer_id = None
-    hw.robot = object()
+    hw = hardware_robot_on(object(), tool_name="test_arm", control_frequency=30.0)
     return hw
 
 

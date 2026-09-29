@@ -4,7 +4,7 @@ description: lerobot_local runs any LeRobot checkpoint in process. Install extra
 
 # lerobot_local
 
-By the end of this page you can run a HuggingFace LeRobot checkpoint (ACT, diffusion, pi0, SmolVLA, GR00T N1.7, MolmoAct2) on a simulated or real arm in this process, and you know the two naming rules that decide whether the model sees your cameras and joints at all.
+By the end of this page you can run a HuggingFace LeRobot checkpoint (ACT, diffusion, pi0, SmolVLA, GR00T N1.7, MolmoAct2) on a simulated or real arm in this process, and you know the two naming rules that decide whether the model sees your cameras and joints.
 
 ```bash
 pip install 'strands-robots[lerobot]'          # lerobot[feetech,dataset] + psutil
@@ -15,15 +15,15 @@ export STRANDS_TRUST_REMOTE_CODE=1             # required: models load with trus
 
 ## What it is
 
-`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory, so the policy type is read from the model's `config.json` and any class LeRobot registers works without a change here. The model's processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations and unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the exact number of steps consumed during inference, and the policy blends the next chunk onto the seam.
+`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works without a change here. The model's processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations and unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the steps consumed during inference, and the policy blends the next chunk onto the seam.
 
 Build it by name or smart string; a non-`nvidia` HuggingFace id resolves here.
 
 ```python title="sketch"
 from strands_robots.policies import create_policy
 
-policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/act_so101", embodiment="so101")
-policy = create_policy("lerobot/act_so101", embodiment="so101")   # same thing
+policy = create_policy("lerobot_local", pretrained_name_or_path="robotfuel/act_so101_t16b", embodiment="so101")
+policy = create_policy("robotfuel/act_so101_t16b", embodiment="so101")   # same thing
 ```
 
 ## Constructor keywords
@@ -42,7 +42,7 @@ An embodiment is a declared key map between what the robot emits and what the mo
 
 ## Rule 1: state keys
 
-Without `set_robot_state_keys`, the policy infers the state vector from the observation's insertion order over its numeric scalars. The sim backends write `obs[joint]` and then `obs[f"{joint}.vel"]` for every joint, so that raw order alternates position and velocity. `strands_robots.policies._state_keys.drop_velocity_siblings` removes each `.vel` whose position companion is present, and keeps a `.vel` that has none (LeKiwi declares `x.vel`, `y.vel`, `theta.vel` as state). Every provider that infers an ordering shares this rule; an explicit `robot_state_keys` list is never filtered, because an operator naming `elbow.vel` is stating the model's input.
+Without `set_robot_state_keys`, the policy infers the state vector from the observation's insertion order over its numeric scalars. The sim backends write `obs[joint]` then `obs[f"{joint}.vel"]`, so `strands_robots.policies._state_keys.drop_velocity_siblings` removes each `.vel` whose position companion is present and keeps one that has none (LeKiwi declares `x.vel`, `y.vel`, `theta.vel` as state). Every provider that infers an ordering shares this rule; an explicit `robot_state_keys` list is never filtered.
 
 ## Rule 2: camera names
 
@@ -59,8 +59,7 @@ Two ways to satisfy the check:
 sim.add_camera(name="front", position=[0.22, 0.025, 0.6], target=[0.22, 0.025, 0])
 sim.add_camera(name="wrist", parent_body="so101/gripper", position=[0.058, 0.0, -0.029], target=[-0.024, 0.0, -0.297])
 
-# 2. Keep your names and route them. camera_key_map is rung 1, obs_rename_override is rung 2,
-#    both merge over the embodiment's obs_rename.
+# 2. Keep your names and route them (camera_key_map, then obs_rename_override, merge over obs_rename).
 sim.run_policy(
     robot_name="so101",
     policy_provider="lerobot_local",
@@ -73,13 +72,15 @@ sim.run_policy(
 )
 ```
 
-`parent_body` mounts a camera on a link so a wrist view rides with the arm; `position` and `target` are then in that body's frame and both are required. It works on `mujoco` and `newton`; `isaac` refuses it and names the world-frame alternative.
+`parent_body` mounts a camera on a link so a wrist view rides with the arm; `position` and `target` are then in that frame, both required. It works on `mujoco` and `newton`; `isaac` refuses it and names the world-frame alternative.
 
 ## Run it
 
-Needs the extra above, `STRANDS_TRUST_REMOTE_CODE=1`, and a download on first use.
+Needs the extra above and an 865 MB download on first use. `smolvla_base` declares `camera1..3` and ships no SO-101 stats, so `embodiment="so101"` (which converts degrees) is refused after the download; an inline embodiment with native units runs:
 
-```python title="sketch"
+```python
+import os
+os.environ["STRANDS_TRUST_REMOTE_CODE"] = "1"
 from strands_robots.simulation import create_simulation
 
 sim = create_simulation("mujoco", mesh=False)
@@ -87,22 +88,23 @@ sim.create_world()
 sim.add_robot("so101")
 sim.add_camera(name="front", position=[0.22, 0.025, 0.6], target=[0.22, 0.025, 0])
 sim.add_camera(name="wrist", parent_body="so101/gripper", position=[0.058, 0.0, -0.029], target=[-0.024, 0.0, -0.297])
-result = sim.run_policy(
-    robot_name="so101",
-    policy_provider="lerobot_local",
-    policy_config={"pretrained_name_or_path": "lerobot/smolvla_base", "embodiment": "so101"},
-    instruction="pick up the cube",
-    n_steps=300,
-    control_frequency=30.0,
-)
+joints = sim.robot_joint_names("so101")
+embodiment = {"name": "so101_native", "state_keys": joints, "action_keys": joints, "dim_policy": "pad",
+              "obs_rename": {"front": "observation.images.camera1", "wrist": "observation.images.camera2",
+                             "default": "observation.images.camera3"}}
+result = sim.run_policy(robot_name="so101", policy_provider="lerobot_local",
+                        policy_config={"pretrained_name_or_path": "lerobot/smolvla_base", "embodiment": embodiment},
+                        instruction="pick up the cube", n_steps=30, control_frequency=30.0)
 print(result["status"])
+sim.cleanup()
 ```
 
-A real arm's tool takes it as `policy_config`; host/port stay `policy_host`/`policy_port`:
+A checkpoint fine-tuned on an SO-101 carries its stats, and `embodiment="so101"` then converts units both ways in sim and binds the arm's `.pos` keys on hardware ([First policy](../../start/first-policy.md)). A real arm's tool takes the same dict as `policy_config`; host/port stay `policy_host`/`policy_port`:
 
 ```json
 {"action": "execute", "policy_provider": "lerobot_local",
- "policy_config": {"pretrained_name_or_path": "lerobot/smolvla_base", "embodiment": "so101_real"}}
+ "policy_config": {"pretrained_name_or_path": "robotfuel/act_so101_t16b", "embodiment": "so101",
+                   "obs_rename_override": {"front": null, "wrist": "observation.images.wrist"}}}
 ```
 
 ## Limits

@@ -1,9 +1,9 @@
 """Behavior tests for hardware Robot ROS 2 telemetry classification and the
 pre-0.5 SO-family calibration file auto-migration.
 
-Both paths are exercised on a ``Robot`` built via ``__new__`` + manual attribute
-wiring (the same pattern as ``test_hardware_robot_lifecycle``) so no serial/USB
-hardware and no lerobot driver is touched.
+Both paths are exercised on a ``Robot`` built by
+``tests._hardware_robot.hardware_robot_on`` so no serial/USB hardware and no
+lerobot driver is touched.
 
 ``_publish_ros_telemetry`` splits an observation dict into ``JointState``
 scalars (sorted, deterministic) and per-camera ``(H, W, 3)`` frames, skips
@@ -25,6 +25,7 @@ import numpy as np
 import pytest
 
 from strands_robots.hardware_robot import Robot as HwRobot
+from tests._hardware_robot import hardware_robot_on
 
 
 class _RecordingBridge:
@@ -53,18 +54,13 @@ class _FakeRobot:
 
 
 def _telemetry_robot(bridge: _RecordingBridge | None, *, robot_name: str = "arm0") -> HwRobot:
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "test_arm"
-    hw.robot = _FakeRobot(name=robot_name)
+    hw = hardware_robot_on(_FakeRobot(name=robot_name), tool_name="test_arm")
     hw._ros_bridge = bridge
-    hw._ros2_domain = 0
     return hw
 
 
 def _migration_robot(calibration_fpath: str | None) -> HwRobot:
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "test_arm"
-    hw.robot = _FakeRobot(calibration_fpath=calibration_fpath)
+    hw = hardware_robot_on(_FakeRobot(calibration_fpath=calibration_fpath), tool_name="test_arm")
     return hw
 
 

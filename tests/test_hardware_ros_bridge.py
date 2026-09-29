@@ -25,7 +25,6 @@ import os
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
@@ -34,10 +33,10 @@ import pytest
 
 import strands_robots.utils as utils_mod
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState
 from strands_robots.hardware_ros_bridge import HardwareRosBridge
 from strands_robots.ros_telemetry import RosTelemetryBridge
 from strands_robots.simulation.ros_bridge import SimRosBridge
+from tests._hardware_robot import hardware_robot_on
 
 
 class _FakePublisher:
@@ -210,19 +209,8 @@ def _reap_bridge_threads() -> Any:
 
 
 def _make_robot(observation: dict[str, Any], *, ros2_bridge: bool = False, ros2_domain: int = 0) -> HwRobot:
-    """Build a Robot via __new__ and wire only what the bridge path touches."""
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "test_arm"
-    hw.data_config = None
-    hw._task_state = RobotTaskState()
-    hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
-    hw.mesh = None
-    hw.peer_id = None
-    hw.robot = _FakeLeRobot(observation)
+    """Build a Robot on a stand-in device and wire the bridge path under test."""
+    hw = hardware_robot_on(_FakeLeRobot(observation), tool_name="test_arm")
     hw._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
     _BUILT_ROBOTS.append(hw)
     return hw
@@ -358,9 +346,7 @@ def test_robot_telemetry_noop_when_disabled() -> None:
 
 def test_robot_telemetry_noop_without_bridge_attr() -> None:
     """A Robot built without _init_ros_bridge still no-ops (getattr guard)."""
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "bare"
-    hw.robot = _FakeLeRobot({"j0.pos": 1.0})
+    hw = hardware_robot_on(_FakeLeRobot({"j0.pos": 1.0}), tool_name="bare")
     hw._publish_ros_telemetry({"j0.pos": 1.0})  # no _ros_bridge attribute
 
 

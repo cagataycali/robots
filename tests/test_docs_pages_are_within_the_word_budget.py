@@ -58,12 +58,14 @@ _BUDGET: int = _hook().LIMIT
 #: to 48,896 when the per-driver facts moved to one section on the drivers page, and
 #: to 47,845 when the robot pages dropped the back-link footer the nav already gives, and
 #: to 46,418 when they dropped the lines their chips and the nav already state; the old
-#: site was 112,416. Raised to 46,969 for the mjlab backend page (a fourth
-#: SimEngine backend: learn/simulation/mjlab.md, its row on the simulation index
-#: and the rsl_rl_onnx section on learn/policies/rl.md); the ONE convention
-#: exception of that change, flagged in its PR for the owner to accept or to
-#: trade against cuts elsewhere.
-_SITE_BUDGET = 46_969
+#: site was 112,416. Raised once, to 49,800, when the site started saying where readers
+#: look that learned policies run on real robots: a new Start page (First learned
+#: policy) and a generated "Policies verified on this robot" section on every robot
+#: page, each row carrying the source of its numbers (docs/hooks/data/checkpoints.json).
+#: Raised to 50,351 for the mjlab backend page (a fourth SimEngine backend:
+#: learn/simulation/mjlab.md, its row on the simulation index and the rsl_rl_onnx
+#: section on learn/policies/rl.md), the ONE convention exception of that change.
+_SITE_BUDGET = 50_351
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
