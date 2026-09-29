@@ -625,6 +625,7 @@ _PYTHON_ONLY_ACTIONS = frozenset(
         "stream_dataset",
         # SimEngine
         "bind_predicate_robot",
+        "capabilities",
         # The tool path reads a finished start_policy report through
         # stop_policy's last_result; this is the Python reader of the same.
         "policy_result",

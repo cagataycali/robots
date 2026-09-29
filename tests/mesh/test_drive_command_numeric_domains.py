@@ -29,10 +29,10 @@ from typing import Any
 
 import pytest
 
-import strands_robots.mesh.ackermann_robot as ackermann_mod
-import strands_robots.mesh.ros_bridge as ros_bridge_mod
-import strands_robots.mesh.rosbridge_robot as rosbridge_mod
-import strands_robots.mesh.rtps_robot as rtps_mod
+import strands_robots.drivers.ros.ackermann_robot as ackermann_mod
+import strands_robots.drivers.ros.ros_bridge as ros_bridge_mod
+import strands_robots.drivers.ros.rosbridge_robot as rosbridge_mod
+import strands_robots.drivers.ros.rtps_robot as rtps_mod
 from strands_robots.utils import (
     finite_number_error,
     positive_finite_number_error,
