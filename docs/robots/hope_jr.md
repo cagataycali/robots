@@ -21,3 +21,7 @@ robot = Robot("hope_jr", mode="real", driver="strands", port="/dev/ttyACM0")  # 
 **lerobot.** `Robot("hope_jr", mode="real")` builds lerobot's `hope_jr_arm` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
 **`FeetechDriver`** (selected with `driver="strands"`) speaks Feetech STS/SMS serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#feetechdriver).
+
+## Policies verified on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.

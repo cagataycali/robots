@@ -57,10 +57,14 @@ _BUDGET: int = _hook().LIMIT
 #: lowered to 51,184 when the robot-page template stopped restating its fences and
 #: to 48,896 when the per-driver facts moved to one section on the drivers page, and
 #: to 47,845 when the robot pages dropped the back-link footer the nav already gives, and
-#: to 46,418 when they dropped the lines their chips and the nav already state, and
-#: raised to 46,998 for the flux3_action provider page (the one page per provider the
-#: coverage grader demands; its own budget is 602 words); the old site was 112,416.
-_SITE_BUDGET = 46_998
+#: to 46,418 when they dropped the lines their chips and the nav already state; the old
+#: site was 112,416. Raised once, to 49,800, when the site started saying where readers
+#: look that learned policies run on real robots: a new Start page (First learned
+#: policy) and a generated "Policies verified on this robot" section on every robot
+#: page, each row carrying the source of its numbers (docs/hooks/data/checkpoints.json).
+#: Raised to 50,380 for the flux3_action provider page (one page per provider, ruling
+#: R-S01; its own budget is 602 words).
+_SITE_BUDGET = 50_380
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
