@@ -101,6 +101,9 @@ def _startable_mesh(monkeypatch: pytest.MonkeyPatch) -> None:
     """Let ``start()`` past the ACL posture gate, and pace the loops fast."""
     monkeypatch.setenv("STRANDS_MESH_LOCAL_DEV", "true")
     monkeypatch.setenv("STRANDS_MESH_HEALTH_HZ", "50")
+    # The roster under test is the always-on set; the camera loop is an operator
+    # opt-in, and a stray rate from the process environment is not this claim (#4200).
+    monkeypatch.delenv("STRANDS_MESH_CAMERA_HZ", raising=False)
 
 
 def _tick_holder(topic_suffix: str) -> tuple[Any, Any, list[str], threading.Event, threading.Event]:
