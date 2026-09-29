@@ -35,6 +35,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import settings  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
+from tests._dashboard_bootstrap import bootstrap_headers, configure_bootstrap  # noqa: E402
 
 HOST = "127.0.0.1:8090"
 
@@ -45,6 +46,7 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
     monkeypatch.delenv("STRANDS_DASH_AUTH_ENABLED", raising=False)
     monkeypatch.setattr(settings, "SETTINGS_FILE", tmp_path / "settings.json")
+    configure_bootstrap(monkeypatch)
     settings.clear_overrides()
     settings.load(refresh=True)
     built = create_app()
@@ -91,7 +93,8 @@ class TestARefusedSocketSaysWhy:
         ("code", "headers", "auth_on"),
         [
             pytest.param(4401, {"host": HOST, "origin": f"http://{HOST}"}, True, id="sign-in-required"),
-            pytest.param(4404, {"host": HOST, "origin": f"http://{HOST}"}, False, id="no-such-session"),
+            pytest.param(4401, {"host": HOST, "origin": f"http://{HOST}"}, False, id="fresh-install-without-the-bootstrap-proof"),
+            pytest.param(4404, {"host": HOST, "origin": f"http://{HOST}", **bootstrap_headers()}, False, id="no-such-session"),
         ],
     )
     def test_the_socket_is_accepted_first_so_the_close_code_reaches_the_page(

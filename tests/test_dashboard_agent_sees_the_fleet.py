@@ -372,15 +372,16 @@ def test_a_resume_never_rebuilds_the_agent_that_raised_the_interrupt() -> None:
     assert agent_console._is_resume("move it") is False
 
 
-def test_agent_info_reports_the_tools_and_fleet_awareness() -> None:
+def test_agent_info_reports_the_tools_and_fleet_awareness(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
     from strands_robots.dashboard.server import create_app
+    from tests._dashboard_bootstrap import configure_bootstrap
 
     app = create_app()
     app.state.bridge = FakeBridge({"lane-so101__so101": SIM_PEER})
-    with TestClient(app) as client:
+    with TestClient(app, headers=configure_bootstrap(monkeypatch)) as client:
         info = client.get("/api/agent").json()
     assert info["fleet_aware"] is True
     assert "fleet" in info["tools"] and "lane_so101__so101" in info["tools"]
