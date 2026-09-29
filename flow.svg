@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="300" viewBox="0 0 1180 300" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5f6368"/></marker></defs>
+<rect width="1180" height="300" fill="#fff"/>
+<text x="20" y="34" font-size="19" font-weight="600" fill="#202124">One Isaac Lab run, end to end through strands - measured on one L40S, Isaac-Ant, 4096 envs</text>
+<rect x="20" y="60" width="260" height="210" rx="12" fill="#e8f0fe" stroke="#1a73e8"/>
+<text x="36" y="90" font-size="16" font-weight="600" fill="#202124">1. train</text>
+<text x="36" y="118" font-size="12.5" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">train_policy(action=&quot;train&quot;,</text>
+<text x="36" y="136" font-size="12.5" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">  extra={&quot;task&quot;: &quot;Isaac-Ant&quot;,</text>
+<text x="36" y="154" font-size="12.5" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">  &quot;physics&quot;: &quot;isaacsim_physx&quot;})</text>
+<text x="36" y="198" font-size="12.5" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">model_39.pt</text>
+<text x="36" y="216" font-size="12.5" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">strands_run.json</text>
+<text x="36" y="256" font-size="12" fill="#5f6368">50 s (40 iterations)</text>
+<path d="M282 165 L308 165" stroke="#5f6368" stroke-width="2" marker-end="url(#a)"/>
+<rect x="310" y="60" width="260" height="210" rx="12" fill="#e8f0fe" stroke="#1a73e8"/>
+<text x="326" y="90" font-size="16" font-weight="600" fill="#202124">2. play</text>
+<text x="326" y="118" font-size="12.5" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">train_policy(action=&quot;play&quot;,</text>
+<text x="326" y="136" font-size="12.5" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">  job_id=job)</text>
+<text x="326" y="198" font-size="12.5" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">videos/play/clip.mp4</text>
+<text x="326" y="216" font-size="12.5" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">exported/policy.pt (TorchScript)</text>
+<text x="326" y="256" font-size="12" fill="#5f6368">28 s (150 frames)</text>
+<path d="M572 165 L598 165" stroke="#5f6368" stroke-width="2" marker-end="url(#a)"/>
+<rect x="600" y="60" width="260" height="210" rx="12" fill="#e8f0fe" stroke="#1a73e8"/>
+<text x="616" y="90" font-size="16" font-weight="600" fill="#202124">3. export</text>
+<text x="616" y="118" font-size="12.5" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">train_policy(action=&quot;export&quot;,</text>
+<text x="616" y="136" font-size="12.5" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">  output_dir=&quot;runs/ant&quot;)</text>
+<text x="616" y="198" font-size="12.5" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">strands_policy/</text>
+<text x="616" y="216" font-size="12.5" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">policy.pt + policy_meta.json</text>
+<text x="616" y="256" font-size="12" fill="#5f6368">&lt; 1 s</text>
+<path d="M862 165 L888 165" stroke="#5f6368" stroke-width="2" marker-end="url(#a)"/>
+<rect x="890" y="60" width="260" height="210" rx="12" fill="#e6f4ea" stroke="#1e8e3e"/>
+<text x="906" y="90" font-size="16" font-weight="600" fill="#202124">4. deploy</text>
+<text x="906" y="118" font-size="12.5" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">create_policy(&quot;rl&quot;,</text>
+<text x="906" y="136" font-size="12.5" fill="#3c4043" font-family="ui-monospace, Menlo, monospace">  checkpoint_dir=...)</text>
+<text x="906" y="198" font-size="12.5" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">actions = rsl_rl actor</text>
+<text x="906" y="216" font-size="12.5" fill="#0d652d" font-family="ui-monospace, Menlo, monospace">(ELU, obs normalizer)</text>
+<text x="906" y="256" font-size="12" fill="#5f6368">max |Δa| = 0.0 vs Isaac Lab&#x27;s export</text>
+</svg>
