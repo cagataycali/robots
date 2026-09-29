@@ -5,6 +5,8 @@ import { connBadge } from '../lib/connBadge'
 import { recordNavFlag } from '../lib/rehearsalNav'
 import { absentNotice, quietNotice, type AbsentChild } from '../lib/absentChildren'
 import StrandsMark from './StrandsMark'
+import { useEffect, useState } from 'react'
+import { chooseScheme, effectiveScheme, nextScheme, storedScheme, systemScheme, type Scheme } from '../lib/scheme'
 
 interface Props {
   conn: ConnState
@@ -47,9 +49,13 @@ export default function FleetBar({
   return (
     <header className="fleetbar">
       <div className="brand">
-        <span className="logo"><StrandsMark size={26} title="Strands Agents" /></span>
+        {/* The docs header, verbatim (overrides/partials/logo.html): the wordmark links out to
+            strandsagents.com, "/robots" names this project. */}
+        <a className="logo" href="https://strandsagents.com/" title="Strands Agents" aria-label="Strands Agents">
+          <StrandsMark height={18} title="Strands Agents" />
+        </a>
         <div>
-          <h1>strands robots</h1>
+          <h1 className="project">/robots</h1>
           <div className="sub" title={`API: ${backendLabel()}`}>
             {dashboardId || 'fleet cockpit'}
             <span className="backend"> · {backendLabel()}</span>
@@ -114,6 +120,7 @@ export default function FleetBar({
           aria-keyshortcuts="?"
         >? help</button>
 
+        <SchemeToggle />
         <span className="peers">{peerCount} peer{peerCount === 1 ? '' : 's'}</span>
         <span
           className={`conn ${conn}${badge.tone ? ` ${badge.tone}` : ''}`}
@@ -124,5 +131,26 @@ export default function FleetBar({
         </span>
       </div>
     </header>
+  )
+}
+
+/** paper / dark, the docs' toggle: the OS decides until the operator presses this, then the choice sticks. */
+function SchemeToggle() {
+  const [scheme, setScheme] = useState<Scheme>(() => effectiveScheme(storedScheme(), systemScheme()))
+  useEffect(() => {
+    // A stored choice wins; only an OS change with no stored choice moves the page.
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const follow = (e: MediaQueryListEvent) => { if (!storedScheme()) setScheme(systemScheme(e.matches)) }
+    mq.addEventListener('change', follow)
+    return () => mq.removeEventListener('change', follow)
+  }, [])
+  const to = nextScheme(scheme)
+  return (
+    <button
+      className="chip scheme"
+      onClick={() => { chooseScheme(to); setScheme(to) }}
+      title={`switch to the ${to} scheme`}
+      aria-label={`colour scheme: ${scheme}. Switch to ${to}`}
+    >{scheme === 'dark' ? '◐ dark' : '◑ paper'}</button>
   )
 }

@@ -2,7 +2,7 @@
 
 import logging
 import math
-from typing import Any, ClassVar
+from typing import Any
 
 from strands_robots.policies.base import Policy
 from strands_robots.utils import finite_number_error, name_list_error, sequence_length
@@ -58,9 +58,9 @@ class MockPolicy(Policy):
         return False
 
     #: ``False``: every joint follows a sinusoid; ``instruction`` is never read.
-    reads_instruction: ClassVar[bool] = False
+    reads_instruction: bool = False
     #: The words the task envelope uses for that sinusoid.
-    instruction_free_actions: ClassVar[str | None] = "a test motion on every joint"
+    instruction_free_actions: str | None = "a test motion on every joint"
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
         """Record the ordered joint keys used to name the sinusoidal action dict.

@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import os
 import sys
-import threading
 import types
 from typing import Any
 
@@ -58,9 +57,9 @@ pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac import simulation as isaac_module  # noqa: E402
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402
-    IsaacConfig,
     IsaacSimulation,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 #: Joint names the MuJoCo backend reports for ``trs_so_arm100/scene.xml``, the
 #: description ``resolve_model("so100")`` returns. Spelled out because the point
@@ -83,21 +82,11 @@ class _Articulation:
 
 
 def _engine() -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig()
+    engine = isaac_engine()
     engine._world = types.SimpleNamespace(physics_sim_view=object())
     engine._world_created = True
-    engine._robots = {}
-    engine._objects = {}
-    engine._cameras = {}
-    engine._scene_objects = set()
-    engine._prim_registry = []
-    engine._action_controllers = {}
-    engine._replicated = False
     # add_robot asks the shared recording mixin whether a dataset is open;
     # the Isaac backend answers from this engine-owned dict.
-    engine._recording_state_dict = {}
     return engine
 
 

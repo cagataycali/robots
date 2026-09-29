@@ -14,7 +14,6 @@ needs a live Kit stage) is covered by
 
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 import numpy as np
@@ -27,6 +26,7 @@ from strands_robots.simulation.isaac.simulation import (
     _RobotState,
     _rotmat_to_quat_wxyz,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 
 class _FakeRigidHandle:
@@ -63,14 +63,10 @@ def _make_engine(
     robots: dict[str, _RobotState] | None = None,
 ) -> IsaacSimulation:
     """Skeleton IsaacSimulation with exactly the state get_body_state reads."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._world = None
+    engine = isaac_engine()
     engine._world_created = True
     engine._robots = robots if robots is not None else {}
     engine._objects = objects if objects is not None else {}
-    engine._pump_running = False
-    engine._main_tid = threading.get_ident()
     return engine
 
 

@@ -7,7 +7,7 @@ description: "Shadow Dexterous Hand (24-DOF)"
 
 # Shadow Dexterous Hand (24-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip">45 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:shadow_hand}}
 
 <robot-viewer name="shadow_hand"></robot-viewer>
 

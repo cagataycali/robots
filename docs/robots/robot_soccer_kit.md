@@ -7,7 +7,7 @@ description: "Robot Soccer Kit (multi-robot soccer, 65-DOF total)"
 
 # Robot Soccer Kit (multi-robot soccer, 65-DOF total)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">65 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:robot_soccer_kit}}
 
 <robot-viewer name="robot_soccer_kit"></robot-viewer>
 

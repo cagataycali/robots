@@ -7,7 +7,7 @@ description: "Google Robot (mobile base + arm, RT-X)"
 
 # Google Robot (mobile base + arm, RT-X)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile_manip">Mobile manipulators</span><span class="sr-chip">10 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:google_robot}}
 
 <robot-viewer name="google_robot"></robot-viewer>
 

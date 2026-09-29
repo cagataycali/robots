@@ -22,16 +22,14 @@ without the Isaac Sim Kit runtime.
 
 from __future__ import annotations
 
-import threading
-
 import numpy as np
 import pytest
 
-from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import (
     IsaacSimulation,
     _CameraState,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 # Every value the shared positive-whole-number domain refuses: zero and
 # negative rates, a fractional rate, non-finite floats, a string that looks
@@ -58,19 +56,9 @@ def _camera(name: str, width: int = 64, height: int = 48) -> _CameraState:
 
 def _make_engine() -> IsaacSimulation:
     """Skeleton IsaacSimulation with one camera and no Kit runtime."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._config = IsaacConfig()
-    engine._lock = threading.RLock()
-    engine._world = None
+    engine = isaac_engine()
     engine._world_created = True
-    engine._robots = {}
     engine._cameras = {"front": _camera("front")}
-    engine._objects = {}
-    engine._prim_registry = []
-    engine._cams_rec_state = None
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._main_tid = threading.get_ident()
     return engine
 
 

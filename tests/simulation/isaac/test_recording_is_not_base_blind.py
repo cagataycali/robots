@@ -24,7 +24,6 @@ what it was.
 
 from __future__ import annotations
 
-import threading
 import types
 from typing import Any
 
@@ -33,8 +32,8 @@ import pytest
 
 pytest.importorskip("strands_robots.simulation.isaac")
 
-from strands_robots.simulation.isaac.config import IsaacConfig  # noqa: E402
 from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 #: The four signals and their components, in the order the siblings declare them.
 _EXPECTED = [
@@ -67,16 +66,10 @@ def _robot(name: str, *, fixed_base: bool) -> Any:
 
 
 def _engine(robots: dict[str, Any]) -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world_created = True
     engine._world = types.SimpleNamespace()
     engine._robots = robots
-    engine._cameras = {}
-    engine._objects = {}
-    engine._pump_running = False
-    engine._main_tid = threading.get_ident()
     engine.robot_action_keys = lambda robot_name: ["j0", "j1"]  # type: ignore[method-assign]
     return engine
 

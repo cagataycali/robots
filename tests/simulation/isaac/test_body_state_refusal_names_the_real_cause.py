@@ -33,7 +33,6 @@ is stubbed to miss, which is the state under test.
 
 from __future__ import annotations
 
-import threading
 import types
 from typing import Any
 
@@ -41,7 +40,7 @@ import pytest
 
 pytest.importorskip("strands_robots.simulation.isaac")
 
-from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 
 class _DeadHandle:
@@ -65,13 +64,9 @@ class _LiveHandle:
 
 def _engine(objects: dict[str, Any]) -> Any:
     """A skeleton engine whose stage read always misses."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
     engine._world_created = True
     engine._world = types.SimpleNamespace()
-    engine._robots = {}
-    engine._pump_running = False
-    engine._main_tid = threading.get_ident()
     engine._prim_body_state = lambda body_name: None  # type: ignore[method-assign]
     engine._objects = objects
     return engine

@@ -1146,6 +1146,32 @@ class LerobotLocalPolicy(Policy):
             mask = mask.bool().to(self._device)
         return tokens, mask
 
+    @property
+    def reads_instruction(self) -> bool:  # type: ignore[override]
+        """Whether the loaded checkpoint acts on the instruction.
+
+        The class cannot know: ``lerobot_local`` loads ACT, diffusion and VQ-BeT
+        (no language input) as readily as SmolVLA, pi0 and MolmoAct2. Until the
+        model is loaded the answer is the base default ``True`` (a report before
+        the load must not claim the words were ignored); once loaded it is
+        whether the model declares a language input, the same reading
+        :meth:`_needs_language_tokens` uses to decide whether to tokenize.
+        """
+        if not self._loaded:
+            return True
+        from . import molmoact2 as _molmoact2
+
+        if _molmoact2.is_molmoact2(self.pretrained_name_or_path, self.policy_type):
+            return True
+        return self._needs_language_tokens()
+
+    @property
+    def instruction_free_actions(self) -> str | None:  # type: ignore[override]
+        """What a loaded non-reader's actions are, for the envelope's notice."""
+        if self.reads_instruction:
+            return None
+        return f"the {self.policy_type or 'loaded'} checkpoint's actions from the observation alone"
+
     def _needs_language_tokens(self) -> bool:
         """Check whether this policy requires observation.language.tokens.
 
