@@ -671,7 +671,7 @@ def _ensure_log_group(logs: Any, account: BootstrappedAccount) -> str:
                 account.skipped.append(f"logs:{LOG_GROUP_NAME}")
                 return lg["arn"]
     except Exception:
-        pass
+        logger.debug("describe_log_groups failed; creating %s", LOG_GROUP_NAME, exc_info=True)
 
     logs.create_log_group(
         logGroupName=LOG_GROUP_NAME,

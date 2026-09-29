@@ -38,6 +38,7 @@ from strands_robots.dashboard.device_manager import (
     validate_port,
     validate_spawn,
 )
+from strands_robots.dashboard.log_redaction import one_line
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ def _audit(bridge: Any | None, action: str, *, target: str, detail: str | None =
     try:
         record("api", action, target=target, detail=detail, ok=ok)
     except Exception as e:  # noqa: BLE001 - the audit must never veto the action it describes
-        logger.warning("activity trail refused %s %s: %r", action, target, e)
+        logger.warning("activity trail refused %s %s: %r", one_line(action), one_line(target), e)
 
 
 def _live_camera_names(bridge: Any | None) -> dict[str, list[str]]:

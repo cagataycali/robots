@@ -2509,6 +2509,64 @@ class Robot(TeleopMixin, AgentTool):
         return f"policy {provider}"
 
     @staticmethod
+    def _policy_config_error(policy_config: Any, method: str) -> dict[str, Any] | None:
+        """Reject a ``policy_config`` that cannot be splatted into ``create_policy``.
+
+        The agent tool's counterpart of ``SimEngine._validate_policy_mapping``:
+        one owner of the sentence (``policies.policy_mapping_error``), so a JSON
+        blob an agent forgot to parse is refused with the same words on hardware
+        and in sim.
+        """
+        from strands_robots.policies import policy_mapping_error
+
+        message = policy_mapping_error(policy_config, "policy_config")
+        if message is None:
+            return None
+        return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
+
+    @staticmethod
+    def _policy_config_reserved_error(policy_kwargs: Mapping[str, Any], method: str) -> dict[str, Any] | None:
+        """Reject a ``policy_config`` that spells host or port, which have their own parameters.
+
+        ``_get_policy`` assembles ``host`` and ``port`` from ``policy_host`` /
+        ``policy_port`` and then overlays the bag, so a ``port`` inside the bag would
+        silently win over the parameter the operator read in the approval prompt. The
+        prompt must describe the server the arm will dial, so the two spellings are
+        not allowed to disagree: the bag may not carry either.
+        """
+        clash = sorted(k for k in ("host", "port") if k in policy_kwargs)
+        if not clash:
+            return None
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{method}: policy_config must not carry {', '.join(clash)} - "
+                        "name the policy server with policy_host and policy_port, so the approval "
+                        "prompt describes the endpoint the arm will actually dial"
+                    )
+                }
+            ],
+        }
+
+    @staticmethod
+    def _checkpoint_description(tool_input: Mapping[str, Any]) -> str:
+        """The checkpoint half of the approval line, or nothing when the bag names none.
+
+        An operator approving a ``lerobot_local`` rollout is approving a specific
+        model driving the arm; the prompt used to name the provider only, so two
+        checkpoints read identically. Only the two keys that name a model are
+        spelled out - the rest of the bag is provider tuning the operator is not
+        being asked to judge.
+        """
+        bag = tool_input.get("policy_config")
+        if not isinstance(bag, Mapping):
+            return ""
+        parts = [f"{key} {refusal_str(bag[key])}" for key in ("pretrained_name_or_path", "model_path") if bag.get(key)]
+        return f", checkpoint {' / '.join(parts)}" if parts else ""
+
+    @staticmethod
     def _policy_provider_error(policy_provider: Any, method: str) -> dict[str, Any] | None:
         """Reject a ``policy_provider`` no policy can be resolved from.
 
@@ -3698,10 +3756,13 @@ class Robot(TeleopMixin, AgentTool):
                         "policy_config": {
                             "type": "object",
                             "description": (
-                                "execute/start: provider kwargs forwarded to create_policy, the same "
-                                "dict the sim tool takes (lerobot_local: pretrained_name_or_path, "
-                                "device; flux3_action: model_id, revision, camera_map; groot: "
-                                "api_token). Unknown keys are the provider's own refusal."
+                                "Provider keywords forwarded to strands_robots.policies.create_policy, "
+                                "the same bag the sim tool takes. For lerobot_local: pretrained_name_or_path "
+                                "(a Hugging Face repo id or a local checkpoint dir), policy_type, device, "
+                                "actions_per_step. For flux3_action: model_id, revision, camera_map. "
+                                "For groot: api_token, observation_mapping, action_mapping. "
+                                "Never host/port here: those are policy_host/policy_port. An entry the "
+                                "provider does not take is the provider's own refusal, before the arm moves."
                             ),
                             "additionalProperties": True,
                         },
@@ -3781,7 +3842,7 @@ class Robot(TeleopMixin, AgentTool):
             action,
             self.tool_name_str,
             f"{action!r} drives the real robot {self.tool_name_str!r}{budget} with {instruction!r} "
-            f"({self._policy_description(provider, host, port)}); "
+            f"({self._policy_description(provider, host, port)}{self._checkpoint_description(tool_input)}); "
             "it needs operator approval before it is dispatched." + (f" {notice}" if notice else ""),
             tool_context,
             allow_env=COMMAND_ALLOW_ENV,
@@ -3897,34 +3958,8 @@ class Robot(TeleopMixin, AgentTool):
                 policy_host = input_data.get("policy_host", "localhost")
                 policy_provider = input_data.get("policy_provider", "groot")
                 duration = input_data.get("duration", 30.0)
+                policy_config = input_data.get("policy_config")
                 method = "execute_task" if action == "execute" else "start_task"
-
-                # The checkpoint lives in ``policy_config`` (the sim tool's dict of
-                # the same name). Without it the hardware tool could only name a
-                # provider, so lerobot_local / flux3_action were unrunnable from an
-                # agent turn while the mesh dispatch forwarded the same kwargs.
-                policy_config = input_data.get("policy_config") or {}
-                if not isinstance(policy_config, dict) or any(not isinstance(k, str) for k in policy_config):
-                    bad = {
-                        "status": "error",
-                        "content": [
-                            {
-                                "text": f"policy_config must be an object of provider kwargs, got {type(policy_config).__name__}"
-                            }
-                        ],
-                    }
-                    yield ToolResultEvent(self._make_tool_result(tool_use_id, bad))
-                    return
-                reserved = {"instruction", "policy_port", "policy_host", "policy_provider", "duration"}
-                if clash := sorted(reserved & set(policy_config)):
-                    bad = {
-                        "status": "error",
-                        "content": [
-                            {"text": f"policy_config repeats tool arguments {clash}; pass them at the top level"}
-                        ],
-                    }
-                    yield ToolResultEvent(self._make_tool_result(tool_use_id, bad))
-                    return
 
                 # Only ``instruction`` is judged here; whether a port is needed is
                 # the named provider's call, which the preflight below asks.
@@ -3936,13 +3971,25 @@ class Robot(TeleopMixin, AgentTool):
                 # The dispatcher's own preflight, without the claim, before the
                 # operator is asked: a call it would refuse on its inputs alone
                 # must not spend an approval. The dispatcher runs it again.
+                # The checkpoint bag is the one input that reaches ``create_policy`` through
+                # ``**``, so its shape is judged here, at the entry point, the way the sim
+                # tool judges it - a string or a list would otherwise surface as CPython's
+                # TypeError from inside the rollout, after the arm was energized.
+                if err := self._policy_config_error(policy_config, method):
+                    yield ToolResultEvent(self._make_tool_result(tool_use_id, err))
+                    return
+                policy_kwargs: dict[str, Any] = dict(policy_config or {})
+                if err := self._policy_config_reserved_error(policy_kwargs, method):
+                    yield ToolResultEvent(self._make_tool_result(tool_use_id, err))
+                    return
+
                 if err := self._preflight(
                     method,
                     duration=duration,
                     builds_policy=True,
                     policy_provider=policy_provider,
                     policy_port=policy_port,
-                    policy_kwargs=policy_config,
+                    policy_kwargs=policy_kwargs,
                 ):
                     yield ToolResultEvent(self._make_tool_result(tool_use_id, err))
                     return
@@ -3964,7 +4011,7 @@ class Robot(TeleopMixin, AgentTool):
                     return
 
                 dispatch = self._execute_task_sync if action == "execute" else self.start_task
-                result = dispatch(instruction, policy_port, policy_host, policy_provider, duration, **policy_config)
+                result = dispatch(instruction, policy_port, policy_host, policy_provider, duration, **policy_kwargs)
                 yield ToolResultEvent(self._make_tool_result(tool_use_id, result))
 
             elif action == "status":

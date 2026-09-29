@@ -859,6 +859,11 @@ constraint-dependencies = [
     # floor sits at the newest release that resolves; lift it to 83.0.0 when
     # lerobot lifts its cap.
     "setuptools>=81.0.0",
+    # Two more advisories wait on the same lerobot 0.6.1 caps and have no
+    # resolvable floor today: GHSA-xrqw-3rrv-vx5w (HIGH, transformers < 5.10.0;
+    # lerobot[molmoact2] caps transformers < 5.6.0) and GHSA-rrmf-rvhw-rf47
+    # (LOW, torch <= 2.12.1; lerobot caps torch < 2.12.0). Add
+    # "transformers>=5.10.0" and "torch>=2.13.0" here when lerobot lifts them.
     # GHSA-hxp9-w8x3-p566 (MEDIUM): permessage-deflate bypasses
     # maxMessagePayloadSize, < 26.7.1 (under roslibpy).
     "autobahn>=26.7.1",

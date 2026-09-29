@@ -48,6 +48,7 @@ import json
 import logging
 import os
 import re
+import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -578,7 +579,7 @@ def provision_robot(
     try:
         os.chmod(cert_dir, 0o700)
     except OSError:
-        pass
+        logger.debug("could not chmod 0o700 %s", cert_dir, exc_info=True)
 
     # 1. Thing
     thing_arn = _ensure_thing(iot, thing_name, attributes)
@@ -673,7 +674,7 @@ def provision_operator(
     try:
         os.chmod(cert_dir, 0o700)
     except OSError:
-        pass
+        logger.debug("could not chmod 0o700 %s", cert_dir, exc_info=True)
 
     thing_arn = _ensure_thing(iot, thing_name, attributes)
     policy_arn = _ensure_policy(iot, OPERATOR_POLICY_NAME, _OPERATOR_POLICY_DOC)
@@ -774,7 +775,7 @@ def teardown_thing(
         iot.delete_thing(thingName=thing_name)
         logger.info("[teardown] deleted thing %s", thing_name)
     except iot.exceptions.ResourceNotFoundException:
-        pass
+        pass  # expected: teardown is idempotent and the Thing is already gone
 
     # Remove local cert files.  Honour a custom ``cert_dir`` so we don't
     # orphan certs provisioned with ``provision_robot(..., cert_dir=...)``.
@@ -810,7 +811,7 @@ def _ensure_thing(iot: Any, thing_name: str, attributes: dict[str, str] | None) 
         logger.info("[provision] thing %s already exists", thing_name)
         return existing["thingArn"]
     except iot.exceptions.ResourceNotFoundException:
-        pass
+        pass  # expected: the Thing does not exist yet, so it is created below
 
     payload: dict[str, Any] = {"thingName": thing_name}
     if attributes:
@@ -828,7 +829,7 @@ def _ensure_policy(iot: Any, name: str, document: dict[str, Any]) -> str:
         logger.info("[provision] policy %s already exists (v%s)", name, existing.get("defaultVersionId", "?"))
         return existing["policyArn"]
     except iot.exceptions.ResourceNotFoundException:
-        pass
+        pass  # expected: the policy does not exist yet, so it is created below
 
     resp = iot.create_policy(
         policyName=name,
@@ -917,7 +918,7 @@ def _ensure_ca(ca_path: Path) -> None:
       untouched -- the caller decides whether to delete and retry.
     * Otherwise download the CA over HTTPS, cap the body at
       :data:`_CA_FETCH_MAX_BYTES`, verify the pin, and write the result
-      with mode ``0o644``.
+      owner-only (mode ``0o600``, created atomically with that mode).
 
     Pinning defeats a network-level adversary (DNS hijack, captive portal,
     BGP route attacks, malicious corporate proxy) that could substitute a
@@ -1039,11 +1040,26 @@ def _ensure_ca(ca_path: Path) -> None:
             "anything on its own."
         )
 
-    ca_path.write_bytes(body)
+    # Owner-only, created atomically: ``os.open`` with ``O_CREAT`` applies the
+    # mode as the file comes into being, so there is no write-then-chmod
+    # window in which the CA sits at the umask default. The bytes are public
+    # (Amazon's root), but the file is what the TLS client trusts, and the
+    # only reader is this user's own process inside the 0o700 cert_dir; a
+    # world-readable copy grants nothing and is what the scanner flags.
+    # ``O_NOFOLLOW`` refuses to write through a pre-planted symlink, as the
+    # marker below does.
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(ca_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow, 0o600)
     try:
-        os.chmod(ca_path, 0o644)
+        os.write(fd, body)
+    finally:
+        os.close(fd)
+    try:
+        # O_CREAT does not apply the mode to a file that already existed
+        # (a zero-byte CA left by an interrupted download); re-assert it.
+        os.chmod(ca_path, 0o600)
     except OSError:
-        pass
+        logger.debug("could not chmod 0o600 %s", ca_path, exc_info=True)
 
     # Issue #261: when the break-glass STRANDS_MESH_DISABLE_CA_PIN was
     # active during this download, write a sidecar marker so future
@@ -1121,7 +1137,6 @@ def _download_with_per_socket_timeout(url: str, timeout_s: float, max_bytes: int
     hostile proxy) with a message pointing at the break-glass env var.
     """
     import http.client
-    import urllib.error
 
     class _TimedHTTPSHandler(urllib.request.HTTPSHandler):
         """HTTPSHandler whose connection factory bakes in *timeout_s*.

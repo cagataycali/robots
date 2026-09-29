@@ -248,7 +248,7 @@ if _importlib_util.find_spec("mujoco") is not None:
 
         _configure_gl_backend()
     except (ImportError, AttributeError, OSError):
-        pass
+        pass  # best effort: MuJoCo picks its own GL backend when the hint cannot be set
 
 
 # Auto-configure the macOS dyld search path so torchcodec can find Homebrew's

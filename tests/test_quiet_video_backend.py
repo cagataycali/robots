@@ -27,8 +27,7 @@ from strands_robots import _dyld
 
 @pytest.fixture(autouse=True)
 def _fresh_probe(monkeypatch):
-    monkeypatch.setattr(_dyld, "_quiet_backend", None)
-    monkeypatch.setattr(_dyld, "_quiet_backend_probed", False)
+    monkeypatch.setattr(_dyld, "_quiet_backend", _dyld._UNPROBED)
     monkeypatch.setattr(_dyld, "_pending_hint", None)
 
 
