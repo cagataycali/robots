@@ -20,4 +20,4 @@ armature-derived PD gains on all 29 joints at the decoder's 0.005 s x 4 clock.
 The lerobot_local embodiment `unitree_g1_sonic` names the 66 dataset actions so
 `align_action_values` keeps every token instead of truncating to the 31 state
 keys. Docs page `learn/policies/wbc-latent.md`; the site word ceiling rises
-once from 46,418 to 47,206 for it.
+once from 49,800 to 50,522 for it.
