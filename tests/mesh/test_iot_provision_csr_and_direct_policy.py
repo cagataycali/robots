@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -129,7 +130,9 @@ def _csr_subject(csr_pem: str) -> str:
         [openssl, "req", "-noout", "-subject", "-in", "/dev/stdin"], input=csr_pem, capture_output=True, text=True
     )
     assert out.returncode == 0, out.stderr
-    return out.stdout.strip()
+    # OpenSSL 3.x prints the subject as "CN = x, O = y"; 1.x as "CN=x/O=y".
+    # Normalise the spacing around '=' so the substring checks hold on both.
+    return re.sub(r"\s*=\s*", "=", out.stdout.strip())
 
 
 class TestCsrIssuance:
