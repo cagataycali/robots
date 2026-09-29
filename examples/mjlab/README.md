@@ -199,7 +199,7 @@ rotates or lifts its first body.
 
 ## 03 Humanoid beyond velocity
 
-Results (rough done, get-up v1 and v2 done, both negative; v3 training):
+Results (rough done, get-up v1 and v2 done, both negative; v3 read at checkpoint 400, same crouch):
 
 **Rough terrain, 1500 iterations, 4096 envs, 2 h 39 min on Thor** (`results/g1_rough`, shared GPU). Training ended at
 mean reward 15.66 and mean episode length 926 of 1000 ticks under the terrain curriculum. Native mjlab play at the
@@ -236,8 +236,16 @@ already showed the same trace, which pointed at the real mechanism: mjlab's stoc
 (pelvis) gravity. The G1's waist lets the torso stand vertical over a pelvis pitched past 20 degrees at 0.525 m, so
 the crouch collects the full upright weight plus a quarter of the height bell, and the AND-gated `standing` gives no
 gradient toward straightening the pelvis. `--getup-reward v3` adds a shaped `pelvis_upright` term (exp of the root's
-lateral gravity, std 0.4, weight 2.0) and is the last retry of this lane (phase 10, `results/g1_getup_v3`); if it
-lands before the lane closes its row goes here, otherwise it is the named next step.
+lateral gravity, std 0.4, weight 2.0) was the last retry of this lane (phase 10, `results/g1_getup_v3`). Its
+checkpoint 400 of 1000, exported and played while the run continued
+([`assets/g1_getup_v3_ckpt400_eval_native.json`](assets/g1_getup_v3_ckpt400_eval_native.json)): the same 0.525 m
+trace on all four drops, `upright_final` false, 0 of 4, with `pelvis_upright` at 0.54 of 2.0 (a pelvis still pitched
+about 27 degrees) and `standing` still 0.0. Three reward shapes, one attractor. The trace has one more clue the
+rewards do not explain: `base_z_max` is 0.85 to 1.26 m in every episode, so the supine spawn throws the pelvis up to
+0.8 m into the air before the robot ever acts (the drop height is 0.35 to 0.45 m), which points at an initial-contact
+impulse in the supine keyframe rather than at PPO. The next attempt should fix the spawn (settle the supine pose for
+a few ticks with zero action before the episode starts, or lower the drop) before spending another 1000 iterations
+on reward terms. The finished v3 run lands in `results/g1_getup_v3/eval_native.json` in the lane directory.
 `eval-native` now records `z_per_second`, `base_z_max` and `upright_final` per episode so the next attempt is
 readable at a glance (the v1 trace also shows the pelvis reaching 0.85 to 1.25 m inside the first second after
 the drop, a launch that was not diagnosed).
