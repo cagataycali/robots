@@ -51,11 +51,9 @@ authored value by construction (nothing else has written yet). An object added
 AFTER a randomize call gets its base captured on the next call, unrandomized -
 same effect as MuJoCo's mutate-then-randomize ordering note.
 
-``set_obs_noise`` stores the config; :meth:`IsaacSimulation.get_observation`
-applies it through :meth:`_apply_obs_noise`, suffix-keyed exactly as the
-MuJoCo pass is (``joint_pos_std`` to position floats, ``joint_vel_std`` to
-``.vel`` floats, ``camera_jitter_px`` as an integer-pixel roll on frames,
-lists - the ``base_*`` signals - untouched).
+``set_obs_noise`` and its passes are
+:class:`~strands_robots.simulation.obs_noise.ObservationNoiseMixin`, shared
+with MuJoCo and Newton; :meth:`IsaacSimulation.get_observation` applies it.
 """
 
 from __future__ import annotations
@@ -72,6 +70,7 @@ from strands_robots.simulation.base import (
     randomization_seed_error,
     unknown_kwargs_error,
 )
+from strands_robots.simulation.obs_noise import ObservationNoiseMixin
 from strands_robots.utils import boolean_flag_error
 
 logger = logging.getLogger(__name__)
@@ -92,12 +91,6 @@ _RANDOMIZE_PARAMS: tuple[str, ...] = (
     "seed",
 )
 
-_OBS_NOISE_PARAMS: tuple[str, ...] = (
-    "joint_pos_std",
-    "joint_vel_std",
-    "camera_jitter_px",
-    "seed",
-)
 
 #: Bounds of the lighting intensity scale, fixed rather than a parameter:
 #: neither sibling backend exposes a lighting range knob, and inventing one
@@ -105,12 +98,12 @@ _OBS_NOISE_PARAMS: tuple[str, ...] = (
 _LIGHT_INTENSITY_SCALE: tuple[float, float] = (0.5, 1.5)
 
 
-class IsaacRandomizationMixin:
+class IsaacRandomizationMixin(ObservationNoiseMixin):
     """``randomize`` / ``set_obs_noise`` for :class:`IsaacSimulation`.
 
     Expects the host class to provide ``_lock``, ``_world``, ``_world_created``,
-    ``_objects`` and ``_config``. State this mixin owns (``_dr_base``,
-    ``_obs_noise``, ``_obs_noise_rng``) is created lazily via ``getattr`` so the
+    ``_objects`` and ``_config``. State this mixin owns (``_dr_base``) is
+    created lazily via ``getattr`` so the
     two dozen ``__new__``-skeleton test engines need no new seeds.
     """
 
@@ -121,8 +114,6 @@ class IsaacRandomizationMixin:
         _world: Any
         _world_created: bool
         _objects: dict[str, Any]
-        _obs_noise: dict[str, float] | None
-        _obs_noise_rng: Any
         _dr_base: dict[tuple[str, str], Any]
 
     # --- randomize -----------------------------------------------------------
@@ -357,84 +348,3 @@ class IsaacRandomizationMixin:
             moved[name] = pos
         applied["positions"] = moved
         return len(moved)
-
-    # --- set_obs_noise --------------------------------------------------------
-
-    def set_obs_noise(
-        self,
-        joint_pos_std: float = 0.0,
-        joint_vel_std: float = 0.0,
-        camera_jitter_px: float = 0.0,
-        seed: int | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Configure additive Gaussian sensor noise on observations.
-
-        Signature, defaults and semantics mirror the MuJoCo and Newton
-        backends: ``joint_pos_std`` (radians) on the position floats,
-        ``joint_vel_std`` (rad/s) on the ``.vel`` floats, ``camera_jitter_px``
-        as a random integer-pixel roll on rendered frames. All zeros clears the
-        noise. Applied by :meth:`IsaacSimulation.get_observation` on every
-        read; ``get_frame`` / ``render`` stay noise-free, matching MuJoCo.
-        """
-        if kwargs_error := unknown_kwargs_error("set_obs_noise", kwargs, _OBS_NOISE_PARAMS):
-            return kwargs_error
-        for param, value in (
-            ("joint_pos_std", joint_pos_std),
-            ("joint_vel_std", joint_vel_std),
-            ("camera_jitter_px", camera_jitter_px),
-        ):
-            if msg := finite_non_negative_error(value, param, "set_obs_noise"):
-                return {"status": "error", "content": [{"text": msg}]}
-        if msg := randomization_seed_error(seed, "set_obs_noise"):
-            return {"status": "error", "content": [{"text": msg}]}
-        cfg = {
-            "joint_pos_std": float(joint_pos_std),
-            "joint_vel_std": float(joint_vel_std),
-            "camera_jitter_px": float(camera_jitter_px),
-        }
-        with self._lock:
-            if any(v > 0 for v in cfg.values()):
-                self._obs_noise = cfg
-                self._obs_noise_rng = np.random.default_rng(seed)
-                text = (
-                    f"Sensor noise: joint_pos_std={cfg['joint_pos_std']}, "
-                    f"joint_vel_std={cfg['joint_vel_std']}, camera_jitter_px={cfg['camera_jitter_px']}"
-                )
-            else:
-                self._obs_noise = None
-                self._obs_noise_rng = None
-                text = "Sensor noise cleared."
-        return {"status": "success", "content": [{"text": text}, {"json": {**cfg, "seed": seed}}]}
-
-    def _apply_obs_noise(self, obs: dict[str, Any]) -> dict[str, Any]:
-        """Return ``obs`` with the configured sensor noise applied.
-
-        Suffix-keyed exactly as the MuJoCo pass: position noise to the plain
-        float entries, velocity noise to the ``.vel`` floats, an integer-pixel
-        roll to ndarray frames. List values (the ``base_*`` floating-base
-        signals) are left untouched - a quaternion would need renormalization,
-        out of scope for additive scalar noise. A no-op returning the input
-        when no noise is configured.
-        """
-        cfg = getattr(self, "_obs_noise", None)
-        rng = getattr(self, "_obs_noise_rng", None)
-        if not cfg or rng is None or not obs:
-            return obs
-        pos_std = cfg.get("joint_pos_std", 0.0)
-        vel_std = cfg.get("joint_vel_std", 0.0)
-        px = cfg.get("camera_jitter_px", 0.0)
-        out: dict[str, Any] = {}
-        for key, value in obs.items():
-            if isinstance(value, np.ndarray):
-                if px > 0:
-                    dx, dy = (int(v) for v in rng.integers(-int(px), int(px) + 1, size=2))
-                    out[key] = np.roll(value, shift=(dy, dx), axis=(0, 1))
-                else:
-                    out[key] = value
-            elif isinstance(value, float):
-                std = vel_std if key.endswith(".vel") else pos_std
-                out[key] = value + (float(rng.normal(0.0, std)) if std > 0 else 0.0)
-            else:
-                out[key] = value
-        return out
