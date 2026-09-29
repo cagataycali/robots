@@ -101,6 +101,20 @@ def test_contract_surface():
     assert vla.state_keys == [*SONIC_JOINT_NAMES, *GRIPPER_KEYS]
 
 
+def test_an_inner_with_an_embodiment_keeps_its_own_key_declaration():
+    """lerobot_local names actions by robot_state_keys unless an embodiment declares action_keys."""
+    from types import SimpleNamespace
+
+    pol, vla, _ = _policy()
+    vla.state_keys = ["untouched"]
+    vla._embodiment = SimpleNamespace(action_keys=list(TOKEN_KEYS) + list(GRIPPER_KEYS))  # type: ignore[attr-defined]
+    pol.set_robot_state_keys(list(SONIC_JOINT_NAMES))
+    assert vla.state_keys == ["untouched"]
+    vla._embodiment = SimpleNamespace(action_keys=[])  # type: ignore[attr-defined]
+    pol.set_robot_state_keys(list(SONIC_JOINT_NAMES))
+    assert vla.state_keys == [*SONIC_JOINT_NAMES, *GRIPPER_KEYS]
+
+
 def test_one_action_per_tick_with_joint_names_and_grippers():
     pol, vla, sess = _policy(chunk=5)
     actions = asyncio.run(pol.get_actions(_obs(), "Bring the can to the white table"))

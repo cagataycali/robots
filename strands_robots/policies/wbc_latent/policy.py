@@ -204,9 +204,10 @@ class WBCLatentPolicy(Policy):
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
         """Record the robot's joint names and refuse a robot that is not a 29-joint G1.
 
-        The inner VLA receives the 31 keys of the dataset (29 joints + 2
-        grippers) regardless of what the sim declares, because that is the
-        state vector the checkpoint was normalised on.
+        An inner VLA without an embodiment receives the 31 keys of the dataset
+        (29 joints + 2 grippers) regardless of what the sim declares, because
+        that is the state vector the checkpoint was normalised on; one with an
+        embodiment keeps the keys the embodiment declares.
 
         Raises:
             ValueError: any of the 29 SONIC joint names is missing.
@@ -220,7 +221,15 @@ class WBCLatentPolicy(Policy):
                 "names match the Menagerie g1.xml."
             )
         self._robot_state_keys = keys
-        self._inner.set_robot_state_keys([*SONIC_JOINT_NAMES, *GRIPPER_KEYS])
+        # An inner policy carrying an embodiment (lerobot_local with
+        # unitree_g1_sonic) already declares both sides: 31 state keys and the
+        # 66 action names. lerobot_local names its ACTION values by
+        # robot_state_keys when no embodiment says otherwise, so forwarding the
+        # 31 state keys there would rename the 66 tokens to 31 joint names and
+        # drop 35 of them. Forward only to an inner without one.
+        embodiment = getattr(self._inner, "_embodiment", None)
+        if embodiment is None or not getattr(embodiment, "action_keys", None):
+            self._inner.set_robot_state_keys([*SONIC_JOINT_NAMES, *GRIPPER_KEYS])
 
     def set_control_frequency(self, hz: float) -> None:
         """Set the control rate here and on the inner policy; warn when it is not 50 Hz."""
