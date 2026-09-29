@@ -530,8 +530,7 @@ class MjlabEngine(MjlabRecordingMixin, SimEngine):
                 lines.append(f"Bodies: {m.nbody} | Joints: {m.njnt} | Actuators: {m.nu} | nq={m.nq}")
             return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
-    @property
-    def physics_timestep(self) -> float | None:
+    def physics_timestep(self) -> float | None:  # method, like the ABC (base.py) and the MuJoCo backend
         """The physics timestep in seconds (robot MJCF default until ``create_world`` pins one)."""
         return self._timestep if self._timestep is not None else self._default_timestep
 

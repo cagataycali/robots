@@ -83,7 +83,7 @@ def test_so101_contract_matches_mujoco_backend():
         oc = classic.get_observation("so101", skip_images=True)
         om = mjl.get_observation("so101", skip_images=True)
         assert set(om) == set(oc), (sorted(om), sorted(oc))
-        assert mjl.physics_timestep == pytest.approx(0.002)
+        assert mjl.physics_timestep() == pytest.approx(0.002)
         assert mjl.mj_model.opt.integrator == classic.mj_model.opt.integrator
         assert mjl.mj_model.opt.solver == classic.mj_model.opt.solver
     finally:
