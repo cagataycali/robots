@@ -473,6 +473,52 @@ def _prim_world_pose(stage: Any, path: str) -> tuple[list[float], list[float]]:
         return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
 
 
+def _split_joint_action(
+    robot: Any, action_map: dict[str, Any]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split an action into joint position targets and joint efforts.
+
+    A joint whose MJCF actuator is a ``<motor>`` takes the action value as that
+    actuator's ``ctrl``, as the MuJoCo backend does: clipped to ``ctrlrange``
+    and applied as a joint effort of ``gear * ctrl``. Every other named joint
+    takes it as a position target, as before. Measured on one L40S (Isaac Sim
+    6.1, go2): sent as position targets, the motor joints' zero-gain force
+    drives did nothing - the base fell from 0.44 m to 0.09 m in 240 steps and
+    +5 on FL_calf moved nothing - while every call reported success.
+
+    Only the named joints are commanded, as before: an unnamed joint keeps its
+    current target (or effort). Returns ``(position_values, position_indices,
+    effort_values, effort_indices)``.
+    """
+    from strands_robots.simulation.isaac.mjcf_assets import mjcf_motor_joints
+
+    motors = mjcf_motor_joints(getattr(robot, "description_path", None))
+    pos_idx: list[int] = []
+    pos_val: list[float] = []
+    eff_idx: list[int] = []
+    eff_val: list[float] = []
+    for i, jname in enumerate(robot.joint_names):
+        if jname not in action_map:
+            continue
+        value = float(action_map[jname])
+        motor = motors.get(jname)
+        if motor is None:
+            pos_idx.append(i)
+            pos_val.append(value)
+            continue
+        gear, lo, hi = motor
+        if lo is not None and hi is not None:
+            value = min(max(value, lo), hi)
+        eff_idx.append(i)
+        eff_val.append(gear * value)
+    return (
+        np.array(pos_val, dtype=np.float32),
+        np.array(pos_idx, dtype=np.int32),
+        np.array(eff_val, dtype=np.float32),
+        np.array(eff_idx, dtype=np.int32),
+    )
+
+
 def _physics_scene_path(stage: Any) -> str:
     """The stage's ``UsdPhysics.Scene`` prim path, discovered rather than assumed.
 
@@ -5917,12 +5963,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # over every joint, so the indices then address every DOF in
             # articulation order - what the raw vector path expressed by passing
             # ``None``.
-            named = [i for i, jname in enumerate(robot.joint_names) if jname in action_map]
-            action_array: np.ndarray = np.array(
-                [float(action_map[robot.joint_names[i]]) for i in named],
-                dtype=np.float32,
-            )
-            joint_indices: np.ndarray = np.array(named, dtype=np.int32)
+            action_array, joint_indices, effort_array, effort_indices = _split_joint_action(robot, action_map)
 
         # Nested (not a separate method) so the write-and-step runs on the
         # ``SimulationApp``-owning thread and the lock is released every
@@ -5947,15 +5988,20 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 # exist on the 6.0 class (the #101 ``omni.isaac.* -> isaacsim.*``
                 # migration renamed imports but missed this articulation method).
                 # See ``set_joint_positions`` for the teleport (non-PD) counterpart.
-                if robot.articulation is not None and action_array.size > 0:
+                if robot.articulation is not None and (action_array.size > 0 or effort_array.size > 0):
                     try:
                         from strands_robots.simulation.isaac._deprecated_api import (
                             ArticulationAction,
                         )
 
-                        robot.articulation.apply_action(
-                            ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
-                        )
+                        if action_array.size > 0:
+                            robot.articulation.apply_action(
+                                ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
+                            )
+                        if effort_array.size > 0:
+                            robot.articulation.apply_action(
+                                ArticulationAction(joint_efforts=effort_array, joint_indices=effort_indices)
+                            )
                     except (RuntimeError, ValueError, AttributeError, ImportError) as e:
                         # apply_action raises RuntimeError on a torn-down
                         # articulation, ValueError on shape mismatch, AttributeError
@@ -6030,6 +6076,35 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
     # --- SimEngine: Synchronized multi-robot rollout -------------------------
 
+    def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
+        """Hand a policy that opts in (``set_sim_context``) the robot's compiled source MJCF.
+
+        The MuJoCo backend hands its live ``MjModel``; this backend has none,
+        but a robot converted from MJCF records the file it came from, and the
+        compiled model carries the same actuator table. ``MockPolicy`` reads its
+        ctrl ranges from it to keep its sinusoid inside them - without this, on
+        Isaac it commanded (and recorded) +-0.5 on so100 joints whose ranges are
+        [-3.32, 0.174] and [-0.174, 1.75], so a replay could not follow its own
+        dataset (0.325 rad worst-case error vs 0.106 on MuJoCo). No-op for a
+        robot loaded from plain USD or URDF, and never fails a rollout.
+        """
+        ctx = getattr(policy, "set_sim_context", None)
+        if not callable(ctx):
+            return
+        robot = registry_entry(self._robots, robot_name)
+        path = getattr(robot, "description_path", None) if robot is not None else None
+        if not path or not str(path).lower().endswith(".xml"):
+            return
+        from strands_robots.simulation.isaac.mjcf_assets import compiled_mjcf_model
+
+        model = compiled_mjcf_model(str(path))
+        if model is None:
+            return
+        try:
+            ctx(model, "")
+        except Exception as exc:  # noqa: BLE001 - non-fatal, as on the MuJoCo backend
+            logger.debug("bind_policy_sim_context(%s) failed: %s", robot_name, exc)
+
     def _apply_lockstep_action(self, robot_name: str, action: dict[str, Any], warned_unresolved: set[str]) -> None:
         """Apply one robot's action WITHOUT stepping physics (lockstep half of send_action).
 
@@ -6088,22 +6163,22 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
         # Command ONLY the named joints (see send_action for why a full
         # zero-filled vector would slam unnamed joints to 0.0).
-        named = [i for i, jname in enumerate(robot.joint_names) if jname in action_map]
-        if robot.articulation is None or not named:
+        action_array, joint_indices, effort_array, effort_indices = _split_joint_action(robot, action_map)
+        if robot.articulation is None or (action_array.size == 0 and effort_array.size == 0):
             return
-        action_array: np.ndarray = np.array(
-            [float(action_map[robot.joint_names[i]]) for i in named],
-            dtype=np.float32,
-        )
-        joint_indices: np.ndarray = np.array(named, dtype=np.int32)
         try:
             from strands_robots.simulation.isaac._deprecated_api import (
                 ArticulationAction,
             )
 
-            robot.articulation.apply_action(
-                ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
-            )
+            if action_array.size > 0:
+                robot.articulation.apply_action(
+                    ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
+                )
+            if effort_array.size > 0:
+                robot.articulation.apply_action(
+                    ArticulationAction(joint_efforts=effort_array, joint_indices=effort_indices)
+                )
         except (RuntimeError, ValueError, AttributeError, ImportError) as e:
             # Same expected-failure set as send_action's apply path; a failed
             # apply mid-lockstep must halt the loop, not leave this robot
