@@ -9,7 +9,7 @@
  * One finger orbits, two fingers pan and zoom. Sliders move joints through
  * mj_forward; the Physics switch steps mj_step at real time with the sliders as
  * actuator targets and a clock reads the simulated time. The code panel mirrors
- * the sliders as robot.act({...}), flashing the line a slider just changed.
+ * the sliders as robot.send_action({...}), flashing the line a slider just changed.
  *
  * Arrival: while the meshes stream, the robot's thumbnail is revealed bottom-up
  * in step with the download; on the first load the camera starts a fifth farther
@@ -954,7 +954,7 @@ class RobotViewer extends HTMLElement {
           return `    ${prev.size && prev.get(jt.name) !== v ? `<span class="flash">${line}</span>` : line}`;
         }).join("\n")
       : `    <span style="opacity:.55"># move a slider</span>`;
-    this.$(".code").innerHTML = `<div class="sheet-head"><h5>robot.act</h5><button class="pill" data-act="close" aria-label="Close code">Close</button></div>from strands_robots import Robot\n\nrobot = Robot(<b>"${this._entry.name}"</b>)\nrobot.act({\n${body}\n})`;
+    this.$(".code").innerHTML = `<div class="sheet-head"><h5>robot.send_action</h5><button class="pill" data-act="close" aria-label="Close code">Close</button></div>from strands_robots import Robot\n\nrobot = Robot(<b>"${this._entry.name}"</b>)\nrobot.send_action({\n${body}\n})`;
   }
 
   resetPose() {

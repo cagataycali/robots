@@ -4,7 +4,7 @@ description: One run_policy call runs a learned policy from the Hugging Face Hub
 
 # First learned policy
 
-At the end of this page a vision-language-action model from the Hugging Face Hub has driven the simulated SO-101 from its cameras, you have the same call for the physical arm, and you have watched an agent stop at the approval gate with the checkpoint named in the question it asks. The sim fences run on a laptop with no GPU; the first one downloads about 865 MB the first time.
+By the end of this page a vision-language-action model from the Hub has driven the simulated SO-101 from its cameras, you have the same call for the physical arm, and you have watched an agent stop at the approval gate naming the checkpoint. The sim fences run on a laptop with no GPU; the first downloads about 865 MB once.
 
 The page uses a vision-language-action checkpoint because the SO-101 has several; the same shape, one provider name and one `policy_config`, runs a world foundation model through [cosmos3](../learn/policies/cosmos3.md) or a whole-body controller through [wbc](../learn/policies/wbc.md).
 
@@ -44,11 +44,11 @@ LerobotLocalPolicy | pick up the cube
 60 0 True
 ```
 
-The timing line is yours; on the Apple laptop GPU that produced this output each 50-action chunk took about 1.2 s of inference. Three things in that fence are the whole recipe. `STRANDS_TRUST_REMOTE_CODE=1` is the consent lerobot checkpoints need before they build. `obs_rename` routes your camera names onto the feature names the checkpoint was trained with; without it the call refuses before any download and names the override to pass. The inline `embodiment` says which joints are the state and action vectors. It is inline because `smolvla_base` is a pretraining checkpoint: it ships no SO-101 statistics, so the shipped `embodiment="so101"` (which converts servo degrees) is refused and the arm's radians reach the model raw. The motion you see is the plumbing working, not a task being done. A checkpoint fine-tuned on an SO-101 carries its stats, and `embodiment="so101"` then converts units both ways, as the ACT checkpoint on the [home page](../index.md) does.
+The timing line is yours; on the Apple laptop GPU that produced this output each 50-action chunk took about 1.2 s. Three things in the fence are the whole recipe. `STRANDS_TRUST_REMOTE_CODE=1` is the consent lerobot checkpoints need before they build. `obs_rename` routes your camera names onto the feature names the checkpoint was trained with; without it the call refuses before any download and names the override to pass. The inline `embodiment` says which joints are the state and action vectors. It is inline because `smolvla_base` is a pretraining checkpoint with no SO-101 statistics, so the shipped `embodiment="so101"` (which converts servo degrees) is refused and the arm's radians reach the model raw. The motion you see is the plumbing working, not a task being done. A checkpoint fine-tuned on an SO-101 carries its stats, and `embodiment="so101"` then converts units both ways, as the ACT checkpoint on the [lerobot_local page](../learn/policies/lerobot-local.md) does.
 
 ## The same call on the real arm
 
-Swap `mode` and the driver's camera dict; keep the checkpoint and the `embodiment`. The lerobot driver opens the cameras, and `embodiment="so101"` binds the arm's `shoulder_pan.pos` keys the same way it binds the sim's joints:
+Swap `mode` and the camera dict; keep the checkpoint and the `embodiment`. The lerobot driver opens the cameras, and `embodiment="so101"` binds the arm's `shoulder_pan.pos` keys the same way it binds the sim's joints:
 
 ```python title="sketch"
 import os
@@ -66,11 +66,11 @@ print(result["content"][0]["text"])
 robot.cleanup()
 ```
 
-`run_policy` on hardware takes a policy you built with `create_policy` and blocks until `duration` elapses, `n_steps` actions were applied, or `stop_task()` is called from another thread; `start_task(instruction, policy_provider="lerobot_local", pretrained_name_or_path=..., embodiment=...)` is the non-blocking form. Both refuse while another rollout holds the bus, and after `cleanup()`. The checkpoint named here was trained on a real SO-101, so its statistics carry the arm's units: use one like it, or [your own](../learn/training/lerobot.md), on a real arm.
+`run_policy` on hardware takes a policy built with `create_policy` and blocks until `duration` elapses, `n_steps` actions were applied, or `stop_task()` is called; `start_task(instruction, policy_provider="lerobot_local", pretrained_name_or_path=..., embodiment=...)` is the non-blocking form. Both refuse while another rollout holds the bus, and after `cleanup()`. The checkpoint named here was trained on a real SO-101, so its statistics carry the arm's units: use one like it, or [your own](../learn/training/lerobot.md), on a real arm.
 
 ## Behind the gate
 
-Mounted as a tool, the real arm's `execute` and `start` actions carry the same checkpoint in `policy_config`, and they stop for a human before anything is dispatched. `mock=True` gives the lerobot driver a mocked servo bus, so this runs on a laptop:
+Mounted as a tool, the real arm's `execute` and `start` actions carry the checkpoint in `policy_config` and stop for a human before anything is dispatched. `mock=True` gives the lerobot driver a mocked servo bus, so this runs on a laptop:
 
 ```python
 import asyncio
@@ -97,7 +97,7 @@ error
 so101: 'execute' drives the real robot 'so101' for up to 10s with 'pick up the cube' (policy lerobot_local built in this process, no server, checkpoint pretrained_name_or_path robotfuel/act_so101_t16b); it needs operator approval before it is dispatched.
 ```
 
-With no operator to ask, the call fails closed. Inside an `Agent`, the same sentence is the question the operator answers, and `y` dispatches the rollout; [First agent](first-agent.md) shows the interrupt and the resume line. Over the mesh, `policy_config` travels but `embodiment` does not yet ([#4180](https://github.com/strands-labs/robots/issues/4180)), so run a Hub checkpoint on a real arm in the process that owns the arm.
+With no operator to ask, the call fails closed. Inside an `Agent`, the same sentence is the question the operator answers and `y` dispatches the rollout; [First agent](first-agent.md) shows the interrupt and the resume line. Over the mesh, `policy_config` travels but `embodiment` does not yet ([#4180](https://github.com/strands-labs/robots/issues/4180)), so run a Hub checkpoint on a real arm from the process that owns it.
 
 ## Where next
 

@@ -5651,7 +5651,9 @@ class MuJoCoSimEngine(
         ``task`` column falls back to the recording's ``start_recording(task=)``
         (``add_frame``'s default chain), so a scripted episode is labelled the
         way the session was opened. One :class:`TrajectoryStep` per robot goes
-        to the in-memory trajectory, as the rollout hook appends. Caller holds
+        to the in-memory trajectory, as the rollout hook appends, and the frame
+        is written through :class:`~strands_robots.simulation.recording.RecordedFrame`,
+        the writer every rollout entry point shares. Caller holds
         ``self._lock``; raises whatever the recorder raises so ``step`` reports
         it instead of counting a frame that was not written.
         """
@@ -5663,12 +5665,11 @@ class MuJoCoSimEngine(
         assert world is not None and world._model is not None and world._data is not None
         mj = self._mj
         model, data = world._model, world._data
-        multi = len(world.robots) > 1
         task = world._backend_state.get("recording_task") or ""
 
-        observation: dict[str, Any] = {}
-        action: dict[str, Any] = {}
-        required: list[str] = []
+        states: dict[str, dict[str, Any]] = {}
+        actions: dict[str, dict[str, Any]] = {}
+        images: dict[str, Any] = {}
         now = time.time()
         for robot_name, robot in world.robots.items():
             obs = self._get_sim_observation(robot_name)
@@ -5678,38 +5679,32 @@ class MuJoCoSimEngine(
                 # The key form mirrors _apply_action_by_name's lookup: the
                 # namespaced spelling first, then the raw one. An actuator
                 # actuate_robot injected is named "<robot>_act_<joint>" with no
-                # namespace, so the first spelling names nothing for it.
+                # namespace, so the first spelling names nothing for it. A key
+                # that resolves nowhere is still required by the frame below: a
+                # declared column this frame cannot supply is the recorder's to
+                # refuse (unrecordable_action_columns_error), not to zero-fill
+                # under a step that reports success.
                 act_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, pfx + key) if pfx else -1
                 if act_id < 0:
                     act_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, key)
-                # Every advertised key is required whether or not it resolved:
-                # a declared column this frame cannot supply is the recorder's
-                # to refuse (unrecordable_action_columns_error), not to zero-fill
-                # under a step that reports success.
-                required.append(f"{robot_name}__{key}" if multi else key)
-                if act_id < 0:
-                    continue
-                act[key] = float(data.ctrl[act_id])
-            for k, v in obs.items():
-                observation[k if (isinstance(v, np.ndarray) or not multi) else f"{robot_name}__{k}"] = v
-            for k, v in act.items():
-                action[f"{robot_name}__{k}" if multi else k] = v
+                if act_id >= 0:
+                    act[key] = float(data.ctrl[act_id])
+            states[robot_name] = {k: v for k, v in obs.items() if not isinstance(v, np.ndarray)}
+            images.update({k: v for k, v in obs.items() if isinstance(v, np.ndarray)})
+            actions[robot_name] = act
             world._backend_state["trajectory"].append(
                 TrajectoryStep(
                     timestamp=now,
                     sim_time=world.sim_time,
                     robot_name=robot_name,
-                    observation={k: v for k, v in obs.items() if not isinstance(v, np.ndarray)},
+                    observation=states[robot_name],
                     action=act,
                     instruction=task,
                 )
             )
-        observation = _drop_unrecorded_cameras(observation, world._backend_state.get("recording_cameras"))
-        clock.recorder.add_frame(
-            observation=observation,
-            action=action,
-            task=task or None,
-            required_action_keys=required,
+        images = _drop_unrecorded_cameras(images, world._backend_state.get("recording_cameras"))
+        RecordedFrame(self, tuple(world.robots), world.robots).write(
+            clock.recorder, states, actions, images, task or None
         )
 
     def reset(self) -> dict[str, Any]:
