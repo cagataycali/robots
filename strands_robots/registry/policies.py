@@ -297,7 +297,7 @@ def list_policy_aliases() -> dict[str, str]:
     return {alias: canonical for alias, canonical in _build_alias_map().items() if alias != canonical}
 
 
-#: A leading URL scheme, e.g. the ``zmq`` in ``zmq://gpu-box:5555``. The scheme
+#: A leading URL scheme, e.g. the ``ws`` in ``ws://gpu-box:8765``. The scheme
 #: grammar is RFC 3986 section 3.1: an ALPHA followed by ALPHA / DIGIT / "+" /
 #: "-" / ".".
 _URL_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*)://")
@@ -306,8 +306,8 @@ _URL_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*)://")
 def _with_lowercase_url_scheme(policy: str) -> str:
     """Fold a leading ``scheme://`` to lowercase, leaving the rest untouched.
 
-    URL schemes are case-insensitive (RFC 3986 section 3.1), so ``ZMQ://`` and
-    ``zmq://`` name the same transport. Stage 1 of :func:`resolve_policy`
+    URL schemes are case-insensitive (RFC 3986 section 3.1), so ``WS://`` and
+    ``ws://`` name the same transport. Stage 1 of :func:`resolve_policy`
     matches the ``url_patterns`` each provider declares in ``policies.json`` --
     every one of them spelled lowercase -- and the per-scheme branches then
     re-read the same string for host and port. Folding the scheme once, here,
@@ -368,7 +368,7 @@ def _declared_url_schemes() -> list[str]:
 
     Returns:
         Lowercase scheme names without the ``://``, e.g.
-        ``["cosmos3", "ws", "wss", "zmq"]``.
+        ``["cosmos3", "ws", "wss"]``.
     """
     schemes: set[str] = set()
     for prov_info in _load("policies").get("providers", {}).values():
@@ -384,7 +384,7 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
     and returns the canonical provider + ready-to-use kwargs.
 
     Resolution order:
-        1. URL patterns declared in ``policies.json`` (ws://, wss://, zmq://,
+        1. URL patterns declared in ``policies.json`` (ws://, wss://,
            cosmos3://)
         2. Shorthand names (mock, lerobot_local, remote, ...); a removed
            provider's spelling (:data:`REMOVED_PROVIDERS`) is refused here
@@ -409,7 +409,7 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
     either.
 
     Every stage matches case-insensitively. A URL scheme is folded per RFC 3986
-    section 3.1 (``ZMQ://gpu:5555`` resolves exactly as ``zmq://gpu:5555``, and
+    section 3.1 (``WS://gpu:8765`` resolves exactly as ``ws://gpu:8765``, and
     the emitted URL carries the lowercased scheme); shorthands and provider
     names are lowercased; a HuggingFace org is matched lowercased while the repo
     id itself is forwarded exactly as given, since repo ids are case-sensitive.
@@ -466,11 +466,6 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
                     if match:
                         kwargs["host"] = match.group(1)
                         kwargs["port"] = int(match.group(2) or 8000)
-                elif pattern.startswith("^zmq://"):
-                    match = re.match(r"zmq://([^:]+):(\d+)", url)
-                    if match:
-                        kwargs["host"] = match.group(1)
-                        kwargs["port"] = int(match.group(2))
                 elif ":" in url and "/" not in url:
                     # Generic scheme-less ``host:port``. Reached only when a
                     # provider declares a scheme-less ``url_patterns`` entry
