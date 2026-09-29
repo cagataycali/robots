@@ -29,7 +29,6 @@ import ast
 import inspect
 import math
 import pathlib
-import queue
 import threading
 from typing import Any
 
@@ -38,7 +37,8 @@ import pytest
 
 from strands_robots.simulation import base as sim_base
 from strands_robots.simulation.base import SimEngine
-from strands_robots.simulation.isaac.simulation import IsaacConfig, IsaacSimulation, _RobotState
+from strands_robots.simulation.isaac.simulation import IsaacSimulation, _RobotState
+from tests.simulation._isaac_engine import isaac_engine
 
 JOINTS = ["shoulder", "elbow", "wrist"]
 HOME = [0.10, 0.20, 0.30]
@@ -70,10 +70,8 @@ def _engine(*, queued: bool = False) -> tuple[IsaacSimulation, FakeArticulation]
     ``__new__`` leaves ``_init_complete`` at its class default of ``False`` so the
     finalizer skips a teardown this instance never set up.
     """
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
     engine._world_created = True
-    engine._config = IsaacConfig()
     # A worker-thread call takes the queued branch; -1 is never a real thread id.
     engine._main_tid = -1 if queued else threading.get_ident()
     # Queuing is only a write if something drains the queue, and ``pump`` - run by
@@ -82,7 +80,6 @@ def _engine(*, queued: bool = False) -> tuple[IsaacSimulation, FakeArticulation]
     # the write is refused rather than applied, because it would sit in a queue
     # nobody reads while the caller was told it succeeded.
     engine._pump_running = queued
-    engine._action_q = queue.Queue()
     articulation = FakeArticulation()
     engine._robots = {
         "arm": _RobotState(

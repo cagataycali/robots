@@ -227,6 +227,12 @@ class WBCPolicy(Policy):
 
     #: Opts in to the MuJoCo PD-to-torque shim auto-install (see sim_control.PDTorquePolicy).
     pd_torque_shim: ClassVar[bool] = True
+    #: The controller reads joint state, the base IMU and the ``[vx, vy, omega]``
+    #: command; the words of the task never shape a step. Declared so every
+    #: envelope says so beside the instruction it echoes (#4159).
+    reads_instruction: bool = False
+    instruction_free_actions: str | None = "the whole-body controller's joint targets for its velocity command"
+
     requires_action_controller: ClassVar[str | None] = (
         "it emits joint-position targets the scene's position servos override, and "
         "the torque shim that corrects them (WBCTorqueController applies SONIC's "

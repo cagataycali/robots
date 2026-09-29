@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, ClassVar, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -154,9 +154,9 @@ class ProtoMotionsPolicy(Policy):
     requires_images = False
     #: ``False``: the tracker follows the loaded motion, not language, so the
     #: task envelopes say the instruction they echo was never read.
-    reads_instruction: ClassVar[bool] = False
+    reads_instruction: bool = False
     #: The words the task envelope uses for what the tracker commands instead.
-    instruction_free_actions: ClassVar[str | None] = "the loaded motion's tracked joint targets"
+    instruction_free_actions: str | None = "the loaded motion's tracked joint targets"
 
     def __init__(
         self,

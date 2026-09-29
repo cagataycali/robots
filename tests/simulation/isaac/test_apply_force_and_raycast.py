@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import pathlib
 import sys
-import threading
 import types
 from typing import Any
 
@@ -38,11 +37,11 @@ import pytest
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402
-    IsaacConfig,
     IsaacSimulation,
     _ObjectState,
     _RobotState,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 
 class _Handle:
@@ -54,21 +53,11 @@ class _Handle:
 
 
 def _engine(with_object: bool = True, static: bool = False) -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world = types.SimpleNamespace(step=lambda render=False: None)
     engine._world_created = True
-    engine._robots = {}
-    engine._objects = {}
-    engine._applied_wrenches = {}
     # send_action resolves a task-space controller before it steps.
-    engine._action_controllers = {}
-    engine._sim_time = 0.0
-    engine._step_count = 0
     engine._STEPS_PER_BATCH = IsaacSimulation._STEPS_PER_BATCH
-    engine._main_tid = threading.get_ident()
-    engine._pump_running = False
     if with_object:
         state = _ObjectState(name="cube", prim_path="/World/Objects/cube", shape="box", is_static=static)
         state.handle = _Handle()
