@@ -30,11 +30,11 @@ from tests.test_dashboard_sim_routes import FakeEngine  # noqa: E402
 #: A browser always sends Origin on a socket handshake; this is the dashboard's own page.
 OWN_PAGE = {"origin": "http://testserver"}
 
-INTERRUPT = [
+INTERRUPT: list[dict[str, Any]] = [
     {"type": "text", "text": "moving"},
     {"type": "interrupt", "id": "i1", "name": "sim_motion", "reason": {"detail": "2 -> 1.000 rad"}},
 ]
-DONE = [{"type": "done", "stop_reason": "end_turn"}]
+DONE: list[dict[str, Any]] = [{"type": "done", "stop_reason": "end_turn"}]
 
 
 class RecordingConsole:
