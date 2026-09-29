@@ -287,7 +287,9 @@ function sessionVerdict(token, nowS, renewedAtS = 0) {
   if (!raw) {
     return { state: "none", expiresInS: null, text: null, refusesUntilSignIn: false };
   }
-  const exp = tokenExpiry(raw);
+  return sessionVerdictAt(tokenExpiry(raw), nowS, renewedAtS);
+}
+function sessionVerdictAt(exp, nowS, renewedAtS = 0) {
   if (exp === null) {
     return { state: "opaque", expiresInS: null, text: null, refusesUntilSignIn: false };
   }
@@ -411,6 +413,16 @@ function subscribeAuth(fn) {
 function notifyAuth() {
   for (const fn of authListeners) fn();
 }
+let cookieSessionExp = null;
+let cookieSessionEpoch = 0;
+function noteCookieSession(exp) {
+  cookieSessionExp = typeof exp === "number" && Number.isFinite(exp) ? exp : null;
+  cookieSessionEpoch += 1;
+  notifyAuth();
+}
+function cookieSessionExpiry() {
+  return cookieSessionExp;
+}
 function setAuthToken(token) {
   const value = token.trim();
   if (value) localStorage.setItem(TOKEN_KEY, value);
@@ -422,7 +434,7 @@ function backendLabel() {
   return base ? base.replace(/^https?:\/\//, "") : `${location.host} (this origin)`;
 }
 function backendKey() {
-  return `${backendBase()}|${authToken() ? "auth" : "open"}`;
+  return `${backendBase()}|${authToken() ? "auth" : cookieSessionEpoch ? `cookie${cookieSessionEpoch}` : "open"}`;
 }
 function setBackendBase(raw) {
   cachedBase = normalize(raw);
@@ -13240,6 +13252,10 @@ function webauthnReady() {
 function fetchAuthStatus() {
   return api("/api/auth/status");
 }
+function grantOf(res) {
+  const exp = res && typeof res.exp === "number" && Number.isFinite(res.exp) ? res.exp : null;
+  return { exp };
+}
 async function enroll(label2, bootstrap = "") {
   const { challenge_id, options } = await api("/api/auth/register/begin", {
     method: "POST",
@@ -13251,7 +13267,7 @@ async function enroll(label2, bootstrap = "") {
     method: "POST",
     body: JSON.stringify({ challenge_id, credential: credToJSON(cred) })
   });
-  return res.token;
+  return grantOf(res);
 }
 function loginFresh(p) {
   return !!p && Date.now() - p.t < 24e4;
@@ -13281,7 +13297,7 @@ async function completeLogin(p, timeoutMs = 75e3) {
     method: "POST",
     body: JSON.stringify({ challenge_id: p.challenge_id, credential: credToJSON(cred) })
   });
-  return res.token;
+  return grantOf(res);
 }
 const __vite_import_meta_env__ = {};
 const BUILD = (__vite_import_meta_env__ == null ? void 0 : __vite_import_meta_env__.VITE_BUILD) ?? "dev";
@@ -13305,7 +13321,8 @@ function AuthGate({ children }) {
     let alive = true;
     const check = () => {
       if (!alive) return;
-      const v = sessionVerdict(authToken(), Date.now() / 1e3, lastRenewalAt());
+      const held = authToken();
+      const v = held ? sessionVerdict(held, Date.now() / 1e3, lastRenewalAt()) : sessionVerdictAt(cookieSessionExpiry(), Date.now() / 1e3, lastRenewalAt());
       if (v.refusesUntilSignIn) {
         setExpiring("");
         setError(v.text ?? "this sign-in has expired");
@@ -13434,8 +13451,8 @@ function AuthGate({ children }) {
     setBusy(true);
     setError("");
     try {
-      const token = await fn();
-      setAuthToken(token);
+      const grant = await fn();
+      noteCookieSession(grant.exp);
       setMode("open");
     } catch (e) {
       const msg = e instanceof HttpError ? ((_a = e.body) == null ? void 0 : _a.detail) ?? e.message : e.message;
