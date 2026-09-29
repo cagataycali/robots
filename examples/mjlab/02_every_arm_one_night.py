@@ -135,7 +135,14 @@ def inspect_arm(robot: str, pose: str = "home") -> ArmInfo:
 
 
 class ArmFK:
-    """Forward kinematics of the end effector in the robot base frame (classic MuJoCo, CPU)."""
+    """Forward kinematics of the end effector in the MJCF world frame (classic MuJoCo, CPU).
+
+    The world frame of ``model_xml`` is the frame mjlab attaches the entity in, and the frame the
+    ``rsl_rl_onnx`` provider's site FK reports, so the cloud, the training targets and the replay all
+    speak the same frame. An earlier version reported the base *body* frame: Menagerie's ur5e/ur10e
+    rotate their base body by 180 degrees about z, so every training target was mirrored in x/y at
+    replay time and the actors scored 0/20 on classic MuJoCo while being 16/20 natively (F16b).
+    """
 
     def __init__(self, info: ArmInfo) -> None:
         import mujoco
@@ -150,22 +157,18 @@ class ArmFK:
         obj = mujoco.mjtObj.mjOBJ_SITE if info.ee_kind == "site" else mujoco.mjtObj.mjOBJ_BODY
         self.ee_id = mujoco.mj_name2id(self.model, obj, info.ee_name)
         self.kind = info.ee_kind
-        # The base frame is the first body under the world.
-        self.base_id = 1 if self.model.nbody > 1 else 0
 
     def site_pos(self, q: list[float]) -> np.ndarray:
-        """End-effector position in the base frame for actuated-joint positions ``q`` (provider hook name)."""
+        """End-effector position in the world frame for actuated-joint positions ``q`` (provider hook name)."""
         self.data.qpos[:] = 0.0
         for adr, v in zip(self.qadr, q, strict=True):
             self.data.qpos[adr] = v
         self.mujoco.mj_kinematics(self.model, self.data)
         ee = self.data.site_xpos[self.ee_id] if self.kind == "site" else self.data.xpos[self.ee_id]
-        base_p = self.data.xpos[self.base_id]
-        base_r = self.data.xmat[self.base_id].reshape(3, 3)
-        return (base_r.T @ (ee - base_p)).astype(np.float32)
+        return np.asarray(ee, dtype=np.float32)
 
     def sample_reachable(self, n: int, seed: int, z_min: float = 0.03) -> np.ndarray:
-        """FK of ``n`` uniformly random joint configurations, above the floor, base frame."""
+        """FK of ``n`` uniformly random joint configurations, above the floor, world frame."""
         rng = np.random.default_rng(seed)
         lo, hi = [], []
         for j in self.qadr:
@@ -177,11 +180,10 @@ class ArmFK:
                 lo.append(-np.pi)
                 hi.append(np.pi)
         pts = []
-        base_z = float(self.model.body_pos[self.base_id, 2])
         for _ in range(n):
             q = rng.uniform(lo, hi)
             p = self.site_pos(list(q))
-            if p[2] + base_z > z_min:
+            if p[2] > z_min:
                 pts.append(p)
         return np.asarray(pts, dtype=np.float32)
 
@@ -457,7 +459,7 @@ async def sim2sim(
     sim = Robot(info.robot, backend="mujoco", keyframe=info.keyframe)
     apply_min_armature_classic(sim.mj_model, info)  # the same plant the actor was trained on
     # The provider only knows MJCF sites and reads them from the registry MJCF; the
-    # example's FK also handles a leaf body and the base frame, so it is injected
+    # example's FK also handles a leaf body (and the armature floor plant), so it is injected
     # (FINDINGS: the provider wants an injectable FK / body fallback).
     original_fk = provider_module._SiteFK
     provider_module._SiteFK = lambda robot, site, joints: fk  # type: ignore[assignment]

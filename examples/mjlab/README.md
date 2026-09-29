@@ -120,7 +120,7 @@ Rows landed so far (the sweep is still running; the table is regenerated from
 | ur5e | 6 | site attachment_site | 1.13 | 0.10 | 6.0 | 14,248 | 0/20 | 990 | done |
 | vx300s | 7 | site pinch | 0.90 |  |  |  |  |  | ValueError: The observation group 'actor' returned by the en |
 | wx250s | 7 | body wx250s/left_finger_link | 0.75 |  |  |  |  |  | ValueError: Not all regular expressions are matched! Please  |
-| xarm7 | 7 | site link_tcp | 1.19 | 0.46 | 7.1 | 10,858 | 11/20 | 79 | done |
+| xarm7 | 7 | site link_tcp | 1.19 | 0.46 | 7.1 | 10,858 | 13/20 | 79 | done |
 | yam | 7 | site tcp_site | 0.73 | 0.25 | 6.2 | 13,633 | 6/20 | 89 | done |
 | z1 | 7 | body gripperMover | 0.90 | 0.51 | 5.6 | 15,168 |  |  | KeyError: 'jointGripper' |
 
@@ -148,11 +148,33 @@ the actor needs 6 x the action scale just to reach the `home` keyframe. The cont
 qpos-0 fraction ranks the table: kinova 100 %, panda 90 %, fr3 65 %, z1 58 %, piper
 45 % against 0 % for koch, so101, iiwa and dynamixel_2r, the arms that score 17-20/20.
 `--pose home` (now the default when the MJCF has a keyframe) re-runs the 12 affected arms
-at the same budget; the first two rows are in: ur10e `at_goal` 0.09 -> 0.70 and ur5e
-0.10 -> 0.75 in training, while the classic replay stays at 0/20 and 2/20 with the tool
-ending 0.9-1.9 m from the target. The classic plant does start in `home` (checked), so
-the remaining gap is between the exported actor and the classic UR plant, the F9 shape
-again; the native mjlab replay that separates the two is the next step (F16).
+at the same budget (200 iterations, 1,024 environments, seed 42, the same 20 targets):
+
+| arm | keyframe | max home-zero rad | resets with contact at qpos 0 | A at_goal | A classic 20 targets | A median mm | B at_goal | B classic 20 targets | B median mm |
+|---|---|---|---|---|---|---|---|---|---|
+| panda | home | 1.57 | 90 % | 0.26 | 7/20 | 116 | 0.79 | 20/20 | 13 |
+| ur10e | home | 1.57 | 0 % | 0.09 | 0/20 | 1426 | 0.70 | 19/20 | 42 |
+| ur5e | home | 1.57 | 0 % | 0.10 | 0/20 | 990 | 0.75 | 20/20 | 22 |
+
+A = the zero-pose sweep above, B = the home-keyframe re-run; more rows land as the
+re-run finishes. panda goes from a 116 mm miss to 20/20 at 13 mm with no other change,
+so the Franka-class "under-training" reading above was really the rest pose.
+
+**The UR rows hid a second, frame bug (F16b).** With `home`, ur10e trained to `at_goal`
+0.70 yet the classic replay first scored 0/20 with the tool ending 0.9-1.9 m away. A
+native mjlab replay of the same ONNX on the same 20 targets (`scratch/native_replay.py`,
+one world per target, no noise) scored 16/20 at 33 mm, so the actor was fine and the
+replay was not. Cause: the example's forward kinematics reported the end effector in the
+robot's base *body* frame, while mjlab's `ReachCommand` expresses the target in the entity
+root frame, which for a fixed-base attach is the MJCF world frame. Those are the same frame
+for 17 of the 20 arms and differ for exactly three: Menagerie's ur5e and ur10e rotate the
+base body 180 degrees about z (`quat="0 0 0 1"`), so every replay target was mirrored in
+x and y, and xarm7 lifts its base 0.12 m, so its targets were 12 cm off. The FK now
+reports the world frame, the frame the `rsl_rl_onnx` provider's own site FK uses; the
+same ONNX files re-evaluated: ur5e 20/20 at 22 mm, ur10e 19/20 at 42 mm, xarm7 11/20 ->
+13/20. The one-line lesson for anyone wiring a reach policy across engines: the target
+frame is part of the policy contract, and "base frame" is ambiguous the moment an MJCF
+rotates or lifts its first body.
 
 ## 03 Humanoid beyond velocity
 
