@@ -203,7 +203,13 @@ class _RawWebsocketTransport:
         return self._decode(resp, "action chunk")
 
     def reset(self) -> None:
-        pass
+        """No-op: the RoboLab wire protocol carries no reset message.
+
+        The protocol is connect, metadata frame, then observation/action pairs
+        (mirroring OpenPI's ``WebsocketClientPolicy.reset``, which is also
+        empty), so there is nothing to send. Kept so the client and the
+        transport share one surface.
+        """
 
 
 class Cosmos3WebsocketClient:
@@ -348,11 +354,14 @@ class Cosmos3WebsocketClient:
             raise ConnectionError(self._server_hint()) from e
 
     def reset(self) -> None:
-        """Best-effort per-episode reset hint to the server.
+        """Per-episode reset on the client side only; nothing reaches the server.
 
-        The raw transport is stateless on the client side - reset is a
-        soft hint, never a correctness requirement (mirrors
-        ``Gr00tPolicy.reset``). Any failure is swallowed.
+        The RoboLab wire protocol has no reset message, so the transport's
+        ``reset`` is a no-op and the server's per-episode RNG is not touched
+        from here (``Cosmos3Policy.reset`` documents what that means for
+        reproducibility). The call still establishes the connection when none
+        is open, so a server that is absent at episode start is reported on
+        the first ``infer`` rather than here; any failure here is swallowed.
         """
         try:
             client = self._ensure_client()
