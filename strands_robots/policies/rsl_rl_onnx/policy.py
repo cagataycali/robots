@@ -38,7 +38,7 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -183,8 +183,8 @@ class RslRlOnnxPolicy(Policy):
         **kwargs: Ignored, for factory uniformity.
     """
 
-    reads_instruction: ClassVar[bool] = False
-    instruction_free_actions: ClassVar[str | None] = "the rsl_rl actor's per-step joint targets"
+    reads_instruction: bool = False
+    instruction_free_actions: str | None = "the rsl_rl actor's per-step joint targets"
 
     def __init__(
         self,
