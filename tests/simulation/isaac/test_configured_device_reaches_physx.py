@@ -215,6 +215,41 @@ class TestWhatIsReportedIsWhatResolved:
         assert state["device"] != state["device_requested"]
 
 
+class TestTheDivergenceIsSaidOutLoud:
+    """The text line and the docs name the CPU fallback, not only the json.
+
+    ``device=cpu`` in the text is correct but reads as a detail; a caller who
+    asked for ``cuda:0`` (the default) needs to be told that their request was
+    not honoured, and the docs' ``device="cuda:0"`` default needs the caveat
+    next to it.
+    """
+
+    def test_the_text_line_names_the_request_it_did_not_honour(self, fake_isaacsim) -> None:
+        sim = IsaacSimulation(config=IsaacConfig(device="cuda:0"))
+
+        text = sim.create_world()["content"][0]["text"]
+
+        assert "device=cpu (requested cuda:0" in text
+        assert "CPU PhysX" in text
+
+    def test_no_caveat_when_the_request_was_honoured(self, fake_isaacsim, monkeypatch) -> None:
+        monkeypatch.setattr(isaac_simulation, "_resolved_physics_device", lambda world: "cuda:0")
+        sim = IsaacSimulation(config=IsaacConfig(device="cuda:0"))
+
+        text = sim.create_world()["content"][0]["text"]
+
+        assert "device=cuda:0," in text
+        assert "requested" not in text
+
+    def test_the_docs_limits_name_the_cpu_physics(self) -> None:
+        import pathlib
+
+        doc = pathlib.Path(__file__).resolve().parents[3] / "docs" / "learn" / "simulation" / "isaac.md"
+        limits = doc.read_text(encoding="utf-8").split("## Limits", 1)[1]
+        assert "CPU PhysX" in limits
+        assert "device_requested" in limits
+
+
 class TestTheResolverNeverRaises:
     """It feeds status reads, so it answers None instead of failing."""
 

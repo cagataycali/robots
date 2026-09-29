@@ -15,6 +15,9 @@ Registers the session-truncation reporter from
 :mod:`tests.session_truncation`, so a run that stops before every collected test
 has started says so instead of reporting counts that read as a total.
 
+Blocks ``import isaacsim`` for every test (:func:`_no_real_isaac_sim`), so a host
+with the Isaac Sim wheel installed never boots Kit inside the unit run.
+
 Finally, removes a passed test's ``<name>current`` symlink in the same teardown
 that removes its ``tmp_path`` (:func:`pytest_runtest_teardown` below): every
 test here creates a ``tmp_path``, and the base temp is listed in full to name
@@ -206,6 +209,35 @@ def _mesh_rate_limit_history_is_left_empty() -> Iterator[None]:
     module = sys.modules.get("strands_robots.tools.robot_mesh")
     if module is not None:
         module._reset_rate_limits()
+
+
+@pytest.fixture(autouse=True)
+def _strands_environment_is_left_as_found() -> Iterator[None]:
+    """Every ``STRANDS_*`` environment variable reads after a test as it did before.
+
+    ``monkeypatch.setenv`` already restores what a test sets through it. The
+    leak this closes is the other path: shipped code that writes
+    ``os.environ`` itself. ``strands_robots.dashboard.settings.apply_mesh_env``
+    pushes the saved mesh settings into the environment (``MeshBridge.start``
+    calls it), so a test that starts a bridge with a camera rate in its
+    settings leaves ``STRANDS_MESH_CAMERA_HZ`` set for every later test on
+    that xdist worker. Measured on #4200: ``Mesh.start()`` then launched the
+    opt-in camera loop, and ``test_the_roster_holds_every_loop_start_launched``
+    (which grades the always-on loops) failed with ``mesh-camera-peer-a`` as an
+    extra thread, once per few thousand runs and never in the file's own run.
+
+    Snapshotting only the ``STRANDS_`` prefix keeps the fixture cheap on a
+    55,000-test session and leaves the interpreter's own variables alone.
+    Writes a test makes on purpose *inside* itself are the test's subject and
+    still land; they are undone once it returns, which is the property.
+    """
+    before = {k: v for k, v in os.environ.items() if k.startswith("STRANDS_")}
+    yield
+    for key in [k for k in os.environ if k.startswith("STRANDS_") and k not in before]:
+        del os.environ[key]
+    for key, value in before.items():
+        if os.environ.get(key) != value:
+            os.environ[key] = value
 
 
 @pytest.fixture(autouse=True)
@@ -611,3 +643,21 @@ def pytest_runtest_teardown(item: pytest.Item) -> Iterator[None]:
     tmp_path = funcargs.get("tmp_path")
     if isinstance(tmp_path, Path):
         remove_dead_current_symlink(tmp_path, item.name)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_isaac_sim(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every unit test sees the host CI sees: no importable ``isaacsim``.
+
+    ``tests/`` is the unit suite - its tests fake the Isaac surface they need
+    (``monkeypatch.setitem(sys.modules, "isaacsim", ...)`` wins over this, since
+    it runs later and is undone first). Without the block, a test that assumes
+    Isaac is absent and calls ``create_world`` on a host that HAS the pip wheel
+    boots a real Kit app inside the unit run: it asserts the wrong status, blocks
+    on the EULA prompt when ``OMNI_KIT_ACCEPT_EULA`` is unset, and leaves
+    ``omni.*`` in ``sys.modules`` for whichever test the xdist worker runs next
+    (``TestLazyImport`` then fails at random). The live half is
+    ``tests_integ/simulation/test_isaac_*`` under ``STRANDS_GPU_TEST=1``.
+    """
+    if "isaacsim" not in sys.modules or sys.modules["isaacsim"] is None:
+        monkeypatch.setitem(sys.modules, "isaacsim", None)  # type: ignore[arg-type]

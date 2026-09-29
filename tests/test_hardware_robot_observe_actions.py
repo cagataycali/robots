@@ -58,8 +58,7 @@ from strands.types.tools import ToolUse
 
 from strands_robots import hardware_observe
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState
-from tests._daemon_executor import DaemonThreadExecutor
+from tests._hardware_robot import hardware_robot_on
 
 
 class _Mode(Enum):
@@ -361,21 +360,7 @@ class _RaisingCalibration(FakeLeRobot):
 
 
 def _make_hw(robot: FakeLeRobot) -> HwRobot:
-    hw = HwRobot.__new__(HwRobot)
-    hw.tool_name_str = "arm"
-    hw.action_horizon = 8
-    hw.data_config = None
-    hw.control_frequency = 30.0
-    hw.action_sleep_time = 1.0 / 30.0
-    hw._task_state = RobotTaskState()
-    hw._executor = DaemonThreadExecutor(max_workers=1, thread_name_prefix="arm_executor")
-    hw._shutdown_event = threading.Event()
-    hw._stop_requested = threading.Event()
-    hw._task_admission = threading.Lock()
-    hw._task_claimed = False
-    hw.mesh = None
-    hw.peer_id = None
-    hw.robot = robot
+    hw = hardware_robot_on(robot, tool_name="arm", control_frequency=30.0)
     return hw
 
 

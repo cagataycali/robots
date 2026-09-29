@@ -272,10 +272,21 @@ class TestTheDropInContractHolds:
         )
 
 
+#: The shared stand-in builder; a call to it installs whatever executor it assigns.
+_HELPER = _TESTS_DIR / "_hardware_robot.py"
+
+
 def _executor_constructors(tree: ast.AST) -> list[tuple[int, str]]:
-    """Return ``(line, constructor)`` for each ``*._executor = <Call>``."""
+    """Return ``(line, constructor)`` for each ``*._executor = <Call>``.
+
+    A call to ``hardware_robot_on`` counts as the executors that helper assigns,
+    reported at the call's line, so a fixture built through it is scanned too.
+    """
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "hardware_robot_on":
+            helper = _executor_constructors(ast.parse(_HELPER.read_text()))
+            found.extend((node.lineno, name) for _, name in helper)
         if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
             continue
         for target in node.targets:
@@ -367,3 +378,7 @@ class TestEveryAbandoningFixtureUsesTheDaemonExecutor:
             "    hw._task_state.task_future.result(timeout=5)\n"
         )
         assert _unsafe_modules([planted]) == {}
+
+    def test_the_scan_reads_the_executor_the_shared_builder_installs(self) -> None:
+        planted = ast.parse("hw = hardware_robot_on(bus)\n")
+        assert [name for _, name in _executor_constructors(planted)] == ["DaemonThreadExecutor"]

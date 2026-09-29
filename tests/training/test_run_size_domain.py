@@ -37,6 +37,7 @@ from strands_robots.training._validate import run_size_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
 from strands_robots.training.groot import Gr00tTrainer
+from strands_robots.training.isaaclab import IsaacLabTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 from strands_robots.training.sagemaker import SagemakerTrainer
@@ -60,6 +61,11 @@ UNUSABLE = NON_POSITIVE + WRONG_TYPE + NOT_COMPARABLE
 # Every backend that reads the run size. The RL trainers are deliberately
 # absent - see TestTheRLTrainersIgnoreAFieldTheyDoNotRead.
 SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, Gr00tTrainer, LerobotTrainer, SagemakerTrainer)
+
+# Backends that read ``steps`` (as an iteration count) and never
+# ``global_batch_size``: Isaac Lab's rsl_rl batch is num_envs x rollout length,
+# set by the task. They grade ``steps`` with the same count domain, per field.
+STEPS_ONLY_TRAINERS = (IsaacLabTrainer,)
 
 
 @pytest.fixture
@@ -246,9 +252,30 @@ class TestOneOwnerForTheRunSizeDomain:
                 seen.add(cls_name)
                 if not _calls_run_size_gate(fn):
                     adrift.setdefault(path.name, []).append(cls_name)
+        steps_only = {t.__name__ for t in STEPS_ONLY_TRAINERS}
+        adrift = {name: [c for c in classes if c not in steps_only] for name, classes in adrift.items()}
+        adrift = {name: classes for name, classes in adrift.items() if classes}
         assert not adrift, f"validate() does not call _run_size_problems: {adrift}"
         # Non-vacuity: the scan really reached every backend, not an empty tree.
-        assert seen == {t.__name__ for t in SUPERVISED_TRAINERS}, seen
+        assert seen == {t.__name__ for t in SUPERVISED_TRAINERS + STEPS_ONLY_TRAINERS}, seen
+
+    @pytest.mark.parametrize("trainer_cls", STEPS_ONLY_TRAINERS)
+    @pytest.mark.parametrize("value", UNUSABLE)
+    def test_a_steps_only_backend_refuses_an_unusable_steps_in_the_shared_wording(
+        self, tmp_path: pathlib.Path, trainer_cls: type[Trainer], value: Any
+    ) -> None:
+        trainer = trainer_cls()
+        spec = TrainSpec(output_dir=str(tmp_path), extra={"task": "Isaac-Cartpole"})
+        named = [p for p in trainer.validate(_mutate(spec, "steps", value)) if ": steps " in p]
+        assert named and "must be a positive integer" in named[0], named
+        assert named[0].startswith(f"{trainer.provider_name}: "), named
+
+    @pytest.mark.parametrize("trainer_cls", STEPS_ONLY_TRAINERS)
+    def test_a_steps_only_backend_ignores_the_batch_it_never_reads(
+        self, tmp_path: pathlib.Path, trainer_cls: type[Trainer]
+    ) -> None:
+        spec = TrainSpec(output_dir=str(tmp_path), global_batch_size=0, extra={"task": "Isaac-Cartpole"})
+        assert not [p for p in trainer_cls().validate(spec) if "global_batch_size" in p]
 
     def test_no_backend_re_implements_the_domain(self) -> None:
         copies = {p.name: hits for p in _training_modules() if (hits := _local_run_size_comparisons(p.read_text()))}
