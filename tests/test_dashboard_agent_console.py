@@ -33,8 +33,8 @@ def safety(monkeypatch, tmp_path):
 # -- the tools: no robot of its own ---------------------------------------------------------------
 
 
-def _tools(safety) -> dict[str, Any]:
-    return {t.tool_name: t for t in agent_console.build_tools(safety)}
+def _tools(safety, bridge=None) -> dict[str, Any]:
+    return {t.tool_name: t for t in agent_console.build_tools(safety, bridge)}
 
 
 #: The in-process simulation tools the console carried before it drove mesh peers only.
@@ -65,8 +65,65 @@ def test_emergency_stop_latches_the_lockout_and_is_never_refused(safety):
     t = _tools(safety)
     out = t["emergency_stop"]()
     assert out["lockout"] == safety.lockout.as_fields() and safety.lockout.state == "locked"
+    assert out["fleet"] is None and out["all_stopped"] is False, "no bridge: the tool must not claim a fleet stop"
     # a second stop while latched is still accepted: stopping is never gated
     assert t["emergency_stop"]()["lockout"]["state"] == "locked"
+
+
+class _FleetBridge:
+    """A bridge with two live peers and one stale: records the stops and the signed rail."""
+
+    def __init__(self, answers: dict[str, Any]):
+        now = __import__("time").time()
+        self.peers = {"arm-1": {"last_seen": now}, "sim-1": {"last_seen": now}, "old-1": {"last_seen": now - 3600}}
+        self.answers = answers
+        self.sent: list[tuple[str, dict[str, Any], str]] = []
+        self.signed_calls = 0
+        self.activity: list[tuple[str, str, dict[str, Any]]] = []
+
+    def snapshot(self):
+        return {"peers": self.peers}
+
+    def live_peers(self):
+        return ["arm-1", "sim-1"]
+
+    def send_cmd(self, target, cmd, timeout=30.0, *, source="api"):
+        self.sent.append((target, dict(cmd), source))
+        answer = self.answers[target]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def record_activity(self, kind, action, **fields):
+        self.activity.append((kind, action, fields))
+
+    def signed_estop(self):
+        self.signed_calls += 1
+        return {"lockout_engaged": True, "responses": ["secret"], "peers_not_stopped": []}
+
+
+def test_emergency_stop_with_a_bridge_stops_every_live_peer_and_fires_the_signed_rail(safety):
+    """The agent's e-stop is the red button's: per-peer stop to the live fleet, then the signed lockout."""
+    bridge = _FleetBridge(
+        {"arm-1": {"status": "success", "content": [{"text": "stopped"}]}, "sim-1": {"error": "timeout"}}
+    )
+    out = _tools(safety, bridge)["emergency_stop"]()
+    assert sorted(t for t, _c, _s in bridge.sent) == ["arm-1", "sim-1"]
+    assert all(c == {"action": "stop"} and s == "estop" for _t, c, s in bridge.sent)
+    assert out["targeted"] == ["arm-1", "sim-1"] and out["stale_skipped"] == ["old-1"]
+    assert out["counts"] == {"stopped": 1, "not_stopped": 0, "no_answer": 1}
+    assert out["all_stopped"] is False, "one peer did not answer: the tool must not say the fleet stopped"
+    assert bridge.signed_calls == 1 and out["lockout_engaged"] is True
+    assert "responses" not in out["signed_rail"], "the signed rail's raw responses stay out of the model's context"
+    assert safety.lockout.state == "locked"
+    assert bridge.activity and bridge.activity[0][:2] == ("estop", "stop_all")
+
+
+def test_emergency_stop_reports_a_peer_that_raised_instead_of_skipping_the_rest(safety):
+    bridge = _FleetBridge({"arm-1": RuntimeError("socket closed"), "sim-1": {"status": "success", "content": []}})
+    out = _tools(safety, bridge)["emergency_stop"]()
+    assert out["counts"]["stopped"] == 1 and out["stopped"]["arm-1"]["state"] in {"no_answer", "not_stopped"}
+    assert bridge.signed_calls == 1, "the signed rail fires even when a peer could not be asked"
 
 
 class _Bridge:

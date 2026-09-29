@@ -29,6 +29,7 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from strands import Agent, tool
@@ -74,13 +75,75 @@ def default_model() -> Any:
     )
 
 
-def build_tools(safety: Any) -> list[Any]:
-    """The tools that are not peers: only the e-stop, which latches ``safety`` like the button does."""
+#: How long one peer gets to confirm a stop before the fleet stop moves on; the route uses the same.
+STOP_TIMEOUT_S = 5.0
+
+
+def fleet_stop(safety: Any, bridge: Any | None, by: str = "agent") -> dict[str, Any]:
+    """Stop everything this dashboard can reach, both rails, and say what confirmed.
+
+    The local ``safety`` lockout latches first (it refuses every relayed command
+    until an operator resumes). With a bridge, every live peer is then asked to
+    ``stop`` and the signed fleet e-stop engages the lockout on every listening
+    peer, the same two rails ``POST /api/mesh/safety/estop`` fires. ``all_stopped``
+    is True only when every live peer confirmed; anything else keeps shouting.
+    """
+    local = safety.estop(by=by)
+    out: dict[str, Any] = {"lockout": local["lockout"], "frozen": local.get("frozen", [])}
+    if bridge is None:
+        return {
+            **out,
+            "fleet": None,
+            "all_stopped": False,
+            "note": "no mesh bridge: nothing beyond this process was stopped",
+        }
+    from strands_robots.dashboard.mesh_bridge import stop_outcome
+
+    peers = list(bridge.live_peers())
+    stale = sorted(set(bridge.peers) - set(peers))
+
+    def _stop(peer: str) -> dict[str, Any]:
+        try:
+            result = bridge.send_cmd(peer, {"action": "stop"}, timeout=STOP_TIMEOUT_S, source="estop")
+        except Exception as exc:  # noqa: BLE001 - a peer that cannot be asked is reported, not raised past the others
+            result = {"error": str(exc)}
+        return result if isinstance(result, dict) else {"error": str(result)}
+
+    with ThreadPoolExecutor(max_workers=max(1, len(peers))) as pool:
+        answers = list(pool.map(_stop, peers))
+    per_peer = {peer: {**stop_outcome(answer), "result": answer} for peer, answer in zip(peers, answers, strict=True)}
+    counts = {"stopped": 0, "not_stopped": 0, "no_answer": 0}
+    for info in per_peer.values():
+        counts[info["state"]] = counts.get(info["state"], 0) + 1
+    all_stopped = bool(peers) and counts["stopped"] == len(peers)
+    bridge.record_activity(
+        "estop",
+        "stop_all",
+        target="fleet",
+        detail=f"{counts['stopped']}/{len(peers)} confirmed stopped",
+        ok=all_stopped,
+    )
+    signed = bridge.signed_estop()
+    return {
+        **out,
+        "targeted": peers,
+        "stale_skipped": stale,
+        "counts": counts,
+        "all_stopped": all_stopped,
+        "stopped": per_peer,
+        "signed_rail": {k: v for k, v in signed.items() if k != "responses"},
+        "lockout_engaged": bool(signed.get("lockout_engaged")),
+        "peers_not_stopped": list(signed.get("peers_not_stopped", [])),
+    }
+
+
+def build_tools(safety: Any, bridge: Any | None = None) -> list[Any]:
+    """The tools that are not peers: only the e-stop, which stops the fleet like the red button does."""
 
     @tool
     def emergency_stop() -> dict[str, Any]:
-        """Latch the dashboard's lockout: every command it relays is refused until an operator resumes. Never refused."""
-        return dict(safety.estop(by="agent"))
+        """Stop every robot on the mesh and latch the lockout: per-peer stop, then the signed fleet e-stop. Never refused."""
+        return fleet_stop(safety, bridge, by="agent")
 
     return [emergency_stop]
 
@@ -283,7 +346,7 @@ class Console:
         from strands_robots.dashboard.agent_hitl import MotionInterruptHook
         from strands_robots.dashboard.peer_tools import build_peer_tools, fleet_signature, motion_actions_for
 
-        tools: list[Any] = build_tools(self._safety)
+        tools: list[Any] = build_tools(self._safety, self._bridge)
         hooks: list[Any] = []
         if self._bridge is not None:
             peers = self._peers()
