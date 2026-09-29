@@ -145,3 +145,26 @@ class TestTheWriterRefusesToWriteThroughALink:
         out = tmp_path / "0_front.jpg"
         assert record_worker._save_thumbnail(np.zeros((8, 8, 3), dtype="uint8"), out) is True
         assert out.is_file()
+
+
+class TestTheMintedRootIsRemovedAtShutdown:
+    def test_close_removes_a_minted_root_and_leaves_a_configured_one(self, tmp_path: Path) -> None:
+        minted = RecordController(devices=object())
+        root = minted.thumb_dir
+        assert root.is_dir()
+        minted.close_thumbs()
+        assert not root.exists()
+
+        configured = RecordController(devices=object(), thumb_root=str(tmp_path / "thumbs"))
+        kept = configured.thumb_dir
+        configured.close_thumbs()
+        assert kept.is_dir()
+
+    def test_the_app_removes_it_when_its_lifespan_ends(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from strands_robots.dashboard.server import create_app
+
+        app = create_app()
+        with TestClient(app):
+            root = app.state.record.thumb_dir
+            assert root.is_dir()
+        assert not root.exists()

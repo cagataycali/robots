@@ -95,6 +95,7 @@ def _activity(request: Request) -> Callable[..., None] | None:
 
 def attach(app: FastAPI) -> None:
     """Set ``app.state.record``; when the device manager is not attached yet, finish at startup."""
+    attach_shutdown(app)
     if getattr(app.state, "devices", None) is not None:
         app.state.record = _build(app)
         return
@@ -109,6 +110,21 @@ def attach(app: FastAPI) -> None:
         hooks.append(_late)
     else:
         app.state.record = _build(app)
+
+
+def _close_thumbs(app: FastAPI) -> None:
+    record = getattr(app.state, "record", None)
+    if record is not None:
+        record.close_thumbs()
+
+
+def attach_shutdown(app: FastAPI) -> None:
+    """Remove the per-process thumbnail directory at shutdown so temp directories do not accumulate."""
+    hooks = getattr(app.state, "shutdown_hooks", None)
+    if hooks is None:
+        hooks = []
+        app.state.shutdown_hooks = hooks
+    hooks.append(lambda: _close_thumbs(app))
 
 
 router.include_router(record_api.build_router(controller, _activity, late_bound=True))

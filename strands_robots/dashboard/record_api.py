@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import stat
 import tempfile
 import threading
@@ -231,6 +232,7 @@ class RecordController:
         # Resolved on first use by :attr:`thumb_dir`: a private per-process directory when none
         # is named, otherwise the named one once it has passed :func:`_private_thumb_root`.
         self._thumb_root: Path | None = Path(thumb_root) if thumb_root else None
+        self._thumb_minted = False
         self._thumb_lock = threading.Lock()
         self._lock = threading.Lock()
         self._worker: RecordWorker | None = None
@@ -298,7 +300,15 @@ class RecordController:
         with self._thumb_lock:
             if self._thumb_root is None:
                 self._thumb_root = Path(tempfile.mkdtemp(prefix="strands-record-thumbs-"))
+                self._thumb_minted = True
             return _private_thumb_root(self._thumb_root)
+
+    def close_thumbs(self) -> None:
+        """Remove the per-process thumbnail directory this controller minted; a configured root is left alone."""
+        with self._thumb_lock:
+            if self._thumb_minted and self._thumb_root is not None:
+                shutil.rmtree(self._thumb_root, ignore_errors=True)
+                self._thumb_root, self._thumb_minted = None, False
 
     # ---------------------------------------------------------------- open
 
