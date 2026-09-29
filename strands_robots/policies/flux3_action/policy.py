@@ -138,7 +138,7 @@ class Flux3ActionPolicy(Policy):
 
     provider_name: ClassVar[str] = "flux3_action"
     requires_images: ClassVar[bool] = True
-    reads_instruction: ClassVar[bool] = True
+    reads_instruction: bool = True
 
     def __init__(
         self,

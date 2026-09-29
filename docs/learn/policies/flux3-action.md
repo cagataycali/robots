@@ -16,7 +16,7 @@ pip install natten==0.21.6 -f https://whl.natten.org   # the wheel for your torc
 
 ## What it is
 
-`Flux3ActionPolicy` wraps the FLUX 3 Action inference library (Apache 2.0): a 3.9B flow-matching transformer over a video VAE that reads eight steps of two camera views plus joint state and one instruction and returns 42 absolute targets for the six SO-101 joints, replanning every 32 ticks at 30 Hz. It loads in process and speaks the `Policy` ABC; weights arrive on `load()`, the first `reset()` or the first `get_actions()`.
+`Flux3ActionPolicy` wraps the FLUX 3 Action inference library (Apache 2.0): a 3.9B flow-matching transformer over a video VAE that reads eight steps of two camera views plus joint state and an instruction, returning 42 absolute targets for the six SO-101 joints, replanning every 32 ticks at 30 Hz. It loads in process and speaks the `Policy` ABC; weights arrive on `load()`, the first `reset()` or the first `get_actions()`.
 
 ## Constructor keywords
 
