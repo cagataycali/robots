@@ -58,6 +58,18 @@ STAND_Z = 0.72  # pelvis height of a standing G1 (deep lane native harness: 0.75
 GETUP_REWARDS = {
     "v1": {"height_std": 0.3, "height_w": 2.0, "standing_w": 3.0, "standing_dz": 0.1, "upright_w": 2.0},
     "v2": {"height_std": 0.15, "height_w": 2.0, "standing_w": 5.0, "standing_dz": 0.15, "upright_w": 3.0},
+    # v3: F21 read at v2 checkpoint 600 shows the crouch keeps torso_link upright (the stock ``upright`` term
+    # rewards the torso) while the pelvis stays pitched, which ``standing`` gates on with a hard AND. A shaped
+    # pelvis-upright term gives PPO the gradient the gate withholds.
+    "v3": {
+        "height_std": 0.15,
+        "height_w": 2.0,
+        "standing_w": 5.0,
+        "standing_dz": 0.15,
+        "upright_w": 3.0,
+        "pelvis_upright_w": 2.0,
+        "pelvis_upright_std": 0.4,
+    },
 }
 GETUP_REWARD = os.environ.get("GETUP_REWARD", "v1")
 FALL_Z = 0.35
@@ -90,6 +102,11 @@ def getup_env_cfg(play: bool = False):
         g = asset.data.projected_gravity_b
         up = g[:, 2] < -math.cos(math.radians(20.0))
         return (pelvis_height(env, asset_cfg) > target).float() * up.float()
+
+    def pelvis_upright(env, std: float, asset_cfg=SceneEntityCfg("robot")):
+        """Shaped version of the pelvis half of ``standing``: 1 when the root's up axis is vertical."""
+        g = env.scene[asset_cfg.name].data.projected_gravity_b
+        return torch.exp(-(torch.square(g[:, 0]) + torch.square(g[:, 1])) / std**2)
 
     # Drop supine (roll pi) or prone (roll 0 with pitch pi/2 -> face down) from 0.35 m.
     cfg.events["reset_base"] = EventTermCfg(
@@ -128,6 +145,10 @@ def getup_env_cfg(play: bool = False):
     )
     if "upright" in cfg.rewards:
         cfg.rewards["upright"].weight = shape["upright_w"]
+    if shape.get("pelvis_upright_w"):
+        cfg.rewards["pelvis_upright"] = RewardTermCfg(
+            func=pelvis_upright, weight=shape["pelvis_upright_w"], params={"std": shape["pelvis_upright_std"]}
+        )
     # Falling is the start state, so it cannot be a termination.
     cfg.terminations.pop("fell_over", None)
     cfg.terminations.pop("out_of_terrain_bounds", None)
