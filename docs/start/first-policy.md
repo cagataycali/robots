@@ -37,6 +37,8 @@ robot.cleanup()
 You should see:
 
 ```text
+Loading  HuggingFaceTB/SmolVLM2-500M-Video-Instruct weights ...
+Reducing the number of VLM layers to 16 ...
 success
 Policy complete on 'so101'
 LerobotLocalPolicy | pick up the cube
@@ -44,7 +46,7 @@ LerobotLocalPolicy | pick up the cube
 60 0 True
 ```
 
-The timing line is yours; on the Apple laptop GPU that produced this output each 50-action chunk took about 1.2 s. Three things in the fence are the whole recipe. `STRANDS_TRUST_REMOTE_CODE=1` is the consent lerobot checkpoints need before they build. `obs_rename` routes your camera names onto the feature names the checkpoint was trained with; without it the call refuses before any download and names the override to pass. The inline `embodiment` says which joints are the state and action vectors. It is inline because `smolvla_base` is a pretraining checkpoint with no SO-101 statistics, so the shipped `embodiment="so101"` (which converts servo degrees) is refused and the arm's radians reach the model raw. The motion you see is the plumbing working, not a task being done. A checkpoint fine-tuned on an SO-101 carries its stats, and `embodiment="so101"` then converts units both ways, as the ACT checkpoint on the [lerobot_local page](../learn/policies/lerobot-local.md) does.
+Lerobot prints the first two lines while it loads; the timing line is yours; on the Apple laptop GPU that produced this output each 50-action chunk took about 1.2 s. Three things in the fence are the whole recipe. `STRANDS_TRUST_REMOTE_CODE=1` is the consent lerobot checkpoints need before they build. `obs_rename` routes your camera names onto the feature names the checkpoint was trained with; without it the call refuses before any download and names the override to pass. The inline `embodiment` says which joints are the state and action vectors. It is inline because `smolvla_base` is a pretraining checkpoint with no SO-101 statistics, so the shipped `embodiment="so101"` (which converts servo degrees) is refused and the arm's radians reach the model raw. The motion you see is the plumbing working, not a task being done. A checkpoint fine-tuned on an SO-101 carries its stats, and `embodiment="so101"` then converts units both ways, as the ACT checkpoint on the [lerobot_local page](../learn/policies/lerobot-local.md) does.
 
 ## The same call on the real arm
 
