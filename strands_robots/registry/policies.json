@@ -20,7 +20,7 @@
     "groot": {
       "module": "strands_robots.policies.groot",
       "class": "Gr00tPolicy",
-      "description": "NVIDIA GR00T N1.5/N1.6 via ZMQ",
+      "description": "NVIDIA GR00T N1.5/N1.6/N1.7 via ZMQ",
       "requires": [
         "port"
       ],
@@ -28,7 +28,13 @@
         "port",
         "host",
         "data_config",
-        "strict_keys"
+        "groot_version",
+        "observation_mapping",
+        "action_mapping",
+        "language_key",
+        "strict_keys",
+        "timeout_ms",
+        "api_token"
       ],
       "defaults": {
         "host": "localhost"
