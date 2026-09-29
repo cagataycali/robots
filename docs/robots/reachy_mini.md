@@ -7,7 +7,7 @@ description: "Pollen Reachy Mini (6-DOF Stewart head + antennas, 9 actuators)"
 
 # Pollen Reachy Mini (6-DOF Stewart head + antennas, 9 actuators)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="expressive">Expressive</span><span class="sr-chip">21 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:reachy_mini}}
 
 <robot-viewer name="reachy_mini"></robot-viewer>
 

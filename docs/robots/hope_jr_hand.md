@@ -7,7 +7,7 @@ description: "HopeJR Hand (dexterous anthropomorphic hand, Feetech)"
 
 # HopeJR Hand (dexterous anthropomorphic hand, Feetech)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
+{{robot_chips:hope_jr_hand}}
 
 The registry ships no simulation asset for it, so `Robot("hope_jr_hand")` in the default sim mode refuses by name.
 

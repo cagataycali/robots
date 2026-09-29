@@ -7,7 +7,7 @@ description: "Open Duck Mini V2 (16-DOF expressive biped, Feetech servos)"
 
 # Open Duck Mini V2 (16-DOF expressive biped, Feetech servos)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">16 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:open_duck_mini}}
 
 <robot-viewer name="open_duck_mini"></robot-viewer>
 

@@ -7,7 +7,7 @@ description: "LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuat
 
 # LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuators)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">9 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot, strands</span></p>
+{{robot_chips:lekiwi}}
 
 <robot-viewer name="lekiwi"></robot-viewer>
 

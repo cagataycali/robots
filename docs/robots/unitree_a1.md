@@ -7,7 +7,7 @@ description: "Unitree A1 Quadruped"
 
 # Unitree A1 Quadruped
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">13 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:unitree_a1}}
 
 <robot-viewer name="unitree_a1"></robot-viewer>
 

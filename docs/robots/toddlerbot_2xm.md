@@ -7,7 +7,7 @@ description: "Toddlerbot 2xM Humanoid (45-DOF)"
 
 # Toddlerbot 2xM Humanoid (45-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">45 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:toddlerbot_2xm}}
 
 <robot-viewer name="toddlerbot_2xm"></robot-viewer>
 

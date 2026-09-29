@@ -7,7 +7,7 @@ description: "LeKiwi networked client (drives a remote LeKiwi host over ZMQ)"
 
 # LeKiwi networked client (drives a remote LeKiwi host over ZMQ)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile_manip">Mobile manipulators</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
+{{robot_chips:lekiwi_client}}
 
 The registry ships no simulation asset for it, so `Robot("lekiwi_client")` in the default sim mode refuses by name.
 

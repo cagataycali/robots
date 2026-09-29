@@ -7,7 +7,7 @@ description: "Unitree Go2 Quadruped"
 
 # Unitree Go2 Quadruped
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">40 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:unitree_go2}}
 
 <robot-viewer name="unitree_go2"></robot-viewer>
 

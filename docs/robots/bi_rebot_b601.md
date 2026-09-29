@@ -7,7 +7,7 @@ description: "Bi-manual reBot B601-DM (dual 6-DOF + gripper, Damiao CAN motors)"
 
 # Bi-manual reBot B601-DM (dual 6-DOF + gripper, Damiao CAN motors)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="bimanual">Bimanual</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
+{{robot_chips:bi_rebot_b601}}
 
 The registry ships no simulation asset for it, so `Robot("bi_rebot_b601")` in the default sim mode refuses by name.
 

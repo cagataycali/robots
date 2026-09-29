@@ -7,7 +7,7 @@ description: "Shadow DexEE Dexterous End-Effector (12-DOF)"
 
 # Shadow DexEE Dexterous End-Effector (12-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip">12 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:shadow_dexee}}
 
 <robot-viewer name="shadow_dexee"></robot-viewer>
 

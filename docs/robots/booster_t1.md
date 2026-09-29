@@ -7,7 +7,7 @@ description: "Booster T1 Humanoid (24-DOF)"
 
 # Booster T1 Humanoid (24-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">24 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:booster_t1}}
 
 <robot-viewer name="booster_t1"></robot-viewer>
 

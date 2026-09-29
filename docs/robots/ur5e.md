@@ -7,7 +7,7 @@ description: "Universal Robots UR5e (6-DOF industrial)"
 
 # Universal Robots UR5e (6-DOF industrial)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">6 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:ur5e}}
 
 <robot-viewer name="ur5e"></robot-viewer>
 

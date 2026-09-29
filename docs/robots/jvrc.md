@@ -7,7 +7,7 @@ description: "JVRC-1 Humanoid (HRP-based, 45-DOF)"
 
 # JVRC-1 Humanoid (HRP-based, 45-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">45 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:jvrc}}
 
 <robot-viewer name="jvrc"></robot-viewer>
 

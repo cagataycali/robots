@@ -7,7 +7,7 @@ description: "Agility Cassie Bipedal Robot"
 
 # Agility Cassie Bipedal Robot
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">28 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:cassie}}
 
 <robot-viewer name="cassie"></robot-viewer>
 

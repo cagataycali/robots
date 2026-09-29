@@ -7,7 +7,7 @@ description: "LEAP Hand (16-DOF dexterous)"
 
 # LEAP Hand (16-DOF dexterous)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip">41 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:leap_hand}}
 
 <robot-viewer name="leap_hand"></robot-viewer>
 

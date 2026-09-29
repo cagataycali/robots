@@ -7,7 +7,7 @@ description: "Pollen Microduck (14-DOF open-source biped, Dynamixel XL330)"
 
 # Pollen Microduck (14-DOF open-source biped, Dynamixel XL330)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">15 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:microduck}}
 
 <robot-viewer name="microduck"></robot-viewer>
 

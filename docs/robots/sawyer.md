@@ -7,7 +7,7 @@ description: "Rethink Robotics Sawyer (7-DOF)"
 
 # Rethink Robotics Sawyer (7-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:sawyer}}
 
 <robot-viewer name="sawyer"></robot-viewer>
 

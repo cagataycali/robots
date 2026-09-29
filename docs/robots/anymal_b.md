@@ -7,7 +7,7 @@ description: "ANYbotics ANYmal B Quadruped (12-DOF)"
 
 # ANYbotics ANYmal B Quadruped (12-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">13 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:anymal_b}}
 
 <robot-viewer name="anymal_b"></robot-viewer>
 

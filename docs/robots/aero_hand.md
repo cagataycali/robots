@@ -7,7 +7,7 @@ description: "Tetheria Aero Hand Open (16-DOF dexterous)"
 
 # Tetheria Aero Hand Open (16-DOF dexterous)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip">16 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:aero_hand}}
 
 <robot-viewer name="aero_hand"></robot-viewer>
 

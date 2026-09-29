@@ -7,7 +7,7 @@ description: "Trossen WidowX AI Bimanual"
 
 # Trossen WidowX AI Bimanual
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="bimanual">Bimanual</span><span class="sr-chip">17 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:trossen_wxai}}
 
 <robot-viewer name="trossen_wxai"></robot-viewer>
 

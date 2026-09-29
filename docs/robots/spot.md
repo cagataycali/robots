@@ -7,7 +7,7 @@ description: "Boston Dynamics Spot (with arm)"
 
 # Boston Dynamics Spot (with arm)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="mobile">Mobile bases</span><span class="sr-chip">20 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:spot}}
 
 <robot-viewer name="spot"></robot-viewer>
 

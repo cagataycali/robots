@@ -7,7 +7,7 @@ description: "Robotiq 2F-85 v4 Gripper (updated model)"
 
 # Robotiq 2F-85 v4 Gripper (updated model)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="hand">Hands and grippers</span><span class="sr-chip">6 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:robotiq_2f85_v4}}
 
 <robot-viewer name="robotiq_2f85_v4"></robot-viewer>
 

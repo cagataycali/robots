@@ -7,7 +7,7 @@ description: "ARX L5 (6-DOF lightweight arm)"
 
 # ARX L5 (6-DOF lightweight arm)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">11 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:arx_l5}}
 
 <robot-viewer name="arx_l5"></robot-viewer>
 

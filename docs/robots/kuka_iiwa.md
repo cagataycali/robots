@@ -7,7 +7,7 @@ description: "KUKA LBR iiwa 14 (7-DOF collaborative)"
 
 # KUKA LBR iiwa 14 (7-DOF collaborative)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">11 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:kuka_iiwa}}
 
 <robot-viewer name="kuka_iiwa"></robot-viewer>
 

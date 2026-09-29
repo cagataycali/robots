@@ -7,7 +7,7 @@ description: "Enactic OpenArm (7-DOF, DAMIAO motors, CAN bus)"
 
 # Enactic OpenArm (7-DOF, DAMIAO motors, CAN bus)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">9 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: lerobot</span></p>
+{{robot_chips:openarm}}
 
 <robot-viewer name="openarm"></robot-viewer>
 
