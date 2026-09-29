@@ -214,3 +214,62 @@ def _log(robot: str, a: np.ndarray, b: np.ndarray) -> None:
         fh.write("per-col max err: " + " ".join(f"{x:.5f}" for x in err.max(axis=0)) + "\n")
         fh.write("classic last: " + " ".join(f"{x:.4f}" for x in a[-1]) + "\n")
         fh.write("mjlab   last: " + " ".join(f"{x:.4f}" for x in b[-1]) + "\n")
+
+
+def test_zero_pose_spawn_matches_classic_not_keyframe_zero():
+    """F10: ``keyframe=None`` spawns the zero configuration on both backends.
+
+    The stock ``g1.xml`` declares a keyframe with bent arms; the classic backend
+    ignores it unless ``keyframe=`` is passed. The mjlab backend used to spawn
+    from keyframe 0 silently, and a kp=500 crouch hold that stands from qpos0
+    topples from that keyframe (same model, same CPU MuJoCo, different start).
+    """
+    classic, mjl = _pair("unitree_g1")
+    try:
+        oc = classic.get_observation("unitree_g1", skip_images=True)
+        om = mjl.get_observation("unitree_g1", skip_images=True)
+        # zero pose: every actuated joint at 0, including the arms the keyframe bends
+        for j in classic.robot_action_keys("unitree_g1"):
+            assert oc[j] == pytest.approx(0.0, abs=1e-6), j
+            assert om[j] == pytest.approx(0.0, abs=1e-6), j
+        assert np.allclose(om["base_pos"], oc["base_pos"], atol=1e-6)
+        keys = classic.robot_action_keys("unitree_g1")
+        # a shallow crouch target (the mjlab velocity task default pose)
+        crouch = {k: 0.0 for k in keys}
+        for side in ("left", "right"):
+            crouch[f"{side}_hip_pitch_joint"] = -0.2
+            crouch[f"{side}_knee_joint"] = 0.42
+            crouch[f"{side}_ankle_pitch_joint"] = -0.23
+        for k in ("left_shoulder_pitch_joint", "right_shoulder_pitch_joint"):
+            crouch[k] = 0.2
+        crouch["left_elbow_joint"] = crouch["right_elbow_joint"] = 1.28
+
+        def hold(k: int, n: int):
+            return [crouch[key] for key in keys]
+
+        a = _rollout(classic, "unitree_g1", hold, n_control=100, substeps=10)
+        b = _rollout(mjl, "unitree_g1", hold, n_control=100, substeps=10)
+    finally:
+        classic.destroy()
+        mjl.destroy()
+    _log("unitree_g1_crouch", a, b)
+    nj = 29
+    # both stand for 2 s (z stays above 0.6 m) and agree on the standing height
+    assert a[:, nj + 2].min() > 0.6, f"classic fell: min z {a[:, nj + 2].min():.3f}"
+    assert b[:, nj + 2].min() > 0.6, f"mjlab fell: min z {b[:, nj + 2].min():.3f}"
+    assert abs(a[-1, nj + 2] - b[-1, nj + 2]) < 0.005
+
+
+def test_keyframe_argument_spawns_the_keyed_pose():
+    os.environ.setdefault("MUJOCO_GL", "egl")
+    from strands_robots.simulation import create_simulation
+
+    mjl = create_simulation("mjlab", num_envs=1)
+    mjl.create_world(timestep=0.002)
+    try:
+        assert mjl.add_robot("unitree_g1", keyframe=0)["status"] == "success"
+        om = mjl.get_observation("unitree_g1", skip_images=True)
+        assert om["left_elbow_joint"] == pytest.approx(1.28, abs=1e-5)
+        assert om["base_pos"][2] == pytest.approx(0.79, abs=1e-5)
+    finally:
+        mjl.destroy()

@@ -383,8 +383,13 @@ class MjlabEngine(MjlabRecordingMixin, SimEngine):
             spec.joint_names = self._contract_joint_names(spec, ent)
             spec.actuator_names = list(ent.actuator_names)
             spec.free_base = not ent.is_fixed_base
+        # A fresh scene spawns in its declared pose right away, as the MuJoCo
+        # backend does at add_robot(keyframe=...) time; a rebuild after a
+        # mutation carries the live joint positions over instead.
         if saved:
             self._restore_joint_positions(saved)
+        else:
+            self._write_spawn_state()
         if self._use_cuda_graph and self.device.startswith("cuda"):
             try:
                 sim.create_graph()
@@ -465,6 +470,25 @@ class MjlabEngine(MjlabRecordingMixin, SimEngine):
         self._sim.forward()
         self._scene.update(self._timestep or self._default_timestep)
 
+    def _write_spawn_state(self) -> None:
+        """Every world to its declared spawn pose (default root state + env origins,
+        default joint pose), zero velocity, zero ctrl, then forward."""
+        import torch
+
+        origins = self._scene.env_origins
+        for ent in self._scene.entities.values():
+            d = ent.data
+            if not ent.is_fixed_base and d.default_root_state is not None:
+                root = d.default_root_state.clone()
+                root[:, 0:3] += origins
+                ent.write_root_state_to_sim(root)
+            if ent.is_articulated and d.default_joint_pos is not None and d.default_joint_pos.shape[-1] > 0:
+                ent.write_joint_state_to_sim(d.default_joint_pos.clone(), torch.zeros_like(d.default_joint_pos))
+        self._sim.data.qvel[:] = 0.0
+        self._sim.data.ctrl[:] = 0.0
+        self._sim.forward()
+        self._scene.update(self._timestep or self._default_timestep)
+
     # ----------------------------------------------------------------- stepping
 
     def reset(self) -> dict[str, Any]:
@@ -480,28 +504,13 @@ class MjlabEngine(MjlabRecordingMixin, SimEngine):
             flush_note = flush["content"][0]["text"] + " "
         with self._lock:
             self._ensure_built()
-            import torch
-
             # mjlab's Scene.reset() only clears actuator state; restoring the
             # spawn pose is the job of the RL env's reset events. Do it here
             # the same way (default root state + env origins, default joints).
             self._scene.reset()
-            origins = self._scene.env_origins
-            for ent in self._scene.entities.values():
-                d = ent.data
-                if not ent.is_fixed_base and d.default_root_state is not None:
-                    root = d.default_root_state.clone()
-                    root[:, 0:3] += origins
-                    ent.write_root_state_to_sim(root)
-                if ent.is_articulated and d.default_joint_pos is not None and d.default_joint_pos.shape[-1] > 0:
-                    ent.write_joint_state_to_sim(d.default_joint_pos.clone(), torch.zeros_like(d.default_joint_pos))
-            self._sim.data.qvel[:] = 0.0
-            self._sim.data.ctrl[:] = 0.0
-            self._sim.forward()
-            self._scene.update(self._timestep or self._default_timestep)
+            self._write_spawn_state()
             self._pending_ctrl.clear()
             self._step_count = 0
-            del torch
             return {
                 "status": "success",
                 "content": [{"text": f"{flush_note}Reset {self.num_envs} world(s) to initial state"}],
@@ -968,7 +977,7 @@ def _qpos_width(jnt_type: int) -> int:
 
 
 def _inspect_mjcf(path: str, keyframe: str | int | None) -> tuple[dict[str, float], bool, list[str], list[str]]:
-    """Home joint positions (from a keyframe when present), free-base flag, actuator and joint names."""
+    """Home joint positions (from the requested keyframe, else the zero pose), free-base flag, actuator and joint names."""
     import mujoco
 
     model = mujoco.MjModel.from_xml_path(path)
@@ -989,18 +998,26 @@ def _keyframe_root_pos(path: str, keyframe: str | int | None) -> tuple[float, fl
     import mujoco
 
     model = mujoco.MjModel.from_xml_path(path)
-    key_id = _resolve_key(model, keyframe)
-    if key_id is None or model.njnt == 0 or int(model.jnt_type[0]) != 0:
+    if model.njnt == 0 or int(model.jnt_type[0]) != 0:
         return None
-    q = model.key_qpos[key_id]
+    key_id = _resolve_key(model, keyframe)
+    # keyframe=None: the zero configuration, whose root pose is the MJCF body
+    # pos (qpos0), exactly where the MuJoCo backend spawns a free-base robot.
+    q = model.key_qpos[key_id] if key_id is not None else model.qpos0
     return (float(q[0]), float(q[1]), float(q[2]))
 
 
 def _resolve_key(model: Any, keyframe: str | int | None) -> int | None:
-    if model.nkey == 0:
+    """Keyframe id for ``add_robot(keyframe=...)``, or ``None`` for the zero pose.
+
+    Mirrors the MuJoCo backend's contract: ``keyframe=None`` keeps the all-zero
+    configuration even when the MJCF declares keyframes. (Finding F10: silently
+    spawning from keyframe 0 made the stock ``g1.xml`` topple under a crouch hold
+    that the classic backend survives from ``qpos0``; same model, same CPU
+    MuJoCo, different start.)
+    """
+    if model.nkey == 0 or keyframe is None:
         return None
-    if keyframe is None:
-        return 0
     if isinstance(keyframe, int):
         return keyframe if 0 <= keyframe < model.nkey else None
     import mujoco
