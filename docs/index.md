@@ -82,7 +82,7 @@ robot.cleanup()
 
 </div>
 
-The left fence runs on a laptop. The right one needs an SO-101 on USB; same tool, same verbs. The sim addresses joints by the model's names in radians; the native driver addresses servos by name in degrees. [Start here](start/index.md).
+The left fence runs on a laptop; the right needs an SO-101 on USB. Same tool, same verbs: the sim addresses joints by the model's names in radians, the native driver addresses servos by name in degrees. [Start here](start/index.md).
 
 ## The same checkpoint, sim or real
 
@@ -91,14 +91,14 @@ The left fence runs on a laptop. The right one needs an SO-101 on USB; same tool
 ```python
 import os; os.environ["STRANDS_TRUST_REMOTE_CODE"] = "1"
 from strands_robots import Robot
-
 robot = Robot("so101", mode="sim")
+robot.add_camera(name="front", position=[0.22, 0.025, 0.6], target=[0.22, 0.025, 0])
 robot.add_camera(name="wrist", parent_body="so101/gripper", position=[0.058, 0.0, -0.029], target=[-0.024, 0.0, -0.297])
-checkpoint = {"pretrained_name_or_path": "robotfuel/act_so101_t16b", "embodiment": "so101",
-              "obs_rename_override": {"front": None, "wrist": "observation.images.wrist"}}
-result = robot.run_policy(robot_name="so101", policy_provider="lerobot_local", policy_config=checkpoint,
-                          instruction="pick up the cube", n_steps=60, control_frequency=30.0)
-print(result["status"])
+joints = robot.robot_joint_names("so101")
+embodiment = {"state_keys": joints, "action_keys": joints, "dim_policy": "pad", "obs_rename": {
+    "front": "observation.images.camera1", "wrist": "observation.images.camera2", "default": "observation.images.camera3"}}
+print(robot.run_policy(robot_name="so101", policy_provider="lerobot_local", instruction="pick up the cube", n_steps=60,
+                       policy_config={"pretrained_name_or_path": "lerobot/smolvla_base", "embodiment": embodiment})["status"])
 robot.cleanup()
 ```
 
@@ -106,15 +106,15 @@ robot.cleanup()
 import os; os.environ["STRANDS_TRUST_REMOTE_CODE"] = "1"
 from strands_robots import Robot
 from strands_robots.policies import create_policy
-
-robot = Robot("so101", mode="real", port="/dev/ttyACM0", cameras={"wrist": {"type": "opencv", "index_or_path": 0, "fps": 30}})
-policy = create_policy("lerobot_local", pretrained_name_or_path="robotfuel/act_so101_t16b", embodiment="so101",
-                       obs_rename_override={"front": None, "wrist": "observation.images.wrist"})
-result = robot.run_policy(policy, instruction="pick up the cube", duration=10.0)
-print(result["status"])
+robot = Robot("so101", mode="real", port="/dev/ttyACM0", cameras={"front": {"type": "opencv", "index_or_path": 0},
+              "wrist": {"type": "opencv", "index_or_path": 1}, "top": {"type": "opencv", "index_or_path": 2}})
+embodiment = {"state_keys": list("123456"), "action_keys": list("123456"), "dim_policy": "pad", "obs_rename": {
+    "front": "observation.images.camera1", "wrist": "observation.images.camera2", "top": "observation.images.camera3"}}
+policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/smolvla_base", embodiment=embodiment)
+print(robot.run_policy(policy, instruction="pick up the cube", duration=10.0)["status"])
 robot.cleanup()
 ```
 
 </div>
 
-The left fence runs on a laptop with no GPU: an ACT checkpoint trained on a real SO-101 drives the simulated one from its wrist camera, and `embodiment="so101"` converts between the checkpoint's degrees and the simulator's radians. The right one runs the same checkpoint on the arm; mounted as an agent tool, its `execute` stops for operator approval first. [First learned policy](start/first-policy.md) walks through it.
+The left fence runs on a laptop with no GPU: SmolVLA, a vision-language-action model from the Hub, reads three cameras and the instruction and drives the simulated arm. The right one runs the same checkpoint on the physical arm; as an agent tool, its `execute` waits for operator approval. [First learned policy](start/first-policy.md) explains `obs_rename` and the embodiment.
