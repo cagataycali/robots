@@ -30,6 +30,7 @@ _PURPOSE: dict[str, str] = {
     "sim": "asset download through robot_descriptions",
     "sim-mujoco": "MuJoCo simulation, offscreen rendering, IK (the default sim)",
     "sim-newton": "Newton GPU simulation on warp",
+    "sim-mjlab": "mjlab GPU-vectorized MuJoCo (MuJoCo-Warp), rsl_rl training, ONNX policies",
     "sim-isaac": "Isaac Sim backend (USD assets)",
     "sim-gs": "Gaussian splat rendering (gsplat)",
     "lerobot": "lerobot drivers, teleoperation, recording, Feetech buses",

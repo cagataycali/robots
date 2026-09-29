@@ -683,15 +683,23 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         self,
         name: str,
         shape: str = "box",
-        size: Sequence[float] | None = None,
         position: Sequence[float] | None = None,
         orientation: Sequence[float] | None = None,
-        mass: float = 0.1,
+        size: Sequence[float] | None = None,
         color: Sequence[float] | None = None,
-        static: bool = False,
+        mass: float = 0.1,
+        is_static: bool | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Add a primitive (box/sphere/cylinder/capsule) as a free or static body to every world."""
+        """Add a primitive (box/sphere/cylinder/capsule) as a free or static body to every world.
+
+        Parameter order is the one every backend shares (graded by
+        ``tests/simulation/test_backend_shared_parameter_order.py``); ``static`` is
+        accepted as the older spelling of ``is_static``.
+        """
+        if "static" in kwargs and is_static is None:
+            is_static = bool(kwargs.pop("static"))
+        static = bool(is_static)
         err = entity_name_error("add_object", "name", name)
         if err:
             return {"status": "error", "content": [{"text": err}]}
@@ -874,11 +882,30 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         name: str,
         position: Sequence[float] | None = None,
         target: Sequence[float] | None = None,
+        fov: float = 60.0,
         width: int | None = None,
         height: int | None = None,
+        parent_body: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Register a look-at camera used by :meth:`render` and image observations."""
+        """Register a look-at camera used by :meth:`render` and image observations.
+
+        ``fov`` is stored and applied to the world-0 renderer; ``parent_body`` (a
+        camera mounted on a moving body) is not supported by the batched worlds
+        and is refused rather than silently rendered from a fixed pose.
+        """
+        if parent_body is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "add_camera(parent_body=...) is not supported by the mjlab backend: the batched "
+                            "worlds have no per-body camera; use the MuJoCo backend for mounted cameras."
+                        )
+                    }
+                ],
+            }
         err = entity_name_error("add_camera", "name", name)
         if err:
             return {"status": "error", "content": [{"text": err}]}
@@ -886,6 +913,7 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
             self._cameras[name] = {
                 "position": list(position) if position is not None else [1.0, -1.0, 0.8],
                 "target": list(target) if target is not None else [0.0, 0.0, 0.2],
+                "fov": float(fov),
                 "width": int(width or self.default_width),
                 "height": int(height or self.default_height),
             }
@@ -922,6 +950,9 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
                 cam.distance = float(np.linalg.norm(d))
                 cam.azimuth = float(np.degrees(np.arctan2(d[1], d[0])))
                 cam.elevation = float(-np.degrees(np.arcsin(d[2] / max(cam.distance, 1e-9))))
+                if cam_cfg and "fov" in cam_cfg:
+                    # Free cameras take the global vertical FOV; apply the registered one.
+                    model.vis.global_.fovy = float(cam_cfg["fov"])
             self._renderer.update_scene(data, camera=cam)
             return self._renderer.render().copy()
 
