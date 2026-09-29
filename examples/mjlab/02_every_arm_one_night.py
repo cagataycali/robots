@@ -88,6 +88,13 @@ def inspect_arm(robot: str) -> ArmInfo:
             notes.append(f"actuator {actuators[a]} drives a non scalar joint")
             continue
         actuated.append(m.joint(j).name)
+    # Natural joint order, not actuator order: mjlab's JointPositionAction resolves
+    # actuator names to joints in entity joint order and the ONNX metadata lists
+    # joint_names the same way (dynamixel_2r declares its actuators R2, R1; the
+    # provider hands q back as R1, R2, so an actuator-ordered FK reads it swapped).
+    if actuated != sorted(actuated, key=joints.index):
+        notes.append(f"actuator order {actuated} differs from joint order; using joint order")
+        actuated = sorted(actuated, key=joints.index)
     free_base = m.njnt > 0 and int(m.jnt_type[0]) == int(mujoco.mjtJoint.mjJNT_FREE)
     sites = [m.site(s).name for s in range(m.nsite)]
     ee_kind, ee_name = "site", ""
