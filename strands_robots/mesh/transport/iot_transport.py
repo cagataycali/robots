@@ -104,13 +104,29 @@ class _MqttSample:
     Mesh handlers (``_on_presence``, ``_on_cmd``, ``_on_response``) all access
     ``sample.key_expr`` and ``sample.payload.to_bytes()``. By exposing the
     same shape we avoid touching any handler when the transport changes.
+
+    Two MQTT5 properties ride along as optional attributes, ``None`` when the
+    publisher set none: ``response_topic`` (Response Topic) and
+    ``correlation_data`` (Correlation Data, decoded to text). A ``zenoh.Sample``
+    has neither attribute, so a handler reads them with ``getattr(sample,
+    "response_topic", None)`` and takes ``None`` as "reply on the computed
+    key". They carry the reply address of a command that arrived as an AWS IoT
+    Core direct message (see :class:`~strands_robots.mesh.transport.base.DirectSender`).
     """
 
-    __slots__ = ("key_expr", "payload")
+    __slots__ = ("correlation_data", "key_expr", "payload", "response_topic")
 
-    def __init__(self, topic: str, payload_bytes: bytes) -> None:
+    def __init__(
+        self,
+        topic: str,
+        payload_bytes: bytes,
+        response_topic: str | None = None,
+        correlation_data: str | None = None,
+    ) -> None:
         self.key_expr = topic
         self.payload = _MqttPayload(payload_bytes)
+        self.response_topic = response_topic
+        self.correlation_data = correlation_data
 
 
 class _MqttPayload:
@@ -688,13 +704,45 @@ class IotMqttTransport:
         if not matching:
             return
 
-        sample = _MqttSample(topic, payload)
+        sample = _MqttSample(topic, payload, *_mqtt5_reply_properties(data.publish_packet))
         for _filter, handlers in matching:
             for handler in handlers:
                 try:
                     handler(sample)
                 except Exception as exc:
                     logger.debug("IoT handler error on %s: %s", topic, exc)
+
+
+def _mqtt5_reply_properties(packet: Any) -> tuple[str | None, str | None]:
+    """Read the Response Topic and Correlation Data off an inbound PUBLISH.
+
+    Both are optional MQTT5 properties; ``awscrt`` exposes them as
+    ``publish_packet.response_topic`` (``str | None``) and
+    ``publish_packet.correlation_data`` (``bytes`` or ``str`` depending on the
+    SDK version, ``None`` when unset). The pair is normalised to text so
+    :class:`_MqttSample` hands the Mesh handlers one shape. Correlation bytes
+    that are not UTF-8 are dropped rather than raised: the field is an opaque
+    echo for the sender, and a handler that cannot read it replies on the
+    computed key exactly as it would for a message that carried none.
+
+    Args:
+        packet: The ``awscrt.mqtt5.PublishPacket`` of the inbound message.
+
+    Returns:
+        ``(response_topic, correlation_data)``, each ``None`` when absent.
+    """
+    response_topic = getattr(packet, "response_topic", None)
+    if response_topic is not None and not isinstance(response_topic, str):
+        response_topic = None
+    correlation: Any = getattr(packet, "correlation_data", None)
+    if isinstance(correlation, (bytes, bytearray, memoryview)):
+        try:
+            correlation = bytes(correlation).decode("utf-8")
+        except UnicodeDecodeError:
+            correlation = None
+    elif correlation is not None and not isinstance(correlation, str):
+        correlation = None
+    return response_topic, correlation
 
 
 def _mqtt_topic_matches(filter_: str, topic: str) -> bool:
