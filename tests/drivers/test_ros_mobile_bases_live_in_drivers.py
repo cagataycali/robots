@@ -52,4 +52,7 @@ def test_the_alias_import_leaves_the_driver_module_its_own_spec(stem: str) -> No
     assert moved.__spec__ is not None
     assert moved.__spec__.name == moved.__name__ == f"strands_robots.drivers.ros.{stem}"
     assert moved.__spec__.origin is not None
-    assert importlib.reload(moved).__name__ == f"strands_robots.drivers.ros.{stem}"
+    # ``importlib.reload`` re-executes ``sys.modules[__spec__.name]``: with the
+    # alias spec that was the alias entry, not the driver. Not called here, a
+    # reload would recreate the classes under every other test's feet.
+    assert sys.modules[moved.__spec__.name] is moved
