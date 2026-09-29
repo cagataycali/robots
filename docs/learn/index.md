@@ -16,7 +16,7 @@ description: Each page answers one workflow question and ends with something tha
 
 ## Data
 
-- [Record](data/record.md), [Verify](data/verify.md), [Label and judge](data/label-and-judge.md), [Stream and sync](data/stream-and-sync.md): a dataset from the first frame to a filtered training set.
+- [Record](data/record.md), [Verify](data/verify.md), [Foxglove](data/foxglove.md), [Label and judge](data/label-and-judge.md), [Stream and sync](data/stream-and-sync.md): a dataset from the first frame to a filtered training set, and a live view of the robot while it records.
 
 ## Hardware
 

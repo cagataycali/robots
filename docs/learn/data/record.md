@@ -72,4 +72,6 @@ rec.finalize()
 
 ## The one failure to know
 
+To watch the arm and its cameras while a recording runs, or to open a finished episode in Foxglove, see [Foxglove](foxglove.md).
+
 A run that intended N episodes but never called `save_episode` between them writes one `episode_index=0` mega-episode with the right total frame count. Nothing in the recorder's bookkeeping catches that; the parquet does. Run `strands-robots verify-dataset <root> --expected N` before training, every time.

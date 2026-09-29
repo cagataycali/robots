@@ -122,6 +122,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "device_connect",
             "drivers",
+            "foxglove",
             "mesh",
             "ros",
             "rosbridge",

@@ -311,18 +311,14 @@ class TestTheSeam:
         assert base_mod is not None
 
     def test_the_hardware_robot_publishes_through_it(self, fake_server: list[_FakeServer], tmp_path: Path) -> None:
-        from strands_robots.foxglove.options import resolve_foxglove_options
-        from strands_robots.hardware_robot import Robot
+        from types import SimpleNamespace
 
-        robot = Robot.__new__(Robot)
-        robot.tool_name_str = "arm"
-        robot.robot = type("Device", (), {"name": "so101"})()
-        robot._init_ros_bridge()
-        robot._init_foxglove_bridge(
-            resolve_foxglove_options(":0", foxglove_mcap=tmp_path / "run.mcap", context="Robot")
-        )
+        from tests._hardware_robot import hardware_robot_on
+
+        robot = hardware_robot_on(SimpleNamespace(name="so101"), foxglove=":0", foxglove_mcap=tmp_path / "run.mcap")
         try:
             assert robot.foxglove_url == "ws://127.0.0.1:43210"
+            assert robot._ros2_bridge_enabled is False
             robot._publish_ros_telemetry({"shoulder.pos": 1.0, "front": np.zeros((4, 4, 3), dtype=np.uint8)})
         finally:
             robot._shutdown_ros_bridge()
@@ -330,6 +326,23 @@ class TestTheSeam:
         assert channels["/so101/joint_states"]["messages"] == 1
         assert channels["/so101/camera/front"]["messages"] == 1
         assert robot.foxglove_url is None
+
+    def test_the_hardware_status_names_the_url_and_keeps_the_ros_fact_honest(
+        self, fake_server: list[_FakeServer], tmp_path: Path
+    ) -> None:
+        import asyncio
+        from types import SimpleNamespace
+
+        from tests._hardware_robot import hardware_robot_on
+
+        robot = hardware_robot_on(SimpleNamespace(name="so101", robot_type="so101_follower"), foxglove=":0")
+        try:
+            status = asyncio.run(robot.get_status())
+        finally:
+            robot._shutdown_ros_bridge()
+        assert status["foxglove_url"] == "ws://127.0.0.1:43210"
+        assert status["ros2_bridge"] is False, "a Foxglove bridge in the telemetry slot is not a ROS 2 bridge"
+        assert status["ros2_transport"] is None
 
 
 class TestServices:
