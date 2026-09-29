@@ -575,11 +575,15 @@ def rewrite_urdf(
 def _add_actuators(spec: Any, limits: dict[str, tuple[float, float]], mujoco: Any) -> list[str]:
     """One position actuator per hinge/slide joint; returns the joint names driven."""
     driven: list[str] = []
+    # Enum values compared as int() to int(): a mujoco enum on the left of ==
+    # stops matching numpy fields on mujoco 3.12 (see
+    # tests/test_mujoco_enum_comparisons_are_value_based.py).
+    hinge, slide_t = int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE)
     for joint in spec.joints:
-        if joint.type not in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE):
+        if int(joint.type) not in (hinge, slide_t):
             continue
         effort, _ = limits.get(joint.name, (0.0, 0.0))
-        slide = joint.type == mujoco.mjtJoint.mjJNT_SLIDE
+        slide = int(joint.type) == slide_t
         kp = min(max(effort, _KP_MIN), _KP_MAX) if effort > 0 else (_KP_DEFAULT_SLIDE if slide else _KP_DEFAULT_HINGE)
         if _FINGER_RE.search(joint.name):
             kp = min(kp, _KP_FINGER_MAX)
@@ -607,12 +611,13 @@ def _add_actuators(spec: Any, limits: dict[str, tuple[float, float]], mujoco: An
 
 
 def _lowest_point(model: Any, data: Any) -> float:
-    """World z of the lowest geom AABB corner at the current pose."""
+    """World z of the lowest geom AABB corner at the current pose (planes excluded)."""
+    import mujoco
     import numpy as np
 
     lowest = 0.0
     for g in range(model.ngeom):
-        if model.geom_type[g] == 0:  # mjGEOM_PLANE: infinite, and it is the floor itself
+        if int(model.geom_type[g]) == int(mujoco.mjtGeom.mjGEOM_PLANE):  # infinite, and it is the floor itself
             continue
         center = model.geom_aabb[g, :3]
         half = model.geom_aabb[g, 3:]
@@ -702,7 +707,7 @@ def build_from_urdf(
     spec.modelname = name
     roots = list(spec.worldbody.bodies)
     is_free = is_floating(tags) if floating is None else bool(floating)
-    has_free = any(j.type == mujoco.mjtJoint.mjJNT_FREE for j in spec.joints)
+    has_free = any(int(j.type) == int(mujoco.mjtJoint.mjJNT_FREE) for j in spec.joints)
     if is_free and not has_free and roots:
         roots[0].add_freejoint()
     is_free = is_free or has_free
