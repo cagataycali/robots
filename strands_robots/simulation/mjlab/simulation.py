@@ -623,6 +623,11 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Add a registry robot (or an explicit MJCF) to every world; the scene recompiles lazily."""
+        # A robot added while a LeRobot schema is frozen has no columns in that
+        # schema, so its rows would record as zeros and train. Refused in the
+        # shared mixin, on every backend, before anything else is checked.
+        if frozen := self._recording_schema_frozen_error("add_robot", name):
+            return frozen
         err = entity_name_error("add_robot", "name", name)
         if err:
             return {"status": "error", "content": [{"text": err}]}
@@ -665,6 +670,9 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
                 spec.home_qpos, spec.free_base, spec.actuator_names, spec.joint_names = _inspect_mjcf(path, keyframe)
                 if spec.free_base and position is None:
                     spec.position = _keyframe_root_pos(path, keyframe) or spec.position
+            except KeyError as exc:
+                # An unknown keyframe: the refusal names the available ones.
+                return {"status": "error", "content": [{"text": f"{exc.args[0]} (add_robot '{name}')"}]}
             except Exception as exc:
                 return {"status": "error", "content": [{"text": f"Could not load MJCF for '{name}': {exc}"}]}
             self._robots[name] = spec
@@ -878,6 +886,14 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
                     "status": "error",
                     "content": [{"text": f"expected shape ({self.num_envs}, {len(ids)}), got {tuple(block.shape)}"}],
                 }
+            if not bool(torch.isfinite(block).all()):
+                # Same rule as send_action: a nan or inf is refused, never written
+                # (MuJoCo would discard the step; a recorder would keep the row).
+                bad = torch.nonzero(~torch.isfinite(block))[:4].tolist()
+                return {
+                    "status": "error",
+                    "content": [{"text": f"action block contains nan/inf at (world, index) {bad}"}],
+                }
             self._sim.data.ctrl[:, ids] = block
             dt = self._timestep or self._default_timestep
             for _ in range(int(n_substeps)):
@@ -910,17 +926,19 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
             robot_name = self._default_robot(robot_name)
             self._ensure_built()
             keys = self._robots[robot_name].actuator_names
-            if isinstance(action, Mapping):
-                unknown = [k for k in action if k not in keys]
-                if unknown:
-                    return {"status": "error", "content": [{"text": f"unknown action keys {unknown}; valid: {keys}"}]}
-                vec = np.array([float(action.get(k, np.nan)) for k in keys], dtype=np.float32)
-            else:
-                vec = np.asarray(list(action), dtype=np.float32)
-                if vec.shape != (len(keys),):
-                    return {"status": "error", "content": [{"text": f"expected {len(keys)} values in order {keys}"}]}
-            if not np.all(np.isfinite(vec[~np.isnan(vec)])):
-                return {"status": "error", "content": [{"text": "action contains inf"}]}
+            # The shared coercion refuses what every backend refuses: a vector of
+            # the wrong length, a non-numeric or multi-element value, a boolean,
+            # and any nan/inf. It runs BEFORE the nan-sentinel packing below, so a
+            # nan a caller sends is an error here and never reads as "key absent".
+            action_map, coerce_error = self._coerce_action(action, robot_name)
+            if coerce_error is not None:
+                return coerce_error
+            assert action_map is not None  # narrow for mypy: no error implies a mapping
+            unknown = [k for k in action_map if k not in keys]
+            if unknown:
+                return {"status": "error", "content": [{"text": f"unknown action keys {unknown}; valid: {keys}"}]}
+            # nan marks a key the (partial) dict did not name: that actuator keeps its ctrl.
+            vec = np.array([float(action_map.get(k, np.nan)) for k in keys], dtype=np.float32)
             ids = self._actuator_ids(robot_name)
             import torch
 
@@ -1158,16 +1176,27 @@ def _resolve_key(model: Any, keyframe: str | int | None) -> int | None:
     """Keyframe id for ``add_robot(keyframe=...)``, or ``None`` for the zero pose.
 
     Mirrors the MuJoCo backend's contract: ``keyframe=None`` keeps the all-zero
-    configuration even when the MJCF declares keyframes. (Finding F10: silently
+    configuration even when the MJCF declares keyframes, and a keyframe that
+    does not exist (unknown name, index out of range, or any keyframe on a
+    model that declares none) raises ``KeyError`` naming the available ones. (Finding F10: silently
     spawning from keyframe 0 made the stock ``g1.xml`` topple under a crouch hold
     that the classic backend survives from ``qpos0``; same model, same CPU
     MuJoCo, different start.)
     """
-    if model.nkey == 0 or keyframe is None:
+    if keyframe is None:
         return None
-    if isinstance(keyframe, int):
-        return keyframe if 0 <= keyframe < model.nkey else None
     import mujoco
 
+    names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_KEY, k) or str(k) for k in range(model.nkey)]
+    if isinstance(keyframe, int) and not isinstance(keyframe, bool):
+        if 0 <= keyframe < model.nkey:
+            return keyframe
+        raise KeyError(f"keyframe index {keyframe} out of range; the model has {model.nkey} keyframe(s): {names}.")
     kid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, str(keyframe))
-    return kid if kid >= 0 else None
+    if kid >= 0:
+        return kid
+    # The ABC contract: an unknown keyframe is a hard error that names what
+    # exists; it never silently falls back to the zero pose (F10 was exactly
+    # that failure discovered from a robot toppling).
+    avail = ", ".join(repr(n) for n in names) or "none"
+    raise KeyError(f"Keyframe {keyframe!r} not found. Available: {avail}.")

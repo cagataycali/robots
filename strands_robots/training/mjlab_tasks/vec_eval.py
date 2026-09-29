@@ -211,7 +211,17 @@ async def vec_rollout(
             )
             actions = [c[0] for c in chunks]
         t1 = time.perf_counter()
-        block = np.asarray([[float(a.get(k, 0.0)) for k in action_keys] for a in actions], dtype=np.float32)
+        # Every world's dict must name every action key: a key the policy did
+        # not emit is refused by name, never zero-filled (a zero target is a
+        # command the robot follows and the recorder would write as the policy's).
+        missing = sorted({k for a in actions for k in action_keys if k not in a})
+        if missing:
+            emitted = sorted({k for a in actions for k in a})
+            raise ValueError(
+                f"the policy's actions lack keys {missing} that {robot_name!r} commands "
+                f"({action_keys}); the policy emitted {emitted}"
+            )
+        block = np.asarray([[float(a[k]) for k in action_keys] for a in actions], dtype=np.float32)
         res = engine.send_action_batch(block, robot_name, n_substeps=n_sub)
         if res.get("status") != "success":
             raise RuntimeError(res["content"][0]["text"])

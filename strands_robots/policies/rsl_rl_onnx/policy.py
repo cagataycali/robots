@@ -401,10 +401,17 @@ class _SiteFK:
         self.site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, site)
         if self.site_id < 0:
             raise ValueError(f"site {site!r} not in {robot}'s MJCF")
-        self.qadr = [
-            int(self.model.jnt_qposadr[mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, j)])
-            for j in joint_names
-        ]
+        # mj_name2id answers -1 for a name the MJCF lacks, and jnt_qposadr[-1]
+        # is the LAST joint's address, so an unchecked lookup reads the wrong
+        # qpos slot every tick and the arm converges nowhere. Refuse by name.
+        joint_ids = {j: int(mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, j)) for j in joint_names}
+        missing = [j for j, jid in joint_ids.items() if jid < 0]
+        if missing:
+            actual = [self.model.joint(j).name for j in range(self.model.njnt)]
+            raise ValueError(
+                f"joints {missing} from the ONNX metadata are not in {robot}'s MJCF; its joints are {actual}"
+            )
+        self.qadr = [int(self.model.jnt_qposadr[joint_ids[j]]) for j in joint_names]
         self._mujoco = mujoco
 
     def site_pos(self, q: list[float]) -> np.ndarray:
