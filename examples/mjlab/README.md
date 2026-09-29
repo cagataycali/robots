@@ -224,7 +224,48 @@ workspace a fixed recipe covers; it is not a substitute for a recipe designed fo
 
 ## 06 Agent trains a fleet
 
-Results follow (queued).
+`06_agent_trains_a_fleet.py --arms so101,koch,arx_l5` hands a Strands `Agent` three
+tools: the stock `train_policy` (provider `rsl_rl`, the MuJoCo-Warp trainer),
+`evaluate_policy` (plays the exported ONNX on the classic CPU MuJoCo backend for
+20 seeded targets) and `write_leaderboard`. The prompt names the arms and the task
+ids; the koch and arx_l5 reach tasks are registered on the fly from the registry
+entry with example 02's builder. The agent decides the order, reads the numbers the
+tools return and writes the table itself. `--no-llm` runs the same three tools in
+the obvious order without a model, for CI.
+
+Run 1 (claude-sonnet-4-6 on Bedrock, 9 tool uses, 38.7 min wall, three
+training jobs on a GPU shared with two other sweeps). The leaderboard is the file the
+agent wrote, unedited:
+
+# Reach Policy Leaderboard — MuJoCo-Warp Fleet (2026-09-29)
+
+> Sorted by evaluation success (descending). Training: rsl_rl, 200 steps, batch 1024, seed 0.
+> Success threshold: 30 mm. Evaluation: 20 seeded episodes, CPU MuJoCo backend.
+
+| Rank | Arm | DoF | Train wall time (min) | `Metrics/reach/at_goal` (train) | Eval success | Median final error (mm) | Status |
+|------|--------|-----|----------------------:|--------------------------------:|:------------:|------------------------:|--------|
+| 1 | koch | 6 | 7.97 | 0.7188 | 19 / 20 | 6.4 | ✅ OK |
+| 2 | so101 | 5 | 6.51 | 0.5906 | 14 / 20 | 15.5 | ✅ OK |
+| 3 | arx_l5 | 7 | 23.11 | 0.4222 | — / 20 | — | ❌ `ValueError: model has 7 outputs but 8 joint_names / 7 action_scale entries` |
+
+Two things run 1 found, both fixed in the example afterwards:
+
+- **Concurrent tool calls kill the second trainer.** Strands' default tool
+  executor runs the model's tool calls concurrently; the agent asked for all three
+  `train_policy` calls at once, two died with `Graph capture already in progress on
+  this stream` (mjlab captures a CUDA graph per trainer on the default stream) and
+  the agent retried them one at a time on its own. The example now passes
+  `SequentialToolExecutor`.
+- **An unactuated joint breaks the exported actor.** arx_l5 has 8 joints and 7
+  actuators. mjlab's export metadata lists every joint of the entity while the
+  actor has one output per action target, so the `rsl_rl_onnx` provider refused
+  the file. The trained actor was fine: re-exported with trimmed metadata it scores
+  17/20 at 18 mm median on the same 20 targets. The example now trims
+  `joint_names` / `default_joint_pos` to the actuated joints after every
+  `train_policy` call; the proper fix belongs in
+  `strands_robots/training/mjlab_tasks/export.py` (FINDINGS F15).
+
+Run 2 with both fixes follows.
 
 ## 07 Dataset factory
 
