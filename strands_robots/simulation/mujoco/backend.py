@@ -134,8 +134,18 @@ def _ensure_mujoco() -> "Any":
 
             _mujoco_viewer = viewer
         except ImportError:
-            pass
+            pass  # best effort: the passive viewer is optional; launch_viewer reports its absence
     return _mujoco
+
+
+def mujoco_viewer() -> Any:
+    """Return the ``mujoco.viewer`` module :func:`_ensure_mujoco` resolved, or ``None``.
+
+    ``None`` before MuJoCo has been loaded, on a headless host, or on a build
+    without the passive viewer; :meth:`Simulation.open_viewer` reports that to
+    the agent rather than importing the private global itself.
+    """
+    return _mujoco_viewer
 
 
 _rendering_available: bool | None = None
@@ -381,13 +391,13 @@ def _can_render() -> bool:
     # mj.Renderer() will use GLFW which triggers a C-level abort (SIGABRT).
     # Skip the probe entirely - rendering is impossible anyway.
     if _is_headless() and not os.environ.get("MUJOCO_GL"):
-        _rendering_available = False
         logger.warning(
             "Headless environment without EGL/OSMesa - rendering disabled. "
             "Physics and joint observations will still work. "
             "Install libegl1-mesa-dev or libosmesa6-dev for camera rendering."
         )
-        return False
+        _rendering_available = False
+        return _rendering_available
 
     # Probe rendering in a subprocess to survive C-level aborts (SIGABRT).
     # On some CI environments, libEGL.so.1 is loadable but non-functional -
