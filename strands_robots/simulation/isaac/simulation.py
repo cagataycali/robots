@@ -473,6 +473,12 @@ def _prim_world_pose(stage: Any, path: str) -> tuple[list[float], list[float]]:
         return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
 
 
+#: Render-only ticks a camera read waits after physics moved: the RTX render
+#: product delivers one tick behind, so one tick still returned the pre-action
+#: frame and two returned the current one (measured on one L40S, Isaac Sim 6.1).
+_RENDER_LAG_TICKS = 2
+
+
 def _physics_scene_path(stage: Any) -> str:
     """The stage's ``UsdPhysics.Scene`` prim path, discovered rather than assumed.
 
@@ -2402,6 +2408,8 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
                 if self._world is not None:
                     self._world.reset()
+                    # The scene moved without a counted physics step.
+                    self._rendered_at_step = None
                     # ``world.reset()`` on the pip Isaac Sim 6.0.x wheels
                     # invalidates the physics-tensor view the per-robot
                     # ``SingleArticulation`` handles hold (the #1798
@@ -5144,10 +5152,10 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 # blank buffer. When more than one camera is configured, tick the
                 # renderer a few extra times (holding the pose static) so EVERY
                 # camera's RTX render product accumulates a fresh frame before we
-                # read them back. Single-camera setups skip this (the substep
-                # render already warmed the one product) to stay fast.
-                if len(self._cameras) > 1:
-                    self._refresh_all_render_products()
+                # read them back. Every camera count gets the same refresh
+                # once per physics step: the substep render does NOT reliably
+                # refresh even a single product (``_refresh_if_physics_moved``).
+                self._refresh_if_physics_moved()
                 for cam_name, cam in self._cameras.items():
                     if cam.handle is None:
                         continue
@@ -6783,6 +6791,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
             # Phase-2 RTX path: pull real frames from the Camera handle.
             try:
+                self._refresh_if_physics_moved()
                 rgba = cam.handle.get_rgba()
                 # ``get_rgba`` returns either ``(H, W, 4)`` or
                 # ``(H, W, 3)`` depending on the Isaac Sim build. A
@@ -9906,6 +9915,35 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 update()
             else:
                 self._world.step(render=True)
+
+    def _refresh_if_physics_moved(self) -> None:
+        """Tick the renderer twice if physics has stepped since the last camera read.
+
+        A camera read after ``send_action`` or ``step`` returned the frame from
+        BEFORE the action. Measured on one L40S (Isaac Sim 6.1, go2, one RTX
+        camera): ``send_action(n_substeps=40)`` folded the robot flat (base
+        0.44 -> 0.11 m) and ``render`` - and a second ``render`` - still showed
+        it standing. The render product delivers a tick behind: one
+        render-only tick after the action still returned a stale frame (mean
+        pixel difference 10.9 against the next step's frame), two returned the
+        current one (3.2, the difference one physics step makes). So an agent
+        that acted and then looked saw the world before its action, and with
+        one camera ``get_observation`` skipped even the single refresh
+        multi-camera scenes got.
+
+        Two ``SimulationApp.update()`` ticks, render-only (no physics step), and
+        keyed on the physics step count so repeated reads between steps cost
+        nothing. ``reset()`` clears the key.
+        """
+        step = getattr(self, "_step_count", None)
+        if step is None or getattr(self, "_rendered_at_step", None) == step:
+            return
+        try:
+            self._refresh_all_render_products(n=_RENDER_LAG_TICKS)
+        except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+            logger.debug("render refresh unavailable: %s", exc)
+            return
+        self._rendered_at_step = step
 
     def _converge_render(self, n: int = 8) -> None:
         """Render ``n`` ticks WITHOUT advancing physics, holding each robot's pose.
