@@ -28,7 +28,16 @@ import pytest
 
 pytest.importorskip("strands_robots.simulation.isaac")
 
-from strands_robots.simulation.isaac.simulation import IsaacConfig, IsaacSimulation  # noqa: E402
+from strands_robots.simulation.isaac.simulation import (  # noqa: E402
+    _BLANK_FRAME_RETRIES,
+    IsaacConfig,
+    IsaacSimulation,
+)
+
+#: Reads a camera needs before it yields a frame, past what ``render`` itself
+#: waits out with render-only ticks (``_read_camera_rgb``): a product that
+#: never accumulates within that budget.
+_NEVER = _BLANK_FRAME_RETRIES + 1
 
 _LOGGER = "strands_robots.simulation.isaac.simulation"
 
@@ -54,6 +63,7 @@ def _engine(handle: _Handle) -> Any:
     engine._lock = threading.RLock()
     engine._config = IsaacConfig(headless=True, render_mode="rtx_realtime")
     engine._world = types.SimpleNamespace(step=lambda render=False: None)
+    engine._app = types.SimpleNamespace(update=lambda: None)
     engine._world_created = True
     engine._sim_time = 0.0
     engine._step_count = 0
@@ -67,7 +77,7 @@ def _engine(handle: _Handle) -> Any:
 
 class TestWarmup:
     def test_the_not_ready_reads_log_no_error(self, caplog) -> None:
-        engine = _engine(_Handle(not_ready=2))
+        engine = _engine(_Handle(not_ready=_NEVER + 1))
         with caplog.at_level(logging.DEBUG, logger=_LOGGER):
             assert engine._warmup_camera("front", n_steps=5) is True
 
@@ -76,10 +86,14 @@ class TestWarmup:
         # Still observable at DEBUG for whoever is chasing a slow product.
         assert any("malformed RGB buffer" in r.getMessage() for r in caplog.records)
 
+    def test_a_product_a_few_ticks_late_is_waited_out_inside_render(self) -> None:
+        engine = _engine(_Handle(not_ready=_BLANK_FRAME_RETRIES))
+        assert engine.render(camera_name="front")["status"] == "success"
+
     def test_render_after_warmup_errors_again(self, caplog) -> None:
         engine = _engine(_Handle(not_ready=0))
         assert engine._warmup_camera("front", n_steps=1) is True
-        engine._cameras["front"].handle.not_ready = 1
+        engine._cameras["front"].handle.not_ready = _NEVER
         with caplog.at_level(logging.ERROR, logger=_LOGGER):
             result = engine.render(camera_name="front")
 
@@ -89,7 +103,7 @@ class TestWarmup:
 
 class TestOutsideWarmup:
     def test_a_callers_render_of_a_not_ready_camera_is_an_error(self, caplog) -> None:
-        engine = _engine(_Handle(not_ready=1))
+        engine = _engine(_Handle(not_ready=_NEVER))
         with caplog.at_level(logging.ERROR, logger=_LOGGER):
             result = engine.render(camera_name="front")
 

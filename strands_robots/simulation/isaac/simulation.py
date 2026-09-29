@@ -1150,6 +1150,32 @@ class _CameraState:
         self.width = width
         self.height = height
         self.handle: Any = None
+        # Set when a whole re-render budget still produced an all-zero frame:
+        # the camera really sees black, so later black frames are believed
+        # without re-rendering until it next produces colour (see
+        # ``IsaacSimulation._read_camera_rgb``).
+        self.dark = False
+
+
+#: Render-only ticks a camera gets to turn an empty or all-zero frame into a real
+#: one. Measured on one L40S (Isaac Sim 6.1, so101 wrist camera 0.26 m over a
+#: cube): the first TWO rollout frames were all zeros, frame 2 was real. Each
+#: tick is a ``SimulationApp.update()``: it renders and does not step physics,
+#: so the scene does not move while the camera catches up.
+_BLANK_FRAME_RETRIES = 6
+
+
+def _is_frame(arr: Any) -> bool:
+    """A usable ``(H, W, C)`` buffer; a render product with no frame yet returns a 0-D/0-size one."""
+    return getattr(arr, "ndim", 0) == 3 and arr.shape[0] > 0 and arr.shape[1] > 0
+
+
+def _is_blank_frame(arr: Any) -> bool:
+    """An RGB(A) frame whose colour channels are all zero: a render product with nothing in it yet."""
+    try:
+        return bool(arr.size) and not bool(np.any(arr[..., :3]))
+    except (AttributeError, TypeError, IndexError, ValueError):
+        return False
 
 
 class _ObjectState:
@@ -2364,6 +2390,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
                 if self._world is not None:
                     self._world.reset()
+                    # A reset rebuilds the render products too: a camera that
+                    # was dark may see something now.
+                    for cam_state in self._cameras.values():
+                        if hasattr(cam_state, "dark"):
+                            cam_state.dark = False
                     # ``world.reset()`` on the pip Isaac Sim 6.0.x wheels
                     # invalidates the physics-tensor view the per-robot
                     # ``SingleArticulation`` handles hold (the #1798
@@ -5105,7 +5136,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     if cam.handle is None:
                         continue
                     try:
-                        rgba = cam.handle.get_rgba()
+                        rgba = self._read_camera_rgb(cam)
                         # Validate shape BEFORE slicing: a 0-D scalar
                         # buffer from a not-yet-warmed RTX render product
                         # makes ``[..., :3]`` raise ``IndexError`` (#140).
@@ -6718,7 +6749,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
             # Phase-2 RTX path: pull real frames from the Camera handle.
             try:
-                rgba = cam.handle.get_rgba()
+                rgba = self._read_camera_rgb(cam)
                 # ``get_rgba`` returns either ``(H, W, 4)`` or
                 # ``(H, W, 3)`` depending on the Isaac Sim build. A
                 # camera whose RTX render product hasn't accumulated a
@@ -9805,6 +9836,54 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 update()
             else:
                 self._world.step(render=True)
+
+    def _read_camera_rgb(self, cam: _CameraState) -> Any:
+        """``cam``'s RGBA buffer, re-rendered while the render product hands back nothing.
+
+        An RTX render product has no frame right after the camera is created or
+        the world is reset (``get_rgba`` returns an empty buffer), and during a
+        rollout it can hand back a correctly shaped buffer of zeros for a tick
+        or two. Measured on one L40S (Isaac Sim 6.1, so101 wrist camera 0.26 m
+        over a red cube): the probe frame before ``start_recording`` was lit,
+        the first two rollout frames were all zeros, frame 2 on was real - so
+        every recording began with two black wrist frames (MuJoCo: never), and
+        a policy trained on it saw black inputs at every episode start. Every
+        caller took the zeros as the picture, and rendering first did not help.
+
+        An empty or all-zero buffer now gets up to :data:`_BLANK_FRAME_RETRIES`
+        render-only ticks (``SimulationApp.update()``: no physics step, the
+        scene does not move). A camera that is still black after the whole
+        budget really sees black; it is marked dark and believed until it next
+        produces colour, so it pays the budget once, not on every frame.
+        """
+        rgba = cam.handle.get_rgba()
+        arr = np.asarray(rgba)
+        if _is_frame(arr) and not _is_blank_frame(arr):
+            cam.dark = False
+            return rgba
+        if getattr(cam, "dark", False) and _is_frame(arr):
+            return rgba
+        tries = 0
+        while (not _is_frame(arr) or _is_blank_frame(arr)) and tries < _BLANK_FRAME_RETRIES:
+            try:
+                self._refresh_all_render_products()
+            except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                # No renderer to tick (torn down, or not a live Kit session):
+                # the buffer is what there is.
+                logger.debug("camera %r: render-only tick unavailable: %s", getattr(cam, "name", "?"), exc)
+                break
+            tries += 1
+            rgba = cam.handle.get_rgba()
+            arr = np.asarray(rgba)
+        if _is_frame(arr):
+            cam.dark = _is_blank_frame(arr)
+            logger.debug(
+                "camera %r: %d render-only tick(s) until a frame (%s)",
+                getattr(cam, "name", "?"),
+                tries,
+                "still black - believed" if cam.dark else "lit",
+            )
+        return rgba
 
     def _converge_render(self, n: int = 8) -> None:
         """Render ``n`` ticks WITHOUT advancing physics, holding each robot's pose.
