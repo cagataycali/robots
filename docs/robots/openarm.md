@@ -21,7 +21,7 @@ robot = Robot("openarm")
 robot = Robot("openarm", mode="real", port="/dev/ttyACM0")  # lerobot openarm_follower
 ```
 
-Aliases: `enactic_openarm`, `open_arm`, `openarm_v10`.
+Aliases: `enactic_openarm`, `open_arm`, `openarm_v1`, `openarm_v10`.
 
 ## Hardware
 

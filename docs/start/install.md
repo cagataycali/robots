@@ -15,7 +15,7 @@ uv pip install "strands-robots[sim-mujoco]"
 
 ## Pick extras
 
-The `sim-mujoco` extra is the one most people start with: it pulls MuJoCo, `robot_descriptions` for asset download, `imageio` for video, and `mink` for inverse kinematics. Add `lerobot` when a physical arm arrives, `mesh` when a second machine does.
+Most people start with the `sim-mujoco` extra: it pulls MuJoCo, `robot_descriptions` for asset download, `imageio` for video, and `mink` for inverse kinematics. Add `lerobot` when a physical arm arrives, `mesh` when a second machine does.
 
 ```bash
 uv pip install "strands-robots[sim-mujoco,lerobot]"
