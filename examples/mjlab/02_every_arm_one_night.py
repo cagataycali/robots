@@ -65,10 +65,17 @@ class ArmInfo:
     ee_name: str
     free_base: bool
     notes: list[str] = field(default_factory=list)
+    keyframe: str | None = None  # MJCF keyframe the arm rests in and resets around (None = the zero pose)
 
 
-def inspect_arm(robot: str) -> ArmInfo:
-    """Read the registry MJCF: actuated joints (one hinge/slide per actuator) and an end effector."""
+def inspect_arm(robot: str, pose: str = "home") -> ArmInfo:
+    """Read the registry MJCF: actuated joints (one hinge/slide per actuator), an end effector, the rest pose.
+
+    ``pose="home"`` rests and resets the arm in the MJCF's first keyframe when it has one (Menagerie's
+    ``home``); ``"zero"`` uses qpos 0. The zero pose is degenerate for several arms: ur5e/ur10e lie flat
+    at 6 cm with the wrist 0.8-1.2 m out, so a +-0.3 rad reset band puts the tool below the floor in
+    about half the resets and the actor has to output 6 x ACTION_SCALE just to stand up (F16).
+    """
     import mujoco
 
     from strands_robots.assets import resolve_model_path, resolve_robot_name
@@ -119,7 +126,12 @@ def inspect_arm(robot: str) -> ArmInfo:
         pick = max(named or leaves, key=lambda b: depth[b])
         ee_kind, ee_name = "body", m.body(pick).name
         notes.append(f"no end-effector site; using leaf body {ee_name!r}")
-    return ArmInfo(robot, path, joints, actuators, actuated, ee_kind, ee_name, free_base, notes)
+    keyframe = None
+    if pose == "home" and m.nkey > 0:
+        keyframe = m.key(0).name or "0"
+    elif pose == "home":
+        notes.append("no keyframe in the MJCF; resting in the zero pose")
+    return ArmInfo(robot, path, joints, actuators, actuated, ee_kind, ee_name, free_base, notes, keyframe)
 
 
 class ArmFK:
@@ -249,7 +261,7 @@ def build_task(info: ArmInfo, cloud: np.ndarray, *, play: bool = False, scale: f
     from mjlab.utils.noise import UniformNoiseCfg as Unoise
     from mjlab.viewer import ViewerConfig
 
-    from strands_robots.simulation.mjlab.simulation import MjlabEngine, _RobotSpec
+    from strands_robots.simulation.mjlab.simulation import MjlabEngine, _inspect_mjcf, _RobotSpec
     from strands_robots.training.mjlab_tasks import so101_reach as base
 
     cloud_t = torch.as_tensor(cloud)
@@ -282,9 +294,11 @@ def build_task(info: ArmInfo, cloud: np.ndarray, *, play: bool = False, scale: f
         path=info.path,
         position=(0.0, 0.0, 0.0),
         orientation=(1.0, 0.0, 0.0, 0.0),
-        keyframe=None,
+        keyframe=info.keyframe,
         actuator_names=list(info.actuators),
     )
+    # add_robot() fills home_qpos from the keyframe; this example builds the spec by hand.
+    spec.home_qpos = _inspect_mjcf(info.path, info.keyframe)[0]
     entity = MjlabEngine._robot_entity_cfg(None, spec)  # type: ignore[arg-type]
     entity = _with_min_armature(entity, info)
     # Natural (MJCF) joint order, the order the ONNX metadata and the provider use.
@@ -440,7 +454,7 @@ async def sim2sim(
     from strands_robots.policies import create_policy
 
     fk = ArmFK(info)
-    sim = Robot(info.robot, backend="mujoco")
+    sim = Robot(info.robot, backend="mujoco", keyframe=info.keyframe)
     apply_min_armature_classic(sim.mj_model, info)  # the same plant the actor was trained on
     # The provider only knows MJCF sites and reads them from the registry MJCF; the
     # example's FK also handles a leaf body and the base frame, so it is injected
@@ -483,11 +497,14 @@ async def sim2sim(
 # ------------------------------------------------------------------ main
 
 
-def run_robot(robot: str, *, num_envs: int, iterations: int, seed: int, out: Path, n_eval: int) -> dict:
+def run_robot(
+    robot: str, *, num_envs: int, iterations: int, seed: int, out: Path, n_eval: int, pose: str = "home"
+) -> dict:
     rec: dict = {"robot": robot, "stage": "inspect", "t_start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     (out / robot).mkdir(parents=True, exist_ok=True)
     try:
-        info = inspect_arm(robot)
+        info = inspect_arm(robot, pose=pose)
+        rec["pose"] = {"requested": pose, "keyframe": info.keyframe}
         rec.update(
             {
                 "dof": len(info.actuated_joints),
@@ -556,6 +573,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--iterations", type=int, default=150)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--n-eval", type=int, default=20)
+    p.add_argument(
+        "--pose", choices=("home", "zero"), default="home", help="rest/reset pose: the MJCF home keyframe or qpos 0"
+    )
     p.add_argument("--out", default="runs/arms")
     p.add_argument("--table", help="fold <out>/*/result.json into a markdown table")
     a = p.parse_args(argv)
@@ -572,7 +592,13 @@ def main(argv: list[str] | None = None) -> None:
         ]
     for robot in robots:
         rec = run_robot(
-            robot, num_envs=a.num_envs, iterations=a.iterations, seed=a.seed, out=Path(a.out), n_eval=a.n_eval
+            robot,
+            num_envs=a.num_envs,
+            iterations=a.iterations,
+            seed=a.seed,
+            out=Path(a.out),
+            n_eval=a.n_eval,
+            pose=a.pose,
         )
         summary = {k: v for k, v in rec.items() if k not in ("train", "sim2sim")}
         if "train" in rec:
