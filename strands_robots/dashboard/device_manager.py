@@ -184,6 +184,26 @@ def _looks_like_a_fault(text: str) -> bool:
     return low.startswith(("traceback (most recent", "fatal", "error:", "usage:"))
 
 
+def child_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The environment a spawned robot process gets: the dashboard's, minus its listen role.
+
+    When the dashboard anchors the mesh (``--mesh-listen`` sets ``ZENOH_LISTEN``)
+    a child that inherited the variable would try to listen on the same
+    endpoint and lose the port to its parent. The child gets ``ZENOH_CONNECT``
+    to the anchor's loopback instead, unless it already names where to connect.
+    Without an anchor the environment passes through unchanged.
+    """
+    env = dict(os.environ if base is None else base)
+    listen = env.pop("ZENOH_LISTEN", None)
+    if listen and not env.get("ZENOH_CONNECT"):
+        first = listen.split(",")[0].strip()
+        scheme, sep, rest = first.partition("/")
+        _host, colon, port = rest.rpartition(":")
+        if sep and colon and port.isdigit():
+            env["ZENOH_CONNECT"] = f"{scheme}/127.0.0.1:{port}"
+    return env
+
+
 def _drain(proc: subprocess.Popen, logs: deque[str], peer_id: str) -> None:
     """Continuously read child stdout so the pipe never fills."""
     try:
@@ -1866,6 +1886,7 @@ class DeviceManager:
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                env=child_env(),
             )
             managed = ManagedRobot(
                 peer_id=peer_id,
@@ -2047,6 +2068,7 @@ class DeviceManager:
                 [sys.executable, "-c", _REPLAY_SPAWNER, _json.dumps(cfg)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                env=child_env(),
             )
             managed = ManagedRobot(
                 peer_id=peer_id,
@@ -2124,6 +2146,7 @@ class DeviceManager:
                 [sys.executable, "-c", _COLLECT_SPAWNER, _json.dumps(cfg)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                env=child_env(),
             )
             managed = self.robots[peer_id]  # the reservation made above
             managed.process = proc

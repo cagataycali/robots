@@ -333,3 +333,16 @@ def test_mesh_info_carries_the_anchor_hint(monkeypatch: pytest.MonkeyPatch) -> N
     assert bridge.mesh_info()["anchor_hint"] == "ZENOH_CONNECT=tcp/192.168.1.20:7447"
     bridge._endpoints = {"listen": [], "connect": [], "auth_mode": "none"}
     assert bridge.mesh_info()["anchor_hint"] is None
+
+
+def test_a_spawned_child_connects_to_the_anchor_instead_of_inheriting_its_listen_role() -> None:
+    from strands_robots.dashboard import device_manager
+
+    anchored = device_manager.child_env({"ZENOH_LISTEN": "tcp/0.0.0.0:7447", "PATH": "/bin"})
+    assert "ZENOH_LISTEN" not in anchored
+    assert anchored["ZENOH_CONNECT"] == "tcp/127.0.0.1:7447"
+    assert anchored["PATH"] == "/bin"
+    told = device_manager.child_env({"ZENOH_LISTEN": "tcp/0.0.0.0:7447", "ZENOH_CONNECT": "tcp/10.0.0.1:7447"})
+    assert told["ZENOH_CONNECT"] == "tcp/10.0.0.1:7447" and "ZENOH_LISTEN" not in told
+    plain = device_manager.child_env({"PATH": "/bin"})
+    assert plain == {"PATH": "/bin"}
