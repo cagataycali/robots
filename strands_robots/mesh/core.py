@@ -3724,7 +3724,7 @@ class Mesh(SensorLoopsMixin):
         result = out.get("result")
         if out.get("type") == "response" and isinstance(result, dict) and result.get("pong") is True:
             return {"status": "ok", "latency_ms": latency, "via": via, "confirmed": confirmed}
-        if out.get("status") == "error" and out.get("error") == "peer offline (iot 404)":
+        if _reports_failure_to_stop(out) and out.get("error") == "peer offline (iot 404)":
             return {"status": "offline", "latency_ms": latency, "via": "direct", "reason": "offline"}
         if out.get("status") == "timeout":
             return {"status": "timeout", "latency_ms": latency, "via": via, "confirmed": confirmed}
