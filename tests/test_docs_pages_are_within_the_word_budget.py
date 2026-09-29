@@ -63,8 +63,11 @@ _BUDGET: int = _hook().LIMIT
 #: policy) and a generated "Policies verified on this robot" section on every robot
 #: page, each row carrying the source of its numbers (docs/hooks/data/checkpoints.json).
 #: Then lowered to 49,002 when the robot pages' chips became one {{robot_chips:<name>}} token the hook expands (798 words the chips no longer repeat).
-#: Raised once more, to 49,722, for learn/policies/wbc-latent.md (the wbc_latent provider).
-_SITE_BUDGET = 49_722
+#: Raised to 49,508 when the mesh gained its direct messaging page (one new page under
+#: learn/mesh, a variable row and a sentence on the pages that point at it, and the `iot`
+#: verbs on the command line page).
+#: Raised once more, to 50,250, for learn/policies/wbc-latent.md (the wbc_latent provider).
+_SITE_BUDGET = 50_250
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

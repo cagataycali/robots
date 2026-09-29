@@ -33,9 +33,9 @@ from typing import TYPE_CHECKING, Any
 from strands_robots.simulation.models import registered
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
+    RecordedFrame,
     RecordingSchema,
     floating_base_state_specs,
-    undriven_robot_state,
 )
 from strands_robots.utils import camera_schema_key
 
@@ -161,36 +161,15 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         ``evaluate_benchmark``) install this hook alone when a recording is
         open and the caller passed no ``on_frame``.
         """
+        import numpy as np
+
         from strands_robots.simulation.policy_runner import _extract_frame_ndarray
 
         world = self._world
         if world is None or not registered(world.robots, robot_name):
             return None
 
-        multi_robot = len(world.robots) > 1
-
-        # Action columns this rollout is responsible for: the driven robot's own
-        # actuators. A declared column the policy never produced cannot be written
-        # as a placeholder without persisting a command nobody issued, so
-        # ``add_frame`` refuses it.
-        #
-        # Resolved on the first recorded frame and cached, rather than up front:
-        # ``robot_action_keys`` is explicitly best-effort for the runner's
-        # fail-fast probe (a backend quirk or a mid-rollout teardown may make it
-        # raise, and that must not mask the primary "robot has not moved" signal),
-        # so the hook must not call it for a rollout that is not recording. Where a
-        # recording IS attached the keys are load-bearing - without them the frame
-        # cannot be checked - so a raise there correctly fails the recording.
-        action_key_cache: dict[bool, list[str]] = {}
-
-        def _required_action_keys(prefixed: bool) -> list[str]:
-            """Action columns this frame owes the recorder, resolved once."""
-            cached = action_key_cache.get(prefixed)
-            if cached is None:
-                keys = self.robot_action_keys(robot_name)
-                cached = [f"{robot_name}__{key}" for key in keys] if prefixed else list(keys)
-                action_key_cache[prefixed] = cached
-            return cached
+        frame = RecordedFrame(self, (robot_name,), world.robots)
 
         def _record(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             if not world._backend_state.get("recording", False):
@@ -206,32 +185,9 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 if img is not None:
                     obs[safe_name] = img
 
-            if multi_robot:
-                import numpy as np
-
-                # The schema declares a state column for every robot in the
-                # scene, and this frame carries only the driven robot's. An
-                # undriven robot's columns are a readable measurement, so they
-                # are filled from the engine at this step rather than left to
-                # add_frame's 0.0 fill, which records them as a zero pose the
-                # robot is not in. Driven keys win any collision.
-                driven = {(k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v for k, v in obs.items()}
-                obs = undriven_robot_state(self, (robot_name,), world.robots)
-                obs.update(driven)
-                act = {f"{robot_name}__{k}": v for k, v in action.items()}
-                rec.add_frame(
-                    observation=obs,
-                    action=act,
-                    task=instruction,
-                    required_action_keys=_required_action_keys(True),
-                )
-            else:
-                rec.add_frame(
-                    observation=obs,
-                    action=action,
-                    task=instruction,
-                    required_action_keys=_required_action_keys(False),
-                )
+            state = {k: v for k, v in obs.items() if not isinstance(v, np.ndarray)}
+            images = {k: v for k, v in obs.items() if isinstance(v, np.ndarray)}
+            frame.write(rec, {robot_name: state}, {robot_name: action}, images, instruction)
 
         return _record
 
