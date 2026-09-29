@@ -24,7 +24,6 @@ what it was.
 
 from __future__ import annotations
 
-import threading
 import types
 from typing import Any
 
@@ -33,8 +32,8 @@ import pytest
 
 pytest.importorskip("strands_robots.simulation.isaac")
 
-from strands_robots.simulation.isaac.config import IsaacConfig  # noqa: E402
 from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: E402
+from tests.simulation._isaac_engine import isaac_engine
 
 #: The four signals and their components, in the order the siblings declare them.
 _EXPECTED = [
@@ -67,23 +66,17 @@ def _robot(name: str, *, fixed_base: bool) -> Any:
 
 
 def _engine(robots: dict[str, Any]) -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world_created = True
     engine._world = types.SimpleNamespace()
     engine._robots = robots
-    engine._cameras = {}
-    engine._objects = {}
-    engine._pump_running = False
-    engine._main_tid = threading.get_ident()
     engine.robot_action_keys = lambda robot_name: ["j0", "j1"]  # type: ignore[method-assign]
     return engine
 
 
 def _specs(engine: Any) -> list[tuple[str, list[str]]]:
-    """The seventh element of the schema tuple: the base specs."""
-    return engine._collect_recording_schema({})[6]
+    """The base specs of the declared schema."""
+    return engine._collect_recording_schema({}).base_state_specs
 
 
 class TestAFloatingBaseRobotDeclaresItsBaseColumns:
@@ -155,7 +148,7 @@ class TestAFixedBaseRobotDeclaresNone:
     def test_the_joint_columns_are_unchanged(self) -> None:
         engine = _engine({"arm": _robot("arm", fixed_base=True)})
 
-        joint_names = engine._collect_recording_schema({})[0]
+        joint_names = engine._collect_recording_schema({}).joint_names
 
         assert joint_names == ["j0", "j1"]
 
@@ -188,27 +181,21 @@ class TestMultiRobotColumnsArePrefixed:
 
 class TestTheSiblingBackendsDoTheSame:
     """Derived from their source, so a divergence shows up here rather than in a
-    dataset. This is the parity the whole series claims."""
+    dataset: every backend's schema declares the base through the shared helper."""
 
-    @pytest.mark.parametrize("backend", ["mujoco", "newton"])
-    def test_the_sibling_passes_extra_state_specs(self, backend: str) -> None:
+    @pytest.mark.parametrize("backend", ["isaac", "mujoco", "newton"])
+    def test_the_schema_declares_the_shared_base_columns(self, backend: str) -> None:
+        import ast
         import pathlib
 
         source = (
             pathlib.Path(__file__).resolve().parents[3] / "strands_robots" / "simulation" / backend / "recording.py"
         ).read_text()
+        schema = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef) and node.name == "_collect_recording_schema"
+        )
+        called = {n.func.id for n in ast.walk(schema) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
 
-        assert "extra_state_specs=" in source, f"{backend} no longer declares base columns"
-
-    @pytest.mark.parametrize("backend", ["mujoco", "newton"])
-    def test_the_sibling_declares_the_same_four_signals(self, backend: str) -> None:
-        import pathlib
-
-        source = (
-            pathlib.Path(__file__).resolve().parents[3] / "strands_robots" / "simulation" / backend / "recording.py"
-        ).read_text()
-
-        for src, _components in _EXPECTED:
-            assert f'"{src}"' in source or f"base_{src.split('base_')[-1]}" in source, (
-                f"{backend} does not declare {src}"
-            )
+        assert "floating_base_state_specs" in called, f"{backend} no longer declares base columns"

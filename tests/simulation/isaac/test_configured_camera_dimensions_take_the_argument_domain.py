@@ -45,7 +45,6 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
-import threading
 from typing import Any
 
 import numpy as np
@@ -53,6 +52,7 @@ import pytest
 
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
+from tests.simulation._isaac_engine import isaac_engine
 
 #: Every spelling a caller can reach through either owner. The verdict must not
 #: depend on which one carried it.
@@ -99,19 +99,10 @@ NARROWED_VALUES: dict[Any, str] = {
 
 def _engine(config: IsaacConfig) -> IsaacSimulation:
     """Skeleton engine carrying only what the headless render path reads."""
-    engine = IsaacSimulation.__new__(IsaacSimulation)
+    engine = isaac_engine()
     engine._config = config
-    engine._lock = threading.RLock()
-    engine._world = None
     engine._world_created = True
-    engine._robots = {}
-    engine._objects = {}
-    engine._cameras = {}
-    engine._prim_registry = []
     engine._camera_warmup_steps = 0
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._main_tid = threading.get_ident()
     return engine
 
 

@@ -103,7 +103,7 @@ def _hook_class_lists() -> set[tuple[str, ...]]:
     hook = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hook)
     html = [hook.cards(None, "")]
-    html += [hook.robot_page(name) for name in hook.registry()]
+    html += [hook.substitute(hook.robot_page(name), "") for name in hook.registry()]
     html += [hook.family_page(category) for category in hook._families_in_order()]
     return {tuple(value.split()) for chunk in html for value in re.findall(r'class="([^"]+)"', chunk)}
 

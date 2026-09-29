@@ -42,6 +42,8 @@ import ast
 import inspect
 import math
 import pathlib
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -147,13 +149,13 @@ class TestALaunchTopologyThatCannotBeHonoredIsRefused:
 
     def test_a_usable_single_process_topology_selects_the_direct_module_run(self) -> None:
         cmd = _build(num_gpus=1)
-        assert cmd[:4] == ["python", "-m", "lerobot.scripts.lerobot_train"][:3] + [cmd[3]]
+        assert cmd[:4] == [sys.executable, "-m", "lerobot.scripts.lerobot_train"][:3] + [cmd[3]]
         assert not [flag for flag in cmd if flag.startswith("--num_processes=")]
 
     @pytest.mark.parametrize("value", [2, 4, 8])
     def test_a_usable_multi_process_topology_still_sizes_the_accelerate_launch(self, value: int) -> None:
         cmd = _build(num_gpus=value)
-        assert cmd[0] == "accelerate"
+        assert Path(cmd[0]).name == "accelerate"
         assert f"--num_processes={value}" in cmd
 
     def test_the_topology_is_checked_even_when_the_size_knobs_are_usable(self) -> None:

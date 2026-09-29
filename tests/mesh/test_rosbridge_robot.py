@@ -11,8 +11,8 @@ from typing import Any
 
 import pytest
 
-import strands_robots.mesh.rosbridge_robot as rbr_mod
-from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
+import strands_robots.drivers.ros.rosbridge_robot as rbr_mod
+from strands_robots.drivers.ros.rosbridge_robot import RosbridgeRobot
 from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 
@@ -180,6 +180,6 @@ def test_tools_forward(rec: Transport) -> None:
 
 
 def test_exported_from_mesh() -> None:
-    from strands_robots.mesh import RosbridgeRobot as exported
+    from strands_robots.drivers.ros import RosbridgeRobot as exported
 
     assert exported is RosbridgeRobot

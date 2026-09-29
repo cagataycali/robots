@@ -19,13 +19,13 @@ integrates. These pins fail on the pre-fix accumulate-a-constant code.
 
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 import pytest
 
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
+from tests.simulation._isaac_engine import isaac_engine
 
 
 class _ClockWorld:
@@ -55,21 +55,11 @@ class _ClockWorld:
 
 
 def _engine(*, render_mode: str, config_dt: float, world_dt: float) -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
+    engine = isaac_engine()
     engine._config = IsaacConfig(render_mode=render_mode, physics_dt=config_dt)
     engine._world = _ClockWorld(world_dt)
     engine._world_created = True
-    engine._physics_view_stale = False
-    engine._robots = {}
-    engine._objects = {}
-    engine._applied_wrenches = {}
-    engine._action_controllers = {}
-    engine._sim_time = 0.0
-    engine._step_count = 0
     engine._STEPS_PER_BATCH = IsaacSimulation._STEPS_PER_BATCH
-    engine._main_tid = threading.get_ident()
-    engine._pump_running = False
     return engine
 
 

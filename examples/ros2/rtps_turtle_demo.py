@@ -28,7 +28,7 @@ Expected: the turtle drives forward and to the left for ~1.5 seconds.
 Runtime: ~2 seconds.
 """
 
-from strands_robots.mesh import RtpsRobot
+from strands_robots.drivers.ros import RtpsRobot
 
 
 def _check(result: dict, what: str) -> dict:

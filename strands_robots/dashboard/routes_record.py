@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 
 from strands_robots.dashboard import access, record_api
 from strands_robots.dashboard.dataset_check import OUTSIDE_DATASET_HOME
+from strands_robots.dashboard.log_redaction import one_line
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,13 @@ def contained_path(raw: Any) -> Path:
         real = os.path.normpath(os.path.realpath(os.path.expanduser(raw.strip())))
     except (OSError, RuntimeError):
         raise HTTPException(400, OUTSIDE_DATASET_HOME) from None
+    # Two single tests rather than one ``==`` or ``startswith``: the folded path must
+    # begin with the home, and a longer path must continue with a separator, so a
+    # sibling such as ``<home>2`` is refused. The pair admits exactly what the one
+    # compound test did; a path-injection checker reads a lone ``startswith`` as the
+    # barrier and does not read a disjunction as one.
+    if not real.startswith(home):
+        raise HTTPException(400, OUTSIDE_DATASET_HOME)
     if real != home and not real.startswith(home + os.sep):
         raise HTTPException(400, OUTSIDE_DATASET_HOME)
     return Path(real)
@@ -130,7 +138,9 @@ async def collect_episodes(request: Request, body: dict[str, Any]) -> dict[str, 
 
         _training.remember_dataset_root(dataset_root)
     except ImportError:
-        logger.debug("[record] training module absent; %s will not be remembered for the picker", dataset_root)
+        logger.debug(
+            "[record] training module absent; %s will not be remembered for the picker", one_line(dataset_root)
+        )
     result = await asyncio.to_thread(
         lambda: devices.collect(
             dataset_root=dataset_root,

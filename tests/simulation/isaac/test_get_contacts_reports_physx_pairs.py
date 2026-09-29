@@ -30,7 +30,6 @@ verified on GPU.
 from __future__ import annotations
 
 import sys
-import threading
 import types
 from typing import Any
 
@@ -39,11 +38,11 @@ import pytest
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402
-    IsaacConfig,
     IsaacSimulation,
     _ObjectState,
     _translate_contact_report,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 
 class _Header:
@@ -141,13 +140,10 @@ class TestTheTranslation:
 
 
 def _engine() -> Any:
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world = types.SimpleNamespace()
     engine._world_created = True
     engine._objects = {"cube": _ObjectState(name="cube", prim_path="/World/Objects/cube", shape="box", is_static=False)}
-    engine._robots = {}
     engine._step_count = 4
     return engine
 

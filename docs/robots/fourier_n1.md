@@ -7,7 +7,7 @@ description: "Fourier N1 / GR-1 Humanoid (26-DOF)"
 
 # Fourier N1 / GR-1 Humanoid (26-DOF)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="humanoid">Humanoids</span><span class="sr-chip">26 joints</span><span class="sr-chip sr-chip-sim">sim only</span></p>
+{{robot_chips:fourier_n1}}
 
 <robot-viewer name="fourier_n1"></robot-viewer>
 

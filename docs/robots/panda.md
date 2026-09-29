@@ -7,7 +7,7 @@ description: "Franka Emika Panda (7-DOF + gripper)"
 
 # Franka Emika Panda (7-DOF + gripper)
 
-<p class="sr-chips"><span class="sr-chip sr-chip-family" data-family="arm">Arms</span><span class="sr-chip">7 joints</span><span class="sr-chip sr-chip-sim">sim</span><span class="sr-chip sr-chip-real">real</span><span class="sr-chip sr-chip-driver">driver: strands</span></p>
+{{robot_chips:panda}}
 
 <robot-viewer name="panda"></robot-viewer>
 

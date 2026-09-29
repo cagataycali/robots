@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
-import strands_robots.mesh.rtps_robot as rtps_robot_module
+import strands_robots.drivers.ros.rtps_robot as rtps_robot_module
 import strands_robots.rtps.participant as participant_module
 from strands_robots.rtps.idl import REGISTRY, have_cyclonedds
 from strands_robots.rtps.mangling import (
