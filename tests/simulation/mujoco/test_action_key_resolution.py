@@ -71,9 +71,10 @@ class TestActionKeyResolution:
         result = sim.send_action(action)
         assert result["status"] == "error"
         text = result["content"][0]["text"]
-        # Must NOT contain the old hardcoded examples
-        assert "shoulder_pan" not in text
-        assert "elbow_flex" not in text
+        # Must NOT contain the old hardcoded examples: a label appears only
+        # beside the so100 joint it names, from the registry's joint_labels.
+        assert text.count("shoulder_pan") == text.count("Rotation=shoulder_pan") == 1
+        assert text.count("elbow_flex") == text.count("Elbow=elbow_flex") == 1
         # Must contain actual so100 actuator names
         assert "Rotation" in text
         assert "Pitch" in text
