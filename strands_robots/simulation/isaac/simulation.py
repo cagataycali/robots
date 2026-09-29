@@ -1874,6 +1874,16 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     "step_count": self._step_count,
                 }
 
+                # The json carries both fields, but the text line is what most
+                # callers read: a request that was not honoured (every default
+                # cuda:0 world - the device is deliberately not forwarded, see
+                # the World() call above) is said in it, not left to a diff.
+                device_text = str(world_info["device"])
+                if world_info["device"] != self._config.device:
+                    device_text += (
+                        f" (requested {self._config.device}; physics runs on CPU PhysX - see "
+                        "the Limits section of docs/learn/simulation/isaac.md)"
+                    )
                 return {
                     "status": "success",
                     "content": [
@@ -1881,7 +1891,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                             "text": (
                                 f"Isaac Sim world created. "
                                 f"dt={dt:.5f}, gravity={grav}, "
-                                f"device={world_info['device']}, "
+                                f"device={device_text}, "
                                 f"headless={self._config.headless}"
                             ),
                             "json": world_info,

@@ -204,7 +204,10 @@ class IsaacConfig:
         Number of parallel environments. Default 1. For fleet training,
         set to 1024 (Isaac is heavy per-env).
     device : str
-        CUDA device string. ``"cuda:0"`` (default) or ``"cuda:N"``.
+        CUDA device string. ``"cuda:0"`` (default) or ``"cuda:N"``. Validated and
+        reported as ``device_requested``; PhysX itself runs on the CPU pipeline
+        (the GPU pipeline breaks incremental ``add_robot``), so ``create_world``
+        reports ``device="cpu"``. See the Limits section of the Isaac docs.
     headless : bool
         Run without GUI. Default True (required for cloud/CI runners). Must be a
         boolean on :func:`strands_robots.utils.boolean_flag_error` -- it selects
