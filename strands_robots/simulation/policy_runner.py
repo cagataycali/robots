@@ -1649,11 +1649,9 @@ class PolicyRunner:
             stop on and report.
 
             A failed flush is not telemetry. The recorder marks itself closed
-            because the LeRobot episode buffer is in an undefined state, and
-            :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame`
-            then returns on a closed recorder without writing a frame or
-            counting a drop - so a later episode's frames reach no dataset and
-            leave no trace in the recorder's own accounting either. An
+            because the LeRobot episode buffer is in an undefined state, and a
+            closed :class:`~strands_robots.recorder.Recorder` refuses every
+            later frame - so a later episode's frames reach no dataset. An
             evaluation that carried on would report a ``success_rate`` over
             episodes whose data does not exist. Every sibling flush already
             refuses the same way: ``stop_recording`` and
@@ -4257,7 +4255,7 @@ class PolicyRunner:
                 if recording_save_error is not None:
                     # This episode's frames did not reach the dataset and the
                     # recorder is now closed, so every later episode would run
-                    # into a recorder that drops frames without counting them.
+                    # into a recorder that refuses its frames.
                     # Stop here and report, rather than measure a success_rate
                     # over episodes whose data is gone. This episode's video is
                     # already closed and collected above, so it is kept.

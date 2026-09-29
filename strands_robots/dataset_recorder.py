@@ -34,6 +34,7 @@ import numpy as np
 from strands_robots._dyld import quiet_video_backend
 from strands_robots.dataset_source import resolve_dataset_dir
 from strands_robots.dataset_transfer import sync_dataset_to_bucket
+from strands_robots.recorder import Recorder
 from strands_robots.recording_errors import RecordingFrameError
 from strands_robots.utils import (
     boolean_flag_error,
@@ -633,8 +634,8 @@ def _frame_shape_error(
     return None
 
 
-class DatasetRecorder:
-    """Bridge between strands-robots control loops and LeRobotDataset.
+class DatasetRecorder(Recorder):
+    """The :class:`~strands_robots.recorder.Recorder` that writes a LeRobotDataset.
 
     Handles the full lifecycle:
     1. create() - build LeRobotDataset with correct features
@@ -1399,12 +1400,18 @@ class DatasetRecorder:
                 scope: LeRobot refuses that frame either way, and this is the
                 only place that can name the camera-name mismatch behind it
                 (see :func:`unrecordable_camera_columns_error`).
-            RecordingFrameError: The dataset write failed and this recorder is
+            RecordingFrameError: The dataset write failed, or this recorder is
+                :attr:`~strands_robots.recorder.Recorder.closed`, and it is
                 ``strict`` (the default). With ``strict=False`` the frame is
                 counted in ``dropped_frame_count`` and a warning is logged
                 instead.
         """
         if self._closed:
+            self._lose_frame(
+                RuntimeError(
+                    "the recorder is closed (finalize() ran or a save_episode failed); nothing more is written"
+                )
+            )
             return
 
         frame = {}
@@ -1586,27 +1593,35 @@ class DatasetRecorder:
             self.frame_count += 1
             self.episode_frame_count += 1
         except Exception as e:
-            if self.strict:
-                # Fail-fast per AGENTS.md convention #5. Raised as
-                # RecordingFrameError so a rollout driver does not absorb it
-                # into the tolerance it grants a caller's telemetry hook - the
-                # frame is lost, so silently continuing writes a short episode
-                # and reports success. The original error is chained.
-                raise RecordingFrameError(
-                    f"dataset add_frame failed after {self.frame_count} frame(s) written; "
-                    f"the recording is incomplete from this frame on "
-                    f"(strict=True, so it is not dropped silently): {e}"
-                ) from e
-            self.dropped_frame_count += 1
-            n = self.dropped_frame_count
-            # Log at 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, then every 1000
-            if (n & (n - 1)) == 0 or n % 1000 == 0:
-                logger.warning(
-                    "add_frame failed (frame %d, dropped %d): %s",
-                    self.frame_count,
-                    self.dropped_frame_count,
-                    e,
-                )
+            self._lose_frame(e)
+
+    def _lose_frame(self, cause: Exception) -> None:
+        """Account for a frame that did not reach the dataset, as ``strict`` says.
+
+        Raises:
+            RecordingFrameError: This recorder is ``strict`` (the default).
+        """
+        if self.strict:
+            # Fail-fast per AGENTS.md convention #5. Raised as
+            # RecordingFrameError so a rollout driver does not absorb it
+            # into the tolerance it grants a caller's telemetry hook - the
+            # frame is lost, so silently continuing writes a short episode
+            # and reports success. The original error is chained.
+            raise RecordingFrameError(
+                f"dataset add_frame failed after {self.frame_count} frame(s) written; "
+                f"the recording is incomplete from this frame on "
+                f"(strict=True, so it is not dropped silently): {cause}"
+            ) from cause
+        self.dropped_frame_count += 1
+        n = self.dropped_frame_count
+        # Log at 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, then every 1000
+        if (n & (n - 1)) == 0 or n % 1000 == 0:
+            logger.warning(
+                "add_frame failed (frame %d, dropped %d): %s",
+                self.frame_count,
+                self.dropped_frame_count,
+                cause,
+            )
 
     def save_episode(self) -> dict[str, Any]:
         """Finalize current episode - writes parquet, encodes video, computes stats.

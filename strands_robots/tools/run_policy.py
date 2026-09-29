@@ -593,7 +593,7 @@ def run_policy(
                 if recording_save_error is not None:
                     # This episode's frames did not reach the dataset and the
                     # recorder closed itself, so every later episode would run
-                    # into a recorder that drops frames without counting them -
+                    # into a recorder that refuses its frames -
                     # burning the remaining budget to record nothing. Stop and
                     # report the reason, which is the posture every sibling
                     # flush takes (PolicyRunner.evaluate breaks here too).
