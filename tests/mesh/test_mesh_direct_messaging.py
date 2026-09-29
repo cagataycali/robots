@@ -643,6 +643,91 @@ class TestDeliveryVerdict:
         assert health["direct"] == {"sent": 3, "delivered": 2, "failed": 1, "unmatched_inbound": 4}
 
 
+class TestPing:
+    """``Mesh.ping``: one ``ping`` command, answered by the mesh layer, timed end to end."""
+
+    def _answer_ping(self, m: Mesh, t: _DirectTransport) -> threading.Thread:
+        def _run() -> None:
+            for _ in range(200):
+                if t.direct_calls:
+                    break
+                threading.Event().wait(0.01)
+            call = t.direct_calls[-1]
+            turn = call["correlation"]
+            m._on_response(
+                _sample(
+                    call["response_key"],
+                    {"responder_id": "so101", "turn_id": turn, "type": "response", "result": {"pong": True}},
+                )
+            )
+
+        th = threading.Thread(target=_run, daemon=True)
+        th.start()
+        return th
+
+    def test_ok_over_direct_with_the_round_trip(self, puts):
+        t = _DirectTransport([_ok()])
+        m = _start(t)
+        try:
+            th = self._answer_ping(m, t)
+            out = m.ping("so101", timeout=2.0)
+            th.join(2)
+        finally:
+            _stop(m)
+        assert out["status"] == "ok" and out["via"] == "direct" and out["confirmed"] is True
+        assert 0 <= out["latency_ms"] < 2000
+        assert t.direct_calls[0]["data"]["command"] == {"action": "ping"}
+
+    def test_offline_in_one_round_trip(self, puts, monkeypatch):
+        _pure_iot_with_unknown_peer(monkeypatch)
+        t = _DirectTransport([_fail("offline")])
+        m = _start(t)
+        try:
+            t0 = time.monotonic()
+            out = m.ping("so101", timeout=30.0)
+            elapsed = time.monotonic() - t0
+        finally:
+            _stop(m)
+        assert out["status"] == "offline" and out["via"] == "direct" and out["reason"] == "offline"
+        assert elapsed < 1.0
+
+    def test_timeout_names_the_leg_it_travelled(self, puts):
+        t = _DirectTransport([_fail("error")])
+        m = _start(t)
+        try:
+            out = m.ping("so101", timeout=0.05)
+        finally:
+            _stop(m)
+        assert out["status"] == "timeout" and out["via"] == "publish"
+
+    def test_zenoh_ping_is_a_published_command_answered_via_publish(self, puts):
+        sess = MagicMock(spec=["put", "declare_subscriber", "is_alive", "close"])
+        m = _start(sess)
+        try:
+            out = m.ping("so101", timeout=0.05)
+        finally:
+            _stop(m)
+        assert out == {"status": "timeout", "latency_ms": out["latency_ms"], "via": "publish", "confirmed": False}
+        assert [d["command"] for k, d in puts if k == "strands/so101/cmd"] == [{"action": "ping"}]
+
+    def test_the_peer_answers_ping_without_touching_the_robot_even_under_lockout(self, puts):
+        t = _DirectTransport()
+        m = _start(t, peer_id="so101")
+        try:
+            m.robot = MagicMock(spec=[])  # a robot with no methods at all
+            m._estop_lockout.set()
+            out = m._dispatch({"action": "ping"})
+        finally:
+            _stop(m)
+        assert out["pong"] is True and out["peer_id"] == "so101"
+
+    def test_ping_is_an_allowed_wire_action(self):
+        from strands_robots.mesh import security
+
+        assert "ping" in security.ALLOWED_ACTIONS
+        assert security.validate_command({"action": "ping"}) == {"action": "ping"}
+
+
 class TestZenohIsUntouched:
     def test_a_session_without_send_direct_on_its_class_publishes_everything(self, puts):
         sess = MagicMock(spec=["put", "declare_subscriber", "is_alive", "close"])

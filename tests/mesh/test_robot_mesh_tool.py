@@ -169,6 +169,27 @@ def test_send_passes_the_delivery_verdict_through(fake_local_mesh):
     assert '"confirmed": true' in out["content"][0]["text"]
 
 
+def test_ping_requires_target(fake_local_mesh):
+    out = _strands_call(action="ping")
+    assert out["status"] == "error"
+    assert "target" in out["content"][0]["text"]
+
+
+def test_ping_reports_a_reachable_peer_as_success(fake_local_mesh):
+    fake_local_mesh.ping.return_value = {"status": "ok", "latency_ms": 156.2, "via": "direct", "confirmed": True}
+    out = _strands_call(action="ping", target="peer-b", timeout=2.0)
+    assert out["status"] == "success"
+    assert '"via": "direct"' in out["content"][0]["text"]
+    fake_local_mesh.ping.assert_called_once_with("peer-b", timeout=2.0)
+
+
+def test_ping_reports_an_unreachable_peer_as_an_error(fake_local_mesh):
+    fake_local_mesh.ping.return_value = {"status": "offline", "latency_ms": 81.0, "via": "direct", "reason": "offline"}
+    out = _strands_call(action="ping", target="peer-b", timeout=2.0)
+    assert out["status"] == "error"
+    assert "offline" in out["content"][0]["text"]
+
+
 def test_broadcast_invokes_mesh_broadcast(fake_local_mesh):
     fake_local_mesh.broadcast.return_value = [{"a": 1}, {"b": 2}]
     out = _strands_call(action="broadcast", command='{"action":"status"}')

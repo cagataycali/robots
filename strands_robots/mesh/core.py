@@ -2428,11 +2428,17 @@ class Mesh(SensorLoopsMixin):
         # ``stop`` is admitted too: it only ever de-energizes, and a second
         # e-stop arriving while the lockout is already engaged must still halt
         # a rollout the first one missed rather than be "rejected".
-        if self._estop_lockout.is_set() and action not in ("status", "resume", "stop"):
+        if self._estop_lockout.is_set() and action not in ("status", "resume", "stop", "ping"):
             raise _security.LockoutError("command rejected")
 
         if action == "resume":
             return self._resume_lockout(cmd.get("override_code", ""))
+
+        if action == "ping":
+            # Reachability only: nothing on the robot is read or moved, so it
+            # is also answered under an e-stop lockout (a locked robot is
+            # still a reachable one). :meth:`ping` measures the round trip.
+            return {"pong": True, "peer_id": self.peer_id, "t": time.time()}
 
         if action == "status":
             if hasattr(r, "get_task_status"):
@@ -3685,6 +3691,44 @@ class Mesh(SensorLoopsMixin):
         """True when the transport already saw a 403 for *target* on this connection."""
         memo = getattr(direct, "direct_forbidden", None)
         return bool(memo(target)) if callable(memo) else False
+
+    def ping(self, target: str, timeout: float = 2.0) -> dict[str, Any]:
+        """Is *target* reachable, and how fast: one ``ping`` command and its round trip.
+
+        The command is ``{"action": "ping"}``, answered by the peer's mesh layer
+        with an empty result (no robot method is reached, and it is answered
+        under an e-stop lockout too). With a direct transport (AWS IoT Core
+        Direct Messaging) the command is delivered to *target* alone with
+        confirmation and an unreachable peer is reported in one round trip;
+        over Zenoh the command is published and the answer is whoever holds
+        that peer id.
+
+        Args:
+            target: The peer id.
+            timeout: Budget for the whole round trip, seconds.
+
+        Returns:
+            ``{"status": "ok", "latency_ms": float, "via": "direct"|"publish", "confirmed": bool}``
+            when the peer answered; ``{"status": "offline", "latency_ms": float,
+            "via": "direct", "reason": "offline"}`` when the broker knows the peer
+            is gone; ``{"status": "timeout", "latency_ms": float, "via": ...}``
+            when nothing answered inside *timeout*; or ``send``'s own
+            ``{"status": "error", ...}`` envelope for a refused precondition.
+        """
+        started = time.monotonic()
+        out = self.send(target, {"action": "ping"}, timeout=timeout)
+        latency = round((time.monotonic() - started) * 1000.0, 1)
+        delivery = out.get("delivery") if isinstance(out, dict) else None
+        via = str(delivery.get("via", "publish")) if isinstance(delivery, dict) else "publish"
+        confirmed = bool(delivery.get("confirmed", False)) if isinstance(delivery, dict) else False
+        result = out.get("result")
+        if out.get("type") == "response" and isinstance(result, dict) and result.get("pong") is True:
+            return {"status": "ok", "latency_ms": latency, "via": via, "confirmed": confirmed}
+        if out.get("status") == "error" and out.get("error") == "peer offline (iot 404)":
+            return {"status": "offline", "latency_ms": latency, "via": "direct", "reason": "offline"}
+        if out.get("status") == "timeout":
+            return {"status": "timeout", "latency_ms": latency, "via": via, "confirmed": confirmed}
+        return out
 
     def broadcast(self, cmd: dict[str, Any], timeout: float = 5.0) -> list[dict[str, Any]]:
         """Broadcast a command to every peer and return all responses.

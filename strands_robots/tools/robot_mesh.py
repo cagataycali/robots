@@ -13,6 +13,7 @@ API plus a few discovery helpers:
 ``status``          One-line summary of mesh state
 ``tell``            ``mesh.tell(target, instruction, ...)``
 ``send``            ``mesh.send(target, json.loads(command), ...)``
+``ping``            ``mesh.ping(target, timeout)``: reachable, and how fast
 ``broadcast``       ``mesh.broadcast(json.loads(command), ...)``
 ``stop``            Send ``{"action": "stop"}`` to a single peer
 ``emergency_stop``  Broadcast stop to every peer (audited)
@@ -115,6 +116,7 @@ _ACTIONS: tuple[str, ...] = (
     "status",
     "tell",
     "send",
+    "ping",
     "rpc",
     "broadcast",
     "stop",
@@ -1034,9 +1036,9 @@ def _try_device_connect(
 
     Returns None - signalling robot_mesh() to use the built-in mesh - when
     Device Connect is unavailable, has discovered no devices, or the action is
-    one DC does not handle (subscribe / watch / inbox / unsubscribe).
+    one DC does not handle (subscribe / watch / inbox / unsubscribe / ping).
     """
-    if action in ("subscribe", "watch", "inbox", "unsubscribe"):
+    if action in ("subscribe", "watch", "inbox", "unsubscribe", "ping"):
         return None  # mesh-only actions - let the built-in mesh handle them
     if os.environ.get("STRANDS_ROBOT_MESH_DC", "on").strip().lower() in ("off", "0", "false", "no"):
         return None  # Device Connect dispatch disabled (e.g. hermetic unit tests)
@@ -1289,8 +1291,12 @@ def robot_mesh(
 
     Args:
         action: One of ``peers`` / ``status`` / ``tell`` / ``send`` /
-            ``rpc`` / ``broadcast`` / ``stop`` / ``emergency_stop`` /
+            ``ping`` / ``rpc`` / ``broadcast`` / ``stop`` / ``emergency_stop`` /
             ``subscribe`` / ``unsubscribe`` / ``watch`` / ``inbox``.
+            ``ping`` asks one peer whether it is reachable and how fast
+            (nothing on the robot is read or moved): ``{"status": "ok",
+            "latency_ms", "via": "direct"|"publish"}``, or ``offline`` in
+            one round trip when the AWS IoT broker knows the peer is gone.
             ``rpc`` calls a device's NATIVE Device Connect function (e.g.
             the Reachy's ``nod`` / ``look`` / ``playMove``) directly,
             bypassing the policy-action allowlist that ``tell`` / ``send``
@@ -1663,6 +1669,19 @@ def robot_mesh(
         return _ok(f"[tell -> {target}] {json.dumps(result, default=str)[:600]}")
 
     # ── action: send ──────────────────────────────────────────────────────
+    if action == "ping":
+        if not target:
+            return _err("ping requires target (the peer id)")
+        try:
+            verdict = mesh.ping(target, timeout=timeout)
+        except Exception as exc:  # noqa: BLE001
+            _audit_tool_action(action, target, False, f"dispatch error: {type(exc).__name__}: {exc}")
+            return _err(f"[ping -> {target}] dispatch error: {type(exc).__name__}: {exc}")
+        reachable = verdict.get("status") == "ok"
+        _audit_tool_action(action, target, reachable, json.dumps(verdict, default=str)[:200])
+        text = f"[ping -> {target}] {json.dumps(verdict, default=str)[:600]}"
+        return _ok(text) if reachable else _err(text)
+
     if action == "send":
         # Parse + validation already happened in the pre-interrupt pass
         # above (so the operator approves the validated form). Reuse that
