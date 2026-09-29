@@ -331,11 +331,18 @@ class RemotePolicy(Policy):
         from websockets.sync.client import connect
 
         try:
+            # ``legacy=True``: the connection outlives this call (one socket for
+            # the whole rollout), so it cannot be a ``with connect(...)`` block.
+            # websockets 17.1 warns on a connection obtained without the flag
+            # and will change connect()'s default behaviour after the
+            # deprecation period; the flag sets the 17.1 floor (17.0 has no such
+            # parameter), owned by tests/test_websockets_floor_ships_the_imported_api.py.
             self._ws = connect(
                 self.uri,
                 open_timeout=self.connect_timeout,
                 max_size=None,
                 compression=None,
+                legacy=True,
             )
         except OSError as exc:
             raise ConnectionError(

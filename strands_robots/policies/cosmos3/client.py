@@ -92,7 +92,15 @@ class _RawWebsocketTransport:
         headers = {"Authorization": f"Api-Key {self.api_key}"} if self.api_key else None
         # ``Any`` for the same reason ``self._ws`` is declared ``Any``: the frames
         # go straight to the vendored packer, which treats them as opaque.
-        ws: Any = _wsc.connect(self.uri, compression=None, max_size=None, additional_headers=headers)
+        # ``legacy=True`` is the supported spelling of "return the connection
+        # directly": this transport holds one connection across every
+        # ``infer`` call, which no ``with connect(...)`` block can express.
+        # From websockets 17.1 a connection obtained without the flag warns
+        # (``DeprecationWarning``) on its first read, and connect() is announced
+        # to change behaviour once that period ends. The flag is what sets the
+        # websockets floor to 17.1 (17.0 does not accept it); owned by
+        # tests/test_websockets_floor_ships_the_imported_api.py.
+        ws: Any = _wsc.connect(self.uri, compression=None, max_size=None, additional_headers=headers, legacy=True)
         # ``self._ws`` is published only once the handshake has been consumed.
         # Assigned before the read, a failed handshake left a live connection
         # cached behind the error it had just raised, with the metadata frame

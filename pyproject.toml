@@ -111,10 +111,14 @@ cosmos3-service = [
     # driving the arm after the operator was told the server stopped. Measured
     # against the released wheels: 16.1.1 still serves that client, 17.0 does
     # not. (13.0 remains the floor of the API *names* reached for -
-    # `websockets.sync.server.Server`.) One environment resolves one websockets,
-    # so this floor and [inference]'s are deliberately the same number. Owned
-    # and measured by tests/test_websockets_floor_ships_the_imported_api.py.
-    "websockets>=17.0",
+    # `websockets.sync.server.Server`.) 17.1 is the release that adds the
+    # `legacy=True` flag to `websockets.sync.client.connect`, the supported way
+    # to hold a connection outside a `with` block; without it 17.1 warns on
+    # every service connect and announces a behaviour change. One environment
+    # resolves one websockets, so this floor and [inference]'s are deliberately
+    # the same number. Owned and measured by
+    # tests/test_websockets_floor_ships_the_imported_api.py.
+    "websockets>=17.1",
 ]
 # In-process Cosmos 3 backend (Cosmos3Policy(backend="diffusers")). Loads the
 # Cosmos3OmniPipeline directly via native Hugging Face `diffusers` (no RoboLab
@@ -634,10 +638,12 @@ ollama = [
 # (numpy-version agnostic, so it composes with lerobot's numpy>=2). See
 # strands_robots/inference/ and docs/reference/inference/remote.md.
 inference = [
-    # See [cosmos3-service]: >=17.0 is where `Server.shutdown()` starts closing
+    # See [cosmos3-service]: 17.0 is where `Server.shutdown()` starts closing
     # the connections it accepted, which is what makes `PolicyServer.stop()`
-    # stop the server *serving*, and both extras must declare the same floor.
-    "websockets>=17.0",
+    # stop the server *serving*; 17.1 adds the `connect(..., legacy=True)` flag
+    # RemotePolicy holds its connection with, and both extras must declare the
+    # same floor.
+    "websockets>=17.1",
 ]
 # rosbridge WebSocket transport: drive ROS1 (or remote ROS 2) robots from a host
 # with no ROS install at all. Pure-pip `roslibpy` speaks the rosbridge JSON
@@ -685,7 +691,7 @@ dashboard = [
 # this extra's name when it is absent. Not a member of [all]: [bidi] pins awscrt
 # to one exact release and [mesh-iot]'s awsiotsdk to another, so the bundle
 # would not resolve. The OpenAI backend needs only
-# ``websockets``, which the base dependency supplies at >=17.0 (strands' own
+# ``websockets``, which the base dependency supplies at >=17.1 (strands' own
 # ``bidi-openai`` extra would cap it below 17). Gemini Live is not offered:
 # its SDK, google-genai, caps websockets below 17 as well, so it cannot be
 # installed next to this package.
