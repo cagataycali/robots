@@ -909,6 +909,24 @@ def _coerce_prim_path(res: Any) -> str:
     return ""
 
 
+def _adopt_referenced_type(prim: Any) -> None:
+    """Let a referenced mesh asset's own prim type win over the placeholder.
+
+    ``add_reference_to_stage`` defines a missing target as ``Xform`` before
+    adding the reference, and a local ``typeName`` is stronger than the one the
+    reference brings. Every mesh USD this backend writes (and most a caller
+    hands it) has a ``Mesh`` as its default prim, so the composed prim was an
+    ``Xform`` carrying mesh attributes: nothing to render, and the collision
+    APIs applied to it had no geometry to collide. Clearing the local opinion
+    makes the prim compose as the ``Mesh`` it references (an ``Xform`` asset
+    still composes as an ``Xform``). A ``None`` prim (a stand-in loader) is a
+    no-op.
+    """
+    clear = getattr(prim, "ClearTypeName", None)
+    if clear is not None:
+        clear()
+
+
 def _import_articulation_cls() -> Any:
     """Resolve the single-prim articulation wrapper across Isaac versions.
 
@@ -1874,6 +1892,16 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     "step_count": self._step_count,
                 }
 
+                # The json carries both fields, but the text line is what most
+                # callers read: a request that was not honoured (every default
+                # cuda:0 world - the device is deliberately not forwarded, see
+                # the World() call above) is said in it, not left to a diff.
+                device_text = str(world_info["device"])
+                if world_info["device"] != self._config.device:
+                    device_text += (
+                        f" (requested {self._config.device}; physics runs on CPU PhysX - see "
+                        "the Limits section of docs/learn/simulation/isaac.md)"
+                    )
                 return {
                     "status": "success",
                     "content": [
@@ -1881,7 +1909,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                             "text": (
                                 f"Isaac Sim world created. "
                                 f"dt={dt:.5f}, gravity={grav}, "
-                                f"device={world_info['device']}, "
+                                f"device={device_text}, "
                                 f"headless={self._config.headless}"
                             ),
                             "json": world_info,
@@ -4000,7 +4028,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             from omni.isaac.core.utils.stage import (  # type: ignore[import-not-found]
                 add_reference_to_stage,
             )
-        add_reference_to_stage(usd_path=usd_path, prim_path=prim_path)
+        _adopt_referenced_type(add_reference_to_stage(usd_path=usd_path, prim_path=prim_path))
 
         # Isaac Sim 6.0 exposes the single-prim wrappers under
         # ``isaacsim.core.prims``; the legacy 4.x names lack the ``Single``
@@ -4512,7 +4540,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # sits at body origin + offset, so the local translate is
             # ``mesh_pos - offset``.
             visual_path = f"{prim_path}/visual"
-            add_reference_to_stage(usd_path=usd_path, prim_path=visual_path)
+            _adopt_referenced_type(add_reference_to_stage(usd_path=usd_path, prim_path=visual_path))
             local_pos = tuple(obj.mesh_pos[i] - obj.offset[i] for i in range(3))
             self._author_local_xform(
                 stage.GetPrimAtPath(visual_path),
