@@ -456,6 +456,7 @@ nav:
           - robots/jaxon.md
           - robots/jvrc.md
           - robots/microduck.md
+          - robots/mujoco_humanoid.md
           - robots/op3.md
           - robots/open_duck_mini.md
           - robots/r2.md

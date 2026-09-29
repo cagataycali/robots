@@ -162,6 +162,23 @@ class TestTheConversionIsCachedByContent:
         assert len({free, welded, scened}) == 3
         assert len(importer.calls) == 3
 
+    def test_the_importer_version_is_part_of_the_key(self, importer, mjcf, tmp_path, monkeypatch) -> None:
+        """A 6.0 and a 6.1 process sharing one cache must not trade conversions.
+
+        mujoco-usd-converter 0.2 (Isaac 6.0) flattens physics inline; 0.5 (6.1)
+        puts it behind a ``Physics`` variantSet. Same MJCF bytes, different USD.
+        """
+        from strands_robots.simulation.isaac import mjcf_assets
+
+        cache = str(tmp_path / "cache")
+        monkeypatch.setattr(mjcf_assets, "_importer_version", lambda: "isaacsim=6.0.1.0,mujoco-usd-converter=0.2.0")
+        old = convert_mjcf_to_usd(mjcf, cache)
+        monkeypatch.setattr(mjcf_assets, "_importer_version", lambda: "isaacsim=6.1.0.0,mujoco-usd-converter=0.5.0")
+        new = convert_mjcf_to_usd(mjcf, cache)
+
+        assert old != new, "a conversion from another importer version was served from cache"
+        assert len(importer.calls) == 2
+
     def test_the_digest_does_not_depend_on_walk_order(self, importer, mjcf, tmp_path) -> None:
         """``os.walk`` promises no order, so an unsorted manifest would key the
         same bytes differently on two machines and miss every cache entry."""

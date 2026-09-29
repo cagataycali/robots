@@ -94,6 +94,8 @@ _DESCRIPTION_REPOS: dict[str, tuple[str, str, str]] = {
     ),
     "aliengo": ("unitreerobotics/unitree_mujoco", "f3300ff1bf0ab9efbea0162717353480d9b05d73", "data/aliengo"),
     "unitree_a1": ("unitreerobotics/unitree_mujoco", "f3300ff1bf0ab9efbea0162717353480d9b05d73", "data/a1"),
+    # robot_descriptions 1.23.0 pins google-deepmind/mujoco (model/humanoid) to this commit.
+    "mujoco_humanoid": ("google-deepmind/mujoco", "ad0dc0de5e10a075a2c65be629e9a8d557d383a6", "model/humanoid"),
 }
 
 
@@ -194,13 +196,6 @@ def on_pre_build(config) -> None:  # noqa: ANN001 - mkdocs signature
     )
 
 
-if __name__ == "__main__":
-    m = build_manifest()
-    _OUT.parent.mkdir(parents=True, exist_ok=True)
-    _OUT.write_text(json.dumps(m, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"{len(m['robots'])} robots, {sum(1 for r in m['robots'].values() if r['viewer'])} renderable -> {_OUT}")
-
-
 def _registry_view():  # noqa: ANN202 - a sibling hook module, loaded by path like the others
     """``docs/hooks/registry_view.py``: robots.json merged with the URDF long tail."""
     name = "docs_hooks_registry_view"
@@ -212,3 +207,10 @@ def _registry_view():  # noqa: ANN202 - a sibling hook module, loaded by path li
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+if __name__ == "__main__":
+    m = build_manifest()
+    _OUT.parent.mkdir(parents=True, exist_ok=True)
+    _OUT.write_text(json.dumps(m, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"{len(m['robots'])} robots, {sum(1 for r in m['robots'].values() if r['viewer'])} renderable -> {_OUT}")
