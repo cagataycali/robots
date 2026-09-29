@@ -1016,6 +1016,7 @@ class TestPolicyReset:
         p._client = None
         p._groot_version = "n1.7"
         p.data_config_name = "libero_panda"
+        p._video_history = {}
 
         # Reseeded twice with the same seed → same torch.randn draw.
         p.reset(seed=42)
@@ -1037,6 +1038,7 @@ class TestPolicyReset:
         p._client = None
         p._groot_version = "n1.7"
         p.data_config_name = "libero_panda"
+        p._video_history = {}
 
         # Take a draw, then reset(no seed), then take another draw. They
         # should differ because the RNG advanced naturally.
