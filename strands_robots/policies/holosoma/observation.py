@@ -6,7 +6,7 @@ Reproduces ``holosoma_inference/policies/base.py`` (``_initialize_history_state`
 the layout is unit-testable on any machine.
 
 The one fact that decides the layout: upstream sorts the term names of a group
-alphabetically before concatenating them (``base.py:135``
+alphabetically before concatenating them (``holosoma_inference/policies/base.py:135``
 ``self.obs_terms_sorted[group] = sorted(term_names)``). The ``loco-g1-29dof``
 preset therefore lays ``actor_obs`` out as
 
@@ -131,7 +131,7 @@ class GaitPhase:
     standing restarts the clock at ``[0, pi]`` instead of advancing.
 
     Upstream advances the phase BEFORE building the tick's observation
-    (``base.py:860-863``: ``update_phase_time()`` then ``policy_action()``);
+    (``holosoma_inference/policies/base.py:860-863``: ``update_phase_time()`` then ``policy_action()``);
     :meth:`step` is that call, so read :attr:`phase` after it.
     """
 

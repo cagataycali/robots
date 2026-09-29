@@ -1,6 +1,6 @@
 """HolosomaPolicy: Amazon FAR's Holosoma locomotion controller for the Unitree G1.
 
-Ports the deployment loop of ``holosoma_inference`` (``policies/base.py`` +
+Ports the deployment loop of ``holosoma_inference`` (``holosoma_inference/policies/base.py`` +
 ``policies/locomotion.py``, commit ``bccd4d7``) to the Strands
 :class:`~strands_robots.policies.base.Policy` contract:
 
@@ -121,7 +121,7 @@ def read_onnx_metadata(path: str | Path) -> dict[str, Any]:
     """Return the ONNX ``metadata_props`` of ``path`` with JSON values decoded.
 
     Upstream writes ``dof_names``, ``kp``, ``kd`` and ``command_ranges`` as
-    JSON strings (``base.py:396-404``). Reads through ``onnxruntime``'s model
+    JSON strings (``holosoma_inference/policies/base.py:396-404``). Reads through ``onnxruntime``'s model
     metadata so the ``onnx`` package is not required.
     """
     ort = require_optional("onnxruntime", extra="holosoma", purpose="reading the checkpoint's gains and joint names")
@@ -259,7 +259,7 @@ class HolosomaPolicy(Policy):
         missing = [name for name in HOLOSOMA_G1_JOINTS if name not in key_set]
         if missing:
             raise ValueError(
-                "HolosomaPolicy: the robot's joint list is missing expected Unitree G1 joints: "
+                "HolosomaPolicy: the robot's joint list is missing expected G1 joints: "
                 f"{missing}.\n  expected (dof_names order): {list(HOLOSOMA_G1_JOINTS)}\n  robot provided: {keys}\n"
                 "The released Holosoma checkpoints drive the 29-DOF Unitree G1 only; load unitree_g1."
             )
@@ -458,7 +458,7 @@ class HolosomaPolicy(Policy):
 
         Sim schema: ``obs[name]`` / ``obs[name + ".vel"]`` per joint plus
         ``base_quat`` (wxyz) and ``base_ang_vel`` (body frame). Hardware
-        schema (``drivers/g1.py`` snapshot): ``obs["joints"][name]["q"|"dq"]``
+        schema (:mod:`strands_robots.drivers.g1` snapshot): ``obs["joints"][name]["q"|"dq"]``
         and ``obs["imu"]["quaternion"|"gyroscope"]``. Flat
         ``observation.state`` / ``observation.velocity`` vectors are indexed by
         the robot's key list when one was set, else positionally.

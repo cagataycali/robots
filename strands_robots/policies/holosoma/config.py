@@ -7,7 +7,7 @@ commit ``bccd4d7`` (2026-09-04): the ``loco-g1-29dof`` observation preset
 ``gait_period=1.0``, ``desired_base_height=0.75``) and the ``g1-29dof`` robot
 preset (``config/config_values/robot.py``: ``default_dof_angles``). The PD gains
 are NOT here on purpose: upstream reads them from the ONNX metadata
-(``policies/base.py`` ``_resolve_control_gains``: "config override > ONNX
+(``holosoma_inference/policies/base.py`` ``_resolve_control_gains``: "config override > ONNX
 metadata > error") and so does :class:`~strands_robots.policies.holosoma.HolosomaPolicy`;
 ``kps`` / ``kds`` below are the optional override slot.
 """

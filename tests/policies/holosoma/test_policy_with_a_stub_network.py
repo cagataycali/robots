@@ -178,7 +178,7 @@ def test_metadata_with_foreign_joint_names_is_refused() -> None:
 
 def test_non_g1_joint_list_is_refused_by_name() -> None:
     pol, _ = _policy()
-    with pytest.raises(ValueError, match="missing expected Unitree G1 joints") as exc:
+    with pytest.raises(ValueError, match="missing expected G1 joints") as exc:
         pol.set_robot_state_keys(["shoulder_pan", "elbow_flex"])
     assert "left_hip_pitch_joint" in str(exc.value)
 
