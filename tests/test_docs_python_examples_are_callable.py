@@ -268,3 +268,42 @@ def test_the_grader_reports_a_keyword_the_callable_would_reject() -> None:
         for candidate in candidates["run_policy"]
     )
     assert not binds, "a goal keyword passed straight to run_policy must not be graded as acceptable"
+
+
+def _run_policy_calls_that_fall_back_to_mock(block: str) -> list[str]:
+    """Return every ``run_policy`` call in *block* whose policy is left to the default.
+
+    A simulation's ``run_policy`` takes ``robot_name`` first and defaults
+    ``policy_provider`` to ``"mock"``, so ``sim.run_policy("microduck", ...)``
+    binds the robot and runs ``MockPolicy``. It reports ``success``, which is
+    why nothing notices. A call names its policy when it passes
+    ``policy_provider`` / ``policy_object`` by keyword, or passes a
+    non-literal first positional (the hardware ``Robot.run_policy(policy)``).
+    """
+    offenders = []
+    for node in ast.walk(ast.parse(block)):
+        if not isinstance(node, ast.Call) or _callee_name(node) != "run_policy":
+            continue
+        if {k.arg for k in node.keywords} & {"policy_provider", "policy_object"}:
+            continue
+        if node.args and not isinstance(node.args[0], ast.Constant):
+            continue
+        offenders.append(ast.unparse(node))
+    return offenders
+
+
+def test_every_documented_run_policy_names_the_policy_it_runs() -> None:
+    """No documented rollout may silently run ``MockPolicy``."""
+    planted = 'sim.run_policy("microduck", instruction="walk forward")\n'
+    assert _run_policy_calls_that_fall_back_to_mock(planted), "the grader must catch a positional robot name"
+
+    offenders = []
+    for path in _documentation_files():
+        text = path.read_text(encoding="utf-8")
+        for fence in _PYTHON_FENCE.finditer(text):
+            try:
+                calls = _run_policy_calls_that_fall_back_to_mock(fence.group(1))
+            except SyntaxError:
+                continue
+            offenders += [f"{path.relative_to(_REPO_ROOT)}: {call}" for call in calls]
+    assert not offenders, "documented run_policy calls that run MockPolicy:\n  " + "\n  ".join(offenders)

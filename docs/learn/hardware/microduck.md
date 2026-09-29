@@ -46,7 +46,12 @@ pip install 'strands-robots[microduck,sim-mujoco]'     # onnxruntime + huggingfa
 
 ```python title="sketch"
 sim = Robot("microduck")
-sim.run_policy("microduck", instruction="walk forward")   # the provider self-configures from the ONNX metadata
+sim.run_policy(
+    robot_name="microduck",
+    policy_provider="microduck",   # self-configures from the ONNX metadata
+    policy_config={"onnx_path": "alpha_walking.onnx"},
+    policy_kwargs={"target_velocity": [0.15, 0.0, 0.0]},   # the twist is the command
+)
 ```
 
 ## Camera
