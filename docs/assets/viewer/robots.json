@@ -730,7 +730,7 @@
    "real": false,
    "scene": "humanoid.xml",
    "sim": true,
-   "thumbnail": null,
+   "thumbnail": "assets/img/robots/mujoco_humanoid.webp",
    "viewer": true,
    "viewer_note": null
   },
