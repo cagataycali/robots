@@ -103,6 +103,10 @@ class RslRlTrainer(Trainer):
     def validate(self, spec: TrainSpec) -> list[str]:
         """Pure preflight: task resolvable, sizes positive, output_dir set; no GPU touched."""
         problems: list[str] = self._security_problems(spec)
+        # Shared domains go through the Trainer gates (one owner per field).
+        problems.extend(self._checkpoint_cadence_problems(spec))
+        problems.extend(self._seed_problems(spec))
+        problems.extend(self._resume_problems(spec))
 
         if not spec.output_dir:
             problems.append("output_dir is required (mjlab log_root; the run and its ONNX land under it)")
@@ -182,11 +186,11 @@ class RslRlTrainer(Trainer):
         cfg = TrainConfig.from_task(task)
         cfg.env.scene.num_envs = int(spec.global_batch_size)
         cfg.agent.max_iterations = int(spec.steps)
-        cfg.agent.save_interval = max(1, min(int(spec.save_freq), int(spec.steps)))
+        cfg.agent.save_interval = max(1, min(spec.save_freq, int(spec.steps)))  # admitted by the cadence gate
         cfg.agent.run_name = run_name
-        cfg.agent.resume = bool(spec.resume)
+        cfg.agent.resume = spec.resume
         if spec.seed is not None:
-            cfg.agent.seed = int(spec.seed)
+            cfg.agent.seed = spec.seed
         if spec.learning_rate is not None:
             cfg.agent.algorithm.learning_rate = float(spec.learning_rate)
         cfg.agent.logger = "tensorboard"

@@ -106,6 +106,7 @@ DOMAINS: tuple[SharedDomain, ...] = (
         ("seed",),
         "cosmos3.py",
         "lerobot.py",
+        "rsl_rl.py",
         "sagemaker.py",
         "ppo.py",
         "fast_sac.py",
@@ -117,6 +118,7 @@ DOMAINS: tuple[SharedDomain, ...] = (
         "cosmos3.py",
         "groot.py",
         "lerobot.py",
+        "rsl_rl.py",
         "sagemaker.py",
         # The eval_steps fallback selector: which cadence to forward, not whether
         # the cadence is usable.
@@ -131,7 +133,7 @@ DOMAINS: tuple[SharedDomain, ...] = (
         # relation against another quantity, which the gate cannot see.
         comparisons=("0 < spec.val_episodes < effective",),
     ),
-    _domain("_resume_problems", ("resume",), "groot.py", "lerobot.py", "sagemaker.py"),
+    _domain("_resume_problems", ("resume",), "groot.py", "lerobot.py", "rsl_rl.py", "sagemaker.py"),
     _domain("_streaming_problems", ("streaming",), "lerobot.py", "sagemaker.py"),
     _domain("_observation_normalization_problems", ("normalize_obs",), "ppo.py", "fast_sac.py", "fast_td3.py"),
     _domain("_advantage_normalization_problems", ("normalize_advantage",), "ppo.py"),
