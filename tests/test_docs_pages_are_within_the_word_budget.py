@@ -62,7 +62,9 @@ _BUDGET: int = _hook().LIMIT
 #: look that learned policies run on real robots: a new Start page (First learned
 #: policy) and a generated "Policies verified on this robot" section on every robot
 #: page, each row carrying the source of its numbers (docs/hooks/data/checkpoints.json).
-_SITE_BUDGET = 49_800
+#: Raised to 50,074 when the mesh gained its direct messaging page (one new page under
+#: learn/mesh plus a variable row and a sentence on the pages that point at it).
+_SITE_BUDGET = 50_074
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
