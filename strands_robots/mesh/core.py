@@ -1962,7 +1962,14 @@ class Mesh(SensorLoopsMixin):
                         frame = frame.astype(np.uint8)
 
                 if have_cv2:
-                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    # Frames arrive RGB (MuJoCo's renderer, lerobot's cameras);
+                    # cv2 encodes what it is given as BGR, so without this swap
+                    # every card showed a red cube as blue and a blue sky as
+                    # brown.
+                    to_encode = frame
+                    if len(shape) == 3 and shape[2] == 3:
+                        to_encode = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    ok, buf = cv2.imencode(".jpg", to_encode, [cv2.IMWRITE_JPEG_QUALITY, 80])
                     if not ok:
                         continue
                     encoded = base64.b64encode(buf.tobytes()).decode("ascii")

@@ -363,3 +363,27 @@ def test_a_mesh_built_without_the_pacer_state_still_sends() -> None:
     del mesh._cmd_pace_lock
     mesh.send("sim-a", {"action": "status"}, timeout=0.01)
     assert published
+
+
+# ──────────────────────────────────────── the card shows the cube red ───────
+
+
+def test_a_published_camera_frame_keeps_its_colours() -> None:
+    """A red frame leaves the peer as a red JPEG: the encoder is handed BGR, the frame is RGB."""
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    published: list[tuple[str, dict[str, Any]]] = []
+    mesh = mesh_core.Mesh.__new__(mesh_core.Mesh)
+    mesh.peer_id = "sim-1"
+    mesh.publish = lambda key, payload: published.append((key, payload))  # type: ignore[method-assign]
+    red = np.zeros((8, 8, 3), dtype=np.uint8)
+    red[..., 0] = 255  # RGB: red
+    mesh._encode_and_publish_frames({"front": red}, ["front"])
+    [(key, payload)] = published
+    assert key == "strands/sim-1/camera/front" and payload["encoding"] == "jpeg"
+    import base64
+
+    decoded_bgr = cv2.imdecode(np.frombuffer(base64.b64decode(payload["data"]), np.uint8), cv2.IMREAD_COLOR)
+    decoded_rgb = cv2.cvtColor(decoded_bgr, cv2.COLOR_BGR2RGB)
+    r, g, b = (int(decoded_rgb[4, 4, i]) for i in range(3))
+    assert r > 200 and g < 60 and b < 60, (r, g, b)
