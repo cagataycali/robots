@@ -21,7 +21,6 @@ stand it in - no Isaac Sim runtime):
 
 from __future__ import annotations
 
-import queue
 import threading
 from typing import Any
 
@@ -29,11 +28,10 @@ import pytest
 
 pytest.importorskip("strands_robots.simulation.isaac")
 
-from strands_robots.simulation.isaac.config import IsaacConfig  # noqa: E402
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402
-    IsaacSimulation,
     _RobotState,
 )
+from tests.simulation._isaac_engine import isaac_engine
 
 
 class _World:
@@ -56,23 +54,11 @@ def _engine(*, main_tid: int, pump_running: bool = False) -> Any:
     ``articulation=None`` so the substep loop - the thing under test - runs without
     reaching the isaacsim ``ArticulationAction`` import, which is absent here.
     """
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._lock = threading.RLock()
-    engine._config = IsaacConfig(render_mode="headless")
+    engine = isaac_engine()
     engine._world = _World()
     engine._world_created = True
-    engine._robots = {}
-    engine._cameras = {}
-    engine._objects = {}
-    engine._action_controllers = {}
-    engine._applied_wrenches = {}
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._physics_view_stale = False
     engine._main_tid = main_tid
     engine._pump_running = pump_running
-    engine._action_q = queue.Queue()
-    engine._main_jobs = queue.Queue()
     engine._idle_converge = 1
     engine._idle_render_period = 3600.0
 

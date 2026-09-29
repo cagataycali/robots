@@ -69,6 +69,7 @@ import pytest
 
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import FREE_CAMERA_TOKENS, camera_name_error, reserved_camera_name_error
+from tests.simulation._isaac_engine import isaac_engine
 
 #: The tokens that are also *addressable* strings, so only the reserved-name rule
 #: can refuse them. ``None`` and ``""`` are refused earlier by
@@ -308,21 +309,10 @@ class _FakeCameraHandle:
 
 
 def _isaac_engine():
-    from strands_robots.simulation.isaac.simulation import IsaacConfig, IsaacSimulation
 
-    engine = IsaacSimulation.__new__(IsaacSimulation)
-    engine._config = IsaacConfig()
-    engine._lock = threading.RLock()
-    engine._world = None
+    engine = isaac_engine()
     engine._world_created = True
-    engine._robots = {}
-    engine._objects = {}
-    engine._cameras = {}
-    engine._prim_registry = []
     engine._camera_warmup_steps = 0
-    engine._sim_time = 0.0
-    engine._step_count = 0
-    engine._main_tid = threading.get_ident()
 
     def _create_camera_prim(**kwargs: Any) -> tuple[Any, float]:
         return _FakeCameraHandle(), 24.0
