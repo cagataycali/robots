@@ -15,16 +15,6 @@ from strands_robots.policies import (
     create_policy,
 )
 
-# Detect groot-service availability for conditional test grouping.
-try:
-    import msgpack  # noqa: F401
-    import zmq  # noqa: F401
-
-    _groot_available = True
-except ImportError:
-    _groot_available = False
-
-
 class TestMockPolicy:
     """MockPolicy should produce deterministic sinusoidal trajectories."""
 

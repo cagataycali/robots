@@ -1,15 +1,15 @@
 """A policy provider refuses a service port it cannot dial.
 
-Four providers reach a policy service over TCP and build the endpoint by
-interpolating a caller-supplied ``port``: ``groot`` and ``moveit2`` into
-``tcp://<host>:<port>`` (ZMQ), ``cosmos3`` into ``ws://<host>:<port>``, and
+Two shipped providers reach a policy service over TCP and build the endpoint by
+interpolating a caller-supplied ``port``: ``moveit2`` into
+``tcp://<host>:<port>`` (ZMQ) and ``cosmos3`` into ``ws://<host>:<port>``.
 Every one of those transports connects
 lazily, so the socket does not reject a port outside the 16-bit range - it
 accepts it and the request fails much later as an unreachable service, naming
 the server rather than the port that could never have addressed it.
 
 :func:`~strands_robots.utils.tcp_port_error` is the shared domain the agent tool
-that *starts* the GR00T service (``gr00t_inference``) and the mesh bridges
+that starts a sidecar and the mesh bridges
 already validate against, and its docstring states the invariant these
 providers broke: the same port cannot be refused onto a service by one surface
 and accepted by the next. These tests pin the refusal per provider, pin that it
@@ -61,10 +61,6 @@ USABLE_PORTS: list[Any] = [1, 5555, 5556, 8000, 8080, 65535]
 DOMAIN_REFUSED_NON_INT: list[Any] = [np.int64(8080), np.float64(8080.0)]
 
 
-def _groot(port: Any) -> Any:
-    return create_policy("groot", port=port, data_config="so100_dualcam")
-
-
 def _moveit2(port: Any) -> Any:
     return create_policy("moveit2", port=port)
 
@@ -78,7 +74,6 @@ def _cosmos3(port: Any) -> Any:
 #: optional dependency; only the accepted-value controls dial and therefore
 #: import one.
 PROVIDERS: list[tuple[str, Any, str, str | None]] = [
-    ("groot", _groot, "Gr00tPolicy", "zmq"),
     ("moveit2", _moveit2, "MoveIt2Policy", "zmq"),
     ("cosmos3", _cosmos3, "Cosmos3Policy", None),
 ]
@@ -126,11 +121,10 @@ class TestRefusalPrecedesTheTransport:
     @pytest.mark.parametrize(
         ("module_path", "transport_attr", "build"),
         [
-            ("strands_robots.policies.groot.policy", "Gr00tInferenceClient", _groot),
             ("strands_robots.policies.moveit2.policy", "MoveIt2InferenceClient", _moveit2),
             ("strands_robots.policies.cosmos3.policy", "Cosmos3WebsocketClient", _cosmos3),
         ],
-        ids=["groot", "moveit2", "cosmos3"],
+        ids=["moveit2", "cosmos3"],
     )
     def test_transport_is_never_constructed(
         self, monkeypatch: pytest.MonkeyPatch, module_path: str, transport_attr: str, build: Any
@@ -162,21 +156,6 @@ class TestUsablePortIsAccepted:
 
 class TestOnlyTheDialedPortIsValidated:
     """A port a call never reads is not refused - the guard is scoped."""
-
-    def test_groot_local_mode_ignores_the_port(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``model_path`` selects local inference, which dials nothing."""
-        import strands_robots.policies.groot.policy as groot_policy
-        from strands_robots.policies.groot.policy import Gr00tPolicy
-
-        # Local mode refuses before the loader when no Isaac-GR00T release is
-        # importable, so stubbing the loader alone no longer reaches the branch
-        # under test. Detection is stubbed too, which is what the port scoping
-        # is being measured against - not the availability of gr00t.
-        monkeypatch.setattr(groot_policy, "_detect_groot_version", lambda **kw: "n1.7")
-        monkeypatch.setattr(Gr00tPolicy, "_load_local_policy", lambda self, *a, **k: None)
-        monkeypatch.setattr(Gr00tPolicy, "_init_mappings", lambda self: None)
-        policy = Gr00tPolicy(model_path="/tmp/checkpoint", port=99999)
-        assert policy._mode == "local"
 
     def test_cosmos3_injected_client_owns_its_address(self) -> None:
         """An injected client already holds an endpoint, so ``port`` is inert."""
@@ -212,7 +191,7 @@ class TestTransportDoesNotRefuseItself:
         refused anywhere - it becomes an endpoint that can never connect and
         surfaces as an inference timeout blamed on the server.
         """
-        zmq = pytest.importorskip("zmq", reason="zmq not installed - pip install 'strands-robots[groot-service]'")
+        zmq = pytest.importorskip("zmq", reason="zmq not installed - pip install 'strands-robots[moveit2]'")
         context = zmq.Context()
         socket = context.socket(zmq.REQ)
         socket.setsockopt(zmq.LINGER, 0)
@@ -268,7 +247,7 @@ def _calls_the_shared_domain(cls: ast.ClassDef) -> bool:
 
 
 class TestNoProviderShipsAnUnguardedPort:
-    """A fifth provider cannot repeat this by copying a sibling constructor."""
+    """A new provider cannot repeat this by copying a sibling constructor."""
 
     def test_every_provider_taking_a_port_validates_it(self) -> None:
         offenders = []
@@ -279,7 +258,7 @@ class TestNoProviderShipsAnUnguardedPort:
                 seen.append(cls.name)
                 if not _calls_the_shared_domain(cls):
                     offenders.append(f"{path.name}::{cls.name}")
-        assert set(_IDS) and {"Gr00tPolicy", "MoveIt2Policy", "Cosmos3Policy"} <= set(seen), seen
+        assert set(_IDS) and {"MoveIt2Policy", "Cosmos3Policy"} <= set(seen), seen
         assert offenders == [], (
             "these provider constructors accept a port without validating it against "
             f"strands_robots.utils.tcp_port_error: {offenders}"
