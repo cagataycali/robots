@@ -556,6 +556,19 @@ def _sensor_present(robot: Any, *attrs: str) -> bool:
     return False
 
 
+def _responder_segment(key: str, me: str) -> str | None:
+    """The ``<responder>`` of ``strands/<me>/response/<responder>/<turn>``, or ``None``.
+
+    ``None`` for the legacy three-segment shape ``strands/<me>/response/<turn>``
+    (no responder segment to check) and for any key that is not this peer's
+    response prefix at all.
+    """
+    parts = key.split("/")
+    if len(parts) != 5 or parts[0] != "strands" or parts[1] != me or parts[2] != "response":
+        return None
+    return parts[3]
+
+
 class Mesh(SensorLoopsMixin):
     """Peer-to-peer mesh component embedded in a single Robot or Simulation.
 
@@ -2032,25 +2045,46 @@ class Mesh(SensorLoopsMixin):
             )
             if result.delivered:
                 return
-            self._note_direct_fallback(sender, result.reason, result.detail)
+            self._note_direct_fallback(sender, result.reason, result.detail, leg="reply")
         self.publish(rkey, payload)
 
-    def _note_direct_fallback(self, peer: str, reason: str, detail: str) -> None:
-        """Log why a direct send to *peer* fell back to publish: once per peer for 403, debug otherwise."""
+    def _note_direct_fallback(self, peer: str, reason: str, detail: str, leg: str = "command") -> None:
+        """Log why a direct send to *peer* fell back to publish: once per peer for 403, debug otherwise.
+
+        The 403 hint depends on which leg was refused. A refused *reply* means
+        THIS peer's identity has no ``AllowDirectResponseToAnyOperator`` grant:
+        its certificate predates the CSR default (CN ``AWS IoT Certificate``)
+        or its policy predates the statement; re-running ``provision_robot``
+        fixes both. A refused *command* means this peer's OPERATOR policy has no
+        ``AllowDirectCommandToAnyRobot``; re-running ``provision_operator``
+        publishes the current document.
+        """
         if reason == "forbidden":
             if peer not in self._direct_fallback_logged:
                 self._direct_fallback_logged.add(peer)
+                if leg == "reply":
+                    hint = (
+                        "this robot may not send direct replies: its certificate predates the CSR default "
+                        "(CN must equal the Thing name) or its policy predates AllowDirectResponseToAnyOperator; "
+                        "re-run provision_robot for it"
+                    )
+                else:
+                    hint = (
+                        "this operator's policy has no AllowDirectCommandToAnyRobot grant; re-run "
+                        "provision_operator to publish the current document"
+                    )
                 logger.warning(
-                    "[mesh] %s: direct message to %s refused by policy (%s); using publish/subscribe for this "
-                    "peer until reconnect. A robot provisioned before direct messaging needs a certificate "
-                    "issued from a CSR with CN=<thing name>: re-run provision_robot.",
+                    "[mesh] %s: direct %s to %s refused by policy (%s); using publish/subscribe for this peer "
+                    "until reconnect. %s.",
                     self.peer_id,
+                    leg,
                     peer,
                     detail or "403",
+                    hint,
                 )
             return
         logger.debug(
-            "[mesh] %s: direct message to %s not delivered (%s %s); publishing", self.peer_id, peer, reason, detail
+            "[mesh] %s: direct %s to %s not delivered (%s %s); publishing", self.peer_id, leg, peer, reason, detail
         )
 
     def _exec_cmd(self, data: dict[str, Any], reply_to: str | None = None) -> None:
@@ -2913,6 +2947,28 @@ class Mesh(SensorLoopsMixin):
         if not isinstance(turn, str):
             return
         responder = data.get("responder_id")
+        # The topic binds the responder too: ``strands/<me>/response/<responder>/<turn>``
+        # is the segment the IoT policy scopes a robot's publish and direct reply
+        # to (``${...ThingName}`` / ``${...CommonName}``), while ``responder_id``
+        # is whatever the payload says. Accepting the payload alone let a peer
+        # authorised for its own segment claim another robot's identity in the
+        # body. A response on the shorter legacy shape (no responder segment)
+        # is judged on the payload as before.
+        topic_responder = _responder_segment(str(getattr(sample, "key_expr", "")), self.peer_id)
+        if topic_responder is not None and topic_responder != responder:
+            logger.warning(
+                "[mesh] %s: dropped response on turn %s -- topic names responder %r but the payload "
+                "says responder_id=%r (possible response spoof)",
+                self.peer_id,
+                turn[:12],
+                topic_responder,
+                responder,
+            )
+            self._audit_local(
+                "response_hijack_rejected",
+                {"turn_prefix": turn[:12], "responder_id": responder, "topic_responder": topic_responder},
+            )
+            return
         with self._rpc_lock:
             event = self._pending.get(turn)
             if event is None:

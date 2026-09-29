@@ -338,7 +338,11 @@ class TestSendGoesDirectFirst:
             _stop(m)
         warnings = [r for r in caplog.records if "refused by policy" in r.getMessage()]
         assert len(warnings) == 1
-        assert "CN=<thing name>" in warnings[0].getMessage()
+        # A refused COMMAND is about the operator's own policy, not the robot's certificate.
+        assert "direct command" in warnings[0].getMessage()
+        assert "AllowDirectCommandToAnyRobot" in warnings[0].getMessage()
+        assert "provision_operator" in warnings[0].getMessage()
+        assert "CN" not in warnings[0].getMessage()
         assert len([k for k, _ in puts if k == "strands/so101/cmd"]) == 2
 
     def test_a_peer_the_transport_remembers_as_forbidden_is_not_asked_again(self, puts):
@@ -439,6 +443,20 @@ class TestReplyOverTheResponseTopic:
         assert call["data"]["responder_id"] == "so101"
         assert [k for k, _ in puts if "/response/" in k] == []
 
+    def test_a_refused_direct_reply_names_the_robot_side_fix(self, puts, caplog):
+        t = _DirectTransport([_fail("forbidden", "Authorization failed")])
+        m = _start(t, peer_id="so101")
+        try:
+            with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.core"):
+                _exec_and_wait(m, self._payload(), f"strands/operator-1/response/so101/{self.TURN}")
+        finally:
+            _stop(m)
+        (w,) = [r for r in caplog.records if "refused by policy" in r.getMessage()]
+        assert "direct reply" in w.getMessage()
+        assert "CN must equal the Thing name" in w.getMessage()
+        assert "provision_robot" in w.getMessage()
+        assert [k for k, _ in puts if k == f"strands/operator-1/response/so101/{self.TURN}"]
+
     def test_undelivered_direct_reply_is_published_on_the_computed_key(self, puts):
         t = _DirectTransport([_fail("error", "socket")])
         m = _start(t, peer_id="so101")
@@ -483,6 +501,72 @@ class TestReplyOverTheResponseTopic:
             _stop(m)
         assert t.direct_calls == []
         assert [k for k, _ in puts if k == f"strands/operator-1/response/so101/{self.TURN}"]
+
+
+class TestResponseTopicBindsTheResponder:
+    """``_on_response`` refuses a payload whose responder_id is not the topic's responder segment."""
+
+    def _pending(self, m: Mesh, turn: str, expected: str) -> None:
+        with m._rpc_lock:
+            m._pending[turn] = threading.Event()
+            m._responses[turn] = []
+            m._expected_responders[turn] = expected
+
+    def test_a_body_claiming_another_robot_than_the_topic_names_is_dropped(self, puts, caplog):
+        t = _DirectTransport()
+        m = _start(t)
+        turn = "a" * 32
+        try:
+            self._pending(m, turn, "so101")
+            with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.core"):
+                # Published on so102's segment (what so102's policy allows), body says so101.
+                m._on_response(
+                    _sample(
+                        f"strands/operator-1/response/so102/{turn}",
+                        {"responder_id": "so101", "turn_id": turn, "type": "result"},
+                    )
+                )
+            assert m._responses[turn] == []
+        finally:
+            _stop(m)
+        assert any("possible response spoof" in r.getMessage() for r in caplog.records)
+
+    def test_a_consistent_topic_and_body_are_accepted(self, puts):
+        t = _DirectTransport()
+        m = _start(t)
+        turn = "b" * 32
+        try:
+            self._pending(m, turn, "so101")
+            m._on_response(
+                _sample(
+                    f"strands/operator-1/response/so101/{turn}",
+                    {"responder_id": "so101", "turn_id": turn, "type": "result"},
+                )
+            )
+            assert len(m._responses[turn]) == 1
+        finally:
+            _stop(m)
+
+    def test_the_legacy_shape_without_a_responder_segment_is_judged_on_the_body(self, puts):
+        t = _DirectTransport()
+        m = _start(t)
+        turn = "c" * 32
+        try:
+            self._pending(m, turn, "so101")
+            m._on_response(
+                _sample(
+                    f"strands/operator-1/response/{turn}", {"responder_id": "so101", "turn_id": turn, "type": "result"}
+                )
+            )
+            assert len(m._responses[turn]) == 1
+        finally:
+            _stop(m)
+
+    def test_segment_helper(self):
+        assert mesh_core._responder_segment("strands/op/response/so101/" + "d" * 32, "op") == "so101"
+        assert mesh_core._responder_segment("strands/op/response/" + "d" * 32, "op") is None
+        assert mesh_core._responder_segment("strands/other/response/so101/" + "d" * 32, "op") is None
+        assert mesh_core._responder_segment("strands/op/cmd", "op") is None
 
 
 class TestZenohIsUntouched:
