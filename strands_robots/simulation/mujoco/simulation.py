@@ -1263,6 +1263,8 @@ class MuJoCoSimEngine(
             # self-correct without inspecting the MJCF by hand.
             valid_keys = self._get_valid_action_keys(robot_name)
             hint = f" Valid keys: {valid_keys}" if valid_keys else ""
+            if labels_hint := self._joint_labels_hint(robot_name):
+                hint += f" {labels_hint}"
             return {
                 "status": "error",
                 "content": [
