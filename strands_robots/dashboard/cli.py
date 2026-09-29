@@ -77,8 +77,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(listen_refusal, file=sys.stderr)
         return 2
     if args.mesh_listen:
-        # Before anything imports the mesh: session.py reads ZENOH_LISTEN when the
-        # shared session opens, and the dashboard opens it at startup.
+        # Before anything imports the mesh: ``strands_robots.mesh.session`` reads
+        # ZENOH_LISTEN when the shared session opens, and the dashboard opens it at startup.
         os.environ["ZENOH_LISTEN"] = args.mesh_listen
 
     from strands_robots.dashboard import auth, settings
