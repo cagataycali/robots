@@ -1086,6 +1086,14 @@ class MeshBridge:
             return
         key = str(getattr(sample, "key_expr", ""))
         kind = "estop" if key.endswith("estop") else "resume"
+        refusal = safety_state.envelope_refusal(data)
+        if refusal is not None:
+            # The peers refuse this envelope too, so nothing on the fleet locked or
+            # resumed; folding it would show a lockout that never happened and its
+            # non-finite ``t`` would poison every snapshot the page reads.
+            logger.warning("[safety] %s dropped: %s", kind, refusal)
+            self.record_activity("safety", f"{kind}_refused", detail={"why": refusal}, ok=False)
+            return
         # A five-second flash in the header was the ONLY representation of a lockout in
         # this product, so a reload erased it while two arms stayed locked for ten hours.
         with self._peers_lock:
