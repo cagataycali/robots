@@ -505,6 +505,23 @@ sim-newton = [
     "mujoco-warp>=3.11.0,<3.12.0",
     "trimesh>=4.0.0,<5.0.0",
 ]
+# mjlab GPU-vectorized MuJoCo backend (mujocolab/mjlab: Isaac-Lab-shaped API
+# on MuJoCo-Warp, rsl_rl training, ONNX export). Selected via
+# create_simulation("mjlab", num_envs=N) / Robot(..., backend="mjlab"). Shares
+# newton's MuJoCo 3.11 pins (mjlab pins mujoco~=3.11 + mujoco-warp~=3.11).
+# GPU/heavy - kept OUT of `[all]`. Known conflict: mjlab needs torch>=2.14
+# while `[lerobot]` (lerobot>=0.6.1) caps torch<2.12, so the two extras do not
+# resolve together in one step; install `[lerobot]` first, then this extra
+# (the LeRobot v3 recorder still imports on torch 2.14). onnxruntime serves
+# the exported policies through strands_robots.policies.rsl_rl_onnx.
+sim-mjlab = [
+    "strands-robots[sim-mujoco]",
+    "mjlab>=1.6.0,<2.0.0",
+    "mujoco>=3.11.0,<3.12.0",
+    "mujoco-warp>=3.11.0,<3.12.0",
+    "warp-lang>=1.14.0,<2.0.0",
+    "onnxruntime>=1.17.0,<2.0.0",
+]
 # Isaac Sim GPU-native backend (NVIDIA Isaac Sim / Omniverse). Selected via
 # create_simulation("isaac") / Robot(..., backend="isaac"); the vendored
 # in-tree backend lives at strands_robots.simulation.isaac (parent epic #1144).
