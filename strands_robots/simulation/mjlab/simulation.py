@@ -360,7 +360,6 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
 
     def _build(self) -> None:
         """Compile the scene + simulation from the collected entity specs."""
-        import torch
         from mjlab.scene import Scene, SceneCfg
         from mjlab.sim import MujocoCfg, Simulation, SimulationCfg
 
@@ -441,7 +440,6 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
             list(self._objects),
             self._build_seconds,
         )
-        del torch
 
     def _compile_with_plane(self, scene: Any) -> Any:
         """Recompile the scene spec with a ground plane geom on the worldbody."""
@@ -1116,12 +1114,6 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         finally:
             with self._lock:
                 self._teardown_built()
-
-    def __del__(self) -> None:  # pragma: no cover - GC timing
-        try:
-            self._teardown_built()
-        except Exception:
-            pass
 
 
 # ------------------------------------------------------------------ helpers
