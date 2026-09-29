@@ -23,6 +23,7 @@ import os
 import platform
 import re
 import sys
+import uuid
 import warnings
 from pathlib import Path
 
@@ -1067,6 +1068,116 @@ def check_mesh() -> str:
     return _warn(f"mesh: {summary}", note="; ".join(notes)) if notes else _pass(f"mesh: {summary}")
 
 
+def _certificate_cn(cert_path: Path) -> str | None:
+    """The subject CN of the PEM certificate at *cert_path*, or ``None`` when unreadable.
+
+    Uses ``cryptography`` when importable (it is part of ``[all]`` but not of
+    ``[mesh-iot]``); without it the doctor still reports the 403, just without
+    naming the CN.
+    """
+    try:
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+
+        cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+        attrs = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+        return str(attrs[0].value) if attrs else ""
+    except Exception:  # noqa: BLE001 - a diagnostic aid, never a failure of its own
+        return None
+
+
+def check_iot_direct() -> str:
+    """Whether this peer can reach itself over AWS IoT Core Direct Messaging.
+
+    Only meaningful with ``STRANDS_MESH_BACKEND=iot`` or ``bridge``; any other
+    backend is a SKIP. With one configured, the probe connects the IoT
+    transport exactly as ``Mesh.start`` would, sends ONE direct message to
+    its own client id with confirmation (so the broker waits for this very
+    process's PUBACK) and reports the round trip, or the exact reason the
+    broker gave: ``offline`` means the MQTT session did not come up,
+    ``forbidden`` means the policy grants no ``iot:SendDirectMessage`` for
+    this identity (a certificate issued before the CSR default has the CN
+    ``AWS IoT Certificate``, which the robot grant cannot match: re-run
+    ``provision_robot``), ``unavailable`` means no credential could sign the
+    HTTPS call. ``STRANDS_MESH_IOT_DIRECT=0`` is reported as a deliberate
+    SKIP, not a failure.
+    """
+    from strands_robots.mesh._backend_select import select_backend
+
+    backend = select_backend()
+    if backend not in ("iot", "bridge"):
+        return _skip(f"iot direct: STRANDS_MESH_BACKEND={backend} (no AWS IoT leg)")
+
+    from strands_robots.mesh.transport.iot_transport import (
+        DIRECT_AUTH_ENV_VAR,
+        DIRECT_ENV_VAR,
+        IotMqttTransport,
+        direct_messaging_enabled,
+    )
+
+    if not direct_messaging_enabled():
+        return _skip(f"iot direct: {DIRECT_ENV_VAR}=0 (commands go over publish/subscribe)")
+
+    try:
+        import awsiot  # noqa: F401
+    except ImportError:
+        return _fail("iot direct: awsiotsdk not installed", fix='uv pip install "strands-robots[mesh-iot]"')
+
+    transport = IotMqttTransport(connect_timeout=10.0)
+    thing = transport.thing_name
+    if not thing or not transport._endpoint:
+        return _fail(
+            "iot direct: STRANDS_IOT_THING_NAME and STRANDS_IOT_ENDPOINT are required",
+            fix="run provision_robot(<thing>) and export the lines it prints",
+        )
+    try:
+        if not transport.connect():
+            return _fail(
+                f"iot direct: MQTT session for {thing} did not open (see the log line above)",
+                fix="check STRANDS_IOT_CERT_DIR holds <thing>.cert.pem, <thing>.private.key, AmazonRootCA1.pem",
+            )
+        # The one topic a robot identity may address itself on: its own reply
+        # path, which the robot grant scopes to the certificate's CN and the
+        # robot's Receive grant covers. (Its ``cmd`` topic would need the
+        # OPERATOR grant to send.)
+        probe_turn = uuid.uuid4().hex
+        result = transport.send_direct(
+            thing,
+            f"strands/{thing}/response/{thing}/{probe_turn}",
+            {"responder_id": thing, "turn_id": probe_turn, "type": "doctor-probe"},
+            confirm=True,
+            timeout=5.0,
+        )
+    finally:
+        transport.close()
+
+    auth = os.environ.get(DIRECT_AUTH_ENV_VAR, "").strip() or "x509"
+    if result.delivered:
+        return _pass(f"iot direct: {thing} reached itself in {result.latency_ms:.0f} ms (confirmed, {auth})")
+    if result.reason == "forbidden":
+        cn = _certificate_cn(transport._cert_dir / f"{thing}.cert.pem")
+        if cn is not None and cn != thing:
+            return _fail(
+                f"iot direct: certificate CN is {cn!r}, the robot grant needs CN={thing!r}",
+                fix=f"re-run provision_robot({thing!r}) to issue a certificate from a CSR with that CN",
+            )
+        return _fail(
+            f"iot direct: {thing} may not send a direct message to its own reply topic ({result.detail or '403'})",
+            fix=(
+                f"a robot: re-run provision_robot({thing!r}) so the policy carries AllowDirectResponseToAnyOperator; "
+                "an operator identity is expected here (its grant is strands/*/cmd), run the doctor on the robot"
+            ),
+        )
+    if result.reason == "offline":
+        return _fail(f"iot direct: broker does not see {thing} connected ({result.detail or '404'})")
+    if result.reason == "unavailable":
+        return _fail(
+            f"iot direct: no credential for the HTTPS call ({result.detail})",
+            fix=f"{DIRECT_AUTH_ENV_VAR}=x509 needs the certificate files; sigv4 needs AWS credentials",
+        )
+    return _warn(f"iot direct: {result.reason} ({result.detail or 'no detail'})", note="transient; re-run")
+
+
 #: The doctor's table: one ``(label, probe)`` row per check, in print order.
 #: Probes are looked up by name at run time so a test (or an operator's
 #: ``python -c``) can replace one without rebuilding the table.
@@ -1085,6 +1196,7 @@ CHECKS: tuple[tuple[str, str], ...] = (
     ("HF Auth", "check_hf_auth"),
     ("Device Connect", "check_device_connect"),
     ("Mesh", "check_mesh"),
+    ("IoT Direct", "check_iot_direct"),
     ("Sim Test", "check_sim_smoke"),
 )
 
