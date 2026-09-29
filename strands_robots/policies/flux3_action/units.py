@@ -88,8 +88,8 @@ class UnitAdapter:
     """
 
     joint_units: str = "rad"
-    joint_signs: tuple[float, float, float, float, float] = SO101_SIM_JOINT_SIGNS
-    joint_offsets_deg: tuple[float, float, float, float, float] = SO101_SIM_JOINT_OFFSETS_DEG
+    joint_signs: tuple[float, ...] = SO101_SIM_JOINT_SIGNS
+    joint_offsets_deg: tuple[float, ...] = SO101_SIM_JOINT_OFFSETS_DEG
     gripper_range: tuple[float, float] = SO101_SIM_GRIPPER_RANGE_RAD
 
     def __post_init__(self) -> None:

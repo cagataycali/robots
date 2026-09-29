@@ -25,14 +25,13 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Sequence
 from typing import Any, ClassVar
 
 import numpy as np
 
 from strands_robots.policies._state_keys import observation_joint_keys
 from strands_robots.policies.base import Policy
-from strands_robots.utils import name_list_error, require_optional
+from strands_robots.utils import name_list_error, partial_construction_repr, require_optional
 
 from .units import (
     SO101_JOINT_LABELS,
@@ -189,7 +188,7 @@ class Flux3ActionPolicy(Policy):
         self.tick_ms: list[float] = []
         self.inference_ms: list[float] = []
 
-        self._torch = require_optional("torch", extra="lerobot", purpose="FLUX 3 Action inference (CUDA)")
+        self._torch: Any = require_optional("torch", extra="lerobot", purpose="FLUX 3 Action inference (CUDA)")
         require_optional(
             "flux_action",
             system_install=FLUX3_SYSTEM_INSTALL_HINT,
@@ -258,10 +257,6 @@ class Flux3ActionPolicy(Policy):
         """
         if error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys"):
             raise ValueError(error)
-        if isinstance(robot_state_keys, str | bytes) or not isinstance(robot_state_keys, Sequence):
-            raise TypeError(
-                f"flux3_action.set_robot_state_keys expects a list of joint names, got {type(robot_state_keys).__name__}"
-            )
         self.robot_state_keys = list(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:
@@ -378,7 +373,9 @@ class Flux3ActionPolicy(Policy):
         if not cuobjdump or not libs:
             return set()
         try:
-            out = subprocess.run([cuobjdump, "--list-elf", libs[0]], capture_output=True, text=True, timeout=30).stdout
+            out = subprocess.run(
+                [cuobjdump, "--list-elf", libs[0]], capture_output=True, text=True, errors="replace", timeout=30
+            ).stdout
         except (OSError, subprocess.SubprocessError):
             return set()
         return {divmod(int(n), 10) for n in re.findall(r"\bsm_(\d+)\b", out)}
@@ -447,7 +444,10 @@ class Flux3ActionPolicy(Policy):
         return lo, hi
 
     def __repr__(self) -> str:
-        return (
-            f"Flux3ActionPolicy(pretrained_name_or_path={self.pretrained_name_or_path!r}, mode={self.mode!r}, "
-            f"device={self.device!r}, joint_units={self.units.joint_units!r})"
-        )
+        try:
+            return (
+                f"Flux3ActionPolicy(pretrained_name_or_path={self.pretrained_name_or_path!r}, mode={self.mode!r}, "
+                f"device={self.device!r}, joint_units={self.units.joint_units!r})"
+            )
+        except AttributeError:
+            return partial_construction_repr(self)

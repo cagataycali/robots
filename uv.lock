@@ -4583,7 +4583,7 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'cosmos3-service'", specifier = ">=17.0" },
     { name = "websockets", marker = "extra == 'inference'", specifier = ">=17.0" },
 ]
-provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "groot-service", "inference", "kimodo", "lerobot", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "rl", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mujoco", "sim-newton", "smolvla", "ur", "voice", "wbc"]
+provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "flux3", "groot-service", "inference", "kimodo", "lerobot", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "rl", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mujoco", "sim-newton", "smolvla", "ur", "voice", "wbc"]
 
 [[package]]
 name = "sympy"
