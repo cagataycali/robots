@@ -199,7 +199,7 @@ rotates or lifts its first body.
 
 ## 03 Humanoid beyond velocity
 
-Results so far (rough done, get-up v1 done, get-up v2 training):
+Results (rough done, get-up v1 and v2 done, both negative; v3 training):
 
 **Rough terrain, 1500 iterations, 4096 envs, 2 h 39 min on Thor** (`results/g1_rough`, shared GPU). Training ended at
 mean reward 15.66 and mean episode length 926 of 1000 ticks under the terrain curriculum. Native mjlab play at the
@@ -224,7 +224,20 @@ tracking and gait rewards removed, a height bell (target 0.72 m, std 0.3) plus a
 0.525 m from second 1 to second 9, torso not upright, 0 of 4 stood up. The reason is arithmetic, not physics: at
 0.525 m the height bell still pays 66 percent, the standing bonus pays nothing until 0.62 m, so a stable crouch is
 a local optimum PPO has no gradient out of (F21). `--getup-reward v2` (std 0.15, so the crouch is worth 18 percent;
-standing bonus 5.0 from 0.57 m; upright weight 3.0) is the one retry, running as phase 9; its row lands here.
+standing bonus 5.0 from 0.57 m; upright weight 3.0) was the first retry.
+
+**Get-up v2, same budget, 44 min** (`results/g1_getup_v2`,
+[`assets/g1_getup_v2_eval_native.json`](assets/g1_getup_v2_eval_native.json)): mean reward -35 to 18.3, `upright`
+2.97 of 3.0, `height` 0.50, `standing` 0.0000 for all 1000 iterations, and the four play episodes are byte-for-byte
+the v1 trace: pelvis at 0.525 m from second 1 to 9, `upright_final` false, 0 of 4 stood up. Sharpening the height
+bell could not move it, and a mid-run export of `model_600.pt` (`results/g1_getup_v2/eval_native_ckpt600.json`)
+already showed the same trace, which pointed at the real mechanism: mjlab's stock `upright` term is bound to
+`torso_link` (`config/g1/env_cfgs.py`), while the `standing` gate and the eval's stood-up test read the root
+(pelvis) gravity. The G1's waist lets the torso stand vertical over a pelvis pitched past 20 degrees at 0.525 m, so
+the crouch collects the full upright weight plus a quarter of the height bell, and the AND-gated `standing` gives no
+gradient toward straightening the pelvis. `--getup-reward v3` adds a shaped `pelvis_upright` term (exp of the root's
+lateral gravity, std 0.4, weight 2.0) and is the last retry of this lane (phase 10, `results/g1_getup_v3`); if it
+lands before the lane closes its row goes here, otherwise it is the named next step.
 `eval-native` now records `z_per_second`, `base_z_max` and `upright_final` per episode so the next attempt is
 readable at a glance (the v1 trace also shows the pelvis reaching 0.85 to 1.25 m inside the first second after
 the drop, a launch that was not diagnosed).

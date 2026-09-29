@@ -1,0 +1,115 @@
+{
+ "task": "Strands-GetUp-Unitree-G1",
+ "onnx": "/home/cagatay/.tiny/mjlab-extreme-20260929/results/g1_getup_v2/g1_getup_v2.onnx",
+ "terrain": "generator",
+ "ticks": 500,
+ "hz": 50.0,
+ "episodes": {
+  "getup_supine_0": {
+   "command": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "survived_s": 10.0,
+   "fell": false,
+   "v_xy_err_mean": 0.0644,
+   "base_z_mean": 0.5419,
+   "base_z_max": 0.9593,
+   "upright_final": false,
+   "z_per_second": [
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.35
+   ],
+   "stood_up": false
+  },
+  "getup_supine_1": {
+   "command": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "survived_s": 10.0,
+   "fell": false,
+   "v_xy_err_mean": 0.0464,
+   "base_z_mean": 0.5379,
+   "base_z_max": 0.8853,
+   "upright_final": false,
+   "z_per_second": [
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.386
+   ],
+   "stood_up": false
+  },
+  "getup_supine_2": {
+   "command": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "survived_s": 10.0,
+   "fell": false,
+   "v_xy_err_mean": 0.0824,
+   "base_z_mean": 0.5508,
+   "base_z_max": 1.1034,
+   "upright_final": false,
+   "z_per_second": [
+    0.524,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.358
+   ],
+   "stood_up": false
+  },
+  "getup_supine_3": {
+   "command": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "survived_s": 10.0,
+   "fell": false,
+   "v_xy_err_mean": 0.0936,
+   "base_z_mean": 0.566,
+   "base_z_max": 1.298,
+   "upright_final": false,
+   "z_per_second": [
+    0.522,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.525,
+    0.358
+   ],
+   "stood_up": false
+  }
+ },
+ "survived_all": true,
+ "stood_up": 0
+}
