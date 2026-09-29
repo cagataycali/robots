@@ -60,6 +60,13 @@ class TestLazyResolution:
             assert name in strands_robots.__all__
 
 
+def test_version_is_the_installed_distribution_version():
+    from importlib.metadata import version
+
+    assert "__version__" in vars(strands_robots)
+    assert strands_robots.__version__ == version("strands-robots")
+
+
 class TestUnknownAttribute:
     """Unknown attributes raise AttributeError with the standard message."""
 
