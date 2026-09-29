@@ -39,8 +39,10 @@ The run is always headless (``--visualizer none``).
 
 from __future__ import annotations
 
+import difflib
 import json
 import logging
+import math
 import re
 import subprocess
 import time
@@ -81,9 +83,26 @@ _JOB_ID_RE = re.compile(r"^isaaclab-\d{8}-\d{6}-[0-9a-f]{12}\Z")
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _ITERATION_RE = re.compile(r"Learning iteration (\d+)/(\d+)")
-_REWARD_RE = re.compile(r"Mean reward: (-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)")
-_STEPS_PER_S_RE = re.compile(r"Steps per second: (\d+)")
-_TOTAL_STEPS_RE = re.compile(r"Total steps: (\d+)")
+# A logged number: rsl_rl prints ``nan`` / ``inf`` for a diverged run, and those
+# must be read, not skipped - skipping them made a dead run look healthy.
+_NUMBER = r"([-+]?(?:nan|inf|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?))"
+# ``_EOL`` ends a match at the end of its line, without ``$``'s match before a
+# trailing newline.
+_EOL = r"[ \t\r]*(?=\n|\Z)"
+_REWARD_RE = re.compile(r"Mean reward: " + _NUMBER + _EOL, re.I)
+# Whole-line counts, with or without thousands separators, so ``1,234,567``
+# reads as that number rather than as ``1``.
+_STEPS_PER_S_RE = re.compile(r"Steps per second: (\d[\d,]*)" + _EOL)
+_TOTAL_STEPS_RE = re.compile(r"Total steps: (\d[\d,]*)" + _EOL)
+# Isaac Lab's own per-task terms: ``Metrics/success_rate: 0.98``. These say
+# whether a task is solved when the reward is shaped by a penalty curriculum.
+_TASK_METRIC_RE = re.compile(
+    r"^\s*((?:Metrics|Curriculum|Episode_Termination)/[\w/.-]+): " + _NUMBER + _EOL, re.M | re.I
+)
+# The last line of a Python traceback: an unindented ``module.SomeError: ...``.
+_EXCEPTION_RE = re.compile(
+    r"^((?:[A-Za-z_][\w]*\.)*[A-Za-z_]\w*(?:Error|Exception|NotFound|Interrupt))(?::[ \t]?(.*))?" + _EOL, re.M
+)
 _LOG_DIR_RE = re.compile(r"Logging experiment in directory: (\S+)")
 _TRAINING_TIME_RE = re.compile(r"Training time: (\d+(?:\.\d+)?) seconds")
 _MODEL_RE = re.compile(r"^model_(\d+)\.pt\Z")
@@ -91,7 +110,29 @@ _MODEL_RE = re.compile(r"^model_(\d+)\.pt\Z")
 _JOB_FILE = "job.json"
 _LOG_FILE = "train.log"
 _TIMED_OUT_FILE = "timed_out"
+_STOPPED_FILE = "stopped"
+#: Written next to the checkpoints, so a run remembers how it was trained:
+#: which task, which physics preset, how many environments and which overrides.
+RUN_RECORD_FILE = "strands_run.json"
 _TAIL_LINES = 12
+
+#: How the end of a failed run is classified, with the next step for each.
+FAILURE_HINTS: dict[str, str] = {
+    "cuda_oom": "the GPU ran out of memory - lower extra['num_envs']",
+    "nan_observation": "the simulation produced NaN observations - try another physics preset or a lower learning_rate",
+    "diverged": "the mean reward became NaN or infinite - lower learning_rate or try another physics preset",
+    "unknown_task": "Isaac Lab has no such task id - check extra['task']",
+    "unknown_physics_preset": "the task has no such physics preset - check extra['physics']",
+    "timeout": "the run passed its timeout_s",
+    "stopped": "the run was stopped by request",
+    "killed": "the run was killed from outside",
+    "exception": "the run raised an exception",
+    "exit_status": "the run exited without reporting a training time",
+}
+
+# Iterations averaged at each end of the run for the ``learning`` verdict. One
+# iteration is noise; a penalty curriculum dips the reward for tens of them.
+_TREND_WINDOW = 10
 
 # Popen handles of runs this process launched, so a finished child is reaped
 # rather than left a zombie. A run launched by another process is judged by pid.
@@ -156,6 +197,16 @@ class IsaacLabTrainer(Trainer):
         if not resume_problems and spec.resume:
             problems.append(f"{ctx}: resuming a run is not supported yet - start a new run with resume=False")
         problems.extend(_extra_problems(spec.extra or {}, ctx))
+        task = (spec.extra or {}).get("task")
+        if isinstance(task, str) and _TASK_RE.match(task) and self._python:
+            known = runtime.registered_tasks(self._python)
+            if known and task not in known:
+                close = difflib.get_close_matches(task, sorted(known), n=3, cutoff=0.6)
+                hint = f"; did you mean {close}?" if close else ""
+                problems.append(
+                    f"{ctx}: extra['task'] {task!r} is not registered by the Isaac Lab install at {self._python} "
+                    f"({len(known)} tasks){hint}"
+                )
         return problems
 
     def build_command(self, spec: TrainSpec, job_id: str) -> list[str]:
@@ -208,10 +259,20 @@ class IsaacLabTrainer(Trainer):
         if problems:
             return TrainResult(status="error", job_id="", message="validation failed: " + "; ".join(problems))
         extra = spec.extra or {}
+        work_dir = Path(spec.output_dir).expanduser().resolve()
+        running = self._running_job_for(work_dir, str(extra["task"]))
+        if running is not None:
+            return TrainResult(
+                status="error",
+                job_id=running,
+                message=(
+                    f"{self.provider_name}: job {running} is already training {extra['task']} in {work_dir}; "
+                    f"poll it with action='status', stop it with action='stop', or use another output_dir"
+                ),
+            )
         job_id = f"isaaclab-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{uuid.uuid4().hex[:12]}"
         job_dir = self._jobs_dir / job_id
         job_dir.mkdir(parents=True, exist_ok=False)
-        work_dir = Path(spec.output_dir).expanduser().resolve()
         work_dir.mkdir(parents=True, exist_ok=True)
         cmd = self.build_command(spec, job_id)
         proc = runtime.launch(
@@ -229,6 +290,7 @@ class IsaacLabTrainer(Trainer):
             "deadline": started + float(timeout_s) if timeout_s is not None else None,
             "task": extra["task"],
             "max_iterations": spec.steps,
+            "run": run_record(spec),
         }
         (job_dir / _JOB_FILE).write_text(json.dumps(record, indent=1), encoding="utf-8")
         logger.info("isaaclab: launched %s (pid %d): %s", job_id, proc.pid, " ".join(cmd))
@@ -298,6 +360,7 @@ class IsaacLabTrainer(Trainer):
         model = latest_model(run_dir)
         metrics["latest_model"] = model
         tail = "\n".join(text.strip().splitlines()[-_TAIL_LINES:])
+        _write_run_record(run_dir, record)
 
         if alive:
             return TrainResult(
@@ -305,31 +368,40 @@ class IsaacLabTrainer(Trainer):
                 job_id=job_id,
                 checkpoint_dir=run_dir,
                 metrics=metrics,
-                message=f"iteration {metrics['latest_iteration']}/{record.get('max_iterations')}",
+                message=_running_line(metrics, record),
             )
+        at = f"iteration {metrics['latest_iteration']}" if metrics["latest_iteration"] is not None else "startup"
+        if (job_dir / _STOPPED_FILE).exists():
+            metrics["failure"] = "stopped"
+            return TrainResult(
+                status="stopped",
+                job_id=job_id,
+                checkpoint_dir=run_dir,
+                metrics=metrics,
+                message=f"{self.provider_name}: stopped by request at {at}; latest checkpoint {model}",
+            )
+        failure, error_line = classify_failure(text, metrics)
         if (job_dir / _TIMED_OUT_FILE).exists():
+            failure, summary = "timeout", f"stopped at {at} after its timeout_s"
+        elif exit_code is None:
+            failure, summary = failure or "killed", f"the run ended at {at} without an exit status (killed)"
+        else:
+            summary = f"Isaac Lab exited {exit_code} at {at}"
+            if failure is None and (exit_code != 0 or metrics["training_time_s"] is None):
+                failure = "exit_status"
+        if failure is not None:
+            metrics["failure"] = failure
+            metrics["error"] = error_line or summary
+            cause = f": {error_line}" if error_line else ""
             return TrainResult(
                 status="error",
                 job_id=job_id,
                 checkpoint_dir=run_dir,
                 metrics=metrics,
-                message=f"{self.provider_name}: stopped after its timeout_s; log tail:\n{tail}",
-            )
-        if exit_code is None:
-            return TrainResult(
-                status="error",
-                job_id=job_id,
-                checkpoint_dir=run_dir,
-                metrics=metrics,
-                message=f"{self.provider_name}: the run ended without an exit status (killed); log tail:\n{tail}",
-            )
-        if exit_code != 0 or metrics["training_time_s"] is None:
-            return TrainResult(
-                status="error",
-                job_id=job_id,
-                checkpoint_dir=run_dir,
-                metrics=metrics,
-                message=f"{self.provider_name}: Isaac Lab exited {exit_code}; log tail:\n{tail}",
+                message=(
+                    f"{self.provider_name}: {summary}{cause} ({FAILURE_HINTS[failure]}); "
+                    f"latest checkpoint {model}; log tail:\n{tail}"
+                ),
             )
         return TrainResult(
             status="success",
@@ -339,9 +411,51 @@ class IsaacLabTrainer(Trainer):
             message=(
                 f"finished {metrics['latest_iteration'] + 1 if metrics['latest_iteration'] is not None else 0}"
                 f"/{record.get('max_iterations')} iterations in {metrics['training_time_s']} s; "
-                f"latest checkpoint {model}"
+                f"{_verdict_line(metrics)}; latest checkpoint {model}"
             ),
         )
+
+    def stop(self, job_id: str) -> TrainResult:
+        """Stop a running job and return its verdict, ``stopped``.
+
+        Marks the job as stopped by request, then stops its process group
+        (SIGTERM, then SIGKILL). Checkpoints already written stay usable. A job
+        that has already ended is reported as it ended, unchanged.
+        """
+        if not isinstance(job_id, str) or not _JOB_ID_RE.match(job_id):
+            return self.status(job_id)
+        job_dir = self._jobs_dir / job_id
+        try:
+            record = json.loads((job_dir / _JOB_FILE).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return self.status(job_id)
+        pid = int(record["pid"])
+        if not runtime.process_alive(pid):
+            result = self.status(job_id)
+            result.message = f"{self.provider_name}: job {job_id} had already ended - {result.message}"
+            return result
+        (job_dir / _STOPPED_FILE).write_text(str(time.time()), encoding="utf-8")
+        logger.info("isaaclab: stopping %s (pid %d) by request", job_id, pid)
+        runtime.terminate(pid)
+        child = _CHILDREN.pop(job_id, None)
+        if child is not None:
+            child.poll()
+        return self.status(job_id)
+
+    def _running_job_for(self, work_dir: Path, task: str) -> str | None:
+        """Return the id of a live job already training *task* in *work_dir*."""
+        if not self._jobs_dir.is_dir():
+            return None
+        for job_file in self._jobs_dir.glob(f"isaaclab-*/{_JOB_FILE}"):
+            try:
+                record = json.loads(job_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if record.get("cwd") != str(work_dir) or record.get("task") != task:
+                continue
+            if runtime.process_alive(int(record.get("pid", 0))) and not (job_file.parent / _STOPPED_FILE).exists():
+                return str(record.get("job_id"))
+        return None
 
     def latest_checkpoint(self, output_dir: str) -> str | None:
         """Return the newest rsl_rl run directory under ``output_dir`` holding a ``model_*.pt``."""
@@ -416,28 +530,156 @@ def parse_rsl_rl_log(text: str) -> dict[str, Any]:
         text: The log, ANSI escapes removed.
 
     Returns:
-        ``latest_iteration`` (0-based, ``None`` before the first),
+        ``latest_iteration`` (``None`` before the first),
         ``first_reward`` / ``latest_reward`` / ``best_reward`` (mean episode
-        reward), ``steps_per_s`` and ``total_steps`` of the latest iteration,
-        ``training_time_s`` once rsl_rl reports it, and ``learning`` - whether
-        the latest mean reward is above the first after at least two
-        iterations.
+        reward; ``best`` over finite values) and ``best_iteration``,
+        ``steps_per_s`` and ``total_steps`` of the latest iteration,
+        ``training_time_s`` once rsl_rl reports it, ``diverged`` with
+        ``diverged_at_iteration`` once a reward is NaN or infinite,
+        ``reward_trend`` (mean of the last ten finite rewards minus the mean of
+        the first ten, fewer on a short run) and ``learning`` - whether that
+        trend is positive after at least two iterations. ``task_metrics`` holds
+        every ``Metrics/``, ``Curriculum/`` and ``Episode_Termination/`` term as
+        ``{"first", "latest", "min", "max"}``, and ``success_rate`` repeats
+        ``Metrics/success_rate`` when the task reports one: on a task whose
+        penalties ramp up, it is the number that says the task is solved.
     """
-    iterations = [int(m.group(1)) for m in _ITERATION_RE.finditer(text)]
-    rewards = [float(m) for m in _REWARD_RE.findall(text)]
-    steps_per_s = [int(m) for m in _STEPS_PER_S_RE.findall(text)]
-    total_steps = [int(m) for m in _TOTAL_STEPS_RE.findall(text)]
+    starts = [(m.start(), int(m.group(1))) for m in _ITERATION_RE.finditer(text)]
+    blocks = [
+        (it, text[pos : starts[k + 1][0] if k + 1 < len(starts) else len(text)]) for k, (pos, it) in enumerate(starts)
+    ]
+    rewards: list[tuple[int, float]] = []
+    task_metrics: dict[str, dict[str, float]] = {}
+    for it, block in blocks:
+        reward = _REWARD_RE.search(block)
+        if reward:
+            rewards.append((it, float(reward.group(1))))
+        for name, raw in _TASK_METRIC_RE.findall(block):
+            value = float(raw)
+            entry = task_metrics.setdefault(name, {"first": value, "latest": value, "min": value, "max": value})
+            entry["latest"] = value
+            if math.isfinite(value):
+                entry["min"] = value if not math.isfinite(entry["min"]) else min(entry["min"], value)
+                entry["max"] = value if not math.isfinite(entry["max"]) else max(entry["max"], value)
+    if not blocks:
+        rewards = [(0, float(m)) for m in _REWARD_RE.findall(text)]
+    finite = [(it, r) for it, r in rewards if math.isfinite(r)]
+    diverged_at = next((it for it, r in rewards if not math.isfinite(r)), None)
+    best = max(finite, key=lambda item: item[1]) if finite else None
+    window = max(1, min(_TREND_WINDOW, len(finite) // 2))
+    trend = (
+        sum(r for _, r in finite[-window:]) / window - sum(r for _, r in finite[:window]) / window
+        if len(finite) >= 2
+        else None
+    )
+    steps_per_s = [int(m.replace(",", "")) for m in _STEPS_PER_S_RE.findall(text)]
+    total_steps = [int(m.replace(",", "")) for m in _TOTAL_STEPS_RE.findall(text)]
     training_time = _TRAINING_TIME_RE.search(text)
+    success = task_metrics.get("Metrics/success_rate")
     return {
-        "latest_iteration": iterations[-1] if iterations else None,
-        "first_reward": rewards[0] if rewards else None,
-        "latest_reward": rewards[-1] if rewards else None,
-        "best_reward": max(rewards) if rewards else None,
+        "latest_iteration": starts[-1][1] if starts else None,
+        "first_reward": rewards[0][1] if rewards else None,
+        "latest_reward": rewards[-1][1] if rewards else None,
+        "best_reward": best[1] if best else None,
+        "best_iteration": best[0] if best and blocks else None,
+        "reward_trend": round(trend, 6) if trend is not None else None,
+        "diverged": diverged_at is not None,
+        "diverged_at_iteration": diverged_at if blocks else None,
         "steps_per_s": steps_per_s[-1] if steps_per_s else None,
         "total_steps": total_steps[-1] if total_steps else None,
         "training_time_s": float(training_time.group(1)) if training_time else None,
-        "learning": len(rewards) >= 2 and rewards[-1] > rewards[0],
+        "learning": diverged_at is None and trend is not None and trend > 0,
+        "task_metrics": task_metrics,
+        "success_rate": {"latest": success["latest"], "max": success["max"]} if success else None,
     }
+
+
+def classify_failure(text: str, metrics: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Name why a run failed from its log: a :data:`FAILURE_HINTS` key and the line that says so.
+
+    The last exception line of the log wins, so a traceback printed above a
+    tail of iteration metrics is still the one reported. ``(None, None)``
+    when the log names no failure.
+    """
+    exceptions = [m for m in _EXCEPTION_RE.finditer(text) if not m.group(0).startswith(("Traceback", "raise"))]
+    line = exceptions[-1].group(0).strip() if exceptions else None
+    if line and len(line) > 300:
+        line = line[:297] + "..."
+    lowered = (line or "").lower()
+    if "outofmemory" in lowered or "out of memory" in lowered:
+        return "cuda_oom", line
+    if "nan values" in lowered or "contains nan" in lowered:
+        return "nan_observation", line
+    if "namenotfound" in lowered or ("environment" in lowered and "doesn't exist" in lowered):
+        return "unknown_task", line
+    if "unknown preset" in lowered:
+        return "unknown_physics_preset", line
+    if metrics.get("diverged"):
+        at = metrics.get("diverged_at_iteration")
+        return "diverged", line or f"the mean reward became NaN at iteration {at}"
+    if line:
+        return "exception", line
+    return None, None
+
+
+def run_record(spec: TrainSpec) -> dict[str, Any]:
+    """Return how *spec* trains: task, physics preset, environments, seed and overrides.
+
+    Written as :data:`RUN_RECORD_FILE` next to the checkpoints, so replaying a
+    checkpoint can use the simulator it was trained in - a policy trained on
+    PhysX and replayed on the task's default Newton preset falls within a second.
+    """
+    extra = spec.extra or {}
+    overrides = []
+    if "physics" in extra:
+        overrides.append(f"physics={extra['physics']}")
+    if spec.learning_rate is not None:
+        overrides.append(f"agent.algorithm.learning_rate={spec.learning_rate!r}")
+    return {
+        "task": extra.get("task"),
+        "physics": extra.get("physics"),
+        "num_envs": extra.get("num_envs"),
+        "seed": spec.seed,
+        "iterations": spec.steps,
+        "rl_library": extra.get("rl_library", "rsl_rl"),
+        "overrides": overrides,
+    }
+
+
+def _write_run_record(run_dir: str | None, record: dict[str, Any]) -> None:
+    """Put the job's run record beside its checkpoints once the run directory exists."""
+    if not run_dir or "run" not in record:
+        return
+    path = Path(run_dir) / RUN_RECORD_FILE
+    if path.exists():
+        return
+    try:
+        path.write_text(json.dumps({"job_id": record.get("job_id"), **record["run"]}, indent=1), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("isaaclab: could not write %s: %s", path, exc)
+
+
+def _running_line(metrics: dict[str, Any], record: dict[str, Any]) -> str:
+    """``iteration N/M``, plus the task's success rate and any divergence seen so far."""
+    line = f"iteration {metrics['latest_iteration']}/{record.get('max_iterations')}"
+    if metrics.get("success_rate"):
+        line += f"; success_rate {metrics['success_rate']['latest']:.3f}"
+    if metrics.get("diverged"):
+        line += f"; the mean reward became NaN at iteration {metrics['diverged_at_iteration']}"
+    return line
+
+
+def _verdict_line(metrics: dict[str, Any]) -> str:
+    """One line on whether the run learned, preferring the task's success rate over reward."""
+    success = metrics.get("success_rate")
+    if success:
+        return f"success_rate {success['latest']:.3f} (best {success['max']:.3f})"
+    if metrics.get("best_reward") is None:
+        return "no reward logged"
+    return (
+        f"mean reward {metrics['first_reward']} -> {metrics['latest_reward']} "
+        f"(best {metrics['best_reward']} at iteration {metrics['best_iteration']})"
+    )
 
 
 def find_run_dir(text: str, job_id: str) -> str | None:

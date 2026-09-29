@@ -17,8 +17,8 @@ train_policy(action="train", provider="isaaclab", steps=50, output_dir="runs",
              extra={"task": "Isaac-Cartpole", "num_envs": 4096, "physics": "newton_mjwarp", "timeout_s": 600})
 ```
 
-It returns a `job_id`; `action="status"` reports `latest_iteration`, rewards, `learning`, `steps_per_s` and `checkpoint_dir`. `steps` counts PPO iterations; no dataset is needed. `extra['wait']` blocks until the run ends; `extra['rl_library']` accepts only `rsl_rl`.
+It returns a `job_id`; `action="status"` reports rewards, `success_rate`, `learning`, a failure's cause and `checkpoint_dir`; `action="stop"` ends a run. `steps` counts PPO iterations; no dataset is needed. `extra['wait']` blocks until the run ends.
 
 Measured on one L40S with 4096 envs: Cartpole 291k env steps/s, G1 flat locomotion 110k.
 
-Caveats: Isaac Lab 3.0 is an RC; first RTX use compiles shaders (~4 min); PhysX and Newton results differ; `create_policy("rl")` cannot load rsl_rl checkpoints yet.
+Caveats: Isaac Lab 3.0 is an RC; first RTX use compiles shaders (~4 min); PhysX and Newton results differ (`strands_run.json` beside the checkpoints names the preset); `create_policy("rl")` cannot load rsl_rl checkpoints yet.

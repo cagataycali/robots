@@ -27,7 +27,7 @@ from strands_robots.training import TrainSpec, create_trainer, list_trainers
 logger = logging.getLogger(__name__)
 
 #: The actions ``train_policy`` answers, in the order its docstring lists them.
-_ACTIONS: tuple[str, ...] = ("train", "validate", "status", "export", "list")
+_ACTIONS: tuple[str, ...] = ("train", "validate", "status", "stop", "export", "list")
 
 
 def _ok(text: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -118,6 +118,11 @@ def train_policy(
             - ``"train"``    : validate + launch training (default).
             - ``"validate"`` : pure preflight only; report problems, launch nothing.
             - ``"status"``   : "RUNNING != learning" verdict for a job (needs ``job_id``).
+                               Prefer ``metrics['success_rate']`` / ``task_metrics``
+                               over reward when a task reports them; a failed
+                               run names its cause in ``metrics['failure']``.
+            - ``"stop"``     : stop a running job, keeping its checkpoints
+                               (needs ``job_id``; ``isaaclab``).
             - ``"export"``   : produce a loadable artifact from a checkpoint
                                (needs ``output_dir``; uses the run's last checkpoint).
             - ``"list"``     : list available training providers.
@@ -200,7 +205,7 @@ def train_policy(
             ``num_envs``, ``physics`` (``"newton_mjwarp"`` / ``"isaacsim_physx"``),
             ``wait`` (block until the run ends), ``timeout_s``; ``steps`` is the
             PPO iteration count and ``status`` polls the returned ``job_id``.
-        job_id: Job identifier for ``action="status"``.
+        job_id: Job identifier for ``action="status"`` and ``action="stop"``.
 
     Returns:
         Canonical Strands result ``{status, content:[...]}`` (no sibling keys).
@@ -242,11 +247,11 @@ def train_policy(
         if action == "list":
             return _ok("Available training providers:\n  " + "\n  ".join(list_trainers()))
 
-        if action == "status":
+        if action in ("status", "stop"):
             if not job_id:
-                return _err("action='status' requires job_id")
+                return _err(f"action='{action}' requires job_id")
             trainer = create_trainer(provider)
-            res = trainer.status(job_id)
+            res = trainer.status(job_id) if action == "status" else trainer.stop(job_id)
             return {
                 "status": "success" if res.status != "error" else "error",
                 "content": [

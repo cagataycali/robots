@@ -152,7 +152,8 @@ class TrainResult:
     """Outcome of a training lifecycle call.
 
     Attributes:
-        status: ``"success"`` | ``"running"`` | ``"error"``.
+        status: ``"success"`` | ``"running"`` | ``"error"`` | ``"stopped"``
+            (ended by :meth:`Trainer.stop`; its checkpoints are kept).
         job_id: Stable id for this run (used by :meth:`Trainer.status`).
         checkpoint_dir: Where checkpoints are written (``None`` before any
             save / on validation failure).
@@ -551,6 +552,22 @@ class Trainer(ABC):
             message=(
                 f"{self.provider_name}: status() polling is not supported - "
                 "train() runs synchronously and already returns the metrics verdict."
+            ),
+        )
+
+    def stop(self, job_id: str) -> TrainResult:
+        """Stop a job still in flight and return its verdict, ``stopped``.
+
+        Only a *transport* trainer has a run to stop - one :meth:`train`
+        handed back as ``running``. The default returns an informative
+        ``error``, since a local trainer's run ends with the call that made it.
+        """
+        return TrainResult(
+            status="error",
+            job_id=job_id,
+            message=(
+                f"{self.provider_name}: stop() is not supported - train() runs synchronously, so there is "
+                "no run in flight to stop."
             ),
         )
 
