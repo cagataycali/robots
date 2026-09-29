@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from .dataset import read_manifest
 from .primitives import SO101_PRIMITIVES
 
 TASK_NAMES = ("reach", "pick")
@@ -63,7 +64,7 @@ def lerobot_features() -> dict[str, dict[str, Any]]:
 def iter_shards(roots: list[Path]):
     """Yield ``(root, manifest_row, path)`` for every episode shard, sorted by name."""
     for root in roots:
-        rows = [json.loads(line) for line in (root / "manifest.jsonl").read_text(encoding="utf-8").splitlines() if line]
+        rows = read_manifest(root)
         for row in sorted(rows, key=lambda r: r["name"]):
             yield root, row, root / "episodes" / f"{row['name']}.npz"
 

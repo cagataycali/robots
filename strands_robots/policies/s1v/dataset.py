@@ -259,7 +259,12 @@ def read_manifest(root: Path) -> list[dict[str, Any]]:
     path = Path(root) / "manifest.jsonl"
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    rows: dict[str, dict[str, Any]] = {}
+    for line in path.read_text().splitlines():
+        if line.strip():
+            row = json.loads(line)
+            rows[row["name"]] = row  # last writer wins: two generators on one root append twice
+    return list(rows.values())
 
 
 def main(argv: list[str] | None = None) -> None:
