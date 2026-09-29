@@ -7887,6 +7887,17 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         # than silently on the first render attempt.
         camera.initialize()
 
+        # Near plane. A freshly-defined UsdGeom.Camera carries USD's schema
+        # default ``clippingRange=(1, 1000000)`` - in STAGE units, and this
+        # stage is metersPerUnit=1 - so everything closer than ONE METRE to the
+        # camera was culled: a tabletop arm 0.8 m from the lens rendered as an
+        # empty floor. 1 cm matches the Kit viewport camera (/OmniverseKit_Persp)
+        # and sits below MuJoCo's default znear (0.01 x extent).
+        try:
+            camera.set_clipping_range(near_distance=0.01, far_distance=1.0e6)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("add_camera %r: could not set the near clipping plane (%s)", name, exc)
+
         # ``fov_deg`` is the VERTICAL field of view (fovy) -- the one meaning
         # shared with the MuJoCo and Newton backends and with the
         # :meth:`get_camera_params` intrinsics fallback. Isaac has a single
