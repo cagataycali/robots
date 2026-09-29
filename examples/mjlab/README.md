@@ -99,6 +99,8 @@ Two things the sweep needed before it was fair:
 Rows landed so far (the sweep is still running; the table is regenerated from
 `results/every_arm/*/result.json` when it finishes):
 
+
+=== every_arm
 | arm | DoF | end effector | reach m | at_goal (last 10 its) | train min | env-steps/s | classic MuJoCo 20 targets | median err mm | status |
 |---|---|---|---|---|---|---|---|---|---|
 | arx_l5 | 7 | body link7 | 0.81 | 0.59 | 8.1 | 10,271 | 15/20 | 45 | done |
@@ -110,8 +112,19 @@ Rows landed so far (the sweep is still running; the table is regenerated from
 | kuka_iiwa | 7 | site attachment_site | 1.30 | 0.82 | 6.9 | 12,702 | 20/20 | 17 | done |
 | openarm | 8 | body openarm_right_finger | 0.61 | 0.00 | 12.7 | 6,888 |  |  | KeyError: 'openarm_joint1' |
 | panda | 7 | body left_finger | 1.23 | 0.26 | 8.7 | 9,661 | 7/20 | 116 | done |
+| piper | 7 | body link7 | 0.88 | 0.57 | 7.8 | 10,895 | 14/20 | 29 | done |
+| sawyer | 7 | site attachment_site | 1.31 | 0.28 | 7.1 | 12,011 | 9/20 | 134 | done |
+| so100 | 6 | body Moving_Jaw | 0.48 | 0.47 | 7.3 | 11,204 | 14/20 | 14 | done |
+| so101 | 6 | site gripper | 0.57 | 0.79 | 6.6 | 12,882 | 17/20 | 7 | done |
+| ur10e | 6 | site attachment_site | 1.53 | 0.09 | 6.4 | 13,415 | 0/20 | 1426 | done |
+| ur5e | 6 | site attachment_site | 1.13 | 0.10 | 6.0 | 14,248 | 0/20 | 990 | done |
+| vx300s | 7 | site pinch | 0.90 |  |  |  |  |  | ValueError: The observation group 'actor' returned by the en |
+| wx250s | 7 | body wx250s/left_finger_link | 0.75 |  |  |  |  |  | ValueError: Not all regular expressions are matched! Please  |
+| xarm7 | 7 | site link_tcp | 1.19 | 0.46 | 7.1 | 10,858 | 11/20 | 79 | done |
+| yam | 7 | site tcp_site | 0.73 | 0.25 | 6.2 | 13,633 | 6/20 | 89 | done |
+| z1 | 7 | body gripperMover | 0.90 | 0.51 | 5.6 | 15,168 |  |  | KeyError: 'jointGripper' |
 
-8 arms trained; 5 reach at least 10/20 on classic MuJoCo with the one recipe.
+16 arms trained; 9 reach at least 10/20 on classic MuJoCo with the one recipe.
 
 Reading the table: a 2-DoF arm and the 7-DoF iiwa both solve the task in 200
 iterations; the 1.2 m Franka-class arms (fr3, fr3_v2, panda) do not, and their
@@ -121,7 +134,25 @@ tells you which arms need more than one recipe. dynamixel_2r first scored 9/20
 because its MJCF lists actuators R2, R1 while joint order is R1, R2; the
 example's forward kinematics now index by joint name (FINDINGS F9). openarm
 fails because the registry's `model_xml` is the single arm while `scene_xml` is
-the bimanual scene (F13).
+the bimanual scene (F13). z1 trains (at_goal 0.51) but the classic replay dies on
+`KeyError: 'jointGripper'`, the same actuated-set mismatch as openarm's second half
+(F13); vx300s returns NaN observations on its first mjlab step (F19) and wx250s's
+heuristic finger body does not resolve in mjlab's body table (F20).
+
+**The rest pose was the recipe's biggest variable.** Every row above rested and reset
+around qpos 0 because the example passed `keyframe=None`. A 200-reset probe in the
+recipe's +-0.3 rad band (`scratch/zero_pose_probe.json` in the lane directory) shows why
+ur5e and ur10e sit at 0/20: qpos 0 is the UR arm lying flat 6 cm above the floor with
+the tool 0.8-1.2 m out, so half of all resets start with the tool below the floor and
+the actor needs 6 x the action scale just to reach the `home` keyframe. The contact-at-
+qpos-0 fraction ranks the table: kinova 100 %, panda 90 %, fr3 65 %, z1 58 %, piper
+45 % against 0 % for koch, so101, iiwa and dynamixel_2r, the arms that score 17-20/20.
+`--pose home` (now the default when the MJCF has a keyframe) re-runs the 12 affected arms
+at the same budget; the first two rows are in: ur10e `at_goal` 0.09 -> 0.70 and ur5e
+0.10 -> 0.75 in training, while the classic replay stays at 0/20 and 2/20 with the tool
+ending 0.9-1.9 m from the target. The classic plant does start in `home` (checked), so
+the remaining gap is between the exported actor and the classic UR plant, the F9 shape
+again; the native mjlab replay that separates the two is the next step (F16).
 
 ## 03 Humanoid beyond velocity
 
