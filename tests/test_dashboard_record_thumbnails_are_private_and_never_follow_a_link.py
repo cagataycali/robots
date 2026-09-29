@@ -160,7 +160,7 @@ class TestTheMintedRootIsRemovedAtShutdown:
         configured.close_thumbs()
         assert kept.is_dir()
 
-    def test_the_app_removes_it_when_its_lifespan_ends(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_the_app_removes_it_when_its_lifespan_ends(self) -> None:
         from strands_robots.dashboard.server import create_app
 
         app = create_app()
