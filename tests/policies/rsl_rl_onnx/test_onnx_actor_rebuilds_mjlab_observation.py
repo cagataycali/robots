@@ -11,11 +11,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-onnx = pytest.importorskip("onnx")
-pytest.importorskip("onnxruntime")
-
-from tests.policies.rsl_rl_onnx.actor_fixture import JOINTS  # noqa: E402
+from tests.policies.rsl_rl_onnx.actor_fixture import JOINTS
 from tests.policies.rsl_rl_onnx.actor_fixture import write_actor as _write_actor
+
+pytest.importorskip("onnx")
+pytest.importorskip("onnxruntime")
 
 
 def test_locomotion_terms_and_frames(tmp_path):
