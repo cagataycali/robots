@@ -20,3 +20,7 @@ Aliases: `omx_follower`, `omx_robot`, `robotis_omx`.
 ## Hardware
 
 **lerobot.** `Robot("omx", mode="real")` builds lerobot's `omx_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
+
+## Policies that ran on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.

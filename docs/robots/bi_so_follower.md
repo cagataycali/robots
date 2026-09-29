@@ -24,3 +24,7 @@ Aliases: `bi_so100`, `bi_so101`.
 ## Hardware
 
 **lerobot.** `Robot("bi_so_follower", mode="real")` builds lerobot's `bi_so_follower` with `pip install 'strands-robots[lerobot]'`; there is no single `port=`; pass `left_arm_config=` and `right_arm_config=`, one `SOFollowerConfig` per arm with its own `port` and `cameras`. The default when `driver=` is not given.
+
+## Policies that ran on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.

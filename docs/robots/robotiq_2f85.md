@@ -27,4 +27,8 @@ Aliases: `robotiq`.
 
 **`RobotiqDriver`** (the default for this robot) speaks Modbus TCP: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#robotiqdriver).
 
+## Policies that ran on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
+
 Model: [google-deepmind/mujoco_menagerie/robotiq_2f85](https://github.com/google-deepmind/mujoco_menagerie/tree/c96a32d28fb5da84da38c1da4d749e7a13212855/robotiq_2f85), scene `scene.xml`.

@@ -19,4 +19,8 @@ robot = Robot("rby1")
 
 Aliases: `rby1a`, `rainbow_rby1`.
 
+## Policies that ran on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
+
 Model: [uynitsuj/rby1_description/models/rby1a/mujoco](https://github.com/uynitsuj/rby1_description/tree/e4c07203aa0a0d1b6b3b39da105cb00a77e2bc72/models/rby1a/mujoco), scene `model.xml`.

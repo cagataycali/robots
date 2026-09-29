@@ -10,7 +10,7 @@ template_class: sr-home
 <p class="sr-hero__title">Run a <em>VLA</em> from the Hub. On a real arm.</p>
 <p class="sr-hero__lead">Name a checkpoint on the Hugging Face Hub, SmolVLA, ACT, Pi0, GR00T, and one <code>run_policy</code> call drives the robot: the same call in MuJoCo and on the physical arm. Hand the robot to a Strands Agent and it runs the policy as a tool. A real arm does not move until an operator says yes.</p>
 <div class="sr-hero__actions">
-<a class="sr-btn sr-btn--primary" href="start/first-policy/">Run your first policy</a>
+<a class="sr-btn sr-btn--primary" href="start/">Start</a>
 <a class="sr-btn" href="robots/">Pick a robot</a>
 <span class="sr-install">pip install "strands-robots[sim-mujoco]"<button class="sr-copy" data-clipboard-text='pip install "strands-robots[sim-mujoco]"'>copy</button></span>
 </div>

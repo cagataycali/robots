@@ -15,6 +15,12 @@ Two jobs, both filesystem only (no ``strands_robots`` import):
    ``{{driver_facts}}`` (every native driver's facts, rendered once on the
    drivers page that each robot page links to).
 
+The "Policies that ran on this robot" section is read from
+``docs/hooks/data/checkpoints.json``: one row per checkpoint that was run on the
+robot first-hand, each with the script or public artifact that produced its
+numbers in ``source``. A robot without rows states that no checkpoint has been
+verified on it and links the recording page, so no page implies a policy ran.
+
 Hardware facts come from :data:`DRIVERS`, one entry per native driver class,
 each line re-read from the driver module it names, and from the registry's
 ``hardware`` block. The join of "which driver builds this robot" is
@@ -40,6 +46,7 @@ _DOCS = _REPO / "docs"
 _OUT = _DOCS / "robots"
 _MANIFEST = _DOCS / "assets" / "viewer" / "robots.json"
 _REGISTRY = _REPO / "strands_robots" / "registry" / "robots.json"
+_CHECKPOINTS = _HERE / "data" / "checkpoints.json"
 _CDN = "https://cdn.jsdelivr.net/gh/"
 
 _TOKEN_CARDS = re.compile(r"^\{\{\s*robot_cards(?::([a-z_]+))?\s*\}\}\s*$", re.M)
@@ -277,6 +284,36 @@ def manifest() -> dict[str, dict]:
     return json.loads(_MANIFEST.read_text(encoding="utf-8"))["robots"]
 
 
+@lru_cache(maxsize=1)
+def checkpoints() -> dict[str, list[dict[str, str]]]:
+    """Checkpoints run on each robot, from ``docs/hooks/data/checkpoints.json``."""
+    return json.loads(_CHECKPOINTS.read_text(encoding="utf-8"))["robots"]
+
+
+def _policies_section(name: str, cov) -> str:  # noqa: ANN001
+    """The section that says which checkpoints ran on this robot, or that none did."""
+    out: list[str] = ["## Policies that ran on this robot", ""]
+    rows = checkpoints().get(name, ())
+    if rows:
+        out += ["| Checkpoint | Provider | Where | What happened |", "|---|---|---|---|"]
+        for row in rows:
+            out.append(
+                f"| {row['checkpoint']} ({row['kind']}) | `{row['provider']}` | {row['where']} | {row['result']}. "
+                f"Source: {row['source']} |"
+            )
+        out.append("")
+    else:
+        out += [
+            "No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then "
+            "[train](../learn/training/lerobot.md) and run it with `run_policy`.",
+            "",
+        ]
+    if cov.policies:
+        providers = ", ".join(f"`{p}`" for p in cov.policies)
+        out += [f"Providers written for this body: {providers}; the rest are in the [policy matrix](../learn/policies/index.md).", ""]
+    return "\n".join(out)
+
+
 def _families_in_order() -> list[str]:
     seen: list[str] = []
     for spec in registry().values():
@@ -503,10 +540,7 @@ def robot_page(name: str) -> str:
         ]
     if cov.real or spec.get("hardware"):
         lines += [_hardware_section(name, spec, cov)]
-    matrix = "[policy matrix](../learn/policies/index.md)"
-    if cov.policies:
-        providers = ", ".join(f"`{p}`" for p in cov.policies)
-        lines += ["## Policies", "", f"Providers written for this body: {providers}; the rest are in the {matrix}.", ""]
+    lines += [_policies_section(name, cov)]
     model = _model_link(entry.get("base_url"))
     if model:
         lines += [f"Model: {model}, scene `{entry.get('scene')}`.", ""]

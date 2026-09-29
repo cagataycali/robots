@@ -20,3 +20,7 @@ Aliases: `lekiwi_remote`, `lekiwi_net`.
 ## Hardware
 
 **lerobot.** `Robot("lekiwi_client", mode="real")` builds lerobot's `lekiwi_client` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
+
+## Policies that ran on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.

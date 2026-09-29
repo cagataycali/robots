@@ -19,4 +19,8 @@ robot = Robot("unitree_a1")
 
 Aliases: `a1`.
 
+## Policies that ran on this robot
+
+No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
+
 Model: [unitreerobotics/unitree_mujoco/data/a1](https://github.com/unitreerobotics/unitree_mujoco/tree/f3300ff1bf0ab9efbea0162717353480d9b05d73/data/a1), scene `xml/a1.xml`.
