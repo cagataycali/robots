@@ -3574,14 +3574,15 @@ class Mesh(SensorLoopsMixin):
         # ``event.wait(timeout)`` made a 0.5 s budget last 1.5 s and the
         # default 30 s last 40 s.
         deadline = time.monotonic() + timeout
+        delivery: dict[str, Any] | None = None
         try:
             # Point-to-point first when the transport can address the target
             # (AWS IoT Core Direct Messaging); an offline target answers here
             # in one round trip instead of after the whole budget. Every other
             # outcome keeps the publish the Zenoh path has always done.
-            direct = self._send_cmd_direct(target, turn, msg, timeout)
+            direct, delivery = self._send_cmd_direct(target, turn, msg, timeout)
             if direct == "offline":
-                return {"status": "error", "error": "peer offline (iot 404)", "peer": target}
+                return {"status": "error", "error": "peer offline (iot 404)", "peer": target, "delivery": delivery}
             if direct != "delivered":
                 self.publish(f"strands/{target}/cmd", msg)
             # What is left of the budget after the delivery leg.
@@ -3592,9 +3593,18 @@ class Mesh(SensorLoopsMixin):
                 resps = self._responses.pop(turn, [])
                 self._pending.pop(turn, None)
                 self._expected_responders.pop(turn, None)
-        return resps[0] if resps else {"status": "timeout"}
+        out = resps[0] if resps else {"status": "timeout"}
+        if delivery is not None:
+            # Only when a direct transport was in play: a Zenoh envelope is
+            # byte for byte what it was. With it a caller can tell a robot
+            # that took the command and is slow (delivered, then timeout) from
+            # one that never got it (published, then timeout).
+            out = {**out, "delivery": delivery}
+        return out
 
-    def _send_cmd_direct(self, target: str, turn: str, msg: dict[str, Any], timeout: float) -> str:
+    def _send_cmd_direct(
+        self, target: str, turn: str, msg: dict[str, Any], timeout: float
+    ) -> tuple[str, dict[str, Any] | None]:
         """Try to deliver one :meth:`send` command to *target* alone.
 
         With a :class:`DirectSender` transport the command goes to *target*
@@ -3604,18 +3614,23 @@ class Mesh(SensorLoopsMixin):
         Correlation Data.
 
         Returns:
-            ``"delivered"`` when the target acknowledged it (the caller then
-            waits for the response as before); ``"offline"`` when the target
-            is not connected (the caller answers at once instead of spending
-            its budget, 30 s today against about 80 ms); ``"publish"`` in every
-            other case: no DirectSender, ``STRANDS_MESH_IOT_DIRECT=0``, a
-            target already known to be forbidden, or a ``forbidden`` (reported
-            once per peer), ``throttled``, ``unconfirmed``, ``error`` or
-            ``unavailable`` result for this call.
+            ``(verdict, delivery)``. The verdict is ``"delivered"`` when the
+            target acknowledged it (the caller then waits for the response as
+            before); ``"offline"`` when the target is not connected (the caller
+            answers at once instead of spending its budget, 30 s today against
+            about 80 ms); ``"publish"`` in every other case: no DirectSender,
+            ``STRANDS_MESH_IOT_DIRECT=0``, a target already known to be
+            forbidden, or a ``forbidden`` (reported once per peer),
+            ``throttled``, ``unconfirmed``, ``error`` or ``unavailable`` result
+            for this call. ``delivery`` is the verdict for the caller,
+            ``{"via": "direct"|"publish", "confirmed": bool, "latency_ms": float, "reason": str}``,
+            or ``None`` when no direct transport is in play (Zenoh).
         """
         direct = self._direct
-        if direct is None or self._direct_known_forbidden(direct, target):
-            return "publish"
+        if direct is None:
+            return "publish", None
+        if self._direct_known_forbidden(direct, target):
+            return "publish", {"via": "publish", "confirmed": False, "latency_ms": 0.0, "reason": "forbidden"}
         result = direct.send_direct(
             target,
             f"strands/{target}/cmd",
@@ -3627,20 +3642,22 @@ class Mesh(SensorLoopsMixin):
             response_key=f"strands/{self.peer_id}/response/{target}/{turn}",
             correlation=turn,
         )
+        latency = round(result.latency_ms, 1)
         if result.delivered:
-            return "delivered"
+            return "delivered", {"via": "direct", "confirmed": True, "latency_ms": latency, "reason": ""}
+        fallback = {"via": "publish", "confirmed": False, "latency_ms": latency, "reason": result.reason}
         if result.reason == "offline":
             if self._offline_verdict_is_final(target):
-                return "offline"
+                return "offline", {"via": "direct", "confirmed": False, "latency_ms": latency, "reason": "offline"}
             logger.debug(
                 "[mesh] %s: no IoT client %r is connected, but the peer may still be reachable over "
                 "publish/subscribe; publishing",
                 self.peer_id,
                 target,
             )
-            return "publish"
+            return "publish", fallback
         self._note_direct_fallback(target, result.reason, result.detail)
-        return "publish"
+        return "publish", fallback
 
     def _offline_verdict_is_final(self, target: str) -> bool:
         """Whether a 404 from the broker means *target* cannot be reached at all.

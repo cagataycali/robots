@@ -248,7 +248,8 @@ class TestSendGoesDirectFirst:
             elapsed = time.monotonic() - t0
         finally:
             _stop(m)
-        assert out == {"status": "timeout"}
+        assert out["status"] == "timeout"
+        assert out["delivery"]["via"] == "direct" and out["delivery"]["confirmed"] is True
         assert elapsed <= 1.0 + 0.1, elapsed
 
     def test_offline_target_answers_at_once_and_publishes_nothing(self, puts, monkeypatch):
@@ -257,7 +258,12 @@ class TestSendGoesDirectFirst:
         m = _start(t)
         try:
             out = m.send("so101", {"action": "status"}, timeout=30.0)
-            assert out == {"status": "error", "error": "peer offline (iot 404)", "peer": "so101"}
+            assert {k: v for k, v in out.items() if k != "delivery"} == {
+                "status": "error",
+                "error": "peer offline (iot 404)",
+                "peer": "so101",
+            }
+            assert out["delivery"] == {"via": "direct", "confirmed": False, "latency_ms": 1.0, "reason": "offline"}
             assert m._pending == {} and m._expected_responders == {} and m._responses == {}
         finally:
             _stop(m)
@@ -272,7 +278,8 @@ class TestSendGoesDirectFirst:
             out = m.send("so101", {"action": "status"}, timeout=0.05)
         finally:
             _stop(m)
-        assert out == {"status": "timeout"}
+        assert out["status"] == "timeout"
+        assert out["delivery"]["via"] == "publish"
         assert len([k for k, _ in puts if k == "strands/so101/cmd"]) == 1
 
     def test_a_404_for_a_peer_that_declared_that_client_id_is_final_even_while_presence_lingers(
@@ -300,7 +307,8 @@ class TestSendGoesDirectFirst:
             out = m.send("so101", {"action": "status"}, timeout=0.05)
         finally:
             _stop(m)
-        assert out == {"status": "timeout"}
+        assert out["status"] == "timeout"
+        assert out["delivery"]["via"] == "publish"
         assert len([k for k, _ in puts if k == "strands/so101/cmd"]) == 1
 
     def test_a_404_with_no_factory_backend_publishes_instead(self, puts):
@@ -311,7 +319,8 @@ class TestSendGoesDirectFirst:
             out = m.send("so101", {"action": "status"}, timeout=0.05)
         finally:
             _stop(m)
-        assert out == {"status": "timeout"}
+        assert out["status"] == "timeout"
+        assert out["delivery"]["via"] == "publish"
         assert len([k for k, _ in puts if k == "strands/so101/cmd"]) == 1
 
     @pytest.mark.parametrize("reason", ["throttled", "unconfirmed", "error", "unavailable", "too_large"])
@@ -322,7 +331,8 @@ class TestSendGoesDirectFirst:
             out = m.send("so101", {"action": "status"}, timeout=0.05)
         finally:
             _stop(m)
-        assert out == {"status": "timeout"}
+        assert out["status"] == "timeout"
+        assert out["delivery"] == {"via": "publish", "confirmed": False, "latency_ms": 1.0, "reason": reason}
         cmd_puts = [(k, d) for k, d in puts if k == "strands/so101/cmd"]
         assert len(cmd_puts) == 1
         assert cmd_puts[0][1]["command"] == {"action": "status"}
@@ -583,6 +593,54 @@ class TestResponseTopicBindsTheResponder:
         assert mesh_core._responder_segment("strands/op/response/" + "d" * 32, "op") is None
         assert mesh_core._responder_segment("strands/other/response/so101/" + "d" * 32, "op") is None
         assert mesh_core._responder_segment("strands/op/cmd", "op") is None
+
+
+class TestDeliveryVerdict:
+    """``send`` tells the caller how the command travelled, only when a direct transport is in play."""
+
+    def test_a_delivered_command_with_a_reply_carries_the_verdict(self, puts):
+        t = _DirectTransport([_ok()])
+        m = _start(t)
+        try:
+            holder: dict[str, str] = {}
+            th = _answer_later(m, holder, t)
+            out = m.send("so101", {"action": "status"}, timeout=5.0)
+            th.join(2)
+        finally:
+            _stop(m)
+        assert out["type"] == "result"
+        assert out["delivery"] == {"via": "direct", "confirmed": True, "latency_ms": 1.0, "reason": ""}
+
+    def test_a_peer_memoised_as_forbidden_reports_publish_with_the_reason(self, puts):
+        t = _DirectTransport()
+        t.forbidden.add("so101")
+        m = _start(t)
+        try:
+            out = m.send("so101", {"action": "status"}, timeout=0.05)
+        finally:
+            _stop(m)
+        assert out["delivery"] == {"via": "publish", "confirmed": False, "latency_ms": 0.0, "reason": "forbidden"}
+
+    def test_a_zenoh_envelope_has_no_delivery_field(self, puts):
+        sess = MagicMock(spec=["put", "declare_subscriber", "is_alive", "close"])
+        m = _start(sess)
+        try:
+            out = m.send("so101", {"action": "status"}, timeout=0.05)
+        finally:
+            _stop(m)
+        assert out == {"status": "timeout"}
+
+    def test_health_carries_the_direct_counters(self, puts):
+        t = _DirectTransport()
+        t.direct_stats = {"sent": 3, "delivered": 2, "failed": 1}  # type: ignore[attr-defined]
+        t.unmatched_inbound = 4  # type: ignore[attr-defined]
+        m = _start(t)
+        try:
+            health = m._read_health()
+        finally:
+            _stop(m)
+        assert health is not None
+        assert health["direct"] == {"sent": 3, "delivered": 2, "failed": 1, "unmatched_inbound": 4}
 
 
 class TestZenohIsUntouched:

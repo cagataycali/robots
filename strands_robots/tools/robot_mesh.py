@@ -1679,6 +1679,12 @@ def robot_mesh(
         except Exception as exc:  # noqa: BLE001
             _audit_tool_action(action, target, False, f"dispatch error: {type(exc).__name__}: {exc}")
             return _err(f"[send -> {target}] dispatch error: {type(exc).__name__}: {exc}")
+        if isinstance(result, dict) and result.get("status") == "error":
+            # ``send``'s own verdict, not the peer's answer: nothing was
+            # executed. Wrapping it in a success reads to an agent as a robot
+            # that did the thing.
+            _audit_tool_action(action, target, False, str(result.get("error", "error"))[:200])
+            return _err(f"[send -> {target}] {json.dumps(result, default=str)[:600]}")
         _audit_tool_action(action, target, True, f"action={cmd.get('action')}")
         return _ok(f"[send -> {target}] {json.dumps(result, default=str)[:600]}")
 
