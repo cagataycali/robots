@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import agent_motion  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
+from tests._dashboard_bootstrap import configure_bootstrap  # noqa: E402
 
 OWN_PAGE = {"origin": "http://testserver"}
 
@@ -58,10 +59,13 @@ def client(monkeypatch, tmp_path):
     monkeypatch.delenv(agent_motion.MOTION_ENV, raising=False)
     monkeypatch.delenv(agent_motion.TASK_CONFIRM_ENV, raising=False)
 
+    # Since f002 (#4298) the fresh-install open posture admits the bootstrap proof, not a loopback peer alone.
+    headers = {**OWN_PAGE, **configure_bootstrap(monkeypatch)}
+
     def make(bridge: FakeBridge) -> TestClient:
         app = create_app()
         app.state.bridge = bridge
-        return TestClient(app, headers=OWN_PAGE)
+        return TestClient(app, headers=headers)
 
     return make
 
