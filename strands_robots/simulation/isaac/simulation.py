@@ -33,7 +33,7 @@ import os
 import queue
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
@@ -1135,6 +1135,10 @@ class _RobotState:
         #: this backend did not import: what the importer was told is knowable,
         #: what an arbitrary USD asset declares is not always.
         self.fixed_base = fixed_base
+        # The joint position targets standing on every joint after the last
+        # command an installed action controller converted, by joint name - the
+        # command a recording stores as ``action`` (see _recorded_action).
+        self.commanded_targets: dict[str, float] | None = None
         self.name = name
         self.prim_path = prim_path
         self.joint_names = joint_names
@@ -2471,6 +2475,10 @@ class IsaacSimulation(
                     # ``get_observation`` degrades to its documented
                     # silent-empty mode (#1895).
                     self._revive_articulations_after_reset()
+                    # A reset puts the drives back on the default state; the
+                    # next command re-seeds from the measured positions.
+                    for _robot in self._robots.values():
+                        _robot.commanded_targets = None
 
                 # ``world.reset()`` rebuilds the PhysX tensor view, which is what
                 # makes a body added or deleted since the last reset simulate at
@@ -6108,6 +6116,8 @@ class IsaacSimulation(
                         robot.articulation.apply_action(
                             ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
                         )
+                        if controller is not None:
+                            self._note_commanded_targets(robot, joint_indices, action_array)
                     except (RuntimeError, ValueError, AttributeError, ImportError) as e:
                         # apply_action raises RuntimeError on a torn-down
                         # articulation, ValueError on shape mismatch, AttributeError
@@ -6255,6 +6265,8 @@ class IsaacSimulation(
             robot.articulation.apply_action(
                 ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
             )
+            if controller is not None:
+                self._note_commanded_targets(robot, joint_indices, action_array)
         except (RuntimeError, ValueError, AttributeError, ImportError) as e:
             # Same expected-failure set as send_action's apply path; a failed
             # apply mid-lockstep must halt the loop, not leave this robot
@@ -6680,7 +6692,8 @@ class IsaacSimulation(
                         # instruction (the shared normalizer already warned when
                         # per-robot instructions are distinct).
                         images = {raw_to_safe[k]: v for k, v in camera_imgs.items() if k in raw_to_safe}
-                        frame.write(recorder, per_robot_obs, per_robot_action, images, instr_map[next(iter(policies))])
+                        recorded = {r: self._recorded_action(r, a) for r, a in per_robot_action.items()}
+                        frame.write(recorder, per_robot_obs, recorded, images, instr_map[next(iter(policies))])
 
                     step_count += 1
                     for rname in policies:
@@ -8581,6 +8594,46 @@ class IsaacSimulation(
             }
 
     # --- Private Implementation ----------------------------------------------
+
+    def _note_commanded_targets(self, robot: _RobotState, joint_indices: np.ndarray, values: np.ndarray) -> None:
+        """Fold one converted command into the standing target of every joint.
+
+        A task-space controller names only the joints a step moves (an all-zero
+        delta names no arm joint, an absent gripper names no finger), yet each
+        recorded frame owes a value for every joint: the PD target standing on
+        it. Seeded from the measured positions - what the drives hold before any
+        command - and updated with each command, on the thread that applied it.
+        """
+        if robot.commanded_targets is None:
+            q = None
+            if not self._physics_view_stale:  # both callers gate first; this read keeps its own
+                try:
+                    q = robot.articulation.get_joint_positions()  # type: ignore[union-attr]
+                except (RuntimeError, ValueError, AttributeError, TypeError):
+                    q = None
+            q = np.asarray(q if q is not None else np.zeros(len(robot.joint_names)), dtype=float).reshape(-1)
+            robot.commanded_targets = {n: float(q[i]) for i, n in enumerate(robot.joint_names) if i < q.size}
+        for idx, value in zip(joint_indices.tolist(), values.tolist(), strict=False):
+            if 0 <= idx < len(robot.joint_names):
+                robot.commanded_targets[robot.joint_names[idx]] = float(value)
+
+    def _recorded_action(self, robot_name: str, action: Mapping[str, Any]) -> Mapping[str, Any]:
+        """The action a recorded frame stores for *robot_name*.
+
+        With an action controller installed the policy's action is task-space
+        (``{x, y, z, roll, pitch, yaw, gripper}``) while the dataset's action
+        columns are the robot's joints, so the policy's dict has no value for
+        any of them and the recorder refused every frame. What was commanded is
+        the joint targets the controller produced; that is what is recorded.
+        Without a controller the policy's action is the command and is recorded
+        as is.
+        """
+        robot = registry_entry(self._robots, robot_name)
+        if robot is None or registry_entry(self._action_controllers, robot_name) is None:
+            return action
+        if robot.commanded_targets is None:
+            return action
+        return dict(robot.commanded_targets)
 
     def _load_usd_robot(self, prim_path: str, usd_path: str, position: list[float]) -> tuple[list[str], Any]:
         """Load a robot from a USD file. Returns ``(joint_names, articulation)``.
