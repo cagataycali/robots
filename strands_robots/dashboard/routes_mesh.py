@@ -702,6 +702,15 @@ _IOT_REGISTRY_CACHE: TTLCache[dict[str, Any]] = TTLCache(IOT_REGISTRY_TTL_S, max
 _ADDRESSED_BACKENDS = frozenset({"iot", "bridge"})
 
 
+def _dashboard_thing_name() -> str:
+    """The Thing this dashboard connects as (``STRANDS_IOT_THING_NAME``), or ``""``.
+
+    It is in the registry like every other Thing, but it is not a robot to ping
+    and never a grey card.
+    """
+    return os.getenv("STRANDS_IOT_THING_NAME", "").strip()
+
+
 def iot_registry_view(bridge: MeshBridge) -> dict[str, Any]:
     """The IoT Thing registry merged with what the bridge has heard, for the fleet grid.
 
@@ -719,9 +728,7 @@ def iot_registry_view(bridge: MeshBridge) -> dict[str, Any]:
     view = dict(cached)
     live = set(bridge.live_peers())
     peers = dict(bridge.peers)
-    # The Thing this dashboard connects as: it is in the registry like every
-    # other, but it is not a robot to ping and never a grey card.
-    own_thing = os.getenv("STRANDS_IOT_THING_NAME", "")
+    own_thing = _dashboard_thing_name()
     things = []
     for row in view.get("things") or []:
         name = str(row.get("thing_name") or "")
