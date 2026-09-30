@@ -477,8 +477,10 @@ class ProcessorBridge:
         the official checkpoint with its OWN stats. The padded tail carries
         zeros, so it gets the stats that leave a zero at zero - mean 0 / std 1,
         min / q01 / q10 -1 and max / q99 / q90 1 - and the robot's columns keep
-        theirs. Only for a model that declares ``max_state_dim`` equal to the
-        feature's width; any other mismatch is still refused.
+        theirs. Only for a step whose declared ``observation.state`` feature IS
+        ``max_state_dim`` wide (read from ``step.features``); a fine-tune that
+        declares the robot's width keeps its stats, and any other mismatch is
+        still refused.
         """
         padded = getattr(self._policy_config, "max_state_dim", None)
         if not isinstance(padded, int) or padded <= 0:
@@ -502,6 +504,17 @@ class ProcessorBridge:
             for step in getattr(pipeline, "steps", []) if pipeline is not None else []:
                 stats = (getattr(step, "_tensor_stats", None) or {}).get("observation.state")
                 if not stats:
+                    continue
+                # The pad applies only when the step DECLARES observation.state
+                # at the padded width. max_state_dim is always 32 on the pi
+                # family, but lerobot-train sets input_features from the
+                # dataset: a fine-tune on a 6-DOF arm declares the feature at
+                # 6 with 6-wide stats, which fit as they are; widening them
+                # would make the width guard refuse the checkpoint with its own
+                # stats. A step declaring no state feature is left alone too.
+                feature = (getattr(step, "features", None) or {}).get("observation.state")
+                shape = tuple(getattr(feature, "shape", None) or ())
+                if len(shape) != 1 or int(shape[0]) != padded:
                     continue
                 for name, fill in neutral.items():
                     value = stats.get(name)

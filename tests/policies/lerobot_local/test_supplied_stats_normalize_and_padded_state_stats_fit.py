@@ -76,14 +76,31 @@ class TestANormalizerThatDeclaresNothingIsReportedInert:
 
 
 class TestPaddedStateStatsAreWidenedNeutrally:
-    def _bridge(self, config: SimpleNamespace) -> ProcessorBridge:
+    def _bridge(self, config: SimpleNamespace, *, declared_width: int | None = 32) -> ProcessorBridge:
         stats = {"observation.state": {"mean": torch.arange(8.0), "std": torch.ones(8), "q01": -torch.ones(8)}}
+        features: dict = {"x": 1}
+        if declared_width is not None:
+            features["observation.state"] = SimpleNamespace(shape=(declared_width,))
         bridge = ProcessorBridge(
-            preprocessor=SimpleNamespace(steps=[_step("NormalizerProcessorStep", features={"x": 1}, stats=stats)])
+            preprocessor=SimpleNamespace(steps=[_step("NormalizerProcessorStep", features=features, stats=stats)])
         )
         bridge._policy_config = config
         bridge._pad_narrow_state_stats()
         return bridge
+
+    def test_a_fine_tune_declaring_the_robots_width_keeps_its_stats(self) -> None:
+        """``PI0Config.max_state_dim`` is always 32, but lerobot-train sets ``input_features`` from the
+        dataset: a pi0 fine-tune on a 6-DOF arm declares ``observation.state`` at 6 with 6-wide stats and
+        loads cleanly. Widening those to 32 would make the width guard refuse the checkpoint with its own
+        stats, so the pad applies only when the declared feature IS the padded width."""
+        pre = self._bridge(_CONFIG, declared_width=8)._preprocessor
+        assert pre is not None
+        assert pre.steps[0]._tensor_stats["observation.state"]["mean"].shape == (8,)
+
+    def test_a_step_that_declares_no_state_feature_is_left_alone(self) -> None:
+        pre = self._bridge(_CONFIG, declared_width=None)._preprocessor
+        assert pre is not None
+        assert pre.steps[0]._tensor_stats["observation.state"]["mean"].shape == (8,)
 
     def test_the_robots_columns_keep_their_stats_and_the_tail_maps_zero_to_zero(self) -> None:
         pre = self._bridge(_CONFIG)._preprocessor
