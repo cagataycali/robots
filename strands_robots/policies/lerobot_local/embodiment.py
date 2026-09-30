@@ -760,6 +760,10 @@ def register_pack_state_step() -> type | None:
             gripper_joint_range: The sim gripper joint's ``[min, max]`` radians,
                 used to map that column onto 0..100. Empty (the default) =
                 convert the gripper like an arm joint.
+            gripper_fraction: ``[open, closed]`` of the gripper joint when the
+                model reads the gripper as the fraction closed (DROID); the
+                packed gripper column is then that fraction. Empty (the default)
+                = off.
             joint_mids: Per-joint calibration mid-points in degrees, aligned to
                 ``state_keys``, subtracted from the arm columns so the packed
                 state is mid-centered like LeRobot's ``DEGREES`` mode. Empty
@@ -996,6 +1000,22 @@ class EmbodimentMap:
             ``state_keys`` / ``action_keys``, because LeRobot's ``DEGREES`` mode
             is mid-point-centered. Empty (the default) = mid 0, i.e. sim
             ``qpos=0`` is assumed to be the calibration mid.
+        action_mode: What the model's arm action columns are: ``"position"``
+            targets (the default) or joint ``"velocity"`` (DROID: rad/s),
+            integrated into the position targets ``send_action`` takes.
+        action_dt: Seconds one velocity action integrates over; required
+            (positive) when ``action_mode`` is ``"velocity"``.
+        gripper_fraction: ``[open, closed]`` of the gripper column's sim joint
+            when the model speaks the gripper as the fraction closed, ``0`` =
+            open .. ``1`` = closed (DROID); applies to the ``gripper_index``
+            column on both sides. Empty (the default) = off.
+        gripper_followers: Sim action keys that also receive the gripper
+            column's command: one model gripper dimension driving a two-finger
+            hand (Panda ``finger_joint1`` + ``finger_joint2``). Empty (the
+            default) = the column alone.
+        action_dim_policy: ``"strict"`` (the default): the model's action width
+            must equal ``action_keys``; ``"truncate"``: a wider (padded) head's
+            leading ``len(action_keys)`` columns are the actions.
     """
 
     name: str = ""
