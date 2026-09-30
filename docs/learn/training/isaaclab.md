@@ -17,10 +17,10 @@ train_policy(action="train", provider="isaaclab", steps=50, output_dir="runs",
              extra={"task": "Isaac-Cartpole", "num_envs": 4096, "physics": "newton_mjwarp", "timeout_s": 600})
 ```
 
-It returns a `job_id`; `action="status"` reports rewards, `success_rate`, a failure's cause and `checkpoint_dir`; `action="stop"` ends it; `action="play"` records video; `action="export"` writes what `create_policy("rl", checkpoint_dir=...)` loads. `extra['rl_library']` is `rsl_rl` or `skrl` (AMP, multi-agent); `export` converts `rsl_rl` only. Your own task package trains once the operator sets `STRANDS_ISAACLAB_TASK_PACKAGES=module:register_fn` (importable in the Isaac Lab venv).
+It returns a `job_id`; `action="status"` reports rewards, `success_rate`, a failure's cause and `checkpoint_dir`; `action="stop"` ends it; `action="play"` records video; `action="export"` writes what `create_policy("rl", checkpoint_dir=...)` loads. `extra['rl_library']` is `rsl_rl`, `skrl` (AMP, multi-agent) or `rl_games` (Factory, Forge, AutoMate); `export` converts `rsl_rl`. Your own task package trains once the operator sets `STRANDS_ISAACLAB_TASK_PACKAGES=module:register_fn` (importable in the Isaac Lab venv).
 
 `extra['overrides']` (`env.*`/`agent.*`, checked against the task config), `agent`, `device`, `video`, `deterministic`, `base_model` and `resume` reach Isaac Lab; `learning_rate` pins `schedule=fixed`.
 
-One L40S, 4096 envs: Cartpole 291k env steps/s, G1 flat locomotion 110k.
+One L40S, 4096 envs: Cartpole 291k steps/s, G1 110k.
 
 Caveats: Isaac Lab 3.0 is an RC; first RTX use compiles shaders (~4 min); PhysX and Newton differ (`strands_run.json` names the preset).

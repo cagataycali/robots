@@ -129,7 +129,7 @@ print("STRANDS_CFG_CHECK " + json.dumps(out))
 """
 
 #: RL libraries whose training log :meth:`IsaacLabTrainer.status` can read.
-SUPPORTED_RL_LIBRARIES: tuple[str, ...] = ("rsl_rl", "skrl")
+SUPPORTED_RL_LIBRARIES: tuple[str, ...] = ("rsl_rl", "skrl", "rl_games")
 
 #: The agent config each library trains from unless ``extra['agent']`` names
 #: another (``skrl_ippo_cfg_entry_point`` / ``skrl_mappo_cfg_entry_point`` for
@@ -137,10 +137,15 @@ SUPPORTED_RL_LIBRARIES: tuple[str, ...] = ("rsl_rl", "skrl")
 DEFAULT_AGENT_ENTRY_POINTS: dict[str, str] = {
     "rsl_rl": "rsl_rl_cfg_entry_point",
     "skrl": "skrl_cfg_entry_point",
+    "rl_games": "rl_games_cfg_entry_point",
 }
 
 #: skrl logs its scalars to TensorBoard, not stdout; this is its mean episode reward.
 SKRL_REWARD_TAG = "Reward / Total reward (mean)"
+
+#: rl_games' mean episode reward per epoch, and the task's success rate when it logs one.
+RL_GAMES_REWARD_TAG = "rewards/iter"
+RL_GAMES_SUCCESS_TAG = "Episode/Metrics/success_rate"
 
 # Isaac Lab task ids are gym ids: ``Isaac-Cartpole``, ``Isaac-Velocity-Flat-G1``,
 # ``IsaacContrib-Stack-Cube-SO101-v0``. The first character is a letter, so a
@@ -184,6 +189,10 @@ _MODEL_RE = re.compile(r"^model_(\d+)\.pt\Z")
 _SKRL_MODEL_RE = re.compile(r"^agent_(\d+)\.pt\Z")
 # skrl's tqdm bar: `` 45%|####5     | 144/320 [00:02<00:03, 58.1it/s]``.
 _SKRL_PROGRESS_RE = re.compile(r"\|\s*(\d+)/(\d+)\s*\[")
+# rl_games: ``fps step: 546 ... epoch: 3/3 frames: 32768``.
+_RL_GAMES_PROGRESS_RE = re.compile(r"\bepoch: (\d+)/(\d+)")
+# rl_games: ``nn/last_<config>_ep_<epoch>_rew__<reward>_.pth`` (plus ``nn/<config>.pth``, the best).
+_RL_GAMES_MODEL_RE = re.compile(r"_ep_(\d+)_rew_.*\.pth\Z")
 _JOB_ID_IN_NAME_RE = re.compile(r"(isaaclab-\d{8}-\d{6}-[0-9a-f]{12})\Z")
 # Isaac Lab's video recorder: ``[VideoRecorder] Wrote 120 frames to <path>.mp4``.
 _VIDEO_RE = re.compile(r"\[VideoRecorder\] Wrote (\d+) frames to (\S+\.mp4)")
@@ -424,7 +433,14 @@ class IsaacLabTrainer(Trainer):
             overrides.append(f"physics={extra['physics']}")
         user = dict(extra.get("overrides") or {})
         skrl = _rl_library(extra) == "skrl"
-        if spec.learning_rate is not None and skrl:
+        rl_games = _rl_library(extra) == "rl_games"
+        if spec.learning_rate is not None and rl_games:
+            overrides.append(f"agent.params.config.learning_rate={spec.learning_rate!r}")
+            # rl_games' adaptive (KL) schedule rescales the rate; any other
+            # lr_schedule value is its identity scheduler.
+            if "agent.params.config.lr_schedule" not in user:
+                overrides.append("agent.params.config.lr_schedule=identity")
+        elif spec.learning_rate is not None and skrl:
             overrides.append(f"agent.agent.learning_rate={spec.learning_rate!r}")
             # skrl's KLAdaptiveLR scheduler (the Isaac Lab skrl PPO configs)
             # rescales the rate every update; pin it unless the caller chose.
@@ -437,7 +453,10 @@ class IsaacLabTrainer(Trainer):
             # rate is pinned unless the caller chose a schedule themselves.
             if "agent.algorithm.schedule" not in user:
                 overrides.append("agent.algorithm.schedule=fixed")
-        if spec.save_freq not in (0, _DEFAULT_SAVE_FREQ) and not skrl and "agent.save_interval" not in user:
+        if spec.save_freq not in (0, _DEFAULT_SAVE_FREQ) and rl_games:
+            if "agent.params.config.save_frequency" not in user:  # rl_games counts epochs = iterations
+                overrides.append(f"agent.params.config.save_frequency={int(spec.save_freq)}")
+        elif spec.save_freq not in (0, _DEFAULT_SAVE_FREQ) and not skrl and "agent.save_interval" not in user:
             overrides.append(f"agent.save_interval={int(spec.save_freq)}")
         overrides += [f"{path}={_hydra_value(value)}" for path, value in user.items()]
         return flags, overrides
@@ -478,7 +497,7 @@ class IsaacLabTrainer(Trainer):
         # The job id names the run directory, so status() finds this run and no
         # other: rsl_rl takes it as --run_name; skrl has no --run_name and
         # appends its agent.experiment.experiment_name instead.
-        cmd += ["--run_name", job_id] if library == "rsl_rl" else []
+        cmd += ["--run_name", job_id] if library == "rsl_rl" else []  # skrl / rl_games: an override, below
         if "num_envs" in extra:
             cmd += ["--num_envs", str(extra["num_envs"])]
         if spec.seed is not None:
@@ -488,6 +507,11 @@ class IsaacLabTrainer(Trainer):
         flags, overrides = self._forwarded(spec)
         if library == "skrl":
             overrides.append(f"agent.agent.experiment.experiment_name={job_id}")
+        elif library == "rl_games":
+            # rl_games names the run directory full_experiment_name outright;
+            # keep Isaac Lab's <time>_ prefix so runs still sort by start time.
+            stamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.strptime(job_id[9:24], "%Y%m%d-%H%M%S"))
+            overrides.append(f"agent.params.config.full_experiment_name={stamp}_{job_id}")
         return cmd + flags + overrides
 
     def train(self, spec: TrainSpec) -> TrainResult:
@@ -599,8 +623,11 @@ class IsaacLabTrainer(Trainer):
         if record.get("kind") == "play":
             return self._play_status(job_id, job_dir, record, text, exit_code, alive)
         run_dir = find_run_dir(text, job_id)
-        if (record.get("run") or {}).get("rl_library") == "skrl":
+        library = (record.get("run") or {}).get("rl_library")
+        if library == "skrl":
             metrics = parse_skrl_log(text, run_dir, record.get("max_iterations"))
+        elif library == "rl_games":
+            metrics = parse_rl_games_log(text, run_dir)
         else:
             metrics = parse_rsl_rl_log(text)
         metrics.update(
@@ -898,9 +925,12 @@ class IsaacLabTrainer(Trainer):
         record_path = Path(checkpoint_dir) / RUN_RECORD_FILE
         if record_path.is_file():
             run = json.loads(record_path.read_text(encoding="utf-8"))
-        if run.get("rl_library") == "skrl" or Path(model).name.startswith("agent_"):
+        library = run.get("rl_library") or (
+            "skrl" if Path(model).name.startswith("agent_") else "rl_games" if model.endswith(".pth") else "rsl_rl"
+        )
+        if library != "rsl_rl":
             raise ValueError(
-                f"{self.provider_name}: {model} is a skrl checkpoint; converting it to a strands policy is not "
+                f"{self.provider_name}: {model} is a checkpoint of {library}; converting it to a strands policy is not "
                 "supported yet (only rsl_rl's). play(job_id) replays it in Isaac Lab, and "
                 "extra['rl_library']='rsl_rl' trains one export can convert"
             )
@@ -1243,6 +1273,46 @@ def parse_skrl_log(text: str, run_dir: str | None, max_iterations: int | None) -
     }
 
 
+def parse_rl_games_log(text: str, run_dir: str | None) -> dict[str, Any]:
+    """Read an rl_games run's progress: ``epoch: N/M`` from the log, rewards from TensorBoard.
+
+    Same keys as :func:`parse_rsl_rl_log`. An rl_games epoch is one
+    ``--max_iterations`` iteration; they are reported 0-based, as rsl_rl's are.
+    The task's ``success_rate`` is read when it logs one (Factory does).
+    """
+    bars = _RL_GAMES_PROGRESS_RE.findall(text)
+    latest_iteration = int(bars[-1][0]) - 1 if bars else None
+    summaries = str(Path(run_dir) / "summaries") if run_dir else None
+    rewards = [(max(0, step - 1), r) for step, r in read_tensorboard_scalars(summaries, RL_GAMES_REWARD_TAG)]
+    finite = [(it, r) for it, r in rewards if math.isfinite(r)]
+    diverged_at = next((it for it, r in rewards if not math.isfinite(r)), None)
+    best = max(finite, key=lambda item: item[1]) if finite else None
+    window = max(1, min(_TREND_WINDOW, len(finite) // 2))
+    trend = (
+        sum(r for _, r in finite[-window:]) / window - sum(r for _, r in finite[:window]) / window
+        if len(finite) >= 2
+        else None
+    )
+    success = [v for _, v in read_tensorboard_scalars(summaries, RL_GAMES_SUCCESS_TAG) if math.isfinite(v)]
+    training_time = _TRAINING_TIME_RE.search(text)
+    return {
+        "latest_iteration": latest_iteration,
+        "first_reward": rewards[0][1] if rewards else None,
+        "latest_reward": rewards[-1][1] if rewards else None,
+        "best_reward": best[1] if best else None,
+        "best_iteration": best[0] if best else None,
+        "reward_trend": round(trend, 6) if trend is not None else None,
+        "diverged": diverged_at is not None,
+        "diverged_at_iteration": diverged_at,
+        "steps_per_s": None,
+        "total_steps": None,
+        "training_time_s": float(training_time.group(1)) if training_time else None,
+        "learning": diverged_at is None and trend is not None and trend > 0,
+        "task_metrics": {},
+        "success_rate": {"latest": success[-1], "max": max(success)} if success else None,
+    }
+
+
 def _read_log(path: Path) -> str:
     try:
         return _ANSI_RE.sub("", path.read_text(encoding="utf-8", errors="replace"))
@@ -1438,6 +1508,11 @@ def latest_model(run_dir: str | None) -> str | None:
     models = []
     for path in Path(run_dir).glob("model_*.pt"):
         match = _MODEL_RE.match(path.name)
+        if match:
+            models.append((int(match.group(1)), path))
+    # rl_games: nn/last_<config>_ep_<epoch>_rew__<reward>_.pth
+    for path in Path(run_dir).glob("nn/*.pth"):
+        match = _RL_GAMES_MODEL_RE.search(path.name)
         if match:
             models.append((int(match.group(1)), path))
     # skrl: checkpoints/agent_<timestep>.pt

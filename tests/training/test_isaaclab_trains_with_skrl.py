@@ -69,7 +69,7 @@ def skrl_run(tmp_path: Path) -> Path:
 
 
 def test_skrl_is_a_supported_library() -> None:
-    assert SUPPORTED_RL_LIBRARIES == ("rsl_rl", "skrl")
+    assert SUPPORTED_RL_LIBRARIES[:2] == ("rsl_rl", "skrl")
 
 
 def test_the_rewards_are_read_from_tensorboard(skrl_run: Path) -> None:
@@ -130,5 +130,5 @@ def test_the_run_finds_its_task_from_a_skrl_directory_name(fake_python, skrl_run
 
 
 def test_export_says_a_skrl_checkpoint_is_not_convertible_yet(fake_python, skrl_run: Path, tmp_path: Path) -> None:  # noqa: F811
-    with pytest.raises(ValueError, match="skrl checkpoint"):
+    with pytest.raises(ValueError, match="checkpoint of skrl"):
         IsaacLabTrainer().export(None, str(skrl_run))  # type: ignore[arg-type]
