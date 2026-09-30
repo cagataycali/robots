@@ -7,6 +7,7 @@ import logging
 import os
 import warnings
 from collections.abc import Callable, Iterable, Mapping
+from types import ModuleType
 from typing import Any
 
 from strands_robots import refusal_codes
@@ -21,7 +22,13 @@ from strands_robots.registry import (
 # The one canonicalisation rule, shared rather than restated: a decision keyed
 # on a provider name has to resolve the caller's spelling first, and a second
 # copy of that rule here is a second thing to keep in step with policies.json.
-from strands_robots.registry.policies import _canonical_provider_name, _url_scheme_refusal, removed_provider_error
+from strands_robots.registry.policies import (
+    _canonical_provider_name,
+    _matches_declared_url_pattern,
+    _url_scheme_refusal,
+    _with_lowercase_url_scheme,
+    removed_provider_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -187,13 +194,23 @@ def _check_trust_remote_code(provider: str) -> None:
 
 
 def _is_smart_string(provider: str) -> bool:
-    """Whether ``provider`` is a spelling :func:`resolve_policy` interprets (HF id, URL)."""
-    return (
-        "/" in provider
-        or (":" in provider and not provider.replace("_", "").isalpha())
-        or provider.startswith("ws://")
-        or provider.startswith("grpc://")
-    )
+    """Whether ``provider`` has the shape of an address or a checkpoint :func:`resolve_policy` interprets.
+
+    Three shapes qualify: a ``scheme://`` URL (an undeclared scheme is refused
+    downstream by name), a scheme-less address some provider's
+    ``url_patterns`` declares, and a checkpoint - a HuggingFace ``org/repo`` or
+    a filesystem path with a name in it. Anything else is read as a provider
+    name, so a typo such as ``"wbc/"``, ``":"`` or ``"protomotions:"`` reaches
+    the did-you-mean lookup instead of being forwarded to ``lerobot_local`` as
+    a checkpoint id the caller never named.
+    """
+    spelling = provider.strip()
+    if "://" in spelling or _matches_declared_url_pattern(_with_lowercase_url_scheme(spelling)):
+        return True
+    if "/" not in spelling:
+        return False
+    names = [part for part in spelling.split("/") if part.strip(".~")]
+    return len(names) >= 2 or (bool(names) and spelling.startswith(("/", "./", "../", "~/")))
 
 
 def provider_can_be_created(provider: Any) -> bool:
@@ -315,23 +332,27 @@ def import_policy_class(provider: str) -> type:
             raise _provider_import_error(canonical, exc, config.get("extra")) from exc
         return getattr(mod, config["class"])
 
-    # Auto-discovery fallback
+    # Auto-discovery fallback, for spellings that can name a module at all.
+    module_name = f"strands_robots.policies.{provider}"
+    discovered: ModuleType | None = None
     try:
-        mod = importlib.import_module(f"strands_robots.policies.{provider}")
-        class_name = f"{provider.capitalize()}Policy"
-        if hasattr(mod, class_name):
-            return getattr(mod, class_name)
-        for attr_name in dir(mod):
-            attr = getattr(mod, attr_name)
-            if isinstance(attr, type) and issubclass(attr, Policy) and attr is not Policy:
-                return attr
+        if provider.isidentifier():
+            discovered = importlib.import_module(module_name)
     except ImportError as exc:
         # Distinguish "this provider does not exist" from "it exists but its
         # optional dependency is missing". Only the former is an unknown
         # provider; reporting the latter that way sends the caller to check a
         # name that was correct.
-        if getattr(exc, "name", None) != f"strands_robots.policies.{provider}":
+        if getattr(exc, "name", None) != module_name:
             raise _provider_import_error(provider, exc, None) from exc
+    if discovered is not None:
+        class_name = f"{provider.capitalize()}Policy"
+        if hasattr(discovered, class_name):
+            return getattr(discovered, class_name)
+        for attr_name in dir(discovered):
+            attr = getattr(discovered, attr_name)
+            if isinstance(attr, type) and issubclass(attr, Policy) and attr is not Policy:
+                return attr
 
     # Offer the nearest registered spellings, the way Robot() does for a robot
     # name: case and dash are folded, and 0.6 is Robot()'s cutoff, which is
@@ -629,6 +650,13 @@ def policy_kwargs_error(provider: str, PolicyClass: type, kwargs: Mapping[str, A
     accepted, tolerates_unknown = _constructor_keywords(PolicyClass)
     if not accepted:
         return None
+    # A provider may know a name that its sink would otherwise swallow: a field
+    # that belongs on another object (lerobot_local's ``state_units`` is an
+    # embodiment field, #4164). Its ``misplaced_kwargs_error`` says where the
+    # name goes, and runs here so the caller learns it before the trust gate.
+    misplaced_error = getattr(PolicyClass, "misplaced_kwargs_error", None)
+    if callable(misplaced_error) and (misplaced := misplaced_error(kwargs)) is not None:
+        return str(misplaced)
     owner = f"{PolicyClass.__name__} (policy provider {provider!r})"
     misspelled: list[str] = []
     unknown: list[str] = []
@@ -671,7 +699,13 @@ def create_policy(provider: str, **kwargs) -> Policy:
 
     - Provider name: ``create_policy("lerobot_local", pretrained_name_or_path="lerobot/act_aloha_sim")``
     - Server URL: ``create_policy("ws://gpu-box:8765")``
+    - Checkpoint: ``create_policy("lerobot/act_aloha_sim")`` or a path such as
+      ``create_policy("outputs/train/act/checkpoints/last/pretrained_model")``
     - Shorthand: ``create_policy("mock")``
+
+    Any other spelling is a provider name; one carrying stray punctuation
+    (``"wbc/"``, ``"protomotions:"``) is refused as an unknown provider with the
+    nearest names, not forwarded to ``lerobot_local`` as a checkpoint id.
 
     All provider definitions live in ``registry/policies.json``.
 
@@ -865,9 +899,8 @@ def policy_provider_error(provider: str, **kwargs) -> str | None:
     instantiating anything, so every spelling that provider accepts -- a
     registered name, a HuggingFace model ID, a ``ws://`` / ``cosmos3://`` URL --
     resolves here too. Only a name no spelling can reach yields a reason. A
-    scheme-less ``host:port`` is not among them: no shipped provider declares a
-    scheme-less ``url_patterns`` entry, so such a string is resolvable only as a
-    checkpoint id and this preflight reports no reason for it.
+    scheme-less ``host:port`` is one of those unless a provider declares a
+    scheme-less ``url_patterns`` entry for it (no shipped provider does).
 
     This is the agent-tool companion to :func:`preflight_policy`, which
     deliberately swallows resolution failures on the stated grounds that

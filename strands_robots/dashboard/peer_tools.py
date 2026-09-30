@@ -174,6 +174,14 @@ _POLICY_PROPERTIES: dict[str, Any] = {
         "description": "execute/start with lerobot_local: the Hub checkpoint, e.g. lerobot/smolvla_base",
     },
     "policy_type": {"type": "string", "description": "execute/start with lerobot_local: act, smolvla, pi0, ..."},
+    "embodiment": {
+        "type": "string",
+        "description": (
+            "execute/start with lerobot_local: the registry embodiment the checkpoint was trained for "
+            "(e.g. so101); it carries the unit frame and the camera renames, so a degrees trained "
+            "checkpoint is not applied in radians"
+        ),
+    },
 }
 
 _SIM_INPUT_SCHEMA: dict[str, Any] = {
@@ -309,7 +317,14 @@ def peer_tool_spec(peer_id: str, kind: str, tool_name: str) -> dict[str, Any] | 
 #: wire carries (``pretrained_name_or_path``, ``policy_type``, ``model_path``,
 #: ``walk``) and the per-call goal ``target_velocity``. Each has a validator in
 #: ``mesh/security.validate_command`` on the robot host; nothing else crosses.
-_POLICY_FIELDS: tuple[str, ...] = ("pretrained_name_or_path", "policy_type", "model_path", "walk", "target_velocity")
+_POLICY_FIELDS: tuple[str, ...] = (
+    "pretrained_name_or_path",
+    "policy_type",
+    "embodiment",
+    "model_path",
+    "walk",
+    "target_velocity",
+)
 
 #: Fields the real-robot rail forwards. Everything else is refused by
 #: mesh/security.validate_command anyway; dropping them here makes the

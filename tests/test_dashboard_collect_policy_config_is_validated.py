@@ -132,6 +132,7 @@ def test_the_keys_the_route_forwards_are_the_keys_the_mesh_forwards():
         "server_address",
         "policy_type",
         "pretrained_name_or_path",
+        "embodiment",
         "policy_host",
         "policy_port",
         "walk",
