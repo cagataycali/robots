@@ -5,8 +5,8 @@ At the end of this page you can read any mesh topic by its exact key, know how o
 Keys are `strands/...` by default; `STRANDS_MESH_NAMESPACE` changes the prefix for a whole fleet, and two fleets with different prefixes cannot exchange a message. Keys are written in the source where each publisher lives (`mesh/core.py`, `mesh/sensors.py`, `mesh/input.py`), so this table is hand-checked against those files at this commit rather than generated.
 
 ```python title="sketch"
-a.mesh.subscribe("imu", "strands/arm-b/imu", lambda key, payload: print(payload))
-a.mesh.subscribe("all-state", "strands/*/state", lambda key, payload: print(key, payload["joints"]))
+a.mesh.subscribe("strands/arm-b/imu", lambda key, payload: print(payload), name="imu")
+a.mesh.subscribe("strands/*/state", lambda key, payload: print(key, payload["joints"]), name="all-state")
 ```
 
 ## Per-peer topics

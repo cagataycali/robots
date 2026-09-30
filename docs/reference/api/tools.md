@@ -50,11 +50,6 @@ The `@tool` functions re-exported from `strands_robots`; hand any of them to a S
       heading_level: 3
       show_root_heading: true
 
-::: strands_robots.tools.gr00t_inference.gr00t_inference
-    options:
-      heading_level: 3
-      show_root_heading: true
-
 ## Assets and memory
 
 ::: strands_robots.tools.download_assets.download_assets

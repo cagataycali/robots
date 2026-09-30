@@ -222,8 +222,11 @@ def test_round_trip_episode_and_frame_counts(sim_two_robots, tmp_path) -> None:
     assert sorted(set(info["episode_indices"])) == [0, 1]
     assert info["total_frames"] == 2 * 5
 
-    # Physics advanced exactly once per timestep across both rollouts.
-    assert sim._world.step_calls == 2 * 5
+    # Physics advanced one CONTROL period per timestep across both rollouts:
+    # 1/30 s at the default physics_dt of 1/120 s is 4 ticks, as run_policy steps.
+    ticks_per_step = round((1.0 / 30.0) / sim._config.physics_dt)
+    assert ticks_per_step == 4
+    assert sim._world.step_calls == 2 * 5 * ticks_per_step
 
 
 def test_recorded_task_is_first_robots_instruction_with_shared_warning(sim_two_robots, tmp_path, caplog) -> None:

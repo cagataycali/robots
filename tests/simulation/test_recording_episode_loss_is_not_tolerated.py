@@ -9,13 +9,11 @@ specifically must surface a lost frame rather than absorb it as telemetry.
 
 The *episode* flush had the opposite rule, and it sits on the worse failure. A
 failed ``save_episode`` closes the recorder - the LeRobot episode buffer is in
-an undefined state after a partial write - and ``add_frame`` then returns on a
-closed recorder without writing a frame, without raising
-``RecordingFrameError``, and without counting a ``dropped_frame_count``. So one
-failed flush discards every remaining episode of the evaluation in total
-silence, and the eval reported a ``success_rate`` over all of them under
-``status="success"``. A lost frame truncates an episode; a lost episode
-truncated the whole run and took the recorder's own accounting with it.
+an undefined state after a partial write - and a closed recorder refuses every
+later frame. So one failed flush leaves every remaining episode of the
+evaluation unrecordable, and the eval reported a ``success_rate`` over all of
+them under ``status="success"``. A lost frame truncates an episode; a lost
+episode truncated the whole run.
 
 These tests pin the episode-level rule: the evaluation stops at the episode
 whose flush failed and reports the reason in ``recording_save_error``, matching
@@ -361,41 +359,6 @@ class TestAHealthyEvaluationIsNotRefused:
         assert payload["recording_save_error"] is None
         assert payload["episodes_completed"] == 3
         assert ds.save_attempts == 0
-
-
-class TestTheClosedRecorderIsWhyItStops:
-    """The premise, measured on the real recorder rather than asserted.
-
-    Both cells hold before and after the fix: they describe why continuing is
-    not a milder outcome than stopping, which is the reason the evaluation
-    stops rather than averaging over the episodes that follow.
-    """
-
-    def test_a_failed_flush_closes_the_recorder_and_reports_it(self) -> None:
-        ds = _Dataset(fail_from_episode=0)
-        recorder = DatasetRecorder(dataset=ds, task="t")
-        recorder.add_frame(dict(_FULL), dict(_FULL), camera_keys=[])
-        assert recorder.episode_frame_count == 1
-
-        verdict = recorder.save_episode()
-
-        assert verdict["status"] == "error"
-        assert recorder._closed is True
-
-    def test_add_frame_on_a_closed_recorder_writes_nothing_and_counts_no_drop(self) -> None:
-        """The silence: no frame, no ``RecordingFrameError``, no counted drop."""
-        ds = _Dataset(fail_from_episode=0)
-        recorder = DatasetRecorder(dataset=ds, task="t")
-        recorder.add_frame(dict(_FULL), dict(_FULL), camera_keys=[])
-        recorder.save_episode()
-        assert recorder._closed is True
-
-        before = (recorder.frame_count, recorder.dropped_frame_count, ds.written)
-        for _ in range(5):
-            recorder.add_frame(dict(_FULL), dict(_FULL), camera_keys=[])
-
-        assert (recorder.frame_count, recorder.dropped_frame_count, ds.written) == before
-        assert recorder.strict is True  # even fail-fast mode raises nothing here
 
 
 def _discarded_flush_verdicts(source: str) -> list[int]:

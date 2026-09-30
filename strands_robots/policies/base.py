@@ -1,7 +1,7 @@
 """Abstract base class for robot policies (VLA, motion planners, MPC, scripted).
 
 The :class:`Policy` ABC is intentionally agnostic about *how* actions are
-produced.  Built-in providers (`mock`, `groot`, `lerobot_local`) are VLA-style,
+produced.  Built-in providers (`mock`, `lerobot_local`, `remote`) are VLA-style,
 but the same interface is the right shape for:
 
 * **Classical motion planners** - cuRobo, MoveIt2, OMPL, RRT*: take a goal
@@ -267,8 +267,8 @@ class Policy(ABC):
         state (e.g. diffusion sampler RNG, action chunk caches, KV-caches)
         should override to apply the reset.
 
-        For SERVICE-mode policies (e.g. ``Gr00tPolicy(host=...)`` over
-        ZMQ), the override forwards the call to the server so its
+        For SERVICE-mode policies (e.g. ``Cosmos3Policy(host=...)`` over
+        WebSocket), the override forwards the call to the server so its
         per-episode RNG state can be re-initialised - without this,
         ``set_eval_seed`` only seeds the client-side process, leaving
         the server's diffusion sampler RNG drifting across calls and
@@ -477,11 +477,11 @@ class Policy(ABC):
         A chunk-emitting policy (ACT, diffusion, pi0, pi0.5, pi0-FAST, SmolVLA,
         MolmoAct2) returns more than one action per inference, so its inference
         latency can be hidden behind the EXECUTION of the current chunk while the
-        next chunk is computed in the background. The async-RTC pipeline in
-        :meth:`PolicyRunner.run` uses this signal to auto-enable latency masking
-        for exactly the policies that benefit (``run_policy(async_rtc=None)``);
-        single-step policies (``MockPolicy``, classical planners) gain nothing
-        from overlap and stay on the synchronous loop.
+        next chunk is computed in the background. :meth:`PolicyRunner.run`
+        auto-enables that overlap (``run_policy(async_rtc=None)``) only when this
+        is true AND the policy blends the seam (``supports_rtc``); single-step
+        policies (``MockPolicy``, classical planners) gain nothing from overlap
+        and stay on the synchronous loop.
 
         The default derives the answer from the re-query interval the consumer
         actually drives - :attr:`execution_horizon` - so ANY policy that emits a
@@ -491,6 +491,14 @@ class Policy(ABC):
         policy reports ``1``. Providers whose chunk shape is not visible through
         ``execution_horizon`` (e.g. a model that must be driven via
         ``predict_action_chunk``) override this.
+
+        :class:`~strands_robots.policies.mock.MockPolicy` returns eight actions
+        per call and still declares ``1`` on purpose: its sinusoid is a function
+        of a step counter, so a re-query continues the same curve wherever it
+        happens, there is no inference latency for the async pipeline to hide,
+        and ``1`` keeps the reference policy on the synchronous loop every
+        tutorial and test reads. A provider that pays for its chunk (Cosmos 3,
+        every LeRobot checkpoint) declares ``actions_per_step`` instead.
 
         Returns:
             ``True`` when the policy emits multi-action chunks; ``False`` for

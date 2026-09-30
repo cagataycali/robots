@@ -44,11 +44,6 @@ A `Policy` turns an observation into actions. Providers live in `registry/polici
       heading_level: 3
       show_root_heading: true
 
-::: strands_robots.policies.groot.Gr00tPolicy
-    options:
-      heading_level: 3
-      show_root_heading: true
-
 ## Persistent cache
 
 ::: strands_robots.policies.persistent
