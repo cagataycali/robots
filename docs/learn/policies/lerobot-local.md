@@ -4,7 +4,7 @@ description: lerobot_local runs any LeRobot checkpoint in process. Install extra
 
 # lerobot_local
 
-By the end of this page you can run a HuggingFace LeRobot checkpoint (ACT, diffusion, pi0, SmolVLA, GR00T N1.7, MolmoAct2) on a simulated or real arm in this process, and you know the two naming rules that decide whether the model sees your cameras and joints.
+By the end of this page you can run a LeRobot checkpoint (ACT, diffusion, pi0, SmolVLA, GR00T N1.7, MolmoAct2) on a simulated or real arm in this process, and you know the two naming rules that decide whether the model sees your cameras and joints.
 
 ```bash
 pip install 'strands-robots[lerobot]'          # lerobot[feetech,dataset] + psutil
@@ -16,7 +16,7 @@ export STRANDS_TRUST_REMOTE_CODE=1             # required: models load with trus
 
 ## What it is
 
-`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works without a change here. The model's processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations and unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the steps consumed during inference, and the policy blends the next chunk onto the seam.
+`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works without a change here. The model's processor pipeline (`preprocessor.json`, `postprocessor.json`) normalises observations and unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the steps consumed during inference; the policy blends the next chunk onto the seam.
 
 Build it by name or smart string; a HuggingFace id resolves here.
 
@@ -47,9 +47,9 @@ Without `set_robot_state_keys`, the policy infers the state vector from the obse
 
 ## Rule 2: camera names
 
-A checkpoint declares image features such as `observation.images.image`. The embodiment's `obs_rename` maps the camera key you attach onto that feature. Name a sim camera after the model card (`realsense_top`) instead of the embodiment's source key (`front`) and the rename never fires; `preflight` refuses before any weights download, naming the expected source keys.
+A checkpoint declares image features such as `observation.images.image`. The embodiment's `obs_rename` maps the camera key you attach onto that feature. Name a sim camera after the model card (`realsense_top`) instead of the embodiment's source key (`front`) and the rename never fires; inference fails late. `preflight` runs before any weights download and refuses with the expected source keys.
 
-Generated from `embodiments.json`:
+From `embodiments.json`:
 
 {{providers:cameras}}
 
@@ -73,11 +73,11 @@ sim.run_policy(
 )
 ```
 
-`parent_body` mounts a camera on a link so a wrist view rides with the arm; `position` and `target` are then in that frame, both required. It works on `mujoco` and `newton`; `isaac` refuses it and names the world-frame alternative.
+`parent_body` mounts a camera on a link so a wrist view rides with the arm; `position` and `target` are then in that frame, both required. `mujoco` and `newton` support it; `isaac` refuses it and names the world-frame alternative.
 
 ## Run it
 
-Needs the extra and an 865 MB download. `smolvla_base` declares `camera1..3` and ships no SO-101 stats, so `embodiment="so101"` (degrees) is refused; an inline embodiment with native units runs:
+Needs the extra above and an 865 MB download once. `smolvla_base` declares `camera1..3` and ships no SO-101 stats, so `embodiment="so101"` (which converts degrees) is refused after the download; an inline native embodiment runs:
 
 ```python
 import os
@@ -100,7 +100,7 @@ print(result["status"])
 sim.cleanup()
 ```
 
-A checkpoint fine-tuned on an SO-101 carries its stats; `embodiment="so101"` then converts units in sim and binds the arm's `.pos` keys on hardware ([First policy](../../start/first-policy.md)). A real arm's tool takes the same dict as `policy_config`:
+`robotfuel/act_so101_t16b`, a checkpoint trained on a real SO-101, carries its stats: `embodiment="so101"` converts units both ways in sim and binds the arm's `.pos` keys on hardware. Through `run_policy(policy_object=...)` it applied 90 of 90 steps at 30 Hz from one wrist camera on a laptop CPU; the arm moved, no cube lifted. A real arm's tool takes the dict as `policy_config`:
 
 ```json
 {"action": "execute", "policy_provider": "lerobot_local",
@@ -129,6 +129,7 @@ policy = create_policy("ws://gpu-box:8765")                                     
 
 ## Limits
 
-- `trust_remote_code=True` is unconditional for this provider, hence the environment gate; load checkpoints only from organisations you trust.
+- Torch and the model share this process. One interpreter cannot hold `lerobot` (`transformers>=5`) and NVIDIA's Isaac-GR00T (`transformers==4.57.3`); for GR00T in process use `policy_type="groot"` here, or the [groot](groot.md) service.
+- `trust_remote_code=True` is unconditional here, hence the environment gate. Load checkpoints only from organisations you trust.
 - `dim_policy="pad"` and `"truncate"` adapt the state vector to the model width by design, and most shipped embodiments declare `pad`; `strict` refuses a width mismatch and names the two opt-ins.
-- An embodiment that is not in `embodiments.json` needs its own entry: state keys, action keys, and camera renames. The [training](../training/lerobot.md) page shows how a trained checkpoint carries those names.
+- An embodiment not in `embodiments.json` needs its own entry: state keys, action keys, camera renames. [Training](../training/lerobot.md) shows how a trained checkpoint carries those names.

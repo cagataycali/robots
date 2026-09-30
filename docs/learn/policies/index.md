@@ -4,7 +4,7 @@ description: The Policy contract, the provider matrix generated from the registr
 
 # Policies
 
-By the end of this page you can pick a provider for what you have, build one with `create_policy`, write your own in twenty lines, and swap providers by changing one string. One `run_policy` call takes the provider name and a `policy_config`.
+By the end of this page you can pick a provider for what you have, build one with `create_policy`, write your own in twenty lines, and swap providers by changing one string; one `run_policy` call takes the provider name and a `policy_config`.
 
 ## Which provider
 
@@ -18,13 +18,14 @@ By the end of this page you can pick a provider for what you have, build one wit
 | a Cosmos endpoint | [`cosmos3`](cosmos3.md) | a world model behind one URL |
 | a task the arm has never seen | [Teach it](../../start/teach-it.md) | no checkpoint learns your task from a page; record and train first |
 
-One gap is open: over the mesh `policy_config` travels but `embodiment` does not ([#4180](https://github.com/strands-labs/robots/issues/4180)), so run a Hub checkpoint on a real arm from the process that owns it. Deprecated providers (`moveit2`, `kimodo`, `protomotions`) stay in the table below until 0.7; their pages name the replacement.
+One gap is open: over the mesh `policy_config` travels but `embodiment` does not ([#4180](https://github.com/strands-labs/robots/issues/4180)), so run a Hub checkpoint on a real arm from the process that owns it. Deprecated providers (`moveit2`, `kimodo`, `protomotions`) stay in the table until 0.7; their pages name the replacement.
 
 ## The contract
 
 ```python title="strands_robots/policies/base.py (abridged)"
 class Policy(ABC):
     control_frequency: float | None = None          # set by the runtime
+    rtc_observed_delay_steps: int | None = None
     reads_instruction: bool = True                   # False: the words never shape actions
     instruction_free_actions: str | None = None             # what a non-reader does
     requires_action_controller: ClassVar[str | None] = None # the engine installs it or refuses
@@ -52,15 +53,15 @@ class Policy(ABC):
     def provider_name(self) -> str: ...
 ```
 
-Abridged ([API reference](../../reference/api/policies.md)). `get_actions` returns the chunk: one dict per control tick, joint name to a python `float`. Planners read `target_pose` or `target_joints` instead of the instruction.
+Abridged ([API reference](../../reference/api/policies.md)). `get_actions` returns the chunk: one dict per control tick, joint name to a `float`. Planners read `target_pose` or `target_joints`, not the instruction.
 
 ## Providers
 
-Generated from the registry at build time; "Also spelled" lists the shorthands `create_policy` accepts.
+From the registry at build time; "Also spelled" lists the shorthands `create_policy` accepts.
 
 {{providers:table}}
 
-`composite` and `persistent` resolve by module name, not the registry.
+`composite` and `persistent` resolve by module name, outside the registry.
 
 ## Build one
 
@@ -74,11 +75,11 @@ actions = policy.get_actions_sync({"shoulder_pan": 0.0, "elbow_flex": 0.0}, "wav
 print(len(actions), actions[0])
 ```
 
-Smart strings work too: a Hub id resolves to `lerobot_local`, `ws://` to [`remote`](remote.md). A misspelled keyword is a `TypeError` before any download; `lerobot_local` needs `STRANDS_TRUST_REMOTE_CODE=1`.
+Smart strings: a Hub id resolves to `lerobot_local`, `ws://` to [`remote`](remote.md). A misspelled keyword is a `TypeError` before any download; `lerobot_local` needs `STRANDS_TRUST_REMOTE_CODE=1`.
 
 ## Run one, then swap it
 
-`run_policy` builds the policy from the provider name, runs `preflight` before any download, then drives the loop. A registered class is one more string:
+`run_policy` builds the policy from the provider name, runs `preflight` before any download, then drives the loop; a registered class is one more string:
 
 ```python
 from typing import Any
@@ -132,4 +133,4 @@ freeze success 0.501
 Note: HoldPolicy does not read the instruction. Its actions - a fixed pose on every joint - were commanded to the robot whatever the task says; nothing above means the task was performed.
 ```
 
-The notes come from `reads_instruction = False`: a policy that never reads the words says so in every report, so an agent cannot relay a test motion as done. On hardware, `start_task(instruction, policy_provider=..., **policy_config)` takes the provider string and `run_policy(policy_object=...)` a built object, behind the [gate](../agents.md).
+The notes come from `reads_instruction = False`: a policy that never reads the words says so in every report, so an agent cannot relay a test motion as done. On hardware `start_task(instruction, policy_provider=..., **policy_config)` takes the provider string and `run_policy(policy_object=...)` a built object, behind the [gate](../agents.md).
