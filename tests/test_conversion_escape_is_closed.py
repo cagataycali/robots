@@ -178,7 +178,7 @@ CONVERTING: tuple[Converting, ...] = (
         "positive_finite_number_error",
         lambda v: positive_finite_number_error(v, "hz", "teleoperate"),
         lambda v: f"teleoperate: hz must be within the range of a 64-bit float, got {v!r}.",
-        "teleoperate: hz must be > 0, got RealNoFloat().",
+        "teleoperate: hz must be a positive finite number, got RealNoFloat().",
         (
             (2.5, None),
             (30.0, None),
@@ -186,13 +186,13 @@ CONVERTING: tuple[Converting, ...] = (
             (LARGE_BUT_CONVERTIBLE, None),
             (np.float32(58.0), None),
             (np.int64(30), None),
-            (0, "teleoperate: hz must be > 0, got 0."),
-            (-5, "teleoperate: hz must be > 0, got -5."),
-            (NAN, "teleoperate: hz must be > 0, got nan."),
-            (INF, "teleoperate: hz must be > 0, got inf."),
-            (-INF, "teleoperate: hz must be > 0, got -inf."),
-            (True, "teleoperate: hz must be > 0, got True."),
-            ("x", "teleoperate: hz must be > 0, got 'x'."),
+            (0, "teleoperate: hz must be a positive finite number, got 0."),
+            (-5, "teleoperate: hz must be a positive finite number, got -5."),
+            (NAN, "teleoperate: hz must be a positive finite number, got nan."),
+            (INF, "teleoperate: hz must be a positive finite number, got inf."),
+            (-INF, "teleoperate: hz must be a positive finite number, got -inf."),
+            (True, "teleoperate: hz must be a positive finite number, got True."),
+            ("x", "teleoperate: hz must be a positive finite number, got 'x'."),
         ),
     ),
     Converting(
@@ -396,7 +396,7 @@ class TestTheRangeIsTheBoundTheGuardAlreadyHad:
 
     def test_the_reason_would_have_been_false_of_the_value(self) -> None:
         """Why new text was needed at all, stated as three true propositions."""
-        assert BEYOND_FLOAT_RANGE > 0, "so 'must be > 0' would be false of it"
+        assert BEYOND_FLOAT_RANGE > 0, "so 'must be a positive finite number' would be false of it"
         assert BEYOND_FLOAT_RANGE == int(BEYOND_FLOAT_RANGE), "so 'positive whole number' would be false"
         assert not isinstance(BEYOND_FLOAT_RANGE, float), "and it is finite: no float64 is involved"
 
