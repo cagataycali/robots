@@ -109,7 +109,7 @@ class TestATimeoutThatNamesNoBudgetIsRefused:
         text = str(exc.value)
         assert name in text, f"the refusal must name the class, got {text!r}"
         assert param in text, f"the refusal must name the parameter, got {text!r}"
-        assert "must be > 0" in text, f"the refusal must state the domain, got {text!r}"
+        assert "must be a positive finite number" in text, f"the refusal must state the domain, got {text!r}"
 
 
 class TestARunningServerIsNoLongerBlamedForTheCallersTimeout:
@@ -195,7 +195,7 @@ class TestInfinityIsRefusedRatherThanReadAsNoDeadline:
         A later change that reads ``inf`` as "wait forever" fails here first, and
         should read the premise test below before deciding this test is wrong.
         """
-        with pytest.raises(ValueError, match="must be > 0"):
+        with pytest.raises(ValueError, match="must be a positive finite number"):
             build(**{param: math.inf})
 
     def test_the_websocket_transport_does_not_honour_it(self) -> None:
@@ -228,7 +228,7 @@ class TestTheClientDefersToTheSharedDomain:
         shared_refuses = positive_finite_number_error(value, param, "Ctx") is not None
         for name, build in CLIENTS:
             if shared_refuses:
-                with pytest.raises(ValueError, match="must be > 0"):
+                with pytest.raises(ValueError, match="must be a positive finite number"):
                     build(**{param: value})
             else:
                 build(**{param: value})  # constructs; no transport is touched

@@ -24,7 +24,7 @@ MOTION_ENV = "STRANDS_DASH_AGENT_PHYSICAL_MOTION"
 
 #: Actions that can put a real robot in motion. Everything else -- including every way of STOPPING
 #: one -- is deliberately outside this set.
-GATED_ACTIONS: frozenset[str] = frozenset({"task", "teleop_receive"})
+GATED_ACTIONS: frozenset[str] = frozenset({"task", "teleop_receive", "reset"})
 
 #: How each gated action reads in a refusal: pointing a follower at a live leader stream is
 #: immediate motion (the follower snaps to the leader's pose the moment the command lands),
@@ -32,6 +32,8 @@ GATED_ACTIONS: frozenset[str] = frozenset({"task", "teleop_receive"})
 _ACTION_PHRASE: dict[str, str] = {
     "task": "starting a task on",
     "teleop_receive": "pointing the follower {shown} at a live leader stream",
+    # A reset drives every joint back to the home pose at once: motion, gated like a task.
+    "reset": "returning {shown} to its home pose",
 }
 
 _TRUE = ("1", "true", "yes", "on")

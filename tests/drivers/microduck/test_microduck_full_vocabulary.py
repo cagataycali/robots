@@ -191,7 +191,7 @@ class TestDiscovery:
         assert positive_finite_number_error(value, "connect_timeout", "ssh_forward_argv") is not None
         with pytest.raises(ValueError) as exc:
             ssh_forward_argv("radxa", "h", [("/tmp/l.sock", DEFAULT_SOCKET)], connect_timeout=value)
-        assert "connect_timeout" in str(exc.value) and "must be > 0" in str(exc.value)
+        assert "connect_timeout" in str(exc.value) and "must be a positive finite number" in str(exc.value)
 
     def test_a_missing_socket_refusal_names_what_to_set(self) -> None:
         driver = MicroduckDriver(port=os.path.join(tempfile.mkdtemp(), "none.sock"))

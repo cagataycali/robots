@@ -159,6 +159,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_file
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _TEST_TREES = ("tests", "tests_integ")
@@ -208,7 +209,7 @@ def _graded_files() -> list[Path]:
 
 def _parse(path: Path) -> ast.Module | None:
     try:
-        return ast.parse(path.read_text(encoding="utf-8"))
+        return parse_file(path)
     except (OSError, SyntaxError):  # pragma: no cover - defensive
         return None
 

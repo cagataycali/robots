@@ -54,14 +54,14 @@ three, and the same call succeeds once the material is supplied.
 """
 
 import ast
-import importlib.util
 import pathlib
 import re
-import sys
 
 import pytest
 
 from strands_robots.mesh import _zenoh_config
+from tests._docs_hooks import docs_hook
+from tests._package_ast import parse_file
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "_zenoh_config.py"
@@ -69,7 +69,6 @@ _SESSION = _ROOT / "strands_robots" / "mesh" / "session.py"
 _PAGE = _ROOT / "docs" / "learn" / "mesh" / "index.md"
 _PAGE_NAME = "docs/learn/mesh/index.md"
 _README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
-_HOOK = _ROOT / "docs" / "hooks" / "env_vars.py"
 
 _HEADING = "## Postures"
 _PREFIX = "STRANDS_MESH_TLS_"
@@ -82,7 +81,7 @@ def _tls_env_reads() -> frozenset[str]:
     Derived from the module's own source so a path added later is held to the
     same documentation rule without editing a list here.
     """
-    tree = ast.parse(_MODULE.read_text(encoding="utf-8"))
+    tree = parse_file(_MODULE)
     names: set[str] = set()
     for node in ast.walk(tree):
         literal = None
@@ -116,11 +115,7 @@ def _documented(text: str) -> frozenset[str]:
 
 def _rendered_matrix() -> str:
     """The configuration page as the build renders it: ``{{env_vars}}`` expanded by the hook."""
-    spec = importlib.util.spec_from_file_location("docs_env_vars_hook_mesh_tls", _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = docs_hook("env_vars")
     source = _README.read_text(encoding="utf-8")
     assert "{{env_vars}}" in source, "docs/reference/configuration.md must carry the {{env_vars}} token"
     rendered = module.on_page_markdown(source, page=None, config=None, files=None)
@@ -297,7 +292,7 @@ class TestTheRefusalBelongsToTheProductionPosture:
     """The caller reaches it exactly under mtls, which is what the page says."""
 
     def test_the_tls_block_is_built_only_under_mtls(self) -> None:
-        tree = ast.parse(_SESSION.read_text(encoding="utf-8"))
+        tree = parse_file(_SESSION)
         guarded = False
         for node in ast.walk(tree):
             if not isinstance(node, ast.If):

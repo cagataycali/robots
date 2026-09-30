@@ -34,6 +34,7 @@ import pytest
 from strands_robots import utils
 from strands_robots.policies.protomotions import policy as policy_mod
 from strands_robots.policies.protomotions.policy import ProtoMotionsPolicy
+from tests._package_ast import parse_file
 
 _ROOT = Path(__file__).resolve().parents[3]
 _PACKAGE = _ROOT / "strands_robots" / "policies" / "protomotions"
@@ -82,7 +83,7 @@ def _refusal(value: str, _ort: None) -> str:
 def _module_scope_imports(path: Path) -> set[str]:
     """Every module-scope import name in ``path`` (typing-only blocks skipped)."""
     names: set[str] = set()
-    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+    for node in parse_file(path).body:
         if isinstance(node, ast.Import):
             names.update(a.name.split(".")[0] for a in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:

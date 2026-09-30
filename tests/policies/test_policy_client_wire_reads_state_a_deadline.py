@@ -61,6 +61,7 @@ from websockets.sync.server import serve  # noqa: E402
 
 from strands_robots.policies.cosmos3 import _msgpack_numpy as mnp  # noqa: E402
 from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient  # noqa: E402
+from tests._package_ast import parse_file
 
 #: Budget handed to the client for a read that must miss its reply. Waited out in
 #: full on every run, so it is the one value here worth keeping small.
@@ -336,7 +337,7 @@ class TestEveryReadOffTheseWiresStatesADeadline:
         unbounded: list[str] = []
         for relative in self.MODULES:
             path = package / relative
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            for node in ast.walk(parse_file(path)):
                 if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
                     continue
                 if node.func.attr != "recv":
