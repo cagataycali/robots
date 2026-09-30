@@ -154,8 +154,9 @@ def test_send_reports_sends_own_error_envelope_as_an_error(fake_local_mesh):
     }
     out = _strands_call(action="send", target="peer-b", command='{"action": "status"}', timeout=5.0)
     assert out["status"] == "error"
-    text = out["content"][0]["text"]
-    assert "peer offline (iot 404)" in text and '"via": "direct"' in text
+    # The envelope is relayed whole as a json block (GH #4172), not as text.
+    envelope = out["content"][1]["json"]
+    assert envelope["error"] == "peer offline (iot 404)" and envelope["delivery"]["via"] == "direct"
 
 
 def test_send_passes_the_delivery_verdict_through(fake_local_mesh):
@@ -166,7 +167,7 @@ def test_send_passes_the_delivery_verdict_through(fake_local_mesh):
     }
     out = _strands_call(action="send", target="peer-b", command='{"action": "status"}', timeout=5.0)
     assert out["status"] == "success"
-    assert '"confirmed": true' in out["content"][0]["text"]
+    assert out["content"][1]["json"]["delivery"]["confirmed"] is True
 
 
 def test_ping_requires_target(fake_local_mesh):
@@ -179,7 +180,7 @@ def test_ping_reports_a_reachable_peer_as_success(fake_local_mesh):
     fake_local_mesh.ping.return_value = {"status": "ok", "latency_ms": 156.2, "via": "direct", "confirmed": True}
     out = _strands_call(action="ping", target="peer-b", timeout=2.0)
     assert out["status"] == "success"
-    assert '"via": "direct"' in out["content"][0]["text"]
+    assert out["content"][1]["json"]["via"] == "direct"
     fake_local_mesh.ping.assert_called_once_with("peer-b", timeout=2.0)
 
 
@@ -187,7 +188,7 @@ def test_ping_reports_an_unreachable_peer_as_an_error(fake_local_mesh):
     fake_local_mesh.ping.return_value = {"status": "offline", "latency_ms": 81.0, "via": "direct", "reason": "offline"}
     out = _strands_call(action="ping", target="peer-b", timeout=2.0)
     assert out["status"] == "error"
-    assert "offline" in out["content"][0]["text"]
+    assert out["content"][1]["json"]["status"] == "offline"
 
 
 def test_broadcast_invokes_mesh_broadcast(fake_local_mesh):

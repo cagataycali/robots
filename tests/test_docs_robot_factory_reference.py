@@ -24,7 +24,6 @@ claims are graded here by reaching the state they describe.
 from __future__ import annotations
 
 import ast
-import importlib.util
 import inspect
 import re
 from pathlib import Path
@@ -32,6 +31,7 @@ from pathlib import Path
 import pytest
 
 from strands_robots.robot import Robot, _mesh_env_opt_in
+from tests._docs_hooks import docs_hook
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DOC = _REPO_ROOT / "docs" / "reference" / "api" / "robot.md"
@@ -41,7 +41,6 @@ _MESH_DOC = _REPO_ROOT / "docs" / "learn" / "mesh" / "index.md"
 #: last class here grades. The factory docstring states the choice; this page
 #: states the contract and names the robots that take the native path.
 _NATIVE_DRIVERS_DOC = _REPO_ROOT / "docs" / "learn" / "hardware" / "drivers.md"
-_DRIVERS_HOOK = _REPO_ROOT / "docs" / "hooks" / "drivers.py"
 
 _VARIADIC = (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
 _DIRECTIVE = "::: strands_robots.robot.Robot"
@@ -321,10 +320,7 @@ class TestTheNativeDriverRefusalClaimIsStillTrue:
         """The hook reads source text; the classes it names must be the registered ones."""
         from strands_robots.drivers import get_native_driver_class
 
-        spec = importlib.util.spec_from_file_location("drivers_hook", _DRIVERS_HOOK)
-        assert spec is not None and spec.loader is not None
-        hook = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(hook)
+        hook = docs_hook("drivers")
         rows = hook.rows()
         assert rows, "the drivers table is empty; the guard would prove nothing"
         wrong = []
