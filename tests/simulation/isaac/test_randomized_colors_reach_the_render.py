@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 pxr = pytest.importorskip("pxr")
-from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade  # noqa: E402
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade  # type: ignore[import-not-found]  # noqa: E402
 
 from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: E402
 
