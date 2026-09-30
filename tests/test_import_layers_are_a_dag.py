@@ -410,13 +410,13 @@ class TestTheContract:
         shims = {
             name
             for name, path in graph.modules.items()
-            for node in ast.parse(path.read_text(encoding="utf-8")).body
+            for node in parse_file(path).body
             if isinstance(node, ast.Expr) and "DeprecationWarning" in ast.unparse(node.value)
         }
         mesh = "strands_robots.mesh"
         moved = next(
             ast.literal_eval(node.value)
-            for node in ast.parse(graph.modules[mesh].read_text(encoding="utf-8")).body
+            for node in parse_file(graph.modules[mesh]).body
             if isinstance(node, ast.AnnAssign) and node.value and ast.unparse(node.target) == "_MOVED_TO_DRIVERS"
         )
         old = shims | {f"{mesh}.{key}" for key in (*moved, *moved.values())}
@@ -424,7 +424,7 @@ class TestTheContract:
         offenders = sorted(
             (importer, target)
             for importer, path in graph.modules.items()
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            for node in ast.walk(parse_file(path))
             if isinstance(node, ast.Import | ast.ImportFrom)
             for target in mod._import_targets(importer, node, is_package=path.name == "__init__.py")
             if target in old or target.rpartition(".")[0] in shims
