@@ -31,7 +31,7 @@ Constructor keywords: `num_envs` (1), `device` (first CUDA device), `default_tim
 
 The parity tests drive one sinusoid through both backends: so101 joints agree to 8e-5 rad over 2 s, the Unitree G1 free base to 2e-4 m over 1 s, and the same rsl_rl reach actor scores 8/16 on identical seeded targets on both engines (`examples/mjlab/vec_eval_bench.py`).
 
-Physics steps per second, so101, Jetson AGX Thor: mujoco CPU 50,500 at N=1; mjlab 1,100 at N=1, 60,500 at N=64, 544,000 at N=1024. One GPU world is slower than the CPU; the crossover is near 50 worlds. Episodes per minute, a 150-tick reach rollout written to LeRobot v3: classic 227, mjlab 416 at N=16, 807 at N=1024 (6,300 without the writer). The serial LeRobot writer is the ceiling.
+Physics steps per second, so101, Jetson AGX Thor: mujoco CPU 50,500 at N=1; mjlab 1,100 at N=1, 60,500 at N=64, 544,000 at N=1024. One GPU world is slower than the CPU; crossover is near 50 worlds. Episodes per minute, a 150-tick reach rollout written to LeRobot v3: classic 227, mjlab 416 at N=16, 807 at N=1024 (6,300 without the writer). The serial LeRobot writer is the ceiling.
 
 ## Batched operations
 
@@ -46,7 +46,7 @@ Physics steps per second, so101, Jetson AGX Thor: mujoco CPU 50,500 at N=1; mjla
 
 ## Limits
 
-- NVIDIA GPU only; the first build JIT-compiles Warp kernels (about 80 s for so101 on Thor, then cached).
+- NVIDIA GPU only; the first build JIT-compiles Warp kernels (about 80 s for so101 on Thor, cached after).
 - mjlab pins `mujoco~=3.11` and `torch>=2.14`, `[lerobot]` pins `torch<2.12`: install `[sim-mjlab]` in its own environment or second; `[all]` leaves it out for that reason.
-- No batched camera rendering; `render()` rasterises world 0 on the CPU model.
+- No batched camera rendering; `render()` rasterises world 0 on the CPU.
 - mjlab's own ONNX export bakes a batch of 1; the provider scores such graphs one world at a time, warning once.
