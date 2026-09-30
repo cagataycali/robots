@@ -195,6 +195,16 @@ def convert_checkpoint(
     )
     module.load_state_dict(module_state)
 
+    contract = (extra_meta or {}).get("deploy_contract")
+    if isinstance(contract, dict):
+        from strands_robots.training.rl.deploy_contract import complete_obs_layout, contract_problems
+
+        if problems := contract_problems(contract, num_actor_obs=num_actor_obs, num_actions=num_actions):
+            raise ValueError(f"{model_path}: the run's deploy contract does not fit its actor: {'; '.join(problems)}")
+        contract = complete_obs_layout(contract, num_actor_obs=num_actor_obs)
+        extra_meta = {**(extra_meta or {}), "deploy_contract": contract}
+        action_keys = list(contract["action_keys"])
+
     os.makedirs(out_dir, exist_ok=True)
     torch.save(payload, os.path.join(out_dir, "policy.pt"))
     meta = {

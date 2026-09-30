@@ -116,6 +116,15 @@ _STOPPED_FILE = "stopped"
 #: Written next to the checkpoints, so a run remembers how it was trained:
 #: which task, which physics preset, how many environments and which overrides.
 RUN_RECORD_FILE = "strands_run.json"
+
+#: Where ``--export_io_descriptors`` makes Isaac Lab write a run's IO
+#: descriptors - the joint order, action scale/offset and observation layout
+#: an exported actor's deploy contract is built from.
+IO_DESCRIPTORS_FILE = "io_descriptors/IO_descriptors.yaml"
+
+#: Wall-clock limit for the one-environment, zero-iteration launch that writes
+#: the IO descriptors of a run trained before they were always requested.
+IO_DESCRIPTORS_TIMEOUT_S = 900
 _TAIL_LINES = 12
 
 #: How the end of a failed run is classified, with the next step for each.
@@ -248,6 +257,9 @@ class IsaacLabTrainer(Trainer):
             cmd.append(f"physics={extra['physics']}")
         if spec.learning_rate is not None:
             cmd.append(f"agent.algorithm.learning_rate={spec.learning_rate!r}")
+        # Always: one YAML at startup, and the only record of the joint order,
+        # action scale and offsets an exported actor needs to deploy.
+        cmd.append("--export_io_descriptors")
         return cmd
 
     def train(self, spec: TrainSpec) -> TrainResult:
@@ -597,7 +609,10 @@ class IsaacLabTrainer(Trainer):
         Writes ``<run>/strands_policy/policy.pt`` + ``policy_meta.json``
         (``provider="rsl_rl"``: rsl_rl's MLP with the run's own activation and
         observation normalizer, rebuilt without rsl_rl or Isaac Lab), with the
-        run record's task and physics preset in the metadata.
+        run record's task and physics preset in the metadata and, under
+        ``deploy_contract``, what the actor's outputs and inputs mean - read
+        from the run's IO descriptors, which are written first for a run that
+        has none (see :meth:`_deploy_contract`).
 
         Args:
             spec: The validated spec (unused beyond the gate ``train_policy`` runs).
@@ -620,7 +635,92 @@ class IsaacLabTrainer(Trainer):
         if record_path.is_file():
             run = json.loads(record_path.read_text(encoding="utf-8"))
         extra = {k: run[k] for k in ("task", "physics", "num_envs", "job_id", "overrides") if k in run}
+        contract, missing = self._deploy_contract(Path(checkpoint_dir), run)
+        if contract is not None:
+            extra["deploy_contract"] = contract
+        else:
+            extra["deploy_contract_missing"] = missing
+            logger.warning("isaaclab: %s exported without a deploy contract: %s", checkpoint_dir, missing)
         return rsl_rl.convert_checkpoint(model, str(Path(checkpoint_dir) / "strands_policy"), extra_meta=extra)
+
+    def _deploy_contract(self, run_dir: Path, run: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+        """The run's deploy contract, from its IO descriptors; ``(None, reason)`` when there are none.
+
+        A run trained by this provider has them (``--export_io_descriptors`` is
+        always passed). For a run that does not - trained before, or by hand -
+        they are written now by launching the same task with the same physics
+        preset and overrides for zero iterations on one environment, which is
+        what Isaac Lab needs to resolve the joint order: it is the articulation
+        the preset builds, not the task config, that fixes it. Isaac Lab exports
+        descriptors for manager-based tasks only, so a direct-workflow task has
+        none and gets the reason instead.
+        """
+        from strands_robots.training.rl.deploy_contract import contract_from_io_descriptors
+
+        path = run_dir / IO_DESCRIPTORS_FILE
+        if not path.is_file():
+            reason = self._write_io_descriptors(run_dir, run)
+            if reason is not None:
+                return None, reason
+        try:
+            return contract_from_io_descriptors(self._read_yaml(path), physics=run.get("physics")), None
+        except (OSError, ValueError) as exc:  # DeployContractError is a ValueError
+            return None, f"{path} could not be read as IO descriptors: {exc}"
+
+    def _write_io_descriptors(self, run_dir: Path, run: dict[str, Any]) -> str | None:
+        """Write *run_dir*'s IO descriptors with a zero-iteration launch; the reason on failure."""
+        import shutil
+        import tempfile
+
+        task = run.get("task")
+        if not task:
+            return f"{run_dir} has no {RUN_RECORD_FILE} naming its task, so its IO descriptors cannot be rebuilt"
+        if problems := runtime.runtime_problems(self._python, context=self.provider_name):
+            return "; ".join(problems)
+        with tempfile.TemporaryDirectory(prefix="strands-io-") as tmp:
+            cmd = [str(self._python), "-m", "isaaclab", "train", "--rl_library", "rsl_rl", "--task", str(task),
+                   "--max_iterations", "0", "--num_envs", "1", "--visualizer", "none", "--run_name", "io",
+                   "--export_io_descriptors", *[str(o) for o in run.get("overrides") or []]]  # fmt: skip
+            try:
+                done = subprocess.run(  # noqa: S603 - argv, no shell; the interpreter is the operator's
+                    cmd, cwd=tmp, env=runtime.child_env(), capture_output=True, timeout=IO_DESCRIPTORS_TIMEOUT_S
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return f"the zero-iteration launch that writes IO descriptors failed: {exc}"
+            found = sorted(Path(tmp).glob("logs/*/*/*/" + IO_DESCRIPTORS_FILE))
+            if not found:
+                tail = done.stdout.decode(errors="replace")[-600:]
+                if "only supported for manager based" in tail:
+                    return f"{task} is a direct-workflow task, for which Isaac Lab exports no IO descriptors"
+                return f"the zero-iteration launch (exit {done.returncode}) wrote no IO descriptors: ...{tail}"
+            target = run_dir / IO_DESCRIPTORS_FILE
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(found[0], target)
+        return None
+
+    def _read_yaml(self, path: Path) -> dict[str, Any]:
+        """Parse a YAML file with PyYAML when installed, else with the Isaac Lab interpreter's."""
+        try:
+            import yaml  # type: ignore[import-untyped]
+        except ImportError:
+            done = subprocess.run(  # noqa: S603 - argv, no shell
+                [
+                    str(self._python),
+                    "-c",
+                    "import json, sys, yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1]))))",
+                    str(path),
+                ],  # fmt: skip
+                env=runtime.child_env(),
+                capture_output=True,
+                timeout=120,
+                check=True,
+            )
+            parsed = json.loads(done.stdout)
+        else:
+            parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(parsed, dict):
+            raise ValueError(f"{path} is not a YAML mapping")
+        return parsed
 
     def stop(self, job_id: str) -> TrainResult:
         """Stop a running job and return its verdict, ``stopped``.

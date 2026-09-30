@@ -4,7 +4,7 @@ description: GPU-parallel RL through the isaaclab trainer, with Isaac Lab in its
 
 # Isaac Lab training
 
-The `isaaclab` trainer runs `python -m isaaclab train` (rsl_rl PPO) in a separate Isaac Lab venv, reading its log. strands-robots never imports it: its pins conflict, and Kit exits the process that closes it.
+The `isaaclab` trainer runs `python -m isaaclab train` (rsl_rl PPO) in a separate Isaac Lab venv; strands-robots never imports it (its pins conflict, and Kit exits the process that closes it).
 
 ```bash
 uv venv --python 3.12 ~/il && uv pip install --python ~/il/bin/python --prerelease=allow \
@@ -21,4 +21,4 @@ It returns a `job_id`; `action="status"` reports rewards, `success_rate`, a fail
 
 Measured on one L40S with 4096 envs: Cartpole 291k env steps/s, G1 flat locomotion 110k.
 
-Caveats: Isaac Lab 3.0 is an RC; first RTX use compiles shaders (~4 min); PhysX and Newton differ (`strands_run.json` names the preset).
+Caveats: Isaac Lab 3.0 is an RC; first RTX use compiles shaders (~4 min); PhysX and Newton differ, even in joint order, so export records a `deploy_contract` that `create_policy("rl")` applies by name.

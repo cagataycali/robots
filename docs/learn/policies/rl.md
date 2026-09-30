@@ -4,7 +4,7 @@ description: rl rolls out an actor trained by create_trainer("ppo" | "fast_sac" 
 
 # rl
 
-By the end of this page you can load an actor the RL trainers wrote and drive a robot with it through the same `run_policy` path as every other provider.
+By the end of this page you can drive a robot with an actor the RL trainers wrote, through `run_policy` like any provider.
 
 ```bash
 pip install 'strands-robots[rl]'    # torch + gymnasium + the MuJoCo backend
