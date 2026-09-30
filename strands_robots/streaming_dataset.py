@@ -22,18 +22,16 @@ from typing import Any
 
 from strands_robots.dataset_source import local_dataset_dir
 from strands_robots.utils import (
+    LEROBOT_UPGRADE,
     boolean_flag_error,
     finite_number_error,
+    lerobot_floor_error,
     non_negative_count_error,
     positive_count_error,
     refusal_repr,
 )
 
 logger = logging.getLogger(__name__)
-
-# The lerobot that first accepts ``repo_type: Literal["dataset", "bucket"]``;
-# every lerobot-bearing extra in pyproject floors at or above it.
-BUCKET_STREAMING_MIN_LEROBOT = "0.6.1"
 
 # Only a POSITIVE probe is cached: a transient import failure (slow import, a
 # test's monkeypatched ``sys.modules``) must not disable streaming for the rest
@@ -59,6 +57,8 @@ def _get_streaming_cls() -> Any:
     mock_cls = getattr(sys.modules[__name__], "StreamingLeRobotDataset", None)
     if mock_cls is not None:
         return mock_cls
+    if problem := lerobot_floor_error():
+        raise ImportError(f"{problem}. Upgrade with: {LEROBOT_UPGRADE}", name="lerobot")
     try:
         from lerobot.datasets import StreamingLeRobotDataset
 

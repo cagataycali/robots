@@ -37,7 +37,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 from strands_robots import streaming_dataset as sd
-from strands_robots.streaming_dataset import BUCKET_STREAMING_MIN_LEROBOT
+from strands_robots.utils import BUCKET_STREAMING_MIN_LEROBOT
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
@@ -146,6 +146,33 @@ class TestThePackagingFloorAndTheRuntimeGuardAgree:
             f"{BUCKET_STREAMING_MIN_LEROBOT}, but that extra floors at {lower}: following "
             f"the advertised remedy would not clear the guard"
         )
+
+    @pytest.mark.parametrize(
+        ("installed", "refused"),
+        [("0.5.1", True), ("0.6.0", True), ("0.6.1", False), ("0.6.2.dev0", False), ("unknown", False)],
+    )
+    def test_doctor_and_the_streaming_path_refuse_a_lerobot_below_the_floor(
+        self, monkeypatch: pytest.MonkeyPatch, installed: str, refused: bool
+    ) -> None:
+        """pip keeps a pre-existing older lerobot, so the floor is also checked at run time.
+
+        Below it, the doctor must FAIL rather than PASS with the version printed,
+        and the streaming path must name the version and the upgrade instead of
+        a ``TypeError`` about ``return_uint8``, a keyword the caller never passed.
+        """
+        from strands_robots import utils
+        from strands_robots.doctor import check_lerobot
+
+        pytest.importorskip("lerobot", reason="lerobot is an optional extra")
+        monkeypatch.setattr(utils, "lerobot_version", lambda: installed)
+        monkeypatch.delattr(sd, "StreamingLeRobotDataset", raising=False)
+
+        assert ("  FAIL  " in check_lerobot()) is refused
+        if refused:
+            with pytest.raises(ImportError, match=rf"lerobot {installed} is below .*pip install -U"):
+                sd._get_streaming_cls()
+        else:
+            assert sd._get_streaming_cls().__name__ == "StreamingLeRobotDataset"
 
 
 class TestTheFloorReallyDeliversTheCapability:
