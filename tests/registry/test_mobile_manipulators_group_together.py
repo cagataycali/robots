@@ -20,6 +20,15 @@ BASE_WITH_ARM = {
     "stretch3",
     "tiago_dual",
     "yahboom_m3pro",
+    # The robot_descriptions URDF tail (strands_robots/registry/urdf_robots.json): a
+    # wheeled base under one or two arms in every case.
+    "bambot",
+    "eve_r3",
+    "fetch",
+    "ginger",
+    "pepper",
+    "pr2",
+    "stretch_se3",
 }
 
 
