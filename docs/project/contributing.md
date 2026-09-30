@@ -15,7 +15,7 @@ uv pip install -e ".[all,dev]"
 strands-robots doctor
 ```
 
-Python 3.12 or newer. `hatch` drives the scripts below with `uv` as its installer; nothing else needs installing.
+Python 3.12 or newer. `hatch` drives the scripts below with `uv` as its installer.
 
 ## Check before you push
 
@@ -44,7 +44,7 @@ Ruff runs at line length 120 targeting `py312`; mypy runs with `disallow_untyped
 
 ## Log the change
 
-Every pull request that changes behaviour adds one file under `changelog.d/`, `<pr-number>-<slug>.md`, with the `### <Category>: <summary>` heading and body that would have gone into `CHANGELOG.md`. Never edit `## [Unreleased]` directly; the `Guards` step (`scripts/ci_guards.py`) refuses a PR that does, and refuses the placeholders `0000` and `999x`. Push the fragment right after opening the PR, or open as a draft and add it before marking ready: a push after an approval dismisses the approval.
+Every pull request that changes behaviour adds one file under `changelog.d/`, `<pr-number>-<slug>.md`, with the `### <Category>: <summary>` heading and body that would have gone into `CHANGELOG.md`. Never edit `## [Unreleased]` directly; the `Guards` step (`scripts/ci_guards.py`) refuses a PR that does, and refuses the placeholders `0000` and `999x`. Push the fragment right after opening the PR, or open as a draft and add it before marking ready: a push after approval dismisses the approval.
 
 ## Open the pull request
 

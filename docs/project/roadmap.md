@@ -40,4 +40,4 @@ Registry rows, robot names and aliases, wire protocols and safety postures carry
 
 The stobor repository is the staging ground; every file lands in `strands-labs/robots` by path, unrenamed, in reviewed pull requests once the acceptance suite is green on hardware as well as headless. Until then `main` stays 0.5.x and receives fixes. Progress: the [contracts](https://cagataycali.github.io/stobor/contracts/robot/), the [coverage matrix](https://cagataycali.github.io/stobor/robots/) with a witness mark per cell, the [acceptance page](https://cagataycali.github.io/stobor/reference/acceptance/).
 
-No date is promised; done is the acceptance run, not a calendar.
+No date is promised; done is the acceptance run.
