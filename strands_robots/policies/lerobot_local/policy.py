@@ -27,12 +27,14 @@ from ...utils import (
     name_list_error,
     positive_count_error,
     positive_finite_number_error,
+    refusal_repr,
 )
 from .. import Policy, align_action_values, chunk_count_error
 from .._log_safety import sanitize_log_value
 from .._rng import reseed_client_rngs
 from .._state_keys import drop_velocity_siblings
 from .embodiment import (
+    UNIT_FRAMES,
     ZeroActionMonitor,
     diagnose_action_dim,
     hardware_pos_keys,
@@ -119,6 +121,42 @@ def _declared_feature_is_image(name: str, feature: Any = None) -> bool:
     if isinstance(type_name, str):
         return type_name == "VISUAL"
     return "image" in name
+
+
+def embodiment_spec_error(spec: Any) -> str | None:
+    """Why ``embodiment=`` cannot be resolved to an :class:`EmbodimentMap`, or ``None``.
+
+    The one resolution rule for the two places that read the spec before any
+    weights move: :meth:`LerobotLocalPolicy.preflight` (the rollout surfaces'
+    pre-build hook) and the constructor. Both used to leave an unresolvable spec
+    to the load path, where ``_configure_embodiment`` runs AFTER
+    ``_load_model``: ``embodiment="so102"`` was refused only once the checkpoint
+    had downloaded and loaded (18 s cold, 2 s cached), as a raised
+    ``RuntimeError``, while a misspelt keyword was refused in 0.09 s as an
+    envelope. The registry lookup costs nothing, so the verdict moves ahead of
+    the download.
+
+    Args:
+        spec: The ``embodiment`` keyword as the caller passed it: a registry
+            name, an inline dict, an :class:`EmbodimentMap`, or ``None``.
+
+    Returns:
+        ``None`` when ``spec`` is ``None`` or resolves (a known name, a dict
+        :class:`EmbodimentMap` accepts, an instance); otherwise the reason,
+        which for a name lists the registered embodiments.
+    """
+    if spec is None:
+        return None
+    from .embodiment import load_embodiment
+
+    try:
+        load_embodiment(spec)
+    except (TypeError, ValueError) as exc:
+        # ValueError is the unknown-name / wrong-type verdict from
+        # ``load_embodiment``; TypeError is ``EmbodimentMap(**dict)`` refusing a
+        # field the map does not declare.
+        return f"lerobot_local: {exc}"
+    return None
 
 
 def _merge_obs_rename(base: dict[str, str], override: dict[str, str | None] | None) -> dict[str, str]:
@@ -482,6 +520,41 @@ def list_cached_models() -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+#: Embodiment fields a caller has passed as constructor keywords, by mistake.
+EMBODIMENT_UNIT_FIELDS: tuple[str, ...] = ("state_units", "action_units")
+
+
+def embodiment_units_kwarg_error(kwargs: Mapping[str, Any]) -> str | None:
+    """Why ``kwargs`` names a unit frame the constructor cannot bind, or ``None``.
+
+    ``state_units`` and ``action_units`` are fields of an embodiment map, not
+    constructor keywords. Under the pass-through rule they were dropped with a
+    WARNING, and ``run_policy`` then reported ``success`` with the unit frame
+    unchanged (#4164). The message names where the field goes and the two
+    frames it takes (:data:`~strands_robots.policies.lerobot_local.embodiment.UNIT_FRAMES`);
+    ``radians`` is not one of them, because ``native`` already means the values
+    the robot emits, which a MuJoCo simulation reports in radians.
+
+    Args:
+        kwargs: The constructor keywords the signature did not bind.
+
+    Returns:
+        The refusal, or ``None`` when neither name is present.
+    """
+    misplaced = [name for name in EMBODIMENT_UNIT_FIELDS if name in kwargs]
+    if not misplaced:
+        return None
+    given = ", ".join(f"{name}={refusal_repr(kwargs[name])}" for name in misplaced)
+    return (
+        f"LerobotLocalPolicy does not take {given}: units live on the embodiment, not on the "
+        f"constructor. Pass embodiment={{'name': ..., 'state_keys': [...], 'action_keys': [...], "
+        f"'state_units': 'degrees', 'action_units': 'degrees'}} or a registry embodiment that "
+        f"declares them (so100 and so101 declare 'degrees'). A unit frame is one of "
+        f"{sorted(UNIT_FRAMES)}: 'native' means the values the robot emits (radians in MuJoCo, "
+        f"normalized .pos values on a real arm); 'radians' is not a frame."
+    )
 
 
 class LerobotLocalPolicy(Policy):
@@ -866,6 +939,14 @@ class LerobotLocalPolicy(Policy):
         self._zero_action_monitor = ZeroActionMonitor()
         self._action_dim_warned = False
 
+        # Two names are refused rather than tolerated: ``state_units`` and
+        # ``action_units`` are embodiment fields, and a caller who passes them
+        # here is following an older docs sentence that placed them beside
+        # ``processor_overrides``. Dropped (the pass-through rule below), the
+        # rollout reported success with the unit frame unchanged (#4164).
+        misplaced = embodiment_units_kwarg_error(ignored_kwargs)
+        if misplaced:
+            raise TypeError(misplaced)
         # Same contract as every provider: create_policy forwards one shared
         # kwargs bag to all of them, so a key this provider does not own is
         # tolerated - but named. Dropped silently, a misspelt option (``rtc=``
@@ -880,8 +961,19 @@ class LerobotLocalPolicy(Policy):
                 pretrained_name_or_path or "no checkpoint yet",
             )
 
+        # Resolved before the download for the caller who builds the policy
+        # directly rather than through a rollout surface's ``preflight``: the
+        # same registry lookup, the same words, ahead of the same download.
+        if spec_error := embodiment_spec_error(embodiment):
+            raise ValueError(spec_error)
+
         if pretrained_name_or_path:
             self._load_model()
+
+    #: The factory's pre-construction hook (:func:`~strands_robots.policies.factory.policy_kwargs_error`):
+    #: an embodiment field passed as a constructor keyword is refused before the
+    #: trust gate, with the same message the constructor gives.
+    misplaced_kwargs_error = staticmethod(embodiment_units_kwarg_error)
 
     @property
     def provider_name(self) -> str:
@@ -1985,9 +2077,10 @@ class LerobotLocalPolicy(Policy):
         applies to the MolmoAct2 load path only.
 
         No-op when no ``embodiment`` is configured (the policy then uses the
-        legacy heuristic camera routing, which this hook cannot reason about),
-        or when the embodiment name/spec cannot be resolved (``create_policy``
-        surfaces that error authoritatively).
+        legacy heuristic camera routing, which this hook cannot reason about).
+        An ``embodiment`` that cannot be resolved (an unknown name, a dict the
+        map refuses) is refused here, naming the registered embodiments, so it
+        costs no download - see :func:`embodiment_spec_error`.
 
         The parameter-shape guards below (``actions_per_step``, ``image_keys``,
         ``rtc_execution_horizon``) run before that early-return, because all
@@ -2001,8 +2094,8 @@ class LerobotLocalPolicy(Policy):
         Raises:
             ValueError: When ``actions_per_step`` or ``rtc_execution_horizon``
                 is not a positive whole number, when ``image_keys`` is not a
-                list of distinct non-blank names,
-                when a model image feature has no satisfiable source camera key
+                list of distinct non-blank names, when ``embodiment`` cannot
+                be resolved, when a model image feature has no satisfiable source camera key
                 in ``observation_keys``, or when an explicit ``image_keys``
                 withholds a feature the embodiment feeds.
         """
@@ -2057,12 +2150,16 @@ class LerobotLocalPolicy(Policy):
         spec = policy_config.get("embodiment")
         if spec is None:
             return
+        # An unresolvable spec is refused here, not left to the constructor:
+        # the constructor resolves it too (:func:`embodiment_spec_error`), but
+        # this hook is what the rollout surfaces run before the download, and it
+        # is the difference between a sub-second envelope naming the registered
+        # embodiments and a RuntimeError after the weights have loaded.
+        if spec_error := embodiment_spec_error(spec):
+            raise ValueError(spec_error)
         from .embodiment import load_embodiment
 
-        try:
-            embodiment = load_embodiment(spec)
-        except Exception:  # noqa: BLE001 - unknown/odd spec; create_policy reports it
-            return
+        embodiment = load_embodiment(spec)
 
         # ``camera_key_map`` is routing rung 1 (see :func:`_route_camera_key_map`),
         # so it is applied before the availability check below: a caller who
