@@ -3050,7 +3050,14 @@ class Mesh(SensorLoopsMixin):
             # :func:`~strands_robots.mesh.security.validate_command`.
             extra = {
                 k: cmd[k]
-                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path", "embodiment")
+                for k in (
+                    "model_path",
+                    "server_address",
+                    "policy_type",
+                    "pretrained_name_or_path",
+                    "walk",
+                    "embodiment",
+                )
                 if k in cmd
             }
             # Sim peer? Route to Simulation.start_policy / run_policy.

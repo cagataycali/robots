@@ -17,7 +17,7 @@ pip install 'strands-robots[protomotions,sim-mujoco]'    # onnxruntime + pyyaml 
 
 ## What it is
 
-`ProtoMotionsPolicy` wraps the ONNX Generalist Tracking Policy (GTP) from NVIDIA GEAR's ProtoMotions framework, BeyondMimic-trained, published at `cagataydev/protomotions-gtp-unitree-g1` (`unified_pipeline.onnx` plus its `unified_pipeline.yaml` sidecar). Each tick it reads root and anchor rotation plus joint position and velocity, looks ahead into a reference window from a `MotionPlayer`, and emits PD joint targets for the G1's 29 actuators. `requires_images` is `False`. Output is smoothed by the config's `action_ema_alpha` (`1.0` is passthrough).
+`ProtoMotionsPolicy` wraps the ONNX Generalist Tracking Policy (GTP) from NVIDIA GEAR's ProtoMotions framework, BeyondMimic-trained, published at `cagataydev/protomotions-gtp-unitree-g1` (`unified_pipeline.onnx` plus its `unified_pipeline.yaml` sidecar). Each tick it reads root and anchor rotation plus joint position and velocity, looks ahead into a `MotionPlayer` reference window, and emits PD joint targets for the G1's 29 actuators. `requires_images` is `False`. Output is smoothed by the config's `action_ema_alpha` (`1.0` is passthrough).
 
 ```python title="sketch"
 from strands_robots.policies import create_policy
@@ -30,7 +30,7 @@ policy = create_policy("gtp_g1", onnx_path="unified_pipeline.onnx", motion="walk
 
 {{providers:kwargs:protomotions}}
 
-All keyword-only and no `**kwargs`, so a typo is a `TypeError` at build time. `yaml_path` omitted falls back to `ProtoMotionsConfig` defaults, which match the shipped weights. `motion` may be a `MotionPlayer`, a cache dict, or a `.npz` / `.pt` path, and may be `None` at build time. `providers` defaults to `["CUDAExecutionProvider", "CPUExecutionProvider"]`. `history_length=1` matches the upstream checkpoint.
+All keyword-only, no `**kwargs`: a typo is a `TypeError` at build time. Without `yaml_path` the `ProtoMotionsConfig` defaults apply; they match the shipped weights. `motion` may be a `MotionPlayer`, a cache dict, or a `.npz` / `.pt` path, and may be `None` at build time. `providers` defaults to `["CUDAExecutionProvider", "CPUExecutionProvider"]`. `history_length=1` matches the upstream checkpoint.
 
 ## Per-call keywords
 
@@ -68,7 +68,7 @@ Needs the extra and the two artifact files.
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("g1")
 result = sim.run_policy(
@@ -85,4 +85,4 @@ print(result["status"])
 
 - Unitree G1 only, 29 actuators, the ordering in `GTP_G1_JOINT_NAMES`.
 - The tracker needs a reference. With `motion=None` and no per-call `motion`, `get_actions` refuses.
-- The ONNX runs on CPU when no CUDA provider is available, at a lower rate; the default provider list falls through to CPU.
+- Without a CUDA provider the ONNX runs on CPU at a lower rate; the default provider list falls through to it.

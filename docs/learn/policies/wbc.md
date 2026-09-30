@@ -12,7 +12,7 @@ pip install 'strands-robots[wbc]'    # onnxruntime + pyyaml + huggingface_hub; n
 
 ## What it is
 
-`WBCPolicy` ports the non-gait reference runner from NVlabs/GR00T-WholeBodyControl (`run_mujoco_gear_wbc.py`): an 86-wide observation, a 7-wide command block, and two ONNX policies, a balance `policy.onnx` and a `walk_policy.onnx` selected by commanded velocity. It drives the 15 leg and waist joints of the G1 and holds the arm joints at their nominal defaults. `requires_images` is `False`; the controller reads joint state and base IMU only. Layer an arm policy on top with [`CompositePolicy`](../../reference/api/policies.md#built-in-policies) (legs and waist from `wbc`, arms from a manipulation policy).
+`WBCPolicy` ports the non-gait reference runner from NVlabs/GR00T-WholeBodyControl (`run_mujoco_gear_wbc.py`): an 86-wide observation, a 7-wide command block, and two ONNX policies, a balance `policy.onnx` and a `walk_policy.onnx` selected by commanded velocity. It drives the G1's 15 leg and waist joints and holds the arms at their nominal defaults. `requires_images` is `False`; the controller reads joint state and base IMU only. Layer an arm policy on top with [`CompositePolicy`](../../reference/api/policies.md#built-in-policies) (legs and waist from `wbc`, arms from a manipulation policy).
 
 `WBCGaitPolicy` (`wbc_gait`) ports the gait-clock variant (`run_mujoco_gear_wbc_gait.py`): a 95-wide observation with a step-frequency command slot and a two-element left/right foot phase clock, and a single ONNX policy whose input is `[batch, 570]`. Everything else (SONIC PD gains, name-resolved joint map, checkpoint resolution) is inherited.
 
@@ -34,9 +34,9 @@ gait = create_policy("wbc_gait", checkpoint="./gait-ckpt", gait_frequency=1.5)
 
 {{providers:kwargs:wbc_gait}}
 
-`checkpoint` is a directory holding the ONNX files and an optional `config.json`, a direct path to the main `.onnx`, or a HuggingFace model id. The loader accepts the official artifact names `GR00T-WholeBodyControl-Balance.onnx` and `-Walk.onnx` verbatim, so you do not rename the download. When a G1 checkpoint ships ONNX only, the SONIC gains and default angles for 15 actuators are applied. `walk` is a strict boolean; `"false"` is refused, not read as truthy. `target_velocity` in the constructor is the default command for paths that forward constructor kwargs only, such as the mesh `tell()`; the per-call keyword overrides it.
+`checkpoint` is a directory holding the ONNX files and an optional `config.json`, a path to the main `.onnx`, or a HuggingFace model id. The loader accepts the official names `GR00T-WholeBodyControl-Balance.onnx` and `-Walk.onnx` verbatim. When a G1 checkpoint ships ONNX only, the SONIC gains and default angles for 15 actuators are applied. `walk` is a strict boolean; `"false"` is refused, not read as truthy. `target_velocity` in the constructor is the default command for paths that forward constructor kwargs only, such as the mesh `tell()`; the per-call keyword overrides it.
 
-The repo `nvidia/GEAR-SONIC` ships the SONIC VLA inference stack (`model_encoder.onnx`, `planner_sonic.onnx`, ...), not these controllers; pointing `checkpoint` at it is refused with the reason.
+The repo `nvidia/GEAR-SONIC` ships the SONIC VLA inference stack (`model_encoder.onnx`, `planner_sonic.onnx`, ...), not these controllers; pointing `checkpoint` at it is refused with the reason. Its decoder is what [`wbc_latent`](wbc-latent.md) runs, for a VLA that predicts SONIC motion tokens.
 
 ## Goals
 
@@ -47,12 +47,12 @@ The repo `nvidia/GEAR-SONIC` ships the SONIC VLA inference stack (`model_encoder
 
 ## Run it
 
-Needs the extra and a downloaded checkpoint. `run_policy` on MuJoCo detects a `WBCPolicy` anywhere in the policy tree and installs `WBCTorqueController`, which applies SONIC's per-joint PD law to the compiled model; without it the scene's position servos override the controller and the robot falls within a fraction of a second while the rollout reports success. The Isaac and Newton backends cannot install the shim and refuse to start the rollout unless you pass `wbc_install_torque_control=False` against a torque-actuated scene.
+Needs the extra and a downloaded checkpoint. `run_policy` on MuJoCo detects a `WBCPolicy` anywhere in the policy tree and installs `WBCTorqueController`, SONIC's per-joint PD law on the compiled model; without it the scene's position servos win, the robot falls in a fraction of a second and the rollout reports success. The Isaac and Newton backends cannot install the shim and refuse to start the rollout unless you pass `wbc_install_torque_control=False` against a torque-actuated scene.
 
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("g1")
 result = sim.run_policy(
