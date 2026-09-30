@@ -237,6 +237,8 @@
 /* Chips are the homepage's outlined pills: the colour is the outline and the text, never a fill. */
 .sr-chip { font-size: 0.58rem; line-height: 1; padding: 0.22rem 0.45rem; border-radius: 999px; border: 1px solid var(--sr-pill-border); color: var(--md-default-fg-color--light); letter-spacing: 0.02em; }
 .sr-chip-sim { border-color: var(--sr-accent); color: var(--sr-accent); }
+/* Local render shown on a robot page the browser viewer cannot stream (the URDF robots). */
+.sr-thumb { display: block; max-width: 640px; width: 100%; height: auto; margin: 0.5rem 0 1rem; border-radius: 0.5rem; background: var(--sr-stage, transparent); }
 .sr-chip-real { border-color: #946e00; color: #946e00; }
 [data-md-color-scheme="slate"] .sr-chip-real { border-color: #f6bc00; color: #f6bc00; }
 
