@@ -22,8 +22,15 @@ presence reached the fleet once in 30 s, and nothing above DEBUG said why.
 - A Thing name may not contain `__`, the child separator, so a second Thing can
   never sit inside another's key space (`provision_robot`, `provision_operator`
   and `reprovision_thing` refuse it before any AWS call).
-- `IotMqttTransport` WARNs once per topic when the broker ends the session
-  within a second of a publish, naming the topic and the command.
+- `IotMqttTransport` WARNs when the broker ends the session within a second
+  of a publish, naming every topic published inside that second (newest
+  first; the broker's DISCONNECT lands 47 to 74 ms after the offending publish,
+  after a 10 Hz state loop has published again) and the reprovision command,
+  once per set of topics.
+- The presence shadow mirror is wired for the Thing only. A child peer is not a
+  Thing and `$aws/things/<thing>__so101/shadow/...` is granted by no policy, so
+  the child's shadow update was ending the session every 1.5 s even with the
+  child key space granted.
 - `strands-robots doctor` has an `IoT Child Peers` row that reads the Thing's
   attached policy from the control plane and fails with the fix when the grant
   is missing.
