@@ -937,9 +937,9 @@ class LerobotLocalPolicy(Policy):
     def is_chunk_emitting(self) -> bool:
         """Whether this LeRobot policy returns multi-action chunks per inference.
 
-        Extends :meth:`Policy.is_chunk_emitting` so the async-RTC pipeline
-        auto-enables latency masking for every chunk-emitting LeRobot model, not
-        only those whose chunk shape is visible through ``execution_horizon``:
+        Extends :meth:`Policy.is_chunk_emitting` to every chunk-emitting LeRobot
+        model, not only those whose chunk shape is visible through
+        ``execution_horizon``:
 
         * ``execution_horizon > 1`` covers ACT, diffusion, pi0, pi0.5, pi0-FAST
           and SmolVLA, whose trained chunk (or RTC horizon) is more than one

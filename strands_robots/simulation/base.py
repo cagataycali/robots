@@ -3208,10 +3208,10 @@ class SimEngine(ABC):
                 execution so the next action chunk is computed in the
                 background while the current chunk is still draining (latency
                 masking). ``False`` keeps the synchronous chunk-then-drain loop.
-                ``None`` (default) auto-resolves from ``policy.is_chunk_emitting()``
-                so chunk-emitting VLA/flow-matching policies (pi0, pi0.5,
-                pi0-FAST, SmolVLA, MolmoAct2) get latency masking automatically
-                while single-step policies stay synchronous; an explicit
+                ``None`` (default) enables it only for a chunk-emitting
+                policy that blends the seam (``supports_rtc``), since a
+                prefetched chunk without RTC starts from a stale observation;
+                every other policy stays synchronous; an explicit
                 ``True``/``False`` always wins, and a supplied value must be one
                 of those two: any other type is reported as a structured caller
                 error rather than read by truthiness, since a truthy ``"false"``

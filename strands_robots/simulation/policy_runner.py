@@ -1859,18 +1859,19 @@ class PolicyRunner:
                 prev-chunk state across the seam and joins consecutive chunks
                 smoothly, whereas a chunk-emitting policy WITHOUT an
                 ``rtc_config`` - MolmoAct2, ACT, diffusion, and the public
-                ``lerobot/smolvla_base`` checkpoint - gets the overlap (latency
-                masking) but a plain chunk swap at the seam. This flag only
+                ``lerobot/smolvla_base`` checkpoint - gets the overlap only when
+                asked for with ``True``, and then a plain chunk swap at the seam. This flag only
                 schedules the overlap; it never enables or touches the policy's
                 RTC machinery, so it is provider-agnostic. ``False`` keeps the
                 historical
                 synchronous chunk-then-drain loop, which is correct for
                 single-step policies and any policy whose ``get_actions`` reads
-                live sim state. ``None`` (default) auto-resolves the flag from
-                ``policy.is_chunk_emitting()``: chunk-emitting VLAs (pi0, pi0.5,
-                pi0-FAST, SmolVLA, MolmoAct2) enable the overlap and single-step
-                policies stay synchronous, so the latency-masking default is
-                correct without the caller having to know the policy's shape. An
+                live sim state. ``None`` (default) enables the overlap only for
+                a policy that both emits chunks and blends the seam (``supports_rtc``):
+                the prefetched chunk is queried from an observation half a chunk
+                old, and without RTC its first actions target a state the robot
+                has already left. Every other policy stays synchronous; pass
+                ``True`` to opt a non-RTC chunk policy into latency masking. An
                 explicit ``True``/``False`` always wins over the auto-resolution.
                 The policy object is only ever invoked from the
                 single background worker (never concurrently), and the runner
@@ -2057,18 +2058,18 @@ class PolicyRunner:
                     e,
                 )
 
-        # Auto-resolve the async-RTC overlap from the policy's own shape when the
-        # caller did not pin it. Chunk-emitting VLAs (pi0/pi0.5/pi0-FAST/SmolVLA/
-        # MolmoAct2) benefit from hiding inference behind chunk execution, while a
-        # single-step policy gains nothing - so the latency-masking default is
-        # correct without the caller knowing the policy's internals. An explicit
-        # True/False always wins. Use getattr so a duck-typed policy_object that
-        # predates is_chunk_emitting() simply stays on the synchronous path.
+        # Auto-resolve the async overlap when the caller did not pin it. The
+        # prefetched chunk is queried from an observation half a chunk old, so it
+        # is only safe for a policy that blends the seam against what the robot
+        # did meanwhile (``supports_rtc``). A chunk emitter without RTC would
+        # hard-swap in actions planned for a state that has passed, so it stays
+        # synchronous; an explicit True/False always wins. getattr keeps a
+        # duck-typed policy_object that declares neither on the synchronous path.
         if async_rtc is None:
             _emit = getattr(policy, "is_chunk_emitting", None)
-            async_rtc = bool(_emit()) if callable(_emit) else False
+            async_rtc = bool(getattr(policy, "supports_rtc", False)) and callable(_emit) and bool(_emit())
             logger.info(
-                "async_rtc auto-resolved to %s from %s.is_chunk_emitting()",
+                "async_rtc auto-resolved to %s for %s (supports_rtc and is_chunk_emitting)",
                 async_rtc,
                 type(policy).__name__,
             )
