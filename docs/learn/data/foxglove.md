@@ -41,6 +41,6 @@ The file carries `/observation/state` and `/action/state` in the `lerobot.Scalar
 
 ## The gate
 
-By default the server advertises no capability at all: a Foxglove client can watch, and nothing it sends reaches the robot. `foxglove_services=True` adds one service, `strands/set_joint_positions`, taking `{"robot": "so101", "positions": {"1": 0.2}}`. A call from a panel carries no operator approval, so it is refused with the same sentence every other command surface uses until `STRANDS_FOXGLOVE_COMMAND_ALLOW=strands/set_joint_positions` (or `*`) is set in the robot's environment. Every decision is written to `/strands/events`.
+By default it advertises no capability: a client can watch; nothing it sends reaches the robot. `foxglove_services=True` adds one service, `strands/set_joint_positions`, taking `{"robot": "so101", "positions": {"1": 0.2}}`, and refuses a `robot` it does not drive. A call from a panel carries no operator approval, so it is refused with every other command surface's sentence until `STRANDS_FOXGLOVE_COMMAND_ALLOW=strands/set_joint_positions` (or `*`) is set in the robot's environment. Every decision is written to `/strands/events`.
 
 The `status` action of the simulation tool and of the hardware tool reports the URL, so an agent can hand an operator the link without a new tool action. Foxglove 3.x speaks the `foxglove.sdk.v1` subprotocol the server offers; an older build fails to connect rather than connecting badly.

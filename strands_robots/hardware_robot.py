@@ -1016,7 +1016,20 @@ class Robot(TeleopMixin, AgentTool):
         self._ros_bridge = joined
 
     def _foxglove_command_sink(self, robot: str | None, positions: dict[str, float]) -> dict[str, Any]:
-        """Apply a gated Foxglove ``set_joint_positions`` call as one ``send_action``."""
+        """Apply a gated Foxglove ``set_joint_positions`` call as one ``send_action``.
+
+        A call that names a robot this server does not drive is refused before
+        anything reaches the arm: one server drives one arm, so a panel pointed
+        at the wrong port must not move the wrong hardware. ``robot=None``
+        means this arm.
+        """
+        names = {self.tool_name_str, getattr(self.robot, "name", None)}
+        if robot is not None and robot not in names:
+            text = (
+                f"set_joint_positions names robot {robot!r}, but this server drives {self.tool_name_str!r}; "
+                "nothing was sent to the arm. Point the panel at that robot's own Foxglove server."
+            )
+            return {"status": "error", "content": [{"text": text}]}
         return self.send_action(dict(positions))
 
     @property

@@ -399,6 +399,40 @@ class TestAFailedFoxgloveStartLeaksNoRosBridge:
             robot._shutdown_ros_bridge()
 
 
+class TestTheHardwareSinkDrivesOnlyItsOwnArm:
+    """A gated ``set_joint_positions`` that names another robot never reaches this arm.
+
+    Before: the hardware sink dropped ``robot`` and sent the positions to the
+    arm it drives, answering ``success``; the sim sink already refused an
+    unknown name.
+    """
+
+    @pytest.mark.parametrize(
+        ("robot", "sent"),
+        [(None, True), ("arm", True), ("so101_follower", True), ("koch", False)],
+    )
+    def test_the_named_robot_decides(self, monkeypatch: pytest.MonkeyPatch, robot: str | None, sent: bool) -> None:
+        from types import SimpleNamespace
+
+        from tests._hardware_robot import hardware_robot_on
+
+        hw = hardware_robot_on(SimpleNamespace(name="so101_follower"))
+        actions: list[dict[str, float]] = []
+
+        def _send_action(action: dict[str, float], *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            actions.append(action)
+            return {"status": "success", "content": []}
+
+        monkeypatch.setattr(hw, "send_action", _send_action)
+        result = hw._foxglove_command_sink(robot, {"shoulder_pan": 0.1})
+        assert actions == ([{"shoulder_pan": 0.1}] if sent else [])
+        assert result["status"] == ("success" if sent else "error")
+        if not sent:
+            assert result["content"][0]["text"].startswith(
+                "set_joint_positions names robot 'koch', but this server drives 'arm'"
+            )
+
+
 class TestServices:
     def _bridge(self, tmp_path: Path, sink: Any) -> FoxgloveBridge:
         return FoxgloveBridge(_options(tmp_path, services=True), name="probe", command_sink=sink)
