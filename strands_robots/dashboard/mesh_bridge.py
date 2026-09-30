@@ -272,6 +272,28 @@ FLEET_SUBSCRIPTIONS: tuple[str, ...] = (
     "strands/safety/resume",
 )
 
+#: Backends whose transport carries an AWS IoT Core leg, where the MQTT topic root is bound
+#: to the connecting Thing by the ``strands-operator`` policy.
+_IOT_BEARING_BACKENDS = frozenset({"iot", "bridge"})
+
+
+def safety_rail_peer_id(dashboard_peer_id: str) -> str:
+    """The peer id of the dashboard's robot-less safety Mesh.
+
+    On plain Zenoh it is ``<dashboard>-safety``. On a backend with an IoT leg it
+    is the Thing the dashboard connects as (``STRANDS_IOT_THING_NAME``): the
+    operator policy lets that Thing publish presence only under its own name and
+    subscribe to replies only under ``strands/<thing>/response/#``, so a rail
+    named anything else had its first presence publish drop the shared MQTT
+    session and could never hear a reply.
+    """
+    backend = os.getenv("STRANDS_MESH_BACKEND", "zenoh").strip().lower()
+    thing = os.getenv("STRANDS_IOT_THING_NAME", "").strip()
+    if backend in _IOT_BEARING_BACKENDS and thing:
+        return thing
+    return f"{dashboard_peer_id}-safety"
+
+
 #: Budget for resolving one camera S3 reference: the presigned GET must answer
 #: within this many seconds or the reference is dropped and the next one tried.
 CAMERA_REF_TIMEOUT_S = 3.0
@@ -1282,6 +1304,15 @@ class MeshBridge:
 
     # ------------------------------------------------------------------ Signed safety rail (A6).
 
+    @property
+    def rail_peer_id(self) -> str:
+        """The peer id the signed safety rail announces itself with (see :func:`safety_rail_peer_id`)."""
+        return safety_rail_peer_id(self.peer_id)
+
+    def is_own_rail(self, peer_id: str) -> bool:
+        """True for the dashboard's own safety rail under either of its names: never a host to stop."""
+        return peer_id == self.rail_peer_id or peer_id == f"{self.peer_id}-safety"
+
     def _safety_mesh(self) -> Any | None:
         """Lazily start the bridge's robot-less Mesh: signed safety envelopes and every command."""
         with self._safety_lock:
@@ -1309,7 +1340,7 @@ class MeshBridge:
                     )
                     return None
 
-                m = Mesh(None, peer_id=f"{self.peer_id}-safety", peer_type="gateway")
+                m = Mesh(None, peer_id=safety_rail_peer_id(self.peer_id), peer_type="gateway")
                 m.start()
                 if not m.alive:
                     return None
@@ -1413,7 +1444,7 @@ class MeshBridge:
         if not heard:
             return []
         hosts = sorted(
-            pid for pid in self.live_peers() if pid != self.peer_id and "__" not in pid and not pid.endswith("-safety")
+            pid for pid in self.live_peers() if pid != self.peer_id and "__" not in pid and not self.is_own_rail(pid)
         )
         answered: list[str] = []
         if hosts:
