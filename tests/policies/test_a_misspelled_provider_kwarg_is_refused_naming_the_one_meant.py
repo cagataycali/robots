@@ -1,7 +1,7 @@
 """One rule for every provider: a keyword that misspells a constructor parameter is refused.
 
 Pre-fix each provider had its own behaviour. A constructor with ``**kwargs``
-dropped ``create_policy("groot", hots="x")`` silently, so the client dialled
+dropped ``create_policy("<provider>", hots="x")`` silently, so the client dialled
 the default host under ``status="success"``; ``remote``
 logged "ignoring unexpected constructor kwarg(s)" where no agent reads it; a
 constructor without a sink raised CPython's ``__init__() got an unexpected
@@ -31,7 +31,7 @@ from strands_robots.policies.factory import (
 )
 from strands_robots.registry import list_policy_providers
 
-#: ``zmq`` is what resolving the ``groot`` provider imports. Read as a spec
+#: ``zmq`` is what resolving the ``moveit2`` provider imports. Read as a spec
 #: rather than imported, so the gate costs nothing and mutes nothing.
 _HAS_ZMQ = importlib.util.find_spec("zmq") is not None
 
@@ -213,9 +213,9 @@ class TestTheHelperItself:
         assert policy_kwargs_error("strict_test", _Strict, {"host": "h", "port": 1}) is None
 
 
-@pytest.mark.skipif(not _HAS_ZMQ, reason="groot extra")
-def test_the_groot_reproduction_from_the_lab():
-    # PC2-009 verbatim: pre-fix this returned a Gr00tPolicy dialling localhost.
+@pytest.mark.skipif(not _HAS_ZMQ, reason="moveit2 extra")
+def test_the_reproduction_from_the_lab_on_a_shipped_server_dialing_provider():
+    # PC2-009 shape: pre-fix a sink constructor returned a policy dialling localhost.
     with pytest.raises(TypeError) as info:
-        create_policy("groot", hots="10.0.0.2", data_config="so101")
-    assert "Gr00tPolicy (policy provider 'groot') does not accept 'hots' (did you mean 'host'?)." in str(info.value)
+        create_policy("moveit2", hots="10.0.0.2", port=5555)
+    assert "MoveIt2Policy (policy provider 'moveit2') does not accept 'hots' (did you mean 'host'?)." in str(info.value)
