@@ -67,13 +67,15 @@ _BUDGET: int = _hook().LIMIT
 #: learn/mesh, a variable row and a sentence on the pages that point at it, and the `iot`
 #: verbs on the command line page).
 #: Raised by 551 to 50,059 for the flux3_action provider page (one page per provider).
-#: Raised by 5,903 to 55,962 for the docs ladder: Start rewritten as six rungs with a
+#: Lowered to 49,433 when the GR00T provider page left with the provider (GR00T N1.7
+#: is a section of lerobot-local now).
+#: Raised by 5,886 to 55,319 for the docs ladder: Start rewritten as six rungs with a
 #: checkpoint sentence each (Stage 0 See it is a captured agent transcript with its frames),
 #: a Concepts tab for the Policy -> Robot -> Backend spine with a glossary, a provider
 #: decision table, and a next-step sentence plus a joints print on every simulated robot page.
 #: Pictures enter through one-word {{drawing:}} / {{sim:}} tokens, so the raise is words, not
 #: images. Banked to the exact total; the next page needs an equal cut or its own raise.
-_SITE_BUDGET = 55_962
+_SITE_BUDGET = 55_319
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
