@@ -36,7 +36,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.inference import protocol
-from strands_robots.policies._ws_wire import silent_server_error
+from strands_robots.policies._ws_wire import closed_connection_error, silent_server_error
 from strands_robots.policies.base import Policy, chunk_count_error, required_bodies_error
 from strands_robots.utils import (
     dial_host_error,
@@ -395,6 +395,14 @@ class RemotePolicy(Policy):
                 self._apply_metadata(reply.get("metadata", {}))
                 self._reset_pending = False
             established = True
+        except ConnectionClosed as exc:
+            # Closed after the upgrade but before the ready frame: the server
+            # accepted and then went away (stopped or crashed while loading).
+            raise ConnectionError(
+                closed_connection_error(
+                    server=_SERVER_NAME, uri=self.uri, what=f"{protocol.MSG_READY!r} handshake", exc=exc
+                )
+            ) from exc
         except TimeoutError as exc:
             # Before any ``OSError`` clause, because a ``TimeoutError`` is one:
             # this server accepted the connection and then did not answer, so
@@ -559,6 +567,8 @@ class RemotePolicy(Policy):
             # under ``python -O`` there is no assert at all, leaving
             # ``AttributeError: 'NoneType' object has no attribute 'send'``.
             raise ConnectionError("the connection was discarded after a failed exchange; retry to open a fresh one")
+        from websockets.exceptions import ConnectionClosed
+
         exchanged = False
         try:
             self._ws.send(protocol.dumps(message))
@@ -578,6 +588,14 @@ class RemotePolicy(Policy):
                     timeout=self.request_timeout,
                     budget_param="request_timeout",
                 )
+            ) from exc
+        except ConnectionClosed as exc:
+            # The server was there and ended the connection mid-exchange. Left
+            # alone, the caller sees websockets' own "received 1001 (going away)"
+            # with no endpoint in it. ``exchanged`` is still False, so the
+            # ``finally`` discards the connection and the next call re-dials.
+            raise ConnectionError(
+                closed_connection_error(server=_SERVER_NAME, uri=self.uri, what="reply", exc=exc)
             ) from exc
         finally:
             if not exchanged:

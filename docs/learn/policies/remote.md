@@ -39,6 +39,8 @@ sim.cleanup()
 
 `endpoint` supersedes `host` and `port`; without it the client dials `ws://host:port`. `host` is checked for delimiters and `port` must be an `int` in `[1, 65535]` before the URI exists, so a bad value is refused while you still hold it. `connect_timeout` and `request_timeout` are seconds and must be positive; `0`, a negative or `True` is a `ValueError` at construction.
 
+A failure names the endpoint and which of three things happened: no server is listening, one is listening but did not answer within the timeout, or one closed the connection, for example because it was stopped mid-rollout. After any of them the next call dials again.
+
 ## The server
 
 ```python title="sketch"

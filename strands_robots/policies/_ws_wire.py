@@ -58,6 +58,40 @@ def silent_server_error(*, server: str, uri: str, what: str, timeout: float, bud
     )
 
 
+def closed_connection_error(*, server: str, uri: str, what: str, exc: BaseException) -> str:
+    """Return the report for a peer that closed an open connection before answering.
+
+    websockets raises ``ConnectionClosed`` for this with text such as
+    ``received 1001 (going away); then sent 1001 (going away)``, which names
+    neither the endpoint nor what happened. This is the third case beside a
+    server that is absent and one that went quiet: the server was there and
+    ended the connection, so it was stopped, restarted or crashed.
+
+    Args:
+        server: Human name of the service being dialled.
+        uri: The WebSocket URI the client dialled.
+        what: The reply that did not arrive (e.g. ``"reply"``).
+        exc: The ``ConnectionClosed`` raised; its close code and reason are
+            quoted when the peer sent a close frame.
+
+    Returns:
+        A message naming the endpoint, the reply that did not arrive, the close
+        code and reason, and the remedy.
+    """
+    rcvd = getattr(exc, "rcvd", None)
+    if rcvd is not None:
+        code = getattr(rcvd, "code", "?")
+        reason = getattr(rcvd, "reason", "") or ""
+        how = f"close code {code}" + (f" {reason!r}" if reason else "")
+    else:
+        how = "no close frame, the socket dropped"
+    return (
+        f"{server} at {uri} closed the connection before sending its {what} ({how}). "
+        "The server was there and ended the connection, so it was stopped, restarted or crashed: "
+        "read its log. This connection is discarded, and the next call dials the server again."
+    )
+
+
 def close_quietly(ws: Any) -> None:
     """Close a websocket connection, ignoring any failure.
 
