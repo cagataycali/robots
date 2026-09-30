@@ -33,7 +33,7 @@ policy = create_policy("robotfuel/act_so101_t16b", embodiment="so101")   # same 
 
 Inert normalization has a two-part remedy: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and `state_units` / `action_units` (`degrees` or `radians`) say which unit they were recorded in. `so100` and `so101` declare `state_units='degrees'`; radian stats need the unit half beside the stats half.
 
-`pretrained_name_or_path` is required. `actions_per_step` left at `1` is auto-raised to the model's trained `n_action_steps`; a value above 1 pins it. `cache_model=True` keeps loaded weights across policies (`clear_model_cache()`, `list_cached_models()`).
+`pretrained_name_or_path` is required. `actions_per_step=1` becomes the trained `n_action_steps`; above 1 pins it. `cache_model=True` shares weights in-process (`clear_model_cache()`, `list_cached_models()`). Without `device=` it uses CUDA if present; checkpoint `torch.compile` stays off unless `compile_model=True`.
 
 ## Embodiments
 
@@ -130,5 +130,5 @@ policy = create_policy("ws://gpu-box:8765")                                     
 ## Limits
 
 - `trust_remote_code=True` is unconditional for this provider, hence the environment gate; load checkpoints only from organisations you trust.
-- `dim_policy="pad"` and `"truncate"` adapt the state vector to the model width by design, and most shipped embodiments declare `pad`; `strict` refuses a width mismatch and names the two opt-ins.
-- An embodiment not in `embodiments.json` needs its own entry: state keys, action keys, camera renames; [Training](../training/lerobot.md) shows how a trained checkpoint carries them.
+- `dim_policy="pad"` / `"truncate"` adapt the state width and take the first N values of a wider action (32-D pi0/pi0.5); `strict` refuses. An embodiment the pipeline cannot take is refused at load.
+- An embodiment not in `embodiments.json` needs its own entry (state keys, action keys, camera renames); [training](../training/lerobot.md) shows how a checkpoint carries those names.
