@@ -28,6 +28,7 @@ Environment variables:
 from __future__ import annotations
 
 import logging
+import math
 import os
 import queue
 import threading
@@ -117,7 +118,6 @@ def _vertical_fov_lens_mm(
     Returns:
         ``(vertical_aperture_mm, focal_length_mm)``.
     """
-    import math
 
     vertical_aperture_mm = horizontal_aperture_mm * float(height) / float(width)
     focal_length_mm = vertical_aperture_mm / (2.0 * math.tan(math.radians(fov_deg) / 2.0))
@@ -436,6 +436,43 @@ def _resolve_registry_description(data_config: str | None, lookup_name: str) -> 
 _DEFAULT_PHYSICS_SCENE_PATH = "/physicsScene"
 
 
+def _env_grid_offsets(num_envs: int, spacing: float) -> list[list[float]]:
+    """Offsets of ``num_envs`` environments from env_0, on a square grid, env_0 at the origin.
+
+    Row-major, ``ceil(sqrt(n))`` per row, +x along a row and +y between rows, so
+    every environment gets its own cell and the scene already on the stage
+    (env_0) does not move. Returned for every environment, env_0 included.
+    """
+    per_row = max(1, math.ceil(math.sqrt(num_envs)))
+    return [[(i % per_row) * spacing, (i // per_row) * spacing, 0.0] for i in range(num_envs)]
+
+
+def _prim_world_pose(stage: Any, path: str) -> tuple[list[float], list[float]]:
+    """World translation and (w, x, y, z) orientation of the prim at *path*.
+
+    What a clone of it must keep: the cloner writes the pose it is given onto the
+    clone root, replacing the source's own. Identity when the prim or its
+    transform cannot be read (a stage without USD transforms), so a clone lands
+    at its environment's origin as before rather than failing.
+    """
+    try:
+        from pxr import Usd, UsdGeom  # type: ignore[import-not-found]
+
+        prim = stage.GetPrimAtPath(path)
+        if not prim or not prim.IsValid():
+            return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
+        matrix = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+        translation = matrix.ExtractTranslation()
+        rotation = matrix.RemoveScaleShear().ExtractRotationQuat()
+        imag = rotation.GetImaginary()
+        return (
+            [float(translation[0]), float(translation[1]), float(translation[2])],
+            [float(rotation.GetReal()), float(imag[0]), float(imag[1]), float(imag[2])],
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
+
+
 def _physics_scene_path(stage: Any) -> str:
     """The stage's ``UsdPhysics.Scene`` prim path, discovered rather than assumed.
 
@@ -681,10 +718,11 @@ def _physics_view_stale_error(engine: Any, verb: str) -> dict[str, Any] | None:
                     "robot's get_observation() comes back empty. Call reset() first, "
                     f"then {verb}(). Note reset() returns robots to their default pose. "
                     "Only a dynamic body does this: a static add_object or "
-                    "remove_object, add_camera, remove_camera, move_object and "
-                    "add_robot all leave the view intact. remove_robot deletes an "
+                    "remove_object, add_camera and remove_camera leave the view intact, "
+                    "and add_robot keeps it intact on a live view. remove_robot deletes an "
                     "articulation, so it invalidates the view like a dynamic "
-                    "remove_object and needs the same reset()."
+                    "remove_object and needs the same reset() - including before the "
+                    "next add_robot, which builds the new robot inside that view."
                 )
             }
         ],
@@ -2920,6 +2958,15 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             # structured envelope this method documents as its failure channel.
             if (name_err := entity_name_error("add_robot", "name", name)) is not None:
                 return {"status": "error", "content": [{"text": name_err}]}
+            # A new articulation is initialized INSIDE the tensor view, so on a
+            # stale one (after remove_robot or a dynamic remove_object) the load
+            # used to half-happen and fail with "'NoneType' object has no
+            # attribute 'link_names'" - a message naming neither the cause nor
+            # the one-call remedy, and whose failure path rebuilt enough state
+            # that the SAME call then worked, so remove/add cycles alternated
+            # error/success. Refused before any prim is created instead.
+            if stale := _physics_view_stale_error(self, "add_robot"):
+                return stale
 
             # A posture flag, checked rather than read by truthiness: it selects
             # whether the root is welded, and a truthy non-boolean would pick the
@@ -5631,6 +5678,8 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     }
             if not registered(self._robots, robot_name):
                 return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+            if stale := _physics_view_stale_error(self, "get_jacobian"):
+                return stale
             try:
                 jac = self._link_jacobian(self._robots[robot_name], body_name)
             except (RuntimeError, ValueError) as e:
@@ -6547,9 +6596,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         * ``Rendered (RTX <render_mode>)`` -- Phase-2 path: real
           frames pulled from the Camera handle. ``rgb`` / ``depth``
           are the actual array shapes returned by Isaac (matching
-          the camera's resolved resolution; not necessarily the
-          ``width`` / ``height`` arguments passed to this method,
-          which are only used to size the blank-frame fallbacks).
+          the camera's resolved resolution), resampled to ``width`` /
+          ``height`` when either is given; the json then carries both
+          ``resolution`` and ``native_resolution``).
 
         Parameters
         ----------
@@ -6558,11 +6607,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             Default ``"default"``.
         width : int, optional
             Frame width for blank-frame fallbacks. Default from
-            ``IsaacConfig.camera_width``. Ignored on the RTX path
-            (the camera's own resolution wins).
+            ``IsaacConfig.camera_width``. On the RTX path the camera's
+            native frame is resampled to it (MuJoCo parity).
         height : int, optional
             Frame height for blank-frame fallbacks. Default from
-            ``IsaacConfig.camera_height``. Ignored on the RTX path.
+            ``IsaacConfig.camera_height``. Resampled to on the RTX path.
 
         Returns
         -------
@@ -6591,6 +6640,22 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 "content": [{"text": meta.get("error", "render failed")}],
             }
         content: list[dict[str, Any]] = [{"text": meta.get("text", "")}]
+        # The RTX product renders at the resolution fixed by add_camera, and the
+        # requested width/height were silently dropped: render(width=320,
+        # height=240) answered 640x480 where MuJoCo answers 320x240. The
+        # public frame is resampled to the request; the internal _render_frame
+        # consumers (recording, get_frame) keep the native frame, and the json
+        # says both sizes.
+        native = [int(rgb.shape[1]), int(rgb.shape[0])]
+        want = [native[0] if width is None else int(width), native[1] if height is None else int(height)]
+        if meta.get("json", {}).get("rtx") and want != native:
+            from PIL import Image
+
+            rgb = np.asarray(
+                Image.fromarray(np.ascontiguousarray(rgb)).resize((want[0], want[1]), Image.Resampling.BILINEAR)
+            )
+            meta = {**meta, "text": f"{meta.get('text', '')} (resampled to {want[0]}x{want[1]})"}
+            meta["json"] = {**meta["json"], "resolution": want, "native_resolution": native}
         block = _rgb_png_block(rgb)
         if block is not None:
             content.append(block)
@@ -8016,7 +8081,10 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
         Every registered robot and object is cloned into ``{stage_path}/envs/env_i``
         for ``i`` in ``1..num_envs-1``, laid out on a square grid with ``spacing``
-        metres between neighbours. The scene you already built is environment 0, so
+        metres between neighbours: env ``i`` sits at column ``i % k``, row
+        ``i // k`` (``k = ceil(sqrt(num_envs))``), with env_0 - the scene already
+        built - at the origin, and each clone keeps its source's own pose plus
+        that offset. The offsets are returned as ``env_origins``. The scene you already built is environment 0, so
         ``num_envs`` counts it: ``replicate(64)`` produces the source plus 63
         clones. Cloning is done by Isaac Sim's own
         ``isaacsim.core.cloner.GridCloner``, which is what makes it a GPU-side
@@ -8153,7 +8221,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 }
 
             try:
-                from isaacsim.core.cloner import GridCloner  # type: ignore[import-not-found]
+                from isaacsim.core.cloner import Cloner  # type: ignore[import-not-found]
             except ImportError as exc:
                 # Refuse rather than report a fleet nobody built. This is the
                 # single behaviour this method used to get wrong.
@@ -8188,7 +8256,17 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 stage = omni.usd.get_context().get_stage()
                 before = sum(1 for _ in stage.Traverse())
 
-                cloner = GridCloner(spacing=grid_spacing)
+                # ``Cloner`` with explicit poses, not ``GridCloner``'s own layout.
+                # GridCloner lays out a grid for the N-1 TARGET paths, centred on
+                # the origin, while the source scene stays where it is as env_0 -
+                # so with 4 envs at 1.5 m env_2 landed exactly on env_0 (to 1e-7
+                # m, hidden by the inter-env collision filter), and each clone
+                # root was moved TO its grid cell, dropping the source's own pose
+                # (a cube authored at (0.3, 0.3, 0.02) cloned to (x, y, 0), inside
+                # the ground). Each clone now keeps its source's world pose plus
+                # its environment's offset from env_0.
+                offsets = _env_grid_offsets(n, grid_spacing)
+                cloner = Cloner()
                 cloner.define_base_env(env_root)
 
                 # Define each environment scope BEFORE cloning into it. The cloner
@@ -8209,9 +8287,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     leaf = source.rsplit("/", 1)[-1]
                     clone_paths = [f"{target}/{leaf}" for target in targets]
                     expected += clone_paths
+                    src_pos, src_quat = _prim_world_pose(stage, source)
                     cloner.clone(
                         source_prim_path=source,
                         prim_paths=clone_paths,
+                        positions=np.array([np.add(src_pos, off) for off in offsets[1:]], dtype=float),
+                        orientations=np.array([src_quat] * len(clone_paths), dtype=float),
                         replicate_physics=True,
                         base_env_path=env_root,
                         root_path=env_prefix,
@@ -8326,6 +8407,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                             "prims_created": prims_created,
                             "build_time_ms": elapsed * 1000,
                             "spacing": grid_spacing,
+                            "env_origins": [[round(float(v), 6) for v in off] for off in offsets],
                             "env_root": env_root,
                             "physics_replicated": physics_replicated,
                             "collisions_filtered": collisions_filtered,
@@ -9215,6 +9297,11 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             robot = registry_entry(self._robots, robot_name)
             if robot is None or robot.articulation is None:
                 return {"status": "error", "content": [{"text": f"Robot {robot_name!r} not initialized."}]}
+            # The root-pose write goes through the tensor view; on a stale one it
+            # raised a bare ``Exception`` ("Failed to get root link transforms
+            # from backend") straight out of this method.
+            if stale := _physics_view_stale_error(self, "set_robot_pose"):
+                return stale
             # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
             # MuJoCo backend's ``set_robot_pose`` and this backend's own ``add_camera`` already
             # use, so a pose one backend refuses is refused by all of them - the
@@ -9269,6 +9356,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         obj = registry_entry(self._objects, name)
         if obj is None or obj.handle is None:
             return {"status": "error", "content": [{"text": f"Object {name!r} not found."}]}
+        # A dynamic object is moved through its rigid-body handle, which reads
+        # the tensor view; on a stale one it raised a bare ``Exception`` ("Failed
+        # to get rigid body transforms from backend") out of this method. A
+        # static object is a plain prim and moves fine.
+        if not getattr(obj, "is_static", False) and (stale := _physics_view_stale_error(self, "move_object")):
+            return stale
         # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
         # MuJoCo backend's ``move_object`` and this backend's own ``add_camera`` already
         # use, so a pose one backend refuses is refused by all of them - the
@@ -9506,7 +9599,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
     def _get_body_state_impl(self, body_name: str) -> dict[str, Any]:
         """Resolve + read ``body_name``; runs on the main thread (or pump-less)."""
         obj = registry_entry(self._objects, body_name)
-        if obj is not None and obj.handle is not None:
+        # A stale tensor view makes the rigid handle RAISE a bare ``Exception``
+        # ("Failed to get rigid body transforms from backend") rather than any
+        # type ``_object_body_state`` catches, so the read is not attempted:
+        # the registered-object branch below names the stale view and reset().
+        stale = bool(getattr(self, "_physics_view_stale", False))
+        if obj is not None and obj.handle is not None and not stale:
             state = self._object_body_state(obj)
             if state is not None:
                 return _body_state_envelope(body_name, state)
@@ -9535,6 +9633,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             reason = (
                 "it has no rigid-prim handle"
                 if obj.handle is None
+                else "a DYNAMIC body was added or removed since the last reset(), so PhysX's tensor view "
+                "no longer covers the scene"
+                if stale
                 else "its rigid prim could not be read (the handle raised, or returned an unusable pose)"
             )
             return {

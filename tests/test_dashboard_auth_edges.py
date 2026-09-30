@@ -22,6 +22,7 @@ from fastapi import HTTPException
 
 from strands_robots.dashboard import auth
 from tests._dashboard_connection import connection
+from tests._dashboard_passkeys import issue_enrolled
 
 # --- 1. challenge TTL is enforced at POP, not only by eviction ---------------
 
@@ -91,4 +92,4 @@ def test_token_ttl_garbage_is_refused_rather_than_widened(monkeypatch):
         auth._token_ttl()
     monkeypatch.setenv("STRANDS_DASH_AUTH_TOKEN_TTL", "3600")
     assert auth._token_ttl() == 3600
-    assert auth.session_is_valid(auth.issue_token("cred1"))
+    assert auth.session_is_valid(issue_enrolled("cred1"))

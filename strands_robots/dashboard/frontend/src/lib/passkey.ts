@@ -93,8 +93,20 @@ export function fetchAuthStatus(): Promise<AuthStatus> {
 
 // ---- ceremonies (browser only) ----
 
-/** First-time (or additional) passkey enrollment. Returns the session token. */
-export async function enroll(label: string, bootstrap = ''): Promise<string> {
+/**
+ * What a finished ceremony hands the page: WHEN the session lapses, never the session itself.
+ * The server sets it as the HttpOnly cookie, which the browser rides on every same-origin
+ * request; a copy in page memory or storage would be a copy a script could read.
+ */
+export interface SessionGrant { exp: number | null }
+
+function grantOf(res: any): SessionGrant {
+  const exp = res && typeof res.exp === 'number' && Number.isFinite(res.exp) ? res.exp : null
+  return { exp }
+}
+
+/** First-time (or additional) passkey enrollment. The session arrives as the cookie. */
+export async function enroll(label: string, bootstrap = ''): Promise<SessionGrant> {
   const { challenge_id, options } = await api('/api/auth/register/begin', {
     method: 'POST',
     body: JSON.stringify({ label, bootstrap }),
@@ -105,7 +117,7 @@ export async function enroll(label: string, bootstrap = ''): Promise<string> {
     method: 'POST',
     body: JSON.stringify({ challenge_id, credential: credToJSON(cred) }),
   })
-  return res.token as string
+  return grantOf(res)
 }
 
 /**
@@ -131,7 +143,7 @@ export async function beginLogin(): Promise<PreparedLogin> {
 }
 
 /** Run the authenticator ceremony for a prepared challenge. */
-export async function completeLogin(p: PreparedLogin, timeoutMs = 75_000): Promise<string> {
+export async function completeLogin(p: PreparedLogin, timeoutMs = 75_000): Promise<SessionGrant> {
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), timeoutMs)
   let cred: any
@@ -146,10 +158,10 @@ export async function completeLogin(p: PreparedLogin, timeoutMs = 75_000): Promi
     method: 'POST',
     body: JSON.stringify({ challenge_id: p.challenge_id, credential: credToJSON(cred) }),
   })
-  return res.token as string
+  return grantOf(res)
 }
 
-/** Sign in with an already-enrolled passkey. Returns the session token. */
-export async function login(): Promise<string> {
+/** Sign in with an already-enrolled passkey. The session arrives as the cookie. */
+export async function login(): Promise<SessionGrant> {
   return completeLogin(await beginLogin())
 }

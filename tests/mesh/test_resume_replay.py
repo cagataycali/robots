@@ -20,7 +20,7 @@ import time
 import uuid
 from unittest.mock import MagicMock
 
-from strands_robots.mesh.core import Mesh
+from strands_robots.mesh.core import Mesh, resume_proof_key
 
 
 def _make_mesh(peer_id="r-test"):
@@ -59,7 +59,7 @@ def _make_envelope(override_code, *, t=None, peer_id="op-1", proof_nonce=None, l
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
-    proof = hmac.new(override_code.encode(), mac_input, "sha256").hexdigest()
+    proof = hmac.new(resume_proof_key(override_code), mac_input, "sha256").hexdigest()
     return {
         "peer_id": peer_id,
         "t": envelope_t,
@@ -71,7 +71,7 @@ def _make_envelope(override_code, *, t=None, peer_id="op-1", proof_nonce=None, l
 
 def test_first_legitimate_resume_clears_lockout(monkeypatch):
     """Sanity / happy path: a valid fresh envelope clears the lockout."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
     m.publish_safety_event = MagicMock()  # stub out audit publishing
 
@@ -80,7 +80,7 @@ def test_first_legitimate_resume_clears_lockout(monkeypatch):
     assert m._estop_lockout.is_set()
 
     # Send valid resume
-    env = _make_envelope("secret")
+    env = _make_envelope("secret-code-1234567890abcdef")
     m._on_safety_resume(_sample(env))
 
     # Lockout should be cleared
@@ -89,12 +89,12 @@ def test_first_legitimate_resume_clears_lockout(monkeypatch):
 
 def test_replay_of_same_envelope_is_rejected(monkeypatch):
     """Replay of the same envelope is rejected via cache."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
     m.publish_safety_event = MagicMock()
 
     # Mint ONE envelope
-    env = _make_envelope("secret", peer_id="op-1")
+    env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-1")
 
     # First resume: accepted
     m._estop_lockout.set()
@@ -120,12 +120,12 @@ def test_replay_of_same_envelope_is_rejected(monkeypatch):
 
 def test_stale_envelope_rejected(monkeypatch):
     """Envelope older than RESUME_FRESHNESS_WINDOW_S is rejected."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
     m.publish_safety_event = MagicMock()
 
     # Mint envelope with t = 1 hour ago
-    env = _make_envelope("secret", t=time.time() - 3600)
+    env = _make_envelope("secret-code-1234567890abcdef", t=time.time() - 3600)
 
     m._estop_lockout.set()
     m._on_safety_resume(_sample(env))
@@ -136,12 +136,12 @@ def test_stale_envelope_rejected(monkeypatch):
 
 def test_future_envelope_rejected_beyond_skew(monkeypatch):
     """Envelope with t beyond RESUME_FORWARD_SKEW_S is rejected."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
     m.publish_safety_event = MagicMock()
 
     # Mint envelope with t = 60s in future (beyond default 5s skew)
-    env = _make_envelope("secret", t=time.time() + 60)
+    env = _make_envelope("secret-code-1234567890abcdef", t=time.time() + 60)
 
     m._estop_lockout.set()
     m._on_safety_resume(_sample(env))
@@ -152,12 +152,12 @@ def test_future_envelope_rejected_beyond_skew(monkeypatch):
 
 def test_envelope_within_forward_skew_accepted(monkeypatch):
     """Envelope with t within RESUME_FORWARD_SKEW_S is accepted."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
     m.publish_safety_event = MagicMock()
 
     # Mint envelope with t = 1s in future (within default 5s skew)
-    env = _make_envelope("secret", t=time.time() + 1.0)
+    env = _make_envelope("secret-code-1234567890abcdef", t=time.time() + 1.0)
 
     m._estop_lockout.set()
     m._on_safety_resume(_sample(env))
@@ -173,7 +173,7 @@ def test_replay_cache_bounded(monkeypatch):
     test sets the env var directly rather than monkeypatching the
     module-level constant (which is now only the import-time default).
     """
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "8")
 
     m = _make_mesh()
@@ -181,7 +181,7 @@ def test_replay_cache_bounded(monkeypatch):
 
     # Drive 20 distinct nonces through the resume handler
     for i in range(20):
-        env = _make_envelope("secret", peer_id=f"op-{i}", proof_nonce=uuid.uuid4().hex)
+        env = _make_envelope("secret-code-1234567890abcdef", peer_id=f"op-{i}", proof_nonce=uuid.uuid4().hex)
         m._estop_lockout.set()
         m._on_safety_resume(_sample(env))
 
@@ -191,12 +191,12 @@ def test_replay_cache_bounded(monkeypatch):
 
 def test_envelope_missing_t_field_rejected(monkeypatch):
     """Envelope missing the t field is rejected."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
     m.publish_safety_event = MagicMock()
 
     # Mint envelope then delete t field
-    env = _make_envelope("secret")
+    env = _make_envelope("secret-code-1234567890abcdef")
     del env["t"]
 
     m._estop_lockout.set()
@@ -208,12 +208,12 @@ def test_envelope_missing_t_field_rejected(monkeypatch):
 
 def test_envelope_invalid_t_type_rejected(monkeypatch):
     """Envelope with invalid t type is rejected."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
     m.publish_safety_event = MagicMock()
 
     # Mint envelope with invalid t type
-    env = _make_envelope("secret")
+    env = _make_envelope("secret-code-1234567890abcdef")
     env["t"] = "not-a-number"
 
     m._estop_lockout.set()
@@ -225,12 +225,12 @@ def test_envelope_invalid_t_type_rejected(monkeypatch):
 
 def test_replay_emits_audit_event(monkeypatch):
     """Replay rejection emits resume_replay_rejected audit event."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
     m.publish_safety_event = MagicMock()
 
     # Mint ONE envelope
-    env = _make_envelope("secret", peer_id="op-attacker")
+    env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-attacker")
 
     # First resume: accepted
     m._estop_lockout.set()
@@ -312,11 +312,11 @@ def test_f18a_captured_envelope_with_mutated_peer_id_rejected(monkeypatch):
     cache key (issuer_id, proof_nonce) became (NEW_id, proof_nonce)
     -- a cache miss -- so the lockout cleared on every replay.
     Post-the prior fix the MAC compare fails because peer_id is now bound."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
 
     # 1. Legitimate envelope minted by the canonical issuer.
-    env = _make_envelope("secret", peer_id="op-legit")
+    env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-legit")
 
     # 2. Attacker captures the envelope and mutates peer_id only.
     env["peer_id"] = "op-attacker-impersonating"
@@ -334,12 +334,12 @@ def test_f18a_captured_envelope_with_mutated_t_rejected(monkeypatch):
     """Captured legitimate envelope, attacker rewrites t to bypass
     the freshness check (push it forward) -- post-the prior fix the MAC compare
     fails because t is now bound to the signature."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
 
     # Mint at t=now.
     original_t = time.time()
-    env = _make_envelope("secret", t=original_t, peer_id="op-legit")
+    env = _make_envelope("secret-code-1234567890abcdef", t=original_t, peer_id="op-legit")
 
     # Attacker forwards t by 1 second.
     env["t"] = original_t + 1.0
@@ -354,10 +354,10 @@ def test_f18a_captured_envelope_with_mutated_lockout_elapsed_rejected(monkeypatc
     """Mutating lockout_elapsed_s (forensic noise field) also breaks
     the MAC -- the field is bound, so the receiver cannot trust any
     of these wire fields without the issuer's cooperation."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
 
-    env = _make_envelope("secret", peer_id="op-legit", lockout_elapsed_s=2.5)
+    env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-legit", lockout_elapsed_s=2.5)
     env["lockout_elapsed_s"] = 9999.0  # attacker rewrites
 
     m._estop_lockout.set()
@@ -369,10 +369,10 @@ def test_f18a_captured_envelope_with_mutated_lockout_elapsed_rejected(monkeypatc
 def test_f18a_envelope_without_lockout_elapsed_s_rejected(monkeypatch):
     """A malformed envelope missing lockout_elapsed_s is rejected
     outright before MAC compare (prior shape gate)."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
 
-    env = _make_envelope("secret", peer_id="op-legit")
+    env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-legit")
     del env["lockout_elapsed_s"]
 
     m._estop_lockout.set()
@@ -389,7 +389,7 @@ def test_resume_cache_per_issuer_cap_enforced(monkeypatch):
     issuer is refused with a resume_per_issuer_cap_exceeded audit and the
     cache holds at most the cap for that issuer.
     """
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "8")
 
     m = _make_mesh()
@@ -397,7 +397,7 @@ def test_resume_cache_per_issuer_cap_enforced(monkeypatch):
 
     # cap = max(1, 8 // 4) == 2
     for _ in range(3):
-        env = _make_envelope("secret", peer_id="op-flooder", proof_nonce=uuid.uuid4().hex)
+        env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-flooder", proof_nonce=uuid.uuid4().hex)
         m._estop_lockout.set()
         m._on_safety_resume(_sample(env))
 
@@ -415,7 +415,7 @@ def test_resume_cache_other_issuer_entries_not_evicted(monkeypatch):
     floods again (refused, no eviction). Replaying B's original envelope
     is still detected as a replay -- B's slot survived A's churn.
     """
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "8")
 
     m = _make_mesh()
@@ -423,19 +423,19 @@ def test_resume_cache_other_issuer_entries_not_evicted(monkeypatch):
 
     # A fills its cap of 2.
     for _ in range(2):
-        env_a = _make_envelope("secret", peer_id="op-A", proof_nonce=uuid.uuid4().hex)
+        env_a = _make_envelope("secret-code-1234567890abcdef", peer_id="op-A", proof_nonce=uuid.uuid4().hex)
         m._estop_lockout.set()
         m._on_safety_resume(_sample(env_a))
 
     # B records one legitimate slot.
-    env_b = _make_envelope("secret", peer_id="op-B", proof_nonce=uuid.uuid4().hex)
+    env_b = _make_envelope("secret-code-1234567890abcdef", peer_id="op-B", proof_nonce=uuid.uuid4().hex)
     m._estop_lockout.set()
     m._on_safety_resume(_sample(env_b))
     assert ("body", "op-B") in {k[0] for k in m._resume_replay_cache}
 
     # A keeps flooding -- every attempt is refused, none evicts B.
     for _ in range(5):
-        env_a = _make_envelope("secret", peer_id="op-A", proof_nonce=uuid.uuid4().hex)
+        env_a = _make_envelope("secret-code-1234567890abcdef", peer_id="op-A", proof_nonce=uuid.uuid4().hex)
         m._estop_lockout.set()
         m._on_safety_resume(_sample(env_a))
 
