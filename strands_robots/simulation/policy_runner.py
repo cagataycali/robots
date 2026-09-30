@@ -1366,9 +1366,6 @@ class SubstepSchedule:
         self._stepped += count
         return count
 
-    def __repr__(self) -> str:
-        return f"SubstepSchedule(period_steps={self.period_steps:.6g}, nominal={self.nominal}, exact={self.exact})"
-
 
 class PolicyRunner:
     """Backend-agnostic policy execution against a ``SimEngine``.
