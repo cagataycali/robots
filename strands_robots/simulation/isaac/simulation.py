@@ -7138,16 +7138,17 @@ class IsaacSimulation(
 
         Args:
             camera_name: a camera previously added via ``add_camera``.
-            width: must be ``None`` or the camera's native render width (the
-                handle's intrinsics are only valid at native resolution), and
-                a positive integer when supplied.
+            width: must be ``None`` or the width the camera was added with
+                (the size ``get_frame`` returns; the handle's render-pixel
+                intrinsics are rescaled to it), and a positive integer when
+                supplied.
             height: same contract as ``width``.
 
         Raises:
             RuntimeError: no world, or the camera has no live RTX handle.
             KeyError: unknown camera name.
             ValueError: ``width``/``height`` is not a positive integer, or
-                differs from the native render resolution.
+                differs from the size the camera was added with.
         """
         from strands_robots.rendering import CameraParams
 
@@ -7172,11 +7173,21 @@ class IsaacSimulation(
                         raise ValueError(dim_err)
                 if arg is not None and int(arg) != int(native):
                     raise ValueError(
-                        f"Isaac camera intrinsics are only valid at the native render resolution; "
+                        f"Isaac camera intrinsics are reported at the size the camera was added with; "
                         f"requested {arg_name}={arg} but camera '{camera_name}' renders at "
-                        f"{cam.width}x{cam.height}. Re-add the camera with the desired size."
+                        f"{cam.render_width}x{cam.render_height} and returns {cam.width}x{cam.height} "
+                        "frames. Re-add the camera with the desired size."
                     )
             K = np.asarray(cam.handle.get_intrinsics_matrix(), dtype=np.float64).reshape(3, 3)
+            # The handle's intrinsics are in RENDER pixels (the product renders at
+            # render_width x render_height); get_frame returns width x height, and
+            # the two are consumed as a pair (a compositor aligns a background off
+            # K and reads a frame at width x height), so K is rescaled to the size
+            # the frame comes back in. Identity when the two sizes agree.
+            sx = float(cam.width) / float(cam.render_width)
+            sy = float(cam.height) / float(cam.render_height)
+            if sx != 1.0 or sy != 1.0:
+                K = np.diag([sx, sy, 1.0]) @ K
             position, quat_wxyz = cam.handle.get_world_pose()
             w_px, h_px = int(cam.width), int(cam.height)
 

@@ -48,3 +48,33 @@ def test_depth_is_resampled_without_blending_two_surfaces() -> None:
 def test_a_frame_already_at_the_request_is_returned_as_is() -> None:
     frame = np.ones((224, 224, 3), dtype=np.uint8)
     assert _frame_at_camera_size(_cam(), frame) is frame
+
+
+def test_camera_params_describe_the_frame_get_frame_returns() -> None:
+    """``get_camera_params`` and ``get_frame`` are consumed as a pair (the compositor aligns a
+    background off ``K`` and reads a frame at ``width x height``), so the intrinsics must be in the
+    requested size's pixels: a 224x224 camera rendered at 640x640 reports a principal point at 112,
+    not 320, and a focal length scaled by 224/640."""
+    import types
+
+    pytest.importorskip("strands_robots.simulation.isaac")
+    from tests.simulation._isaac_engine import isaac_engine
+
+    engine = isaac_engine()
+    engine._world_created = True
+    cam = _cam()
+    render_k = np.array([[400.0, 0.0, 320.0], [0.0, 400.0, 320.0], [0.0, 0.0, 1.0]])
+    cam.handle = types.SimpleNamespace(
+        get_intrinsics_matrix=lambda: render_k,
+        get_world_pose=lambda: (np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])),
+    )
+    engine._cameras = {"wrist": cam}
+
+    params = engine.get_camera_params("wrist")
+
+    assert (params.width, params.height) == (224, 224)
+    assert params.K[0, 2] == pytest.approx(112.0) and params.K[1, 2] == pytest.approx(112.0)
+    assert params.K[0, 0] == pytest.approx(400.0 * 224 / 640) and params.K[1, 1] == pytest.approx(400.0 * 224 / 640)
+    assert params.K[2, 2] == 1.0
+    with pytest.raises(ValueError, match=r"640x640.*224x224"):
+        engine.get_camera_params("wrist", width=640, height=640)
