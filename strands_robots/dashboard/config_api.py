@@ -58,8 +58,45 @@ INTERESTING_ENV = [
 
 
 def is_secret(key: str) -> bool:
-    """Whether an env key names a credential and so is masked in every view."""
+    """Whether an env key NAMES a credential and so is masked in every view.
+
+    A backstop behind :data:`SHOWN_ENV_KEYS`, never the sole decision: the read path
+    asks :func:`is_displayable`, which fails closed on a name this module has not seen.
+    """
     return bool(SECRET_RX.search(key))
+
+
+#: The CLOSED set of env keys whose value the page may show in full. The read path used to
+#: decide by name alone, masking a key that contained KEY, TOKEN, PASSWORD and the like and
+#: returning every other key verbatim, so ``STRANDS_MESH_AUDIT_PSK``, the HMAC key that makes
+#: the safety audit log tamper evident, came back in clear text to any admitted session.
+#: A value is shown only when its key is here AND its name does not read as a credential;
+#: everything else reports whether it is set and a mask carrying no character of the value.
+#: Add a key here only if its value is configuration, never material an attacker could use.
+SHOWN_ENV_KEYS: frozenset[str] = frozenset(
+    {
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_PROFILE",
+        "VOICE_MODEL",
+        "VOICE_PROVIDER",
+        "VOICE_NAME",
+        "STRANDS_MODEL_ID",
+        "OPENAI_BASE_URL",
+        "DASHBOARD_VOICE_PROMPT",
+        "STRANDS_DASH_RECORD_CRUMB",
+        "STRANDS_DASH_TASK_REQUIRES_CONFIRM",
+        "STRANDS_MESH_LOCAL_DEV",
+        "STRANDS_MESH_MULTICAST",
+        "STRANDS_ROBOTS_VIDEO_ROOT",
+        "STRANDS_ROBOTS_NO_DYLD_SHIM",
+    }
+)
+
+
+def is_displayable(key: str) -> bool:
+    """Whether the page may show this env key's value in full (allowlist, then the name backstop)."""
+    return key in SHOWN_ENV_KEYS and not is_secret(key)
 
 
 # .env is read by every process the dashboard spawns, so an unrestricted upsert is
@@ -84,11 +121,19 @@ ALLOWED_ENV_KEYS: frozenset[str] = frozenset(
 #: Never dashboard-managed, whatever the allowlist says later: each of these is a gate
 #: some other route reads live from ``os.environ``. Kept as a second fence so that adding
 #: a key above by mistake still cannot open one of them.
+#:
+#: The whole ``STRANDS_MESH_`` vocabulary is fenced, not a few spellings of it. Three
+#: narrower mesh prefixes (``_AUTH``, ``_MTLS``, ``_INSECURE``) named one real variable
+#: between them and missed ``STRANDS_MESH_LOCAL_DEV``, which alone defaults the wire to
+#: ``auth_mode=none`` and stands in for the ``STRANDS_MESH_I_KNOW_THIS_IS_INSECURE``
+#: acknowledgement, and ``STRANDS_MESH_MULTICAST``, which reopens LAN scouting. Both were
+#: in ``INTERESTING_ENV`` and so page-writable: one settings save turned mesh auth off for
+#: the next session and for every child that read the env file. The mesh knobs a page may
+#: change (port, backend, camera rate, policy allowlist) travel as ``mesh.*`` settings,
+#: never as env writes, so nothing the page needs is behind this prefix.
 GATE_BEARING_ENV_PREFIXES: tuple[str, ...] = (
     "STRANDS_DASH_AUTH_",
-    "STRANDS_MESH_AUTH",
-    "STRANDS_MESH_MTLS",
-    "STRANDS_MESH_INSECURE",
+    "STRANDS_MESH_",
 )
 GATE_BEARING_ENV_KEYS: frozenset[str] = frozenset(
     {
@@ -110,6 +155,52 @@ GATE_BEARING_ENV_KEYS: frozenset[str] = frozenset(
     }
 )
 ENV_VALUE_MAX_LEN = 4096
+
+#: Settings keys that ARE credentials. :mod:`~strands_robots.dashboard.settings` maps each to an env spelling that
+#: ``GATE_BEARING_ENV_KEYS`` refuses on the ``env`` half of the same request body, and the
+#: settings half reached the identical value with no check at all: any admitted session,
+#: the pre-enrolment loopback posture included, could write ``security.auth_token`` to disk,
+#: and :func:`~strands_robots.dashboard.access.caller` honours that bearer independently of
+#: passkey enrolment, so it kept admitting its holder after every passkey was deleted. A
+#: bearer is set on the host (``DASHBOARD_AUTH_TOKEN`` in the dashboard's environment),
+#: never from the page. Clearing one stays page-writable: that is the operator's remedy for
+#: a bearer they did not set. Both ``POST /api/config`` and ``POST /api/settings`` go
+#: through :func:`refuse_settings_credentials`; a test derives this roster from the schema.
+REFUSED_SETTINGS_KEYS: frozenset[tuple[str, str]] = frozenset({("security", "auth_token")})
+
+
+def settings_entry_error(section: str, key: str, value: Any) -> str | None:
+    """Why this settings key/value pair must not reach the store, or None if fine.
+
+    Only credential-bearing keys are refused, and only when the value would SET one:
+    ``None`` and the empty string clear it, which remains the page's own business.
+    """
+    if (section, key) not in REFUSED_SETTINGS_KEYS:
+        return None
+    if value is None or value == "":
+        return None
+    return (
+        f"{section}.{key} is not page-writable: a dashboard bearer is set on the host "
+        "(DASHBOARD_AUTH_TOKEN in the dashboard's environment), never from a settings write"
+    )
+
+
+def refuse_settings_credentials(patch: dict[str, Any]) -> list[str]:
+    """Drop every refused key from *patch* in place and return one reason per key dropped.
+
+    Runs before the store sees the patch, so a refused key is never graded, never
+    compared with the current value and never written; the rest of the patch lands.
+    """
+    errors: list[str] = []
+    for section, values in list(patch.items()):
+        if not isinstance(values, dict):
+            continue
+        for key in list(values):
+            problem = settings_entry_error(section, key, values[key])
+            if problem:
+                errors.append(problem)
+                del values[key]
+    return errors
 
 
 def env_key_gate_bearing(key: str) -> bool:
@@ -150,12 +241,16 @@ def env_entry_error(key: str, value: str, *, allowed_keys: frozenset[str] | None
 
 
 def mask(value: str) -> str:
-    """``sk-abc...xyz`` -> ``sk-••••••yz``. Short values are fully hidden."""
+    """A set value -> ``••••••``; an unset one -> ``""``.
+
+    No prefix, no suffix, no length: a masked row says only that the value exists. The
+    row's ``set`` flag carries the same fact for a UI that wants a word instead. An
+    operator who needs to recognise a credential has the fingerprint in the logs
+    (:func:`~strands_robots.dashboard.log_redaction.fingerprint`), not the API document.
+    """
     if not value:
         return ""
-    if len(value) <= 6:
-        return "•" * 6
-    return f"{value[:3]}{'•' * 6}{value[-2:]}"
+    return "•" * 6
 
 
 def looks_masked(value: Any) -> bool:
@@ -321,7 +416,9 @@ def env_view() -> list[dict[str, Any]]:
         in_file = key in from_file
         raw = live if live else from_file.get(key, "")
         shadowed = bool(in_file and live and live != from_file.get(key))
-        secret = is_secret(key)
+        # Shown in full only for a key on the closed allowlist; a name this module has not
+        # seen is hidden, the same fail-closed rule the write path applies to its keys.
+        secret = not is_displayable(key)
         rows.append(
             {
                 "key": key,
@@ -526,6 +623,10 @@ def apply(body: dict[str, Any]) -> dict[str, Any]:
         values = body.get(section)
         if isinstance(values, dict):
             patch[section] = dict(values)
+    # A credential is not page-writable, whatever section it sits in: refused before the
+    # store sees it, with the env half's reason shape, so the two spellings of one value
+    # (``security.auth_token`` here, ``DASHBOARD_AUTH_TOKEN`` under ``env``) share one rule.
+    errors.extend(refuse_settings_credentials(patch))
 
     # "Reset to default prompt" is an explicit action, not an empty string -
     # an empty prompt field should not silently wipe a customised prompt.

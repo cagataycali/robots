@@ -584,6 +584,14 @@ def _published_string_params(field_aliases: dict[str, str]) -> frozenset[str]:
 _PUBLISHED_PARAMS: frozenset[str] = frozenset(_TOOL_SPEC_SCHEMA["properties"]) - {"action"}
 
 
+@functools.lru_cache(maxsize=8)
+def _wire_tool_spec_for(tool_name: str, sim_cls: type) -> dict[str, Any]:
+    """:func:`wire_surface.build_wire_tool_spec` for one class and tool name, built once."""
+    from strands_robots.simulation.mujoco.wire_surface import build_wire_tool_spec
+
+    return build_wire_tool_spec(tool_name, sim_cls)
+
+
 # An annotation JSON cannot construct: a callable, or an already-built Policy.
 # Applied to one union member at a time, never to the whole annotation - see
 # :func:`_tool_call_can_carry`.
@@ -1263,6 +1271,8 @@ class MuJoCoSimEngine(
             # self-correct without inspecting the MJCF by hand.
             valid_keys = self._get_valid_action_keys(robot_name)
             hint = f" Valid keys: {valid_keys}" if valid_keys else ""
+            if labels_hint := self._joint_labels_hint(robot_name):
+                hint += f" {labels_hint}"
             return {
                 "status": "error",
                 "content": [
@@ -6633,6 +6643,17 @@ class MuJoCoSimEngine(
             f"{'; '.join(robots)} - do not call create_world (it is refused while a world exists); "
             f"{next_steps}"
         )
+
+    def wire_tool_spec(self) -> dict[str, Any]:
+        """The tool surface this peer serves over the mesh (:mod:`strands_robots.simulation.mujoco.wire_surface`).
+
+        The published actions minus the peer-side deny table, each with the
+        served params its method declares; cached per tool name because it is
+        read off the class. Presence advertises its hash, ``describe_tool``
+        returns it, and the ``call`` mesh action is refused for anything it
+        does not list.
+        """
+        return _wire_tool_spec_for(self.tool_name_str, type(self))
 
     @property
     def tool_spec(self) -> ToolSpec:

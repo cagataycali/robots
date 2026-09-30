@@ -20,51 +20,10 @@
         "class": "MockTrainer"
       }
     },
-    "groot": {
-      "module": "strands_robots.policies.groot",
-      "class": "Gr00tPolicy",
-      "description": "NVIDIA GR00T N1.5/N1.6 via ZMQ",
-      "requires": [
-        "port"
-      ],
-      "config_keys": [
-        "port",
-        "host",
-        "data_config",
-        "groot_version",
-        "observation_mapping",
-        "action_mapping",
-        "language_key",
-        "strict_keys",
-        "timeout_ms",
-        "api_token",
-        "strict"
-      ],
-      "defaults": {
-        "host": "localhost"
-      },
-      "shorthands": [
-        "groot"
-      ],
-      "url_patterns": [
-        "^zmq://"
-      ],
-      "hf_orgs": [
-        "nvidia"
-      ],
-      "model_id_overrides": [
-        "nvidia/gr00t",
-        "nvidia/groot"
-      ],
-      "trainer": {
-        "module": "strands_robots.training.groot",
-        "class": "Gr00tTrainer"
-      }
-    },
     "lerobot_local": {
       "module": "strands_robots.policies.lerobot_local",
       "class": "LerobotLocalPolicy",
-      "description": "Direct HuggingFace inference (no server)",
+      "description": "Direct HuggingFace inference (no server), incl. GR00T N1.7 (policy_type='groot')",
       "extra": "lerobot",
       "requires": [
         "pretrained_name_or_path"
@@ -99,7 +58,8 @@
       ],
       "hf_orgs": [
         "lerobot",
-        "allenai"
+        "allenai",
+        "nvidia"
       ],
       "is_hf_default": true,
       "trainer": {
@@ -366,6 +326,42 @@
         "microduck_walk",
         "microduck_stand"
       ]
+    },
+    "flux3_action": {
+      "module": "strands_robots.policies.flux3_action",
+      "class": "Flux3ActionPolicy",
+      "description": "FLUX 3 Action (Black Forest Labs) flow-matching VLA, in-process via flux_action: 2 cameras + 8-tick history + text -> 42-step absolute joint chunk at 30 Hz; SO-101 checkpoint speaks lerobot degrees + gripper percent, UnitAdapter converts to the robot's radians",
+      "requires": [],
+      "config_keys": [
+        "pretrained_name_or_path",
+        "revision",
+        "device",
+        "camera_map",
+        "joint_units",
+        "joint_signs",
+        "joint_offsets_deg",
+        "gripper_range",
+        "mode",
+        "execute_steps",
+        "task",
+        "warn_outside_training_range",
+        "natten_backend"
+      ],
+      "defaults": {
+        "pretrained_name_or_path": "black-forest-labs/flux-3-action-so101",
+        "device": "cuda",
+        "mode": "queued",
+        "execute_steps": 32
+      },
+      "shorthands": [
+        "flux3_action",
+        "flux3",
+        "f3a"
+      ],
+      "hf_orgs": [
+        "black-forest-labs"
+      ],
+      "model_id_overrides": []
     }
   }
 }

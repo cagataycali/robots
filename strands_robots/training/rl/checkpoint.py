@@ -36,6 +36,10 @@ _BACKEND_MODULES: dict[str, str] = {
     "ppo": "strands_robots.training.rl.ppo",
     "fast_sac": "strands_robots.training.rl.fast_sac",
     "fast_td3": "strands_robots.training.rl.fast_td3",
+    # Isaac Lab's rsl_rl actor, converted by ``train_policy(action="export",
+    # provider="isaaclab")``: an MLP with the run's own activation (ELU in the
+    # Isaac Lab task configs), not PPO's Tanh network.
+    "rsl_rl": "strands_robots.training.rl.rsl_rl",
 }
 
 #: ``policy_meta.json`` fields a deployment needs. Absent any one of them the
@@ -57,7 +61,7 @@ class DeployableActor:
 
     Attributes:
         provider: Trainer that wrote the checkpoint (``"ppo"``, ``"fast_sac"``,
-            ``"fast_td3"``).
+            ``"fast_td3"``, or ``"rsl_rl"`` for an exported Isaac Lab run).
         actor_obs_keys: Ordered observation keys the actor input is concatenated
             from. The order is part of the trained weights, not a preference.
         action_keys: Ordered action keys the outputs drive - the robot's
@@ -169,11 +173,15 @@ def load_deployable_actor(checkpoint_dir: str, device: str = "cpu") -> Deployabl
 
     num_actor_obs = int(meta["num_actor_obs"])
     build = import_module(_BACKEND_MODULES[meta["provider"]]).build_actor_critic
+    # Only a backend whose actor's activation varies by run records one
+    # (rsl_rl); the others have a fixed architecture per provider.
+    arch: dict[str, Any] = {"activation": str(meta["activation"])} if "activation" in meta else {}
     module = build(
         num_actor_obs,
         int(meta["num_critic_obs"]),
         int(meta["num_actions"]),
         hidden_dims=tuple(int(h) for h in meta["hidden_dims"]),
+        **arch,
     ).to(device)
     # weights_only=True: the payload is state_dicts + an int + a str, matching
     # the loader BaseRLAlgo.load_checkpoint uses, so the legacy unpickler's

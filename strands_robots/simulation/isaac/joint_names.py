@@ -134,6 +134,42 @@ def urdf_joint_names(urdf_path: str) -> list[str]:
     return names
 
 
+def mjcf_joint_names(mjcf_path: str) -> list[str]:
+    """Movable (hinge/slide) joint names of an MJCF, from MuJoCo's compiled model.
+
+    The MJCF counterpart of :func:`urdf_joint_names`, for the vocabulary
+    :func:`demangle_usd_joint_names` maps a converted robot's DOF names back
+    onto. Menagerie's so101 names its joints ``"1"``..``"6"``; the MJCF->USD
+    conversion transcodes those to ``tn__1_``..``tn__6_`` (not valid USD
+    identifiers otherwise), so the Isaac backend reported joint names MuJoCo
+    has never heard of - measured on Isaac Sim 6.1, ``add_robot("so101")``
+    answered ``['tn__1_', ..., 'tn__6_']`` where MuJoCo answers
+    ``['1', ..., '6']``, and every policy / dataset keyed by the MuJoCo names
+    missed on Isaac.
+
+    Compiled rather than XML-parsed because ``<include>``, ``<default>``
+    classes and ``<freejoint>`` spellings all change which joints exist.
+    ``[]`` when MuJoCo is unavailable or the model does not compile - the
+    caller then keeps the importer's names, as before.
+    """
+    try:
+        import mujoco
+    except ImportError:
+        return []
+    try:
+        model = mujoco.MjModel.from_xml_path(mjcf_path)
+    except (ValueError, OSError, RuntimeError):
+        return []
+    movable = {int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE)}
+    names = []
+    for i in range(model.njnt):
+        if int(model.jnt_type[i]) in movable:
+            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, i)
+            if name:
+                names.append(name)
+    return names
+
+
 def demangle_usd_joint_names(
     dof_names: list[str],
     urdf_names: list[str],

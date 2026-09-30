@@ -31,6 +31,7 @@ from typing import Any
 import pytest
 
 from strands_robots.simulation.recording import DatasetRecordingMixin
+from tests._recorder_stand_in import RecorderStandIn
 
 _SAVE = {"repo_id": "lab/so101_ep", "root": "/tmp/x", "frame_count": 37, "episode_count": 1}
 
@@ -50,20 +51,13 @@ class _Sim(DatasetRecordingMixin):
         return self._state
 
 
-class _Recorder:
+class _Recorder(RecorderStandIn):
     """A recorder with one pending episode, shaped like ``DatasetRecorder``."""
 
     def __init__(self, repo_id: str = "lab/so101_ep", root: str = "/tmp/x") -> None:
+        super().__init__(pending=37)
         self.repo_id, self.root = repo_id, root
-        self.episode_frame_count, self.frame_count, self.episode_count = 37, 37, 0
         self.dataset = SimpleNamespace(meta=SimpleNamespace(total_episodes=1))
-
-    def save_episode(self) -> dict[str, str]:
-        self.episode_count += 1
-        return {"status": "success"}
-
-    def finalize(self) -> None:
-        self.finalized = True
 
 
 def _arm(sim: _Sim, recorder: _Recorder, steps: int) -> _Sim:

@@ -86,6 +86,24 @@ function notifyAuth(): void {
   for (const fn of authListeners) fn()
 }
 
+// A passkey session lives in the HttpOnly cookie the ceremony set. The page holds only WHEN it
+// lapses and a counter that changes the connection identity, so nothing script-readable is a
+// credential. Both are page memory: a reload asks the server again (the cookie still answers).
+let cookieSessionExp: number | null = null
+let cookieSessionEpoch = 0
+
+/** A ceremony finished on this backend and the cookie is set; `exp` is when it lapses. */
+export function noteCookieSession(exp: number | null): void {
+  cookieSessionExp = typeof exp === 'number' && Number.isFinite(exp) ? exp : null
+  cookieSessionEpoch += 1
+  notifyAuth() // backendKey() changed
+}
+
+/** When the cookie session this page established lapses (seconds), or null when unknown. */
+export function cookieSessionExpiry(): number | null {
+  return cookieSessionExp
+}
+
 export function setAuthToken(token: string): void {
   const value = token.trim()
   if (value) localStorage.setItem(TOKEN_KEY, value)
@@ -101,7 +119,7 @@ export function backendLabel(): string {
 
 /** Identity of the current connection. */
 export function backendKey(): string {
-  return `${backendBase()}|${authToken() ? 'auth' : 'open'}`
+  return `${backendBase()}|${authToken() ? 'auth' : cookieSessionEpoch ? `cookie${cookieSessionEpoch}` : 'open'}`
 }
 
 export function setBackendBase(raw: string): void {

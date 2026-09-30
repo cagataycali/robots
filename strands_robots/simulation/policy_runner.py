@@ -1540,7 +1540,33 @@ class PolicyRunner:
         except Exception:  # noqa: BLE001 - never fail a run on a probe
             dt = None
         if dt and dt > 0 and control_frequency > 0:
-            return max(1, round((1.0 / control_frequency) / dt))
+            ratio = (1.0 / control_frequency) / dt
+            substeps = max(1, round(ratio))
+            # A control period that is not a whole number of physics steps is
+            # rounded, so simulated time per action is substeps*dt, not
+            # 1/control_frequency. Isaac's default physics_dt=1/120 against the
+            # default 50 Hz is 2.4 -> 2 steps: every action covers 16.7 ms of sim
+            # time, a 30-step rollout ends at sim_t=0.5 s instead of 0.6 s, and a
+            # recording labelled 50 fps holds frames 1/60 s apart. Said
+            # rather than silently absorbed: the remedy is a physics_dt that
+            # divides the control period.
+            if abs(ratio - substeps) > 1e-6 * max(1.0, ratio):
+                effective = 1.0 / (substeps * dt)
+                logger.warning(
+                    "PolicyRunner: control period 1/%g s is %.4g physics steps of %.6g s; "
+                    "rounding to %d, so each action advances %.6g s of sim time (an effective "
+                    "%.4g Hz, not %g Hz). Pick a physics_dt that divides 1/control_frequency "
+                    "(e.g. 1/%d s) or a control_frequency that divides 1/physics_dt.",
+                    control_frequency,
+                    ratio,
+                    dt,
+                    substeps,
+                    substeps * dt,
+                    effective,
+                    control_frequency,
+                    int(round(control_frequency)) * max(1, math.ceil(ratio)),
+                )
+            return substeps
         return 1
 
     def _reject_recording_rate_mismatch(self, control_frequency: float, method: str) -> None:
@@ -1623,11 +1649,9 @@ class PolicyRunner:
             stop on and report.
 
             A failed flush is not telemetry. The recorder marks itself closed
-            because the LeRobot episode buffer is in an undefined state, and
-            :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame`
-            then returns on a closed recorder without writing a frame or
-            counting a drop - so a later episode's frames reach no dataset and
-            leave no trace in the recorder's own accounting either. An
+            because the LeRobot episode buffer is in an undefined state, and a
+            closed :class:`~strands_robots.recorder.Recorder` refuses every
+            later frame - so a later episode's frames reach no dataset. An
             evaluation that carried on would report a ``success_rate`` over
             episodes whose data does not exist. Every sibling flush already
             refuses the same way: ``stop_recording`` and
@@ -4109,14 +4133,22 @@ class PolicyRunner:
                 if master_rng is not None:
                     episode_seed = master_rng.randint(0, 2**31 - 1)
                     set_eval_seed(episode_seed)
-                    try:
-                        policy.reset(seed=episode_seed)
-                    except Exception as e:  # noqa: BLE001 - reset is best-effort
-                        logger.warning(
-                            "policy.reset(seed=%d) raised %s; continuing without per-episode reset",
-                            episode_seed,
-                            e,
-                        )
+                # Reset the policy at EVERY episode boundary, seeded or not: the
+                # sim was just reset above, and a policy carrying an observation
+                # history or an action queue (flux3_action, groot, any RTC
+                # provider) would otherwise start episode N conditioned on
+                # episode N-1's frames. Observed on the SO-101: the unseeded
+                # 10-episode recording drifted its shoulder_lift command by a
+                # further ~5 rad every episode until the model saw nothing but
+                # a clamped joint.
+                try:
+                    policy.reset(seed=episode_seed)
+                except Exception as e:  # noqa: BLE001 - reset is best-effort
+                    logger.warning(
+                        "policy.reset(seed=%s) raised %s; continuing without per-episode reset",
+                        episode_seed,
+                        e,
+                    )
 
                 if async_rtc:
                     # Opt-in async overlap: a single background worker computes the
@@ -4223,7 +4255,7 @@ class PolicyRunner:
                 if recording_save_error is not None:
                     # This episode's frames did not reach the dataset and the
                     # recorder is now closed, so every later episode would run
-                    # into a recorder that drops frames without counting them.
+                    # into a recorder that refuses its frames.
                     # Stop here and report, rather than measure a success_rate
                     # over episodes whose data is gone. This episode's video is
                     # already closed and collected above, so it is kept.
@@ -4540,14 +4572,14 @@ class PolicyRunner:
                 # it the same eval is bit-stable (same successes every run).
                 set_eval_seed(episode_seed)
 
-                # #187 - for SERVICE-mode policies (e.g. Gr00tPolicy over
-                # ZMQ), set_eval_seed only seeds the client process. The
+                # #187 - for SERVICE-mode policies (e.g. Cosmos3Policy or
+                # RemotePolicy), set_eval_seed only seeds the client process. The
                 # remote inference server has its own torch/CUDA RNG that
                 # drifts across calls. Forward the per-episode seed via
                 # policy.reset(seed=...) so server-side state can be
                 # re-initialised. Default Policy.reset is a no-op; concrete
-                # policies override (Gr00tPolicy forwards to the server's
-                # `reset` endpoint).
+                # policies override (a service-mode policy forwards to the
+                # server's `reset` endpoint).
                 try:
                     policy.reset(seed=episode_seed)
                 except Exception as e:  # noqa: BLE001 - reset is best-effort

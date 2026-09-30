@@ -5,7 +5,7 @@ the :class:`Trainer` ABC has optional ``prepare``/``export`` hooks:
 
 * **prepare()** - the base HF checkpoint MUST be converted to PyTorch DCP
   (``cosmos_framework.scripts.convert_model_to_dcp``) before training.
-  LeRobot/GR00T need no such step.
+  LeRobot needs no such step.
 * **train()** - builds the cosmos ``Config`` via
   ``cosmos_framework.configs.toml_config.sft_config.load_experiment_from_toml``
   (TOML recipe + a Hydra ``key.path=value`` override LIST) and calls
@@ -20,8 +20,8 @@ the :class:`Trainer` ABC has optional ``prepare``/``export`` hooks:
 ``TrainSpec.method`` is honored only as ``"full"``. The recipe TOML and the
 Hydra override list are the whole configuration surface here, and no override
 selects an adapter, so an adapter strategy is refused by ``validate`` rather
-than run as a full fine-tune - the same posture GR00T takes toward a strategy
-it has no config field for.
+than run as a full fine-tune - the same posture the lerobot trainer takes toward
+a strategy the policy config has no field for.
 
 Multi-node HSDP maps ``num_nodes`` →
 ``model.config.parallelism.data_parallel_replicate_degree`` (intra-node shard

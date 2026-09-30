@@ -66,9 +66,12 @@ _BUDGET: int = _hook().LIMIT
 #: Raised to 49,508 when the mesh gained its direct messaging page (one new page under
 #: learn/mesh, a variable row and a sentence on the pages that point at it, and the `iot`
 #: verbs on the command line page).
-#: Raised by 866, to 50,374, for the holosoma policy page (811 words), its cross-links and its
+#: Raised by 551 to 50,059 for the flux3_action provider page (one page per provider).
+#: Lowered to 49,433 when the GR00T provider page left with the provider (GR00T N1.7
+#: is a section of lerobot-local now).
+#: Raised by 877, to 50,310, for the holosoma policy page (811 words), its cross-links and its
 #: verified-checkpoint row on the G1 page.
-_SITE_BUDGET = 50_374
+_SITE_BUDGET = 50_310
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

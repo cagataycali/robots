@@ -28,6 +28,8 @@ import re
 from collections.abc import AsyncGenerator, Callable, Mapping
 from typing import Any, cast
 
+from strands_robots.dashboard.agent_motion import hardware_evidence, peer_is_physical
+
 # ── classification ──────────────────────────────────────────────────────────
 
 #: Robot kinds a proxy can represent. ``skip`` = build no tool for this peer.
@@ -85,10 +87,13 @@ def _is_coordinator(peer_id: str, peer: Mapping[str, Any], presence: Mapping[str
 def classify_peer(peer_id: str, peer: Mapping[str, Any] | None) -> str:
     """What kind of tool should represent this peer?
 
-    Mirrors ``agent_motion.peer_is_physical``'s reading of presence, but with
-    the opposite default posture: the GATE fails closed (unknown = metal), a
-    TOOL FACTORY fails quiet (unknown/gateway/dashboard = no tool at all) -
-    a tool for a peer we cannot describe would advertise a spec we invented.
+    Reads presence in the order ``agent_motion.peer_is_physical`` reads it:
+    hardware evidence first (``agent_motion.hardware_evidence``), so a record
+    that names hardware is a real arm whatever its ``robot_type`` says; then the
+    sim claims. Only the default posture differs: the GATE fails closed (unknown
+    = metal), a TOOL FACTORY fails quiet (unknown/gateway/dashboard = no tool at
+    all) - a tool for a peer we cannot describe would advertise a spec we
+    invented.
     """
     if not peer_id or peer is None:
         return KIND_SKIP
@@ -96,6 +101,8 @@ def classify_peer(peer_id: str, peer: Mapping[str, Any] | None) -> str:
     kind = str(presence.get("kind") or peer.get("kind") or "").strip().lower()
     if _is_coordinator(peer_id, peer, presence):
         return KIND_SKIP
+    if hardware_evidence(presence) is not None:
+        return KIND_REAL
     robot_type = str(presence.get("robot_type") or "").strip().lower()
     if robot_type in _SIM_TYPES or presence.get("sim") is True or presence.get("mode") == "sim":
         return KIND_SIM
@@ -107,8 +114,7 @@ def classify_peer(peer_id: str, peer: Mapping[str, Any] | None) -> str:
     state = peer.get("state") or {}
     joints = state.get("joints") or presence.get("joints") or {}
     n_joints = len(joints) if isinstance(joints, Mapping) else int(joints or 0)
-    hw = presence.get("hw")
-    if n_joints > 0 or (isinstance(hw, str) and hw.strip()) or peer.get("role"):
+    if n_joints > 0 or peer.get("role"):
         return KIND_REAL
     if kind == "robot" or presence:
         return KIND_HOST
@@ -167,7 +173,7 @@ _SIM_INPUT_SCHEMA: dict[str, Any] = {
         "instruction": {"type": "string", "description": "execute/start: natural language task"},
         "policy_provider": {
             "type": "string",
-            "description": "execute/start: which policy backend, e.g. mock, lerobot_local, groot, cosmos3 (default mock)",
+            "description": "execute/start: which policy backend, e.g. mock, lerobot_local, cosmos3 (default mock)",
         },
         "pretrained_name_or_path": {
             "type": "string",
@@ -230,12 +236,13 @@ def peer_tool_spec(peer_id: str, kind: str, tool_name: str) -> dict[str, Any] | 
                         "policy_provider": {
                             "type": "string",
                             "description": (
-                                "Which policy backend the peer runs: one of cosmos3, curobo, groot, holosoma, kimodo, "
+                                "Which policy backend the peer runs: one of cosmos3, curobo, flux3_action, holosoma, kimodo, "
                                 "lerobot_local, microduck, mock, moveit2, protomotions, remote, rl, wbc, wbc_gait. "
-                                "groot (default, needs policy_port) dials a server; lerobot_local runs a local "
-                                "checkpoint on the peer. An unknown name is refused by the peer listing its registry."
+                                "lerobot_local (default) runs a local checkpoint on the peer and needs "
+                                "pretrained_name_or_path; moveit2 (needs policy_port) and remote dial a server. "
+                                "An unknown name is refused by the peer listing its registry."
                             ),
-                            "default": "groot",
+                            "default": "lerobot_local",
                         },
                         "duration": {
                             "type": "number",
@@ -566,13 +573,30 @@ def fleet_signature(peers: Mapping[str, Mapping[str, Any]]) -> frozenset[tuple[s
     return frozenset(out)
 
 
-def motion_actions_for(tools: list[Any]) -> dict[str, frozenset[str]]:
+def motion_actions_for(tools: list[Any], peers: Mapping[str, Mapping[str, Any] | None]) -> dict[str, frozenset[str]]:
     """The MOTION_ACTIONS entries these proxies need - derived, never hand-kept.
 
-    Only REAL-arm proxies appear, and only their motion verbs: sims never
-    enter the table (their rail is structurally sim-only and peer_is_physical
-    exempts them anyway), host proxies offer no motion verbs, and stop/status
-    are never gated. Deriving the table from the built tools means the gate
-    and the tool surface cannot drift apart.
+    Every REAL-arm proxy appears with its motion verbs, and so does a sim proxy
+    whose peer the gate itself calls metal (``agent_motion.peer_is_physical``:
+    a wire ``robot_type: "sim"`` claim this dashboard did not launch cannot be
+    checked, so it is metal until a peer it did launch says otherwise). The
+    interrupt hook consults ``peer_is_physical`` only for tools in this table,
+    so a proxy left out is a rollout nobody is asked about (f030). Host
+    proxies offer no motion verbs, and stop/status are never gated. Deriving
+    the table from the built tools means the gate and the tool surface cannot
+    drift apart.
+
+    ``execute`` and ``start`` are the two verbs a hardware peer runs; it refuses
+    ``set_joints``, ``step`` and ``reset`` by name, so those need no row.
     """
-    return {t.tool_name: frozenset({"execute", "start"}) for t in tools if getattr(t, "peer_kind", None) == KIND_REAL}
+    motion = frozenset({"execute", "start"})
+    table: dict[str, frozenset[str]] = {}
+    for t in tools:
+        kind = getattr(t, "peer_kind", None)
+        if kind == KIND_REAL:
+            table[t.tool_name] = motion
+        elif kind == KIND_SIM:
+            physical, _ = peer_is_physical(peers.get(getattr(t, "peer_id", "")))
+            if physical:
+                table[t.tool_name] = motion
+    return table
