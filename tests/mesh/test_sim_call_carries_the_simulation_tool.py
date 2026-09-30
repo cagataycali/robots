@@ -40,7 +40,6 @@ def test_sim_call_is_an_allowed_action_carrying_a_published_action_and_its_param
             "sim_action": "add_object",
             "params": {"name": "red_cube", "shape": "box", "size": [0.02, 0.02, 0.02], "color": [1, 0, 0, 1]},
             "turn_id": "t-1",
-            "instruction": "dropped: not a sim_call field",
         }
     )
     assert set(out) == {"action", "sim_action", "params", "turn_id"}

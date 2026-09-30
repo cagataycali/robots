@@ -47,6 +47,7 @@ Configuration env vars
 
 from __future__ import annotations
 
+import difflib
 import functools
 import ipaddress
 import json
@@ -1363,11 +1364,77 @@ def _coerce_target_joints(value: Any) -> dict[str, float]:
     return coerced_joints
 
 
+#: The keys :func:`validate_command` reads, per action, beyond ``action`` and
+#: the ``turn_id`` / ``sender_id`` routing fields every action carries. Used to
+#: word the refusal of a key it does not read - the refusal itself is computed
+#: from what the validator actually copied, so this table only names the
+#: alternatives; a unit test holds it to the validator's source.
+COMMAND_KEYS: dict[str, frozenset[str]] = {
+    "set_joints": frozenset({"target_joints", "hold", "robot_name"}),
+    "sim_call": frozenset({"sim_action", "params"}),
+    "call": frozenset({"function", "params"}),
+    "execute": frozenset(
+        {
+            "instruction",
+            "policy_host",
+            "duration",
+            "policy_port",
+            "pretrained_name_or_path",
+            "model_path",
+            "policy_type",
+            "policy_provider",
+            "server_address",
+            "robot_name",
+            "target_pose",
+            "target_joints",
+            "target_velocity",
+            "world_update",
+            "control_frequency",
+            "action_horizon",
+            "fast_mode",
+            "n_steps",
+        }
+    ),
+    "step": frozenset({"steps"}),
+    "teleop_receive": frozenset({"source_peer_id", "device_name"}),
+    "teleop_stop": frozenset({"device_name"}),
+    "resume": frozenset({"override_code"}),
+}
+COMMAND_KEYS["start"] = COMMAND_KEYS["execute"]
+_ROUTING_KEYS = frozenset({"action", "turn_id", "sender_id"})
+
+
+def _unread_keys_error(action: str, unread: list[str]) -> str:
+    """Word the refusal of command keys ``validate_command`` did not read.
+
+    Args:
+        action: The command's action.
+        unread: The keys it carried that the validator copied nothing from.
+
+    Returns:
+        A sentence naming each key, the closest key the action does read, and
+        the action's full key list.
+    """
+    taken = sorted(COMMAND_KEYS.get(action, frozenset()))
+    hints = []
+    for key in unread:
+        close = difflib.get_close_matches(key, taken, n=1, cutoff=0.6)
+        hints.append(f"{key!r} (did you mean {close[0]!r}?)" if close else repr(key))
+    takes = f"{action} takes {taken}" if taken else f"{action} takes no keys beyond action"
+    return (
+        f"{action}: unknown key(s) {', '.join(hints)}. The peer would not read them, so its defaults would "
+        f"apply instead. {takes}."
+    )
+
+
 def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
     """Validate a mesh command and return a copy built only from validated keys.
 
-    ``action`` must be in :data:`ALLOWED_ACTIONS`; unknown keys are dropped,
-    never forwarded. Every refusal raises :class:`ValidationError` and falls in
+    ``action`` must be in :data:`ALLOWED_ACTIONS`; a key the validator does not
+    read for that action is refused by name (with the closest key it does read,
+    see :data:`COMMAND_KEYS`), never forwarded and never silently dropped - a
+    dropped ``durration`` left the 30 s default in charge of a robot asked to
+    move for half a second. Every refusal raises :class:`ValidationError` and falls in
     one of four shapes: an allowlisted string (``policy_host`` /
     ``server_address`` -> ``POLICY_HOST_NOT_ALLOWED``, ``policy_type`` /
     ``policy_provider`` -> ``POLICY_TYPE_NOT_ALLOWED``,
@@ -1613,6 +1680,9 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 "resume.override_code contains control characters (CRLF/NUL/C0). Use printable ASCII only."
             )
         out["override_code"] = override_code
+    unread = sorted(key for key in cmd if key not in out and key not in _ROUTING_KEYS)
+    if unread:
+        raise ValidationError(_unread_keys_error(action, unread))
     return out
 
 

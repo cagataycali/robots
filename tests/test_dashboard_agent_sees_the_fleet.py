@@ -54,11 +54,11 @@ def test_set_joints_refusals_name_the_field(cmd: dict[str, Any], fragment: str) 
         security.validate_command(cmd)
 
 
-def test_set_joints_drops_fields_it_does_not_carry() -> None:
-    out = security.validate_command(
-        {"action": "set_joints", "target_joints": {"a": 1.0}, "instruction": "x", "policy_port": 1}
-    )
-    assert set(out) == {"action", "target_joints"}
+def test_set_joints_refuses_fields_it_does_not_carry() -> None:
+    with pytest.raises(security.ValidationError, match="set_joints: unknown key\\(s\\) 'instruction', 'policy_port'"):
+        security.validate_command(
+            {"action": "set_joints", "target_joints": {"a": 1.0}, "instruction": "x", "policy_port": 1}
+        )
 
 
 def _mesh_with(robot: Any) -> Any:

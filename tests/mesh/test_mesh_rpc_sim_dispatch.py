@@ -494,19 +494,20 @@ def test_the_locomotion_goal_reaches_policy_kwargs() -> None:
     assert "target_velocity" not in kwargs.get("policy_config", {})
 
 
-def test_an_undocumented_goal_shaped_key_is_still_dropped() -> None:
+def test_an_undocumented_goal_shaped_key_is_refused_and_never_travels() -> None:
     """The allowlist is not widened generally - only the documented set travels."""
     from strands_robots.mesh import security
 
-    out = security.validate_command(
-        {
-            "action": "execute",
-            "instruction": "go",
-            "policy_provider": "mock",
-            "target_acceleration": [1.0, 0.0, 0.0],
-        }
-    )
-    assert "target_acceleration" not in out
+    with pytest.raises(security.ValidationError, match="unknown key\\(s\\) 'target_acceleration'"):
+        security.validate_command(
+            {
+                "action": "execute",
+                "instruction": "go",
+                "policy_provider": "mock",
+                "target_acceleration": [1.0, 0.0, 0.0],
+            }
+        )
+    out = security.validate_command({"action": "execute", "instruction": "go", "policy_provider": "mock"})
 
     sim = _FakeSim(robots=["unitree_g1"])
     m = Mesh(sim, peer_id="sim-unknown-goal")

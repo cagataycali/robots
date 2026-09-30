@@ -399,20 +399,22 @@ class TestValidateCommandKeyAllowlist:
     would silently pick up attacker-controlled values.
     """
 
-    def test_unknown_keys_are_stripped(self):
-        out = sec.validate_command(
-            {
-                "action": "execute",
-                "instruction": "do thing",
-                "policy_provider": "mock",
-                # Attacker-controlled extras:
-                "trust_remote_code": True,
-                "policy_url": "http://evil.example.com/payload.bin",
-                "extra_kwargs": {"shell": "rm -rf /"},
-            }
-        )
+    def test_unknown_keys_are_refused_by_name_never_forwarded(self):
+        # Attacker-controlled extras never reach the dispatcher: the whole
+        # command is refused, naming each one, rather than run without them.
+        with pytest.raises(sec.ValidationError) as caught:
+            sec.validate_command(
+                {
+                    "action": "execute",
+                    "instruction": "do thing",
+                    "policy_provider": "mock",
+                    "trust_remote_code": True,
+                    "policy_url": "http://evil.example.com/payload.bin",
+                    "extra_kwargs": {"shell": "rm -rf /"},
+                }
+            )
         for forbidden in ("trust_remote_code", "policy_url", "extra_kwargs"):
-            assert forbidden not in out, f"{forbidden!r} leaked through validator"
+            assert repr(forbidden) in str(caught.value)
 
     def test_validated_fields_pass_through(self):
         out = sec.validate_command(
