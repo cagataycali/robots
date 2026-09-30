@@ -41,7 +41,12 @@ import numpy as np
 from strands_robots.simulation.base import SimEngine, unknown_kwargs_error, unknown_model_msg
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.introspection import IsaacIntrospectionMixin
-from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, mjcf_joint_names, urdf_joint_names
+from strands_robots.simulation.isaac.joint_names import (
+    demangle_usd_joint_names,
+    mjcf_joint_names,
+    mjcf_keyframe_joint_positions,
+    urdf_joint_names,
+)
 from strands_robots.simulation.isaac.loaders import mjcf_declares_floating_base
 from strands_robots.simulation.isaac.mjcf_assets import MJCF_EXTENSIONS, convert_mjcf_to_usd
 from strands_robots.simulation.isaac.motion_primitives import IsaacMotionPrimitivesMixin
@@ -1135,6 +1140,9 @@ class _RobotState:
         #: this backend did not import: what the importer was told is knowable,
         #: what an arbitrary USD asset declares is not always.
         self.fixed_base = fixed_base
+        # Joint positions (USD DOF name -> value) a keyframe spawn made this
+        # robot's default state; None for the zero-configuration spawn.
+        self.spawn_joint_positions: dict[str, float] | None = None
         self.name = name
         self.prim_path = prim_path
         self.joint_names = joint_names
@@ -2463,6 +2471,7 @@ class IsaacSimulation(
                     # ``get_observation`` degrades to its documented
                     # silent-empty mode (#1895).
                     self._revive_articulations_after_reset()
+                self._restore_spawn_poses()
 
                 # ``world.reset()`` rebuilds the PhysX tensor view, which is what
                 # makes a body added or deleted since the last reset simulate at
@@ -2896,21 +2905,10 @@ class IsaacSimulation(
         dict
             Status dict with robot info.
         """
-        if keyframe is not None:
+        if keyframe is not None and (isinstance(keyframe, bool) or not isinstance(keyframe, str | int)):
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"add_robot: keyframe={keyframe!r} is not supported on "
-                            "the Isaac backend (spawning at a MuJoCo <keyframe> pose "
-                            "is currently MuJoCo-only); use "
-                            "create_simulation(backend='mujoco') to spawn at a "
-                            "keyframe, or omit keyframe for the default zero-pose "
-                            "spawn."
-                        )
-                    }
-                ],
+                "content": [{"text": "add_robot: keyframe must be a keyframe name (str) or index (int), not a bool."}],
             }
         # Refuse two asset paths rather than picking one. Each of the three is
         # loaded by a different route, so a call naming two is a caller who
@@ -3126,6 +3124,21 @@ class IsaacSimulation(
             # refuses ``fix_base=False`` on that path rather than recording a claim
             # it cannot check.
             mjcf_floating_base = False
+            spawn_pose: dict[str, float] | None = None
+            if keyframe is not None:
+                # A keyframe lives in the MJCF; resolved before anything is
+                # converted or added, so an unknown one refuses with the scene
+                # untouched - the MuJoCo backend's order.
+                if mjcf_path is None or usd_path is not None or urdf_path is not None:
+                    return {
+                        "status": "error",
+                        "content": [
+                            {"text": f"add_robot: keyframe={keyframe!r} needs an MJCF description to read it from"}
+                        ],
+                    }
+                spawn_pose, kf_error = mjcf_keyframe_joint_positions(mjcf_path, keyframe)
+                if kf_error is not None:
+                    return {"status": "error", "content": [{"text": f"add_robot: {kf_error}"}]}
             if mjcf_path is not None and usd_path is None and urdf_path is None:
                 source_mjcf = mjcf_path
                 # MJCF can declare a floating base and URDF cannot, which is why
@@ -3222,6 +3235,8 @@ class IsaacSimulation(
                     fixed_base=not mjcf_floating_base,
                 )
                 self._robots[name] = robot_state
+                if spawn_pose is not None:
+                    self._apply_spawn_pose(robot_state, spawn_pose)
 
                 logger.info(
                     "Added robot '%s' (USD: %s, %d joints, articulation=%s, mjcf=%s)",
@@ -3246,6 +3261,8 @@ class IsaacSimulation(
                 }
                 if source_mjcf is not None:
                     payload["mjcf_path"] = source_mjcf
+                if spawn_pose is not None:
+                    payload["keyframe"] = keyframe
                 return {
                     "status": "success",
                     "content": [
@@ -8482,6 +8499,50 @@ class IsaacSimulation(
             }
 
     # --- Private Implementation ----------------------------------------------
+
+    def _apply_spawn_pose(self, robot: _RobotState, pose: dict[str, float]) -> None:
+        """Make *pose* (MJCF joint name -> position) the robot's default joint state and its drive targets.
+
+        As the default state, every ``reset()`` returns the robot to it (Isaac's
+        ``post_reset`` writes the default joint state); as the drive targets, the
+        arm holds it instead of being driven back to the zero configuration.
+        Joints the keyframe does not name keep zero.
+        """
+        art = robot.articulation
+        if art is None:
+            return
+        mjcf_of = robot.usd_to_urdf_joint_names or {}
+        dof_names = list(getattr(art, "dof_names", None) or robot.joint_names)
+        values = np.array([pose.get(mjcf_of.get(dof, dof), 0.0) for dof in dof_names], dtype=np.float32)
+        robot.spawn_joint_positions = dict(zip(dof_names, values.tolist(), strict=False))
+        try:
+            art.set_joints_default_state(positions=values)
+        except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+            logger.warning("add_robot: could not set %r's keyframe as its default state: %s", robot.name, exc)
+        self._restore_spawn_poses(only=robot.name)
+
+    def _restore_spawn_poses(self, only: str | None = None) -> None:
+        """Put every keyframe-spawned robot back in its keyframe: joint positions, zero velocity, drive targets."""
+        if not hasattr(self, "_robots") or self._physics_view_stale:
+            # An invalidated tensor view hangs or raises on a write; the next
+            # reset rebuilds it and restores the keyframe then.
+            return
+        for robot in list(getattr(self, "_robots", {}).values()):
+            if only is not None and robot.name != only:
+                continue
+            pose = getattr(robot, "spawn_joint_positions", None)
+            if not pose or robot.articulation is None:
+                continue
+            art = robot.articulation
+            values = np.array(list(pose.values()), dtype=np.float32)
+            try:
+                art.set_joint_positions(values)
+                art.set_joint_velocities(np.zeros_like(values))
+                from strands_robots.simulation.isaac._deprecated_api import ArticulationAction
+
+                art.apply_action(ArticulationAction(joint_positions=values))
+            except (RuntimeError, ValueError, AttributeError, TypeError, ImportError) as exc:
+                logger.warning("could not put %r in its keyframe: %s", robot.name, exc)
 
     def _load_usd_robot(self, prim_path: str, usd_path: str, position: list[float]) -> tuple[list[str], Any]:
         """Load a robot from a USD file. Returns ``(joint_names, articulation)``.
