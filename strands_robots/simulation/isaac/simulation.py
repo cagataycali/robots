@@ -2482,8 +2482,6 @@ class IsaacSimulation(
 
                 if self._world is not None:
                     self._world.reset()
-                    # The scene moved without a counted physics step.
-                    self._rendered_at_step = None
                     # ``world.reset()`` on the pip Isaac Sim 6.0.x wheels
                     # invalidates the physics-tensor view the per-robot
                     # ``SingleArticulation`` handles hold (the #1798
@@ -10121,17 +10119,24 @@ class IsaacSimulation(
 
         Two ``SimulationApp.update()`` ticks, render-only (no physics step), and
         keyed on the physics step count so repeated reads between steps cost
-        nothing. ``reset()`` clears the key.
+        nothing. The key is ``(_contact_epoch, _step_count)``, as
+        ``_contact_cache`` is keyed, because ``_step_count`` is not monotonic:
+        ``create_world``, ``reset`` and ``destroy`` rewind it through
+        ``_rewind_clock``, which bumps the epoch, so a marker written at step 0
+        in one world cannot spare the first read at step 0 in the next.
         """
         step = getattr(self, "_step_count", None)
-        if step is None or getattr(self, "_rendered_at_step", None) == step:
+        if step is None:
+            return
+        key = (getattr(self, "_contact_epoch", 0), step)
+        if getattr(self, "_rendered_at_step", None) == key:
             return
         try:
             self._refresh_all_render_products(n=_RENDER_LAG_TICKS)
         except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
             logger.debug("render refresh unavailable: %s", exc)
             return
-        self._rendered_at_step = step
+        self._rendered_at_step = key
 
     def _converge_render(self, n: int = 8) -> None:
         """Render ``n`` ticks WITHOUT advancing physics, holding each robot's pose.

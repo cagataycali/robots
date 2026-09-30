@@ -91,3 +91,38 @@ class TestTheRendererCatchesUpOncePerStep:
         engine._world = types.SimpleNamespace()
         engine._step_count = 1
         engine._refresh_if_physics_moved()  # no raise
+
+
+class TestTheMarkerDoesNotSurviveARewind:
+    """``_step_count`` is not monotonic: create_world, reset and destroy set it back to 0.
+
+    A marker keyed on the step alone survives the rewind with a pre-rewind
+    index, and the first camera read in the new world at the coinciding index
+    skips the refresh: the never-warmed RTX product serves a blank or stale
+    buffer under status="success". Keyed like ``_contact_cache``, on
+    ``(_contact_epoch, _step_count)``, so ``_rewind_clock`` invalidates it.
+    """
+
+    def test_a_read_at_the_same_index_after_a_rewind_refreshes(self) -> None:
+        engine = _engine()
+        engine._step_count = 0
+        engine._refresh_if_physics_moved()
+        assert engine.ticks == 2
+        engine._rewind_clock()  # what destroy() + create_world() and reset() call
+        engine._refresh_if_physics_moved()
+        assert engine.ticks == 4, "the first read in the new world at step 0 skipped the refresh"
+
+    def test_without_a_rewind_the_same_index_is_still_free(self) -> None:
+        engine = _engine()
+        engine._step_count = 7
+        engine._refresh_if_physics_moved()
+        engine._refresh_if_physics_moved()
+        assert engine.ticks == 2
+
+    def test_reset_needs_no_manual_clear(self) -> None:
+        """The rewind is the single owner of the invalidation; reset() carries no second line."""
+        import inspect
+
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        assert "_rendered_at_step = None" not in inspect.getsource(IsaacSimulation.reset)
