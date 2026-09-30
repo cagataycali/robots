@@ -218,7 +218,6 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         ground_plane: bool = True,
         terrain: str | None = None,
         difficulty: float = 1.0,
-        **kwargs: Any,
     ) -> dict[str, Any]:
         """Configure the shared world: timestep, gravity, flat ground (terrains are not supported yet).
 
@@ -620,7 +619,6 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         position: Sequence[float] | None = None,
         orientation: Sequence[float] | None = None,
         keyframe: str | int | None = None,
-        **kwargs: Any,
     ) -> dict[str, Any]:
         """Add a registry robot (or an explicit MJCF) to every world; the scene recompiles lazily."""
         # A robot added while a LeRobot schema is frozen has no columns in that
@@ -974,7 +972,6 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         width: int | None = None,
         height: int | None = None,
         parent_body: str | None = None,
-        **kwargs: Any,
     ) -> dict[str, Any]:
         """Register a look-at camera used by :meth:`render` and image observations.
 
