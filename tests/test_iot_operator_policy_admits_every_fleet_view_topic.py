@@ -26,6 +26,7 @@ from strands_robots.dashboard import mesh_bridge
 from strands_robots.mesh.iot import provision
 from strands_robots.mesh.iot.provision import _OPERATOR_OBSERVE_POLICY_DOC, _OPERATOR_POLICY_DOC, _ROBOT_POLICY_DOC
 from strands_robots.mesh.transport.iot_transport import _zenoh_to_mqtt_filter
+from tests._package_ast import parse_file
 
 _BRIDGE_SOURCE = pathlib.Path(mesh_bridge.__file__)
 
@@ -103,7 +104,7 @@ def test_the_bridge_subscribes_from_the_roster_and_nowhere_else() -> None:
     A literal ``sub("strands/*/thing", ...)`` next to the roster would be a
     subscription the operator policy is never graded against.
     """
-    tree = ast.parse(_BRIDGE_SOURCE.read_text(encoding="utf-8"))
+    tree = parse_file(_BRIDGE_SOURCE)
     literal_keys: list[str] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
