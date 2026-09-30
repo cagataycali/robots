@@ -33,7 +33,6 @@ drive hardware.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -42,7 +41,6 @@ import pytest
 from tests._docs_hooks import docs_hook
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ROBOTS_JSON = REPO_ROOT / "strands_robots" / "registry" / "robots.json"
 ROBOTS_DIR = REPO_ROOT / "docs" / "robots"
 ARMS_PAGE = ROBOTS_DIR / "arm" / "index.md"
 TABLE_TOKEN = "{{robot_family_table:arm}}"
@@ -58,8 +56,8 @@ def _hook():
 
 
 def _registry() -> dict[str, dict]:
-    """Return the built-in robot registry, keyed by canonical name."""
-    return json.loads(ROBOTS_JSON.read_text(encoding="utf-8"))["robots"]
+    """Every shipped robot: ``robots.json`` plus the ``robot_descriptions`` URDF tail (``registry_view.py``)."""
+    return dict(docs_hook("registry_view").merged())
 
 
 def _arm_names() -> set[str]:

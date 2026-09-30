@@ -97,11 +97,20 @@ def get_robot(name: str) -> dict[str, Any] | None:
 
     Returns:
         Robot dict with keys like description, category, joints, asset,
-        hardware - or None if not found.
+        hardware - or None if not found. A ``robot_descriptions`` URDF-only
+        robot (see :func:`~strands_robots.registry.discovery.list_urdf_only`)
+        gets a synthesized entry with ``source: "urdf"``; a curated entry
+        always wins over it.
     """
     reg = _load("robots")
     canonical = resolve_name(name)
     result: dict[str, Any] | None = reg.get("robots", {}).get(canonical)
+    if result is None:
+        # The URDF long tail of robot_descriptions: entries synthesized from the
+        # sweep table (cheap, no import). A curated entry has already won above.
+        from .discovery import urdf_registry_entry
+
+        result = urdf_registry_entry(canonical)
     return result
 
 
@@ -226,7 +235,11 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
             - ``"both"``: robots that have BOTH sim and real.
 
     Returns:
-        List of dicts with name, description, category, joints, has_sim, has_real.
+        List of dicts with name, description, category, joints, has_sim,
+        has_real and source (``"curated"`` for a ``robots.json`` entry,
+        ``"urdf"`` for a ``robot_descriptions`` URDF-only robot the MuJoCo
+        backend compiles on first use; a URDF robot whose description does
+        not build is listed with ``has_sim`` false).
 
     Raises:
         ValueError: If ``mode`` is not one of :data:`LIST_ROBOTS_MODES`. An
@@ -235,9 +248,18 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
     """
     if mode not in LIST_ROBOTS_MODES:
         raise ValueError(f"Unknown list_robots mode {mode!r}. Valid modes: {', '.join(LIST_ROBOTS_MODES)}.")
+    from .discovery import list_urdf_only, urdf_registry_entry
+
     reg = _load("robots")
+    entries: dict[str, dict[str, Any]] = dict(reg.get("robots", {}))
+    for urdf_name in list_urdf_only():
+        if urdf_name in entries:  # curated wins; list_urdf_only already excludes these
+            continue
+        urdf_info = urdf_registry_entry(urdf_name)
+        if urdf_info is not None:
+            entries[urdf_name] = urdf_info
     results = []
-    for name, info in sorted(reg.get("robots", {}).items()):
+    for name, info in sorted(entries.items()):
         _has_sim = "asset" in info
         _has_real = "hardware" in info
 
@@ -256,6 +278,7 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
                 "joints": info.get("joints"),
                 "has_sim": _has_sim,
                 "has_real": _has_real,
+                "source": info.get("source", "curated"),
             }
         )
     return results

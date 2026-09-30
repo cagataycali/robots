@@ -66,9 +66,13 @@ def _published() -> dict[str, dict[str, str | None]]:
 
 
 def _registry() -> dict[str, dict]:
-    """The built-in robot registry, read the way the hook reads it."""
-    path = _REPO / "strands_robots" / "registry" / "robots.json"
-    return json.loads(path.read_text(encoding="utf-8"))["robots"]
+    """The built-in robot registry, read the way the hook reads it.
+
+    ``robots.json`` plus ``urdf_robots.json``, the ``robot_descriptions`` URDF
+    robots the MuJoCo backend compiles on first use: both ship in the package
+    and both are rows of ``list_robots()``, so both are rows of the matrix.
+    """
+    return dict(docs_hook("registry_view").merged())
 
 
 def _live_coverage() -> dict[str, tuple[str, ...]]:
