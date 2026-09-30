@@ -555,6 +555,18 @@ def _zenoh_to_mqtt_filter(key_expr: str) -> str:
     return "/".join(out)
 
 
+def _session_was_resumed(data: Any) -> bool:
+    """True only when the CONNACK says the broker kept the previous session.
+
+    awscrt hands the lifecycle callback a ``connack_packet`` whose
+    ``session_present`` is the MQTT5 flag; a missing packet or flag is read
+    as a fresh session, the safe direction (a needless re-subscribe costs a
+    few SUBSCRIBE packets, a missed one costs every pub/sub topic).
+    """
+    packet = getattr(data, "connack_packet", None)
+    return bool(getattr(packet, "session_present", False)) if packet is not None else False
+
+
 def _qos_and_retain_for(topic: str) -> tuple[int, bool]:
     """Look up the default QoS and retain flag for a topic.
 
@@ -762,6 +774,10 @@ class IotMqttTransport:
         # do" (the 403 memos here and at the Mesh layer) is scoped to one
         # generation and compared against this number.
         self.connection_generation = 0
+        # Set while a post-reconnect re-subscribe worker runs; callers that
+        # need every filter back before they publish can wait on it.
+        self._resubscribe_idle = threading.Event()
+        self._resubscribe_idle.set()
         self._unmatched_inbound = 0
         self.direct_stats: dict[str, int] = {"sent": 0, "delivered": 0, "failed": 0}
         self._sdk_too_old_reported = False
@@ -1297,6 +1313,70 @@ class IotMqttTransport:
         with self._direct_lock:
             self._direct_forbidden.clear()
             self.connection_generation += 1
+        # awscrt reconnects by itself after a keep-alive miss, a broker
+        # DISCONNECT (an ungranted publish is one) or a network blip, and the
+        # client is built without a session request, so every reconnect is a
+        # CLEAN session: the broker forgets the subscriptions of the previous
+        # one. ``_handlers`` still lists them, ``is_alive()`` is True, and the
+        # peer hears direct ``cmd`` (routed without a subscription) and nothing
+        # else - no ``safety/estop``, no ``safety/resume``, no ``broadcast``, no
+        # presence. Measured 2026-09-30: 3/3 e-stops before a drop, 0/3 after.
+        # So when the CONNACK does not report a resumed session, re-issue every
+        # filter this transport was asked for. The lifecycle callback runs on
+        # the awscrt event-loop thread, where ``subscribe().result()`` would
+        # deadlock, so the work goes to a thread of its own.
+        if not _session_was_resumed(data):
+            # No ``self._lock`` here: ``connect()`` holds it while ``start()``
+            # runs, and a client that reports success synchronously would
+            # deadlock. ``list()`` of the dict is one atomic snapshot.
+            filters = list(self._handlers)
+            if filters:
+                self._resubscribe_idle.clear()
+                threading.Thread(
+                    target=self._resubscribe_all,
+                    args=(filters,),
+                    name=f"iot-resubscribe-{self._thing_name}",
+                    daemon=True,
+                ).start()
+
+    def _resubscribe_all(self, filters: list[str]) -> None:
+        """Re-issue *filters* on the current session; WARN with the list, ERROR per refusal."""
+        try:
+            from awscrt import mqtt5
+
+            reissued: list[str] = []
+            for topic_filter in filters:
+                client = self._client
+                if client is None:
+                    return
+                try:
+                    client.subscribe(
+                        mqtt5.SubscribePacket(
+                            subscriptions=[mqtt5.Subscription(topic_filter=topic_filter, qos=mqtt5.QoS.AT_LEAST_ONCE)]
+                        )
+                    ).result(timeout=5)
+                    reissued.append(topic_filter)
+                except Exception as exc:
+                    logger.error(
+                        "IoT MQTT re-subscribe to %s failed after a reconnect (thing=%s): %s; "
+                        "this peer will not hear it until the next connect",
+                        topic_filter,
+                        self._thing_name,
+                        exc,
+                    )
+            if reissued:
+                logger.warning(
+                    "IoT MQTT reconnected without a session and re-subscribed %d topic filters: %s (thing=%s)",
+                    len(reissued),
+                    ", ".join(reissued),
+                    self._thing_name,
+                )
+        finally:
+            self._resubscribe_idle.set()
+
+    def wait_for_resubscribe(self, timeout: float = 5.0) -> bool:
+        """Block until a post-reconnect re-subscribe (if any) has finished; True when idle."""
+        return self._resubscribe_idle.wait(timeout)
 
     def _on_connection_failure(self, data: Any) -> None:
         logger.warning("IoT MQTT connection failure: %s", data.exception)
