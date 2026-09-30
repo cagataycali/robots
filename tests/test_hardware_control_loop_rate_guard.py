@@ -119,7 +119,7 @@ class TestUnusableRateRefused:
     def test_message_reports_the_offending_value(self, hw_init):
         with pytest.raises(ValueError) as excinfo:
             hw_init(control_frequency=-30.0)
-        assert str(excinfo.value) == "Robot: control_frequency must be > 0, got -30.0."
+        assert str(excinfo.value) == "Robot: control_frequency must be a positive finite number, got -30.0."
 
 
 class TestUsableRateAccepted:

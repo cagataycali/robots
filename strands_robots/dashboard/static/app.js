@@ -1156,6 +1156,7 @@ const BUNDLE_ROUTES = [
   "/api/replay",
   "/api/robots/registry",
   "/api/robots/{p}/policy-fit",
+  "/api/robots/{p}/reset",
   "/api/robots/{p}/stop",
   "/api/robots/{p}/task",
   "/api/robots/{p}/teleop",
@@ -2066,6 +2067,24 @@ function stopFailure(f) {
     ambiguous: true
   };
 }
+function resetVerdict(i) {
+  if (i.offline) return { enabled: false, title: "No heartbeat from this robot: a reset would only wait out its timeout" };
+  if (i.running) return { enabled: false, title: "A task is running: stop it first (■), then reset" };
+  if (i.busy) return { enabled: false, title: "Waiting for this robot to answer" };
+  return { enabled: true, title: "Reset: return every joint to its home pose" };
+}
+function interpretReset(res) {
+  var _a, _b;
+  if (!res || typeof res !== "object") return { ok: false, text: "reset: no answer", ambiguous: true };
+  if (res.ok === true) {
+    const via = res.routed_to ? ` (via ${res.routed_to})` : "";
+    return { ok: true, text: `reset to home pose${via}` };
+  }
+  const r = res.result;
+  const sentence = r && typeof r === "object" && (r.error || ((_b = (_a = r.content) == null ? void 0 : _a.find((c) => c == null ? void 0 : c.text)) == null ? void 0 : _b.text)) || res.error;
+  if (typeof sentence === "string" && sentence.trim()) return { ok: false, text: `reset refused: ${sentence.trim()}` };
+  return { ok: false, text: "reset: the robot did not confirm", ambiguous: true };
+}
 function useTask(peer) {
   const [phase, setPhase] = reactExports.useState("idle");
   const [outcome, setOutcome] = reactExports.useState(null);
@@ -2097,7 +2116,7 @@ function useTask(peer) {
     setPhase("starting");
     setOutcome(null);
     setConsent(null);
-    lastBody.current = body;
+    lastBody.current = { kind: "run", body };
     try {
       const res = await post(
         `/api/robots/${encodeURIComponent(peer.peer_id)}/task`,
@@ -2121,7 +2140,10 @@ function useTask(peer) {
   };
   const retryLast = async () => {
     setConsent(null);
-    if (lastBody.current) await run(lastBody.current);
+    const last = lastBody.current;
+    if (!last) return;
+    if (last.kind === "run") await run(last.body);
+    else await reset(last.confirmed);
   };
   const stop = async () => {
     setPhase("stopping");
@@ -2136,6 +2158,31 @@ function useTask(peer) {
       if (!mounted.current) return;
       setOutcome(physicalFail(e, "stop"));
       setPhase("failed");
+    }
+  };
+  const reset = async (confirmed) => {
+    var _a;
+    setPhase("starting");
+    setOutcome(null);
+    setConsent(null);
+    lastBody.current = { kind: "reset", confirmed };
+    try {
+      const res = await post(
+        `/api/robots/${encodeURIComponent(peer.peer_id)}/reset`,
+        confirmed ? { confirmed: true } : {}
+      );
+      if (!mounted.current) return;
+      const v = interpretReset(res);
+      setOutcome(v);
+      setPhase(v.ok ? "idle" : "failed");
+      if (!v.ok) setConsent(findConsent(res));
+    } catch (e) {
+      if (!mounted.current) return;
+      const body = e instanceof HttpError ? e.body : null;
+      const said = ((_a = body == null ? void 0 : body.error) == null ? void 0 : _a.error) ?? (body == null ? void 0 : body.error) ?? null;
+      setOutcome(typeof said === "string" ? { ok: false, text: said } : fail(e));
+      setPhase("failed");
+      if (e instanceof HttpError) setConsent(findConsent((body == null ? void 0 : body.error) ?? body));
     }
   };
   const toggleTwin = async () => {
@@ -2156,6 +2203,7 @@ function useTask(peer) {
     twinBusy,
     run,
     stop,
+    reset,
     toggleTwin,
     setOutcome,
     consent,
@@ -4114,8 +4162,10 @@ function RunConfirm({
     }
   ) });
 }
-function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop }) {
+function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop, onReset }) {
   var _a, _b;
+  const [resetPending, setResetPending] = reactExports.useState(false);
+  const reset = resetVerdict({ running, busy, offline: !!disabled });
   const { policies } = useConfig();
   const [providerName, setProviderName] = reactExports.useState("mock");
   const [instruction, setInstruction] = reactExports.useState("");
@@ -4270,6 +4320,21 @@ function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop }) {
         }
       }
     ),
+    resetPending && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      RunConfirm,
+      {
+        peerId,
+        risk: runRisk(presence),
+        instruction: "return every joint to its home pose",
+        provider: "reset",
+        durationS: void 0,
+        onCancel: () => setResetPending(false),
+        onConfirm: () => {
+          setResetPending(false);
+          onReset == null ? void 0 : onReset(true);
+        }
+      }
+    ),
     staged && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "deploy-banner", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
         "🚀 prefilled from ",
@@ -4314,6 +4379,17 @@ function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop }) {
           onChange: (e) => setInstruction(e.target.value),
           onKeyDown: (e) => e.key === "Enter" && submit(),
           disabled: blocked
+        }
+      ),
+      onReset && /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: "btn ghost reset",
+          "aria-label": "reset to home pose",
+          title: reset.title,
+          disabled: !reset.enabled,
+          onClick: () => runRisk(presence).physical ? setResetPending(true) : onReset(false),
+          children: "↺"
         }
       ),
       running ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn stop", onClick: onStop, disabled: busy, title: "Stop this robot", children: "■" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -4533,7 +4609,7 @@ function ConsentSheet({ need, target, onCancel, onRetry }) {
 }
 function RobotCard({ peer, twinLive = false, onOpen, onBusyChange }) {
   var _a, _b;
-  const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin, consent, clearConsent, retryLast } = useTask(peer);
+  const { phase, outcome, running, busy, twinBusy, run, stop, reset, toggleTwin, consent, clearConsent, retryLast } = useTask(peer);
   const [sheet, setSheet] = reactExports.useState(false);
   const [camSheet, setCamSheet] = reactExports.useState(null);
   const p = peer.presence;
@@ -4672,7 +4748,8 @@ function RobotCard({ peer, twinLive = false, onOpen, onBusyChange }) {
         busy,
         disabled: offline,
         onRun: run,
-        onStop: stop
+        onStop: stop,
+        onReset: reset
       }
     ),
     outcome && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: outcome.ok ? "result ok" : "result bad", children: [
@@ -5218,7 +5295,7 @@ function fmt(v) {
 }
 function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onOpen, onClose }) {
   var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
-  const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin } = useTask(peer);
+  const { phase, outcome, running, busy, twinBusy, run, stop, reset, toggleTwin } = useTask(peer);
   const cams = Object.keys(peer.cameras ?? {});
   const twin = twinButtonCopy({ peerId: peer.peer_id, twinLive, busy: twinBusy });
   const [cam, setCam] = reactExports.useState(null);
@@ -5691,7 +5768,8 @@ function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onOpen, onC
                 busy,
                 disabled: offline,
                 onRun: run,
-                onStop: stop
+                onStop: stop,
+                onReset: reset
               }
             ),
             outcome && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: outcome.ok ? "result ok" : "result bad", children: [

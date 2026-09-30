@@ -3,7 +3,7 @@
 ``Robot(mode="real")`` asks the operator to approve every ``execute`` and
 ``start``; the dispatcher then checks the inputs. Before this, a call with
 ``duration=-5`` or ``policy_port=99999`` raised the approval interrupt,
-and the operator who typed "y" was answered with ``duration must be > 0``
+and the operator who typed "y" was answered with ``duration must be a positive finite number``
 - an approval spent on a command that could never have moved the arm, and
 a second approval round for the agent's corrected retry. Every check here
 is a pure function of the call and of the robot's own shut-down flag, so
@@ -80,23 +80,23 @@ def real(monkeypatch: pytest.MonkeyPatch) -> Iterator[HwRobot]:
 DOOMED = [
     pytest.param(
         {"action": "execute", "instruction": "wave", "policy_provider": "mock", "duration": -5},
-        "duration must be > 0",
+        "duration must be a positive finite number",
         id="execute-negative-duration",
     ),
     pytest.param(
         {"action": "start", "instruction": "wave", "policy_provider": "mock", "duration": "ten"},
-        "duration must be > 0",
+        "duration must be a positive finite number",
         id="start-duration-not-a-number",
     ),
     pytest.param(
-        {"action": "execute", "instruction": "wave", "policy_provider": "groot", "policy_port": 99999, "duration": 5},
+        {"action": "execute", "instruction": "wave", "policy_provider": "moveit2", "policy_port": 99999, "duration": 5},
         "invalid policy_port: 99999",
         id="execute-port-out-of-range",
     ),
     pytest.param(
-        {"action": "start", "instruction": "wave", "policy_provider": "groot", "duration": 5},
+        {"action": "start", "instruction": "wave", "policy_provider": "moveit2", "duration": 5},
         "policy_port is required",
-        id="start-port-missing-for-groot",
+        id="start-port-missing-for-moveit2",
     ),
 ]
 
@@ -135,4 +135,4 @@ def test_the_dispatcher_still_checks_when_the_gate_is_bypassed(real, monkeypatch
     """Defence in depth: the allowlist skips the operator, not the input checks."""
     monkeypatch.setenv(COMMAND_ALLOW_ENV, "*")
     events = _events(real, {"action": "execute", "instruction": "wave", "policy_provider": "mock", "duration": -5})
-    assert events == ["error:execute_task: duration must be > 0, got -5."], events
+    assert events == ["error:execute_task: duration must be a positive finite number, got -5."], events

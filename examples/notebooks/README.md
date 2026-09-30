@@ -78,5 +78,5 @@ Notebook 3 trains [ACT](https://tonyzhaozh.github.io/aloha/) from scratch for tw
 steps so the record -> train -> export -> load loop closes on a CPU laptop. For a
 real policy, point `TrainSpec.base_model` at a pretrained checkpoint, raise
 `steps`, and run on a GPU. Swapping `create_trainer("lerobot_local")` to
-`"groot"` or `"cosmos3"` retargets the same lifecycle to those providers (which do
-require a GPU).
+`"cosmos3"` retargets the same lifecycle to that provider (which does require a
+GPU); GR00T N1.7 stays on `lerobot_local` as `extra={"policy_type": "groot"}`.

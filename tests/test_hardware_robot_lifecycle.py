@@ -197,7 +197,7 @@ class TestStartTask:
         """
         hw = _make_robot()
         assert hw._claim_task("busy") is None
-        result = hw.start_task("new task", policy_port=5555)
+        result = hw.start_task("new task", policy_port=5555, policy_provider="moveit2")
         assert result["status"] == "error"
         assert "already running" in result["content"][0]["text"].lower()
         hw.cleanup()
@@ -217,7 +217,7 @@ class TestStartTask:
         # the submitted wrapper still releases the motors-bus claim it was
         # started under.
         hw._run_control_loop = _fake_loop  # type: ignore[assignment]
-        result = hw.start_task("grab", policy_port=5555, duration=1.0)
+        result = hw.start_task("grab", policy_port=5555, policy_provider="moveit2", duration=1.0)
         assert result["status"] == "success"
         assert "grab" in result["content"][0]["text"]
         # Wait for the background future to run.
@@ -305,7 +305,7 @@ class TestGetPolicy:
     def test_missing_port_raises(self):
         hw = _make_robot()
         with pytest.raises(ValueError, match="policy_port is required"):
-            asyncio.run(hw._get_policy(policy_port=None))
+            asyncio.run(hw._get_policy(policy_port=None, policy_provider="moveit2"))
         hw.cleanup()
 
     def test_builds_policy_via_create_policy(self, monkeypatch):
@@ -363,7 +363,7 @@ class TestExecuteTaskAsync:
 
         hw._get_policy = _fake_get_policy  # type: ignore[assignment]
 
-        asyncio.run(hw._execute_task_async("pick", policy_port=5555, duration=0.05))
+        asyncio.run(hw._execute_task_async("pick", policy_port=5555, policy_provider="moveit2", duration=0.05))
         assert hw._task_state.status == TaskStatus.COMPLETED
         assert len(fake.sent_actions) == 2  # two actions in the policy chunk
         assert hw._task_state.step_count == 2
@@ -372,7 +372,7 @@ class TestExecuteTaskAsync:
     def test_connect_failure_sets_error_state(self):
         fake = _FakeLeRobot(connected=False, calibrated=False)
         hw = _make_robot(fake)
-        asyncio.run(hw._execute_task_async("pick", policy_port=5555, duration=0.01))
+        asyncio.run(hw._execute_task_async("pick", policy_port=5555, policy_provider="moveit2", duration=0.01))
         assert hw._task_state.status == TaskStatus.ERROR
         assert "not calibrated" in hw._task_state.error_message
         hw.cleanup()
@@ -389,7 +389,7 @@ class TestExecuteTaskAsync:
 
         hw._get_policy = _fake_get_policy  # type: ignore[assignment]
         hw._initialize_policy = _fail_init  # type: ignore[assignment]
-        asyncio.run(hw._execute_task_async("pick", policy_port=5555, duration=0.01))
+        asyncio.run(hw._execute_task_async("pick", policy_port=5555, policy_provider="moveit2", duration=0.01))
         assert hw._task_state.status == TaskStatus.ERROR
         assert "Failed to initialize policy" in hw._task_state.error_message
         hw.cleanup()
@@ -556,7 +556,7 @@ class TestExecuteTaskAsyncRtcContract:
             return policy
 
         hw._get_policy = _fake_get_policy  # type: ignore[assignment]
-        asyncio.run(hw._execute_task_async("pick", policy_port=5555, duration=0.05))
+        asyncio.run(hw._execute_task_async("pick", policy_port=5555, policy_provider="moveit2", duration=0.05))
         return hw, fake
 
     def test_sets_control_frequency_once_before_loop(self, monkeypatch):
@@ -654,7 +654,15 @@ class TestStreamDispatch:
         hw.start_task = _fake_start  # type: ignore[assignment]
         events = _drain(
             hw.stream(
-                {"toolUseId": "t5", "input": {"action": "start", "instruction": "go", "policy_port": 5555}},
+                {
+                    "toolUseId": "t5",
+                    "input": {
+                        "action": "start",
+                        "instruction": "go",
+                        "policy_port": 5555,
+                        "policy_provider": "moveit2",
+                    },
+                },
                 {},
             )
         )
@@ -1297,7 +1305,7 @@ class TestExecuteTaskSync:
             hw._task_state.error_message = "boom"
 
         hw._execute_task_async = _err_async  # type: ignore[assignment]
-        result = hw._execute_task_sync("pick", policy_port=5555)
+        result = hw._execute_task_sync("pick", policy_port=5555, policy_provider="moveit2")
         assert result["status"] == "error"
         assert "boom" in result["content"][0]["text"]
         hw.cleanup()
@@ -1354,7 +1362,15 @@ class TestStreamExecuteHappyPath:
         hw._execute_task_sync = _fake_sync  # type: ignore[assignment]
         events = _drain(
             hw.stream(
-                {"toolUseId": "e1", "input": {"action": "execute", "instruction": "lift", "policy_port": 5555}},
+                {
+                    "toolUseId": "e1",
+                    "input": {
+                        "action": "execute",
+                        "instruction": "lift",
+                        "policy_port": 5555,
+                        "policy_provider": "moveit2",
+                    },
+                },
                 {},
             )
         )
@@ -1366,7 +1382,12 @@ class TestStreamExecuteHappyPath:
 
     def test_start_action_requires_instruction_and_port(self):
         hw = _make_robot()
-        events = _drain(hw.stream({"toolUseId": "e2", "input": {"action": "start", "instruction": "go"}}, {}))
+        events = _drain(
+            hw.stream(
+                {"toolUseId": "e2", "input": {"action": "start", "instruction": "go", "policy_provider": "moveit2"}},
+                {},
+            )
+        )
         result = events[-1].tool_result
         assert result["status"] == "error"
         assert "required" in result["content"][0]["text"]

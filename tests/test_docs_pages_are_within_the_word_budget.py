@@ -26,25 +26,20 @@ file, front matter and fences included, so the number here is the number
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import pytest
 
 import strands_robots
+from tests._docs_hooks import docs_hook
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _DOCS = _REPO_ROOT / "docs"
-_HOOK = _DOCS / "hooks" / "word_budget.py"
 
 
 def _hook():
     """The word-budget hook, loaded by path: the docs venv is not the test venv."""
-    spec = importlib.util.spec_from_file_location("docs_word_budget_hook", _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("word_budget")
 
 
 #: The per-page ceiling, in words: the one the build-time hook enforces.
@@ -67,7 +62,9 @@ _BUDGET: int = _hook().LIMIT
 #: learn/mesh, a variable row and a sentence on the pages that point at it, and the `iot`
 #: verbs on the command line page).
 #: Raised by 551 to 50,059 for the flux3_action provider page (one page per provider).
-_SITE_BUDGET = 50_059
+#: Lowered to 49,433 when the GR00T provider page left with the provider (GR00T N1.7
+#: is a section of lerobot-local now).
+_SITE_BUDGET = 49_433
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
