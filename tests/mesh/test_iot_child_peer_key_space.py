@@ -24,8 +24,9 @@ nothing above DEBUG in the log). These tests pin the repair on all four sides:
   key space (verified live on 2026-09-29: 574 publishes on the child topic in
   60 s with zero disconnects, the two foreign topics ended the session with
   reason code 135);
-* the transport WARNs once per topic, naming the topic, when the broker ends
-  the session within a second of a publish, and stays quiet otherwise;
+* the transport WARNs, naming every topic published within the last second
+  (newest first) when the broker ends the session right after a publish, once
+  per such set, and stays quiet otherwise;
 * the doctor row ``IoT Child Peers`` reads the account's default policy version
   and fails with the reprovision command when the grant is missing;
 * ``reprovision_thing`` republishes the module-owned policy so an existing
@@ -213,7 +214,7 @@ def transport(monkeypatch) -> IotMqttTransport:
     return t
 
 
-class TestTheTransportNamesTheTopicThatEndedTheSession:
+class TestTheTransportNamesTheTopicsThatEndedTheSession:
     LOGGER = "strands_robots.mesh.transport.iot_transport"
 
     def _warnings(self, caplog) -> list[str]:
@@ -224,29 +225,42 @@ class TestTheTransportNamesTheTopicThatEndedTheSession:
             transport.put("strands/childfix-a__so101/state", {"t": 1.0})
             transport._on_disconnection(_disconnect(135))
         (w,) = self._warnings(caplog)
-        assert "strands/childfix-a__so101/state" in w
-        assert "reason code 135" in w
+        assert "after publishing strands/childfix-a__so101/state (thing=childfix-a, broker reason code 135)" in w
         assert "strands-robots iot reprovision childfix-a" in w
-        assert "strands/childfix-a__*/*" in w
+        assert "strands/childfix-a__*/*" in w and "strands-robot-children" in w
         assert not transport.is_alive()
 
-    def test_the_warning_is_once_per_topic(self, transport, caplog):
+    def test_every_topic_inside_the_window_is_named_newest_first(self, transport, caplog):
+        # Measured live: the broker's DISCONNECT for the child's publish landed
+        # 47 to 74 ms later, after the parent's own granted state publish, so
+        # naming only the newest topic blamed the wrong one.
+        with caplog.at_level(logging.WARNING, logger=self.LOGGER):
+            transport.put("strands/childfix-a__so101/state", {"t": 1.0})
+            transport.put("strands/childfix-a/state", {"t": 1.0})
+            transport.put("strands/childfix-a/state", {"t": 2.0})
+            transport._on_disconnection(_disconnect(135))
+        (w,) = self._warnings(caplog)
+        assert "after publishing strands/childfix-a/state, strands/childfix-a__so101/state (" in w
+
+    def test_the_warning_is_once_per_set_of_topics(self, transport, caplog):
         with caplog.at_level(logging.WARNING, logger=self.LOGGER):
             for _ in range(5):
                 transport._connected.set()
+                transport._recent_publishes.clear()
                 transport.put("strands/childfix-a__so101/state", {"t": 1.0})
                 transport._on_disconnection(_disconnect())
             transport._connected.set()
+            transport._recent_publishes.clear()
             transport.put("strands/childfix-a__so101/presence", {"t": 1.0})
             transport._on_disconnection(_disconnect())
-        topics = [w.split(" after publishing ", 1)[1].split(" ", 1)[0] for w in self._warnings(caplog)]
-        assert topics == ["strands/childfix-a__so101/state", "strands/childfix-a__so101/presence"]
+        named = [w.split(" after publishing ", 1)[1].split(" (", 1)[0] for w in self._warnings(caplog)]
+        assert named == ["strands/childfix-a__so101/state", "strands/childfix-a__so101/presence"]
 
-    def test_a_disconnect_long_after_the_last_publish_is_not_blamed_on_it(self, transport, caplog, monkeypatch):
+    def test_a_disconnect_long_after_the_last_publish_is_not_blamed_on_it(self, transport, caplog):
         with caplog.at_level(logging.WARNING, logger=self.LOGGER):
             transport.put("strands/childfix-a/state", {"t": 1.0})
-            at, topic = transport._last_publish
-            transport._last_publish = (at - DISCONNECT_AFTER_PUBLISH_WINDOW_S - 0.5, topic)
+            at, topic = transport._recent_publishes[-1]
+            transport._recent_publishes[-1] = (at - DISCONNECT_AFTER_PUBLISH_WINDOW_S - 0.5, topic)
             transport._on_disconnection(_disconnect(None))
         assert self._warnings(caplog) == []
 
@@ -263,9 +277,12 @@ class TestTheTransportNamesTheTopicThatEndedTheSession:
         (w,) = self._warnings(caplog)
         assert "reason code" not in w
 
-    def test_the_window_is_a_second(self):
+    def test_the_window_is_a_second_and_the_memory_is_bounded(self, transport):
         assert DISCONNECT_AFTER_PUBLISH_WINDOW_S == 1.0
         assert iot_transport.DISCONNECT_AFTER_PUBLISH_WINDOW_S is DISCONNECT_AFTER_PUBLISH_WINDOW_S
+        for i in range(100):
+            transport.put(f"strands/childfix-a/state{i}", {"t": 1.0})
+        assert len(transport._recent_publishes) == 16
 
 
 class _Account:
@@ -532,3 +549,42 @@ class TestFleetProvisioningTemplate:
         bootstrap._ensure_provisioning_template(iot, MagicMock(), account)
         assert not iot.create_provisioning_template_version.called and not iot.create_provisioning_template.called
         assert f"iot-prov-template:{bootstrap.PROVISIONING_TEMPLATE}" in account.skipped
+
+
+class TestTheShadowMirrorStaysOnTheThing:
+    """A child peer is not a Thing: ``$aws/things/<thing>__so101/shadow/...``
+    has no grant in either robot policy, and the second live finding (00:20Z,
+    dashiot-so101) was the session still flapping every 1.5 s on the child's
+    shadow update after the child key space was granted. The Thing's shadow
+    belongs to the parent, so the mirror is wired for the parent only."""
+
+    def _enable(self, peer_id: str):
+        from unittest.mock import MagicMock, patch
+
+        from strands_robots.mesh.iot.shadow import enable_for_mesh
+
+        mesh = MagicMock()
+        mesh.peer_id = peer_id
+        mesh._build_presence = MagicMock(return_value={"k": 1})
+        transport = MagicMock(is_alive=MagicMock(return_value=True))
+        with (
+            patch("strands_robots.mesh.transport.factory.current_backend", return_value="iot"),
+            patch("strands_robots.mesh.transport.factory.current_transport", return_value=transport),
+        ):
+            mirror = enable_for_mesh(mesh)
+        return mesh, transport, mirror
+
+    def test_a_child_peer_gets_no_shadow_mirror(self, caplog):
+        with caplog.at_level(logging.DEBUG, logger="strands_robots.mesh.iot.shadow"):
+            mesh, transport, mirror = self._enable("childfix-a__so101")
+        assert mirror is None
+        mesh._build_presence()
+        transport.put.assert_not_called()
+        assert any("childfix-a__so101" in r.getMessage() and "child peer" in r.getMessage() for r in caplog.records)
+
+    def test_the_thing_itself_keeps_its_shadow_mirror(self):
+        mesh, transport, mirror = self._enable("childfix-a")
+        assert mirror is not None
+        mesh._build_presence()
+        (topic, _payload) = transport.put.call_args.args
+        assert topic == "$aws/things/childfix-a/shadow/name/presence/update"

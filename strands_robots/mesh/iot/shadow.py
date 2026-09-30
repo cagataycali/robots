@@ -188,12 +188,24 @@ def enable_for_mesh(mesh: Any) -> ShadowMirror | None:
 
     Returns the :class:`ShadowMirror` so callers can drive ad-hoc updates
     too. Returns ``None`` if the mesh is not running an IoT-capable
-    transport (i.e. plain Zenoh - shadows aren't relevant there).
+    transport (i.e. plain Zenoh - shadows aren't relevant there), and
+    ``None`` for a child peer (``<thing>__<robot>``, see
+    :data:`strands_robots.mesh.iot.provision.CHILD_PEER_SEPARATOR`): a child
+    is not a Thing, ``$aws/things/<thing>__<robot>/shadow/...`` is granted by
+    no robot policy, and AWS IoT answers such a publish by ending the Thing's
+    session. The Thing's presence shadow is the parent's.
     """
+    from strands_robots.mesh.iot.provision import CHILD_PEER_SEPARATOR
     from strands_robots.mesh.transport.factory import current_backend, current_transport
 
     if current_backend() not in ("iot", "bridge"):
         logger.debug("[shadow] backend is %r, skipping shadow mirror", current_backend())
+        return None
+    if CHILD_PEER_SEPARATOR in str(mesh.peer_id):
+        logger.debug(
+            "[shadow] %s is a child peer, not a Thing; no shadow mirror (the parent's shadow is the Thing's)",
+            mesh.peer_id,
+        )
         return None
 
     mirror = ShadowMirror(thing_name=mesh.peer_id, shadow_name="presence")

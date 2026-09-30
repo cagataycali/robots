@@ -55,6 +55,7 @@ import ssl
 import threading
 import time
 import urllib.parse
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -750,12 +751,15 @@ class IotMqttTransport:
         self._unmatched_inbound = 0
         self.direct_stats: dict[str, int] = {"sent": 0, "delivered": 0, "failed": 0}
         self._sdk_too_old_reported = False
-        # The last topic handed to the client and when: a DISCONNECT that
+        # The topics handed to the client lately and when: a DISCONNECT that
         # follows a publish within ``DISCONNECT_AFTER_PUBLISH_WINDOW_S`` is how
-        # AWS IoT answers a publish the policy does not grant, and the topic
-        # is the only clue. Warned once per topic (``_publish_disconnect_warned``).
-        self._last_publish: tuple[float, str] | None = None
-        self._publish_disconnect_warned: set[str] = set()
+        # AWS IoT answers a publish the policy does not grant, and the topics
+        # are the only clue. The broker's DISCONNECT lands 50 to 100 ms after
+        # the offending publish, by which time a 10 Hz state loop has published
+        # again on a granted topic, so every topic inside the window is named,
+        # newest first. Warned once per such set (``_publish_disconnect_warned``).
+        self._recent_publishes: deque[tuple[float, str]] = deque(maxlen=16)
+        self._publish_disconnect_warned: set[tuple[str, ...]] = set()
 
     # Lifecycle
 
@@ -1195,7 +1199,7 @@ class IotMqttTransport:
             from awscrt import mqtt5
 
             qos_enum = mqtt5.QoS.AT_MOST_ONCE if qos == 0 else mqtt5.QoS.AT_LEAST_ONCE
-            self._last_publish = (time.monotonic(), key)
+            self._recent_publishes.append((time.monotonic(), key))
             self._client.publish(
                 mqtt5.PublishPacket(
                     topic=key,
@@ -1297,35 +1301,44 @@ class IotMqttTransport:
         self._warn_if_publish_ended_the_session(data)
 
     def _warn_if_publish_ended_the_session(self, data: Any) -> None:
-        """WARN once per topic when the broker ends the session right after a publish.
+        """WARN once per set of topics when the broker ends the session right after a publish.
 
         AWS IoT does not refuse a publish the connected Thing's policy does
         not grant: it drops the MQTT session (DISCONNECT reason code 135, not
         authorized) and the client reconnects, so a robot that keeps
         publishing one ungranted topic lives in a connect/disconnect cycle
-        with nothing above DEBUG to say why. The topic named here is the one
+        with nothing above DEBUG to say why. The topics named here are those
         handed to the client within :data:`DISCONNECT_AFTER_PUBLISH_WINDOW_S`
-        of the disconnect; the usual cause is a child peer
-        (``<thing>__<robot>``) on a policy from before the child key space
-        grant, which ``strands-robots iot reprovision <thing>`` republishes.
+        of the disconnect, newest first (measured: the DISCONNECT arrives 47
+        to 74 ms after the publish, so the newest is not always the culprit);
+        the usual cause is a child peer (``<thing>__<robot>``) on a certificate
+        from before the child key space grant, which
+        ``strands-robots iot reprovision <thing>`` attaches.
         """
-        last = self._last_publish
-        if last is None:
+        now = time.monotonic()
+        recent = [(at, topic) for at, topic in self._recent_publishes if now - at <= DISCONNECT_AFTER_PUBLISH_WINDOW_S]
+        if not recent:
             return
-        at, topic = last
-        elapsed = time.monotonic() - at
-        if elapsed > DISCONNECT_AFTER_PUBLISH_WINDOW_S or topic in self._publish_disconnect_warned:
+        recent.sort(key=lambda item: item[0], reverse=True)
+        topics: list[str] = []
+        for _at, topic in recent:
+            if topic not in topics:
+                topics.append(topic)
+        key = tuple(topics)
+        if key in self._publish_disconnect_warned:
             return
-        self._publish_disconnect_warned.add(topic)
+        self._publish_disconnect_warned.add(key)
+        elapsed_ms = (now - recent[0][0]) * 1000.0
         packet = getattr(data, "disconnect_packet", None)
         reason = getattr(packet, "reason_code", None)
         reason_text = f", broker reason code {int(reason)}" if isinstance(reason, int) else ""
         logger.warning(
             "IoT MQTT session ended %.0f ms after publishing %s (thing=%s%s): AWS IoT drops the session on a "
-            "publish the Thing's policy does not grant. A child peer (%s__<robot>) needs the strands/%s__*/* grant; "
-            "run `strands-robots iot reprovision %s` to publish the current policy, then restart this robot.",
-            elapsed * 1000.0,
-            topic,
+            "publish the Thing's policy does not grant. A child peer (%s__<robot>) needs the strands/%s__*/* grant "
+            "(policy strands-robot-children); run `strands-robots iot reprovision %s` to attach it, then restart "
+            "this robot.",
+            elapsed_ms,
+            ", ".join(topics),
             self._thing_name,
             reason_text,
             self._thing_name,
