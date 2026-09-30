@@ -134,8 +134,8 @@ class TestTheLadderAndTheRegistryNameTheSameUrlForms:
     def test_the_ladder_and_the_registry_are_both_non_empty(self):
         """A parse that reached nothing would make the two rules above vacuous."""
         forms = _url_forms(_rung_one_text())
-        assert len(forms) >= 3, f"only parsed {forms} out of the stage-1 rung"
-        assert len(_shipped_url_patterns()) >= 3, "the shipped registry declares almost no url_patterns"
+        assert len(forms) >= 2, f"only parsed {forms} out of the stage-1 rung"
+        assert len(_shipped_url_patterns()) >= 2, "the shipped registry declares almost no url_patterns"
         assert _url_forms(_preflight_enumerated_text()), "parsed no form out of the preflight's aside"
 
 

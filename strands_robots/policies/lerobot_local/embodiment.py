@@ -7,8 +7,8 @@ mapping that plugs straight into LeRobot's own processor pipeline.
 * :class:`EmbodimentMap` is a frozen dataclass describing how a robot/sim's
   native observation keys map onto the model's declared LeRobot feature keys
   (``observation.images.*`` / ``observation.state``) and how the model's action
-  tensor maps back onto named robot actuators. It mirrors the GR00T
-  ``Gr00tDataConfig`` pattern that already works in this codebase.
+  tensor maps back onto named robot actuators. One declarative table per
+  robot, the pattern GR00T's modality configs use upstream.
 
 * :class:`PackStateProcessorStep` is the ONE new registered pipeline step: it
   composes the robot's scalar joint observations into ``observation.state`` in a
@@ -19,8 +19,7 @@ mapping that plugs straight into LeRobot's own processor pipeline.
   load time** (fail-fast), then the pipeline owns every per-step transform.
 
 Embodiment definitions live in ``embodiments.json`` next to this module and
-support ``_extends`` inheritance + ``aliases`` (same loader shape as
-``groot/data_configs.json``).
+support ``_extends`` inheritance + ``aliases``.
 """
 
 from __future__ import annotations

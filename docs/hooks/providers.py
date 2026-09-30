@@ -41,7 +41,6 @@ _TOKEN = re.compile(r"\{\{\s*providers:([a-z_]+)(?::([a-z0-9_]+))?\s*\}\}")
 # an ``extra`` only for lerobot_local; the rest are matched here by name and
 # every value is checked against ``[project.optional-dependencies]`` at build.
 _EXTRA_FOR: dict[str, str] = {
-    "groot": "groot-service",
     "cosmos3": "cosmos3-service",
     "moveit2": "moveit2",
     "curobo": "curobo",
@@ -220,7 +219,7 @@ def cameras_table() -> str:
 
 
 def embodiments_line() -> str:
-    """The one-line list of GR00T embodiment tags."""
+    """The one-line list of lerobot_local embodiment names and aliases."""
     data = _embodiments()
     names = list(data["configs"]) + list(data["aliases"])
     return ", ".join(f"`{n}`" for n in names)

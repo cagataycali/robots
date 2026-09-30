@@ -67,7 +67,9 @@ _BUDGET: int = _hook().LIMIT
 #: learn/mesh, a variable row and a sentence on the pages that point at it, and the `iot`
 #: verbs on the command line page).
 #: Raised by 551 to 50,059 for the flux3_action provider page (one page per provider).
-_SITE_BUDGET = 50_059
+#: Lowered to 49,433 when the GR00T provider page left with the provider (GR00T N1.7
+#: is a section of lerobot-local now).
+_SITE_BUDGET = 49_433
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

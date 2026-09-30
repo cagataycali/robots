@@ -54,6 +54,8 @@ class TestProof:
         assert proves_clear("teleop_publish") is True
         assert proves_clear("status") is False, "a locked peer answers status - it proves nothing"
         assert proves_clear("resume") is False
+        assert proves_clear("stop") is False, "a locked peer de-energises on a second stop - it proves nothing"
+        assert proves_clear("ping") is False, "the mesh answers ping without reaching the robot"
         assert proves_clear("") is False
 
     def test_an_accepted_command_clears_the_verdict(self) -> None:
