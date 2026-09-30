@@ -1363,6 +1363,29 @@ def _coerce_robot_name(value: Any) -> str:
     return value
 
 
+def _coerce_embodiment_name(value: Any) -> str:
+    """The ``embodiment`` a policy is built with: a registry NAME, bounded like a peer id.
+
+    The name selects the checkpoint's observation renames and its state/action
+    unit frame, so a degrees trained SO-101 checkpoint drives the arm in degrees
+    (GH #4180: without it on the wire the same checkpoint pinned the sim at its
+    joint limits in radians and reported success). Only a name travels: the
+    constructor also takes an inline map, but a map from the wire would let a
+    remote caller choose unit frames and renames for a body it does not own, so
+    it is refused here rather than forwarded. An unknown name is refused by the
+    provider before construction, which is before anything moves.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValidationError("embodiment must be a non-empty registry name (string); an inline map does not travel")
+    if len(value) > MAX_PEER_ID_LEN:
+        raise ValidationError(f"embodiment length {len(value)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN}).")
+    if not _PEER_ID_RE.fullmatch(value):
+        raise ValidationError(
+            "embodiment must match [A-Za-z0-9_.-]+ (no whitespace, NULs, control chars, shell metacharacters, or '/')."
+        )
+    return value
+
+
 def _coerce_target_joints(value: Any) -> dict[str, float]:
     """The ``target_joints`` dict, validated and coerced: bounded size, identifier-safe keys, finite floats."""
     if not isinstance(value, dict):
@@ -1544,6 +1567,8 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         # wire schema is the same for every receiver.
         if "robot_name" in cmd:
             out["robot_name"] = _coerce_robot_name(cmd["robot_name"])
+        if "embodiment" in cmd:
+            out["embodiment"] = _coerce_embodiment_name(cmd["embodiment"])
         # Issue #300 per-call policy kwargs, forwarded as policy_kwargs. Every
         # key SimEngine.run_policy documents is admitted here; an unlisted key
         # never reaches out.
