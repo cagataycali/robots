@@ -1,5 +1,5 @@
 ---
-description: The Mesh object a robot exposes, the session and peer helpers, and the bridges that put ROS 2 robots on the mesh.
+description: The Mesh object a robot exposes, the session and peer helpers, the bridges that put ROS 2 robots on the mesh.
 ---
 
 # Mesh

@@ -55,7 +55,7 @@ Placements that are a judgement, not a reading: `assets` sits with `registry` be
 
 ## Extras
 
-The package installs with no heavy dependency. Each lane pulls its own extra: `[sim-mujoco]` for the sim lane, `[lerobot]` for the lerobot hardware lane, `[mesh]` for Zenoh, `[dashboard]` for the operator UI, one extra per native driver or policy provider ({{n:policy_providers}} providers, {{n:native_drivers}} shipped drivers). `pyproject.toml` is the list; a door that needs an extra you lack refuses with the install line.
+The package installs with no heavy dependency; each lane pulls its own extra: `[sim-mujoco]` for the sim lane, `[lerobot]` for the lerobot hardware lane, `[mesh]` for Zenoh, `[dashboard]` for the operator UI, one extra per native driver or policy provider ({{n:policy_providers}} providers, {{n:native_drivers}} shipped drivers). `pyproject.toml` is the list; a door that needs an extra you lack refuses with the install line.
 
 ## What changes in 1.0
 

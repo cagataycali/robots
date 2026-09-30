@@ -4,7 +4,7 @@ description: The engine contract, the backend factory, what SimWorld carries, an
 
 # Simulation
 
-`strands_robots.simulation` holds the engine contract, the backend factory and the data types a simulation returns: how backends are created, what `SimWorld` carries, how to register your own.
+`strands_robots.simulation` holds the engine contract, the backend factory and the data types a simulation returns: how backends are created, what `SimWorld` carries, registering your own.
 
 ## Factory
 
@@ -18,7 +18,7 @@ description: The engine contract, the backend factory, what SimWorld carries, an
 
 ## Engine contract
 
-`stop_policy` returns a `json` block with `robot`, `was_running` and `exited`; `exited` is null with no worker to join, the first stop after a rollout ended on its own adds `last_result`, and an empty name means the only rollout in flight. MuJoCo waits 1 s (`MuJoCoSimulation._POLICY_STOP_JOIN_TIMEOUT`) for the worker first.
+`stop_policy` returns a `json` block with `robot`, `was_running` and `exited`; `exited` is null with no worker to join, the first stop after a rollout ended on its own adds `last_result`, and an empty name means the one rollout in flight. MuJoCo waits 1 s (`MuJoCoSimulation._POLICY_STOP_JOIN_TIMEOUT`) for the worker first.
 
 ::: strands_robots.simulation.base.SimEngine
     options:

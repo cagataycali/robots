@@ -1,5 +1,5 @@
 ---
-description: The stable code a continuable refusal carries and the grant that lifts it, so a consumer matches by identity, not message.
+description: The stable code a continuable refusal carries and the grant that lifts it: consumers match by identity, not message.
 ---
 
 # Refusal codes

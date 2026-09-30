@@ -1,5 +1,5 @@
 ---
-description: Where the release notes live, what the last three releases changed, and how a change is logged between releases.
+description: Where the release notes live, what the last three releases changed, how a change is logged between releases.
 ---
 
 # Changelog

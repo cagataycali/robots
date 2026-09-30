@@ -1,5 +1,5 @@
 ---
-description: Every agent-callable tool, one table per area, with the action values a dispatching tool accepts, read from the source.
+description: Every agent-callable tool, one table per area, with the action values a dispatching tool accepts, from the source.
 ---
 
 # Tools

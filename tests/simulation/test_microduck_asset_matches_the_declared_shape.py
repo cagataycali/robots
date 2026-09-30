@@ -100,10 +100,10 @@ def _joint_names(mujoco, model) -> list[str]:
 class TestTheDeclaredShapeMatchesTheCompiledAsset:
     """The declared figures, re-derived from the model they describe."""
 
-    def test_the_declared_count_is_the_models_joint_total(self) -> None:
-        """``joints: 15`` is the model's ``njnt``, floating base included."""
+    def test_the_declared_count_is_the_models_joint_total_without_the_base(self) -> None:
+        """``joints: 14`` is the model's ``njnt`` less its floating base (#4147)."""
         mujoco, model = _model()
-        assert model.njnt == _entry()["joints"]
+        assert model.njnt - FLOATING_BASE_JOINTS == _entry()["joints"]
 
     def test_every_documented_joint_is_driven_by_one_actuator(self) -> None:
         mujoco, model = _model()

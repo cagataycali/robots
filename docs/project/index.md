@@ -1,5 +1,5 @@
 ---
-description: How the package is built, how to change it, where it is going, and how to report a problem.
+description: How the package is built, how to change it, where it is going, how to report a problem.
 ---
 
 # Project

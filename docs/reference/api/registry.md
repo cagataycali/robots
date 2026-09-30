@@ -1,5 +1,5 @@
 ---
-description: Resolve an alias to a canonical robot, list robots by category, inspect a provider entry, add your own robot.
+description: Resolve an alias to a canonical robot, list robots by category, inspect a provider entry, add your own.
 ---
 
 # Registry

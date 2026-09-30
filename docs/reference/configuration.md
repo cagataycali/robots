@@ -1,5 +1,5 @@
 ---
-description: Every environment variable the package reads, with the module that reads it and its default, generated at build time.
+description: Every environment variable the package reads, with its reader module and default, generated at build time.
 ---
 
 # Configuration
