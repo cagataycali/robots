@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_file
 
 _PACKAGE_DIR = pathlib.Path(strands_robots.__file__).parent
 _OWNER = _PACKAGE_DIR / "_serial_discovery.py"
@@ -486,7 +487,7 @@ class TestTheScanIsNotVacuous:
 
     def test_the_owner_module_parses_as_the_source_the_guards_read(self) -> None:
         """The structural guards read source text; confirm it is the real module."""
-        tree = ast.parse(_OWNER.read_text(encoding="utf-8"))
+        tree = parse_file(_OWNER)
         names = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
 
         assert {"matches_servo_bus", "stable_device_id", "scan_serial_devices"} <= names

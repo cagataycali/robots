@@ -42,6 +42,7 @@ import pytest
 
 import strands_robots.simulation.mujoco as mujoco_pkg
 from strands_robots.simulation import create_simulation
+from tests._package_ast import parse_file
 
 # The reader holds the lock for this long. Every unlocked swap measured well
 # under 0.25 s, so a writer that waits is unambiguous at this hold.
@@ -180,7 +181,7 @@ def _live_model_swappers() -> set[str]:
     the graded set on the commit that introduces it.
     """
     source = Path(mujoco_pkg.__file__).parent / "scene_ops.py"
-    tree = ast.parse(source.read_text())
+    tree = parse_file(source)
     functions = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     calls = {
         name: {
@@ -224,7 +225,7 @@ def test_every_call_that_swaps_the_live_model_holds_the_lock():
 
     unlocked = []
     for path in sorted(Path(mujoco_pkg.__file__).parent.glob("*.py")):
-        tree = ast.parse(path.read_text())
+        tree = parse_file(path)
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue

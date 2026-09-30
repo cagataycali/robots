@@ -204,7 +204,7 @@ class TestADomainThatMatchesTheClamp:
 
     @pytest.mark.parametrize("weight", UNUSABLE)
     def test_the_constructor_refuses_an_unusable_ceiling(self, weight: Any) -> None:
-        with pytest.raises(ValueError, match=r"rtc_max_guidance_weight must be > 0"):
+        with pytest.raises(ValueError, match=r"rtc_max_guidance_weight must be a positive finite number"):
             _policy(rtc_enabled=True, rtc_max_guidance_weight=weight)
 
     @pytest.mark.parametrize("weight", UNUSABLE)
@@ -216,7 +216,7 @@ class TestADomainThatMatchesTheClamp:
         there, so that a rollout gets a structured error before the weight
         download rather than a raise from ``__init__`` after it.
         """
-        with pytest.raises(ValueError, match=r"rtc_max_guidance_weight must be > 0"):
+        with pytest.raises(ValueError, match=r"rtc_max_guidance_weight must be a positive finite number"):
             LerobotLocalPolicy.preflight(set(), rtc_max_guidance_weight=weight)
 
     def test_the_refusal_names_the_parameter_and_the_provider(self) -> None:

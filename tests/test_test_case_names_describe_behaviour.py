@@ -41,6 +41,8 @@ from collections.abc import Sequence
 
 import pytest
 
+from tests._package_ast import parse_file
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _TEST_TREES = ("tests", "tests_integ")
 
@@ -67,7 +69,7 @@ def _test_case_names() -> tuple[tuple[pathlib.Path, int, str], ...]:
     for tree in _TEST_TREES:
         for path in sorted((_REPO_ROOT / tree).rglob("*.py")):
             try:
-                module = ast.parse(path.read_text(encoding="utf-8"))
+                module = parse_file(path)
             except SyntaxError:  # pragma: no cover - a broken test file fails elsewhere
                 continue
             for node in ast.walk(module):

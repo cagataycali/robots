@@ -105,7 +105,7 @@ class TestTheOffPolicyBackendRefusesATemperatureWithNoLogarithm:
     def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec, value: Any) -> None:
         spec.init_alpha = value
         (problem,) = _init_alpha_problems(OFF_POLICY, spec)
-        assert problem.startswith("fast_sac: init_alpha must be > 0"), problem
+        assert problem.startswith("fast_sac: init_alpha must be a positive finite number"), problem
         assert repr(value) in problem, problem
 
     def test_a_refusal_does_not_hide_the_rate_that_moves_it(self, spec: RLTrainSpec) -> None:

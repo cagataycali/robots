@@ -35,6 +35,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_file
+
 TESTS = Path(__file__).resolve().parent
 PACKAGE = TESTS.parent / "strands_robots"
 
@@ -56,7 +58,7 @@ def _package_modules_importing(dep: str) -> set[str]:
     """Dotted names of package modules whose module-scope imports reach ``dep``."""
     direct: set[str] = set()
     for path in PACKAGE.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = parse_file(path)
         roots = {n.split(".")[0] for _, names in _module_scope_import_names(tree) for n in names}
         if dep in roots:
             rel = path.relative_to(PACKAGE.parent).with_suffix("")
@@ -89,7 +91,7 @@ def test_test_modules_skip_the_optional_extra_before_reaching_it(dep: str) -> No
     carriers = _package_modules_importing(dep) if dep != "mujoco" else set()
     unguarded: list[str] = []
     for path in sorted(TESTS.rglob("test_*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = parse_file(path)
         reach = _first_reaching_line(tree, dep, carriers)
         if reach is None:
             continue
