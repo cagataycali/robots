@@ -85,8 +85,13 @@ def _bridge_with_steps(steps: list) -> _FakeBridge:
 
 
 def _six_key_embodiment() -> EmbodimentMap:
-    # 6 action_keys against a 32-wide action head -> EmbodimentMap.validate refuses.
-    return EmbodimentMap(name="so101_six", obs_rename={}, state_keys=[], action_keys=list("abcdef"), dim_policy="pad")
+    # 6 action_keys against a 32-wide action head under dim_policy="strict" ->
+    # EmbodimentMap.validate refuses, which is the trigger for the fallback these
+    # cells grade. (Under "pad" the wider head is accepted and drives the leading
+    # six columns, so it would no longer discard the pipeline.)
+    return EmbodimentMap(
+        name="so101_six", obs_rename={}, state_keys=[], action_keys=list("abcdef"), dim_policy="strict"
+    )
 
 
 def _patch_from_pretrained(monkeypatch, bridge) -> None:

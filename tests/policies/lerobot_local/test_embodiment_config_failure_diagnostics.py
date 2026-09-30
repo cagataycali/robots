@@ -64,14 +64,16 @@ def _patch_from_pretrained(monkeypatch, bridge) -> None:
 
 
 # An embodiment whose action_keys length (3) disagrees with the model's action
-# dim (6) -> EmbodimentMap.validate raises ValueError inside _configure_embodiment.
+# dim (6) under dim_policy="strict" -> EmbodimentMap.validate raises ValueError
+# inside _configure_embodiment. (Under "pad" a wider head is accepted and its
+# leading columns drive the keys, so strict is the trigger these cells need.)
 def _incompatible_embodiment() -> EmbodimentMap:
     return EmbodimentMap(
         name="wrong_dims",
         obs_rename={},
         state_keys=[],
         action_keys=["a", "b", "c"],
-        dim_policy="pad",
+        dim_policy="strict",
     )
 
 
