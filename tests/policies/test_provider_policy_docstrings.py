@@ -30,6 +30,7 @@ import json
 from pathlib import Path
 
 import strands_robots.policies as policies_pkg
+from tests._package_ast import parse_file
 
 _PACKAGE_DIR = Path(policies_pkg.__file__).parent
 _REGISTRY = Path(policies_pkg.__file__).parents[1] / "registry" / "policies.json"
@@ -44,6 +45,7 @@ _PROVIDER_POLICIES = {
     "curobo/policy.py": "CuroboPolicy",
     "wbc/policy.py": "WBCPolicy",
     "wbc/gait.py": "WBCGaitPolicy",
+    "wbc_latent/policy.py": "WBCLatentPolicy",
     "kimodo/policy.py": "KimodoPolicy",
     "protomotions/policy.py": "ProtoMotionsPolicy",
     "microduck/policy.py": "MicroduckPolicy",
@@ -95,7 +97,7 @@ def _public_members_without_docstring(class_node: ast.ClassDef) -> list[str]:
 def _provider_class_node(rel_path: str, class_name: str) -> ast.ClassDef:
     """Locate the pinned provider class in its source file by AST (no import)."""
     source_file = _PACKAGE_DIR / rel_path
-    tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+    tree = parse_file(source_file)
     for node in _iter_defs(tree):
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             return node

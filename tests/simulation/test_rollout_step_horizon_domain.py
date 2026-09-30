@@ -70,6 +70,7 @@ import strands_robots
 from strands_robots.policies import MockPolicy
 from strands_robots.simulation import create_simulation
 from strands_robots.simulation.base import SimEngine
+from tests._package_ast import parse_file
 
 #: Values no step horizon can be built from. ``0``/negative make the rollout a
 #: no-op; ``2.7``/``3.0``/NumPy scalars/``True`` used to be truncated into a
@@ -366,7 +367,7 @@ def _bounds_in(root: pathlib.Path) -> list[tuple[str, bool]]:
     found: list[tuple[str, bool]] = []
     for path in sorted(root.rglob("*.py")):
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - the package always parses
             continue
         for function in ast.walk(tree):

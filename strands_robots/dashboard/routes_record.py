@@ -151,8 +151,10 @@ WIRE_POLICY_CONFIG_KEYS: tuple[str, ...] = (
     "server_address",
     "policy_type",
     "pretrained_name_or_path",
+    "embodiment",
     "policy_host",
     "policy_port",
+    "walk",
 )
 
 

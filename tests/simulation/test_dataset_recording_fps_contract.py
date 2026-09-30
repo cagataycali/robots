@@ -35,6 +35,7 @@ from strands_robots.tools.run_policy import run_policy as run_policy_tool
 pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from tests._package_ast import parse_file
 
 # One actuated hinge plus a camera: enough for run_policy to drive something and
 # for the dataset schema to declare an image column, with no asset download.
@@ -166,7 +167,7 @@ def _start_recording_calls_the_shared_guard(module_path: Path) -> bool:
     ``return`` satisfies it - so the returned refusal is driven per backend in
     ``test_recording_preflight_refusals_across_backends.py``.
     """
-    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    tree = parse_file(module_path)
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "start_recording":
             return any(

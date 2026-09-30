@@ -59,6 +59,7 @@ import pytest
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import RGBA_ACCEPTED_LENGTHS, coerce_rgba
+from tests._package_ast import parse_file
 from tests.simulation.test_pose_vector_domain_across_backends import _isaac_stub, _newton_stub
 
 NAN = float("nan")
@@ -328,7 +329,7 @@ def _public_color_methods(root: pathlib.Path) -> dict[tuple[str, str], bool]:
     """
     found: dict[tuple[str, str], bool] = {}
     for path in sorted(root.glob("*/*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
             for fn in [n for n in ast.iter_child_nodes(cls) if isinstance(n, ast.FunctionDef)]:
                 if fn.name.startswith("_"):
