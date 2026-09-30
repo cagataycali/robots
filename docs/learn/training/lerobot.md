@@ -1,5 +1,5 @@
 ---
-description: "Post-tune a LeRobot policy from a recorded dataset: the lerobot_train tool, the train_policy tool, LerobotTrainer through TrainSpec, and the provider knobs for lerobot, GR00T and Cosmos 3."
+description: "Post-tune a LeRobot policy from a recorded dataset: the lerobot_train tool, the train_policy tool, LerobotTrainer through TrainSpec, and the provider knobs for lerobot (GR00T N1.7 included) and Cosmos 3."
 ---
 
 # LeRobot training

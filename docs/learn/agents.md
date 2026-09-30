@@ -18,6 +18,8 @@ print(sorted(agent.tool_names))   # ['pose_tool', 'robot_mesh', 'so101_sim']
 
 ## A robot is a tool
 
+{{drawing:d10_agent_and_robot}}
+
 `Robot(...)` returns an object with the Strands `AgentTool` surface (`tool_name`, `tool_type`, `tool_spec`, `stream`), so it goes into `Agent(tools=[...])` like any tool; the model sees one tool per robot with an `action` field:
 
 | mode | tool name | actions the model sees |
@@ -44,6 +46,8 @@ print(sorted(agent.tool_names))   # ['pose_tool', 'robot_mesh', 'so101_sim']
 | `load_episode`, `sample_frames`, `write_label` | judge episodes ([label and judge](data/label-and-judge.md)) | no |
 
 ## The operator gate
+
+{{drawing:d04_gate_chain}}
 
 Every policy rollout, ROS command, serial write and pose move the model asks for goes through `strands_robots._command_gate.gate_motion`, which decides in order:
 

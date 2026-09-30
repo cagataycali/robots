@@ -1,10 +1,10 @@
 ---
-description: A Strands Agent moves the simulated SO-101 from a sentence, then stops at the operator gate in front of a real arm.
+description: "Stage 2, ten minutes: the robot as a Strands Agent tool, a sentence that moves it, and the operator gate stopping a real rollout."
 ---
 
-# First agent
+# Talk to it
 
-At the end of this page a Strands Agent has moved the simulated arm from a sentence you typed, and you have watched the same agent stop at the operator gate in front of a real one. The sim fences run without a model. The two fences that call `agent("...")` need a model provider configured for `strands-agents`; [Bedrock](https://strandsagents.com/latest/documentation/docs/user-guide/concepts/model-providers/amazon-bedrock/) is the default.
+At the end of this page a Strands Agent has moved the simulated arm from a sentence you typed, and you have watched the same agent stop at the approval gate in front of a real one. [See it](see-it.md) shows a captured run of exactly this; here you run it. The sim fences run without a model. The two fences that call `agent("...")` need a model provider configured for `strands-agents`; Bedrock is the default.
 
 ## The robot is a tool
 
@@ -32,7 +32,7 @@ Programmatic MuJoCo simulation environment (stateful session). One world per ins
 1 (shoulder_pan): pos=0.0000, vel=0.0000
 ```
 
-Nothing was wrapped. The object `Robot()` returned is a Strands `AgentTool`: a name (`so101_sim` in sim, `so101` on hardware, or `tool_name=`), a description the model reads, one `action` enum. `agent.tool.so101_sim(...)` calls it with no model in the loop and returns the envelope [First robot](first-robot.md) showed. Two robots in one agent need two names: `Robot("so101", tool_name="left")`.
+Nothing was wrapped. The object `Robot()` returned is a Strands `AgentTool`: a name (`so101_sim` in sim, `so101` on hardware, or whatever `tool_name=` says), a description the model reads, one `action` enum. `agent.tool.so101_sim(...)` calls it directly, no model in the loop, and returns the envelope [Run it](first-robot.md) showed. Two robots in one agent need two names: `Robot("so101", tool_name="left")`.
 
 ## Ask in words
 
@@ -49,7 +49,7 @@ robot.cleanup()
 
 The model calls `get_robot_state`, then `set_joint_positions` or `actuate_robot` with some `step` calls, then `get_robot_state` again, and writes what it found. One run on this checkout reported the gripper moving from `[+0.020, -0.376, +0.259]` to `[-0.150, -0.335, +0.237]`, a 17 cm sweep along -X for a 0.5 rad pan. Your model picks its own actions and words; the joint it reports is read from physics, not invented.
 
-Other tools mount the same way and are listed in the [tool reference](../reference/tools.md). `pose_tool` talks to a Feetech bus and needs `pip install pyserial` on top of the Start install:
+Other tools mount the same way ([tool reference](../reference/tools.md)); `pose_tool` talks to a Feetech bus and needs `pip install pyserial`:
 
 ```python
 from strands import Agent
@@ -66,6 +66,8 @@ robot.cleanup()
 ```
 
 ## The gate in front of real motion
+
+{{drawing:d04_gate_chain}}
 
 A `mode="real"` robot built through the lerobot driver has eight actions. Six read or halt and are never gated: `get_state`, `get_robot_state`, `list_cameras`, `render`, `status`, `stop`. Two move: `execute` and `start` dispatch a policy rollout to real actuators, and both stop for a human first. This runs on a laptop with no arm: the gate runs before the driver opens `port="/dev/null"`, so the interrupt is reached (approving would then fail to connect):
 
@@ -101,4 +103,4 @@ With no agent, the same call is refused outright and the refusal names the varia
 
 ## Where next
 
-[Agents](../learn/agents.md) covers what the model sees, multi-robot agents and the dashboard's approval flow. [Policies](../learn/policies/index.md) replaces `mock` with a model that acts on the words.
+You now have an agent that drives the simulated arm from a sentence, and you saw the operator gate stop a real rollout. Next rung: [Real arm](first-real-arm.md). [Agents and robots](../learn/agents.md) covers what the model sees, multi-robot agents and the dashboard's approval flow; [Policies](../learn/policies/index.md) replaces `mock` with a model that acts on the words.

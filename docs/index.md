@@ -30,7 +30,7 @@ template_class: sr-home
 <div class="sr-grid" markdown>
 <div class="sr-card" markdown>
 ### [Start](start/index.md)
-Install, move a simulated SO-101, plug in the real one, hand it to an agent, run the doctor.
+The ladder: see it in 30 seconds, run a simulated SO-101 in three minutes, talk to it, plug in the real one, run one checkpoint on both, teach it, fleet.
 </div>
 <div class="sr-card" markdown>
 ### [Robots](robots/index.md)
@@ -41,8 +41,8 @@ The catalog: arms, hands, humanoids, quadrupeds, mobile bases. Which ones simula
 `Agent(tools=[robot])`. What the model sees, what it can call, and the operator gate in front of real motion.
 </div>
 <div class="sr-card" markdown>
-### [Simulation](learn/simulation/index.md)
-MuJoCo on the CPU by default, Newton and Isaac on a GPU. Worlds, objects, cameras, predicates, recordings.
+### [Concepts](concepts/index.md)
+How it works in three minutes: the Robot object, the Policy object, the backends under them, the gate, and a glossary.
 </div>
 <div class="sr-card" markdown>
 ### [Hardware](learn/hardware/drivers.md)
@@ -104,11 +104,11 @@ robot.cleanup()
 
 ```python title="sketch"
 import os; os.environ["STRANDS_TRUST_REMOTE_CODE"] = "1"
-from strands_robots import Robot
-from strands_robots.policies import create_policy
+from strands_robots import Robot; from strands_robots.policies import create_policy
 robot = Robot("so101", mode="real", port="/dev/ttyACM0", cameras={"front": {"type": "opencv", "index_or_path": 0},
               "wrist": {"type": "opencv", "index_or_path": 1}, "top": {"type": "opencv", "index_or_path": 2}})
-embodiment = {"state_keys": list("123456"), "action_keys": list("123456"), "dim_policy": "pad", "obs_rename": {
+keys = [f"{m}.pos" for m in ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")]
+embodiment = {"state_keys": keys, "action_keys": keys, "dim_policy": "pad", "obs_rename": {
     "front": "observation.images.camera1", "wrist": "observation.images.camera2", "top": "observation.images.camera3"}}
 policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/smolvla_base", embodiment=embodiment)
 print(robot.run_policy(policy, instruction="pick up the cube", duration=10.0)["status"])
@@ -117,4 +117,4 @@ robot.cleanup()
 
 </div>
 
-The left fence runs on a laptop with no GPU: SmolVLA, a vision-language-action model from the Hub, reads three cameras and the instruction and drives the simulated arm. The right runs the same checkpoint on the physical arm; as an agent tool its `execute` waits for operator approval. [First learned policy](start/first-policy.md) explains `obs_rename` and the embodiment.
+The left fence runs on a laptop with no GPU: SmolVLA, a vision-language-action model from the Hub, reads three cameras and the instruction and drives the simulated arm. The right one runs the same checkpoint on the physical arm, whose state arrives as `<motor>.pos` keys; as an agent tool, its `execute` waits for operator approval. [Same checkpoint](start/first-policy.md) explains `obs_rename` and the embodiment.
