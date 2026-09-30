@@ -996,13 +996,22 @@ class Robot(TeleopMixin, AgentTool):
             return
         from strands_robots.foxglove import FoxgloveBridge, TelemetryFanout
 
-        self._foxglove_bridge = FoxgloveBridge(
-            options,
-            name=self.tool_name_str,
-            engine=None,
-            command_sink=self._foxglove_command_sink,
-        )
         existing: Any = getattr(self, "_ros_bridge", None)
+        try:
+            self._foxglove_bridge = FoxgloveBridge(
+                options,
+                name=self.tool_name_str,
+                engine=None,
+                command_sink=self._foxglove_command_sink,
+            )
+        except Exception:
+            # A live ROS 2 bridge started two lines earlier in __init__ must
+            # not outlive a constructor that raises: a retrying caller would
+            # accumulate DDS participants with nothing left to shut them down.
+            if existing is not None:
+                existing.shutdown()
+                self._ros_bridge = None
+            raise
         joined: Any = self._foxglove_bridge if existing is None else TelemetryFanout([existing, self._foxglove_bridge])
         self._ros_bridge = joined
 

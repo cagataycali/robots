@@ -232,3 +232,50 @@ class TestTheBridgeWritesTheSceneOnce:
         assert channels["/scene"]["messages"] == 2, "the cube grew, so the world scene is written again"
         assert channels["/arm/scene"]["messages"] == 1, "the arm did not change, so its scene is not"
         assert np is not None
+
+
+class TestTheRecompileDetectorHoldsTheModel:
+    """``id()`` of a dead object is reused by CPython; the bridge must hold the object, not its address.
+
+    The reachable sequence was ``add_object("a"); add_object("b"); step(...)``:
+    model A is published, freed while B compiles, and C lands on A's address, so
+    an ``id(A) == id(C)`` detector skipped the rebuild and kept serving A's scene
+    to new subscribers and the MCAP. Holding a strong reference to the model
+    makes the address unreusable while it is cached, so ``is not`` is exact.
+    """
+
+    def test_the_bridge_keeps_a_strong_reference_to_the_published_model(
+        self, fake_server: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model_and_data: tuple[Any, Any]
+    ) -> None:
+        import gc
+
+        model, data = model_and_data
+        engine = _Engine(model, data)
+        bridge = TestTheBridgeWritesTheSceneOnce()._bridge(tmp_path, engine, monkeypatch)
+        bridge.publish_joint_states("arm", ["elbow"], [0.5])
+        assert bridge._scene_model is model, "the detector caches the model object, not an int"
+        first_id = id(model)
+        # Drop every other reference; the bridge's own must keep the address occupied.
+        del model, data
+        engine.mj_model = None
+        engine.mj_data = None
+        gc.collect()
+        assert id(bridge._scene_model) == first_id and bridge._scene_model is not None
+        # A recompile is a new object with a bigger cube: detected by identity, written once more.
+        engine.mj_model = mujoco.MjModel.from_xml_string(
+            _MJCF.replace('size="0.02 0.02 0.02"', 'size="0.05 0.05 0.05"')
+        )
+        engine.mj_data = mujoco.MjData(engine.mj_model)
+        mujoco.mj_forward(engine.mj_model, engine.mj_data)
+        bridge.publish_joint_states("arm", ["elbow"], [0.5])
+        assert bridge._scene_model is engine.mj_model
+        bridge.shutdown()
+        assert mcap_info(tmp_path / "run.mcap")["channels"]["/scene"]["messages"] == 2
+
+    def test_no_id_based_detector_remains(self) -> None:
+        import inspect
+
+        from strands_robots.foxglove import bridge as bridge_mod
+
+        source = inspect.getsource(bridge_mod)
+        assert "id(model)" not in source, "the recompile detector compares objects, never their addresses"

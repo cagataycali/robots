@@ -345,6 +345,60 @@ class TestTheSeam:
         assert status["ros2_transport"] is None
 
 
+class TestAFailedFoxgloveStartLeaksNoRosBridge:
+    """The Foxglove bridge starts after the ROS 2 bridge in ``Robot.__init__``; a raise must not leak the DDS node.
+
+    Before: ``FoxgloveBridge(...)`` raising (no free port within
+    ``PORT_SEARCH_WIDTH``, an MCAP open failure) left the live rclpy bridge
+    started two lines earlier with nothing to call ``shutdown()`` on it, and a
+    retrying caller accumulated DDS participants. The sim path already shut its
+    bridges down and re-raised; the hardware path now does the same.
+    """
+
+    def test_the_live_ros_bridge_is_shut_down_and_the_error_re_raised(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from types import SimpleNamespace
+
+        from strands_robots import foxglove as fox_pkg
+        from strands_robots.hardware_robot import Robot
+        from tests._hardware_robot import hardware_robot_on
+
+        calls: list[str] = []
+        live_ros = SimpleNamespace(shutdown=lambda: calls.append("shutdown"))
+
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("no free port within PORT_SEARCH_WIDTH")
+
+        monkeypatch.setattr(fox_pkg, "FoxgloveBridge", _boom)
+        original = Robot._init_ros_bridge
+
+        def _ros_then_leak_check(self: Any, **kwargs: Any) -> None:
+            original(self, **kwargs)
+            self._ros_bridge = live_ros  # the rclpy bridge a real ros2_bridge=True would have started
+
+        monkeypatch.setattr(Robot, "_init_ros_bridge", _ros_then_leak_check)
+        with pytest.raises(RuntimeError, match="no free port") as excinfo:
+            hardware_robot_on(SimpleNamespace(name="so101"), foxglove=":0", foxglove_mcap=tmp_path / "run.mcap")
+        # ``excinfo`` holds the traceback, and the traceback holds the half-built
+        # Robot, so ``__del__`` has not run: the shutdown must come from the
+        # constructor itself, before the error escapes (a caller that keeps the
+        # error, as agent retry loops do, would otherwise hold a live DDS node).
+        assert calls == ["shutdown"], "the already-live ROS 2 bridge must be shut down before the error escapes"
+        assert excinfo.value.args[0].startswith("no free port")
+
+    def test_a_clean_start_with_no_ros_bridge_still_works(self, fake_server: list[_FakeServer], tmp_path: Path) -> None:
+        from types import SimpleNamespace
+
+        from tests._hardware_robot import hardware_robot_on
+
+        robot = hardware_robot_on(SimpleNamespace(name="so101"), foxglove=":0")
+        try:
+            assert robot._ros_bridge is robot._foxglove_bridge
+        finally:
+            robot._shutdown_ros_bridge()
+
+
 class TestServices:
     def _bridge(self, tmp_path: Path, sink: Any) -> FoxgloveBridge:
         return FoxgloveBridge(_options(tmp_path, services=True), name="probe", command_sink=sink)

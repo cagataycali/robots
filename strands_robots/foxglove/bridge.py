@@ -160,7 +160,10 @@ class FoxgloveBridge:
         self._live = fox.Context()
         self._file = fox.Context() if options.mcap is not None else None
         self._channels: dict[str, list[Any]] = {}
-        self._scene_model_id: int | None = None
+        # A strong reference, not id(): CPython reuses an address once its
+        # object dies, so an int would mistake the model two recompiles later
+        # for the cached one and keep serving a stale scene.
+        self._scene_model: Any = None
         self._scene_messages: dict[str, Any] = {}
         self._scene_digests: dict[str, str] = {}
         self._resend_scene = threading.Event()
@@ -370,10 +373,10 @@ class FoxgloveBridge:
 
         from strands_robots.foxglove import scene as scene_mod
 
-        if self._scene_model_id != id(model):
+        if self._scene_model is not model:
             # A recompile (add_object, add_robot, ...) is a new model: rebuild
             # every scene once and send it; the file filter keeps one copy.
-            self._scene_model_id = id(model)
+            self._scene_model = model
             self._scene_messages = {}
             robots = sorted(
                 {r for b in range(1, model.nbody) if (r := scene_mod.robot_of_body(scene_mod.body_name(model, b)))}
