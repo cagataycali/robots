@@ -49,6 +49,8 @@ import tomllib
 from pathlib import Path
 from typing import NamedTuple
 
+from tests._package_ast import parse_file
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The trees a pytest outcome can legitimately terminate a helper in. The
@@ -161,7 +163,7 @@ def _mixed_return_helpers(path: Path) -> list[tuple[_MixedReturnHelper, tuple[st
     fall-through whose last act is a call - so it is the one shape graded here,
     one entry per such call.
     """
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = parse_file(path)
     aliases = _imported_callees(tree)
     found: list[tuple[_MixedReturnHelper, tuple[str, str] | None]] = []
     for node in ast.walk(tree):

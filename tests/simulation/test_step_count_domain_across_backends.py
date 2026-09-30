@@ -134,6 +134,7 @@ from strands_robots.simulation.models import SimWorld
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import non_negative_whole_number_error, positive_whole_number_error
+from tests._package_ast import parse_file
 
 NAN = float("nan")
 INF = float("inf")
@@ -757,7 +758,7 @@ def _scan_step_count_surfaces(
     adrift: list[str] = []
     for backend in ("mujoco", "newton", "isaac"):
         for path in sorted((root / backend).glob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
             for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
                 for fn in [n for n in ast.iter_child_nodes(cls) if isinstance(n, ast.FunctionDef)]:
                     if fn.name.startswith("_"):

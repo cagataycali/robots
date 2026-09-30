@@ -56,6 +56,7 @@ from strands_robots._motion_grants import consume_grant  # noqa: E402
 from strands_robots.audit import audit_log_path, read_audit_log  # noqa: E402
 from strands_robots.ros import GATE_TOOL  # noqa: E402
 from tests._hardware_robot import hardware_robot_on
+from tests._package_ast import parse_file
 
 # A reply that carries a reason. Every gate accepts a canonical affirmative only,
 # so this is always a decline - which is exactly why the audit row is the only
@@ -485,7 +486,7 @@ class TestTheGatedSetIsDerivedFromTheInterruptSites:
         """``{module dotted path: function name}`` for every ``interrupt()`` caller."""
         sites: dict[str, str] = {}
         for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
             for node in ast.walk(tree):
                 if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                     continue

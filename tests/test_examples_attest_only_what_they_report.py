@@ -64,6 +64,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from tests._package_ast import parse_file
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
 
@@ -112,7 +114,7 @@ def _example_sources() -> list[tuple[Path, ast.AST]]:
     for path in sorted(_EXAMPLES_DIR.rglob("*.py")):
         if path.relative_to(_REPO_ROOT).as_posix() in _WHOLE_LOG_IS_THE_SUBJECT:
             continue
-        sources.append((path, ast.parse(path.read_text(encoding="utf-8"), filename=str(path))))
+        sources.append((path, parse_file(path)))
     return sources
 
 

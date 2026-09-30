@@ -64,6 +64,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots.tools as tools_package
+from tests._package_ast import parse_file
 
 # Derived from an imported symbol rather than a path literal, so a moved package
 # cannot leave this scanning an empty tree while reporting success.
@@ -232,7 +233,7 @@ def _graded_surfaces() -> list[tuple[str, frozenset[str], frozenset[str]]]:
     """
     surfaces: list[tuple[str, frozenset[str], frozenset[str]]] = []
     for path in sorted(_TOOLS_ROOT.glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         dispatched = dispatched_actions(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):

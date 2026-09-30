@@ -32,6 +32,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_file
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TRAINING_DIR = _REPO_ROOT / "strands_robots" / "training"
 #: The pages a reader of a refusal message is sent to, read as one document.
@@ -69,7 +71,7 @@ def _refused_extra_keys() -> dict[str, list[str]]:
     """Map each ``extra`` key named in a refusal message to its sites."""
     found: dict[str, list[str]] = {}
     for path in sorted(_TRAINING_DIR.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         skip = _docstring_ids(tree)
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
