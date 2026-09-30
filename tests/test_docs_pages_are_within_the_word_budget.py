@@ -67,7 +67,10 @@ _BUDGET: int = _hook().LIMIT
 #: Raised by 733, to 50,166, for learn/policies/wbc-latent.md (the wbc_latent provider).
 #: Raised to 57,259 for the 81 robot_descriptions URDF robots: one generated page each and the
 #: learn page that explains the loader once.
-_SITE_BUDGET = 57_259
+#: Raised by 3,430 to 60,689 when every simulated robot page (the 81 URDF pages included) gained
+#: a fence that prints its joints and a next-step sentence, and the front-matter descriptions
+#: were quoted. Banked to the exact total.
+_SITE_BUDGET = 60_689
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
