@@ -44,12 +44,12 @@ import os
 import re
 import shutil
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..utils import log_safe
+from ..utils import boolean_flag_error, log_safe, refusal_str
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +111,10 @@ ROBOT_URDF, ROBOT_XML, SCENE_XML, ASSET_JSON, MESH_DIR = (
 #: Fixed refusal sentences, one per failure class (the ledger's ``reason`` column).
 REFUSAL_MESH_MISSING = "a mesh the URDF names is not in the package or repository"
 REFUSAL_MESH_FORMAT = "mesh format {ext} is not loadable by MuJoCo and has no converter"
+REFUSAL_MESH_OUTSIDE_TREE = (
+    "a mesh the URDF names resolves outside the description tree (an absolute path, a ~ path or a symlink out of "
+    "the URDF, package and repository directories); a cloned description may not read host files"
+)
 REFUSAL_MESH_CONVERT = "trimesh could not read {file} ({error})"
 REFUSAL_NO_TRIMESH = "mesh format {ext} needs trimesh: pip install 'strands-robots[sim-urdf]'"
 REFUSAL_COMPILE = "MuJoCo refused the compiled spec: {error}"
@@ -222,7 +226,9 @@ def resolve_mesh_uri(uri: str, urdf_dir: Path, package_dir: Path | None, repo_di
         return None
     if uri.startswith("file://"):
         uri = uri[len("file://") :]
-    p = Path(os.path.expanduser(uri))
+    # No ``~`` expansion: the text comes from the description, and a path into
+    # the user's home is refused by the containment check in rewrite_urdf.
+    p = Path(uri)
     if p.is_absolute():
         return p if p.is_file() else None
     # A relative path is relative to the URDF in the spec; in the wild it is as
@@ -476,12 +482,31 @@ def _repair_urdf(root: ET.Element) -> list[str]:
     return repairs
 
 
+def _mesh_roots(urdf_path: Path, package_dir: Path | None, repo_dir: Path | None) -> list[Path]:
+    """The directories a description's meshes may live under, symlinks followed."""
+    return [d.resolve() for d in (urdf_path.parent, package_dir, repo_dir) if d is not None]
+
+
+def mesh_outside_tree_error(src: Path, roots: Sequence[Path]) -> str | None:
+    """The refusal when a resolved mesh sits under none of *roots*, else ``None``.
+
+    ``src`` is already ``resolve()``d, so a symlink inside the tree that points
+    at a host file (``meshes/base.dae -> ~/.ssh/id_rsa``) is judged by where it
+    points. The same containment :func:`_copy_external_tree` enforces on the
+    download route, on the build route.
+    """
+    if any(src == root or root in src.parents for root in roots):
+        return None
+    return f"{REFUSAL_MESH_OUTSIDE_TREE}: {refusal_str(src)}"
+
+
 def rewrite_urdf(
     urdf_path: Path,
     dest: Path,
     *,
     package_dir: Path | None,
     repo_dir: Path | None,
+    allow_outside_tree: bool = False,
 ) -> tuple[Path, list[MeshRecord], dict[str, tuple[float, float]]]:
     """Resolve meshes into ``dest/meshes`` and write ``dest/robot.urdf``.
 
@@ -489,9 +514,20 @@ def rewrite_urdf(
     ``(effort, damping)`` the URDF declared (MjSpec keeps neither). Repairs the
     rewrite makes (see :func:`_repair_urdf`) are logged, one line each.
 
+    Every mesh source is resolved (symlinks followed) and must sit under the
+    URDF's directory, ``package_dir`` or ``repo_dir``; a description is an
+    untrusted tree, so an absolute path, a ``~`` path or a symlink out of the
+    tree is refused before anything is read. ``allow_outside_tree=True`` is the
+    trusted-caller door for a user's own URDF; :func:`build_urdf_asset` never
+    opens it.
+
     Raises:
-        UrdfBuildError: a mesh is missing, unconvertible or of an unknown format.
+        UrdfBuildError: a mesh is missing, outside the tree, unconvertible or of
+            an unknown format.
     """
+    if error := boolean_flag_error(allow_outside_tree, "allow_outside_tree", "rewrite_urdf"):
+        raise ValueError(error)
+    roots = _mesh_roots(urdf_path, package_dir, repo_dir)
     root = _parse_urdf(urdf_path)
     repairs = _repair_urdf(root)
     for tag in _ROS_ONLY_ELEMENTS:
@@ -511,6 +547,8 @@ def rewrite_urdf(
         if src is None:
             raise UrdfBuildError(f"{REFUSAL_MESH_MISSING}: {uri}")
         src = src.resolve()
+        if not allow_outside_tree and (outside := mesh_outside_tree_error(src, roots)):
+            raise UrdfBuildError(outside)
         if src in by_source:
             mesh.set("filename", by_source[src])
             continue
@@ -666,6 +704,7 @@ def build_from_urdf(
     repo_dir: str | os.PathLike[str] | None = None,
     repository: str | None = None,
     commit: str | None = None,
+    allow_outside_tree: bool = False,
 ) -> UrdfAssetInfo:
     """Build ``robot.xml``, ``scene.xml`` and the meshes for one URDF into *dest*.
 
@@ -684,12 +723,17 @@ def build_from_urdf(
         repo_dir: The description's ``REPOSITORY_PATH``.
         repository: ``owner/repo`` of the upstream, for the docs viewer pin.
         commit: Upstream commit the description is pinned to.
+        allow_outside_tree: Let a mesh resolve outside the URDF, package and
+            repository directories. ``False`` (default) for every description
+            that arrives through :func:`build_urdf_asset`; a strict boolean, for
+            a user building their own URDF whose meshes live elsewhere.
 
     Returns:
         The :class:`UrdfAssetInfo` also written as ``urdf_asset.json``.
 
     Raises:
         UrdfBuildError: with one of the fixed refusal sentences.
+        ValueError: ``allow_outside_tree`` is not a boolean.
     """
     import mujoco
 
@@ -698,7 +742,9 @@ def build_from_urdf(
     out.mkdir(parents=True, exist_ok=True)
     pkg = Path(package_dir) if package_dir else urdf.parent
     repo = Path(repo_dir) if repo_dir else None
-    rewritten, meshes, limits = rewrite_urdf(urdf, out, package_dir=pkg, repo_dir=repo)
+    rewritten, meshes, limits = rewrite_urdf(
+        urdf, out, package_dir=pkg, repo_dir=repo, allow_outside_tree=allow_outside_tree
+    )
 
     try:
         spec = mujoco.MjSpec.from_file(str(rewritten))

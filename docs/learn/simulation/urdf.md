@@ -25,11 +25,11 @@ robot = Robot("atlas_v4", mode="sim")  # first call compiles the asset
 
 ## What the loader does
 
-`strands_robots/assets/urdf.py` runs once per robot, on the first `Robot()` that resolves the name, and writes a Menagerie-shaped directory under `~/.strands_robots/assets/<module>/` (`robot.urdf`, `robot.xml`, `scene.xml`, `meshes/`, `urdf_asset.json`). The next call finds it like any other asset.
+`strands_robots/assets/urdf.py` runs once per robot, on the first `Robot()` resolving the name, and writes a Menagerie-shaped directory under `~/.strands_robots/assets/<module>/` (`robot.urdf`, `robot.xml`, `scene.xml`, `meshes/`, `urdf_asset.json`). The next call finds it like any other asset.
 
-1. **Meshes.** Every `<mesh filename>` is resolved: `package://<pkg>/...` against the description's package and repository, relative paths against the URDF, the package and the repository. STL and OBJ are copied. Collada (`.dae`), PLY and glTF are converted with trimesh to binary STL, or to OBJ above MuJoCo's 200,000-face STL limit. A Collada file whose texture image is missing is read anyway; the material is not needed.
-2. **Repairs.** An inertial that is zero, not positive definite or under MuJoCo's `mjMINVAL`, or a link with no inertial at all, gets a small positive one. A primitive with a zero dimension is dropped. A visual with several `<material>` children keeps the first. A xacro prefix left unbound is declared so the file parses. Gazebo, transmission and `ros2_control` elements are removed.
-3. **Compiler block.** `<mujoco><compiler meshdir="." discardvisual="false" fusestatic="false" balanceinertia="true"/></mujoco>` keeps the visual meshes and every link name, so `move_to` and cameras can address the frames the URDF names.
+1. **Meshes.** Every `<mesh filename>` is resolved: `package://<pkg>/...` against the description's package and repository, relative paths against the URDF, package and repository, and must stay under them. STL and OBJ are copied. Collada (`.dae`), PLY and glTF are converted with trimesh to binary STL, or to OBJ above MuJoCo's 200,000-face STL limit. A Collada file with a missing texture image is read anyway.
+2. **Repairs.** An inertial that is zero, not positive definite or under MuJoCo's `mjMINVAL`, or a link with no inertial, gets a small positive one. A primitive with a zero dimension is dropped. A visual with several `<material>` children keeps the first. A xacro prefix left unbound is declared so the file parses. Gazebo, transmission and `ros2_control` elements are removed.
+3. **Compiler block.** `<mujoco><compiler meshdir="." discardvisual="false" fusestatic="false" balanceinertia="true"/></mujoco>` keeps the visual meshes and every link name, so `move_to` and cameras address the frames the URDF names.
 4. **Base.** Descriptions tagged humanoid, biped, quadruped, wheeled, mobile manipulator or drone get a free joint on the root unless the URDF already has one; arms, hands and educational rigs stay bolted to the world. Every root is lifted until its lowest geometry clears the floor by a centimetre, because a URDF has no floor and its zero pose often sits below it.
 5. **Actuators.** One position actuator per hinge and slide joint, named after the joint. The gain is the URDF `effort` limit (clamped to 5..2000), the force range is plus or minus that effort, the control range is the joint range. Finger, thumb, knuckle, jaw and gripper joints are capped at 20 so an arm's effort does not crush the hand. Damping defaults to gain over 20 for hinges and over 10 for slides; hinges get 0.01 armature.
 6. **Scene.** `scene.xml` includes `robot.xml` and adds a checker floor, a sky and one directional light, like a Menagerie `scene.xml`, so cameras, renders and thumbnails behave as they do for every other robot.
@@ -48,6 +48,7 @@ Each failure class has one sentence, returned by `Robot()` and recorded in the r
 |---|---|
 | clone | upstream clone failed or URDF_PATH missing after import |
 | mesh missing | a mesh the URDF names is not in the package or repository |
+| mesh outside tree | a mesh the URDF names resolves outside the description tree (an absolute or `~` path, or a symlink out of the URDF, package and repository directories) |
 | mesh format | mesh format `<ext>` is not loadable by MuJoCo and has no converter |
 | mesh convert | trimesh could not read `<file>` |
 | no trimesh | mesh format `<ext>` needs trimesh: `pip install 'strands-robots[sim-urdf]'` |
@@ -55,7 +56,7 @@ Each failure class has one sentence, returned by `Robot()` and recorded in the r
 | no joints | the compiled model has no actuated joint |
 | xacro | the description ships xacro only; rendering it needs xacrodoc |
 
-At this commit the one refused description is `eve_r3`: its upstream repository was deleted, so the clone fails for everyone.
+At this commit the one refused description is `eve_r3`: its upstream repository was deleted.
 
 ## Viewer
 

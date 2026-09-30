@@ -276,3 +276,98 @@ def test_module_does_not_import_trimesh_or_mujoco_at_import_time() -> None:
     assert "import trimesh" not in head and "import mujoco" not in head
     assert "sim-urdf" in urdf_assets.REFUSAL_NO_TRIMESH
     assert "strands_robots.assets.urdf" in sys.modules
+
+
+_REAL_MESH = next(p for p in sorted((_FIXTURE.parent / "meshes").iterdir()) if p.suffix.lower() == ".stl")
+
+
+class TestAMeshOutsideTheDescriptionTreeIsRefused:
+    """A cloned description is untrusted: its meshes stay under the URDF, package and repository directories.
+
+    Before: ``resolve_mesh_uri`` expanded ``~`` and took any absolute or
+    ``file://`` path, and ``rewrite_urdf`` followed a symlink wherever it
+    pointed, so ``<mesh filename="~/secret.stl"/>`` or
+    ``meshes/base.dae -> ~/.ssh/...`` copied a host file into the asset cache
+    with the build reporting success. ``_copy_external_tree`` already refuses
+    this on the download route; the build route now holds the same line.
+    """
+
+    @staticmethod
+    def _urdf(tmp_path: Path, filename: str) -> Path:
+        urdf = tmp_path / "desc" / "urdf" / "r.urdf"
+        urdf.parent.mkdir(parents=True, exist_ok=True)
+        urdf.write_text(
+            f'<robot name="r"><link name="a"><visual><geometry><mesh filename="{filename}"/></geometry></visual>'
+            '</link><joint name="j" type="revolute"><parent link="a"/><child link="b"/><axis xyz="0 0 1"/></joint>'
+            '<link name="b"/></robot>',
+            encoding="utf-8",
+        )
+        return urdf
+
+    @staticmethod
+    def _host_mesh(tmp_path: Path) -> Path:
+        host = tmp_path / "host" / "secret.stl"
+        host.parent.mkdir(parents=True)
+        shutil.copy2(_REAL_MESH, host)
+        return host
+
+    def test_a_tilde_path_is_not_expanded(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        (tmp_path / "home").mkdir()
+        (tmp_path / "home" / "secret.stl").write_bytes(b"solid x\nendsolid x\n")
+        urdf = self._urdf(tmp_path, "~/secret.stl")
+        assert urdf_assets.resolve_mesh_uri("~/secret.stl", urdf.parent, urdf.parent.parent, tmp_path / "desc") is None
+        with pytest.raises(urdf_assets.UrdfBuildError) as excinfo:
+            urdf_assets.build_from_urdf(urdf, tmp_path / "out", name="r", package_dir=urdf.parent.parent)
+        assert str(excinfo.value).startswith(urdf_assets.REFUSAL_MESH_MISSING)
+        assert not (tmp_path / "out" / "meshes").exists() or not any((tmp_path / "out" / "meshes").iterdir())
+
+    @pytest.mark.parametrize("scheme", ["", "file://"])
+    def test_an_absolute_host_path_is_refused_before_it_is_read(self, tmp_path: Path, scheme: str) -> None:
+        host = self._host_mesh(tmp_path)
+        urdf = self._urdf(tmp_path, f"{scheme}{host}")
+        with pytest.raises(urdf_assets.UrdfBuildError) as excinfo:
+            urdf_assets.build_from_urdf(
+                urdf, tmp_path / "out", name="r", package_dir=urdf.parent.parent, repo_dir=tmp_path / "desc"
+            )
+        assert str(excinfo.value).startswith(urdf_assets.REFUSAL_MESH_OUTSIDE_TREE)
+        assert not list((tmp_path / "out" / "meshes").glob("*")), "nothing of the host file reached the cache"
+
+    def test_a_symlink_out_of_the_tree_is_judged_by_where_it_points(self, tmp_path: Path) -> None:
+        host = self._host_mesh(tmp_path)
+        urdf = self._urdf(tmp_path, "../meshes/base.stl")
+        (tmp_path / "desc" / "meshes").mkdir()
+        (tmp_path / "desc" / "meshes" / "base.stl").symlink_to(host)
+        with pytest.raises(urdf_assets.UrdfBuildError) as excinfo:
+            urdf_assets.build_from_urdf(
+                urdf, tmp_path / "out", name="r", package_dir=tmp_path / "desc", repo_dir=tmp_path / "desc"
+            )
+        assert str(excinfo.value).startswith(urdf_assets.REFUSAL_MESH_OUTSIDE_TREE)
+
+    def test_a_symlink_inside_the_tree_is_fine(self, tmp_path: Path) -> None:
+        inside = tmp_path / "desc" / "shared" / "link.stl"
+        inside.parent.mkdir(parents=True)
+        inside.write_bytes(_REAL_MESH.read_bytes())
+        urdf = self._urdf(tmp_path, "../meshes/base.stl")
+        (tmp_path / "desc" / "meshes").mkdir()
+        (tmp_path / "desc" / "meshes" / "base.stl").symlink_to(inside)
+        info = urdf_assets.build_from_urdf(
+            urdf, tmp_path / "out", name="r", package_dir=tmp_path / "desc", repo_dir=tmp_path / "desc"
+        )
+        assert info.meshes and info.meshes[0].source == str(inside.resolve())
+
+    def test_the_trusted_door_is_explicit_and_a_strict_boolean(self, tmp_path: Path) -> None:
+        host = self._host_mesh(tmp_path)
+        urdf = self._urdf(tmp_path, str(host))
+        info = urdf_assets.build_from_urdf(
+            urdf, tmp_path / "out", name="r", package_dir=urdf.parent.parent, allow_outside_tree=True
+        )
+        assert info.meshes and info.meshes[0].source == str(host.resolve())
+        with pytest.raises(ValueError, match="allow_outside_tree"):
+            urdf_assets.build_from_urdf(urdf, tmp_path / "out2", name="r", allow_outside_tree="yes")  # type: ignore[arg-type]
+
+    def test_build_urdf_asset_never_opens_the_door(self) -> None:
+        import inspect
+
+        source = inspect.getsource(urdf_assets.build_urdf_asset)
+        assert "allow_outside_tree" not in source, "a cloned description never gets the trusted-caller flag"
