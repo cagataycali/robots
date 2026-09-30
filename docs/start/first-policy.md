@@ -1,56 +1,51 @@
 ---
-description: One run_policy call runs a learned policy from the Hugging Face Hub on the simulated SO-101, then the same call on the real one, behind the operator gate.
+description: "Stage 3: one Hub checkpoint, one run_policy call, the simulated SO-101 here and the physical one with a two-line change."
 ---
 
-# First learned policy
+# Same checkpoint: sim or real
 
-By the end of this page a vision-language-action model from the Hub has driven the simulated SO-101 from its cameras, you have the same call for the physical arm, and you have watched an agent stop at the approval gate naming the checkpoint. The sim fences run on a laptop with no GPU; the first downloads about 865 MB once.
+By the end of this page a checkpoint trained on a physical SO-101 has driven the simulated one from its wrist camera, you hold the same call for the physical arm, and you have watched the gate stop that call naming the checkpoint. The sim fence runs on a laptop with no GPU and downloads about 200 MB once.
 
-The page uses a vision-language-action checkpoint because the SO-101 has several; the same shape, one provider name and one `policy_config`, runs a world foundation model through [cosmos3](../learn/policies/cosmos3.md) or a whole-body controller through [wbc](../learn/policies/wbc.md).
+## One checkpoint, one call
 
-## Run SmolVLA in the simulator
-
-`lerobot/smolvla_base` reads three cameras and a six-joint state. The sim arm has one camera, `default`; add two more, name them the features the checkpoint declares, and tell the policy which joints it drives:
+`robotfuel/act_so101_t16b` is an ACT policy trained on a real SO-101: one `observation.images.wrist` camera and a six-joint state in, six joint targets out. Add a wrist camera to the sim arm, route it onto the name the checkpoint declares, and name the embodiment:
 
 ```python
 import os
 os.environ["STRANDS_TRUST_REMOTE_CODE"] = "1"
 from strands_robots import Robot
+from strands_robots.policies import create_policy
 
-robot = Robot("so101", mode="sim")
-robot.add_camera(name="front", position=[0.22, 0.025, 0.6], target=[0.22, 0.025, 0])
+robot = Robot("so101")
 robot.add_camera(name="wrist", parent_body="so101/gripper", position=[0.058, 0.0, -0.029], target=[-0.024, 0.0, -0.297])
-joints = robot.robot_joint_names("so101")
-embodiment = {"name": "so101_native", "state_keys": joints, "action_keys": joints, "dim_policy": "pad",
-              "obs_rename": {"front": "observation.images.camera1", "wrist": "observation.images.camera2",
-                             "default": "observation.images.camera3"}}
-result = robot.run_policy(robot_name="so101", policy_provider="lerobot_local",
-                          policy_config={"pretrained_name_or_path": "lerobot/smolvla_base", "embodiment": embodiment},
-                          instruction="pick up the cube", n_steps=60, control_frequency=30.0)
+policy = create_policy("lerobot_local", pretrained_name_or_path="robotfuel/act_so101_t16b", embodiment="so101",
+                       obs_rename_override={"wrist": "observation.images.wrist", "default": None})
+result = robot.run_policy(policy_object=policy, instruction="pick up the cube", duration=3.0, control_frequency=30.0)
 print(result["status"])
 print(result["content"][0]["text"])
 report = result["content"][1]["json"]
-print(report["actions_applied"], report["action_errors"], report["instruction_read"])
+print(report["actions_applied"], report["action_errors"], round(report["elapsed_s"], 1))
 robot.cleanup()
 ```
 
 You should see:
 
 ```text
-Loading  HuggingFaceTB/SmolVLM2-500M-Video-Instruct weights ...
-Reducing the number of VLM layers to 16 ...
 success
 Policy complete on 'so101'
 LerobotLocalPolicy | pick up the cube
-4.3s | 60 steps | sim_t=2.040s
-60 0 True
+8.2s | 90 steps | sim_t=3.060s
+Note: LerobotLocalPolicy does not read the instruction. Its actions - the act checkpoint's actions from the observation alone - were commanded to the robot whatever the task says; nothing above means the task was performed.
+90 0 8.2
 ```
 
-Lerobot prints the first two lines while it loads; the timing line is yours; on the Apple laptop GPU that produced this output each 50-action chunk took about 1.2 s. Three things in the fence are the whole recipe. `STRANDS_TRUST_REMOTE_CODE=1` is the consent lerobot checkpoints need before they build. `obs_rename` routes your camera names onto the feature names the checkpoint was trained with; without it the call refuses before any download and names the override to pass. The inline `embodiment` says which joints are the state and action vectors. It is inline because `smolvla_base` is a pretraining checkpoint with no SO-101 statistics, so the shipped `embodiment="so101"` (which converts servo degrees) is refused and the arm's radians reach the model raw. The motion you see is the plumbing working, not a task being done. A checkpoint fine-tuned on an SO-101 carries its stats, and `embodiment="so101"` then converts units both ways, as the ACT checkpoint on the [lerobot_local page](../learn/policies/lerobot-local.md) does.
+{{sim:same-checkpoint-1|where the ACT checkpoint left the simulated arm after 90 actions from its wrist camera}}
+
+Ninety of ninety actions applied. The 8.2 s is a laptop CPU inferring a 30-action chunk each second; the note says ACT has no language input, so the instruction is a label, not a command. `STRANDS_TRUST_REMOTE_CODE=1` is the consent lerobot checkpoints need. `obs_rename_override` routes your camera names onto the checkpoint's feature names and drops the one it does not read; without it the call refuses before any download and names the override.
 
 ## The same call on the real arm
 
-Swap `mode`, the camera dict and the checkpoint: a pretraining checkpoint has no SO-101 statistics, so the real arm gets one fine-tuned on an SO-101, and the shipped `embodiment="so101"` binds its `shoulder_pan.pos` keys and converts the units:
+Change how the robot is built; the policy and the call do not change:
 
 ```python title="sketch"
 import os
@@ -61,18 +56,28 @@ from strands_robots.policies import create_policy
 robot = Robot("so101", mode="real", port="/dev/ttyACM0",
               cameras={"wrist": {"type": "opencv", "index_or_path": 0, "fps": 30}})
 policy = create_policy("lerobot_local", pretrained_name_or_path="robotfuel/act_so101_t16b", embodiment="so101",
-                       obs_rename_override={"front": None, "wrist": "observation.images.wrist"})
-result = robot.run_policy(policy, instruction="pick up the cube", duration=10.0)
+                       obs_rename_override={"wrist": "observation.images.wrist", "default": None})
+result = robot.run_policy(policy_object=policy, instruction="pick up the cube", duration=10.0)
 print(result["status"])
 print(result["content"][0]["text"])
 robot.cleanup()
 ```
 
-`run_policy` on hardware takes a policy built with `create_policy` and blocks until `duration` elapses, `n_steps` actions were applied, or `stop_task()` is called; `start_task(instruction, policy_provider="lerobot_local", pretrained_name_or_path=..., embodiment=...)` is the non-blocking form. Both refuse while another rollout holds the bus, and after `cleanup()`. On a real arm use this checkpoint or [your own](../learn/training/lerobot.md).
+`mode="real"` picks the lerobot driver, `port=` is the arm's USB device ([Real arm](first-real-arm.md) finds it), `cameras=` is lerobot's camera dict under the key the sim camera had. On hardware `run_policy` blocks until `duration` elapses, `n_steps` actions were applied or `stop_task()` is called; `start_task(...)` is the non-blocking form.
+
+## Why the same object works on both
+
+{{drawing:d03_same_checkpoint}}
+
+The checkpoint never sees a robot. It sees `observation.state`, six numbers in the units it was trained on, and returns `action`, six numbers in the same units. Everything between that tensor and a robot is the embodiment map `embodiment="so101"` selects. In the simulator the state arrives as joints `1` to `6` in radians, so the map converts to degrees on the way in and back on the way out. On the lerobot driver it arrives as `shoulder_pan.pos` to `gripper.pos`, already in degrees with the gripper on 0 to 100, so the map binds those keys and converts nothing. Cameras travel by name through `obs_rename_override`. Policy, checkpoint and call are identical; only the backend changes.
+
+## What it does not mean
+
+The arm moved; the cube was not picked up. A checkpoint trained on one physical arm and table meets other lighting, another camera pose and a rest pose at the edge of its training range, so 90 applied actions prove the plumbing, not the task. Measured success rates live on the [robot page](../robots/so101.md), each with its source; a number without one is not written down.
 
 ## Behind the gate
 
-Mounted as a tool, the real arm's `execute` and `start` actions carry the checkpoint in `policy_config` and stop for a human before anything is dispatched. The gate runs before the driver opens its port, so a laptop with no arm reaches it:
+Mounted as a tool, the real arm's `execute` and `start` carry the checkpoint in `policy_config` and stop for a human first. The gate runs before the driver opens its port, so a laptop with no arm reaches it:
 
 ```python
 import asyncio
@@ -99,8 +104,8 @@ error
 so101: 'execute' drives the real robot 'so101' for up to 10s with 'pick up the cube' (policy lerobot_local built in this process, no server, checkpoint pretrained_name_or_path robotfuel/act_so101_t16b); it needs operator approval before it is dispatched.
 ```
 
-With no operator to ask, the call fails closed. Inside an `Agent`, the same sentence is the question the operator answers and `y` dispatches the rollout; [First agent](first-agent.md) shows the interrupt and the resume line. Over the mesh, `policy_config` travels but `embodiment` does not yet ([#4180](https://github.com/strands-labs/robots/issues/4180)), so run a Hub checkpoint on a real arm from the process that owns it.
+With no operator to ask, the call fails closed. Inside an `Agent` the same sentence is the question the operator answers, and `y` dispatches ([Talk to it](first-agent.md)). Over the mesh `policy_config` travels but `embodiment` does not yet ([#4180](https://github.com/strands-labs/robots/issues/4180)), so run a Hub checkpoint on a real arm from the process that owns it.
 
 ## Where next
 
-[Policies](../learn/policies/index.md) lists every provider and which checkpoints ran where; [LeRobot local](../learn/policies/lerobot-local.md) covers camera routing, units and `processor_overrides`; [Training](../learn/training/lerobot.md) records on the arm and trains the checkpoint you run back on it.
+You now have one checkpoint and one call for both arms, and you saw the gate refuse it by name. Next rung: [Teach it](../learn/data/record.md) records on your arm and trains the checkpoint you run back on it. [Policies](../learn/policies/index.md) lists every provider; [LeRobot local](../learn/policies/lerobot-local.md) covers camera routing, units and `processor_overrides`.
