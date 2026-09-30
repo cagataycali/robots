@@ -539,6 +539,21 @@ def _ok(text: str) -> dict[str, Any]:
     return {"status": "success", "content": [{"text": text}]}
 
 
+def _relayed(label: str, envelope: Any, *, ok: bool = True) -> dict[str, Any]:
+    """A peer's answer handed back whole: a text label and the envelope as a ``json`` block.
+
+    ``tell``, ``send`` and ``stop`` used to render the envelope as
+    ``json.dumps(envelope)[:600]`` inside the label. A ``run_policy`` answer is
+    about 1,800 characters, so the agent read JSON cut mid key and lost the
+    rollout metrics the sim tool and the dashboard carry whole (GH #4172). The
+    block is the envelope re-read through the encoder the text used
+    (``default=str``), so a value the encoder cannot represent is rendered the
+    way it always was instead of making the block unencodable.
+    """
+    block = json.loads(json.dumps(envelope, default=str))
+    return {"status": "success" if ok else "error", "content": [{"text": label}, {"json": block}]}
+
+
 def _stop_not_confirmed(envelope: Any, budget: float) -> str | None:
     """Why a single-target ``stop`` envelope does not confirm the stop, or ``None``.
 
@@ -1703,7 +1718,7 @@ def robot_mesh(
             _audit_tool_action(action, target, False, f"dispatch error: {type(exc).__name__}: {exc}")
             return _err(f"[tell -> {target}] dispatch error: {type(exc).__name__}: {exc}")
         _audit_tool_action(action, target, True, f"instruction={instruction[:200]}")
-        return _ok(f"[tell -> {target}] {json.dumps(result, default=str)[:600]}")
+        return _relayed(f"[tell -> {target}]", result)
 
     # ── action: send ──────────────────────────────────────────────────────
     if action == "ping":
@@ -1716,8 +1731,7 @@ def robot_mesh(
             return _err(f"[ping -> {target}] dispatch error: {type(exc).__name__}: {exc}")
         reachable = verdict.get("status") == "ok"
         _audit_tool_action(action, target, reachable, json.dumps(verdict, default=str)[:200])
-        text = f"[ping -> {target}] {json.dumps(verdict, default=str)[:600]}"
-        return _ok(text) if reachable else _err(text)
+        return _relayed(f"[ping -> {target}]", verdict, ok=reachable)
 
     if action == "send":
         # Parse + validation already happened in the pre-interrupt pass
@@ -1740,9 +1754,9 @@ def robot_mesh(
             # executed. Wrapping it in a success reads to an agent as a robot
             # that did the thing.
             _audit_tool_action(action, target, False, str(result.get("error", "error"))[:200])
-            return _err(f"[send -> {target}] {json.dumps(result, default=str)[:600]}")
+            return _relayed(f"[send -> {target}]", result, ok=False)
         _audit_tool_action(action, target, True, f"action={cmd.get('action')}")
-        return _ok(f"[send -> {target}] {json.dumps(result, default=str)[:600]}")
+        return _relayed(f"[send -> {target}]", result)
 
     # ── action: broadcast ─────────────────────────────────────────────────
     if action == "broadcast":
@@ -1795,7 +1809,7 @@ def robot_mesh(
             _audit_tool_action(action, target, False, f"did not stop: {reason}")
             return _err(f"[stop -> {target}] did NOT stop: {reason}")
         _audit_tool_action(action, target, True, "")
-        return _ok(f"[stop -> {target}] {json.dumps(result, default=str)[:600]}")
+        return _relayed(f"[stop -> {target}]", result)
 
     # ── action: emergency_stop ────────────────────────────────────────────
     if action == "emergency_stop":
