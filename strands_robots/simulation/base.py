@@ -3016,6 +3016,42 @@ class SimEngine(ABC):
             return None
         return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
 
+    @staticmethod
+    def _validate_rollout_target(robot_name: Any, instruction: Any, method: str) -> dict[str, Any] | None:
+        """Reject a ``robot_name`` or ``instruction`` that is not a string.
+
+        Both were used as given. A non-string ``instruction`` (``None`` from a
+        ``task`` lookup, a nested list) ran to ``status="success"`` and was
+        written into the result metadata and the recorded ``task`` column,
+        while ``run_multi_policy`` refused the same value. A :class:`Policy`
+        passed first - the hardware ``run_policy(policy, ...)`` call shape -
+        bound to ``robot_name`` and was reported as an unknown robot named by
+        its ``repr``.
+
+        Args:
+            robot_name: The caller-supplied robot name, or ``None``.
+            instruction: The caller-supplied instruction.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            A structured ``{"status": "error", ...}`` dict, or ``None`` when
+            both values are usable.
+        """
+        from strands_robots.policies import Policy
+
+        if isinstance(robot_name, Policy):
+            message = (
+                f"'robot_name' got a {type(robot_name).__name__} instance; pass a pre-built policy as "
+                "policy_object=, e.g. run_policy(policy_object=policy, instruction=...)."
+            )
+        elif robot_name is not None and not isinstance(robot_name, str):
+            message = f"'robot_name' must be a robot name string or None, got {type(robot_name).__name__}."
+        elif not isinstance(instruction, str):
+            message = f"'instruction' must be a string, got {type(instruction).__name__}."
+        else:
+            return None
+        return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
+
     def run_policy(
         self,
         robot_name: str | None = None,
@@ -3472,6 +3508,8 @@ class SimEngine(ABC):
         if async_rtc is not None and (err := self._validate_posture_flags("run_policy", async_rtc=async_rtc)):
             return err
 
+        if err := self._validate_rollout_target(robot_name, instruction, "run_policy"):
+            return err
         robot_name = self._resolve_single_robot(robot_name)
 
         control_frequency = self._resolve_control_frequency(control_frequency)
@@ -5465,6 +5503,9 @@ class SimEngine(ABC):
         if hook_error := optional_callable_error(on_frame, "on_frame", "eval_policy"):
             return {"status": "error", "content": [{"text": hook_error}]}
 
+        if err := self._validate_rollout_target(robot_name, instruction, "eval_policy"):
+            return err
+
         robots = self.list_robots()
         if not robots:
             return {"status": "error", "content": [{"text": "No robots in sim. Add one first."}]}
@@ -5885,6 +5926,8 @@ class SimEngine(ABC):
         if err := self._validate_posture_flags(
             "evaluate_benchmark", wbc_install_torque_control=wbc_install_torque_control
         ):
+            return err
+        if err := self._validate_rollout_target(robot_name, instruction, "evaluate_benchmark"):
             return err
         if err := self._validate_video_config(video, "evaluate_benchmark"):
             return err

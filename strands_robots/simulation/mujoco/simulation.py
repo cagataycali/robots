@@ -6751,23 +6751,13 @@ class MuJoCoSimEngine(
         rollout that ends for any reason - completion, a cooperative stop, or a
         raise - leaves the robot idle.
         """
-        # Only a str name can key the claim, for the reason ``registry_entry``
-        # is total: a subscript raises ``TypeError`` for an unhashable name, and
-        # this runs before ``run_policy`` has judged the name, so raising here
-        # would turn a reportable bad name into a traceback. An unrecorded claim
-        # is the safe direction anyway - the gate then refuses that rollout's own
-        # mutations rather than exempting a name no robot answers to.
-        if isinstance(robot_name, str):
-            self._rollout_driver_threads[robot_name] = threading.get_ident()
+        # Both callers have refused a non-str name (``_validate_rollout_target``),
+        # so the name can key the claim.
+        self._rollout_driver_threads[robot_name] = threading.get_ident()
         try:
             return super().run_policy(robot_name, **kwargs)
         finally:
-            # Mirror the guard above: ``dict.pop`` hashes its key whenever the
-            # dict is non-empty, so an unguarded pop raises for the same name
-            # the write refused, and a raise in a ``finally`` discards the
-            # error dict the rollout was returning.
-            if isinstance(robot_name, str):
-                self._rollout_driver_threads.pop(robot_name, None)
+            self._rollout_driver_threads.pop(robot_name, None)
             if self._world is not None and registered(self._world.robots, robot_name):
                 robot = self._world.robots[robot_name]
                 robot.policy_running = False
@@ -6818,6 +6808,8 @@ class MuJoCoSimEngine(
         accepts ``n_steps`` (primary) or legacy ``max_steps`` as an
         alternate horizon specification; run_policy converts to duration.
         """
+        if err := self._validate_rollout_target(robot_name, instruction, "start_policy"):
+            return err
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         try:
@@ -7193,6 +7185,8 @@ class MuJoCoSimEngine(
         # be driven is configuration, not a rollout, so it must be refused
         # before the robot is claimed.
         if err := self._validate_policy_object(policy_object, "run_policy"):
+            return err
+        if err := self._validate_rollout_target(robot_name, instruction, "run_policy"):
             return err
 
         if self._world is None or self._world._model is None or self._world._data is None:
