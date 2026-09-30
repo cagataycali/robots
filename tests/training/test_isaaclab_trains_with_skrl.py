@@ -90,7 +90,8 @@ def test_the_log_and_the_events_give_the_rsl_rl_metric_keys(skrl_run: Path) -> N
 
 
 def test_the_newest_agent_checkpoint_is_the_latest_model(skrl_run: Path) -> None:
-    assert Path(latest_model(str(skrl_run))).name == "agent_320.pt"
+    latest = latest_model(str(skrl_run))
+    assert latest is not None and Path(latest).name == "agent_320.pt"
 
 
 def test_the_job_id_names_the_run_without_run_name(fake_python, tmp_path: Path) -> None:  # noqa: F811
