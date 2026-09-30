@@ -19,6 +19,8 @@ train_policy(action="train", provider="isaaclab", steps=50, output_dir="runs",
 
 It returns a `job_id`; `action="status"` reports rewards, `success_rate`, a failure's cause and `checkpoint_dir`; `action="stop"` ends it; `action="play"` records a video; `action="export"` writes what `create_policy("rl", checkpoint_dir=...)` loads. `extra['rl_library']` accepts only `rsl_rl`.
 
-Measured on one L40S with 4096 envs: Cartpole 291k env steps/s, G1 flat locomotion 110k.
+`extra['overrides']` (`env.*`/`agent.*`, checked against the task config), `agent`, `device`, `video`, `deterministic`, `base_model` and `resume` reach Isaac Lab; `learning_rate` pins `schedule=fixed`.
+
+One L40S, 4096 envs: Cartpole 291k env steps/s, G1 flat locomotion 110k.
 
 Caveats: Isaac Lab 3.0 is an RC; first RTX use compiles shaders (~4 min); PhysX and Newton differ (`strands_run.json` names the preset).

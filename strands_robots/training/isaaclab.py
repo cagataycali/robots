@@ -64,7 +64,69 @@ logger = logging.getLogger(__name__)
 
 #: The ``extra`` keys this provider reads. Any other key is refused, because a
 #: key Isaac Lab never receives would train the default while reporting success.
-ACCEPTED_EXTRA_KEYS: tuple[str, ...] = ("task", "num_envs", "physics", "rl_library", "wait", "timeout_s")
+ACCEPTED_EXTRA_KEYS: tuple[str, ...] = (
+    "task",
+    "num_envs",
+    "physics",
+    "rl_library",
+    "wait",
+    "timeout_s",
+    "overrides",
+    "agent",
+    "device",
+    "video",
+    "video_length",
+    "video_interval",
+    "deterministic",
+)
+
+#: A Hydra override path strands forwards: into the env cfg or the agent cfg.
+_OVERRIDE_PATH_RE = re.compile(r"^(env|agent)(\.[A-Za-z_][A-Za-z0-9_]*)+\Z")
+#: An override value that reaches Hydra as one token, unquoted.
+_OVERRIDE_STR_RE = re.compile(r"^[A-Za-z0-9_.:/+-]{1,128}\Z")
+#: ``extra['agent']``: the registry kwarg naming an agent config, e.g.
+#: ``rsl_rl_recurrent_cfg_entry_point`` (recurrent / symmetry / distillation).
+_AGENT_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}_cfg_entry_point\Z")
+_DEVICE_RE = re.compile(r"^(cpu|cuda(:[0-9]{1,2})?)\Z")
+#: ``TrainSpec.save_freq`` left at this default means "unset": Isaac Lab keeps
+#: the task's own ``save_interval`` (50 for most rsl_rl configs).
+_DEFAULT_SAVE_FREQ = 1_000
+
+# Runs in the Isaac Lab interpreter (no Kit, about 5 s): loads the task's env
+# and agent configs and reports every override path that names no field,
+# because Hydra itself accepts an unknown ``env.`` path - ``env.episode_lenght_s=3``
+# trains with exit 0, adds a new field and leaves ``episode_length_s`` alone.
+_CFG_CHECK = """
+import difflib, json, sys
+import isaaclab_tasks  # noqa: F401 - registers the tasks
+from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
+task, agent, paths = json.loads(sys.argv[1])
+out = {"problems": {}, "schedule": None}
+try:
+    cfgs = {"env": load_cfg_from_registry(task, "env_cfg_entry_point"), "agent": load_cfg_from_registry(task, agent)}
+except Exception as exc:  # noqa: BLE001
+    out["load_error"] = f"{type(exc).__name__}: {exc}"
+    print("STRANDS_CFG_CHECK " + json.dumps(out))
+    sys.exit(0)
+out["schedule"] = getattr(getattr(cfgs["agent"], "algorithm", None), "schedule", None)
+for path in paths:
+    root, *parts = path.split(".")
+    obj = cfgs[root]
+    for i, part in enumerate(parts):
+        if isinstance(obj, dict) and part in obj:
+            obj = obj[part]
+            continue
+        if not isinstance(obj, dict) and hasattr(obj, part):
+            obj = getattr(obj, part)
+            continue
+        names = list(obj) if isinstance(obj, dict) else [n for n in dir(obj) if not n.startswith("_")]
+        out["problems"][path] = {
+            "missing": ".".join([root, *parts[: i + 1]]),
+            "close": difflib.get_close_matches(part, names, 3),
+        }
+        break
+print("STRANDS_CFG_CHECK " + json.dumps(out))
+"""
 
 #: RL libraries whose training log :meth:`IsaacLabTrainer.status` can read.
 SUPPORTED_RL_LIBRARIES: tuple[str, ...] = ("rsl_rl",)
@@ -195,11 +257,11 @@ class IsaacLabTrainer(Trainer):
             problems.append(steps_error)
         problems.extend(self._seed_problems(spec))
         problems.extend(self._learning_rate_problems(spec))
-        resume_problems = self._resume_problems(spec)
-        problems.extend(resume_problems)
-        if not resume_problems and spec.resume:
-            problems.append(f"{ctx}: resuming a run is not supported yet - start a new run with resume=False")
+        problems.extend(self._resume_problems(spec))
+        problems.extend(self._launch_topology_problems(spec))
+        problems.extend(self._save_freq_problems(spec))
         problems.extend(_extra_problems(spec.extra or {}, ctx))
+        problems.extend(self._forwarding_problems(spec))
         task = (spec.extra or {}).get("task")
         if isinstance(task, str) and _TASK_RE.match(task) and self._python:
             known = runtime.registered_tasks(self._python)
@@ -211,6 +273,137 @@ class IsaacLabTrainer(Trainer):
                     f"({len(known)} tasks){hint}"
                 )
         return problems
+
+    def _save_freq_problems(self, spec: TrainSpec) -> list[str]:
+        """``save_freq`` becomes ``agent.save_interval`` (iterations); left at its default it is not sent."""
+        problems = self._checkpoint_cadence_problems(spec)
+        if not problems and spec.save_freq not in (0, _DEFAULT_SAVE_FREQ) and spec.save_freq > spec.steps:
+            problems.append(
+                f"{self.provider_name}: save_freq {spec.save_freq} is more iterations than steps={spec.steps}; "
+                "no checkpoint but the last would be written"
+            )
+        return problems
+
+    def _start_checkpoint(self, spec: TrainSpec) -> str | None:
+        """The ``model_<iteration>.pt`` a run starts from: ``base_model``, or the newest one under ``resume``."""
+        if spec.base_model:
+            path = Path(spec.base_model).expanduser()
+            return str(path.resolve()) if path.is_file() else latest_model(str(path.resolve()))
+        if spec.resume:
+            task = (spec.extra or {}).get("task")
+            run_dir = self.latest_checkpoint(spec.output_dir, task=str(task)) if task else None
+            return latest_model(run_dir) if run_dir else None
+        return None
+
+    def _forwarding_problems(self, spec: TrainSpec) -> list[str]:
+        """Report TrainSpec fields and ``extra`` knobs that cannot be forwarded as asked."""
+        ctx = self.provider_name
+        problems: list[str] = []
+        if spec.num_gpus != 1 or spec.num_nodes != 1:
+            problems.append(
+                f"{ctx}: num_gpus={spec.num_gpus} / num_nodes={spec.num_nodes} would run on one GPU here - this "
+                "provider launches one process; Isaac Lab's multi-GPU run is `python -m torch.distributed.run "
+                "--nproc_per_node=N -m isaaclab train ... --distributed`, which strands does not start"
+            )
+        if spec.base_model and spec.resume:
+            problems.append(f"{ctx}: pass base_model or resume=True, not both - both name the checkpoint to start from")
+        elif spec.base_model:
+            path = Path(spec.base_model).expanduser()
+            if not (path.is_file() and path.suffix == ".pt") and not (path.is_dir() and latest_model(str(path))):
+                problems.append(
+                    f"{ctx}: base_model {spec.base_model!r} is not an rsl_rl model_<iteration>.pt nor a run directory "
+                    "holding one (Isaac Lab starts from --checkpoint <file>; Hub ids are not fetched)"
+                )
+        elif spec.resume and isinstance((spec.extra or {}).get("task"), str) and self._start_checkpoint(spec) is None:
+            problems.append(
+                f"{ctx}: resume=True but {spec.output_dir} holds no {(spec.extra or {}).get('task')} run with a "
+                "model_<iteration>.pt to resume from"
+            )
+        overrides = (spec.extra or {}).get("overrides")
+        paths = [str(k) for k in overrides] if isinstance(overrides, dict) else []
+        if (
+            (paths or "agent" in (spec.extra or {}))
+            and not problems
+            and self._python
+            and not _extra_problems(spec.extra or {}, ctx)
+        ):
+            problems.extend(self._cfg_path_problems(spec, paths))
+        return problems
+
+    def _cfg_path_problems(self, spec: TrainSpec, paths: list[str]) -> list[str]:
+        """Check override paths and the agent entry point against the task's real configs (see ``_CFG_CHECK``)."""
+        extra = spec.extra or {}
+        payload = json.dumps([extra["task"], extra.get("agent", "rsl_rl_cfg_entry_point"), paths])
+        try:
+            done = subprocess.run(  # noqa: S603 - argv, no shell; the interpreter is the operator's
+                [str(self._python), "-c", _CFG_CHECK, payload],
+                env=runtime.child_env(),
+                capture_output=True,
+                timeout=180,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return [f"{self.provider_name}: could not check the overrides against {extra['task']}'s configs: {exc}"]
+        line = next(
+            (ln for ln in done.stdout.decode(errors="replace").splitlines() if ln.startswith("STRANDS_CFG_CHECK ")), ""
+        )
+        if not line:
+            tail = (done.stdout + done.stderr).decode(errors="replace")[-400:]
+            return [f"{self.provider_name}: the config check exited {done.returncode} with no answer: ...{tail}"]
+        report = json.loads(line.removeprefix("STRANDS_CFG_CHECK "))
+        if report.get("load_error"):
+            return [
+                f"{self.provider_name}: {extra['task']} has no loadable "
+                f"{extra.get('agent', 'rsl_rl_cfg_entry_point')!r} config: {report['load_error']}"
+            ]
+        problems = []
+        for path, info in sorted(report.get("problems", {}).items()):
+            hint = f"; did you mean {info['close']}?" if info.get("close") else ""
+            problems.append(
+                f"{self.provider_name}: extra['overrides'] path {path!r} names no field ({info['missing']!r} does not "
+                f"exist in {extra['task']}'s config){hint} - Hydra would add it silently and train the default"
+            )
+        return problems
+
+    def _forwarded(self, spec: TrainSpec) -> tuple[list[str], list[str]]:
+        """The flags and Hydra overrides *spec* becomes, beyond the fixed argv.
+
+        One place, so the launched argv and the run record (which ``play``
+        replays) cannot disagree.
+        """
+        extra = spec.extra or {}
+        flags: list[str] = []
+        if "num_envs" in extra:
+            flags += ["--num_envs", str(extra["num_envs"])]
+        if spec.seed is not None:
+            flags += ["--seed", str(spec.seed)]
+        if extra.get("agent"):
+            flags += ["--agent", str(extra["agent"])]
+        if extra.get("device"):
+            flags += ["--device", str(extra["device"])]
+        if extra.get("deterministic"):
+            flags.append("--deterministic")
+        if extra.get("video"):
+            flags.append("--video")
+            for key in ("video_length", "video_interval"):
+                if key in extra:
+                    flags += [f"--{key}", str(extra[key])]
+        if (checkpoint := self._start_checkpoint(spec)) is not None:
+            flags += ["--checkpoint", checkpoint]
+        overrides: list[str] = []
+        if "physics" in extra:
+            overrides.append(f"physics={extra['physics']}")
+        user = dict(extra.get("overrides") or {})
+        if spec.learning_rate is not None:
+            overrides.append(f"agent.algorithm.learning_rate={spec.learning_rate!r}")
+            # rsl_rl's adaptive schedule (most Isaac Lab PPO configs) replaces the
+            # rate from the first iteration and caps it at 1e-2, so a requested
+            # rate is pinned unless the caller chose a schedule themselves.
+            if "agent.algorithm.schedule" not in user:
+                overrides.append("agent.algorithm.schedule=fixed")
+        if spec.save_freq not in (0, _DEFAULT_SAVE_FREQ) and "agent.save_interval" not in user:
+            overrides.append(f"agent.save_interval={int(spec.save_freq)}")
+        overrides += [f"{path}={_hydra_value(value)}" for path, value in user.items()]
+        return flags, overrides
 
     def build_command(self, spec: TrainSpec, job_id: str) -> list[str]:
         """Return the ``python -m isaaclab train`` argv for *spec*.
@@ -245,11 +438,8 @@ class IsaacLabTrainer(Trainer):
             cmd += ["--num_envs", str(extra["num_envs"])]
         if spec.seed is not None:
             cmd += ["--seed", str(spec.seed)]
-        if "physics" in extra:
-            cmd.append(f"physics={extra['physics']}")
-        if spec.learning_rate is not None:
-            cmd.append(f"agent.algorithm.learning_rate={spec.learning_rate!r}")
-        return cmd
+        flags, overrides = self._forwarded(spec)
+        return cmd + flags + overrides
 
     def train(self, spec: TrainSpec) -> TrainResult:
         """Launch the run and return ``running``, or its verdict under ``extra['wait']``.
@@ -297,8 +487,11 @@ class IsaacLabTrainer(Trainer):
             "started": started,
             "deadline": started + float(timeout_s) if timeout_s is not None else None,
             "task": extra["task"],
-            "max_iterations": spec.steps,
-            "run": run_record(spec),
+            # rsl_rl continues a --checkpoint run's iteration count (model_4.pt
+            # + 3 iterations logs "iteration 4/7"), so the run ends at start + steps.
+            "max_iterations": spec.steps + (start := _checkpoint_iteration(self._start_checkpoint(spec))),
+            "start_iteration": start,
+            "run": run_record(spec, overrides=self._forwarded(spec)[1], checkpoint=self._start_checkpoint(spec)),
         }
         (job_dir / _JOB_FILE).write_text(json.dumps(record, indent=1), encoding="utf-8")
         logger.info("isaaclab: launched %s (pid %d): %s", job_id, proc.pid, " ".join(cmd))
@@ -501,8 +694,15 @@ class IsaacLabTrainer(Trainer):
             "--visualizer",
             "kit",
         ]
-        if run.get("physics"):
-            cmd.append(f"physics={run['physics']}")
+        if run.get("agent"):
+            cmd += ["--agent", str(run["agent"])]
+        # The environment the policy trained in: its physics preset and every
+        # env.* override (terrain, episode length, randomization...). agent.*
+        # overrides shaped the training only and are not re-applied.
+        replay = [o for o in run.get("overrides") or [] if o.startswith(("physics=", "env."))]
+        if run.get("physics") and not any(o.startswith("physics=") for o in replay):
+            replay.insert(0, f"physics={run['physics']}")
+        cmd += replay
         play_id = f"isaaclab-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{uuid.uuid4().hex[:12]}"
         play_dir = self._jobs_dir / play_id
         play_dir.mkdir(parents=True, exist_ok=False)
@@ -733,6 +933,43 @@ class IsaacLabTrainer(Trainer):
         return None
 
 
+def _checkpoint_iteration(path: str | None) -> int:
+    """The iteration a ``model_<iteration>.pt`` was saved at; 0 for none."""
+    match = re.search(r"model_(\d+)\.pt\Z", path or "")
+    return int(match.group(1)) if match else 0
+
+
+def _hydra_value(value: Any) -> str:
+    """One override value as Hydra reads it."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return repr(value) if isinstance(value, float) else str(value)
+
+
+def _override_problems(overrides: Any, ctx: str) -> list[str]:
+    """Shape of ``extra['overrides']``: ``{"env.a.b" | "agent.x.y": scalar}``."""
+    if not isinstance(overrides, dict) or not overrides:
+        return [f"{ctx}: extra['overrides'] must be a non-empty dict of 'env.*' / 'agent.*' path -> value"]
+    problems = []
+    for path, value in overrides.items():
+        if not isinstance(path, str) or not _OVERRIDE_PATH_RE.match(path):
+            problems.append(
+                f"{ctx}: extra['overrides'] key {refusal_repr(path)} is not an 'env.<field>...' or "
+                "'agent.<field>...' path"
+            )
+        elif path.startswith("agent.algorithm.learning_rate"):
+            problems.append(f"{ctx}: set the learning rate with TrainSpec.learning_rate, not extra['overrides']")
+        ok = (isinstance(value, bool) or (isinstance(value, int | float) and math.isfinite(value))) or (
+            isinstance(value, str) and _OVERRIDE_STR_RE.match(value)
+        )
+        if not ok:
+            problems.append(
+                f"{ctx}: extra['overrides'][{path!r}] must be a finite number, a bool or a plain token, "
+                f"got {refusal_repr(value)}"
+            )
+    return problems
+
+
 def _extra_problems(extra: dict[str, Any], ctx: str) -> list[str]:
     """Report every ``extra`` key or value this provider cannot forward."""
     problems: list[str] = []
@@ -771,6 +1008,26 @@ def _extra_problems(extra: dict[str, Any], ctx: str) -> list[str]:
         error = positive_finite_number_error(extra["timeout_s"], "extra['timeout_s']", ctx)
         if error is not None:
             problems.append(error)
+    if "overrides" in extra:
+        problems.extend(_override_problems(extra["overrides"], ctx))
+    if "agent" in extra and not (isinstance(extra["agent"], str) and _AGENT_RE.match(extra["agent"])):
+        problems.append(
+            f"{ctx}: extra['agent'] must name an agent config entry point such as "
+            f"'rsl_rl_recurrent_cfg_entry_point', got {refusal_repr(extra['agent'])}"
+        )
+    if "device" in extra and not (isinstance(extra["device"], str) and _DEVICE_RE.match(extra["device"])):
+        problems.append(
+            f"{ctx}: extra['device'] must be 'cpu', 'cuda' or 'cuda:<n>', got {refusal_repr(extra['device'])}"
+        )
+    for key in ("video", "deterministic"):
+        if key in extra and (error := boolean_flag_error(extra[key], f"extra['{key}']", ctx)) is not None:
+            problems.append(error)
+    for key in ("video_length", "video_interval"):
+        if key in extra:
+            if (error := positive_count_error(extra[key], f"extra['{key}']", ctx)) is not None:
+                problems.append(error)
+            elif not extra.get("video"):
+                problems.append(f"{ctx}: extra['{key}'] is read only with extra['video']=True")
     return problems
 
 
@@ -887,7 +1144,7 @@ def classify_failure(text: str, metrics: dict[str, Any]) -> tuple[str | None, st
     return None, None
 
 
-def run_record(spec: TrainSpec) -> dict[str, Any]:
+def run_record(spec: TrainSpec, overrides: list[str] | None = None, checkpoint: str | None = None) -> dict[str, Any]:
     """Return how *spec* trains: task, physics preset, environments, seed and overrides.
 
     Written as :data:`RUN_RECORD_FILE` next to the checkpoints, so replaying a
@@ -895,11 +1152,12 @@ def run_record(spec: TrainSpec) -> dict[str, Any]:
     PhysX and replayed on the task's default Newton preset falls within a second.
     """
     extra = spec.extra or {}
-    overrides = []
-    if "physics" in extra:
-        overrides.append(f"physics={extra['physics']}")
-    if spec.learning_rate is not None:
-        overrides.append(f"agent.algorithm.learning_rate={spec.learning_rate!r}")
+    if overrides is None:
+        overrides = []
+        if "physics" in extra:
+            overrides.append(f"physics={extra['physics']}")
+        if spec.learning_rate is not None:
+            overrides.append(f"agent.algorithm.learning_rate={spec.learning_rate!r}")
     return {
         "task": extra.get("task"),
         "physics": extra.get("physics"),
@@ -907,7 +1165,9 @@ def run_record(spec: TrainSpec) -> dict[str, Any]:
         "seed": spec.seed,
         "iterations": spec.steps,
         "rl_library": extra.get("rl_library", "rsl_rl"),
-        "overrides": overrides,
+        "agent": extra.get("agent"),
+        "checkpoint": checkpoint,
+        "overrides": list(overrides),
     }
 
 

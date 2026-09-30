@@ -1,10 +1,10 @@
 ---
-description: Reinforcement learning from a reward: SimEnv over any SimEngine, the PPO, FastSAC and FastTD3 trainers, every RLTrainSpec field, the checkpoint format and how the rl policy provider reads it.
+description: Reinforcement learning from a reward: SimEnv, the PPO, FastSAC and FastTD3 trainers, RLTrainSpec, and the checkpoint the rl provider reads.
 ---
 
 # RL training
 
-By the end of this page you have trained a PPO actor against a MuJoCo `SimEnv` on this machine, read its checkpoint back, evaluated it, and know every field the three trainers accept.
+By the end of this page you have trained, read back and evaluated a PPO actor on a MuJoCo `SimEnv`, and know every trainer field.
 
 ```python
 import tempfile
