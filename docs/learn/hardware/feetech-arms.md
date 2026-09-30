@@ -29,7 +29,7 @@ arm = Robot("so101", mode="real", driver="strands", port="/dev/ttyACM0")   # nat
 | keys | `shoulder_pan.pos` | `shoulder_pan` or `shoulder_pan.pos`, one per motor |
 | policy rollout | yes (`execute`, `start`) | yes, `PolicyRollout` at `control_frequency` 30 Hz |
 | cameras | `cameras={...}` opened by lerobot | not read (`reads_cameras` is not set) |
-| teleop leader | `Teleoperator("so101_leader", port=...)` | same, through `attach_teleop` |
+| teleop leader | `Teleoperator("so101_leader", port=...)` | same; the leader must report degrees |
 
 Both register for `so100`, `so101`, `lekiwi`, `hope_jr` and `open_duck_mini`. `hope_jr` and `open_duck_mini` share the bus protocol but not the six-servo layout; pass `motor_ids=` to the native driver until a joint map for them lands.
 
