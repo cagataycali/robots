@@ -709,6 +709,33 @@ def _download_from_github(name: str, info: dict, dest_dir: Path) -> str:
 # Orchestrator
 
 
+def _build_urdf_asset(name: str, info: dict[str, Any], dest_dir: Path) -> bool:
+    """Compile a URDF-only ``robot_descriptions`` robot into ``<dest_dir>/<module>/``.
+
+    The import that fetches the description and the build that writes
+    ``robot.xml`` + ``scene.xml`` + meshes are both
+    :func:`strands_robots.assets.urdf.build_urdf_asset`'s; this reports the
+    outcome the way the other fetchers do (``True`` on success, a warning with
+    the fixed refusal sentence otherwise).
+    """
+    module_name = (info.get("asset") or {}).get("robot_descriptions_module")
+    if not module_name or not re.match(r"^[a-z0-9_+]+\Z", str(module_name)):
+        logger.warning("urdf asset for %s: no robot_descriptions module in the entry", log_safe(name))
+        return False
+    from .urdf import UrdfBuildError, build_urdf_asset
+
+    try:
+        build_urdf_asset(name, str(module_name), dest_dir)
+    except UrdfBuildError as exc:
+        logger.warning("urdf asset for %s refused: %s", log_safe(name), exc)
+        return False
+    except Exception as exc:
+        logger.warning("urdf asset for %s failed: %s", log_safe(name), exc)
+        return False
+    logger.info("Built %s from its URDF via robot_descriptions", log_safe(name))
+    return True
+
+
 def auto_download_robot(name: str, info: dict[str, Any]) -> bool:
     """Auto-download a single robot's assets.
 
@@ -725,6 +752,10 @@ def auto_download_robot(name: str, info: dict[str, Any]) -> bool:
     """
     dest_dir = get_assets_dir()
     canonical = resolve_robot_name(name)
+
+    # A URDF-only description has no MJCF to link: it is compiled into one.
+    if (info.get("asset") or {}).get("source", {}).get("type") == "urdf":
+        return _build_urdf_asset(canonical, info, dest_dir)
 
     # Try robot_descriptions first (covers most Menagerie robots)
     if _robot_descriptions_available():
