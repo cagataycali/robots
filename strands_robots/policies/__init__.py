@@ -13,21 +13,21 @@ read their goal from the well-known ``**kwargs`` keys (``target_pose``,
 
 Built-in providers (see policies.json for full list):
     - mock: Sinusoidal test actions (non-VLA reference, ``requires_images=False``)
-    - groot: NVIDIA GR00T via ZMQ
-    - lerobot_local: Direct HuggingFace inference (ACT, Pi0, SmolVLA, Diffusion, ...)
+    - lerobot_local: Direct HuggingFace inference (ACT, Pi0, SmolVLA, Diffusion, GR00T N1.7, ...)
+    - remote: a PolicyServer on another host over WebSocket
 
 Usage::
 
     from strands_robots.policies import create_policy, Policy
 
     # By provider name
-    policy = create_policy("groot", port=5555)
+    policy = create_policy("remote", host="gpu-box", port=8765)
     policy = create_policy("lerobot_local",
         pretrained_name_or_path="lerobot/act_aloha_sim_transfer_cube_human")
 
     # By smart string (auto-resolves provider)
     policy = create_policy("lerobot/act_aloha_sim")
-    policy = create_policy("zmq://localhost:5555")
+    policy = create_policy("ws://gpu-box:8765")
     policy = create_policy("mock")
 
     # Custom provider

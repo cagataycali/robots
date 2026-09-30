@@ -165,7 +165,7 @@ def g1_task(
     instruction: str = "",
     policy_port: int | None = None,
     policy_host: str = "localhost",
-    policy_provider: str = "groot",
+    policy_provider: str = "lerobot_local",
     duration: float = 30.0,
 ) -> dict[str, Any]:
     """Start, observe or stop the task on the G1 driver's 500 Hz control loop.

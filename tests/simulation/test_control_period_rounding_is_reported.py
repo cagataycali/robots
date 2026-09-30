@@ -1,11 +1,14 @@
 """A control period that is not a whole number of physics steps is reported.
 
-``PolicyRunner`` steps ``round(period / physics_dt)`` physics steps per action.
-On Isaac's default ``physics_dt=1/120`` against the default 50 Hz that is 2.4 ->
-2, so every action advanced 16.7 ms instead of 20 ms: ``run_policy(n_steps=30)``
-ended at ``sim_t=0.517 s`` where MuJoCo (2 ms dt, exactly 10 substeps) ended at
-0.600 s (measured on a live GPU run), and a recording labelled 50 fps held
-frames 1/60 s apart in sim time. Nothing said so.
+``PolicyRunner`` used to step ``round(period / physics_dt)`` physics steps per
+action. On Isaac's default ``physics_dt=1/120`` against the default 50 Hz that
+is 2.4 -> 2, so every action advanced 16.7 ms instead of 20 ms:
+``run_policy(n_steps=30)`` ended at ``sim_t=0.517 s`` where MuJoCo (2 ms dt,
+exactly 10 substeps) ended at 0.600 s (measured on a live GPU run), and a
+recording labelled 50 fps held frames 1/60 s apart in sim time. Nothing said so.
+
+Since #4392 the schedule alternates 2 and 3 steps so the span is right to
+within one physics step; the per-action jitter that buys is still said once.
 """
 
 from __future__ import annotations
@@ -27,11 +30,11 @@ def _runner(dt: float) -> PolicyRunner:
     return runner
 
 
-def test_the_isaac_default_rounds_and_says_so(caplog) -> None:
+def test_the_isaac_default_alternates_and_says_so(caplog) -> None:
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         assert _runner(1 / 120)._control_substeps(50.0) == 2
 
-    [record] = [r for r in caplog.records if "rounding to 2" in r.getMessage()]
+    [record] = [r for r in caplog.records if "alternate 2 and 3 steps" in r.getMessage()]
     message = record.getMessage()
     assert "60 Hz" in message and "not 50 Hz" in message
 

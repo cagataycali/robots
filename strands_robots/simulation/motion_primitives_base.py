@@ -537,6 +537,7 @@ class MotionPrimitivesCore:
         orientation_tol: float | None = None,
         ik_orientation_residual: float | None = None,
         obstruction: dict[str, Any] | None = None,
+        left_behind: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Success / not-reached envelope for ``move_to``, shared across backends.
 
@@ -554,6 +555,12 @@ class MotionPrimitivesCore:
         stopped the servo. ``None`` means the engine did not look; an empty
         report means it looked and found nothing, which is itself an answer
         (the servo just needs more steps).
+
+        ``left_behind`` lists bodies that were in the fingers when the move
+        started and did not follow it (``{"body", "ee_moved_m",
+        "body_moved_m", "weld_parent"}``). ``None`` means the backend did not
+        check. Each one adds a sentence naming the grasp assist that carries it,
+        and the records travel in the payload, on either path.
         """
         payload: dict[str, Any] = {
             "reached": reached,
@@ -574,6 +581,17 @@ class MotionPrimitivesCore:
             payload["orientation_tol_rad"] = orientation_tol
             payload["ik_orientation_residual_rad"] = ik_orientation_residual
             pose_detail = f" and orientation within {float(orientation_tol)} rad (error {orientation_error:.4f} rad)"
+        carry_note = ""
+        if left_behind:
+            payload["left_behind"] = left_behind
+            for rec in left_behind:
+                carry_note += (
+                    f" '{rec['body']}' was in the fingers when the move started and was left behind "
+                    f"(the end effector moved {rec['ee_moved_m']:.3f} m, it moved {rec['body_moved_m']:.3f} m): "
+                    "the grasp does not hold it. To carry it, go back down to it, close, then call "
+                    f"attach_bodies(parent='{rec['weld_parent']}', child='{rec['body']}', mode='weld') "
+                    "before the lift - a grasp assist, not a physical grasp."
+                )
         if reached:
             return {
                 "status": "success",
@@ -582,7 +600,7 @@ class MotionPrimitivesCore:
                         "text": (
                             f"move_to: '{robot_name}' EE ({frame_type} '{frame_name}') reached "
                             f"{target.tolist()} within {float(tol)} m in {steps_used} steps "
-                            f"(error {position_error:.4f} m){pose_detail}."
+                            f"(error {position_error:.4f} m){pose_detail}.{carry_note}"
                         )
                     },
                     {"json": payload},
@@ -597,7 +615,7 @@ class MotionPrimitivesCore:
             f"move_to: '{robot_name}' EE ({frame_type} '{frame_name}') did not reach "
             f"{target.tolist()} within tol={float(tol)} m "
             f"after max_steps={max_steps} ({residuals}; IK residual was "
-            f"{ik_residual:.4f} m). " + MotionPrimitivesCore._obstruction_text(obstruction),
+            f"{ik_residual:.4f} m). " + MotionPrimitivesCore._obstruction_text(obstruction) + carry_note,
             payload,
         )
 

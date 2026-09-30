@@ -82,7 +82,7 @@ class TestStart:
                 return Future()
 
         monkeypatch.setattr(arm, "_executor", _Executor())
-        result = arm.start_task("trace a small circle", policy_port=5555, policy_provider="groot")
+        result = arm.start_task("trace a small circle", policy_port=8000, policy_provider="cosmos3")
         assert result["status"] == "success", _text(result)
         assert "does not read" not in _text(result)
 

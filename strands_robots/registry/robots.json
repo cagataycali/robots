@@ -989,7 +989,7 @@
     },
     "lekiwi": {
       "description": "LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuators)",
-      "category": "mobile",
+      "category": "mobile_manip",
       "joints": 9,
       "asset": {
         "dir": "lekiwi",
@@ -1054,7 +1054,7 @@
     },
     "spot": {
       "description": "Boston Dynamics Spot (with arm)",
-      "category": "mobile",
+      "category": "mobile_manip",
       "joints": 19,
       "asset": {
         "dir": "boston_dynamics_spot",

@@ -10,21 +10,18 @@ that exist.
 
 from __future__ import annotations
 
-import importlib.util
 import re
 from collections import Counter
 from pathlib import Path
+
+from tests._docs_hooks import docs_hook
 
 _REPO = Path(__file__).resolve().parents[1]
 _ROBOTS = _REPO / "docs" / "robots"
 
 
 def _hook():  # noqa: ANN202 - the loaded hook module
-    spec = importlib.util.spec_from_file_location("docs_robot_pages_hook", _REPO / "docs/hooks/robot_pages.py")
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("robot_pages")
 
 
 def _token_categories(hook) -> tuple[Counter[str], int]:  # noqa: ANN001 - the loaded hook module
