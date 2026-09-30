@@ -29,6 +29,7 @@ import pytest
 
 import strands_robots
 from tests._docs_hooks import docs_hook
+from tests._package_ast import parse_file
 
 _REPO = Path(strands_robots.__file__).resolve().parents[1]
 _PKG = _REPO / "strands_robots"
@@ -79,7 +80,7 @@ def _statically_named_tools() -> set[tuple[str, str]]:
     """
     found: set[tuple[str, str]] = set()
     for path in sorted(_PKG.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for node in _importable_tools(tree):
             for decorator in node.decorator_list:
                 call = decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -99,7 +100,7 @@ def _statically_named_tools() -> set[tuple[str, str]]:
 
 def _function_node(item) -> ast.FunctionDef | ast.AsyncFunctionDef:  # noqa: ANN001 - the hook's Tool
     path = _REPO / (item.module.replace(".", "/") + ".py")
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = parse_file(path)
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == item.name:
             return node
@@ -182,7 +183,7 @@ def test_a_default_or_type_carrying_a_pipe_cannot_split_a_table_row() -> None:
 
 def test_the_hook_reads_the_tree_without_importing_the_package() -> None:
     """The docs environment installs mkdocs only, so an import of the package fails the build."""
-    tree = ast.parse(_HOOK.read_text(encoding="utf-8"))
+    tree = parse_file(_HOOK)
     imported = {
         alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names
     } | {node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}

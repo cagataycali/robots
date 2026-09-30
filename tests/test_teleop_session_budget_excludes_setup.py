@@ -236,7 +236,7 @@ class TestTheBoundariesDoNotMove:
         res = host.teleoperate(hz=50.0, duration=0.0, block=True)
 
         assert res["status"] == "error"
-        assert "duration must be > 0" in res["content"][0]["text"]
+        assert "duration must be a positive finite number" in res["content"][0]["text"]
         assert dev.connect_calls == 0, "a refused session connected a device"
         assert finder.calls == 0, (
             f"a refused session resolved {_MESH_SLEW_MODULE}: the resolve was hoisted above the "

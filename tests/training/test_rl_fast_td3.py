@@ -102,9 +102,9 @@ def test_validate_accepts_a_vectorized_env_count() -> None:
         ({"batch_size": 0}, "batch_size must be a positive integer"),
         ({"gradient_steps": 0}, "gradient_steps must be a positive integer"),
         ({"policy_delay": 0}, "policy_delay must be a positive integer"),
-        ({"exploration_noise_std": 0.0}, "exploration_noise_std must be > 0"),
-        ({"target_noise_std": 0.0}, "target_noise_std must be > 0"),
-        ({"target_noise_clip": 0.0}, "target_noise_clip must be > 0"),
+        ({"exploration_noise_std": 0.0}, "exploration_noise_std must be a positive finite number"),
+        ({"target_noise_std": 0.0}, "target_noise_std must be a positive finite number"),
+        ({"target_noise_clip": 0.0}, "target_noise_clip must be a positive finite number"),
     ],
 )
 def test_validate_flags_each_out_of_range_field(overrides: dict[str, Any], expected: str) -> None:

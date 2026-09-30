@@ -439,7 +439,7 @@ class RecordWorker:
     # ---------------------------------------------------------------- loop
 
     def _loop(self) -> None:
-        from strands_robots.mesh.pacing import Ticker
+        from strands_robots._pacing import Ticker
 
         with Ticker(1.0 / self.fps, self._stop_evt) as ticker:
             while not ticker.wait():

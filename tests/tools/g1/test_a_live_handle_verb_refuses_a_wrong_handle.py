@@ -70,6 +70,7 @@ import pytest
 import strands_robots.drivers.unitree as unitree_transport
 import strands_robots.tools.g1 as g1_package
 from strands_robots.drivers.unitree._common import snapshot_handle_refusal
+from tests._package_ast import parse_file
 
 
 class _AccessorIsData:
@@ -208,7 +209,7 @@ def _live_handle_verbs_from_source() -> set[str]:
     found: set[str] = set()
     package_dir = Path(g1_package.__file__).parent
     for path in sorted(package_dir.glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -475,9 +476,6 @@ class TestPremises:
             path.name
             for package_dir in package_dirs
             for path in sorted(package_dir.glob("*.py"))
-            if any(
-                isinstance(node, ast.FunctionDef) and node.name == guard
-                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-            )
+            if any(isinstance(node, ast.FunctionDef) and node.name == guard for node in ast.walk(parse_file(path)))
         ]
         assert definitions == ["_common.py"], definitions
