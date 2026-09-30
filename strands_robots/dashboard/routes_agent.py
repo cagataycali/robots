@@ -14,7 +14,7 @@ import contextlib
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 
 from strands_robots.dashboard import access, agent_console
 
@@ -57,13 +57,20 @@ async def agent_reset(request: Request, _: dict = Depends(access.require_session
     return {"reset": True, "history_cleared": clear, "reconnect": True, "model": agent_console.model_id()}
 
 
+def strict_flag(value: Any) -> bool:
+    """A consent flag from the page: the JSON boolean ``true`` or the string ``"true"`` is yes, anything else is no.
+
+    ``bool()`` read the string ``"false"``, ``"no"``, ``1`` and any non-empty
+    list as consent (f025). A flag that answers a motion interrupt is held to the
+    strict spelling, so a misspelt refusal never becomes a yes.
+    """
+    return value is True or value == "true"
+
+
 @router.websocket("/ws/agent")
 async def agent_socket(ws: WebSocket) -> None:
-    """A conversation. Admission is the same as every route; a stranger is closed with 4401."""
-    try:
-        access.caller(ws)  # type: ignore[arg-type]
-    except HTTPException:
-        await access.refuse_socket(ws, 4401)
+    """A conversation. Admission is the same as every socket: Origin first, then the credential."""
+    if await access.admit_socket(ws) is None:
         return
     await ws.accept()
     try:
@@ -90,7 +97,7 @@ async def agent_socket(ws: WebSocket) -> None:
                 prompt: Any = text
             elif kind == "resume":
                 prompt = agent_console.Console.resume(
-                    str(frame.get("id") or ""), bool(frame.get("approve")), bool(frame.get("always"))
+                    str(frame.get("id") or ""), strict_flag(frame.get("approve")), strict_flag(frame.get("always"))
                 )
             else:
                 await ws.send_json({"type": "error", "message": "frames are {type: say|resume}"})
