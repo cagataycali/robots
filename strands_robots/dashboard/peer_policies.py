@@ -35,9 +35,7 @@ EMBODIMENT_BOUND: dict[str, tuple[str, ...]] = {
 #: Providers a fleet row never offers: they need a server the dashboard cannot
 #: start (a port on the robot host) or are removed in 0.7. ``remote`` stays: the
 #: wire carries its ``server_address``.
-NOT_OFFERED: frozenset[str] = frozenset(
-    {"groot", "cosmos3", "moveit2", "curobo", "kimodo", "protomotions", "flux3_action"}
-)
+NOT_OFFERED: frozenset[str] = frozenset({"cosmos3", "moveit2", "curobo", "kimodo", "protomotions", "flux3_action"})
 
 #: One line per provider for the agent. A provider without a line gets the
 #: registry description.
