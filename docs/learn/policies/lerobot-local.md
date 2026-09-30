@@ -31,9 +31,9 @@ policy = create_policy("robotfuel/act_so101_t16b", embodiment="so101")   # same 
 
 {{providers:kwargs:lerobot_local}}
 
-Inert normalization has a two-part remedy: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and `state_units` / `action_units` (`degrees` or `radians`) say which unit they were recorded in. `so100` and `so101` declare `state_units='degrees'`; radian stats need the unit half beside the stats half.
+`processor_overrides={"normalizer_processor": {"stats": ...}}` replaces inert stats; `state_units` / `action_units` (`degrees` or `radians`) name their unit. `so100` and `so101` declare `degrees`, so radian stats need `radians` beside them.
 
-`pretrained_name_or_path` is required. `actions_per_step=1` becomes the trained `n_action_steps`; above 1 pins it. `cache_model=True` shares weights in-process (`clear_model_cache()`, `list_cached_models()`). Without `device=` it uses CUDA if present; checkpoint `torch.compile` stays off unless `compile_model=True`.
+`pretrained_name_or_path` is required. `actions_per_step=1` becomes the trained `n_action_steps`; above 1 pins it. `cache_model=True` shares weights in-process (`clear_model_cache()`, `list_cached_models()`). `device=` defaults to CUDA when present; `torch.compile` stays off unless `compile_model=True`.
 
 ## Embodiments
 
@@ -110,7 +110,7 @@ sim.cleanup()
 
 ## GR00T N1.7 through lerobot
 
-`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` policy type and load here like any checkpoint: no Isaac-GR00T checkout, no ZMQ service. `embodiment_tag` comes from the checkpoint config.
+`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` type and load like any checkpoint, with no Isaac-GR00T checkout or ZMQ service. `embodiment_tag` comes from the checkpoint config.
 
 ```python title="sketch: groot extra, 3B download"
 from strands_robots.policies import create_policy
@@ -129,6 +129,6 @@ policy = create_policy("ws://gpu-box:8765")                                     
 
 ## Limits
 
-- `trust_remote_code=True` is unconditional for this provider, hence the environment gate; load checkpoints only from organisations you trust.
+- `trust_remote_code=True` is unconditional here, hence the environment gate; load only checkpoints you trust.
 - `dim_policy="pad"` / `"truncate"` adapt the state width and take the first N values of a wider action (32-D pi0/pi0.5); `strict` refuses. An embodiment the pipeline cannot take is refused at load.
 - An embodiment not in `embodiments.json` needs its own entry (state keys, action keys, camera renames); [training](../training/lerobot.md) shows how a checkpoint carries those names.

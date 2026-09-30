@@ -19,7 +19,7 @@ print(robot.robot_joint_names("spot"))
 robot.cleanup()
 ```
 
-Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).
+The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.
 
 Aliases: `boston_dynamics_spot`.
 
