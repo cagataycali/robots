@@ -43,6 +43,7 @@ from typing import Any, Protocol
 from strands.types.tools import ToolSpec, ToolUse
 
 from strands_robots.drivers.base import refuse, undeclared_verb_error
+from strands_robots.utils import finite_number_error, refusal_repr, refusal_str
 
 logger = logging.getLogger(__name__)
 
@@ -461,18 +462,38 @@ class CompositeDriver:
             return f"{self._tool_name}: part(s) {dead} not connected; the whole robot refuses motion."
         return None
 
-    def route(self, action: Mapping[str, Any]) -> tuple[dict[str, dict[str, float]], list[str]]:
-        """Split a composite action into per-part targets; unknown keys come back separately."""
+    def route(self, action: Mapping[str, Any]) -> tuple[dict[str, dict[str, float]], list[str], str | None]:
+        """Split a composite action into per-part targets.
+
+        Returns ``(split, unknown, error)``: the per-part targets, the keys no
+        part owns, and the first value that is not a finite number (``"open"``,
+        ``None``, a list, ``nan``, ``True``) rendered as a refusal. ``targets``
+        arrives verbatim from agent tool input, so a bare ``float()`` here would
+        raise out of ``send_action`` and ``stream`` instead of refusing; every
+        value takes the same :func:`~strands_robots.utils.finite_number_error`
+        path the native drivers' write paths take.
+        """
         split: dict[str, dict[str, float]] = {}
         unknown: list[str] = []
+        if not isinstance(action, Mapping):
+            return (
+                split,
+                unknown,
+                (
+                    f"{self._tool_name}: send_action takes a mapping of composite key to value, "
+                    f"got {refusal_repr(action)}."
+                ),
+            )
         for key, value in action.items():
             owner = self._owners.get(key)
             if owner is None:
                 unknown.append(key)
                 continue
+            if error := finite_number_error(value, refusal_str(key), f"{self._tool_name}: send_action"):
+                return split, unknown, error
             part, joint = owner
             split.setdefault(part, {})[joint] = float(value)
-        return split, unknown
+        return split, unknown, None
 
     def send_action(self, action: Mapping[str, Any], robot_name: str | None = None) -> dict[str, Any]:
         """Write targets to their parts, primary first; any failure stops everything.
@@ -488,7 +509,9 @@ class CompositeDriver:
             return refuse(f"{self._tool_name}: send_action needs at least one target.")
         if reason := self._motion_refusal():
             return refuse(reason)
-        split, unknown = self.route(action)
+        split, unknown, error = self.route(action)
+        if error:
+            return refuse(error)
         if unknown:
             return refuse(
                 f"{self._tool_name}: keys {sorted(unknown)} belong to no part {list(self._parts)}; "

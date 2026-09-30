@@ -97,6 +97,36 @@ def test_a_key_no_part_owns_refuses_the_whole_write(g1: Any) -> None:
     assert other["status"] == "error" and "one robot" in other["content"][0]["text"]
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["open", None, [0.5], float("nan"), float("inf"), True],
+    ids=["text", "none", "list", "nan", "inf", "bool"],
+)
+def test_a_target_that_is_not_a_finite_number_is_refused_not_raised(g1: Any, value: Any) -> None:
+    """``targets`` is agent input; a bare ``float()`` used to escape ``send_action`` as a TypeError."""
+    driver, left, right = _composite(g1)
+    result = driver.send_action({"left_gripper": value, "right_gripper": 0.4})
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert text.startswith("g1_openarm: send_action: left_gripper must be") and "finite number" in text
+    assert left.writes == right.writes == 0, "nothing is written when one value is unusable"
+
+
+def test_a_non_mapping_targets_is_refused_through_the_agent_surface(g1: Any) -> None:
+    driver, left, _right = _composite(g1)
+
+    async def call(**payload: Any) -> dict[str, Any]:
+        tool_use: ToolUse = {"toolUseId": "t", "name": driver.tool_name, "input": {"action": "send_action", **payload}}
+        return [event async for event in driver.stream(tool_use, {})][0]
+
+    result = asyncio.run(call(targets="left_gripper=0.5"))
+    assert result["status"] == "error"
+    assert "takes a mapping of composite key to value" in result["content"][0]["text"]
+    spelled = asyncio.run(call(targets={"left_gripper": "open"}))
+    assert spelled["status"] == "error" and "left_gripper must be a finite number" in spelled["content"][0]["text"]
+    assert left.writes == 0
+
+
 def test_a_partial_stop_latches_and_reset_estop_clears_it(g1: Any) -> None:
     driver, left, right = _composite(g1, fail_stop=True)
     halted = driver.stop(reason="test")
