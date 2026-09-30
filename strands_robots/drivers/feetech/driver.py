@@ -687,9 +687,24 @@ class FeetechDriver(TeleopMixin):
         loop writes through, so a thread left in it would command an arm nothing
         in the process can still reach. The halt carries no verdict here either
         (``-> None``), so a refused one is logged.
+
+        A leader attached through ``attach_teleop`` is joined next, and the port
+        is released only when it did join: the loop's next write re-opens the
+        port through ``send_action``'s lazy connect, so a release under a live
+        loop does not hold, and leaves a daemon thread commanding the arm through
+        a handle the discarded driver no longer owns. On a failed join the port
+        stays open and the remedy is logged, as ``Robot.cleanup`` and
+        ``G1Driver.cleanup`` do.
         """
         if detail := halt_failure_detail(self.stop_task()):
             logger.error("%s: cleanup released the bus under a live rollout: %s", self._tool_name, detail)
+        if getattr(self, "_teleops", None) and not _stop_reported_stopped(self.stop_teleoperate()):
+            logger.error(
+                "%s: port left open because the teleop loop did not join; "
+                "call stop_teleoperate() to re-join it, then cleanup() again",
+                self._tool_name,
+            )
+            return
         with bus_lock(self):
             self._bus.disconnect()
 

@@ -391,6 +391,62 @@ def test_a_leader_drives_the_native_driver_and_stop_joins_it_before_torque_off(
     assert follower._teleop_thread is None
 
 
+def test_cleanup_joins_the_leader_loop_before_it_releases_the_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``cleanup()`` is the other teardown; it ends the session, then closes the bus."""
+    import time
+
+    follower: Any = Robot("so101", mode="real", driver="strands", transport="twin")
+    order: list[str] = []
+    stop_teleoperate = follower.stop_teleoperate
+    disconnect = follower._bus.disconnect
+
+    def record_stop() -> Any:
+        order.append("join")
+        return stop_teleoperate()
+
+    def record_disconnect() -> Any:
+        order.append("disconnect")
+        return disconnect()
+
+    monkeypatch.setattr(follower, "stop_teleoperate", record_stop)
+    monkeypatch.setattr(follower._bus, "disconnect", record_disconnect)
+    follower.attach_teleop(_ScriptedLeader(), name="leader")
+    assert follower.teleoperate(duration=5.0)["status"] == "success"
+    deadline = time.monotonic() + 5.0
+    while follower._teleop_thread is None and time.monotonic() < deadline:
+        time.sleep(0.02)
+    follower.cleanup()
+    assert order == ["join", "disconnect"], "the loop is joined first, the port released second"
+    assert follower._teleop_thread is None
+
+
+def test_cleanup_leaves_the_port_open_when_the_leader_loop_did_not_join(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A loop that will not join keeps its port: releasing it would not hold, the next write re-opens it.
+
+    Before: ``cleanup()`` called ``self._bus.disconnect()`` under a live teleop
+    writer, whose next tick re-opened the port through ``send_action``'s lazy
+    connect, leaving a daemon thread commanding the arm through a handle the
+    discarded driver no longer owned.
+    """
+    import logging
+
+    follower: Any = Robot("so101", mode="real", driver="strands", transport="twin")
+    follower._teleops = {"leader": _ScriptedLeader()}
+    disconnected: list[bool] = []
+    monkeypatch.setattr(follower._bus, "disconnect", lambda: disconnected.append(True))
+    monkeypatch.setattr(
+        follower,
+        "stop_teleoperate",
+        lambda: {"status": "error", "content": [{"json": {"stopped": False, "frames": 0}}]},
+    )
+    with caplog.at_level(logging.ERROR):
+        follower.cleanup()
+    assert disconnected == [], "the port stays open under a loop that did not join"
+    assert any("stop_teleoperate() to re-join it, then cleanup() again" in r.getMessage() for r in caplog.records)
+
+
 def _lerobot_so_leader(use_degrees: bool) -> Any:
     pytest.importorskip("lerobot")
     from strands_robots import Teleoperator
