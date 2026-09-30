@@ -66,7 +66,7 @@ import numpy as np
 
 from strands_robots.policies._log_safety import sanitize_log_value
 from strands_robots.policies._state_keys import FLAT_STATE_KEY, drop_velocity_siblings
-from strands_robots.policies.base import Policy
+from strands_robots.policies.base import Policy, chunk_count_error
 from strands_robots.utils import dial_host_error, name_list_error, tcp_port_error
 
 from .client import Cosmos3WebsocketClient
@@ -181,6 +181,10 @@ class Cosmos3Policy(Policy):
             ``view_point``, ``device``, ``dtype``, ``num_inference_steps``,
             ``guidance_scale``, ``enable_sound`` and ``enable_safety_checker``
             are set on the backend and reach the policy through this parameter.
+        actions_per_step: Actions the consumer executes from one chunk before
+            re-querying (a positive whole number). Default: the embodiment's
+            ``action_chunk_size``, replaced by the served chunk length once the
+            server has answered; a value you pass is kept as given.
 
     Notes:
         * This policy needs camera frames **and** robot state in the
@@ -219,8 +223,23 @@ class Cosmos3Policy(Policy):
         mode: str = "policy",
         diffusers_backend: Cosmos3DiffusersBackend | None = None,
         model: str | None = None,
+        actions_per_step: int | None = None,
     ) -> None:
         self.embodiment: Cosmos3Embodiment = get_embodiment(embodiment)
+        # The chunk this policy tells the consumer to execute before re-querying
+        # (:attr:`~strands_robots.policies.base.Policy.execution_horizon` reads
+        # it). A Cosmos 3 inference returns one chunk of ``action_chunk_size``
+        # steps; declaring it is what makes ``is_chunk_emitting()`` true, so the
+        # runner keeps the whole chunk instead of dropping its tail at the
+        # default ``action_horizon`` and auto-enables async RTC for it. The
+        # embodiment's default stands until the server answers; a served chunk
+        # of another length is adopted unless the caller pinned a value.
+        if actions_per_step is not None:
+            if error := chunk_count_error(actions_per_step, "actions_per_step", "cosmos3"):
+                raise ValueError(error)
+        self._actions_per_step_pinned = actions_per_step is not None
+        self.actions_per_step: int = actions_per_step or self.embodiment.action_chunk_size
+        self._served_chunk_noted = False
         self.host = host
         self.port = port
         # ``pretrained_name_or_path`` is injected by the registry's model-id
@@ -747,6 +766,42 @@ class Cosmos3Policy(Policy):
             )
         return list(layout)
 
+    def _note_served_chunk(self, horizon: int) -> None:
+        """Let the served chunk length set the re-query interval, unless the caller pinned one.
+
+        The embodiment's ``action_chunk_size`` is a default (DROID declares 32),
+        and the server may serve another length (16 measured against a
+        wire-faithful RoboLab server). The consumer executes
+        :attr:`execution_horizon` actions from each chunk, so a declared
+        interval longer than the served chunk would re-query on an empty tail
+        and a shorter one would drop the chunk's end; either way the interval
+        should be the chunk the server really serves. A caller who pinned
+        ``actions_per_step`` keeps it and is told once when it exceeds the chunk.
+
+        Args:
+            horizon: The served chunk length, ``T`` of the ``[T, D]`` array.
+        """
+        if horizon < 1 or horizon == self.actions_per_step:
+            return
+        if self._actions_per_step_pinned:
+            if horizon < self.actions_per_step and not self._served_chunk_noted:
+                self._served_chunk_noted = True
+                logger.warning(
+                    "Cosmos3Policy: actions_per_step=%d was pinned but the server serves %d-step chunks; "
+                    "each chunk runs out after %d actions and the policy is re-queried there.",
+                    self.actions_per_step,
+                    horizon,
+                    horizon,
+                )
+            return
+        logger.info(
+            "Cosmos3Policy: the server serves %d-step chunks (embodiment default %d); the re-query "
+            "interval follows the served chunk.",
+            horizon,
+            self.actions_per_step,
+        )
+        self.actions_per_step = horizon
+
     def _unpack_actions(self, action: np.ndarray) -> list[dict[str, Any]]:
         """Split an ``[T, D]`` chunk into per-timestep actuator dicts."""
         if action.ndim == 1:
@@ -755,6 +810,7 @@ class Cosmos3Policy(Policy):
             raise ValueError(f"expected action chunk [T, D]; got shape {action.shape}")
 
         horizon, width = action.shape
+        self._note_served_chunk(horizon)
         col_names = self._action_column_names(width)
         # Apply optional rename: layout column name → robot actuator name.
         out_names = [self._action_mapping.get(name, name) for name in col_names]
