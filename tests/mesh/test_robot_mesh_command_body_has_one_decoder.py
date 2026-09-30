@@ -46,6 +46,7 @@ from unittest.mock import patch
 import pytest
 
 import strands_robots.tools.robot_mesh as rmt
+from tests._package_ast import parse_file
 
 #: Nesting depth that exhausts the scanner's stack. 60k levels of ``[`` is
 #: 120 KB of text -- depth, not size, is what it runs out of room for.
@@ -258,7 +259,7 @@ class TestOneOwnerDecodesEveryCommandBody:
 
     def test_no_other_function_calls_json_loads_on_the_command_parameter(self) -> None:
         module_path = Path(inspect.getfile(rmt))
-        tree = ast.parse(module_path.read_text(encoding="utf-8"))
+        tree = parse_file(module_path)
         owner = rmt._decoded_command_body.__name__
         offenders: list[str] = []
         found_in_owner = False

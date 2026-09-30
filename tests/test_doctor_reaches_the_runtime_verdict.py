@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from strands_robots import doctor
+from tests._package_ast import parse_file
 
 
 @pytest.fixture(autouse=True)
@@ -454,7 +455,7 @@ class TestTheRuntimeUsesTheSameText:
         package_root = Path(strands_robots.__file__).parent
         readers: list[str] = []
         for path in sorted(package_root.rglob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = parse_file(path)
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call | ast.Subscript):
                     continue
@@ -471,7 +472,7 @@ def _def_line(path: Path) -> int:
     """Line of the one ``os.getenv`` inside ``permissive_acl_acknowledged``."""
     import ast
 
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = parse_file(path)
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "permissive_acl_acknowledged":
             return next(n.lineno for n in ast.walk(node) if isinstance(n, ast.Call))

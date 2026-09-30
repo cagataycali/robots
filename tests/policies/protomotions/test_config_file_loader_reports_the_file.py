@@ -66,6 +66,7 @@ from strands_robots.policies.protomotions.config import (  # noqa: E402
     ProtoMotionsConfig,
     load_config_from_yaml,
 )
+from tests._package_ast import parse_file
 
 _POLICY_CONFIG_ROOT = Path(inspect.getsourcefile(pm_config) or "").resolve().parents[2]
 
@@ -131,7 +132,7 @@ def _shipped_loaders() -> list[tuple[str, ast.FunctionDef]]:
     """
     found: list[tuple[str, ast.FunctionDef]] = []
     for module_path in sorted(_POLICY_CONFIG_ROOT.glob("policies/*/config.py")):
-        tree = ast.parse(module_path.read_text(encoding="utf-8"))
+        tree = parse_file(module_path)
         for function in [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]:
             if "path" not in {argument.arg for argument in function.args.args}:
                 continue

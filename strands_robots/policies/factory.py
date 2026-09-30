@@ -363,6 +363,31 @@ def import_policy_class(provider: str) -> type:
     raise ValueError(f"Unknown policy provider: '{provider}'.{hint} Available: {list_policy_providers()}")
 
 
+def _spell_model_path_as_the_provider_does(provider: str, kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """The wire's generic ``model_path`` under the key the provider declares for it.
+
+    ``model_path`` is the one checkpoint key the mesh carries (validated for
+    traversal on the robot host, contained under the checkpoint homes by the
+    dashboard). A provider that spells that key ``checkpoint`` in its
+    ``config_keys`` (``wbc``, ``wbc_gait``) and does not declare ``model_path``
+    used to receive it through ``**kwargs`` and drop it, so a G1 asked to walk
+    over the wire failed at load with "no checkpoint" while the caller had sent
+    one. Mapped here, once, for every caller of ``create_policy``; an explicit
+    ``checkpoint`` in ``kwargs`` wins.
+    """
+    if "model_path" not in kwargs:
+        return dict(kwargs)
+    canonical = _canonical_provider_name(provider)
+    info = get_policy_provider(canonical) or {}
+    keys = set(info.get("config_keys") or [])
+    if "checkpoint" not in keys or "model_path" in keys:
+        return dict(kwargs)
+    out = dict(kwargs)
+    value = out.pop("model_path")
+    out.setdefault("checkpoint", value)
+    return out
+
+
 def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], dict]:
     """Resolve ``provider`` to its policy class WITHOUT instantiating it.
 
@@ -388,6 +413,7 @@ def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], d
     resolved_name = _runtime_aliases.get(provider, provider)
     if resolved_name in _runtime_registry:
         return resolved_name, _runtime_registry[resolved_name](), dict(kwargs)
+    kwargs = _spell_model_path_as_the_provider_does(provider, kwargs)
 
     # 2. Smart string (HF ID, URL, etc.).
     if _is_smart_string(provider):
@@ -624,6 +650,13 @@ def policy_kwargs_error(provider: str, PolicyClass: type, kwargs: Mapping[str, A
     accepted, tolerates_unknown = _constructor_keywords(PolicyClass)
     if not accepted:
         return None
+    # A provider may know a name that its sink would otherwise swallow: a field
+    # that belongs on another object (lerobot_local's ``state_units`` is an
+    # embodiment field, #4164). Its ``misplaced_kwargs_error`` says where the
+    # name goes, and runs here so the caller learns it before the trust gate.
+    misplaced_error = getattr(PolicyClass, "misplaced_kwargs_error", None)
+    if callable(misplaced_error) and (misplaced := misplaced_error(kwargs)) is not None:
+        return str(misplaced)
     owner = f"{PolicyClass.__name__} (policy provider {provider!r})"
     misspelled: list[str] = []
     unknown: list[str] = []

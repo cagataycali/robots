@@ -60,6 +60,7 @@ import pytest
 
 from strands_robots.policies import list_aliases, list_providers
 from strands_robots.registry.policies import resolve_policy
+from tests._package_ast import parse_file
 
 # Derived from the defining module of an imported symbol rather than from a
 # path literal, which is what lets scripts/check_whole_tree_graders.py resolve
@@ -109,7 +110,7 @@ def _is_schema_entry(value: Any) -> bool:
 def _py_schema_entries(path: pathlib.Path) -> list[tuple[str, dict[str, Any]]]:
     """Every ``{"policy_provider": {...}}`` schema literal in a Python file."""
     found: list[tuple[str, dict[str, Any]]] = []
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = parse_file(path)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Dict):
             continue
@@ -167,7 +168,7 @@ def _signature_defaults() -> list[tuple[str, str]]:
     """
     found: list[tuple[str, str]] = []
     for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue

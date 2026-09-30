@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from strands_robots.simulation.base import SimEngine
+from tests._package_ast import parse_file
 from tests.training._engine_stand_in import EngineStandIn
 
 _RL = Path(__file__).resolve().parents[2] / "strands_robots" / "training" / "rl"
@@ -79,7 +80,7 @@ def _calls() -> list[Reached]:
     """Every ``engine.<method>(...)`` call in the RL package, read from source."""
     found: list[Reached] = []
     for path in sorted(_RL.glob("*.py")):
-        tree = ast.parse(path.read_text())
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                 continue

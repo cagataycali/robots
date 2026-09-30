@@ -48,6 +48,8 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+from tests._package_ast import parse_file
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = REPO_ROOT / "strands_robots"
 MENTION_TREES = (REPO_ROOT / "tests", REPO_ROOT / "tests_integ", REPO_ROOT / "examples", REPO_ROOT / "scripts")
@@ -124,7 +126,7 @@ def _scan() -> tuple[dict[str, list[str]], int, int]:
     definitions: dict[str, list[str]] = defaultdict(list)
     read: set[str] = set()
     for path in files:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for name, lineno in _definitions(tree):
             definitions[name].append(f"{path.relative_to(REPO_ROOT)}:{lineno}")
         read |= _readers(tree)

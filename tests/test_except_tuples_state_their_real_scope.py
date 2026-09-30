@@ -58,6 +58,7 @@ from typing import Any
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_file
 
 #: Trees scanned for the rule. Reached through the imported package so a layout
 #: change cannot silently narrow the scan to nothing.
@@ -177,7 +178,7 @@ def _tuple_count() -> int:
     total = 0
     for path in _scanned_files():
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
         except SyntaxError:
             continue
         total += sum(1 for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler) and isinstance(n.type, ast.Tuple))

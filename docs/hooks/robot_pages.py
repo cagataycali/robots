@@ -346,13 +346,26 @@ def _model_link(base_url: str | None) -> str | None:
     return f"[{label}]({href})"
 
 
+#: What the joints chip counts, as its tooltip. The registry figure is the count
+#: ``get_robot_state`` reports (issue #4147): every joint of the loaded model except
+#: a floating base, which the state carries as ``base``. Graded per robot by
+#: ``scripts/audit_registry_joints.py``.
+_JOINTS_TITLE = "joints get_robot_state reports: every joint of the loaded model except a floating base"
+
+
+def _joints_chip(joints: object) -> str:
+    """The ``N joints`` chip, or nothing for a robot that reports no joint (a quadrotor)."""
+    if not isinstance(joints, int) or joints <= 0:
+        return ""
+    return f'<span class="sr-chip" title="{_JOINTS_TITLE}">{joints} joints</span>'
+
+
 def _chips(name: str, spec: dict, cov, entry: dict) -> str:  # noqa: ANN001
-    joints = spec.get("joints")
     parts = [
         f'<span class="sr-chip sr-chip-family" data-family="{spec["category"]}">{html.escape(_label(spec["category"]))}</span>'
     ]
-    if isinstance(joints, int):
-        parts.append(f'<span class="sr-chip">{joints} joints</span>')
+    if chip := _joints_chip(spec.get("joints")):
+        parts.append(chip)
     if entry.get("sim"):
         parts.append(f'<span class="sr-chip sr-chip-sim">{"sim" if cov.real else "sim only"}</span>')
     if cov.real:
@@ -379,6 +392,24 @@ BIMANUAL_ARM_CONFIG: dict[str, tuple[str, str]] = {
 }
 
 
+# lerobot types that connect over the network rather than a serial device: the keyword the
+# config declares, an example value for the fence, and the prose the hardware section prints.
+LEROBOT_NETWORK_WIRING: dict[str, tuple[str, str, str]] = {
+    "unitree_g1": ("robot_ip", '"192.168.123.164"', "`robot_ip=` is the robot's address (DDS over Ethernet)"),
+    "lekiwi_client": ("remote_ip", '"192.168.1.50"', "`remote_ip=` is the address of the Pi that runs `lekiwi`"),
+    "reachy2": ("ip_address", '"192.168.1.42"', "`ip_address=` is the robot's address (gRPC, `port=` 50065)"),
+    "earthrover_mini_plus": ("sdk_url", '"http://localhost:8000"', "`sdk_url=` is where the EarthRover SDK listens"),
+}
+
+
+def _lerobot_wiring(lerobot_type: str) -> tuple[str, str]:
+    """(fence keyword and value, prose clause) for how a lerobot robot is addressed."""
+    if lerobot_type in LEROBOT_NETWORK_WIRING:
+        keyword, example, prose = LEROBOT_NETWORK_WIRING[lerobot_type]
+        return f"{keyword}={example}", prose
+    return 'port="/dev/ttyACM0"', "`port=` is the serial device"
+
+
 def _real_fences(name: str, spec: dict, cov) -> list[str]:  # noqa: ANN001
     """The ``mode="real"`` lines, one per driver that builds this robot."""
     lines: list[str] = []
@@ -395,7 +426,8 @@ def _real_fences(name: str, spec: dict, cov) -> list[str]:  # noqa: ANN001
         ]
     elif cov.lerobot_type:
         pin = "" if cov.default_driver == "lerobot" else ', driver="lerobot"'
-        lines.append(f'robot = Robot("{name}", mode="real"{pin}, port="/dev/ttyACM0")  # lerobot {cov.lerobot_type}')
+        wiring, _ = _lerobot_wiring(cov.lerobot_type)
+        lines.append(f'robot = Robot("{name}", mode="real"{pin}, {wiring})  # lerobot {cov.lerobot_type}')
     if cov.native_driver:
         facts = DRIVERS[cov.native_driver]
         pin = "" if cov.default_driver == "strands" else ', driver="strands"'
@@ -422,7 +454,7 @@ def _hardware_section(name: str, spec: dict, cov) -> str:  # noqa: ANN001
                 f"with its own `port` and `cameras`."
             )
         else:
-            wiring = "`port=` is the serial device, `cameras=` the lerobot camera dict."
+            wiring = f"{_lerobot_wiring(cov.lerobot_type)[1]}, `cameras=` the lerobot camera dict."
         out.append(
             f'**lerobot.** `Robot("{name}", mode="real")` builds lerobot\'s `{cov.lerobot_type}` '
             f"with `pip install 'strands-robots[lerobot]'`; {wiring}{default}{source}"
@@ -618,14 +650,12 @@ def card(name: str, prefix: str) -> str:
         if thumb
         else '<span class="sr-robot-nothumb">no simulation asset</span>'
     )
-    joints = spec.get("joints")
     badges = ""
     if entry.get("sim"):
         badges += '<span class="sr-chip sr-chip-sim">sim</span>'
     if cov.real:
         badges += '<span class="sr-chip sr-chip-real">real</span>'
-    if isinstance(joints, int):
-        badges += f'<span class="sr-chip">{joints} joints</span>'
+    badges += _joints_chip(spec.get("joints"))
     aliases = spec.get("aliases") or []
     alias_html = (
         '<p class="sr-robot-aliases">' + " ".join(f"<code>{html.escape(a)}</code>" for a in aliases[:4]) + "</p>"
