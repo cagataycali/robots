@@ -47,6 +47,7 @@ from typing import Any
 from strands import tool
 from strands.types.tools import ToolContext
 
+from strands_robots._command_gate import BYPASS_CONSENT_ENV
 from strands_robots._hitl_audit import log_operator_response
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.core import _reports_failure_to_stop, mesh_disabled_by_env
@@ -184,6 +185,25 @@ def _resolve_interrupt_actions() -> frozenset[str]:
     with the default (which would mask the operator's misconfiguration).
     """
     return _parse_interrupt_actions(os.getenv("STRANDS_MESH_HITL_ACTIONS", ""))
+
+
+def _headless_remedy(action: str, interrupt_actions: frozenset[str]) -> str:
+    """What pre-approves *action* when no operator can be asked.
+
+    The shared gate, :func:`~strands_robots._command_gate.gate_motion`, names
+    the allowlist variable and value that pre-approve a refused call; this
+    tool's gate is selected by ``STRANDS_MESH_HITL_ACTIONS`` instead (the set
+    of actions that still ask), so the value that pre-approves one action is
+    the current set without it, or ``none`` when it was the last one. Named
+    here so a headless refusal says what to set, the way ``agents.md``
+    promises for every gate (GH #4156).
+    """
+    remaining = ",".join(sorted(interrupt_actions - {action})) or "none"
+    return (
+        f"To pre-approve '{action}' in this process set STRANDS_MESH_HITL_ACTIONS={remaining} "
+        f"(the actions that still ask an operator), or {BYPASS_CONSENT_ENV}=true to skip every "
+        f"operator gate, logged as a WARNING."
+    )
 
 
 @functools.lru_cache(maxsize=1)
@@ -1452,12 +1472,28 @@ def robot_mesh(
     # outside the LLM's tool-argument flow, so an injected prompt cannot
     # smuggle approval. Which actions are gated is operator-configurable
     # (see _resolve_interrupt_actions).
-    if action in interrupt_actions:
+    gated = action in interrupt_actions
+    if gated and os.environ.get(BYPASS_CONSENT_ENV, "").lower() == "true":
+        # The same second step as the shared gate: the operator who set this
+        # variable accepted unattended actuation for the whole process, so the
+        # interrupt is skipped, said at WARNING and recorded (GH #4156). The
+        # action then takes the ungated path below, so the rate limit still
+        # holds; nothing else is skipped.
+        logger.warning(
+            "[robot_mesh] %s=true: allowing gated action %r to %r without an operator interrupt",
+            BYPASS_CONSENT_ENV,
+            action,
+            target or "*ALL_PEERS*",
+        )
+        _audit_tool_action(action, target, True, f"{BYPASS_CONSENT_ENV}=true: interrupt skipped")
+        gated = False
+    if gated:
         if tool_context is None:
             _audit_tool_action(action, target, False, "interrupt unavailable: no tool_context")
             return _err(
                 f"action '{action}' requires a human-in-the-loop interrupt, "
-                "but no tool_context is available in this calling context."
+                "but no tool_context is available in this calling context. "
+                + _headless_remedy(action, interrupt_actions)
             )
         # Fleet-wide actions reach every peer; single-target actions hit
         # one peer. Surface the right scope so the operator's confirmation
@@ -1507,7 +1543,8 @@ def robot_mesh(
             # immediate "interrupt unavailable" error.
             _audit_tool_action(action, target, False, f"interrupt unavailable: {exc}")
             return _err(
-                f"action '{action}' requires a human-in-the-loop interrupt. Interrupts are not available here: {exc}"
+                f"action '{action}' requires a human-in-the-loop interrupt. Interrupts are not available here: {exc}. "
+                + _headless_remedy(action, interrupt_actions)
             )
 
         approved = _interrupt_approves(response)

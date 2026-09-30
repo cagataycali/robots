@@ -48,11 +48,11 @@ print(sorted(agent.tool_names))            # ['pose_tool', 'robot_mesh', 'so101_
 Every rollout and every ROS, serial, pose and Unitree command goes through `strands_robots._command_gate.gate_motion` (native `move_to` is today's one exception), deciding in order:
 
 1. The tool's allowlist variable names the command: allow silently.
-2. `BYPASS_TOOL_CONSENT=true`: allow, and log a WARNING.
-3. No `tool_context` (outside an agent, or the host cannot interrupt): refuse, naming the variable and value that pre-approve it.
+2. `BYPASS_TOOL_CONSENT=true`: allow, logging a WARNING.
+3. No `tool_context` (outside an agent, or the host cannot interrupt): refuse, naming the variable and value pre-approving the call.
 4. Otherwise raise a Strands interrupt named `<tool>-command-approval`. The operator answers out of band: `y`, `yes`, `approve` or `approved` proceeds, anything else declines; the model never sees the reply.
 
-Reading and stopping are never gated.
+Reading is never gated; `robot_mesh` gates `stop`.
 
 | caller | gated verbs | allowlist variable |
 |---|---|---|
