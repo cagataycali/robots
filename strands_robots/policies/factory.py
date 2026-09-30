@@ -136,6 +136,43 @@ class UntrustedRemoteCodeError(RuntimeError):
         self.subject = subject
 
 
+def construction_failure_keeps_its_raise(exc: BaseException) -> bool:
+    """Whether a raise out of a provider constructor must travel on as an exception.
+
+    Every rollout surface that builds a policy for a caller (the simulation's
+    ``run_policy`` / ``eval_policy`` / ``evaluate_benchmark``, the ``run_policy``
+    agent tool) answers a refused configuration as a ``status=error`` envelope,
+    and a constructor is the last judge of its configuration: a checkpoint id
+    that is not on the Hub (``FileNotFoundError``), a server nobody listens on
+    (``ConnectionError``), a checkpoint directory without its ONNX
+    (``RuntimeError``), a port outside 1-65535 (``ValueError``), a keyword the
+    constructor does not bind (``TypeError``). Each of those is this
+    configuration's verdict and belongs in the envelope.
+
+    Two raises do not. Both name their remedy already and hold for every call
+    on this process rather than for this configuration, so turning them into an
+    error string a caller may retry past would hide a decision the process
+    needs to make once:
+
+    * the remote-code gate, :class:`UntrustedRemoteCodeError` (a security
+      decision, not a configuration one);
+    * a missing optional dependency: an ``ImportError``, or a provider's own
+      error wrapping one as its cause (``raise RuntimeError(...) from e``, the
+      shape the ``wbc`` provider uses when ``onnxruntime`` is absent).
+
+    Args:
+        exc: The exception the constructor raised.
+
+    Returns:
+        ``True`` when the caller must re-raise ``exc``; ``False`` when it is a
+        refusal of this configuration and belongs in the caller's envelope.
+    """
+    if isinstance(exc, UntrustedRemoteCodeError | ImportError):
+        return True
+    cause = exc.__cause__
+    return isinstance(cause, ImportError)
+
+
 # Providers whose HuggingFace model loading path calls ``trust_remote_code=True``.
 # Any provider that downloads and executes code from a model repository
 # **must** be listed here so users are forced to explicitly opt in.

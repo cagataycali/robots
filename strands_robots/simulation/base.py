@@ -1460,6 +1460,16 @@ class SimEngine(ABC):
         an exception where a sibling mistake (an unknown robot, no world, a
         busy robot) gets a result it can act on.
 
+        The envelope used to cover ``TypeError`` and ``ValueError`` only, so a
+        constructor's other verdicts still escaped as raises: a
+        ``lerobot_local`` checkpoint id that is not on the Hub
+        (``FileNotFoundError``), a ``remote`` server nobody listens on
+        (``ConnectionError``), an ``rl`` checkpoint directory without its
+        ``policy_meta.json`` (``FileNotFoundError``), a ``wbc`` directory
+        without its ONNX (``RuntimeError``). The boundary is now
+        :func:`~strands_robots.policies.construction_failure_keeps_its_raise`,
+        one rule for every surface that builds a policy for a caller.
+
         Args:
             entry: The public method being served, quoted in the report.
             policy_provider: As passed to the entry point.
@@ -1468,16 +1478,23 @@ class SimEngine(ABC):
         Returns:
             The policy when construction succeeds, or the ``status=error``
             envelope when the constructor refused - the constructor's own
-            text, prefixed with the entry and provider. A missing optional
-            dependency and the trust-remote-code gate keep their own raise:
-            each names its remedy already, and both hold for every call on
-            this process, not for this configuration.
+            text, prefixed with the entry and provider and followed by the
+            configuration it judged, so the checkpoint id or address the
+            verdict is about is named even when the constructor's text does
+            not repeat it. A missing optional dependency and the
+            trust-remote-code gate keep their own raise: each names its
+            remedy already, and both hold for every call on this process,
+            not for this configuration.
         """
-        from strands_robots.policies import create_policy
+        from strands_robots.policies import construction_failure_keeps_its_raise, create_policy
 
+        config = policy_config or {}
         try:
-            return create_policy(policy_provider, **(policy_config or {}))
-        except (TypeError, ValueError) as exc:
+            return create_policy(policy_provider, **config)
+        except Exception as exc:  # noqa: BLE001 - the shared rule below decides what travels on
+            if construction_failure_keeps_its_raise(exc):
+                raise
+            judged = ", ".join(f"{key}={refusal_repr(value)}" for key, value in config.items())
             return {
                 "status": "error",
                 "content": [
@@ -1485,6 +1502,7 @@ class SimEngine(ABC):
                         "text": (
                             f"{entry}: policy provider {policy_provider!r} refused its configuration, "
                             f"so no rollout was started. {exc}"
+                            + (f" Configuration judged: {judged}." if judged else "")
                         )
                     }
                 ],
