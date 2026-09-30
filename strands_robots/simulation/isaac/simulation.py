@@ -2471,13 +2471,17 @@ class IsaacSimulation(
                     # ``get_observation`` degrades to its documented
                     # silent-empty mode (#1895).
                     self._revive_articulations_after_reset()
-                self._restore_spawn_poses()
 
                 # ``world.reset()`` rebuilds the PhysX tensor view, which is what
                 # makes a body added or deleted since the last reset simulate at
                 # all. Cleared here rather than at the top so a reset that failed
                 # to reach this point leaves the scene marked stale.
                 self._physics_view_stale = False
+                # After the flag, not before: the view above is genuinely fresh,
+                # and ``_restore_spawn_poses`` skips its writes while the flag is
+                # set. Restoring first silently left a keyframe-spawned robot's
+                # drive targets at zero on the first reset after an add_object.
+                self._restore_spawn_poses()
 
                 # reset() clears every latched wrench, matching the MuJoCo
                 # contract ("reset() clears every latched wrench in the world").
