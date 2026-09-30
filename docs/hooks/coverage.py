@@ -7,7 +7,8 @@ written for that body.
 
 Every cell is witnessed by a file at this commit, never typed:
 
-* the robot registry, ``strands_robots/registry/robots.json``;
+* the robot registry, ``strands_robots/registry/robots.json`` and the
+  ``robot_descriptions`` URDF tail in ``urdf_robots.json`` (see ``registry_view.py``);
 * the native drivers, from the ``_SHIPPED_DRIVERS`` table in
   ``strands_robots/drivers/__init__.py`` and the ``SUPPORTED_ROBOTS`` tuple each
   driver module declares (the same join ``list_driver_coverage`` makes);
@@ -25,9 +26,11 @@ from __future__ import annotations
 
 import ast
 import collections
+import importlib.util
 import json
 import logging
 import re
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -104,8 +107,8 @@ def _literal(path: Path, name: str) -> object:
 
 @lru_cache(maxsize=1)
 def registry() -> dict[str, dict]:
-    """The robot registry, read once per build."""
-    return json.loads((_PKG / "registry" / "robots.json").read_text(encoding="utf-8"))["robots"]
+    """The robot registry, read once per build: ``robots.json`` plus the URDF tail."""
+    return dict(_registry_view().merged())
 
 
 @lru_cache(maxsize=1)
@@ -257,3 +260,16 @@ if __name__ == "__main__":
     problems = check_witnesses()
     print(render())
     print("\n".join(f"STALE {p}" for p in problems) or "witnesses ok")
+
+
+def _registry_view():  # noqa: ANN202 - a sibling hook module, loaded by path like the others
+    """``docs/hooks/registry_view.py``: robots.json merged with the URDF long tail."""
+    name = "docs_hooks_registry_view"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "registry_view.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
