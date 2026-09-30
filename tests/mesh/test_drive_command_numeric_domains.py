@@ -180,7 +180,7 @@ def test_every_bridge_refuses_an_unusable_publish_rate_at_construction(value: An
     for label, _module, _symbol, ctor, _fields in _TRANSPORTS:
         expected = positive_finite_number_error(value, "publish_rate", "")
         assert expected is not None, "probe value must be outside the domain"
-        with pytest.raises(ValueError, match="publish_rate must be > 0"):
+        with pytest.raises(ValueError, match="publish_rate must be a positive finite number"):
             ctor(publish_rate=value)
 
 
@@ -249,7 +249,7 @@ def test_an_unusable_velocity_or_horizon_limit_is_refused_at_construction(limit:
     ``max_linear=True`` would otherwise install a silent 1.0 m/s clamp on a
     rover configured for 2.0, quietly halving every command that exceeds it.
     """
-    with pytest.raises(ValueError, match=f"{limit} must be > 0"):
+    with pytest.raises(ValueError, match=f"{limit} must be a positive finite number"):
         rosbridge_mod.RosbridgeRobot("rover", "/cmd_vel", "/odom", **{limit: value})
 
 
