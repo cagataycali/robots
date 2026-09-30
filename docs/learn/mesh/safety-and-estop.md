@@ -51,6 +51,7 @@ While engaged, a peer answers only `status`, `resume` and `stop`; `stop` stays a
 
 ```mermaid
 stateDiagram-v2
+    direction LR
     [*] --> armed
     armed --> latched: e-stop, issued or heard
     latched --> latched: other commands refused, audited

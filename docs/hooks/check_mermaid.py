@@ -27,6 +27,7 @@ ACCENT_CLASS = "\nclassDef accent fill:rgba(2,164,53,0.12),stroke:#007a3d,color:
 
 
 def cdn_script() -> str:
+    """The mermaid@10 script mkdocs.yml loads, so the check renders with the site's own build."""
     match = re.search(r"(https://\S+mermaid@10/dist/mermaid\.min\.js)", MKDOCS.read_text(encoding="utf-8"))
     if not match:
         raise SystemExit("mkdocs.yml names no mermaid@10 CDN script")
@@ -34,6 +35,7 @@ def cdn_script() -> str:
 
 
 def fences(only: list[str]) -> list[tuple[str, int, str]]:
+    """Every mermaid fence as (page, index, source), over *only* or the whole docs/ tree."""
     rows: list[tuple[str, int, str]] = []
     pages = [DOCS / p for p in only] if only else sorted(p for p in DOCS.rglob("*.md") if "hooks" not in p.parts)
     for page in pages:
@@ -43,6 +45,7 @@ def fences(only: list[str]) -> list[tuple[str, int, str]]:
 
 
 def render_all(rows: list[tuple[str, int, str]]) -> list[str]:
+    """Render every row in one headless Chromium; return one line per fence that did not draw."""
     from playwright.sync_api import sync_playwright
 
     problems: list[str] = []
@@ -71,6 +74,7 @@ def render_all(rows: list[tuple[str, int, str]]) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    """Render the fences named on the command line (or all of them); exit 1 on any red row."""
     rows = fences(argv)
     if not rows:
         print("no mermaid fences under docs/")

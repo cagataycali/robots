@@ -118,6 +118,7 @@
 .md-typeset .sr-mermaid svg :is(.edgePath path, .messageLine0, .messageLine1, .transition, .actor-line) { stroke-width: 1.5px !important; }
 .md-typeset .sr-mermaid svg :is(marker path, .arrowheadPath, .marker) { fill: var(--sr-fg) !important; stroke: var(--sr-fg) !important; }
 .md-typeset .sr-mermaid svg .messageLine1 { stroke-dasharray: 3 5; }
+.md-typeset .sr-mermaid svg .edgeLabel rect { fill: var(--md-default-bg-color); stroke: none; } /* sized by mermaid.js so a label never reads through its wire */
 
 /* Header: one row. Wordmark out to strandsagents.com, /robots home, the sections inline, then search, GitHub stars, Discord, theme. */
 .md-header { background: var(--md-default-bg-color); color: var(--sr-fg); box-shadow: none; border-bottom: 1px solid var(--md-default-fg-color--lightest); }

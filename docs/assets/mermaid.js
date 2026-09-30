@@ -39,6 +39,20 @@
     return "\nclassDef accent fill:" + soft + ",stroke:" + accent + ",color:" + accent + ",stroke-width:1.5px\n";
   }
 
+  function backLabels(holder) {
+    /* State and flow edge labels come with an unsized rect behind the text; size it so the label sits on the page, not on its wire. */
+    holder.querySelectorAll(".edgeLabel .label").forEach(function (g) {
+      var text = g.querySelector("text"), rect = g.querySelector("rect");
+      if (!text || !rect) return;
+      var box = text.getBBox();
+      if (!box.width) return;
+      rect.setAttribute("x", box.x - 4); rect.setAttribute("y", box.y - 1);
+      rect.setAttribute("width", box.width + 8); rect.setAttribute("height", box.height + 2);
+      rect.style.opacity = "1";
+    });
+    holder.querySelectorAll("g.edgeLabels").forEach(function (g) { g.parentNode.appendChild(g); }); /* labels above their wires */
+  }
+
   function holders() {
     /* First pass: each fence becomes a holder that keeps its source so a palette toggle can re-render it. */
     document.querySelectorAll("pre.sr-diagram").forEach(function (pre) {
@@ -64,6 +78,7 @@
       var withAccent = /^\s*(flowchart|graph|stateDiagram(-v2)?)\b/.test(src) ? src + accentClass() : src;
       mermaid.render(id, withAccent).then(function (out) {
         holder.innerHTML = out.svg;
+        backLabels(holder);
         holder.setAttribute("data-rendered", "true");
         if (out.bindFunctions) out.bindFunctions(holder);
       }).catch(function (err) {
