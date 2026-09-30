@@ -1,8 +1,12 @@
+---
+description: Every mesh topic by its exact key, how often each is published, which ones the bridge sends to the cloud.
+---
+
 # Topics
 
-At the end of this page you can read any mesh topic by its exact key, know how often each one is published and which environment variable changes that, and know which topics the bridge sends to the cloud.
+At the end of this page you can read any mesh topic by its exact key, know how often each is published and which environment variable changes that, and which topics the bridge sends cloudward.
 
-Keys are `strands/...` by default; `STRANDS_MESH_NAMESPACE` changes the prefix for a whole fleet, and two fleets with different prefixes cannot exchange a message. Keys are written in the source where each publisher lives (`mesh/core.py`, `mesh/sensors.py`, `mesh/input.py`), so this table is hand-checked against those files at this commit rather than generated.
+Keys are `strands/...` by default; `STRANDS_MESH_NAMESPACE` changes the prefix for a whole fleet, and two fleets with different prefixes cannot exchange messages. Keys are written where each publisher lives (`mesh/core.py`, `mesh/sensors.py`, `mesh/input.py`); this table is hand-checked against those files at this commit, not generated.
 
 ```python title="sketch"
 a.mesh.subscribe("strands/arm-b/imu", lambda key, payload: print(payload), name="imu")
@@ -28,7 +32,7 @@ a.mesh.subscribe("strands/*/state", lambda key, payload: print(key, payload["joi
 | `strands/{peer}/input/{device}` | the device's rate, capped at 100 Hz | `STRANDS_MESH_INPUT_MAX_HZ`; receivers refuse a value over `STRANDS_MESH_INPUT_VALUE_ABS` (720) or a step over `STRANDS_MESH_INPUT_SLEW_ABS` | teleoperation frames from `teleoperate(publish=True)` |
 | `strands/{peer}/safety/event` | on event | fixed | this peer's own e-stop and resume events |
 
-A sensor topic exists only when the robot exposes the attribute behind it (`_pose`, `_imu`, `_battery`, `_lidar_state`, ...). A driver without an IMU publishes no `imu` key. Every `*_HZ` variable is parsed the same way: a value that is not a positive finite number is reported once and the default stands.
+A sensor topic exists only when the robot exposes the attribute behind it (`_pose`, `_imu`, `_battery`, `_lidar_state`, ...): a driver without an IMU publishes no `imu`. Every `*_HZ` variable is parsed alike: a value that is not a positive finite number is reported once; the default stands.
 
 ## Command topics
 
@@ -49,7 +53,7 @@ Both are capped at 2 Hz and 4 KiB per message (`STRANDS_MESH_SAFETY_RATE_HZ`, `S
 
 ## What crosses the bridge
 
-Under `STRANDS_MESH_BACKEND=bridge` a topic goes to MQTT only if its suffix is in `STRANDS_MESH_BRIDGE_TOPICS`. The default set is `presence`, `health`, `cmd`, `response`, `broadcast`, `safety/event`, `safety/estop`, `safety/resume`; `state`, `pose`, `imu`, `odom`, `camera`, `input`, `hand` and `stream` stay on the LAN. MQTT wildcards map `*` to `+` and `**` to `#`; the keys themselves are unchanged. See [bridges](bridges.md).
+Under `STRANDS_MESH_BACKEND=bridge` a topic goes to MQTT only if its suffix is in `STRANDS_MESH_BRIDGE_TOPICS`; [bridges](bridges.md#what-the-bridge-forwards) lists the default set. MQTT wildcards map `*` to `+` and `**` to `#`; the keys themselves are unchanged.
 
 ## ACL matching
 

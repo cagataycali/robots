@@ -38,6 +38,7 @@ from typing import Any
 import pytest
 
 from strands_robots.simulation.base import SimEngine
+from tests._package_ast import parse_file
 
 _EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
@@ -121,7 +122,7 @@ def _graded_examples() -> list[tuple[Path, float, set[Any]]]:
     """``(path, declared fps, capture rates)`` per example that records."""
     graded: list[tuple[Path, float, set[Any]]] = []
     for path in sorted(_EXAMPLES.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         recordings, rollouts, opened_at = [], [], []
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):

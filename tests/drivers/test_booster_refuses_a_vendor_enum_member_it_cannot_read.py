@@ -55,6 +55,7 @@ from strands_robots.drivers.booster import (
     declared_members,
     resolve_vendor_member,
 )
+from tests._package_ast import parse_file
 
 _WIDTH = len(BOOSTER_JOINT_INDEX)
 
@@ -351,7 +352,7 @@ class TestNoVendorLookupIsLeftUnguarded:
         offenders = {}
         root = pathlib.Path(strands_robots.__file__).parent
         for path in sorted(root.rglob("*.py")):
-            lookups = self._unguarded_lookups(ast.parse(path.read_text(encoding="utf-8")))
+            lookups = self._unguarded_lookups(parse_file(path))
             if lookups:
                 offenders[str(path.relative_to(root))] = lookups
 

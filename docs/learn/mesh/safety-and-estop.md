@@ -1,3 +1,7 @@
+---
+description: What emergency_stop() does to every robot it reaches, why the fleet stays stopped, and what a resume must prove.
+---
+
 # Safety and e-stop
 
 At the end of this page you know what one `emergency_stop()` does to every robot it can reach, why a stopped fleet stays stopped until an operator with the override code says otherwise, what a resume must prove, and where every one of those events is written down.
@@ -40,7 +44,7 @@ A resume is second-factor gated. `STRANDS_MESH_OVERRIDE_CODE` (at least 16 chara
 [safety:arm-a] No emergency-stop resume code set. If any peer broadcasts an e-stop, this robot stays locked until you physically restart it (one message can freeze the whole fleet).
 ```
 
-`{"action": "resume", "override_code": ...}` on one peer compares the code in constant time, throttles after `STRANDS_MESH_RESUME_MAX_FAILS` (default 5) failures for `STRANDS_MESH_RESUME_BACKOFF_S` (default 30 s), and answers one of two shapes: `{"status": "ok"}` or `{"status": "error", "error": "resume rejected"}`. "Lockout not engaged", "code unconfigured" and "wrong code" all get the generic shape on the wire; the structured reason goes to the local audit log only, so a prober learns nothing about the fleet's state.
+`{"action": "resume", "override_code": ...}` on one peer compares the code in constant time, throttles after `STRANDS_MESH_RESUME_MAX_FAILS` (default 5) failures for `STRANDS_MESH_RESUME_BACKOFF_S` (default 30 s), and answers one of two shapes: `{"status": "ok"}` or `{"status": "error", "error": "resume rejected"}`. "Lockout not engaged", "code unconfigured" and "wrong code" get the generic shape on the wire; the structured reason goes to the local audit log only, so a prober learns nothing about the fleet's state.
 
 A receiver refuses a resume older than `STRANDS_MESH_RESUME_FRESHNESS_S` (default 60 s; a receiver whose clock is ahead of the operator trips it) and one more than `STRANDS_MESH_RESUME_FORWARD_SKEW_S` (default 5 s, the tight one) in its future, which a receiver behind the operator trips.
 
