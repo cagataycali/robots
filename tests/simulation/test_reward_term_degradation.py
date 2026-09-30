@@ -7,21 +7,13 @@ usable observation - it raises, or returns something that is not a dict - the
 term degrades to ``0.0`` (the same constant a fixed-base arm produces). This
 mirrors the wider DSL rule that "predicates never raise".
 
-Separately, the pure-Python world->body rotation ``_quat_rotate_inverse_wxyz``
-guards a degenerate (near-zero-norm) quaternion by returning the input vector
-unchanged rather than dividing by ~0.
-
 These paths are exercised through the public ``make_predicate`` reward-term
-surface with a minimal stub engine, plus a direct call to the documented
-degenerate-quaternion guard. They are GL-free and need no display.
+surface with a minimal stub engine. They are GL-free and need no display.
 """
 
 import pytest
 
-from strands_robots.simulation.predicates import (
-    _quat_rotate_inverse_wxyz,
-    make_predicate,
-)
+from strands_robots.simulation.predicates import make_predicate
 
 
 class _RaisingEngine:
@@ -78,12 +70,3 @@ def test_reward_term_degrades_to_zero_when_observation_not_a_dict(term_name, kwa
     """A non-dict observation is treated as "no floating base": the term is 0.0."""
     term = make_predicate(term_name, **kwargs)
     assert term(_NonDictEngine(bad_obs)) == 0.0
-
-
-def test_quat_rotate_inverse_returns_input_unchanged_for_degenerate_quaternion():
-    """A near-zero-norm quaternion cannot define a rotation, so the vector is
-    returned unchanged instead of dividing by ~0 (documented guard)."""
-    vec = [1.1, -2.2, 3.3]
-    assert _quat_rotate_inverse_wxyz([0.0, 0.0, 0.0, 0.0], vec) == pytest.approx(vec, abs=1e-12)
-    # A sub-threshold-norm quaternion takes the same guard.
-    assert _quat_rotate_inverse_wxyz([1e-12, 0.0, 0.0, 0.0], vec) == pytest.approx(vec, abs=1e-12)

@@ -50,6 +50,7 @@ from strands_robots.simulation.isaac.motion_primitives import IsaacMotionPrimiti
 from strands_robots.simulation.isaac.randomization import IsaacRandomizationMixin
 from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
 from strands_robots.simulation.models import registered, registry_entry
+from strands_robots.simulation.predicates import _quat_rotate_inverse_wxyz
 from strands_robots.simulation.recording import RecordedFrame
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
@@ -125,32 +126,6 @@ def _vertical_fov_lens_mm(
     vertical_aperture_mm = horizontal_aperture_mm * float(height) / float(width)
     focal_length_mm = vertical_aperture_mm / (2.0 * math.tan(math.radians(fov_deg) / 2.0))
     return vertical_aperture_mm, focal_length_mm
-
-
-def _world_to_body_frame(quat_wxyz: Any, vec: Any) -> list[float]:
-    """Express a WORLD-frame 3-vector in the body frame given a (w,x,y,z) quaternion.
-
-    ``R(q)^T @ vec``. Used for ``base_ang_vel``, which this schema reports in the
-    BODY frame - the IMU-gyro convention a locomotion policy is trained against -
-    while Isaac's ``get_angular_velocity()`` returns the WORLD frame. ``base_pos``
-    and ``base_lin_vel`` stay world-frame on all three backends and are not routed
-    through here.
-
-    Equivalent to the Newton backend's ``_quat_rotate_inverse_wxyz``, where the
-    convention is documented; verified equal to 1.3e-15 over 400 random
-    (quaternion, vector) pairs. Kept as a separate implementation rather than an
-    import because importing the Newton backend would pull ``warp`` into Isaac's
-    import path.
-
-    A ~zero-norm quaternion returns ``vec`` unchanged, matching Newton: an
-    unreadable orientation is not grounds for scaling a real velocity by garbage,
-    and the caller already has ``base_quat`` to see it with.
-    """
-    q = np.asarray(quat_wxyz, dtype=np.float64)
-    if float(np.linalg.norm(q)) < 1e-8:
-        return [float(v) for v in np.asarray(vec, dtype=np.float64)]
-    rotated = _quat_wxyz_to_rotmat(q).T @ np.asarray(vec, dtype=np.float64)
-    return [float(v) for v in rotated]
 
 
 def _quat_wxyz_to_rotmat(quat: np.ndarray) -> np.ndarray:
@@ -5352,14 +5327,9 @@ class IsaacSimulation(
                         # and the error grows only as it turns - which is exactly
                         # when a locomotion policy is relying on it.
                         #
-                        # Expressed with this module's own quaternion primitive:
-                        # body-frame is R(q)^T @ v, and _world_to_body_frame wraps
-                        # that. Verified equal to the Newton backend's
-                        # _quat_rotate_inverse_wxyz to 1.3e-15 over 400 random
-                        # (quaternion, vector) pairs, so the two backends agree
-                        # numerically without Isaac importing Newton - which would
-                        # drag warp into this import path.
-                        obs["base_ang_vel"] = _world_to_body_frame(quat_wxyz, [float(v) for v in ang_vel])
+                        # Body-frame is R(q)^T @ v, through the one rotation
+                        # the Newton backend and the reward DSL also use.
+                        obs["base_ang_vel"] = _quat_rotate_inverse_wxyz(quat_wxyz, [float(v) for v in ang_vel])
 
             # Camera frames keyed by camera name (RGB HxWx3 uint8), so callers
             # (e.g. the SO-101 collector / Gradio render) get images the same way
