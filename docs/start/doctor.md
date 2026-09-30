@@ -1,6 +1,10 @@
+---
+description: Read a strands-robots doctor report row by row: what each check probed and what to change when it is not PASS.
+---
+
 # Doctor
 
-At the end of this page you can read a `strands-robots doctor` report line by line and know, for each row, what was probed and what to change when it is not `PASS`.
+At the end of this page you can read a `strands-robots doctor` report and know, for each row, what was probed and what to change when it is not `PASS`.
 
 ```bash
 strands-robots doctor
@@ -43,7 +47,7 @@ strands-robots doctor
 All checks passed. Ready to use strands-robots.
 ```
 
-Four verdicts. A `FAIL` line carries a `Fix:` line under it and alone makes the exit code 1, which is what makes the command usable in CI. `WARN` means the package works but a path is narrowed, and says which. `SKIP` means the probe does not apply on this host or its extra is not installed.
+A `FAIL` line carries a `Fix:` line under it and alone makes the exit code 1, so CI can gate on it. `WARN`: the package works, but one named path is narrowed. `SKIP`: the probe does not apply here, or its extra is missing.
 
 ## The probes
 
@@ -66,9 +70,9 @@ Four verdicts. A `FAIL` line carries a `Fix:` line under it and alone makes the 
 | IoT Direct | `STRANDS_MESH_BACKEND=iot` or `bridge` only: one HTTPS `SendDirectMessage` to this identity's own reply topic | `SKIP` otherwise or with `STRANDS_MESH_IOT_DIRECT=0`; `FAIL` when the grant, thing name, endpoint or credential is missing; `WARN` on a transient error |
 | Sim Test | `Robot("so100")` builds in sim and returns an observation | `FAIL` with the exception, pointing at `MUJOCO_GL` and the MuJoCo install |
 
-A failed `pip install 'strands-robots[ros2]'` on a Jetson is not a doctor row; it is the aarch64 build, see [ROS 2](../learn/ros2.md#linux-aarch64-jetson).
+A failed `[ros2]` install on a Jetson is the aarch64 build, not a doctor row: see [ROS 2](../learn/ros2.md#linux-aarch64-jetson).
 
-The `Mesh` row is the one people meet first: a bare `Robot("so101")` never starts a mesh, so the warning costs nothing until you pass `mesh=True`; [Fleet](../learn/mesh/fleet.md) explains the three postures it lists.
+A bare `Robot("so101")` never starts a mesh, so the `Mesh` warning costs nothing until you pass `mesh=True`; [Fleet](../learn/mesh/fleet.md) explains the three postures it lists.
 
 ## When a fence on these pages fails
 
