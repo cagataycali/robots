@@ -4,22 +4,22 @@ description: lerobot_local runs any LeRobot checkpoint in process. Install extra
 
 # lerobot_local
 
-By the end of this page you can run a HuggingFace LeRobot checkpoint (ACT, diffusion, pi0, SmolVLA, GR00T N1.7, MolmoAct2) on a simulated or real arm in this process, and know the two naming rules deciding whether the model sees your cameras and joints.
+By the end of this page you can run a HuggingFace LeRobot checkpoint (ACT, diffusion, pi0, SmolVLA, GR00T N1.7, MolmoAct2, each behind an extra below) on a simulated or real arm in this process, and know the two naming rules deciding whether the model sees your cameras and joints.
 
 ```bash
 pip install 'strands-robots[lerobot]'          # lerobot[feetech,dataset] + psutil
 pip install 'strands-robots[smolvla]'          # adds lerobot[smolvla]
 pip install 'strands-robots[molmoact2]'        # adds lerobot[molmoact2]
 pip install 'strands-robots[groot]'            # adds lerobot[groot] (GR00T N1.7)
-pip install 'lerobot[diffusion]'               # diffusion: lerobot's own extra, none of ours installs it; pi0: lerobot[pi]
+pip install 'lerobot[diffusion]'               # diffusion: lerobot's own extra, not ours; pi0: lerobot[pi]
 export STRANDS_TRUST_REMOTE_CODE=1             # required: models load with trust_remote_code=True
 ```
 
 ## What it is
 
-`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works here unchanged. The processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations, unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the steps consumed during inference; the policy blends the next chunk onto the seam.
+`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works unchanged. The processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations, unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime reports its control rate and the steps consumed during inference; the policy blends the next chunk onto the seam.
 
-Build it by name or smart string; a HuggingFace id resolves here.
+Build it by name or smart string:
 
 ```python title="sketch"
 from strands_robots.policies import create_policy
@@ -32,9 +32,9 @@ policy = create_policy("robotfuel/act_so101_t16b", embodiment="so101")   # same 
 
 {{providers:kwargs:lerobot_local}}
 
-Inert normalization has a two-part remedy: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and the embodiment's `state_units` / `action_units` (`degrees` or `native`) say which frame they were recorded in; `native` is what the robot emits, radians in MuJoCo. `so100` and `so101` declare `degrees`. Neither is a constructor keyword; `create_policy` refuses them.
+Inert normalization has a two-part remedy: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and the embodiment's `state_units` / `action_units` (`degrees` or `native`) say which frame they were recorded in; `native` is what the robot emits, radians in MuJoCo. `so100` and `so101` declare `degrees`. Neither is a constructor keyword; `create_policy` refuses both.
 
-`pretrained_name_or_path` is required. `actions_per_step=1` becomes the trained `n_action_steps`; above 1 pins it. `cache_model=True` shares weights in-process (`clear_model_cache()`, `list_cached_models()`). Without `device=` it uses CUDA if present; checkpoint `torch.compile` stays off unless `compile_model=True`.
+`pretrained_name_or_path` is required. `actions_per_step=1` becomes the trained `n_action_steps`; above 1 pins it. `cache_model=True` shares weights in-process (`clear_model_cache()`, `list_cached_models()`). Without `device=` it uses CUDA if present; `torch.compile` stays off unless `compile_model=True`.
 
 ## Embodiments
 
@@ -44,7 +44,7 @@ An embodiment is a declared key map from what the robot emits to what the model 
 
 ## Rule 1: state keys
 
-Without `set_robot_state_keys`, the policy infers the state vector from the observation's insertion order of numeric scalars. The sim backends write `obs[joint]` then `obs[f"{joint}.vel"]`, so `strands_robots.policies._state_keys.drop_velocity_siblings` removes each `.vel` whose position companion is present, keeping one that has none (LeKiwi declares `x.vel`, `y.vel`, `theta.vel` as state). Every provider that infers an ordering shares this rule; an explicit `robot_state_keys` list is not filtered.
+Without `set_robot_state_keys`, the policy infers the state vector from the observation's insertion order of numeric scalars. The sim backends write `obs[joint]` then `obs[f"{joint}.vel"]`, so `strands_robots.policies._state_keys.drop_velocity_siblings` removes each `.vel` whose position companion is present, keeping one that has none (LeKiwi declares `x.vel`, `y.vel`, `theta.vel` as state). Every provider that infers an ordering shares this rule; an explicit `robot_state_keys` list is kept.
 
 ## Rule 2: camera names
 
@@ -54,7 +54,7 @@ Generated from `embodiments.json`:
 
 {{providers:cameras}}
 
-Two ways to satisfy the check:
+Two remedies:
 
 ```python title="sketch"
 # 1. Name the cameras as the embodiment expects.
