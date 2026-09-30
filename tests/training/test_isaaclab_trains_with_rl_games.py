@@ -57,7 +57,8 @@ def test_epochs_and_rewards_read_like_an_rsl_rl_run(run: Path) -> None:
 
 
 def test_the_newest_epoch_checkpoint_is_the_latest_model(run: Path) -> None:
-    assert Path(latest_model(str(run))).name == "last_Factory_ep_5_rew__49.78_.pth"
+    latest = latest_model(str(run))
+    assert latest is not None and Path(latest).name == "last_Factory_ep_5_rew__49.78_.pth"
 
 
 def test_the_job_id_names_the_run_with_its_start_time(fake_python, tmp_path: Path) -> None:  # noqa: F811
