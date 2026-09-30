@@ -276,7 +276,7 @@ class IsaacRandomizationMixin(ObservationNoiseMixin):
         return out
 
     def _randomize_colors(self, rng: Any, color_range: tuple[float, float], applied: dict[str, Any]) -> int:
-        from pxr import Gf, UsdGeom  # type: ignore[import-not-found]
+        from pxr import Gf, Sdf, UsdGeom, UsdShade  # type: ignore[import-not-found]
 
         lo, hi = float(color_range[0]), float(color_range[1])
         colors: dict[str, list[float]] = {}
@@ -290,9 +290,31 @@ class IsaacRandomizationMixin(ObservationNoiseMixin):
                 gprim = UsdGeom.Gprim(target)
                 if gprim:
                     gprim.CreateDisplayColorAttr().Set([Gf.Vec3f(*rgb)])
+            # But add_object(color=...) BINDS a visual material
+            # (/World/Looks/visual_material...), and a bound material wins over
+            # displayColor: the colour was reported and never rendered. So the
+            # object gets its own UsdPreviewSurface, bound stronger than its
+            # descendants, whose diffuseColor carries the sampled colour - its
+            # own, so recolouring one object cannot recolour another that shared
+            # the original material.
+            self._bind_randomized_color(prim, name, rgb, Gf, Sdf, UsdShade)
             colors[name] = rgb
         applied["colors"] = colors
         return len(colors)
+
+    @staticmethod
+    def _bind_randomized_color(prim: Any, name: str, rgb: list[float], Gf: Any, Sdf: Any, UsdShade: Any) -> None:  # noqa: N803 - pxr modules passed by caller
+        """Bind *prim* to its own preview-surface material whose diffuse colour is *rgb*."""
+        stage = prim.GetStage()
+        token = "".join(ch if ch.isalnum() else "_" for ch in name) or "object"
+        path = f"/World/Looks/strands_randomized_{token}"
+        material = UsdShade.Material.Define(stage, path)
+        shader = UsdShade.Shader.Define(stage, f"{path}/Shader")
+        shader.CreateIdAttr("UsdPreviewSurface")
+        shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*rgb))
+        shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.5)
+        material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
+        UsdShade.MaterialBindingAPI.Apply(prim).Bind(material, UsdShade.Tokens.strongerThanDescendants)
 
     def _randomize_lighting(self, rng: Any, color_range: tuple[float, float], applied: dict[str, Any]) -> int:
         import omni.usd  # type: ignore[import-not-found]
