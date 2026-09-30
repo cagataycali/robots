@@ -1138,6 +1138,43 @@ class WBCPolicy(Policy):
                 f"but huggingface_hub is not installed to download it. If you meant a local "
                 f"path, pass an existing directory or .onnx file.\n{e}"
             ) from e
+        # Preflight: list the repo's file tree via a metadata-only call BEFORE
+        # downloading a byte, and if it advertises the SONIC VLA inference stack
+        # (encoder/decoder/planner), refuse now instead of after ~2 GB of ONNX
+        # weights land in the HF cache. Same wording as _reject_sonic_stack_marker
+        # so the message is identical whether the mismatch is caught pre- or
+        # post-download (a symlinked cache tree can still route to the post
+        # check).  A metadata-only 404, a private repo, or any list_repo_files
+        # failure is not fatal here: fall through to snapshot_download so the
+        # existing "failed to download" error path names the actual cause.
+        try:
+            repo_files = hub.HfApi().list_repo_files(  # type: ignore[attr-defined]
+                repo_id=checkpoint
+            )
+        except Exception:  # noqa: BLE001 - preflight is best-effort
+            repo_files = None
+        if repo_files is not None:
+            onnx_names = {
+                Path(f).name for f in repo_files if f.endswith(".onnx")
+            }
+            sonic_found = onnx_names & _SONIC_INFERENCE_STACK_FILES
+            has_wbc_marker = (
+                _MAIN_POLICY_FILENAME in onnx_names
+                or _MAIN_POLICY_CANONICAL in onnx_names
+            )
+            if sonic_found and not has_wbc_marker:
+                raise RuntimeError(
+                    f"WBCPolicy checkpoint {checkpoint!r} is the SONIC VLA "
+                    f"inference stack (repo advertises {sorted(sonic_found)}), "
+                    "not the decoupled-WBC policy family. Refusing before "
+                    "download to save bandwidth (this repo is ~2 GB). "
+                    "WBCPolicy loads GR00T-WholeBodyControl-Balance.onnx (as "
+                    "policy.onnx) and GR00T-WholeBodyControl-Walk.onnx (as "
+                    "walk_policy.onnx) from the NVlabs/GR00T-WholeBodyControl "
+                    "git-LFS tree (decoupled_wbc/sim2mujoco/resources/robots/g1/policy/). "
+                    "The SONIC encoder/decoder/planner ONNX are a different "
+                    "runtime and are not loaded here."
+                )
         # Log BEFORE the network call so an unexpected download (e.g. a bare
         # an explicit org/repo checkpoint, or a mistyped local path that happens
         # to be org/repo-shaped) is visible, not silent.

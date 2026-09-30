@@ -34,7 +34,7 @@ Aliases: `g1`, `g1_wbc`, `real_g1_relative_eef_relative_joints`, `unitree_g1_ful
 
 | Checkpoint | Provider | Where | What happened |
 |---|---|---|---|
-| NVlabs GR00T-WholeBodyControl G1 (two ONNX files, local directory) (whole-body controller, SONIC) | `wbc` | sim, laptop CPU | 100 steps at 50 Hz in 2.0 s, 1.7 ms inference, the G1 walked 0.665 m and stayed upright (pelvis 0.793 to 0.747 m); drives 15 of 29 actuators by design, so partial_action_failure_rate reads 0.48 on a healthy rollout. A HuggingFace id is refused (#4161): pass the local directory. Source: interface sweep 2026-09-28 script sim-policies/06b and issue #4161 |
+| NVlabs GR00T-WholeBodyControl G1 (two ONNX files, local directory) (whole-body controller, SONIC) | `wbc` | sim, laptop CPU | 100 steps at 50 Hz in 2.0 s, 1.7 ms inference, the G1 walked 0.665 m and stayed upright (pelvis 0.793 to 0.747 m); drives 15 of 29 actuators by design, so partial_action_failure_rate reads 0.48 on a healthy rollout. A HuggingFace id whose file tree advertises the SONIC VLA inference stack (`model_encoder.onnx` / `model_decoder.onnx` / `planner_sonic.onnx`, e.g. `nvidia/GEAR-SONIC`) is refused pre-download (metadata-only `list_repo_files` check, no weights fetched); an id that ships `policy.onnx` or `GR00T-WholeBodyControl-Balance.onnx` is fetched via `huggingface_hub.snapshot_download` (~1 GB, cached after first use). See #4161 for the config-before-download bug. Source: interface sweep 2026-09-28 script sim-policies/06b and issues #4161 / #cagataycali-harness. |
 
 Providers written for this body: `wbc`, `wbc_gait`, `kimodo`, `protomotions`; the rest are in the [policy matrix](../learn/policies/index.md).
 
