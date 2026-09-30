@@ -8,7 +8,7 @@ matching ``scene_position.xml`` / ``scene_motor.xml``. The pack ships no
 ``scene.xml``.
 
 An entry naming the bare include still compiles, which is why this hid: the
-robot loads, renders, seats on the terrain and reports its 45 joints, so
+robot loads, renders, seats on the terrain and reports its 44 joints, so
 ``add_robot`` returns success and goes on to advertise ``run_policy`` on it. It
 merely has ``nu == 0``, so :meth:`robot_action_keys` is empty and every command
 is dropped for want of a driving actuator - a robot the catalog describes as a
@@ -128,10 +128,16 @@ class TestTheDeclaredDocumentsCarryTheAdvertisedActuators:
             f"as a raw force rather than held as a target (biastypes: {sorted(biastypes)})"
         )
 
-    def test_the_declared_joint_count_is_the_models_joint_total(self) -> None:
-        """``joints: 45`` counts every joint, driven or not, base included."""
-        _, model = _model(str(_entry()["asset"]["model_xml"]))
-        assert model.njnt == _entry()["joints"]
+    def test_the_declared_joint_count_is_every_joint_but_the_base(self) -> None:
+        """``joints: 44`` counts every joint, driven or not, except the free base.
+
+        The rule #4147 settled: the joints ``get_robot_state`` reports, which
+        carries a floating base as ``base`` rather than as a joint.
+        """
+        mujoco, model = _model(str(_entry()["asset"]["model_xml"]))
+        free = sum(1 for kind in model.jnt_type if int(kind) == int(mujoco.mjtJoint.mjJNT_FREE))
+        assert free == 1
+        assert model.njnt - free == _entry()["joints"]
 
     def test_only_the_base_and_the_passive_gripper_linkage_go_undriven(self) -> None:
         """Every other joint has an actuator, so the 32 cover the whole robot.

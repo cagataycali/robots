@@ -8,20 +8,14 @@ the ``asset`` block - and two discovery surfaces report them verbatim
 :func:`~strands_robots.registry.list_robots` prints ``joints`` in the ``Joints``
 column an agent reads to size an action vector).
 
-``joints`` is 15, not 14, because the registry counts MuJoCo's ``njnt`` - the
-floating base included. ``docs/robots/arms.md`` states that convention ("Joint
-counts include any free joints"); ``asimov_v0`` declares 15 for the same
-one-free-plus-fourteen-hinge shape; and of the sixteen humanoids whose asset
-compiles, twelve declare their ``njnt`` and none declares its actuator count.
-The *hardware* figure - fourteen XL330 servos - is what the description carries,
-matching ``op3`` (21 against "20-DOF") and ``unitree_h1`` (20 against "19-DOF").
-
-What ``joints`` means registry-wide is deliberately unsettled - see
-``tests/registry/test_asset_family_joint_counts.py``, which grades only in-family
-agreement because 22 of the 50 compilable entries declare a figure that is
-neither their ``njnt`` nor their movable-joint count. Microduck has no
-same-model sibling, so that guard says nothing about it; this file states the
-convention the entry was written against so the figure is not a bare number.
+``joints`` is 14: the joints ``get_robot_state`` reports, which is every joint
+of the loaded model except the floating base (reported as ``base``). That is the
+registry-wide rule issue #4147 settled; ``scripts/audit_registry_joints.py``
+grades every simulated entry against its model, and
+``tests/registry/test_asset_family_joint_counts.py`` keeps same-model siblings
+agreeing. The entry declared 15 (MuJoCo's ``njnt``, base included) before the
+rule existed. The *hardware* figure - fourteen XL330 servos - is what the
+description carries, and here the two coincide.
 
 No home pose is copied into ``robots.json``. No entry declares one, ``add_robot``
 reaches a pose by name from the source model (``keyframe="STAND"``), and upstream
@@ -61,7 +55,8 @@ DOCUMENTED_ORDER: tuple[str, ...] = (
     "right_ankle",
 )
 
-#: One floating base joint: counted by ``joints``, not by the description.
+#: One floating base joint: reported as ``base`` by ``get_robot_state``, so
+#: counted neither by ``joints`` nor by the description.
 FLOATING_BASE_JOINTS = 1
 
 
@@ -77,9 +72,10 @@ class TestTheEntryIsWellFormed:
         assert entry["category"] == "humanoid"
         assert "Microduck" in entry["description"]
 
-    def test_the_declared_count_is_the_hinges_plus_the_floating_base(self) -> None:
-        """15, following the ``njnt`` convention the catalog documents."""
-        assert _entry()["joints"] == len(DOCUMENTED_ORDER) + FLOATING_BASE_JOINTS
+    def test_the_declared_count_is_the_hinges_without_the_floating_base(self) -> None:
+        """14: the joints the simulation reports; the free base is not one of them."""
+        assert _entry()["joints"] == len(DOCUMENTED_ORDER)
+        assert _entry()["joints"] + FLOATING_BASE_JOINTS == 15, "the model's njnt, for the record"
 
     def test_the_description_carries_the_hardware_dof(self) -> None:
         """Fourteen servos - the figure a reader sizes an action vector from."""
