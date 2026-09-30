@@ -10,35 +10,24 @@ sibling built from an indistinguishable model:
   free joint - and ``ur10e``, whose compiled model has byte-identical joint
   names, joint types and actuator names, declared ``6``.
 * ``unitree_a1`` declared ``16`` where ``aliengo`` and ``go1`` - same
-  indistinguishable model - both declared ``13``, which is that model's
-  ``njnt`` (twelve movable joints and the floating base). ``anymal_b`` and
-  ``anymal_c``, a separate family whose model has the same 13/12/12 shape,
-  declare ``13`` too.
+  indistinguishable model - both declared ``13``, that model's ``njnt``
+  (twelve movable joints and the floating base; ``12`` since #4147 stopped
+  counting the base). ``anymal_b`` and ``anymal_c``, a separate family whose
+  model has the same shape, declare the same figure.
 
 One compiled shape, two answers, in both cases.
 
-What ``joints`` MEANS across the whole registry is deliberately not settled
-here. The figure follows no single rule today: ``docs/robots/arms.md`` says
-"Joint counts include any free joints / gripper actuators", which reads as
-MuJoCo's ``njnt`` and holds for ``anymal_b``/``anymal_c`` (13 against a 12-DOF
-description, the extra one being the floating base), while ``panda`` declares
-``7`` against an ``njnt`` of 9 - the arm without its two finger joints - and
-``arx_l5``/``piper`` both declare ``11`` against an ``njnt`` of 8. Of the 50
-registry robots whose asset loads, 22 declare a figure that is neither their
-``njnt`` nor their movable-joint count. Picking one convention would rewrite
-those 22 numbers on a guess about what each was counting, so this file grades a
-weaker property that needs no such decision:
+What ``joints`` MEANS was settled by issue #4147, after this file was written:
+it is the count ``Robot(name).get_robot_state()`` reports, every joint of the
+model the robot loads except a free floating base. ``scripts/audit_registry_joints.py``
+rewrote the 47 entries that disagreed and
+``tests/registry/test_registry_joints_are_the_joints_the_simulation_reports.py``
+grades every simulated robot against its model. This file keeps the weaker
+property it was written for, because it holds on an install with no assets and
+catches a hand edit that breaks one sibling of a shared model:
 
     two robots whose compiled models are indistinguishable must be described
-    by the same number, whatever that number is counting.
-
-That holds under every convention above - ``njnt``, movable joints, actuated
-DOF, hardware DOF - because the models agree on all of them. It is the in-family
-control that makes both figures decidable without settling the registry-wide
-question: ``ur5e``'s own description ("6-DOF industrial") agrees with the
-sibling it disagreed with, and ``unitree_a1``'s two siblings agree with each
-other, with their shared model and with a second quadruped family of the same
-shape.
+    by the same number.
 
 Two layers, because the oracle is not available everywhere:
 
@@ -84,16 +73,10 @@ _ASSET_FAMILIES: tuple[tuple[str, ...], ...] = (
 )
 
 #: Families this file does not require to agree yet, each with the reason.
-#:
-#: ``vx300s``/``wx250s`` declare ``19`` and ``16`` against an ``njnt`` of 8 and
-#: an actuator count of 7, and their descriptions state the same shape as each
-#: other ("6-DOF + gripper"). So they are the same defect as ``ur5e`` - but
-#: unlike ``ur5e``, whose sibling and description both name ``6``, nothing here
-#: says which of the two figures is right, or whether either is. Choosing needs
-#: the registry-wide convention decision this file declines to make, so the pair
-#: is recorded rather than guessed at. Removing an entry from this set is how
-#: that decision gets enforced.
-_UNRESOLVED_FAMILIES: frozenset[tuple[str, ...]] = frozenset({("vx300s", "wx250s")})
+#: Empty since #4147 settled the convention: ``vx300s``/``wx250s`` both declare
+#: the eight joints their shared model reports. Adding an entry here is how a
+#: family is parked while its figure is undecided.
+_UNRESOLVED_FAMILIES: frozenset[tuple[str, ...]] = frozenset()
 
 
 @pytest.fixture(scope="module")
@@ -215,9 +198,11 @@ class TestEveryAssetFamilyAgrees:
         [
             ("ur5e", 6, "six hinge joints, six actuators, no free joint and no gripper"),
             ("ur10e", 6, "six hinge joints, six actuators, no free joint and no gripper"),
-            ("aliengo", 13, "twelve movable joints and the floating base"),
-            ("go1", 13, "twelve movable joints and the floating base"),
-            ("unitree_a1", 13, "twelve movable joints and the floating base"),
+            ("aliengo", 12, "twelve hinge joints; the floating base is reported as base, not as a joint"),
+            ("go1", 12, "twelve hinge joints; the floating base is reported as base, not as a joint"),
+            ("unitree_a1", 12, "twelve hinge joints; the floating base is reported as base, not as a joint"),
+            ("vx300s", 8, "six arm joints and two finger joints, the shared model of the pair"),
+            ("wx250s", 8, "six arm joints and two finger joints, the shared model of the pair"),
         ],
     )
     def test_the_corrected_entries_declare_what_their_asset_has(
@@ -244,7 +229,7 @@ class TestEveryAssetFamilyAgrees:
         listed = {r["name"]: r["joints"] for r in list_robots()}
         assert listed["ur5e"] == 6
         assert listed["ur10e"] == 6
-        assert listed["unitree_a1"] == 13
+        assert listed["unitree_a1"] == 12
 
 
 class TestTheFrozenFamiliesStillMatchTheAssets:
