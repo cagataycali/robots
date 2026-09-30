@@ -171,7 +171,10 @@ def test_dispatch_reset() -> None:
     assert out == {"ok": True}
 
 
-def test_dispatch_execute_calls_execute_task_sync() -> None:
+def test_dispatch_execute_calls_execute_task_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The operator on the robot host pre-approves wire motion; without it a
+    # hardware peer refuses execute/start/teleop_receive (f011).
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
     r = _FakeRobot()
     m = Mesh(r, peer_id="p")
     out = m._dispatch({"action": "execute", "instruction": "go", "duration": 5.0, "policy_provider": "mock"})
@@ -179,7 +182,10 @@ def test_dispatch_execute_calls_execute_task_sync() -> None:
     assert ("execute", {"instruction": "go", "provider": "mock", "duration": 5.0}) in r.calls
 
 
-def test_dispatch_start_calls_start_task() -> None:
+def test_dispatch_start_calls_start_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The operator on the robot host pre-approves wire motion; without it a
+    # hardware peer refuses execute/start/teleop_receive (f011).
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
     r = _FakeRobot()
     m = Mesh(r, peer_id="p")
     out = m._dispatch({"action": "start", "instruction": "go", "policy_provider": "mock"})
