@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from strands_robots.mesh import Mesh
 
 
@@ -58,7 +60,10 @@ class _RecordingRobot:
         return {"started": instruction, "host": policy_host}
 
 
-def test_dispatch_rejects_off_allowlist_policy_host_execute() -> None:
+def test_dispatch_rejects_off_allowlist_policy_host_execute(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The operator on the robot host pre-approves wire motion; without it a
+    # hardware peer refuses execute/start/teleop_receive (f011).
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
     r = _RecordingRobot()
     m = Mesh(r, peer_id="p")
     out = m._dispatch(
@@ -74,7 +79,10 @@ def test_dispatch_rejects_off_allowlist_policy_host_execute() -> None:
     assert r.executed is False, "robot must not actuate against an un-allowlisted host"
 
 
-def test_dispatch_rejects_off_allowlist_policy_host_start() -> None:
+def test_dispatch_rejects_off_allowlist_policy_host_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The operator on the robot host pre-approves wire motion; without it a
+    # hardware peer refuses execute/start/teleop_receive (f011).
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
     r = _RecordingRobot()
     m = Mesh(r, peer_id="p")
     out = m._dispatch(
@@ -89,8 +97,11 @@ def test_dispatch_rejects_off_allowlist_policy_host_start() -> None:
     assert r.started is False
 
 
-def test_dispatch_allows_loopback_policy_host() -> None:
+def test_dispatch_allows_loopback_policy_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default allowlist (loopback) still works -- the guard is not a blanket block."""
+    # The operator on the robot host pre-approves wire motion; without it a
+    # hardware peer refuses execute/start/teleop_receive (f011).
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
     r = _RecordingRobot()
     m = Mesh(r, peer_id="p")
     out = m._dispatch(
@@ -105,8 +116,11 @@ def test_dispatch_allows_loopback_policy_host() -> None:
     assert out.get("executed") == "go"
 
 
-def test_dispatch_default_policy_host_is_loopback() -> None:
+def test_dispatch_default_policy_host_is_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
     """Omitting policy_host defaults to localhost and is allowed."""
+    # The operator on the robot host pre-approves wire motion; without it a
+    # hardware peer refuses execute/start/teleop_receive (f011).
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
     r = _RecordingRobot()
     m = Mesh(r, peer_id="p")
     out = m._dispatch({"action": "execute", "instruction": "go", "policy_provider": "mock"})
@@ -116,6 +130,9 @@ def test_dispatch_default_policy_host_is_loopback() -> None:
 
 def test_dispatch_honors_policy_host_allow_env(monkeypatch) -> None:
     """Operator-extended allowlist via env lets a custom host through _dispatch."""
+    # The operator on the robot host pre-approves wire motion; without it a
+    # hardware peer refuses execute/start/teleop_receive (f011).
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
     # Clear the cached allowlist parse so the new env value is picked up.
     from strands_robots.mesh import security as _security
 

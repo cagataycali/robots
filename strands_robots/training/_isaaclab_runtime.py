@@ -21,6 +21,7 @@ reports it before anything launches.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import signal
@@ -140,6 +141,34 @@ _REGISTER_ID_RE = re.compile(r"""\bid\s*=\s*["']([A-Za-z][A-Za-z0-9_.:-]{0,127})
 #: Task packages Isaac Lab registers its gym ids in.
 _TASK_PACKAGES = ("isaaclab_tasks", "isaaclab_tasks_experimental")
 
+#: Environment variable through which the OPERATOR names their own task
+#: packages: ``"acme_tasks:register_tasks,other_tasks"`` - each a module
+#: importable in the Isaac Lab venv (installed, or on a ``.pth`` there),
+#: optionally with the function Isaac Lab's ``--external_callback`` calls to
+#: register its gym ids. Operator-owned like ``ISAACLAB_PYTHON``: an agent can
+#: train these tasks but cannot point the Isaac Lab process at other code.
+TASK_PACKAGES_ENV = "STRANDS_ISAACLAB_TASK_PACKAGES"
+
+_TASK_PACKAGE_ENTRY_RE = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(?::([A-Za-z_][A-Za-z0-9_]*))?\Z"
+)
+
+
+def operator_task_packages() -> dict[str, str | None]:
+    """``{module: callback-or-None}`` from :data:`TASK_PACKAGES_ENV`; malformed entries are skipped (logged)."""
+    out: dict[str, str | None] = {}
+    for raw in os.environ.get(TASK_PACKAGES_ENV, "").split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+        match = _TASK_PACKAGE_ENTRY_RE.match(entry)
+        if match is None:
+            logging.getLogger(__name__).warning("%s: ignoring malformed entry %r", TASK_PACKAGES_ENV, entry)
+            continue
+        out[match.group(1)] = match.group(2)
+    return out
+
+
 _TASK_CACHE: dict[str, tuple[float, frozenset[str]]] = {}
 
 
@@ -152,7 +181,7 @@ def registered_tasks(python: str) -> frozenset[str] | None:
     ``None`` when no task package is found, so the caller launches as before
     and the run reports an unknown id itself.
     """
-    roots = _task_package_roots(Path(python))
+    roots = _task_package_roots(Path(python)) + [root for root, _ in _operator_package_roots(Path(python))]
     if not roots:
         return None
     stamp = max(root.stat().st_mtime for root in roots)
@@ -172,6 +201,50 @@ def registered_tasks(python: str) -> frozenset[str] | None:
     tasks = frozenset(ids)
     _TASK_CACHE[key] = (stamp, tasks)
     return tasks or None
+
+
+def task_package_of(python: str, task: str) -> tuple[str, str | None] | None:
+    """The operator package (and its callback) whose sources register *task*, or ``None``.
+
+    ``None`` too when *task* is Isaac Lab's own: those need no callback.
+    """
+    for root, module in _operator_package_roots(Path(python)):
+        for source in root.rglob("*.py"):
+            try:
+                text = source.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if task in _REGISTER_ID_RE.findall(text):
+                return module, operator_task_packages().get(module)
+    return None
+
+
+def _operator_package_roots(python: Path) -> list[tuple[Path, str]]:
+    """``(directory, module)`` of each :data:`TASK_PACKAGES_ENV` package found in the venv."""
+    found: list[tuple[Path, str]] = []
+    for module in operator_task_packages():
+        relative = Path(*module.split("."))
+        for base in _site_search_paths(python):
+            candidate = base / relative
+            if (candidate / "__init__.py").is_file():
+                found.append((candidate, module))
+                break
+    return found
+
+
+def _site_search_paths(python: Path) -> list[Path]:
+    """The venv's ``site-packages`` plus every absolute path its ``.pth`` files add."""
+    venv = python.expanduser().absolute().parent.parent
+    search: list[Path] = []
+    for site in sorted(venv.glob("lib/python3*/site-packages")):
+        search.append(site)
+        for pth in site.glob("*.pth"):
+            try:
+                lines = pth.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            search.extend(Path(line.strip()) for line in lines if line.strip().startswith("/"))
+    return search
 
 
 def _task_package_roots(python: Path) -> list[Path]:
