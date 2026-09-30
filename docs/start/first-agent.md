@@ -67,6 +67,8 @@ robot.cleanup()
 
 ## The gate in front of real motion
 
+{{drawing:d04_gate_chain}}
+
 A `mode="real"` robot built through the lerobot driver has eight actions. Six read or halt and are never gated: `get_state`, `get_robot_state`, `list_cameras`, `render`, `status`, `stop`. Two move: `execute` and `start` dispatch a policy rollout to real actuators, and both stop for a human first. This runs on a laptop with no arm: the gate runs before the driver opens `port="/dev/null"`, so the interrupt is reached (approving would then fail to connect):
 
 ```python

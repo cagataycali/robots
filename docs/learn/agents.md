@@ -14,6 +14,8 @@ print(sorted(agent.tool_names))            # ['pose_tool', 'robot_mesh', 'so101_
 
 ## A robot is a tool
 
+{{drawing:d10_agent_and_robot}}
+
 `Robot(...)` returns an object with the Strands `AgentTool` surface (`tool_name`, `tool_type`, `tool_spec`, `stream`), so it goes into `Agent(tools=[...])` like any other tool. The model sees one tool per robot with an `action` field:
 
 | mode | tool name | actions the model sees |
@@ -21,7 +23,7 @@ print(sorted(agent.tool_names))            # ['pose_tool', 'robot_mesh', 'so101_
 | `mode="sim"` (default) | `<name>_sim` | `get_robot_state`, `set_joint_positions`, `move_to`, `run_policy`, `render`, `step` and the world API |
 | `mode="real"` | the canonical robot name | `get_state`, `get_robot_state`, `list_cameras`, `render`, `execute`, `start`, `status`, `stop` |
 
-`execute` runs one rollout to completion, `start` backgrounds it, `status` and `stop` follow. Two `Robot("so101")` in one agent collide on `so101_sim`; `tool_name=` tells them apart.
+`execute` runs one rollout to completion, `start` backgrounds it, `status` and `stop` follow. Two `Robot("so101")` in one agent collide on `so101_sim`; `tool_name=` separates them.
 
 ## The tools around the robot
 
@@ -40,6 +42,8 @@ print(sorted(agent.tool_names))            # ['pose_tool', 'robot_mesh', 'so101_
 | `load_episode`, `sample_frames`, `write_label` | judge episodes ([label and judge](data/label-and-judge.md)) | no |
 
 ## The operator gate
+
+{{drawing:d04_gate_chain}}
 
 Every rollout and every ROS, serial, pose and Unitree command goes through `strands_robots._command_gate.gate_motion` (native `move_to` is today's one exception), deciding in order:
 
