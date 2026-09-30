@@ -44,7 +44,7 @@ sim.cleanup()
 ```python title="sketch"
 from strands_robots.inference import PolicyServer
 
-PolicyServer(policy_provider="lerobot/act_so101", host="0.0.0.0").serve()   # built by provider name
+PolicyServer(policy_provider="robotfuel/act_so101_t16b", host="0.0.0.0").serve()   # built by provider name
 PolicyServer(policy=my_policy, port=8765).serve()                            # or an object you loaded
 ```
 

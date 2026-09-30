@@ -37,8 +37,10 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
+from strands.tools.tools import AgentTool
 
 from strands_robots.simulation.base import SimEngine, unknown_kwargs_error, unknown_model_msg
+from strands_robots.simulation.isaac.agent_tool import IsaacAgentToolMixin
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.introspection import IsaacIntrospectionMixin
 from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, mjcf_joint_names, urdf_joint_names
@@ -472,6 +474,12 @@ def _prim_world_pose(stage: Any, path: str) -> tuple[list[float], list[float]]:
         )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
+
+
+#: The pump's idle wait, in slices short enough that a queued worker call is
+#: picked up within one slice: 10 x 5 ms, the 50 ms the loop always idled for.
+_IDLE_SLICES = 10
+_IDLE_SLICE_S = 0.005
 
 
 def _round_shape_dims(size: list[float] | None) -> tuple[float, float]:
@@ -1465,7 +1473,13 @@ class _ObjectState:
 
 
 class IsaacSimulation(
-    IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, IsaacRecordingMixin, IsaacIntrospectionMixin, SimEngine
+    IsaacAgentToolMixin,
+    IsaacMotionPrimitivesMixin,
+    IsaacRandomizationMixin,
+    IsaacRecordingMixin,
+    IsaacIntrospectionMixin,
+    SimEngine,
+    AgentTool,
 ):
     """GPU-native simulation backend built on NVIDIA Isaac Sim.
 
@@ -1650,7 +1664,8 @@ class IsaacSimulation(
         if legacy_default_height is not None:
             config = dataclasses.replace(config, camera_height=legacy_default_height)
         self._config = config
-        # Tool-name is informational; some Strands tooling renders it.
+        # The name an agent calls this tool by (``IsaacAgentToolMixin``).
+        AgentTool.__init__(self)
         self.tool_name = legacy_tool_name
 
         # Simulation state (all lazy-initialized)
@@ -9280,7 +9295,6 @@ class IsaacSimulation(
                     job = None
                 if job is not None:
                     job()
-                    last_idle_render_mono = None
                     continue
                 busy = not self._action_q.empty()
                 if busy:
@@ -9299,7 +9313,16 @@ class IsaacSimulation(
                 self.pump(render=do_render)
                 if do_render:
                     last_idle_render_mono = now_mono
-                time.sleep(0.05)
+                # Idle for the same 50 ms as before, but in 5 ms slices that end
+                # as soon as a worker queues a call (an agent tool call, a policy
+                # step). The single ``sleep(0.05)``, plus forcing an idle
+                # re-render after every job, capped worker-thread control at
+                # ~12 Hz - 81 ms median per marshalled send_action against 2 ms
+                # on the main thread (one L40S, Isaac Sim 6.1).
+                for _ in range(_IDLE_SLICES):
+                    if not self._main_jobs.empty() or not self._action_q.empty():
+                        break
+                    time.sleep(_IDLE_SLICE_S)
         finally:
             self._pump_running = False
 
@@ -9377,10 +9400,10 @@ class IsaacSimulation(
             f"IsaacSimulation.{method_name}() was called from a worker thread with no "
             "main-thread pump running. Isaac Sim only pumps kit updates on the thread "
             "that created SimulationApp, so this call would block forever. Either call "
-            "it from the owning thread, or have the owning thread run "
-            "`run_pump_forever(stop_event=...)` and submit the call from the worker via "
-            "`run_on_main(lambda: ...)` (see the Threading section of docs/learn/simulation/isaac.md "
-            "for the agent-driven shape)."
+            "it from the owning thread, drive a Strands agent with `sim.run_agent(agent, prompt)`, "
+            "or have the owning thread run `run_pump_forever(stop_event=...)` and submit the call "
+            "from the worker via `run_on_main(lambda: ...)` (see the Threading section of "
+            "docs/learn/simulation/isaac.md for the agent-driven shape)."
         )
 
     # --- joint targets / kinematic teleport --------------------------------
