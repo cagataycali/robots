@@ -49,7 +49,7 @@ success ['entropy', 'iteration', 'iterations_recorded', 'latest_loss', 'latest_s
 DeployableActor ['1', '2', '3', '4', '5', '6']
 ```
 
-Each iteration is appended to `output_dir/metrics.jsonl` (`metrics_path`). Real runs use `total_timesteps` in the hundreds of thousands. `create_policy("rl", checkpoint_dir=result.checkpoint_dir)` drives a robot with it; see [rl](../policies/rl.md).
+Each iteration lands in `output_dir/metrics.jsonl` (`metrics_path`). Real runs use `total_timesteps` in the hundreds of thousands. `create_policy("rl", checkpoint_dir=result.checkpoint_dir)` drives a robot with it; see [rl](../policies/rl.md).
 
 ```bash
 pip install 'strands-robots[rl]'    # torch + gymnasium + [sim-mujoco]
@@ -62,9 +62,9 @@ pip install 'strands-robots[rl]'    # torch + gymnasium + [sim-mujoco]
 - `actor_obs_keys`: ordered scalar keys from `get_observation` (joint names, `.vel` companions, floating-base keys). The order is part of the weights.
 - `reward_terms`: `(sim) -> float` callables, summed per step. Build them with `make_predicate` from the float-valued [predicates](../simulation/predicates-and-rollouts.md).
 - `critic_obs_keys`: privileged sim-only keys appended for an asymmetric critic.
-- `action_dim` defaults to `len(engine.robot_action_keys(robot))`, the actuator count, which is not always the joint count.
+- `action_dim` defaults to `len(engine.robot_action_keys(robot))`, the actuator count, not always the joint count.
 - `action_scale` bounds what the actor can command; `0` disconnects it and is refused.
-- `n_substeps=5`: a position servo needs several physics steps to track one target.
+- `n_substeps=5`: a position servo needs several physics steps per target.
 - `success_fn` ends an episode as a real terminal; `max_episode_steps` is a truncation, value-bootstrapped by the trainers. Without `success_fn`, `evaluate` reports `success_measured=False` and a `success_rate` of zero that measures nothing.
 
 `VecSimEnv(env_factory, num_envs)` steps N independent `SimEnv` through one thread pool, stacks to `(N, D)`, and keeps the terminal observation in `infos[i]["terminal_obs"]` across autoreset. `GymSimEnv(sim_env)` wraps one as a `gymnasium.Env`.
