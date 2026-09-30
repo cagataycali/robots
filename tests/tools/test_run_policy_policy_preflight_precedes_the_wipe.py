@@ -84,10 +84,18 @@ class TestAnUnresolvableProviderIsRefusedBeforeTheRecording:
         assert sim.run_policy_calls == []
         assert sim.stop_recording_calls == []
 
-    def test_the_refusal_names_the_registered_providers(self) -> None:
+    def test_the_refusal_names_the_shipped_providers(self) -> None:
+        """The words are ``policy_provider_error``'s: the shipped registry, offered by name.
+
+        Pinned to names the JSON registry ships rather than to ``list_providers()``,
+        which also reports providers a sibling test registered at runtime for
+        the length of the session and the refusal does not offer.
+        """
         result = _run_tool(_OrderedSim(), policy_provider="no_such_provider_xyz", n_steps=4, dataset_root=ROOT)
-        for name in list_providers():
-            assert name in _text(result), f"the refusal does not offer {name!r}"
+        assert "Available:" in _text(result)
+        for name in ("mock", "lerobot_local", "remote", "wbc"):
+            assert name in list_providers()
+            assert f"'{name}'" in _text(result), f"the refusal does not offer {name!r}"
 
     def test_the_summary_says_the_dataset_is_untouched(self) -> None:
         result = _run_tool(_OrderedSim(), policy_provider="no_such_provider_xyz", n_steps=4, dataset_root=ROOT)
