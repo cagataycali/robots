@@ -18,9 +18,9 @@ train_policy(action="train", provider="isaaclab", steps=50, output_dir="runs",
              extra={"task": "Isaac-Cartpole", "num_envs": 4096, "physics": "newton_mjwarp", "timeout_s": 600})
 ```
 
-It returns a `job_id`; `action="status"` reports rewards, `success_rate`, a failure's cause and `checkpoint_dir`; `action="stop"` ends it; `action="play"` records a video; `action="record"` writes a LeRobotDataset (`extra["dataset_dir"]`); `action="export"` writes MLP (not CNN/recurrent) actors for `create_policy("rl", checkpoint_dir=...)`. `extra['rl_library']` accepts only `rsl_rl`. Your own task package trains once the operator sets `STRANDS_ISAACLAB_TASK_PACKAGES=module:register_fn` (importable in that venv).
+It returns a `job_id`; `action="status"` reports rewards, `success_rate`, a failure's cause and `checkpoint_dir`; `action="stop"` ends it; `action="play"` records video; `action="record"` writes a LeRobotDataset (`extra["dataset_dir"]`); `action="export"` writes MLP (not CNN/recurrent) actors for `create_policy("rl", checkpoint_dir=...)`. `extra['rl_library']` accepts only `rsl_rl`. Your task package trains once the operator sets `STRANDS_ISAACLAB_TASK_PACKAGES=module:register_fn` (importable in that venv).
 
-`extra['overrides']` (`env.*`/`agent.*`, checked against the task config), `agent`, `device`, `video`, `deterministic`, `base_model` and `resume` reach Isaac Lab; `learning_rate` pins `schedule=fixed`.
+`extra['overrides']` (`env.*`/`agent.*`, checked against the task config), `agent`, `device`, `video`, `deterministic`, `base_model`, `resume` reach Isaac Lab; `learning_rate` pins `schedule=fixed`.
 
 One L40S, 4096 envs: Cartpole 291k env steps/s, G1 flat locomotion 110k.
 
