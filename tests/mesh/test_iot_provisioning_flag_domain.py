@@ -6,14 +6,14 @@ flags, and every one of them selects a *posture* rather than scaling a quantity:
 * :func:`~strands_robots.mesh.iot.provision.provision_robot`'s
   ``allow_estop_publish`` chooses between the ``strands-robot`` policy, which
   grants ``AllowSafetyEstop``, and ``strands-robot-no-estop``, which withholds
-  it. It is a security *opt-out*.
+  it. It is a security *opt-in*: the grant-bearing policy needs an explicit True.
 * :func:`~strands_robots.mesh.iot.bootstrap.bootstrap_account`'s ``confirm``
   gates a destructive account-wide create, ``dry_run`` selects preview mode and
   ``force_update`` overwrites an existing E-stop Lambda.
 
 Read by truthiness, every non-boolean spelling of *off* selects the permissive
-branch: ``"false"``, ``"no"``, ``"off"`` and ``"0"`` are all truthy, so the
-opt-out fails open and the confirmation gate confirms. These tests pin that each
+branch: ``"false"``, ``"no"``, ``"off"`` and ``"0"`` are all truthy, so a flag
+read that way fails open and the confirmation gate confirms. These tests pin that each
 flag is now refused instead, before any AWS call, and that the two usable
 postures are unchanged.
 
@@ -220,9 +220,10 @@ class TestProvisionRobotHonoursBothPostures:
         assert ESTOP_SID not in sids
         assert iot.attached_policies == [provision_mod.ROBOT_NO_ESTOP_POLICY_NAME]
 
-    def test_the_default_is_the_grant_bearing_policy(self, iot: _RecordingIot, tmp_path: Path) -> None:
+    def test_the_default_withholds_the_grant(self, iot: _RecordingIot, tmp_path: Path) -> None:
+        """Obeying a stop needs subscribe and receive only; originating one is an opt-in (f010)."""
         result = _provision(tmp_path)
-        assert result.policy_name == provision_mod.ROBOT_POLICY_NAME
+        assert result.policy_name == provision_mod.ROBOT_NO_ESTOP_POLICY_NAME
 
     @pytest.mark.parametrize("value", [np.False_, np.array(False)], ids=["np.False_", "np.array(False)"])
     def test_a_numpy_false_selects_the_deny_posture_as_a_real_bool(
@@ -405,7 +406,7 @@ class TestEveryPostureFlagRoutesThroughTheDomain:
 
 
 class TestTheFlagIsDocumented:
-    """The opt-out is discoverable: a caller can look up that it takes a boolean."""
+    """The posture flag is discoverable: a caller can look up that it takes a boolean."""
 
     def test_provision_robot_documents_allow_estop_publish(self) -> None:
         doc = inspect.getdoc(provision_mod.provision_robot) or ""

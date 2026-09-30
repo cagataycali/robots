@@ -4249,6 +4249,25 @@ class SimEngine(ABC):
                         instruction=instruction,
                         extra=f"reset() failed after episode {ep}: {self._first_text(reset_result)}",
                     )
+                # The policy starts the next episode fresh too. ``runner.run``
+                # only resets it when a seed was given, so an unseeded
+                # recording with a history-keeping provider (flux3_action,
+                # groot, any RTC policy) otherwise conditions episode N+1 on
+                # episode N's frames while the scene has jumped back to rest:
+                # the SO-101 shoulder_lift command drifted a further ~5 rad per
+                # episode across a 10-episode flux3_action recording. Mirrors
+                # the per-episode reset in ``PolicyRunner.evaluate``; best-effort
+                # like every other reset call site.
+                next_seed = None if seed is None else seed + ep + 1
+                try:
+                    policy.reset(seed=next_seed)
+                except Exception as e:  # noqa: BLE001 - reset is best-effort
+                    logger.warning(
+                        "policy.reset(seed=%s) raised %s after episode %d; continuing without per-episode policy reset",
+                        next_seed,
+                        e,
+                        ep,
+                    )
 
         return self._episodes_result(
             episodes,

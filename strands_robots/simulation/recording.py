@@ -1191,6 +1191,15 @@ class DatasetRecordingMixin:
         """A backend refusal of the scoped camera columns, or ``None`` (default)."""
         return None
 
+    def _recording_unknown_cameras_refusal(self, unknown: list[str]) -> dict[str, Any] | None:
+        """A backend's own reason ``cameras=`` names no recordable camera, or ``None`` (default).
+
+        Asked before the generic "unknown camera" refusal, so a backend whose
+        scene holds a camera it cannot record (Isaac in ``render_mode="headless"``)
+        can say why instead of telling the caller to add a camera it already has.
+        """
+        return None
+
     def start_recording(
         self,
         repo_id: str = "local/sim_recording",
@@ -1354,6 +1363,8 @@ class DatasetRecordingMixin:
                             selected.add(raw)
                     if unknown:
                         state["recording"] = False
+                        if refusal := self._recording_unknown_cameras_refusal(unknown):
+                            return refusal
                         return {
                             "status": "error",
                             "content": [

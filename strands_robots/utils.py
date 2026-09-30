@@ -148,6 +148,41 @@ def lerobot_version() -> str:
         return "unknown"
 
 
+# The lerobot that first accepts ``repo_type: Literal["dataset", "bucket"]``;
+# every lerobot-bearing extra in pyproject floors at or above it.
+BUCKET_STREAMING_MIN_LEROBOT = "0.6.1"
+LEROBOT_UPGRADE = "pip install -U 'strands-robots[lerobot]'"
+
+
+def lerobot_floor_error() -> str | None:
+    """Return why the installed lerobot is below ``BUCKET_STREAMING_MIN_LEROBOT``, else None.
+
+    pip leaves an already-installed older lerobot in place, and its
+    ``StreamingLeRobotDataset`` refuses the ``return_uint8`` / ``repo_type``
+    keywords :meth:`strands_robots.streaming_dataset.StreamingDatasetReader.open`
+    forwards - a ``TypeError`` naming a keyword the caller never passed.
+    :func:`strands_robots.doctor.check_lerobot` and
+    :mod:`strands_robots.streaming_dataset` both ask here, so one state is
+    reported one way.
+
+    Returns:
+        A message naming the installed version and the floor (callers add
+        ``LEROBOT_UPGRADE`` in their own frame), or ``None`` when the version
+        meets the floor or cannot be determined.
+    """
+    installed = lerobot_version()
+    release = re.match(r"\d+(?:\.\d+)*", installed)
+    if release is None:
+        return None
+    floor = tuple(int(part) for part in BUCKET_STREAMING_MIN_LEROBOT.split("."))
+    if tuple(int(part) for part in release.group().split(".")) >= floor:
+        return None
+    return (
+        f"lerobot {installed} is below the {BUCKET_STREAMING_MIN_LEROBOT} strands-robots needs: its "
+        "StreamingLeRobotDataset refuses the return_uint8 / repo_type keywords stream_dataset() passes"
+    )
+
+
 def lerobot_install_error() -> str | None:
     """Return why ``import lerobot`` cannot reach an install, or None when it can.
 

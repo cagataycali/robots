@@ -43,7 +43,20 @@ def _granted(env: Mapping[str, str] | None) -> bool:
 
 
 def peer_is_physical(peer: Mapping[str, Any] | None) -> tuple[bool, str]:
-    """Is this peer metal? Returns (physical, why) -- the server-side twin of lib/runRisk.ts."""
+    """Is this peer metal? Returns (physical, why) -- the server-side twin of lib/runRisk.ts.
+
+    A presence record is the peer's own description of itself, and on a mesh
+    whose ACL admits any signed peer (or none, under ``STRANDS_MESH_LOCAL_DEV``)
+    it is also what an impersonator would write. So a record the mesh bridge
+    filed from the wire (``presence_source == "wire"``) is believed when it
+    says metal and doubted when it says sim: the sim claim counts only when
+    something the publisher does not control corroborates it, which is the
+    bridge's ``sim_corroborated`` mark, set when THIS dashboard launched the
+    peer (or its ``<host>__<robot>`` host, or its ``<peer>-twin``) in sim mode.
+    An uncorroborated claim answers physical, so a forged one costs an
+    attacker a refusal, not a rollout. Peer dicts that never met the bridge
+    carry no ``presence_source`` and keep the plain reading.
+    """
     if not peer:
         return True, "this peer is not on the fleet snapshot, so it cannot be shown to be a sim"
     presence = peer.get("presence") or {}
@@ -51,10 +64,20 @@ def peer_is_physical(peer: Mapping[str, Any] | None) -> tuple[bool, str]:
     if isinstance(hw, str) and hw.strip():
         return True, f"it reports real hardware ({hw.strip()})"
     robot_type = str(presence.get("robot_type") or "").strip().lower()
+    claim = ""
     if robot_type in ("sim", "simulation", "mujoco"):
-        return False, f"it reports itself as {robot_type}"
-    if presence.get("sim") is True or presence.get("mode") == "sim":
-        return False, "it reports itself as a simulation"
+        claim = f"it reports itself as {robot_type}"
+    elif presence.get("sim") is True or presence.get("mode") == "sim":
+        claim = "it reports itself as a simulation"
+    if claim:
+        if peer.get("presence_source") != "wire":
+            return False, claim
+        if peer.get("sim_corroborated") is True:
+            return False, f"{claim} and this dashboard launched it as one"
+        return True, (
+            f"{claim}, but this dashboard did not launch it, so the claim cannot be checked "
+            f"and a peer on the mesh could have written it"
+        )
     if not presence:
         return True, "this peer has announced no presence yet, so it cannot be shown to be a sim"
     return True, "it did not say it was a simulation"

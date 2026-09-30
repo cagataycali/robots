@@ -351,7 +351,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
         (isaacsim runtime not importable). Returns ``None`` on success.
         """
         try:
-            from isaacsim.core.utils.types import (  # type: ignore[import-not-found]
+            from strands_robots.simulation.isaac._deprecated_api import (
                 ArticulationAction,
             )
 
@@ -560,8 +560,44 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
                     "uv pip install 'strands-robots[sim-isaac]'."
                 ),
             )
+        # The registry's ``tool_frame`` (a TCP site on a named body) is part of
+        # the robot's IK contract on the MuJoCo backend, which adds it at
+        # ``add_robot`` for every non-URDF robot. The IK model here is compiled
+        # from the same MJCF but never got it, so ``discover_ee_frame`` fell to
+        # the wrist BODY: so100 tracked ``Wrist_Pitch_Roll`` where MuJoCo tracks
+        # ``so100/tcp`` - the same move_to target put a different point of the
+        # arm there. Same key and same URDF exemption as MuJoCo.
+        tool_frame = None
+        if not path.lower().endswith(".urdf"):
+            from strands_robots.simulation.tool_frame import registry_tool_frame
+
+            tool_frame, tool_frame_err = registry_tool_frame(data_config or getattr(robot, "name", None))
+            if tool_frame_err is not None:
+                return None, None, _err(f"move_to: {tool_frame_err}")
         try:
-            model = mj.MjModel.from_xml_path(path)
+            model = None
+            if tool_frame is not None:
+                from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
+                from strands_robots.simulation.tool_frame import ToolFrameRefused
+
+                spec = mj.MjSpec.from_file(path)
+                try:
+                    SpecBuilder.add_tool_site(spec, robot.name, tool_frame)
+                    model = spec.compile()
+                except ToolFrameRefused as refused:
+                    # The robot is already on the stage, so this is not an
+                    # add-time refusal: the file simulating is not the model the
+                    # declaration was written for (a custom description under a
+                    # registry data_config). Solve on it as it stands, loudly.
+                    logger.warning(
+                        "move_to: robot '%s': the registry tool_frame does not fit its IK model %s (%s); "
+                        "the end-effector frame is auto-discovered from the model instead.",
+                        robot.name,
+                        path,
+                        refused,
+                    )
+            if model is None:
+                model = mj.MjModel.from_xml_path(path)
         except (ValueError, OSError, RuntimeError, mj.FatalError) as e:
             return (
                 None,

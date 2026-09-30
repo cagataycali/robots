@@ -188,6 +188,16 @@ moveit2 = [
 # silently-broken install of the squatter package. Tracked in the
 # follow-up issue linked from PR #306.
 curobo = []
+# FLUX 3 Action (Black Forest Labs, 2026-09-22): in-process flow-matching VLA with an
+# SO-101 checkpoint (black-forest-labs/flux-3-action-so101). The inference
+# package `flux-action` is NOT on PyPI - it installs from
+# github.com/black-forest-labs/flux-action (Python 3.12, torch>=2.10 CUDA) and
+# needs `natten` from the wheel index at https://whl.natten.org/ (a wheel per
+# torch/CUDA pair, including aarch64 for Jetson Thor). Pin torch + natten to
+# the same CUDA first, then `pip install "flux-action @ git+https://github.com/black-forest-labs/flux-action"`.
+# Like curobo, the extra is empty on purpose: pinning a git URL here would break
+# the PyPI publish. See policies/flux3_action/ and docs/learn/policies/flux3-action.md.
+flux3 = []
 # GR00T Whole-Body-Control (SONIC) locomotion policy. Runs the ONNX
 # controllers in-process via onnxruntime (no torch, no sidecar) - a light
 # extra, like the client side of moveit2. Model weights are NOT bundled;
@@ -341,7 +351,7 @@ lerobot = [
     # that accepts `repo_type`, and 0.6.1 is the first release that does
     # (0.6.0's constructor has no such parameter). Flooring here makes the
     # flagship streaming path resolver-guaranteed instead of docs-guaranteed;
-    # `strands_robots.streaming_dataset.BUCKET_STREAMING_MIN_LEROBOT` carries
+    # `strands_robots.utils.BUCKET_STREAMING_MIN_LEROBOT` carries
     # the same version for the runtime guard that protects an environment with
     # a pre-existing older lerobot.
     "lerobot[feetech,dataset]>=0.6.1,<0.7.0",
@@ -1058,7 +1068,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "tyro", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "roslibpy", "roslibpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*", "unitree_sdk2py.*", "booster_robotics_sdk_python", "booster_robotics_sdk_python.*", "webauthn", "webauthn.*", "requests", "requests.*"]
+module = ["lerobot.*", "gr00t.*", "tyro", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "roslibpy", "roslibpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*", "unitree_sdk2py.*", "booster_robotics_sdk_python", "booster_robotics_sdk_python.*", "webauthn", "webauthn.*", "requests", "requests.*", "flux_action", "flux_action.*", "natten", "natten.*"]
 ignore_missing_imports = true
 
 # Device Connect drivers - thin wrappers over the untyped device_connect_edge
