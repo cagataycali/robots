@@ -146,7 +146,7 @@ class TestTheTrustRegionRefusesAWidthItCannotHonor:
         spec.clip_param = value
         (problem,) = _clip_problems(ON_POLICY, spec)
         assert problem.startswith("ppo: clip_param "), problem
-        assert "must be > 0" in problem, problem
+        assert "must be a positive finite number" in problem, problem
 
     def test_the_message_is_the_shared_domain_verbatim(self, spec: RLTrainSpec) -> None:
         """The gate adds no wording of its own; it delegates."""

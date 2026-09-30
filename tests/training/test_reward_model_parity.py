@@ -31,6 +31,7 @@ from strands_robots.training.lerobot import (
     _reward_friendly_fields,
     _reward_model_types,
 )
+from tests._package_ast import parse_file
 
 
 def _registered_reward_types_from_source() -> set[str]:
@@ -47,7 +48,7 @@ def _registered_reward_types_from_source() -> set[str]:
     rewards_root = Path(lerobot.rewards.__file__).parent
     names: set[str] = set()
     for cfg_path in rewards_root.rglob("configuration_*.py"):
-        tree = ast.parse(cfg_path.read_text(encoding="utf-8"), filename=str(cfg_path))
+        tree = parse_file(cfg_path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
                 continue

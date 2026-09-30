@@ -42,6 +42,7 @@ import pytest
 import strands_robots
 from strands_robots.utils import tcp_port_error
 from tests._device_connect_real import use_the_real_edge
+from tests._package_ast import parse_file
 
 # Values that cannot address a TCP port. ``True`` is included because it is an
 # ``int`` subclass: a bare range test reads it as a silent port 1.
@@ -248,7 +249,7 @@ class TestTheRefusalPrecedesAnyState:
 
 def _exported_names(package_init: Path) -> list[str]:
     """The names listed in ``__all__`` of a package's ``__init__``."""
-    for node in ast.parse(package_init.read_text(encoding="utf-8")).body:
+    for node in parse_file(package_init).body:
         if not isinstance(node, ast.Assign):
             continue
         if not any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets):

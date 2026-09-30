@@ -425,6 +425,9 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         # WBCGaitPolicy
         "wbc_gait",
         "sonic_gait",
+        # WBCLatentPolicy (a VLA's SONIC motion tokens decoded into G1 joint targets)
+        "wbc_latent",
+        "sonic_latent",
         # KimodoPolicy
         "kimodo",
         "kimodo_g1",
@@ -1544,6 +1547,14 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         # wire schema is the same for every receiver.
         if "robot_name" in cmd:
             out["robot_name"] = _coerce_robot_name(cmd["robot_name"])
+        # A constructor posture flag for the whole-body controllers (``walk``:
+        # load the walk policy too, or balance only). A bool and nothing else:
+        # the string "false" read by truthiness is how the balance-only
+        # spelling became locomotion once (see WBCPolicy's boolean_flag_error).
+        if "walk" in cmd:
+            if not isinstance(cmd["walk"], bool):
+                raise ValidationError(f"walk must be a bool (got {type(cmd['walk']).__name__})")
+            out["walk"] = cmd["walk"]
         if "embodiment" in cmd:
             out["embodiment"] = _coerce_embodiment_name(cmd["embodiment"])
         # Issue #300 per-call policy kwargs, forwarded as policy_kwargs. Every

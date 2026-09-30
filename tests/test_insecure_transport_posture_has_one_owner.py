@@ -41,6 +41,7 @@ from typing import Any
 import pytest
 
 from tests._device_connect_real import use_the_real_edge
+from tests._package_ast import parse_file
 
 #: ``(label, allow_insecure argument, environment value, the resolved posture)``.
 #: The two argument rows are where the advisory and the transport disagreed; the
@@ -198,7 +199,7 @@ class TestTheVocabularyIsSpelledOnce:
         assert len(readers) >= 3, f"expected the resolver, the authorizer and the connector, got {readers}"
         spelled: list[str] = []
         for path in readers:
-            for node in ast.walk(ast.parse(path.read_text())):
+            for node in ast.walk(parse_file(path)):
                 if isinstance(node, ast.Tuple) and [e.value for e in node.elts if isinstance(e, ast.Constant)] == list(
                     az.INSECURE_TRUE
                 ):
@@ -361,7 +362,7 @@ class TestReadingTheRuntimeOffADriverDoesNotAssumeTheSetterRan:
 
         checked: list[str] = []
         for path in drivers:
-            tree = ast.parse(path.read_text())
+            tree = parse_file(path)
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue

@@ -100,7 +100,7 @@ class TestTheOffPolicyBackendRefusesAnUnusableTemperatureRate:
     def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec, value: Any) -> None:
         spec.alpha_lr = value
         (problem,) = _alpha_lr_problems(OFF_POLICY, spec)
-        assert problem.startswith("fast_sac: alpha_lr must be > 0"), problem
+        assert problem.startswith("fast_sac: alpha_lr must be a positive finite number"), problem
         assert repr(value) in problem, problem
 
     def test_a_refusal_does_not_hide_the_first_learning_rate(self, spec: RLTrainSpec) -> None:

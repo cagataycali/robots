@@ -263,7 +263,7 @@ class TestControlFrequency:
     @pytest.mark.parametrize("bad", [0, -1, -30.0])
     def test_set_control_frequency_rejects_non_positive(self, bad):
         p = _IdentityPolicy()
-        with pytest.raises(ValueError, match="control_frequency must be > 0"):
+        with pytest.raises(ValueError, match="control_frequency must be a positive finite number"):
             p.set_control_frequency(bad)
 
     def test_control_frequency_is_per_instance(self):
