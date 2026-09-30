@@ -78,7 +78,7 @@ Episodes: 2 | Success: 2 | Failure: 0 (100.0% success)
 | float, rewards | `distance_neg`, `joint_progress`, `particles_inside_fraction`, `base_velocity`, `base_velocity_tracking`, `base_height`, `base_orientation`, `base_lin_vel_z`, `base_ang_vel_xy`, `constant` |
 | stateful | `staged_reward` (a phase machine of `{"reward": ..., "advance_when": ..., "bonus": ...}` stages) |
 
-Joint predicates resolve names scene-wide, so a task object loaded with `add_robot(urdf_path=...)` exposes `carton/cap_hinge` to them. `register_predicate(name, factory)` adds your own to the registry.
+`contact_between` takes a geom name or the body or object that owns the geom, so `{"predicate": "contact_between", "geom_a": "cube", "geom_b": "tray"}` fires for two `add_object` objects. Joint predicates resolve names scene-wide, so a task object loaded with `add_robot(urdf_path=...)` exposes `carton/cap_hinge` to them. `register_predicate(name, factory)` adds your own to the registry.
 
 ## stop_when and success_when
 

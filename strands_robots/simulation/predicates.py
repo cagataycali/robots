@@ -663,6 +663,16 @@ def _contact_between(geom_a: str, geom_b: str) -> BoolPredicate:
     Requires ``get_contacts()`` (MuJoCo). Ignores contact ordering - a contact
     reported as ``(geom_a, geom_b)`` matches the same predicate as
     ``(geom_b, geom_a)``.
+
+    Each side names a geom, or the body or object that owns it. A reported
+    geom matches a side when it IS that name or belongs to the body of that
+    name under :func:`_geom_belongs_to_body`, the mapping ``grasped`` and
+    ``body_on(require_contact=True)`` already resolve through. So
+    ``contact_between("cube", "tray")`` fires for two objects from
+    :meth:`add_object`, whose geoms are ``cube_geom`` and ``tray_geom``;
+    comparing exact geom names only, it stayed ``False`` while the two were
+    touching, and a success clause written with the names a scene lists scored
+    0% without a warning. Exact geom names match exactly as before.
     """
 
     def check(sim: SimEngine) -> bool:
@@ -672,12 +682,14 @@ def _contact_between(geom_a: str, geom_b: str) -> BoolPredicate:
         contacts = payload.get("contacts")
         if not isinstance(contacts, list):
             return False
-        want = {geom_a, geom_b}
         for c in contacts:
             if not isinstance(c, dict) or not contact_is_active(c):
                 continue
-            pair = {c.get("geom1"), c.get("geom2")}
-            if want <= pair:
+            g1 = c.get("geom1") or ""
+            g2 = c.get("geom2") or ""
+            if (_names_geom(geom_a, g1) and _names_geom(geom_b, g2)) or (
+                _names_geom(geom_a, g2) and _names_geom(geom_b, g1)
+            ):
                 return True
         return False
 
@@ -701,6 +713,11 @@ def _contact_any() -> BoolPredicate:
         return bool(payload.get("n_contacts", 0) > 0)
 
     return check
+
+
+def _names_geom(name: str, geom: str) -> bool:
+    """True when ``name`` is ``geom`` itself or the body/object that owns it."""
+    return bool(geom) and (geom == name or _geom_belongs_to_body(geom, name))
 
 
 def _geom_belongs_to_body(geom: str, body: str) -> bool:
