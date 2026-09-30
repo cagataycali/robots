@@ -1,6 +1,6 @@
 """Repo hygiene: the orientation pages' counts are the code's counts.
 
-``docs/project/architecture.md`` is the map a contributor reads to size each
+``docs/concepts/architecture.md`` is the map a contributor reads to size each
 subsystem, and the ``## The contract`` fence on ``docs/learn/policies/index.md``
 is read as the contract a new implementation conforms to. The old site restated
 both in prose and drifted: 4 providers for a package shipping 14, 8 ``@tool``
@@ -50,7 +50,7 @@ from strands_robots.policies.base import Policy
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = REPO_ROOT / "strands_robots"
 DOCS = REPO_ROOT / "docs"
-ARCHITECTURE = DOCS / "project" / "architecture.md"
+ARCHITECTURE = DOCS / "concepts" / "architecture.md"
 POLICIES = DOCS / "learn" / "policies" / "index.md"
 README = REPO_ROOT / "README.md"
 
@@ -206,7 +206,7 @@ def test_the_architecture_page_types_no_count_by_hand(noun: str) -> None:
     """A number next to a counted noun is a ``{{n:key}}`` token, never a literal."""
     literals = re.findall(rf"\b(\d+)\+?\s+(?:\*\*)?{noun}\b", _architecture())
     assert not literals, (
-        f"docs/project/architecture.md types {literals} {noun} by hand; the page promises its "
+        f"docs/concepts/architecture.md types {literals} {noun} by hand; the page promises its "
         "numbers are generated from the tree, so write {{n:<key>}} instead"
     )
 
@@ -215,7 +215,7 @@ def test_the_architecture_page_uses_the_facts_hook() -> None:
     """Non-vacuity: the page really carries tokens for the guard above to protect."""
     tokens = set(re.findall(r"\{\{\s*n:([a-z_]+)\s*\}\}", _architecture()))
     assert {"policy_providers", "native_drivers", "robots"} <= tokens, (
-        f"docs/project/architecture.md carries {sorted(tokens)}; the provider, driver and robot counts must be tokens"
+        f"docs/concepts/architecture.md carries {sorted(tokens)}; the provider, driver and robot counts must be tokens"
     )
     assert "{{module_map}}" in _architecture(), "the module table is the generated {{module_map}}"
 

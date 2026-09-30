@@ -4,7 +4,7 @@ How the package is built, how to change it, where it is going, and how to report
 
 | page | question it answers |
 |---|---|
-| [Architecture](architecture.md) | Which object does `Robot(...)` return, what are the seven layers, and how big is each? |
+| [Architecture](../../concepts/architecture.md) | Which object does `Robot(...)` return, what are the seven layers, and how big is each? |
 | [Contributing](contributing.md) | How do I set up, which checks must pass, and how do I open the pull request? |
 | [Roadmap](roadmap.md) | What is 1.0, where is it being built, and what changes for me? |
 | [Security policy](security-policy.md) | Where do I report a vulnerability, and what does the package enforce by default? |

@@ -101,7 +101,7 @@ Real servos never move by accident: `mode="real"` is an explicit opt-in.
 
 Full guide, API reference and per-robot pages:
 **[strands-labs.github.io/robots](https://strands-labs.github.io/robots)** -
-start with the [Quickstart](docs/start/first-robot.md) and [Architecture](docs/project/architecture.md).
+start with the [Quickstart](docs/start/first-robot.md) and [Architecture](docs/concepts/architecture.md).
 
 ## Development
 
@@ -112,7 +112,7 @@ hatch run test && hatch run lint   # pytest; ruff + mypy
 ```
 
 Conventions and review learnings are in [AGENTS.md](AGENTS.md);
-[CONTRIBUTING](docs/project/contributing.md) covers the workflow. Work is tracked on the
+[CONTRIBUTING](docs/reference/project/contributing.md) covers the workflow. Work is tracked on the
 [project board](https://github.com/orgs/strands-labs/projects/2).
 
 ## Security

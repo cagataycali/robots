@@ -80,7 +80,7 @@ def sim_html(sim_id: str, caption: str | None, prefix: str) -> str | None:
 
 def substitute(markdown: str, page_path: str = "<string>") -> str:
     """Replace every visual token in ``markdown``; warn on one that has no files."""
-    # Directory URLs: ``project/architecture.md`` is served at ``/project/architecture/``,
+    # Directory URLs: ``concepts/architecture.md`` is served at ``/concepts/architecture/``,
     # so a relative asset path climbs one level per path segment; an ``index.md`` is
     # served at its directory and climbs one less.
     depth = page_path.count("/") + (0 if page_path.endswith("index.md") else 1)

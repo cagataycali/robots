@@ -22,4 +22,4 @@ Released 2026-08-04, 806 commits over v0.4.1. The largest release to that point:
 
 ## Versioning
 
-The version comes from the nearest release tag (`git describe --match 'v[0-9]*'`); a checkout with no reachable tag builds as `0.1.dev...`, and `git fetch upstream --tags` restores the real number. `strands-robots --version` prints what is installed. The road from 0.5.x to 1.0 is on the [roadmap](../project/roadmap.md).
+The version comes from the nearest release tag (`git describe --match 'v[0-9]*'`); a checkout with no reachable tag builds as `0.1.dev...`, and `git fetch upstream --tags` restores the real number. `strands-robots --version` prints what is installed. The road from 0.5.x to 1.0 is on the [roadmap](project/roadmap.md).

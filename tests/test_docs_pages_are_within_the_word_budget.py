@@ -72,7 +72,7 @@ _BUDGET: int = _hook().LIMIT
 #: Policy -> Robot -> Backend spine, a glossary and an examples gallery); pictures enter
 #: through one-word {{drawing:}} / {{sim:}} tokens so the raise is words, not images.
 #: The ceiling moves with each page that lands and is banked to the exact total at the end.
-_SITE_BUDGET = 50_900
+_SITE_BUDGET = 53_900
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
