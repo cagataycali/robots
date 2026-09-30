@@ -127,10 +127,11 @@ class TestTopicPolicy:
         assert qos == 1
         assert retain is True
 
-    def test_safety_estop_qos1_retained(self):
+    def test_safety_estop_qos1_not_retained(self):
+        """A fleet stop is an event: at least once, never handed to late subscribers (f013)."""
         qos, retain = _qos_and_retain_for("strands/safety/estop")
         assert qos == 1
-        assert retain is True
+        assert retain is False
 
     def test_lidar_summary(self):
         qos, retain = _qos_and_retain_for("strands/so100-01/lidar/summary")

@@ -74,15 +74,16 @@ FLEET_POSITION: dict[str, list[float]] = {"so101": [0.0, 0.0, 0.0], "lekiwi": [1
 # metadata: category, joint count, gripper) -> execution binding (a
 # create_policy provider, or a motion primitive). A robot OFFERS a skill iff
 # its registry metadata satisfies the requirements - so dispatch is a
-# capability match by construction, never an embodiment switch.
+# capability match by construction, never an embodiment switch. A base that
+# carries an arm still has the base, so transport admits both mobile families.
 SKILLS: dict[str, dict[str, Any]] = {
     "stage_part": {
-        "requires": {"category": "arm", "min_joints": 5, "gripper": True},
+        "requires": {"categories": ("arm",), "min_joints": 5, "gripper": True},
         "offer": {"payload_kg": 0.5, "fixture": "smif_pod", "zones": ("bench",)},
         "binding": {"execute": "move_to", "position": [0.2, 0.0, 0.15]},
     },
     "transport_tote": {
-        "requires": {"category": "mobile", "min_joints": 3, "gripper": False},
+        "requires": {"categories": ("mobile", "mobile_manip"), "min_joints": 3, "gripper": False},
         "offer": {"payload_kg": 5.0, "fixture": "tote_clamp", "zones": ("bench", "stock")},
         "binding": {"execute": "policy", "policy_provider": "mock"},
     },
@@ -112,7 +113,7 @@ def robot_capability_metadata(embodiment: str) -> dict[str, Any]:
 
 def _meets(meta: dict[str, Any], requires: dict[str, Any]) -> bool:
     return (
-        meta["category"] == requires["category"]
+        meta["category"] in requires["categories"]
         and meta["joints"] >= requires["min_joints"]
         and (meta["gripper"] or not requires["gripper"])
     )

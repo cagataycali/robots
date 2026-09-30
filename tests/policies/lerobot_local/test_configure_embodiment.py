@@ -119,9 +119,24 @@ def test_only_joint_prefixed_keys_is_a_noop():
     bridge.apply_embodiment.assert_not_called()
 
 
-def test_unknown_embodiment_name_raises_runtime_error():
-    """A bad registry name fails the load loudly as RuntimeError, not bare ValueError."""
-    policy = _make_policy(embodiment="definitely_not_a_real_embodiment_xyz")
+def test_unknown_embodiment_name_is_refused_at_construction():
+    """A bad registry name is refused by the constructor, before ``_load_model`` runs.
+
+    It used to reach ``_configure_embodiment`` after the download and fail there
+    as a RuntimeError; the constructor now resolves the spec first (the same rule
+    ``preflight`` applies), so no weights move for a name the registry does not
+    know, and the refusal lists the names it does.
+    """
+    with patch.object(LerobotLocalPolicy, "_load_model") as load_model:
+        with pytest.raises(ValueError, match="Unknown embodiment 'definitely_not_a_real_embodiment_xyz'"):
+            LerobotLocalPolicy(embodiment="definitely_not_a_real_embodiment_xyz")
+    load_model.assert_not_called()
+
+
+def test_a_spec_the_constructor_could_not_have_seen_still_fails_the_load_loudly():
+    """The load-path guard stays for a spec set after construction: RuntimeError, not bare ValueError."""
+    policy = _make_policy(embodiment="so101")
+    policy._embodiment_spec = "definitely_not_a_real_embodiment_xyz"
     _wire_features(policy, state_dim=6, action_dim=6)
 
     with pytest.raises(RuntimeError, match="Failed to load embodiment"):

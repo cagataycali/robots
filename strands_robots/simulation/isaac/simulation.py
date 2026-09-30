@@ -37,9 +37,12 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
+from strands.tools.tools import AgentTool
 
 from strands_robots.simulation.base import SimEngine, unknown_kwargs_error, unknown_model_msg
+from strands_robots.simulation.isaac.agent_tool import IsaacAgentToolMixin
 from strands_robots.simulation.isaac.config import IsaacConfig
+from strands_robots.simulation.isaac.introspection import IsaacIntrospectionMixin
 from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, mjcf_joint_names, urdf_joint_names
 from strands_robots.simulation.isaac.loaders import mjcf_declares_floating_base
 from strands_robots.simulation.isaac.mjcf_assets import MJCF_EXTENSIONS, convert_mjcf_to_usd
@@ -471,6 +474,61 @@ def _prim_world_pose(stage: Any, path: str) -> tuple[list[float], list[float]]:
         )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
+
+
+#: The pump's idle wait, in slices short enough that a queued worker call is
+#: picked up within one slice: 10 x 5 ms, the 50 ms the loop always idled for.
+_IDLE_SLICES = 10
+_IDLE_SLICE_S = 0.005
+
+
+def _round_shape_dims(size: list[float] | None) -> tuple[float, float]:
+    """``(radius, height)`` of a cylinder or capsule from an ``add_object`` ``size``.
+
+    Two layouts, told apart by length. Two components are this backend's own
+    ``[radius, height]``. Three are the ``[diameter, unused, height]`` layout
+    the MuJoCo backend and the published tool schema use, so a size written for
+    one backend builds the same object on this one instead of reading the unused
+    middle component (often 0) as the height. Missing trailing components take
+    the documented defaults (radius 0.05, height 0.10).
+    """
+    values = list(size or [])
+    if len(values) >= 3:
+        return float(values[0]) / 2.0, float(values[2])
+    radius = float(values[0]) if len(values) >= 1 else 0.05
+    height = float(values[1]) if len(values) >= 2 else 0.10
+    return radius, height
+
+
+def _primitive_size_error(shape: str, size: list[float] | None) -> str | None:
+    """Why ``size`` cannot build ``shape``, naming the component; ``None`` when it can.
+
+    Only the components the shape consumes are checked, after the layout is
+    resolved, so a cylinder's unused middle component may be 0. Every consumed
+    extent must be > 0: a zero or negative one either builds a collider PhysX
+    cannot hold (a zero-height cylinder falls through the ground) or fails deep
+    in USD ("Non-positive determinant ... in rotation matrix" for a flat box).
+    """
+    values = list(size or [])
+    if shape == "box":
+        dims = [(axis, float(values[i]) if len(values) > i else 0.05) for i, axis in enumerate("xyz")]
+        layout = "[x, y, z] full edge lengths"
+    elif shape == "sphere":
+        dims = [("radius", float(values[0]) if values else 0.05)]
+        layout = "[radius]"
+    elif shape in ("cylinder", "capsule"):
+        radius, height = _round_shape_dims(values)
+        dims = [("radius", radius), ("height", height)]
+        layout = "[radius, height], or [diameter, unused, height] as the MuJoCo backend spells it"
+    else:
+        return None
+    bad = [f"{label}={value:g}" for label, value in dims if not value > 0]
+    if not bad:
+        return None
+    return (
+        f"add_object: a {shape} needs every extent > 0, got {', '.join(bad)} from size={values} "
+        f"({shape} size is {layout}, in meters). Nothing was added."
+    )
 
 
 def _physics_scene_path(stage: Any) -> str:
@@ -1217,7 +1275,15 @@ class _ObjectState:
         self.handle = handle
 
 
-class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, IsaacRecordingMixin, SimEngine):
+class IsaacSimulation(
+    IsaacAgentToolMixin,
+    IsaacMotionPrimitivesMixin,
+    IsaacRandomizationMixin,
+    IsaacRecordingMixin,
+    IsaacIntrospectionMixin,
+    SimEngine,
+    AgentTool,
+):
     """GPU-native simulation backend built on NVIDIA Isaac Sim.
 
     Implements the ``SimEngine`` ABC. Provides photorealistic rendering,
@@ -1401,7 +1467,8 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         if legacy_default_height is not None:
             config = dataclasses.replace(config, camera_height=legacy_default_height)
         self._config = config
-        # Tool-name is informational; some Strands tooling renders it.
+        # The name an agent calls this tool by (``IsaacAgentToolMixin``).
+        AgentTool.__init__(self)
         self.tool_name = legacy_tool_name
 
         # Simulation state (all lazy-initialized)
@@ -1916,10 +1983,18 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 # physics ran on the CPU - the falsehood above was invisible.
                 # They now read the resolved device off the physics context and
                 # report ``device_requested`` beside it, so the gap is legible.
+                # rendering_dt == physics_dt: one Kit app update integrates ONE
+                # physics step, so a rendering tick can BE the step's physics
+                # tick (see _physics_tick). Isaac's RTX products - every camera
+                # but the first - refresh only on an app update that advances the
+                # timeline, which is why a render-only refresh cannot light them
+                # and why the old refresh (an app update at rendering_dt = 4
+                # physics steps) silently advanced the scene on every
+                # multi-camera observation.
                 self._world = World(
                     stage_units_in_meters=1.0,
                     physics_dt=dt,
-                    rendering_dt=self._config.rendering_dt,
+                    rendering_dt=dt,
                 )
 
                 # Set gravity
@@ -1959,7 +2034,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 world_info = {
                     "physics_dt": resolved_dt if resolved_dt is not None else dt,
                     "physics_dt_requested": dt,
-                    "rendering_dt": self._config.rendering_dt,
+                    "rendering_dt": resolved_dt,  # the World renders with every rendered physics step
                     "gravity": list(grav),
                     "ground_plane": bool(ground_plane and self._config.ground_plane),
                     "stage_path": self._config.stage_path,
@@ -2425,6 +2500,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 wrenches = getattr(self, "_applied_wrenches", None)
                 if wrenches:
                     wrenches.clear()
+                if (
+                    self._world is not None
+                    and getattr(self, "_cameras", None)
+                    and self._config.render_mode != "headless"
+                ):
+                    self._light_cameras_after_reset()
                 self._rewind_clock()
 
                 # One wording, because there is one reset. The branch that used
@@ -2432,6 +2513,64 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 return {"status": "success", "content": [{"text": f"{flush_note}Full reset complete."}]}
 
         return self._marshal_main_thread_affine("reset", _reset_impl)
+
+    #: Upper bound on the rendering ticks a reset spends lighting its cameras.
+    _RESET_LIGHT_TICKS_MAX = 12
+
+    def _light_cameras_after_reset(self) -> None:
+        """Give every camera a frame of the reset scene before the first observation.
+
+        After ``world.reset()`` an RTX camera product - the second and later ones
+        especially - hands back an all-zero frame for the first ~6 rendered
+        updates, and only an app update that advances the timeline counts (a
+        render-only ``World.render`` never lights them). So the first
+        observation of every episode showed the policy a black wrist view
+        (measured: pi0.5's first batch had ``left_wrist_0_rgb`` all zeros). Up
+        to :attr:`_RESET_LIGHT_TICKS_MAX` rendering physics ticks are run until
+        every camera returns a non-black frame, then every velocity is zeroed
+        (:meth:`_settle_after_lighting`) and the caller rewinds the clock, so the
+        episode starts at rest at t = 0, from the pose those few ticks settled to.
+        """
+        for _ in range(self._RESET_LIGHT_TICKS_MAX):
+            self._physics_tick(render=True)
+            if all(self._camera_frame_is_lit(cam) for cam in self._cameras.values()):
+                break
+        self._settle_after_lighting()
+
+    @staticmethod
+    def _camera_frame_is_lit(cam: _CameraState) -> bool:
+        if cam.handle is None:
+            return True
+        try:
+            arr = np.asarray(cam.handle.get_rgba())
+        except (RuntimeError, ValueError, AttributeError, TypeError, IndexError):
+            return False
+        return bool(arr.ndim == 3 and arr.size and arr[..., :3].max() > 0)
+
+    def _settle_after_lighting(self) -> None:
+        """Zero every robot joint velocity and dynamic object velocity (best effort per body).
+
+        Positions are left where the lighting ticks put them - at most
+        :attr:`_RESET_LIGHT_TICKS_MAX` physics steps (0.1 s at 1/120 s) under the
+        drives - because writing them back teleports the bodies, and a teleport
+        blanks the RTX products for the next frames all over again.
+        """
+        for name, robot in self._robots.items():
+            art = getattr(robot, "articulation", None)
+            if art is None:
+                continue
+            try:
+                art.set_joint_velocities(np.zeros_like(np.asarray(art.get_joint_positions())))
+            except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                logger.debug("reset: could not zero robot %r's joint velocities: %s", name, exc)
+        for name, obj in self._objects.items():
+            if getattr(obj, "is_static", True) or obj.handle is None:
+                continue
+            try:
+                obj.handle.set_linear_velocity(np.zeros(3))
+                obj.handle.set_angular_velocity(np.zeros(3))
+            except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                logger.debug("reset: could not zero object %r's velocity: %s", name, exc)
 
     def _revive_articulations_after_reset(self) -> None:
         """Re-initialize robot articulation handles ``world.reset()`` killed.
@@ -2581,9 +2720,10 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                         # registry reads as what it is - no latched wrenches.
                         if getattr(self, "_applied_wrenches", None):
                             self._reapply_wrenches()
-                        self._world.step(render=False)
-                        if render:
-                            self._render_world()
+                        # One app update = one physics_dt (rendering_dt == physics_dt,
+                        # see create_world) that also refreshes every camera.
+                        self._world.step(render=render)
+                        self._rendered_this_tick = render
                         self._sim_time = self._world_clock()
                         self._step_count += 1
                 remaining -= batch
@@ -2655,6 +2795,21 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             except (TypeError, ValueError):
                 pass
         return self._sim_time + float(self._config.physics_dt)
+
+    def _physics_tick(self, *, render: bool) -> None:
+        """Advance physics by ONE ``physics_dt``; with ``render``, refresh every camera in that same tick.
+
+        With the World built at ``rendering_dt == physics_dt`` a rendering
+        ``World.step(render=True)`` is one Kit app update that integrates exactly
+        one physics step and renders every RTX product - the second and later
+        cameras included, which only refresh on an update that advances the
+        timeline. So the frame a caller reads after the tick is the frame of the
+        state the tick produced, and nothing is integrated that the clock does
+        not count. ``_rendered_this_tick`` tells ``get_observation`` whether the
+        products already hold this state's frame.
+        """
+        self._world.step(render=render)
+        self._rendered_this_tick = bool(render)
 
     def _render_world(self) -> None:
         """Refresh the renderer for one frame WITHOUT advancing physics.
@@ -3362,8 +3517,15 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
             * ``box``:      ``[width, height, depth]`` (default ``[0.05, 0.05, 0.05]``).
             * ``sphere``:   ``[radius]`` (default ``[0.05]``).
-            * ``cylinder``: ``[radius, height]`` (default ``[0.05, 0.10]``).
-            * ``capsule``:  ``[radius, height]`` (default ``[0.05, 0.10]``).
+            * ``cylinder``: ``[radius, height]`` (default ``[0.05, 0.10]``), or
+              three components ``[diameter, unused, height]`` - the MuJoCo
+              backend's layout, which the published tool schema documents - so
+              one ``size`` builds the same object on both backends.
+            * ``capsule``:  the same two layouts as ``cylinder``.
+
+            Every extent a shape consumes must be > 0 and is refused by name
+            otherwise: a zero-height cylinder used to fall through the ground
+            under a success envelope.
             * ``mesh``:     ignored -- the asset's own units define the extent
               (the MuJoCo backend's contract for a mesh ``size``; the Newton
               backend consumes it as a scale instead, see #2300). The result
@@ -3655,6 +3817,14 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             size, _serr = coerce_size_vector("add_object", "size", size)
             if _serr is not None:
                 return {"status": "error", "content": [{"text": _serr}]}
+            # The shape-dependent half: which components a shape consumes, and
+            # that each consumed one is a positive extent. A zero reached PhysX
+            # as a zero-height collider (``cylinder size=[0.04, 0, 0.06]``, the
+            # MuJoCo ``[diameter, _, height]`` layout the published tool schema
+            # documents, read here as ``[radius, height=0]``): the body fell
+            # through the ground to z = -19.9 m in 2 s under a success envelope.
+            if shape != "mesh" and (_derr := _primitive_size_error(shape, size)) is not None:
+                return {"status": "error", "content": [{"text": _derr}]}
 
             pos = [0.0, 0.0, 0.5] if position is None else position
             orient = [1.0, 0.0, 0.0, 0.0] if orientation is None else orientation
@@ -4066,15 +4236,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             cls = FixedSphere if is_static else DynamicSphere
             radius = float(size[0]) if size and len(size) >= 1 else 0.05
             return cls(radius=radius, **common), [radius]
-        if shape == "cylinder":
-            cls = FixedCylinder if is_static else DynamicCylinder
-            radius = float(size[0]) if size and len(size) >= 1 else 0.05
-            height = float(size[1]) if size and len(size) >= 2 else 0.10
-            return cls(radius=radius, height=height, **common), [radius, height]
-        if shape == "capsule":
-            cls = FixedCapsule if is_static else DynamicCapsule
-            radius = float(size[0]) if size and len(size) >= 1 else 0.05
-            height = float(size[1]) if size and len(size) >= 2 else 0.10
+        if shape in ("cylinder", "capsule"):
+            if shape == "cylinder":
+                cls = FixedCylinder if is_static else DynamicCylinder
+            else:
+                cls = FixedCapsule if is_static else DynamicCapsule
+            radius, height = _round_shape_dims(size)
             return cls(radius=radius, height=height, **common), [radius, height]
         # Unreachable: shape was validated by add_object before this call;
         # raise loudly if a future caller bypasses that guard.
@@ -5146,7 +5313,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 # camera's RTX render product accumulates a fresh frame before we
                 # read them back. Single-camera setups skip this (the substep
                 # render already warmed the one product) to stay fast.
-                if len(self._cameras) > 1:
+                if len(self._cameras) > 1 and not getattr(self, "_rendered_this_tick", False):
                     self._refresh_all_render_products()
                 for cam_name, cam in self._cameras.items():
                     if cam.handle is None:
@@ -5994,9 +6161,8 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                         # does not re-push it is a tick the force is absent from.
                         if getattr(self, "_applied_wrenches", None):
                             self._reapply_wrenches()
-                        self._world.step(render=False)
-                        if render_on and last:
-                            self._render_world()
+                        self._world.step(render=render_on and last)
+                        self._rendered_this_tick = render_on and last
                         self._sim_time = self._world_clock()
                         self._step_count += 1
                         stepped += 1
@@ -6188,7 +6354,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 ``{robot_name: instruction}`` mapping.
             duration: Episode length in seconds (steps = duration x freq).
                 Used only when no ``n_steps`` / ``max_steps`` is given.
-            control_frequency: Target Hz for policy queries / physics steps.
+            control_frequency: Target Hz for policy queries. Each synchronized step advances one control period of physics, in whole ``physics_dt`` ticks, as ``run_policy`` does.
             action_horizon: Actions consumed from each policy's chunk before
                 re-querying it, as one int or a per-robot mapping.
             n_steps: Exact step horizon (overrides ``duration`` when set).
@@ -6366,6 +6532,13 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
         skip_images = not (any_needs_images or recording)
         render_on = self._config.render_mode != "headless"
         physics_dt = float(getattr(self._config, "physics_dt", 0.0) or 0.0)
+        # One synchronized step is one CONTROL period (MuJoCo parity, and what
+        # run_policy steps for the same rate): one physics tick at 1/120 s under
+        # a 50 Hz loop left each servo 42% of the way to its target, and a
+        # recording labelled at the control rate held frames 1/120 s apart.
+        from strands_robots.simulation.policy_runner import PolicyRunner
+
+        n_substeps = PolicyRunner(self)._control_substeps(control_frequency)
 
         # Honour the RESOLVED step count. ``_resolve_horizon`` above returns both
         # the wall-clock ``duration`` and the normalized ``n_steps``, and the
@@ -6412,7 +6585,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             return per_obs, cams
 
         def _apply_all_and_step(per_robot_action: dict[str, dict[str, Any]]) -> None:
-            """Main-thread hop 2: apply EVERY robot's targets, step physics ONCE."""
+            """Main-thread hop 2: apply EVERY robot's targets, step one control period."""
             with self._lock:
                 # The preflight refused a view that was already stale; this
                 # catches one invalidated MID-rollout by a worker thread's
@@ -6434,11 +6607,16 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     self._apply_lockstep_action(rname, act, warned_unresolved)
                 # Same replay as ``step`` and ``send_action``: this tick advances
                 # ``_sim_time``, so a latched wrench has to act on it.
-                if getattr(self, "_applied_wrenches", None):
-                    self._reapply_wrenches()
-                self._world.step(render=render_on)
-                self._sim_time += physics_dt
-                self._step_count += 1
+                for tick in range(n_substeps):
+                    if getattr(self, "_applied_wrenches", None):
+                        self._reapply_wrenches()
+                    # Render once, after the last tick, as ``send_action`` does:
+                    # the frame read next is of the state this period ends in.
+                    self._world.step(render=False)
+                    if render_on and tick == n_substeps - 1:
+                        self._render_world()
+                    self._sim_time += physics_dt
+                    self._step_count += 1
 
         step_count = 0
         stopped_early = False
@@ -8893,7 +9071,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                     job = None
                 if job is not None:
                     job()
-                    last_idle_render_mono = None
                     continue
                 busy = not self._action_q.empty()
                 if busy:
@@ -8912,7 +9089,16 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 self.pump(render=do_render)
                 if do_render:
                     last_idle_render_mono = now_mono
-                time.sleep(0.05)
+                # Idle for the same 50 ms as before, but in 5 ms slices that end
+                # as soon as a worker queues a call (an agent tool call, a policy
+                # step). The single ``sleep(0.05)``, plus forcing an idle
+                # re-render after every job, capped worker-thread control at
+                # ~12 Hz - 81 ms median per marshalled send_action against 2 ms
+                # on the main thread (one L40S, Isaac Sim 6.1).
+                for _ in range(_IDLE_SLICES):
+                    if not self._main_jobs.empty() or not self._action_q.empty():
+                        break
+                    time.sleep(_IDLE_SLICE_S)
         finally:
             self._pump_running = False
 
@@ -8990,10 +9176,10 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             f"IsaacSimulation.{method_name}() was called from a worker thread with no "
             "main-thread pump running. Isaac Sim only pumps kit updates on the thread "
             "that created SimulationApp, so this call would block forever. Either call "
-            "it from the owning thread, or have the owning thread run "
-            "`run_pump_forever(stop_event=...)` and submit the call from the worker via "
-            "`run_on_main(lambda: ...)` (see the Threading section of docs/learn/simulation/isaac.md "
-            "for the agent-driven shape)."
+            "it from the owning thread, drive a Strands agent with `sim.run_agent(agent, prompt)`, "
+            "or have the owning thread run `run_pump_forever(stop_event=...)` and submit the call "
+            "from the worker via `run_on_main(lambda: ...)` (see the Threading section of "
+            "docs/learn/simulation/isaac.md for the agent-driven shape)."
         )
 
     # --- joint targets / kinematic teleport --------------------------------

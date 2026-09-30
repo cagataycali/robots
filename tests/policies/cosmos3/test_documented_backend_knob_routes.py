@@ -32,10 +32,8 @@ route drops is exactly the silent failure described above.
 """
 
 import ast
-import importlib.util
 import inspect
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -47,11 +45,11 @@ from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient
 from strands_robots.policies.cosmos3.embodiments import get_embodiment
 from strands_robots.registry import build_policy_kwargs
 from strands_robots.simulation import create_simulation
+from tests._docs_hooks import docs_hook
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DOCS = (_REPO_ROOT / "docs" / "learn" / "policies" / "cosmos3.md",)
 _DOC_NAMES = " + ".join(p.name for p in _DOCS)
-_PROVIDERS_HOOK = _REPO_ROOT / "docs" / "hooks" / "providers.py"
 _FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.S)
 
 # Classes the page can name as the receiver of a documented keyword.
@@ -68,12 +66,7 @@ _MINIMUM_FENCE_KEYWORDS = 15
 
 def _providers_hook() -> Any:
     """Load ``docs/hooks/providers.py`` from its file, the way mkdocs does."""
-    spec = importlib.util.spec_from_file_location("docs_providers_hook_cosmos3", _PROVIDERS_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("providers")
 
 
 def _page() -> str:
