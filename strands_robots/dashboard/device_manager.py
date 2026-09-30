@@ -1032,10 +1032,10 @@ class AutoSpawnWatcher:
     def run_forever(self, interval: float = AUTOSPAWN_POLL_S) -> None:
         """Poll until :meth:`stop`. For a thread; the server uses asyncio.
 
-        Paced by :class:`strands_robots.mesh.pacing.Ticker` so a slow
+        Paced by :class:`strands_robots._pacing.Ticker` so a slow
         ``poll()`` does not stretch the period by its own duration.
         """
-        from strands_robots.mesh.pacing import Ticker
+        from strands_robots._pacing import Ticker
 
         with Ticker(interval, self._stop) as ticker:
             while not ticker.wait():
