@@ -1,6 +1,7 @@
 """Tests for ``strands_robots.policies.factory.create_policy``.
 
-* provider resolution (mock / groot / lerobot_local)
+* provider resolution (mock / remote / lerobot_local)
+* the removed ``groot`` spelling is refused with its fixed sentence, never rerouted
 * ``trust_remote_code`` security gate for HF-backed providers
 * kwargs forwarding to the chosen provider
 """
@@ -17,15 +18,8 @@ from strands_robots.policies import (
     preflight_policy,
     register_policy,
 )
-
-# Detect groot-service availability for conditional test grouping.
-try:
-    import msgpack  # noqa: F401
-    import zmq  # noqa: F401
-
-    _groot_available = True
-except ImportError:
-    _groot_available = False
+from strands_robots.policies.factory import policy_provider_error, provider_can_be_created
+from strands_robots.registry.policies import REMOVED_PROVIDERS, policy_provider_resolves, resolve_policy
 
 
 class TestCreatePolicy:
@@ -44,7 +38,8 @@ class TestCreatePolicy:
         register_policy("runtime_only_provider", loader=lambda: MockPolicy)
         providers = list_providers()
         assert "mock" in providers
-        assert "groot" in providers
+        assert "lerobot_local" in providers
+        assert "groot" not in providers
         assert "runtime_only_provider" in providers
 
     def test_unknown_provider_raises(self):
@@ -64,11 +59,6 @@ class TestCreatePolicy:
         p = create_policy("kwarg_test", some_key="some_val")
         assert p.captured == {"some_key": "some_val"}
 
-    def test_create_via_hf_model_id_triggers_smart_resolution(self):
-        """An org/model string should trigger smart-string resolution."""
-        with pytest.raises(Exception):
-            create_policy("unknownorg/somemodel")
-
     def test_create_via_grpc_url_triggers_smart_resolution(self):
         """A grpc:// URL should trigger smart-string resolution."""
         with pytest.raises(Exception):
@@ -87,43 +77,48 @@ class TestCreatePolicy:
         assert policy.uri == "ws://localhost:8080"
 
 
-@pytest.mark.skipif(not _groot_available, reason="groot-service extras not installed")
-class TestFactoryGrootIntegration:
-    """Factory tests that require groot-service extras (zmq, msgpack).
+class TestRemovedGrootProviderIsRefused:
+    """``groot`` was removed in 1.0: every spelling is refused with one sentence.
 
-    Grouped into a single class with a class-level skip marker so future
-    contributors don't need to remember per-test decorators.
+    The refusal must be a refusal, not a reroute. Without the table in
+    ``registry.policies.REMOVED_PROVIDERS`` the name would fall through
+    ``resolve_policy``'s last stage to ``lerobot_local`` as a checkpoint id.
     """
 
-    def test_create_via_zmq_url_resolves_to_groot(self):
-        """A zmq:// URL should resolve to a Gr00tPolicy via smart-string resolution."""
-        from strands_robots.policies.groot import Gr00tPolicy
+    SENTENCE = REMOVED_PROVIDERS["groot"]
 
-        p = create_policy("zmq://localhost:5555")
-        assert isinstance(p, Gr00tPolicy)
+    def test_the_sentence_is_the_documented_one(self):
+        assert self.SENTENCE == (
+            "policy_provider 'groot' was removed in 1.0: GR00T N1.7 runs through "
+            "lerobot_local(policy_type='groot'); for a remote GPU host run "
+            "strands_robots.inference.server.PolicyServer there and use policy_provider='remote'."
+        )
 
-    def test_groot_strict_and_api_token_passthrough(self):
-        """strict and api_token kwargs should reach Gr00tPolicy constructor."""
-        from strands_robots.policies.groot import Gr00tPolicy
+    @pytest.mark.parametrize("spelling", ["groot", "GROOT", " groot "])
+    def test_create_policy_refuses_every_spelling(self, spelling):
+        with pytest.raises(ValueError) as excinfo:
+            create_policy(spelling, port=5555)
+        assert str(excinfo.value) == self.SENTENCE
 
-        p = create_policy("zmq://localhost:5555", strict=True, api_token="test-token")
-        assert isinstance(p, Gr00tPolicy)
-        assert p._strict is True
-        assert p._client.api_token == "test-token"
+    def test_resolve_policy_refuses_before_the_lerobot_local_fallback(self):
+        with pytest.raises(ValueError) as excinfo:
+            resolve_policy("groot")
+        assert str(excinfo.value) == self.SENTENCE
 
-    def test_groot_defaults_strict_false(self):
-        """strict should default to False for production use."""
-        p = create_policy("zmq://localhost:5555")
-        assert p._strict is False
+    def test_preflight_surfaces_report_the_same_sentence(self):
+        assert provider_can_be_created("groot") is False
+        assert policy_provider_resolves("groot") is False
+        assert policy_provider_error("groot") == self.SENTENCE
 
-    def test_groot_direct_construction_with_new_params(self):
-        """Direct Gr00tPolicy() should accept strict and api_token."""
-        from strands_robots.policies.groot import Gr00tPolicy
+    def test_a_zmq_url_is_an_undeclared_scheme(self):
+        """No provider dials ZMQ from a URL any more; the scheme is refused as an address."""
+        with pytest.raises(ValueError, match="zmq://"):
+            resolve_policy("zmq://localhost:5555")
 
-        p = Gr00tPolicy(host="localhost", port=5555, strict=True, api_token="s3cret")
-        assert p._strict is True
-        assert p._mode == "service"
-        assert p._client.api_token == "s3cret"
+    def test_nvidia_checkpoints_route_to_lerobot_local(self):
+        provider, kwargs = resolve_policy("nvidia/GR00T-N1.7-3B")
+        assert provider == "lerobot_local"
+        assert kwargs == {"pretrained_name_or_path": "nvidia/GR00T-N1.7-3B"}
 
 
 class TestTrustRemoteCodeGate:
@@ -186,6 +181,44 @@ class TestSmartResolutionFallThrough:
         monkeypatch.setattr("strands_robots.policies.factory.resolve_policy", boom)
         with pytest.raises(ValueError, match="^resolver refused this address$"):
             create_policy("unknownorg/doesnotexist")
+
+
+class TestOnlyAddressAndCheckpointShapesAreSmartStrings:
+    """Punctuation alone does not make a spelling an address or a checkpoint.
+
+    A typo carrying a ``/`` or ``:`` used to be forwarded to ``lerobot_local``
+    as a checkpoint id, so the caller got a trust-remote-code refusal naming a
+    provider they never typed, and the pre-flight check reported it buildable.
+    """
+
+    @pytest.mark.parametrize(
+        ("spelling", "suggestion"),
+        [
+            ("wbc/", "'wbc'"),
+            ("protomotions:", "'protomotions'"),
+            (":", None),
+            ("/", None),
+            ("C:\\path", None),
+            ("myserver:8080", None),
+        ],
+    )
+    def test_a_typo_is_an_unknown_provider(self, spelling, suggestion, monkeypatch):
+        monkeypatch.delenv("STRANDS_TRUST_REMOTE_CODE", raising=False)
+        assert provider_can_be_created(spelling) is False
+        with pytest.raises(ValueError, match="^Unknown policy provider") as ei:
+            create_policy(spelling)
+        if suggestion:
+            assert f"Did you mean: {suggestion}" in str(ei.value)
+
+    @pytest.mark.parametrize(
+        "spelling",
+        ["unknownorg/somemodel", "/tmp/ft/checkpoints/last/pretrained_model", "outputs/train/act", "./ckpt", "~/ckpt"],
+    )
+    def test_a_checkpoint_still_reaches_lerobot_local(self, spelling, monkeypatch):
+        monkeypatch.delenv("STRANDS_TRUST_REMOTE_CODE", raising=False)
+        assert provider_can_be_created(spelling) is True
+        with pytest.raises(UntrustedRemoteCodeError, match="'lerobot_local'"):
+            create_policy(spelling)
 
 
 class _KwargCapture(Policy):

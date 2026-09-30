@@ -26,17 +26,16 @@ excluded, never why.
 
 from __future__ import annotations
 
-import importlib.util
 import re
-import sys
 import tomllib
 from pathlib import Path
+
+from tests._docs_hooks import docs_hook
 
 _ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _ROOT / "pyproject.toml"
 _DOCS = _ROOT / "docs"
 _INSTALL_PAGE = _DOCS / "start" / "install.md"
-_HOOK = _DOCS / "hooks" / "extras.py"
 
 # The bundle is a developer convenience, so its tooling extra is not a
 # capability a reader installs it for; the pages describe capability extras.
@@ -57,13 +56,7 @@ _EXTRA_IN_TEXT = re.compile(r"`\[([a-z0-9][a-z0-9-]*)\]`")
 
 def _rendered(page: Path) -> str:
     """``page`` with the ``{{extras:...}}`` tokens expanded by the shipped hook."""
-    spec = importlib.util.spec_from_file_location("docs_hooks_extras", _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = sys.modules.get(spec.name)
-    if module is None:
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+    module = docs_hook("extras")
     return module.substitute(page.read_text(encoding="utf-8"), str(page.relative_to(_DOCS)))
 
 

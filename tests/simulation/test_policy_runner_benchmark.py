@@ -1122,8 +1122,8 @@ class TestEvalSeeding:
 
 class TestPolicyResetIntegration:
     """#187: ``_evaluate_with_spec`` calls ``policy.reset(seed=episode_seed)``
-    at the top of every episode so SERVICE-mode policies (e.g. Gr00tPolicy
-    over ZMQ) can forward the seed to a remote inference server.
+    at the top of every episode so SERVICE-mode policies (e.g. Cosmos3Policy
+    over WebSocket) can forward the seed to a remote inference server.
 
     Without this hook the server's diffusion sampler RNG drifts across
     calls and breaks reproducibility. The ``Policy.reset`` default is a

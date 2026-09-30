@@ -87,7 +87,7 @@ class TestStartTask:
 
     def test_the_port_refusal_still_comes_first_for_a_dialing_provider(self):
         hw = _hw()
-        result = hw.start_task("pick", policy_provider="groot", policy_port=None, duration=1.0)
+        result = hw.start_task("pick", policy_provider="moveit2", policy_port=None, duration=1.0)
         assert "policy_port is required" in _text(result)
 
     def test_an_unknown_provider_is_left_to_create_policy(self):
@@ -106,7 +106,7 @@ class TestStartTask:
         Judging it here would find it absent for every caller and refuse a port
         that WAS supplied; ``_policy_port_error`` is the one that reads it.
         """
-        assert HwRobot._policy_requires_error("groot", {}, "start_task") is None
+        assert HwRobot._policy_requires_error("moveit2", {}, "start_task") is None
 
 
 class TestExecuteTask:

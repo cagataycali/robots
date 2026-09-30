@@ -34,13 +34,11 @@ def test_a_kept_provider_does_not_warn() -> None:
         create_policy("mock")
 
 
-def test_groot_local_mode_warns_and_service_mode_does_not() -> None:
-    from strands_robots.policies.groot.policy import Gr00tPolicy
-
-    with pytest.warns(DeprecationWarning, match=r"model_path=.*removed in 0\.7"):
-        with contextlib.suppress(Exception):  # no Isaac-GR00T here; the notice precedes the load
-            Gr00tPolicy(model_path="nvidia/GR00T-N1.6-3B")
+def test_a_provider_already_removed_refuses_instead_of_warning() -> None:
+    """The cut itself is a refusal with the replacement in the sentence, not a warning."""
     with warnings.catch_warnings():
         warnings.simplefilter("error", DeprecationWarning)
-        Gr00tPolicy(port=5555)
-    assert "removed in 0.7" in (_PAGES / "groot.md").read_text()
+        with pytest.raises(ValueError, match="removed in 1.0") as excinfo:
+            create_policy("groot", port=5555)
+    assert "lerobot_local(policy_type='groot')" in str(excinfo.value)
+    assert not (_PAGES / "groot.md").exists(), "a removed provider has no page to warn on"

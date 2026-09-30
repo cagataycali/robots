@@ -57,9 +57,10 @@ from tests.test_hardware_policy_port_domain import _text, hw  # noqa: F401 - fix
 pytestmark = pytest.mark.usefixtures("named_rpc_caller")
 
 # Spellings no policy can be resolved from. The first is the realistic one - a
-# transposed/duplicated letter in the default provider - and the rest cover the
-# other ways a name arrives wrong.
-UNRESOLVABLE: list[str] = ["grooot", "gr00t", "GRoot ", "mokc", "lerobot-local", "no_such_provider"]
+# transposed/duplicated letter in a provider name - and the rest cover the
+# other ways a name arrives wrong. ``groot`` itself is not here: it is a
+# removed provider with its own fixed refusal, graded separately below.
+UNRESOLVABLE: list[str] = ["moveit22", "movit2", "MoveIt2 ", "mokc", "lerobot-local", "no_such_provider"]
 
 # Names absent from ``list_policy_providers()`` that nevertheless build today:
 # the declared aliases resolve through the registry's alias map, and these two
@@ -97,7 +98,15 @@ class TestAnUnresolvableProviderIsRefusedBeforeTheArmIsTouched:
     def test_the_refusal_names_the_provider_and_what_would_resolve(self, hw: Any, provider: str) -> None:  # noqa: F811
         text = _text(hw.start_task("go", policy_provider=provider))
         assert provider in text, "the caller cannot correct a spelling the refusal does not quote"
-        assert "groot" in text and "mock" in text, "the refusal must offer names that do resolve"
+        assert "moveit2" in text and "mock" in text, "the refusal must offer names that do resolve"
+
+    def test_the_removed_provider_is_refused_with_its_own_sentence(self, hw: Any) -> None:  # noqa: F811
+        """``groot`` is neither a typo nor a name: the refusal names the replacement, not the registry."""
+        text = _text(hw.start_task("go", policy_provider="groot"))
+        assert "policy_provider 'groot' was removed in 1.0" in text
+        assert "lerobot_local(policy_type='groot')" in text
+        assert "policy_port is required" not in text
+        assert hw.connects == []
 
 
 class TestAProviderProblemIsNotReportedAsAPortProblem:
@@ -107,26 +116,26 @@ class TestAProviderProblemIsNotReportedAsAPortProblem:
     leaves to the provider. With the port *missing* there was no registry entry
     to read, so the same unknown name was refused as "policy_port is required":
     a port problem reported for a provider problem, and the identical sentence a
-    correctly spelled ``groot`` gets - so the two were indistinguishable.
+    correctly spelled ``moveit2`` gets - so the two were indistinguishable.
     """
 
     @pytest.mark.parametrize("entry", ["start_task", "_execute_task_sync"])
     def test_a_misspelling_with_no_port_is_named_as_unknown(self, hw: Any, entry: str) -> None:  # noqa: F811
-        text = _text(getattr(hw, entry)("go", policy_provider="grooot"))
-        assert "grooot" in text
+        text = _text(getattr(hw, entry)("go", policy_provider="moveit22"))
+        assert "moveit22" in text
         assert "policy_port is required" not in text, "a provider problem reported as a port problem"
 
     def test_a_misspelling_reads_differently_from_a_correct_name_missing_a_port(self, hw: Any) -> None:  # noqa: F811
-        misspelled = _text(hw.start_task("go", policy_provider="grooot"))
-        correct = _text(hw.start_task("go", policy_provider="groot"))
+        misspelled = _text(hw.start_task("go", policy_provider="moveit22"))
+        correct = _text(hw.start_task("go", policy_provider="moveit2"))
         assert misspelled != correct, "the operator cannot tell a typo from a missing port"
         assert "policy_port is required" in correct, "the port refusal keeps its own wording"
 
     def test_the_prescribed_remedy_no_longer_leads_to_another_wrong_reason(self, hw: Any) -> None:  # noqa: F811
         """Pre-fix, adding the port the message asked for got the call *past* the
         pre-flight entirely, to fail after the arm was energized."""
-        result = hw.start_task("go", policy_provider="grooot", policy_port=5555)
-        assert result["status"] == "error" and "grooot" in _text(result)
+        result = hw.start_task("go", policy_provider="moveit22", policy_port=5555)
+        assert result["status"] == "error" and "moveit22" in _text(result)
         assert hw.connects == []
 
 
@@ -180,8 +189,8 @@ class TestTheApprovalPromptDescribesThePolicyTruthfully:
         assert "policy mock built in this process, no server" in prompt
 
     def test_a_supplied_port_is_still_named(self, gateable: Any) -> None:
-        prompt = _gate_prompt(gateable, instruction="wave", policy_provider="groot", policy_port=5555)
-        assert "policy groot at localhost:5555" in prompt
+        prompt = _gate_prompt(gateable, instruction="wave", policy_provider="moveit2", policy_port=5555)
+        assert "policy moveit2 at localhost:5555" in prompt
 
     def test_a_server_dialing_provider_that_defaults_its_port_is_not_called_serverless(self, gateable: Any) -> None:
         """``cosmos3`` dials a server while defaulting the port, so "no server"
@@ -267,7 +276,7 @@ class TestTheGateAcceptsEverySpellingCreatePolicyAccepts:
     def test_a_runtime_alias_is_not_refused(self, registered: str) -> None:
         assert HwRobot._policy_provider_error("gate_probe", "start_task") is None
 
-    @pytest.mark.parametrize("smart", ["lerobot/act_so101_test", "zmq://127.0.0.1:5555", "ws://host:8000/policy"])
+    @pytest.mark.parametrize("smart", ["lerobot/act_so101_test", "ws://host:8000/policy"])
     def test_a_smart_string_is_left_to_resolution(self, smart: str) -> None:
         assert HwRobot._policy_provider_error(smart, "start_task") is None
 

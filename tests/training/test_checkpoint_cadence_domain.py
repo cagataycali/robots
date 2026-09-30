@@ -45,13 +45,12 @@ import pytest
 from strands_robots.training._validate import checkpoint_cadence_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 from strands_robots.training.sagemaker import SagemakerTrainer
 
 # The backends that checkpoint from the field.
-CHECKPOINTING_BACKENDS = (LerobotTrainer, Gr00tTrainer, Cosmos3Trainer, SagemakerTrainer)
+CHECKPOINTING_BACKENDS = (LerobotTrainer, Cosmos3Trainer, SagemakerTrainer)
 
 # Values no consumer can honor, split by how each one failed before the gate.
 
