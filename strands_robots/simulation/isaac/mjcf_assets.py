@@ -324,7 +324,7 @@ def _importer_version() -> str:
 
 
 #: Bumped when the post-import fix-ups below change what a cache entry holds.
-_POSTPROCESS_VERSION = "drives-v3"
+_POSTPROCESS_VERSION = "drives-v4"
 
 
 def _position_servo_gains(mjcf_path: str) -> dict[str, tuple[float, float, float | None]]:
@@ -347,6 +347,8 @@ def _position_servo_gains(mjcf_path: str) -> dict[str, tuple[float, float, float
     except (ValueError, OSError, RuntimeError):
         return {}
     gains: dict[str, tuple[float, float, float | None]] = {}
+    for joint, servo in _tendon_servo_gains(model, mujoco).items():
+        gains.setdefault(joint, servo)
     for i in range(model.nu):
         if int(model.actuator_trntype[i]) != int(mujoco.mjtTrn.mjTRN_JOINT):
             continue
@@ -371,6 +373,147 @@ def _position_servo_gains(mjcf_path: str) -> dict[str, tuple[float, float, float
         passive = float(model.dof_damping[int(model.jnt_dofadr[joint_id])])
         gains[joint] = (kp, max(0.0, -float(bias[2])) + passive, force)
     return gains
+
+
+def _tendon_servo_gains(model: Any, mujoco: Any) -> dict[str, tuple[float, float, float | None]]:
+    """Per-joint ``(kp, kd, force_limit)`` for a position servo that acts through a fixed tendon.
+
+    The Panda gripper is one: ``actuator8`` is a ``general`` actuator on the
+    ``split`` tendon (``0.5 * finger_joint1 + 0.5 * finger_joint2``) with
+    ``biasprm = [0, -100, -10]``, i.e. a servo on the tendon length with
+    ``kp = 100 N/m`` and ``kd = 10 N*s/m``. The USD keeps the two joints and no
+    tendon, and the importer leaves both at ``stiffness=0``: the fingers hung
+    limp and every ``set_gripper`` moved nothing. A tendon force ``F`` reaches
+    joint ``j`` as ``coef_j * F``; with the coupled joints moving together
+    (MuJoCo's equality constraint, and the same target on each here) that is a
+    joint servo of stiffness ``kp * coef_j * sum(coef)``, force limit
+    ``coef_j * forcerange``. Only tendons made purely of joint wraps with
+    positive coefficients qualify; anything else keeps the vendor conversion.
+    """
+    out: dict[str, tuple[float, float, float | None]] = {}
+    joint_wrap = int(mujoco.mjtWrap.mjWRAP_JOINT)
+    for i in range(model.nu):
+        if int(model.actuator_trntype[i]) != int(mujoco.mjtTrn.mjTRN_TENDON):
+            continue
+        if int(model.actuator_gaintype[i]) != int(mujoco.mjtGain.mjGAIN_FIXED):
+            continue
+        if int(model.actuator_biastype[i]) != int(mujoco.mjtBias.mjBIAS_AFFINE):
+            continue
+        bias = model.actuator_biasprm[i]
+        kp, kd = -float(bias[1]), max(0.0, -float(bias[2]))
+        if not kp > 0 or float(model.actuator_gainprm[i][0]) <= 0:
+            continue
+        tendon = int(model.actuator_trnid[i][0])
+        start, count = int(model.tendon_adr[tendon]), int(model.tendon_num[tendon])
+        wraps = [(int(model.wrap_objid[w]), float(model.wrap_prm[w])) for w in range(start, start + count)]
+        if not wraps or any(int(model.wrap_type[w]) != joint_wrap for w in range(start, start + count)):
+            continue
+        if any(coef <= 0 for _, coef in wraps):
+            continue
+        total = sum(coef for _, coef in wraps)
+        force = float(model.actuator_forcerange[i][1]) if bool(model.actuator_forcelimited[i]) else None
+        for joint_id, coef in wraps:
+            joint = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+            if joint:
+                out[joint] = (kp * coef * total, kd * coef * total, None if force is None else force * coef)
+    return out
+
+
+def _declares_api(prim: Any, name: str) -> bool:
+    """Whether *prim* declares the applied API schema *name*, registered or not.
+
+    ``GetAppliedSchemas`` lists only schemas this USD build knows; Newton's are
+    registered inside Kit and unknown to a plain ``usd-core``. The authored
+    ``apiSchemas`` list is read as well, so the answer does not depend on which
+    USD build does the post-process.
+    """
+    if name in [str(x) for x in prim.GetAppliedSchemas()]:
+        return True
+    ops = prim.GetMetadata("apiSchemas")
+    if ops is None:
+        return False
+    items = list(ops.GetAddedOrExplicitItems()) if hasattr(ops, "GetAddedOrExplicitItems") else []
+    items += list(getattr(ops, "prependedItems", []) or []) + list(getattr(ops, "explicitItems", []) or [])
+    return name in [str(x) for x in items]
+
+
+def _mimic_leaders(mjcf_path: str) -> dict[str, str]:
+    """``{follower_joint: leader_joint}`` from the MJCF's ``<equality><joint>`` couplings.
+
+    MuJoCo's ``joint1 = polycoef(joint2)``: ``joint1`` follows ``joint2``. The
+    converter marks the follower with ``NewtonMimicAPI`` but authors no
+    ``newton:mimicJoint`` relationship, so USD Physics logs "must have exactly 1
+    newton:mimicJoint relationship" on every reset. ``{}`` when MuJoCo cannot
+    compile the file.
+    """
+    try:
+        import mujoco
+    except ImportError:
+        return {}
+    try:
+        model = mujoco.MjModel.from_xml_path(mjcf_path)
+    except (ValueError, OSError, RuntimeError):
+        return {}
+    joint_obj = mujoco.mjtObj.mjOBJ_JOINT
+    out: dict[str, str] = {}
+    for i in range(model.neq):
+        if int(model.eq_type[i]) != int(mujoco.mjtEq.mjEQ_JOINT):
+            continue
+        follower = mujoco.mj_id2name(model, joint_obj, int(model.eq_obj1id[i]))
+        leader_id = int(model.eq_obj2id[i])
+        leader = mujoco.mj_id2name(model, joint_obj, leader_id) if leader_id >= 0 else None
+        if follower and leader:
+            out[follower] = leader
+    return out
+
+
+@functools.lru_cache(maxsize=32)
+def _actuator_joints_cached(mjcf_path: str, mtime: float) -> dict[str, tuple[str, ...]]:
+    del mtime  # part of the cache key only: an edited file is read again
+    try:
+        import mujoco
+    except ImportError:
+        return {}
+    try:
+        model = mujoco.MjModel.from_xml_path(mjcf_path)
+    except (ValueError, OSError, RuntimeError):
+        return {}
+    joint_obj = mujoco.mjtObj.mjOBJ_JOINT
+    out: dict[str, tuple[str, ...]] = {}
+    for i in range(model.nu):
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, i)
+        if not name:
+            continue
+        trn = int(model.actuator_trntype[i])
+        target = int(model.actuator_trnid[i][0])
+        joints: list[str] = []
+        if trn in (int(mujoco.mjtTrn.mjTRN_JOINT), int(mujoco.mjtTrn.mjTRN_JOINTINPARENT)):
+            joints = [mujoco.mj_id2name(model, joint_obj, target) or ""]
+        elif trn == int(mujoco.mjtTrn.mjTRN_TENDON):
+            start, count = int(model.tendon_adr[target]), int(model.tendon_num[target])
+            for w in range(start, start + count):
+                if int(model.wrap_type[w]) == int(mujoco.mjtWrap.mjWRAP_JOINT):
+                    joints.append(mujoco.mj_id2name(model, joint_obj, int(model.wrap_objid[w])) or "")
+        joints = [j for j in joints if j]
+        if joints:
+            out[name] = tuple(joints)
+    return out
+
+
+def mjcf_actuator_joints(mjcf_path: str | None) -> dict[str, tuple[str, ...]]:
+    """``{actuator: (joint, ...)}`` for every MJCF actuator that drives joints.
+
+    A joint actuator names its joint; a fixed-tendon actuator names every joint
+    the tendon couples (the Panda's ``actuator8`` drives the ``split`` tendon
+    over ``finger_joint1`` and ``finger_joint2``). Read from the COMPILED model,
+    so class defaults and includes are resolved. The converted USD keeps the
+    joints and drops the actuators, which is why a name the registry gives in
+    MuJoCo's actuator vocabulary has to be translated to reach a DOF on Isaac.
+    ``{}`` when MuJoCo is not importable or the file does not compile.
+    """
+    if not mjcf_path or not os.path.isfile(mjcf_path):
+        return {}
+    return _actuator_joints_cached(os.path.abspath(mjcf_path), os.path.getmtime(mjcf_path))
 
 
 def _author_position_drives(usd_file: str, mjcf_path: str) -> list[str]:
@@ -415,6 +558,15 @@ def _author_position_drives(usd_file: str, mjcf_path: str) -> list[str]:
     joint_prims = [p for p in stage.Traverse() if p.IsA(UsdPhysics.RevoluteJoint) or p.IsA(UsdPhysics.PrismaticJoint)]
     decoded, _ = demangle_usd_joint_names([p.GetName() for p in joint_prims], list(gains))
     written: list[str] = []
+    joints_by_name = dict(zip(decoded, joint_prims, strict=True))
+    for follower, leader in _mimic_leaders(mjcf_path).items():
+        prim, target = joints_by_name.get(follower), joints_by_name.get(leader)
+        if prim is None or target is None or not _declares_api(prim, "NewtonMimicAPI"):
+            continue
+        rel = prim.GetRelationship("newton:mimicJoint") or prim.CreateRelationship("newton:mimicJoint", custom=False)
+        if not rel.GetTargets():
+            rel.SetTargets([target.GetPath()])
+            written.append(f"{follower}->mimic:{leader}")
     for prim, name in zip(joint_prims, decoded, strict=True):
         if name not in gains:
             continue
