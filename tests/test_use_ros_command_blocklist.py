@@ -10,11 +10,9 @@ refuses correctly is worthless if a verb never consults it.
 from __future__ import annotations
 
 import ast
-import importlib.util
 import inspect
 import os
 import re
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, get_args
@@ -33,6 +31,7 @@ from strands_robots._command_gate import (
 )
 from strands_robots.ros import GATE_TOOL, never_gated
 from strands_robots.tools.use_ros import use_ros
+from tests._docs_hooks import docs_hook
 
 # The verbs that carry a command to a robot, with the parameter naming the
 # surface and the module-level helper each one reaches once the gate allows it.
@@ -516,27 +515,16 @@ def _surface_text(name: str) -> str:
     path = _repo_root() / name
     source = path.read_text(encoding="utf-8")
     if name == _GENERATED_DRIVER_FACTS:
-        module = _load_hook("robot_pages.py", "docs_robot_pages_hook")
+        module = docs_hook("robot_pages")
         rendered = module.substitute(source, prefix="")
         assert rendered != source, "drivers.md carries no {{driver_facts}} token for the hook to expand"
         return rendered
     if name != "docs/reference/configuration.md":
         return source
-    module = _load_hook("env_vars.py", "docs_hooks_env_vars")
+    module = docs_hook("env_vars")
     rendered = module.on_page_markdown(source, page=None, config=None, files=None)
     assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"
     return rendered.replace("<code>", "`").replace("</code>", "`")
-
-
-def _load_hook(filename: str, module_name: str) -> Any:
-    """A ``docs/hooks`` module, loaded by path once: the docs venv is not the test venv."""
-    spec = importlib.util.spec_from_file_location(module_name, _repo_root() / "docs" / "hooks" / filename)
-    assert spec is not None and spec.loader is not None
-    module = sys.modules.get(spec.name) or importlib.util.module_from_spec(spec)
-    if spec.name not in sys.modules:
-        sys.modules[spec.name] = module  # dataclasses in the hook resolve their module here
-        spec.loader.exec_module(module)
-    return module
 
 
 def _readme_allow_row() -> str:
