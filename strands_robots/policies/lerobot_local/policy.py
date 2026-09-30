@@ -180,9 +180,8 @@ def _inapplicable_image_target_error(
 
     For such a pair no camera name can satisfy the target, so the source-key
     remedy cannot be followed, and ``EmbodimentMap.validate`` refuses the same
-    rename after the weight download - discarding the whole processor pipeline,
-    including the embodiment's state/action unit conversion, and falling back to
-    the raw flow. That is the verdict this reports up front instead, naming the
+    rename after the weight download, and the load is refused. That is the
+    verdict this reports up front instead, before the download, naming the
     ``obs_rename_override`` drop that :func:`_merge_obs_rename` documents as the
     only way to remove a rename whose target the model never declares.
 
@@ -251,9 +250,8 @@ def _inapplicable_image_target_error(
         f"Embodiment {embodiment_name!r} feeds image feature(s) {sorted(inapplicable)}, which "
         f"{reference!r} does not declare - it declares {sorted(declared)}. A pretrained checkpoint "
         f"records its own input_features, so renaming a camera cannot create the missing feature: "
-        f"this same rename is refused by the embodiment's own validation after the weight download, "
-        f"and the whole processor pipeline - including the embodiment's state/action unit "
-        f"conversion - is then discarded for the raw flow. Route the features it does declare "
+        f"this same rename is refused by the embodiment's own validation after the weight download. "
+        f"Route the features it does declare "
         f"instead: policy_config={{'obs_rename_override': {override!r}}} - a falsy value drops a "
         f"rename this checkpoint cannot accept.{trailer}"
     )
@@ -708,13 +706,9 @@ class LerobotLocalPolicy(Policy):
         self.load_time_s: float = 0.0
         self.load_cache_hit: bool = False
         self._processor_bridge: ProcessorBridge | None = None
-        # Set True when the pipeline loaded and was active but the caller's
-        # embodiment / image_keys were incompatible with the model's declared
-        # features, so the bridge was discarded (see _load_processor_bridge).
-        self._embodiment_config_failed = False
         self._tokenizer: Any = None
-        # True once a discarded pipeline's TokenizerProcessorStep lent its
-        # tokenizer to the raw flow (see _adopt_pipeline_tokenizer).
+        # True when the active pipeline carries a TokenizerProcessorStep, i.e.
+        # the model reads the instruction through it (see _pipeline_has_tokenizer).
         self._pipeline_tokenized = False
         # Refused where the caller's value arrives, and before any checkpoint is
         # downloaded: the tokenizer reads this as a slice bound over the encoded
@@ -1077,49 +1071,26 @@ class LerobotLocalPolicy(Policy):
 
     # Tokenizer resolution (VLA language token injection)
 
-    def _adopt_pipeline_tokenizer(self, bridge: Any) -> None:
-        """Keep a discarded pipeline's tokenizer so the raw flow can still tokenize.
+    @staticmethod
+    def _pipeline_has_tokenizer(bridge: Any) -> bool:
+        """Whether *bridge*'s preprocessor tokenizes the instruction (LeRobot's ``TokenizerProcessorStep``).
 
-        LeRobot's ``TokenizerProcessorStep`` owns the tokenizer for the
-        PaliGemma-based policies (pi0, pi05): their ``config`` carries neither
-        ``tokenizer_name`` nor ``vlm_model_name``, so :meth:`_resolve_tokenizer`
-        finds nothing and :meth:`_needs_language_tokens` answers False, yet
-        ``predict_action_chunk`` reads ``observation.language.tokens``
-        unconditionally. The step is read for its live tokenizer, max length
-        and padding side; a pipeline without such a step leaves the policy as
-        it was. Called right before the bridge reference is dropped.
-
-        Args:
-            bridge: The :class:`ProcessorBridge` about to be discarded.
+        pi0 / pi05 hold the PaliGemma tokenizer only there - their config names
+        neither ``tokenizer_name`` nor ``vlm_model_name`` - so without asking the
+        pipeline, :meth:`reads_instruction` answered ``False`` for a model whose
+        prompt is ``Task: <instruction>, State: ...``, and ``run_policy`` told the
+        agent the instruction was never read.
         """
         if bridge is None:
-            return
-        # ``ProcessorBridge.preprocessor_steps`` is a property returning the
-        # step list; a fake may expose it as a method, so both shapes are read.
+            return False
         steps = getattr(bridge, "preprocessor_steps", None)
         if callable(steps):
             steps = steps()
         for step in steps or ():
-            # ``input_tokenizer`` is the loaded object (set in __post_init__ from
-            # ``tokenizer`` or ``tokenizer_name``); ``tokenizer`` is only set when
-            # the step was built from an object.
             tokenizer = getattr(step, "input_tokenizer", None) or getattr(step, "tokenizer", None)
-            if tokenizer is None or not callable(tokenizer):
-                continue
-            self._tokenizer = tokenizer
-            max_length = getattr(step, "max_length", None)
-            if isinstance(max_length, int) and max_length > 0:
-                self._tokenizer_max_length = max_length
-            padding_side = getattr(step, "padding_side", None)
-            if padding_side in ("left", "right"):
-                self._tokenizer_padding_side = padding_side
-            self._pipeline_tokenized = True
-            logger.info(
-                "lerobot_local: kept the pipeline's tokenizer (%s, max_length=%d) for the raw obs/action flow",
-                getattr(step, "tokenizer_name", None) or type(tokenizer).__name__,
-                self._tokenizer_max_length,
-            )
-            return
+            if tokenizer is not None and callable(tokenizer):
+                return True
+        return False
 
     def _resolve_tokenizer(self) -> Any | None:
         """Resolve and cache the tokenizer for VLA language token injection.
@@ -1450,18 +1421,15 @@ class LerobotLocalPolicy(Policy):
           it - either the embodiment / ``image_keys`` are incompatible with the
           model's declared features, or the active bridge carries no preprocessor
           for the rename + pack-state steps to be injected into (a checkpoint
-          shipping only ``policy_postprocessor.json``). Discarding it silently degrades a
-          WORKING normalization pipeline to the raw flow AND misdirects the
-          downstream "no policy_postprocessor.json" diagnostic (the checkpoint
-          shipped one - it was discarded here). Surface the real cause as a
-          warning, or raise when ``processor_overrides`` were given (mirroring the
-          from_pretrained path).
+          shipping only ``policy_postprocessor.json``). Discarding the pipeline
+          would run the model without its normalization (and, for pi0 / pi05,
+          without the state-in-the-prompt tokenizer) while the caller asked for
+          the map, so it is refused with ``ValueError``.
 
         A malformed embodiment *spec* (bad name / dict) raises ``RuntimeError``
         from ``load_embodiment`` and is intentionally NOT caught here - that is a
         caller error that should abort the load loudly.
         """
-        self._embodiment_config_failed = False
         if not (self.use_processor and self.pretrained_name_or_path):
             return
 
@@ -1493,35 +1461,27 @@ class LerobotLocalPolicy(Policy):
                 try:
                     self._configure_embodiment()
                 except ValueError as exc:
-                    # The pipeline loaded and was active, but the embodiment /
-                    # image_keys do not match the model's declared features. Do NOT
-                    # swallow this at debug: discarding an otherwise-working
-                    # normalization pipeline is a silent behaviour change, and the
-                    # missing-postprocessor warning below would misattribute it to a
-                    # checkpoint lacking a policy_postprocessor.json.
-                    if self.processor_overrides:
-                        raise RuntimeError(
-                            f"Embodiment configuration failed but processor_overrides were specified: {exc}"
-                        ) from exc
-                    logger.warning(
-                        "lerobot_local: %s loaded an ACTIVE processor pipeline but its "
-                        "embodiment could not be configured (%s). The pipeline (including "
-                        "normalization) was discarded and the policy falls back to the raw "
-                        "obs/action flow -- align the embodiment / image_keys with the "
-                        "model's declared input/output features.",
-                        self.pretrained_name_or_path or "<model>",
-                        exc,
-                    )
-                    # The raw flow has to tokenize the instruction itself, and for a
-                    # checkpoint whose config names no tokenizer (pi0 / pi05 carry
-                    # the PaliGemma tokenizer only as a pipeline step) the only
-                    # place that knowledge exists is the pipeline being discarded.
-                    # Keep the step's tokenizer, or the fallback hands the model a
-                    # batch without ``observation.language.tokens`` and it dies
-                    # with a KeyError at the first inference.
-                    self._adopt_pipeline_tokenizer(self._processor_bridge)
-                    self._processor_bridge = None
-                    self._embodiment_config_failed = True
+                    # The pipeline loaded and is ACTIVE, but the caller's DECLARED
+                    # embodiment cannot be configured onto it. Discarding the
+                    # pipeline and falling back to the raw flow used to be the
+                    # answer, with a warning; for pi0 / pi05 that silently dropped
+                    # the normalization and the state-in-the-prompt tokenizer, and
+                    # the run continued on a model fed raw radians and a bare
+                    # instruction. The caller asked for this map, so say it cannot
+                    # be honoured instead of running something else.
+                    raise ValueError(
+                        f"lerobot_local: {self.pretrained_name_or_path or '<model>'} has an active processor "
+                        f"pipeline (normalization, tokenizer), but the declared embodiment cannot be configured "
+                        f"onto it: {exc}. It is refused rather than run without the pipeline. Route the "
+                        "cameras onto the model's declared image features with camera_key_map= or "
+                        "obs_rename_override=, adjust the embodiment, or drop embodiment= and bind the joints "
+                        "with set_robot_state_keys([...])."
+                    ) from exc
+                if self._pipeline_has_tokenizer(self._processor_bridge):
+                    # pi0 / pi05 carry the PaliGemma tokenizer only as a pipeline
+                    # step (their config names none), so the model reads the
+                    # instruction through the pipeline - say so to reads_instruction.
+                    self._pipeline_tokenized = True
             else:
                 # An inactive bridge is benign: the checkpoint ships no processor
                 # configs, so there is genuinely nothing to apply.
@@ -1534,10 +1494,7 @@ class LerobotLocalPolicy(Policy):
         # normalized actions (~[-1, 1] or z-scored) straight to the robot. Fed
         # to a radian-joint sim those are micro-motions and the arm barely
         # moves. Warn once at load so this isn't debugged as a frozen policy.
-        # Skipped when the pipeline was discarded by an embodiment-config failure
-        # above (already warned with the accurate cause), so we do not emit the
-        # misleading "no policy_postprocessor.json" message for that case.
-        if self.use_processor and not self._embodiment_config_failed:
+        if self.use_processor:
             bridge = self._processor_bridge
             # Stats present at the wrong width raise from inside LeRobot's
             # broadcast on the FIRST inference - after the rollout started and
@@ -2211,9 +2168,8 @@ class LerobotLocalPolicy(Policy):
         # MuJoCo arm) and binds cameras by name/position rather than by the declared
         # ``obs_rename``, while ``_tensor_to_action_dicts`` still converts the
         # returned action with ``model_action_to_sim`` - so exactly half of a
-        # ``*_units="degrees"`` embodiment (so100 / so101) is applied. Refuse, and
-        # let the caller's own error path fall back to the raw obs/action flow with
-        # both halves consistent.
+        # ``*_units="degrees"`` embodiment (so100 / so101) is applied. Refuse: the
+        # load raises (see _load_processor_bridge) rather than half-apply it.
         #
         # Only a DECLARED spec is refused: the map synthesised from
         # ``robot_state_keys`` above carries native units and the same keys the
@@ -3137,11 +3093,7 @@ class LerobotLocalPolicy(Policy):
             # and, once a declared embodiment has already been rejected at load
             # time, no embodiment at all, since re-passing that one is the same
             # loop reached through obs_rename rather than state_keys.
-            + state_key_remedy(
-                scalar_keys,
-                embodiment_rejected=self._embodiment_config_failed,
-                normalization_inert=self._normalization_is_inert(),
-            )
+            + state_key_remedy(scalar_keys, normalization_inert=self._normalization_is_inert())
         )
         if self.strict_keys:
             raise ValueError("strict_keys=True: " + msg)
@@ -3233,9 +3185,7 @@ class LerobotLocalPolicy(Policy):
                 "those joints - commonly a mimic/tendon gripper whose actuator name differs "
                 "from the observation's finger-joint names. "
                 + state_key_remedy(
-                    observed_state_keys(observation_dict),
-                    embodiment_rejected=self._embodiment_config_failed,
-                    normalization_inert=self._normalization_is_inert(),
+                    observed_state_keys(observation_dict), normalization_inert=self._normalization_is_inert()
                 )
                 # Same registry-checked remedy as the all-missing guard, so one
                 # rule serves both degradations.
@@ -3502,8 +3452,14 @@ class LerobotLocalPolicy(Policy):
 
         # Validate required image features are present. Missing images would
         # cause the model to produce garbage outputs silently.
+        # pi0 / pi05 / smolvla prepare the views they are given and mask the rest
+        # (resolution.accepts_partial_images), so a partial camera set is theirs to
+        # handle; none at all is still refused.
+        partial_ok = accepts_partial_images(self.policy_type) and any(
+            "image" in key for key in batch if key in self._input_features
+        )
         for feat_name in self._input_features:
-            if feat_name not in batch and "image" in feat_name:
+            if feat_name not in batch and "image" in feat_name and not partial_ok:
                 raise ValueError(
                     f"Missing required image feature '{feat_name}' in observation. "
                     f"The model expects this camera input. Provide it in the observation dict "
