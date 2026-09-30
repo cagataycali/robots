@@ -266,13 +266,10 @@ plugins:
         reference/training/rl.md: learn/training/rl.md
         reference/training/vla_workflow.md: learn/training/lerobot.md
         reference/troubleshooting.md: start/doctor.md
-        robots/aerial.md: robots/aerial/index.md
         robots/arms.md: robots/arm/index.md
-        robots/bimanual.md: robots/bimanual/index.md
         robots/hands.md: robots/hand/index.md
         robots/humanoids.md: robots/humanoid/index.md
         robots/mobile-manip.md: robots/mobile_manip/index.md
-        robots/mobile.md: robots/mobile/index.md
         ros2-integration.md: learn/ros2.md
         ros2/ackermann.md: learn/ros2.md
         ros2/hardware-bridge.md: learn/ros2.md
