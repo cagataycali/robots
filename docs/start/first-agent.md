@@ -63,13 +63,13 @@ robot.cleanup()
 
 ## The gate in front of real motion
 
-A `mode="real"` robot built through the lerobot driver has eight actions. Six read or halt and are never gated: `get_state`, `get_robot_state`, `list_cameras`, `render`, `status`, `stop`. Two move: `execute` and `start` dispatch a policy rollout to real actuators, and both stop for a human first. This runs on a laptop because `mock=True` gives the lerobot driver a mocked servo bus:
+A `mode="real"` robot built through the lerobot driver has eight actions. Six read or halt and are never gated: `get_state`, `get_robot_state`, `list_cameras`, `render`, `status`, `stop`. Two move: `execute` and `start` dispatch a policy rollout to real actuators, and both stop for a human first. This runs on a laptop with no arm: the gate runs before the driver opens `port="/dev/null"`, so the interrupt is reached (approving would then fail to connect):
 
 ```python
 from strands import Agent
 from strands_robots import Robot
 
-arm = Robot("so101", mode="real", port="/dev/null", mock=True)
+arm = Robot("so101", mode="real", port="/dev/null")
 agent = Agent(tools=[arm], callback_handler=None)
 result = agent("Run the mock policy on so101 for 2 seconds with the instruction 'wave'. Call the tool directly.")
 print(result.stop_reason)
@@ -99,7 +99,7 @@ With no agent, the same call is refused outright:
 import asyncio
 from strands_robots import Robot
 
-arm = Robot("so101", mode="real", port="/dev/null", mock=True)
+arm = Robot("so101", mode="real", port="/dev/null")
 
 async def call(action, **fields):
     tool_use = {"toolUseId": "demo", "name": arm.tool_name, "input": {"action": action, **fields}}
@@ -117,7 +117,7 @@ error
  available for operator approval. Set STRANDS_ROBOT_COMMAND_ALLOW=execute (or STRANDS_ROBOT_COMMAND_ALLOW=* for every robot command; comma-separated) or BYPASS_TOOL_CONSENT=true to allow in headless mode.
 ```
 
-The order of the decision is fixed and shared by every tool that can move a robot: `STRANDS_ROBOT_COMMAND_ALLOW` names pre-approved actions (`execute`, `start`, or `*`), `BYPASS_TOOL_CONSENT=true` lifts the gate with a warning in the log, otherwise the operator is asked, and with nobody to ask the call fails closed. Every answer is written to the audit log. The ROS tools, `serial_tool`, `pose_tool` and `use_unitree` use the same path with their own allow variable. The native drivers' `move_to` action does not pass through this gate at this commit.
+The decision order is fixed and shared by every tool that can move a robot: `STRANDS_ROBOT_COMMAND_ALLOW` names pre-approved actions (`execute`, `start`, or `*`), `BYPASS_TOOL_CONSENT=true` lifts the gate with a logged warning, otherwise the operator is asked, and with nobody to ask the call fails closed. Every answer goes to the audit log. The ROS tools, `serial_tool`, `pose_tool` and `use_unitree` use the same path with their own allow variable. The native drivers' `move_to` action does not pass through this gate at this commit.
 
 ## Where next
 
