@@ -13,6 +13,7 @@ thread's stack.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from typing import Any
@@ -77,6 +78,31 @@ class TestTheWatchdog:
             assert exited.wait(2.0)
         assert codes == [sim_module.BOOT_TIMEOUT_EXIT_STATUS] == [70]
         assert "task_threads=4" in capsys.readouterr().err
+
+    def test_a_broken_stderr_does_not_defeat_the_exit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A batch driver that died leaves each child's stderr pipe broken; the watchdog's diagnostics
+        must not take the exit with them. Every stderr operation may raise, the exit still happens."""
+        import io
+
+        class _Broken(io.StringIO):
+            def write(self, _text: str) -> int:
+                raise ValueError("I/O operation on closed file")
+
+            def flush(self) -> None:
+                raise ValueError("I/O operation on closed file")
+
+        exited = threading.Event()
+        codes: list[int] = []
+
+        def fake_exit(code: int) -> None:
+            codes.append(code)
+            exited.set()
+
+        monkeypatch.setattr(sim_module.os, "_exit", fake_exit)
+        monkeypatch.setattr(sys, "stderr", _Broken())
+        with sim_module._boot_watchdog(0.05):
+            assert exited.wait(2.0), "the watchdog thread died on the broken stderr before os._exit"
+        assert codes == [sim_module.BOOT_TIMEOUT_EXIT_STATUS]
 
     def test_none_watches_nothing(self) -> None:
         before = threading.active_count()

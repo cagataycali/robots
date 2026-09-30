@@ -983,23 +983,23 @@ def _boot_watchdog(timeout_s: float | None) -> Iterator[None]:
         import faulthandler
         import sys
 
-        sys.stderr.write(
-            f"strands_robots: Isaac SimulationApp did not start within boot_timeout_s={timeout_s:g}; "
-            "exiting with status 70. Several Isaac processes starting at once on one host is the "
-            "known cause: set IsaacConfig(task_threads=4) or start them one after another. "
-            "Thread stacks follow.\n"
-        )
+        # The exit is the only guarantee this watchdog gives, so it is
+        # unconditional: every diagnostic below may raise on a closed or
+        # broken stderr (a batch driver that died leaves each child's pipe
+        # broken), and none of them may take the exit with it.
         try:
+            sys.stderr.write(
+                f"strands_robots: Isaac SimulationApp did not start within boot_timeout_s={timeout_s:g}; "
+                "exiting with status 70. Several Isaac processes starting at once on one host is the "
+                "known cause: set IsaacConfig(task_threads=4) or start them one after another. "
+                "Thread stacks follow.\n"
+            )
             faulthandler.dump_traceback(all_threads=True)
-        except (ValueError, OSError, AttributeError):  # a stderr without a file descriptor
-            pass
-        try:
             sys.stderr.flush()
-        except (ValueError, OSError):
-            # A closed or broken stderr; the exit below is the message that
-            # matters and it needs no stream.
+        except (ValueError, OSError, AttributeError):  # a stderr that is closed, broken or has no fd
             pass
-        os._exit(BOOT_TIMEOUT_EXIT_STATUS)
+        finally:
+            os._exit(BOOT_TIMEOUT_EXIT_STATUS)
 
     watcher = threading.Thread(target=_watch, name="isaac-boot-watchdog", daemon=True)
     watcher.start()
