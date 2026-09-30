@@ -1,3 +1,7 @@
+---
+description: A Booster T1 takes upper-body joint targets and locomotion twists; legs never get stiffness.
+---
+
 # Booster T1
 
 At the end of this page a Booster Robotics T1 humanoid takes upper-body joint targets and locomotion twists from `Robot("booster_t1", mode="real")`, and you know why the driver will never let you put stiffness on a leg.
@@ -44,7 +48,7 @@ The wire literals (`mode = 0x0A` position mode, `kp=60 / kd=3`) are transcribed 
 | 10 | `waist` | onboard controller |
 | 11 to 22 | hips, knees, cranks | onboard controller, via `move()` |
 
-The map is a module constant rather than read from the SDK, so a typo in an action dict is refused here, on a machine that need not have the SDK at all.
+The map is a module constant, not read from the SDK, so a typo in an action dict is refused here, on a machine without the SDK.
 
 ## Constructor
 
@@ -59,10 +63,10 @@ agent = Agent(tools=[t1])
 agent("Wave with the right arm, then walk two steps forward.")
 ```
 
-`execute` and `start` on the tool pause for approval; `status` and `stop` do not (see [agents](../agents.md)). `stop()` runs `stop_task()`: a zero twist and a release of upper-body control back to the onboard controller. A half that did not complete is logged as an error, because a refused twist leaves the T1 walking.
+`execute` and `start` on the tool pause for approval; `status` and `stop` do not ([the operator gate](../agents.md#the-operator-gate)). `stop()` runs `stop_task()`: a zero twist, then upper-body control released to the onboard controller. A half that did not complete is logged as an error: a refused twist leaves the T1 walking.
 
 ## Simulation
 
-`Robot("booster_t1")` builds the MuJoCo twin with the same joint names. The onboard balance controller has no counterpart in the twin, so a sim rollout that moves the legs is exercising the physics, not the controller you will meet on the robot.
+`Robot("booster_t1")` builds the MuJoCo twin with the same joint names. The onboard balance controller has no counterpart there, so a sim rollout that moves the legs exercises the physics, not the controller you meet on the robot.
 
 <robot-viewer name="booster_t1"></robot-viewer>
