@@ -270,7 +270,7 @@ def peer_tool_spec(peer_id: str, kind: str, tool_name: str) -> dict[str, Any] | 
                             "type": "string",
                             "description": (
                                 "Which policy backend the peer runs: one of cosmos3, curobo, flux3_action, kimodo, "
-                                "lerobot_local, microduck, mock, moveit2, protomotions, remote, rl, rsl_rl_onnx, wbc, wbc_gait. "
+                                "lerobot_local, microduck, mock, moveit2, protomotions, remote, rl, rsl_rl_onnx, wbc, wbc_gait, wbc_latent. "
                                 "lerobot_local (default) runs a local checkpoint on the peer and needs "
                                 "pretrained_name_or_path; moveit2 (needs policy_port) and remote dial a server. "
                                 "An unknown name is refused by the peer listing its registry."
