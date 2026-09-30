@@ -6252,7 +6252,7 @@ class IsaacSimulation(
                 ``{robot_name: instruction}`` mapping.
             duration: Episode length in seconds (steps = duration x freq).
                 Used only when no ``n_steps`` / ``max_steps`` is given.
-            control_frequency: Target Hz for policy queries / physics steps.
+            control_frequency: Target Hz for policy queries. Each synchronized step advances one control period of physics, in whole ``physics_dt`` ticks, as ``run_policy`` does.
             action_horizon: Actions consumed from each policy's chunk before
                 re-querying it, as one int or a per-robot mapping.
             n_steps: Exact step horizon (overrides ``duration`` when set).
