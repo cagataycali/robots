@@ -1408,6 +1408,7 @@ COMMAND_KEYS: dict[str, frozenset[str]] = {
             "policy_provider",
             "server_address",
             "robot_name",
+            "embodiment",
             "target_pose",
             "target_joints",
             "target_velocity",
