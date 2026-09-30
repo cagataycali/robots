@@ -3,7 +3,7 @@
     "crazyflie": {
       "description": "Bitcraze Crazyflie 2 Nano-Quadcopter",
       "category": "aerial",
-      "joints": 1,
+      "joints": 0,
       "asset": {
         "dir": "bitcraze_crazyflie_2",
         "model_xml": "cf2.xml",
@@ -21,7 +21,7 @@
     "skydio_x2": {
       "description": "Skydio X2 Autonomous Drone",
       "category": "aerial",
-      "joints": 1,
+      "joints": 0,
       "asset": {
         "dir": "skydio_x2",
         "model_xml": "x2.xml",
@@ -32,7 +32,7 @@
     "arx_l5": {
       "description": "ARX L5 (6-DOF lightweight arm)",
       "category": "arm",
-      "joints": 11,
+      "joints": 8,
       "asset": {
         "dir": "arx_l5",
         "model_xml": "arx_l5.xml",
@@ -54,7 +54,7 @@
     "fr3": {
       "description": "Franka Research 3 (7-DOF + gripper)",
       "category": "arm",
-      "joints": 8,
+      "joints": 7,
       "asset": {
         "dir": "franka_fr3",
         "model_xml": "fr3.xml",
@@ -103,7 +103,7 @@
     "koch": {
       "description": "Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel)",
       "category": "arm",
-      "joints": 7,
+      "joints": 6,
       "asset": {
         "dir": "low_cost_robot_arm",
         "model_xml": "low_cost_robot_arm.xml",
@@ -164,7 +164,7 @@
     "openarm": {
       "description": "Enactic OpenArm (7-DOF, DAMIAO motors, CAN bus)",
       "category": "arm",
-      "joints": 9,
+      "joints": 18,
       "asset": {
         "dir": "enactic_openarm",
         "model_xml": "openarm.xml",
@@ -183,7 +183,7 @@
     "panda": {
       "description": "Franka Emika Panda (7-DOF + gripper)",
       "category": "arm",
-      "joints": 7,
+      "joints": 9,
       "asset": {
         "dir": "franka_emika_panda",
         "model_xml": "panda.xml",
@@ -214,7 +214,7 @@
     "piper": {
       "description": "AgileX Piper (6-DOF + gripper)",
       "category": "arm",
-      "joints": 11,
+      "joints": 8,
       "asset": {
         "dir": "agilex_piper",
         "model_xml": "piper.xml",
@@ -345,7 +345,7 @@
     "vx300s": {
       "description": "Trossen ViperX 300s (6-DOF + gripper)",
       "category": "arm",
-      "joints": 19,
+      "joints": 8,
       "asset": {
         "dir": "trossen_vx300s",
         "model_xml": "vx300s.xml",
@@ -361,7 +361,7 @@
     "wx250s": {
       "description": "Trossen WidowX 250s (6-DOF + gripper)",
       "category": "arm",
-      "joints": 16,
+      "joints": 8,
       "asset": {
         "dir": "trossen_wx250s",
         "model_xml": "wx250s.xml",
@@ -404,7 +404,7 @@
     "z1": {
       "description": "Unitree Z1 (6-DOF + gripper)",
       "category": "arm",
-      "joints": 8,
+      "joints": 6,
       "asset": {
         "dir": "unitree_z1",
         "model_xml": "z1_gripper.xml",
@@ -418,7 +418,7 @@
     "aloha": {
       "description": "ALOHA Bimanual (2x ViperX 300s, 14-DOF + 2 grippers)",
       "category": "bimanual",
-      "joints": 28,
+      "joints": 16,
       "asset": {
         "dir": "aloha",
         "model_xml": "aloha.xml",
@@ -472,7 +472,7 @@
     "trossen_wxai": {
       "description": "Trossen WidowX AI Bimanual",
       "category": "bimanual",
-      "joints": 17,
+      "joints": 8,
       "asset": {
         "dir": "trossen_wxai",
         "model_xml": "trossen_ai_bimanual.xml",
@@ -486,7 +486,7 @@
     "reachy_mini": {
       "description": "Pollen Reachy Mini (6-DOF Stewart head + antennas, 9 actuators)",
       "category": "expressive",
-      "joints": 21,
+      "joints": 16,
       "asset": {
         "dir": "reachy_mini",
         "model_xml": "mjcf/reachy_mini.xml",
@@ -510,7 +510,7 @@
     "ability_hand": {
       "description": "PSYONIC Ability Hand (5-finger prosthetic, 11-DOF)",
       "category": "hand",
-      "joints": 11,
+      "joints": 10,
       "asset": {
         "dir": "mujoco_xml",
         "model_xml": "scene.xml",
@@ -553,7 +553,7 @@
     "leap_hand": {
       "description": "LEAP Hand (16-DOF dexterous)",
       "category": "hand",
-      "joints": 41,
+      "joints": 16,
       "asset": {
         "dir": "leap_hand",
         "model_xml": "left_hand.xml",
@@ -564,7 +564,7 @@
     "robotiq_2f85": {
       "description": "Robotiq 2F-85 Gripper (2-finger adaptive)",
       "category": "hand",
-      "joints": 16,
+      "joints": 8,
       "asset": {
         "dir": "robotiq_2f85",
         "model_xml": "2f85.xml",
@@ -606,7 +606,7 @@
     "shadow_hand": {
       "description": "Shadow Dexterous Hand (24-DOF)",
       "category": "hand",
-      "joints": 45,
+      "joints": 24,
       "asset": {
         "dir": "shadow_hand",
         "model_xml": "left_hand.xml",
@@ -617,7 +617,7 @@
     "adam_lite": {
       "description": "PNDbotics Adam Lite Humanoid (26-DOF)",
       "category": "humanoid",
-      "joints": 26,
+      "joints": 25,
       "asset": {
         "dir": "pndbotics_adam_lite",
         "model_xml": "adam_lite.xml",
@@ -631,7 +631,7 @@
     "apollo": {
       "description": "Apptronik Apollo Humanoid (34-DOF)",
       "category": "humanoid",
-      "joints": 34,
+      "joints": 32,
       "asset": {
         "dir": "apptronik_apollo",
         "model_xml": "apptronik_apollo.xml",
@@ -645,7 +645,7 @@
     "asimov_v0": {
       "description": "Asimov V0 Bipedal Legs (12-DOF + 2 passive toes)",
       "category": "humanoid",
-      "joints": 15,
+      "joints": 14,
       "asset": {
         "dir": "asimov_v0",
         "model_xml": "xmls/asimov.xml",
@@ -663,7 +663,7 @@
     "booster_t1": {
       "description": "Booster T1 Humanoid (24-DOF)",
       "category": "humanoid",
-      "joints": 24,
+      "joints": 23,
       "asset": {
         "dir": "booster_t1",
         "model_xml": "t1.xml",
@@ -677,7 +677,7 @@
     "cassie": {
       "description": "Agility Cassie Bipedal Robot",
       "category": "humanoid",
-      "joints": 28,
+      "joints": 22,
       "asset": {
         "dir": "agility_cassie",
         "model_xml": "cassie.xml",
@@ -691,7 +691,7 @@
     "elf2": {
       "description": "BXI Elf2 Humanoid (25-DOF)",
       "category": "humanoid",
-      "joints": 26,
+      "joints": 25,
       "asset": {
         "dir": "xml",
         "model_xml": "elf2_dof25.xml",
@@ -705,7 +705,7 @@
     "fourier_n1": {
       "description": "Fourier N1 / GR-1 Humanoid (26-DOF)",
       "category": "humanoid",
-      "joints": 26,
+      "joints": 23,
       "asset": {
         "dir": "fourier_n1",
         "model_xml": "n1.xml",
@@ -723,7 +723,7 @@
     "jvrc": {
       "description": "JVRC-1 Humanoid (HRP-based, 45-DOF)",
       "category": "humanoid",
-      "joints": 45,
+      "joints": 44,
       "asset": {
         "dir": "jvrc_mj_description",
         "model_xml": "xml/jvrc1.xml",
@@ -737,7 +737,7 @@
     "microduck": {
       "description": "Pollen Microduck (14-DOF open-source biped, Dynamixel XL330)",
       "category": "humanoid",
-      "joints": 15,
+      "joints": 14,
       "asset": {
         "dir": "microduck",
         "model_xml": "robot_allcollisions.xml",
@@ -759,7 +759,7 @@
     "mujoco_humanoid": {
       "description": "MuJoCo Humanoid (21-DOF reference model)",
       "category": "humanoid",
-      "joints": 22,
+      "joints": 21,
       "asset": {
         "dir": "mujoco_humanoid",
         "model_xml": "humanoid.xml",
@@ -774,7 +774,7 @@
     "op3": {
       "description": "ROBOTIS OP3 Humanoid (20-DOF)",
       "category": "humanoid",
-      "joints": 21,
+      "joints": 20,
       "asset": {
         "dir": "robotis_op3",
         "model_xml": "op3.xml",
@@ -832,7 +832,7 @@
     "talos": {
       "description": "PAL Robotics TALOS Humanoid (32-DOF)",
       "category": "humanoid",
-      "joints": 45,
+      "joints": 44,
       "asset": {
         "dir": "pal_talos",
         "model_xml": "talos_position.xml",
@@ -846,7 +846,7 @@
     "toddlerbot_2xc": {
       "description": "Toddlerbot 2xC Humanoid (45-DOF)",
       "category": "humanoid",
-      "joints": 45,
+      "joints": 44,
       "asset": {
         "dir": "toddlerbot_2xc",
         "model_xml": "toddlerbot_2xc.xml",
@@ -857,7 +857,7 @@
     "toddlerbot_2xm": {
       "description": "Toddlerbot 2xM Humanoid (45-DOF)",
       "category": "humanoid",
-      "joints": 45,
+      "joints": 44,
       "asset": {
         "dir": "toddlerbot_2xm",
         "model_xml": "toddlerbot_2xm.xml",
@@ -868,7 +868,7 @@
     "unitree_g1": {
       "description": "Unitree G1 Humanoid (29-DOF + dexterous hands)",
       "category": "humanoid",
-      "joints": 46,
+      "joints": 29,
       "asset": {
         "dir": "unitree_g1",
         "model_xml": "g1.xml",
@@ -894,7 +894,7 @@
     "unitree_h1": {
       "description": "Unitree H1 Humanoid (19-DOF)",
       "category": "humanoid",
-      "joints": 20,
+      "joints": 19,
       "asset": {
         "dir": "unitree_h1",
         "model_xml": "h1.xml",
@@ -908,7 +908,7 @@
     "unitree_h1_2": {
       "description": "Unitree H1-2 Humanoid (52-DOF, with hands)",
       "category": "humanoid",
-      "joints": 52,
+      "joints": 51,
       "asset": {
         "dir": "h1_2_description",
         "model_xml": "h1_2.xml",
@@ -922,7 +922,7 @@
     "aliengo": {
       "description": "Unitree Aliengo Quadruped (12-DOF)",
       "category": "mobile",
-      "joints": 13,
+      "joints": 12,
       "asset": {
         "dir": "aliengo",
         "model_xml": "xml/aliengo.xml",
@@ -936,7 +936,7 @@
     "anymal_b": {
       "description": "ANYbotics ANYmal B Quadruped (12-DOF)",
       "category": "mobile",
-      "joints": 13,
+      "joints": 12,
       "asset": {
         "dir": "anybotics_anymal_b",
         "model_xml": "anymal_b.xml",
@@ -950,7 +950,7 @@
     "anymal_c": {
       "description": "ANYbotics ANYmal C Quadruped (12-DOF)",
       "category": "mobile",
-      "joints": 13,
+      "joints": 12,
       "asset": {
         "dir": "anybotics_anymal_c",
         "model_xml": "anymal_c.xml",
@@ -976,7 +976,7 @@
     "go1": {
       "description": "Unitree Go1 Quadruped (12-DOF)",
       "category": "mobile",
-      "joints": 13,
+      "joints": 12,
       "asset": {
         "dir": "unitree_go1",
         "model_xml": "go1.xml",
@@ -1041,7 +1041,7 @@
     "robot_soccer_kit": {
       "description": "Robot Soccer Kit (multi-robot soccer, 65-DOF total)",
       "category": "mobile",
-      "joints": 65,
+      "joints": 64,
       "asset": {
         "dir": "robot_soccer_kit",
         "model_xml": "robot_soccer_kit.xml",
@@ -1055,7 +1055,7 @@
     "spot": {
       "description": "Boston Dynamics Spot (with arm)",
       "category": "mobile_manip",
-      "joints": 20,
+      "joints": 19,
       "asset": {
         "dir": "boston_dynamics_spot",
         "model_xml": "spot_arm.xml",
@@ -1069,7 +1069,7 @@
     "stretch": {
       "description": "Hello Robot Stretch (original, mobile manipulator)",
       "category": "mobile_manip",
-      "joints": 18,
+      "joints": 17,
       "asset": {
         "dir": "hello_robot_stretch",
         "model_xml": "stretch.xml",
@@ -1083,7 +1083,7 @@
     "stretch3": {
       "description": "Hello Robot Stretch 3 (mobile manipulator)",
       "category": "mobile_manip",
-      "joints": 41,
+      "joints": 20,
       "asset": {
         "dir": "hello_robot_stretch_3",
         "model_xml": "stretch.xml",
@@ -1098,7 +1098,7 @@
     "tiago_dual": {
       "description": "PAL Robotics TIAGo++ Dual-Arm Mobile (26-DOF)",
       "category": "mobile_manip",
-      "joints": 26,
+      "joints": 25,
       "asset": {
         "dir": "pal_tiago_dual",
         "model_xml": "tiago_dual.xml",
@@ -1115,7 +1115,7 @@
     "unitree_a1": {
       "description": "Unitree A1 Quadruped",
       "category": "mobile",
-      "joints": 13,
+      "joints": 12,
       "asset": {
         "dir": "unitree_a1",
         "model_xml": "xml/a1.xml",
@@ -1129,7 +1129,7 @@
     "unitree_go2": {
       "description": "Unitree Go2 Quadruped",
       "category": "mobile",
-      "joints": 40,
+      "joints": 12,
       "asset": {
         "dir": "unitree_go2",
         "model_xml": "go2.xml",
@@ -1146,7 +1146,7 @@
     "google_robot": {
       "description": "Google Robot (mobile base + arm, RT-X)",
       "category": "mobile_manip",
-      "joints": 10,
+      "joints": 9,
       "asset": {
         "dir": "google_robot",
         "model_xml": "robot.xml",

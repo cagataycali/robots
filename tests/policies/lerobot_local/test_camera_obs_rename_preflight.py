@@ -95,9 +95,11 @@ def test_preflight_noop_without_embodiment():
     LerobotLocalPolicy.preflight({"whatever"})  # must not raise
 
 
-def test_preflight_noop_for_unknown_embodiment_name():
-    """Unknown embodiment names are left for create_policy to report."""
-    LerobotLocalPolicy.preflight({"front"}, embodiment="totally_unknown_embodiment")
+def test_preflight_refuses_an_unknown_embodiment_name():
+    """An unknown embodiment is refused here, before any download, naming the registered ones."""
+    with pytest.raises(ValueError, match="Unknown embodiment 'totally_unknown_embodiment'") as excinfo:
+        LerobotLocalPolicy.preflight({"front"}, embodiment="totally_unknown_embodiment")
+    assert "Available:" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
