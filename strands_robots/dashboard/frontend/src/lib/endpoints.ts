@@ -100,8 +100,10 @@ export type UrlTokenOutcome = 'none' | 'adopted' | 'refused'
  * Redeem a `?token=` the page arrived with: ONE probe of the public status route on the backend
  * this page is already configured for, carrying the offered token as its bearer. The token is
  * adopted only when that backend answers `authenticated: true`. Refused without a probe when it
- * is not a hand-off token, has lapsed, or this browser already holds a valid sign-in (a working
- * session is never silently replaced by a link). The AuthGate awaits this before it decides.
+ * is not a hand-off token, has lapsed, or this browser already holds a valid bearer; refused
+ * after one BARE probe when the backend already knows this browser (the HttpOnly passkey cookie
+ * rides that same-origin fetch and no script can read it). A working session is never silently
+ * replaced by a link, whichever kind it is. The AuthGate awaits this before it decides.
  */
 export async function redeemUrlToken(): Promise<UrlTokenOutcome> {
   absorbUrl()
@@ -119,11 +121,14 @@ export async function redeemUrlToken(): Promise<UrlTokenOutcome> {
   const held = sessionVerdict(authToken(), nowS)
   if (held.state === 'valid' || held.state === 'expiring' || held.state === 'opaque') return 'refused'
   try {
+    // The primary sign-in is the passkey cookie, which this module cannot see: the server prefers
+    // a bearer over the cookie, so a link's hand-off would shadow that session for every api()
+    // call. Ask bare first; a yes means someone is already signed in here and the link loses.
+    // An answer that cannot be read is treated the same way: without a no there is no adoption.
+    const bare = await fetch(apiUrl('/api/auth/status'), { credentials: 'same-origin' })
+    if ((await statusSaysAuthenticated(bare)) !== false) return 'refused'
     const res = await fetch(apiUrl('/api/auth/status'), { headers: { Authorization: `Bearer ${offered}` } })
-    if (!res.ok) return 'refused'
-    const body: unknown = JSON.parse(await res.text())
-    const authenticated = body !== null && typeof body === 'object' ? (body as { authenticated?: unknown }).authenticated : undefined
-    if (authenticated === true) {
+    if ((await statusSaysAuthenticated(res)) === true) {
       setAuthToken(offered)
       return 'adopted'
     }
@@ -131,6 +136,19 @@ export async function redeemUrlToken(): Promise<UrlTokenOutcome> {
     // no network, no JSON: the link did not prove anything
   }
   return 'refused'
+}
+
+/** What `/api/auth/status` said: true, false, or null when the answer cannot be read (not ok, no JSON, wrong shape). */
+async function statusSaysAuthenticated(res: Response): Promise<boolean | null> {
+  if (!res.ok) return null
+  let body: unknown
+  try {
+    body = JSON.parse(await res.text())
+  } catch {
+    return null
+  }
+  const authenticated = body !== null && typeof body === 'object' ? (body as { authenticated?: unknown }).authenticated : undefined
+  return authenticated === true ? true : authenticated === false ? false : null
 }
 
 

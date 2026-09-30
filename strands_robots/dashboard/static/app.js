@@ -391,17 +391,27 @@ async function redeemUrlToken() {
   const held = sessionVerdict(authToken(), nowS);
   if (held.state === "valid" || held.state === "expiring" || held.state === "opaque") return "refused";
   try {
+    const bare = await fetch(apiUrl("/api/auth/status"), { credentials: "same-origin" });
+    if (await statusSaysAuthenticated(bare) !== false) return "refused";
     const res = await fetch(apiUrl("/api/auth/status"), { headers: { Authorization: `Bearer ${offered}` } });
-    if (!res.ok) return "refused";
-    const body = JSON.parse(await res.text());
-    const authenticated = body !== null && typeof body === "object" ? body.authenticated : void 0;
-    if (authenticated === true) {
+    if (await statusSaysAuthenticated(res) === true) {
       setAuthToken(offered);
       return "adopted";
     }
   } catch {
   }
   return "refused";
+}
+async function statusSaysAuthenticated(res) {
+  if (!res.ok) return null;
+  let body;
+  try {
+    body = JSON.parse(await res.text());
+  } catch {
+    return null;
+  }
+  const authenticated = body !== null && typeof body === "object" ? body.authenticated : void 0;
+  return authenticated === true ? true : authenticated === false ? false : null;
 }
 const authListeners = /* @__PURE__ */ new Set();
 function subscribeAuth(fn) {

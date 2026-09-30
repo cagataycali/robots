@@ -51,14 +51,34 @@ STATUS_YES = '{"authenticated": true, "auth_enabled": true}'
 STATUS_NO = '{"authenticated": false, "auth_enabled": true}'
 
 
-def _redeem(page: str, *, answer_status: int = 200, answer_body: str = STATUS_NO, stored: str | None = None) -> dict:
+def _redeem(
+    page: str,
+    *,
+    answer_status: int = 200,
+    answer_body: str = STATUS_NO,
+    stored: str | None = None,
+    bare_status: int = 200,
+    bare_body: str = STATUS_NO,
+) -> dict:
+    """Redeem the page's ``?token=``; ``answer_*`` is what the backend says to the offered bearer.
+
+    ``bare_*`` is what it says to a request carrying no bearer, where only the
+    HttpOnly cookie could speak for the browser; the default is "nobody is signed
+    in here", the state of a fresh page.
+    """
     setup = "" if stored is None else f"localStorage.setItem('strands.token', {stored!r})\n"
     return run_frontend(
         setup
         + f"""
 const m = await import('./endpoints.ts')
 const before = {{ token: localStorage.getItem('strands.token'), auth: m.authToken() }}
-globalThis.answer = {{ status: {answer_status}, headers: {{}}, body: {answer_body!r} }}
+const bearerAnswer = {{ status: {answer_status}, headers: {{}}, body: {answer_body!r} }}
+const bareAnswer = {{ status: {bare_status}, headers: {{}}, body: {bare_body!r} }}
+const answering = globalThis.fetch
+globalThis.fetch = (url, init = {{}}) => {{
+  globalThis.answer = (init.headers ?? {{}}).Authorization ? bearerAnswer : bareAnswer
+  return answering(url, init)
+}}
 const outcome = await m.redeemUrlToken()
 out({{ before, outcome, token: localStorage.getItem('strands.token'), auth: m.authToken(),
       sent: sent.map(s => ({{ url: s.url, bearer: s.headers.Authorization ?? null }})), replaced }})
@@ -86,7 +106,10 @@ class TestAUrlTokenIsNeverTheSignInBeforeTheBackendSaysSo:
     def test_the_backend_is_asked_once_with_the_offered_token_and_no_is_no(self) -> None:
         handoff = _handoff()
         got = _redeem(f"http://robot.lan:8090/?token={handoff}", answer_body=STATUS_NO)
-        assert got["sent"] == [{"url": "/api/auth/status", "bearer": f"Bearer {handoff}"}], got
+        assert got["sent"] == [
+            {"url": "/api/auth/status", "bearer": None},
+            {"url": "/api/auth/status", "bearer": f"Bearer {handoff}"},
+        ], got
         assert got["outcome"] == "refused"
         assert got["token"] is None and got["auth"] == ""
 
@@ -149,6 +172,43 @@ class TestOnlyAHandoffCanRideInTheUrl:
         handoff = _handoff()
         got = _redeem(f"http://robot.lan:8090/?token={handoff}", answer_body=STATUS_YES, stored=_session(-60))
         assert got["outcome"] == "adopted" and got["token"] == handoff, got
+
+
+@requires_node
+class TestAPasskeyCookieSessionIsKeptOverTheLink:
+    """The primary sign-in is the HttpOnly passkey cookie, which no script can read.
+
+    ``authToken()`` is empty for a passkey operator, so the bearer-only guard let
+    the probe proceed; the server prefers a bearer over the cookie, so a valid
+    hand-off in a link answered yes, was adopted, and every ``api()`` call then
+    acted under that other identity while the cookie session was shadowed
+    (CWE-384 on the main auth path). The page asks the backend bare first: the
+    cookie rides that same-origin fetch, and a yes means the link loses.
+    """
+
+    def test_a_cookie_signed_in_browser_refuses_the_link_without_offering_it(self) -> None:
+        handoff = _handoff()
+        got = _redeem(f"http://robot.lan:8090/?token={handoff}", answer_body=STATUS_YES, bare_body=STATUS_YES)
+        assert got["outcome"] == "refused", got
+        assert got["token"] is None and got["auth"] == "", f"the link shadowed the cookie session: {got}"
+        assert got["sent"] == [{"url": "/api/auth/status", "bearer": None}], f"the offered token was still sent: {got}"
+
+    def test_a_bare_answer_the_page_cannot_read_is_not_a_no(self) -> None:
+        """Fail closed: when the page cannot learn whether someone is signed in, the link proves nothing."""
+        handoff = _handoff()
+        for status, body in ((500, STATUS_NO), (200, "{}"), (200, "not json")):
+            got = _redeem(
+                f"http://robot.lan:8090/?token={handoff}", answer_body=STATUS_YES, bare_status=status, bare_body=body
+            )
+            assert got["outcome"] == "refused" and got["token"] is None, (status, body, got)
+            assert all(s["bearer"] is None for s in got["sent"]), (status, body, got)
+
+    def test_a_browser_nobody_is_signed_into_still_redeems_a_good_handoff(self) -> None:
+        """The rule takes nothing from the LAN hand-off: bare no, then the offered bearer's yes."""
+        handoff = _handoff()
+        got = _redeem(f"http://robot.lan:8090/?token={handoff}", answer_body=STATUS_YES, bare_body=STATUS_NO)
+        assert got["outcome"] == "adopted" and got["token"] == handoff, got
+        assert [s["bearer"] for s in got["sent"]] == [None, f"Bearer {handoff}"], got
 
 
 class TestTheUrlPathNeverWritesStorage:
