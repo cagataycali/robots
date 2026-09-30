@@ -38,6 +38,7 @@ import pytest
 from strands_robots import _description_cache as dc
 from strands_robots.assets import download as dl
 from strands_robots.registry import discovery
+from tests._package_ast import parse_file
 from tests.description_clone_lock import INSTALLED, serialize_description_clones
 
 # A description module whose *import* reports itself to the probe, the way a
@@ -220,7 +221,7 @@ def test_no_description_import_in_the_package_skips_the_lock() -> None:
     raw: list[str] = []
     readers: set[str] = set()
     for path in sorted(package.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if isinstance(node, ast.Name) and node.id == "import_description":
                 readers.add(path.name)

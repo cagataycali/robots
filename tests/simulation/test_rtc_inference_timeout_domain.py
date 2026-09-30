@@ -41,6 +41,7 @@ import pytest
 import strands_robots.simulation.base as base_mod
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.policy_runner import PolicyRunner
+from tests._package_ast import parse_file
 
 from .test_policy_runner_async_rtc import _ChunkPolicy, _CountingSim
 
@@ -267,7 +268,7 @@ def _surfaces_taking_the_deadline() -> dict[str, list[str]]:
     root = pathlib.Path(inspect.getfile(base_mod)).parent
     found: dict[str, list[str]] = {}
     for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text())
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef) or node.name.startswith("_"):
                 continue
