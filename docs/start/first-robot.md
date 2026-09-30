@@ -1,3 +1,7 @@
+---
+description: An SO-101 in a MuJoCo world on your machine: move two joints, read them back, save a camera frame. No hardware, no GPU.
+---
+
 # First robot
 
 At the end of this page an SO-101 arm is standing in a MuJoCo world on your machine, you have moved two of its joints, read them back, and saved a camera frame to disk. No hardware, no GPU.
