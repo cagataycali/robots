@@ -878,7 +878,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             left_behind=left_behind,
         )
 
-    def _free_bodies_in_fingers(self, model: Any, data: Any, gripper_acts: list[int]) -> dict[int, np.ndarray]:
+    def _free_bodies_in_fingers(self, model: Any, data: Any, gripper_acts: Iterable[int]) -> dict[int, np.ndarray]:
         """Free-floating bodies touching the fingers now, with their world positions.
 
         Args:
@@ -891,7 +891,8 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             that owns a free joint (a scene fixture cannot be carried).
         """
         mj = self._mj
-        held = self._finger_contacts(model, data, gripper_acts) if gripper_acts else None
+        acts = list(gripper_acts)
+        held = self._finger_contacts(model, data, acts) if acts else None
         out: dict[int, np.ndarray] = {}
         for name in held or {}:
             body_id = int(mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, name))
