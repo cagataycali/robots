@@ -3024,9 +3024,14 @@ class Mesh(SensorLoopsMixin):
                     )
                 }
             duration = cmd.get("duration", 30.0)
+            # ``embodiment`` rides with the checkpoint it belongs to: it names
+            # the unit frame and the renames the policy is built with, and a
+            # checkpoint that arrives without it runs in the peer's default
+            # frame (GH #4180). Validated as a registry name by
+            # :func:`~strands_robots.mesh.security.validate_command`.
             extra = {
                 k: cmd[k]
-                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path")
+                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path", "embodiment")
                 if k in cmd
             }
             # Sim peer? Route to Simulation.start_policy / run_policy.
