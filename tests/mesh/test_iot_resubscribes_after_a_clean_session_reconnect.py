@@ -22,13 +22,19 @@ from strands_robots.mesh.transport.iot_transport import IotMqttTransport
 LOGGER = "strands_robots.mesh.transport.iot_transport"
 
 
-class _Future:
-    def __init__(self, exc: Exception | None = None) -> None:
-        self._exc = exc
+class _Suback:
+    """What awscrt resolves the subscribe future with: a SubackPacket, never a raise for a refusal."""
 
-    def result(self, timeout: float | None = None) -> None:
-        if self._exc is not None:
-            raise self._exc
+    def __init__(self, code: int) -> None:
+        self.reason_codes = [code]
+
+
+class _Future:
+    def __init__(self, suback: _Suback) -> None:
+        self._suback = suback
+
+    def result(self, timeout: float | None = None) -> _Suback:
+        return self._suback
 
 
 class _Client:
@@ -40,7 +46,8 @@ class _Client:
     def subscribe(self, packet: Any) -> _Future:
         self.subscribed.append([s.topic_filter for s in packet.subscriptions])
         self.seen.set()
-        return _Future(RuntimeError("SUBACK 135") if self.fail else None)
+        # 135 = not authorized, the code a policy gap produces (measured live, critic probe c09).
+        return _Future(_Suback(135 if self.fail else 1))
 
 
 def _connack(session_present: bool | None) -> Any:
@@ -113,8 +120,17 @@ class TestAReconnectWithoutASessionReissuesEveryFilter:
             transport._on_connection_success(_connack(session_present=False))
             _wait_for_resubscribe(transport)
         errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-        assert errors and "strands/safety/estop" in errors[0] and "SUBACK 135" in errors[0]
+        assert errors and "strands/safety/estop" in errors[0] and "SUBACK reason code 135" in errors[0]
         assert "this peer will not hear it" in errors[0]
+        assert not [r for r in caplog.records if r.levelno == logging.WARNING], (
+            "a refused filter is not 're-subscribed'"
+        )
+
+    def test_declare_subscriber_reads_the_suback_verdict_too(self, transport):
+        transport._client.fail = True
+        with pytest.raises(RuntimeError, match="SUBACK reason code 135"):
+            transport.declare_subscriber("strands/safety/estop", lambda sample: None)
+        assert "strands/safety/estop" not in transport._handlers, "a refused filter leaves no handler behind"
 
     def test_the_reissue_runs_off_the_lifecycle_callback_thread(self, transport):
         # awscrt runs lifecycle callbacks on its event-loop thread; a blocking

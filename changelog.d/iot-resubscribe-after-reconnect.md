@@ -18,3 +18,10 @@ filters re-subscribed and ERRORs per filter the broker refused, naming it.
 `wait_for_resubscribe(timeout)` lets a caller block until the filters are
 back. A missing CONNACK or flag is read as a fresh session, the safe
 direction.
+
+Both subscribe paths now read the SUBACK. awscrt resolves the future for a
+refused subscription (reason code 135 not authorized, 151 quota) and raises
+only on a transport error, so `declare_subscriber` returned a handle and the
+re-subscribe counted the filter as back while the broker had refused it.
+A code of 128 or more is now the ERROR branch, naming the filter and the code;
+`declare_subscriber` raises and leaves no handler behind.

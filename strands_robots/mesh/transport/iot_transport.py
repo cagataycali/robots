@@ -555,6 +555,43 @@ def _zenoh_to_mqtt_filter(key_expr: str) -> str:
     return "/".join(out)
 
 
+def _subscription_for(topic_filter: str) -> Any:
+    """The MQTT5 Subscription both subscribe paths send for *topic_filter*.
+
+    A safety command stored on the broker must not arrive as a side effect of
+    subscribing: retain handling 0 (the default) replays the retained message
+    the moment the subscription is accepted, which turned a stop published an
+    hour ago into a lockout on every robot that booted or reconnected (f013).
+    State topics (presence, health) keep the default; a late joiner wants the
+    last known state.
+    """
+    from awscrt import mqtt5
+
+    kwargs: dict[str, Any] = {"topic_filter": topic_filter, "qos": mqtt5.QoS.AT_LEAST_ONCE}
+    if _is_safety_command_filter(topic_filter):
+        kwargs["retain_handling_type"] = mqtt5.RetainHandlingType.DONT_SEND
+    return mqtt5.Subscription(**kwargs)
+
+
+def _suback_refusal(suback: Any) -> int | None:
+    """The reason code when the broker REFUSED the subscription, else ``None``.
+
+    awscrt resolves the subscribe future for any SUBACK and raises only on a
+    transport error, so a policy refusal (135, not authorized) or a quota
+    (151) arrives as ``reason_codes=[135]`` on a normal result. A missing or
+    unreadable packet reads as granted, so a fake that returns ``None`` keeps
+    working; a real refusal always carries the code.
+    """
+    codes = getattr(suback, "reason_codes", None)
+    if not codes:
+        return None
+    try:
+        code = int(codes[0])
+    except (TypeError, ValueError):
+        return None
+    return code if code >= 128 else None
+
+
 def _session_was_resumed(data: Any) -> bool:
     """True only when the CONNACK says the broker kept the previous session.
 
@@ -1257,13 +1294,13 @@ class IotMqttTransport:
             # lockout on every robot that booted or reconnected (f013). State
             # topics (presence, health) keep the default; a late joiner wants
             # the last known state.
-            subscription_kwargs: dict[str, Any] = {"topic_filter": topic_filter, "qos": mqtt5.QoS.AT_LEAST_ONCE}
-            if _is_safety_command_filter(topic_filter):
-                subscription_kwargs["retain_handling_type"] = mqtt5.RetainHandlingType.DONT_SEND
             try:
-                self._client.subscribe(
-                    mqtt5.SubscribePacket(subscriptions=[mqtt5.Subscription(**subscription_kwargs)])
+                suback = self._client.subscribe(
+                    mqtt5.SubscribePacket(subscriptions=[_subscription_for(topic_filter)])
                 ).result(timeout=5)
+                refused = _suback_refusal(suback)
+                if refused is not None:
+                    raise RuntimeError(f"broker refused it, SUBACK reason code {refused}")
             except Exception as exc:
                 # Roll back the handler registration so a retry works cleanly.
                 with self._lock:
@@ -1350,11 +1387,14 @@ class IotMqttTransport:
                 if client is None:
                     return
                 try:
-                    client.subscribe(
-                        mqtt5.SubscribePacket(
-                            subscriptions=[mqtt5.Subscription(topic_filter=topic_filter, qos=mqtt5.QoS.AT_LEAST_ONCE)]
-                        )
+                    # Same packet as the first subscribe, so a reconnect does
+                    # not replay a retained safety command either (f013).
+                    suback = client.subscribe(
+                        mqtt5.SubscribePacket(subscriptions=[_subscription_for(topic_filter)])
                     ).result(timeout=5)
+                    refused = _suback_refusal(suback)
+                    if refused is not None:
+                        raise RuntimeError(f"broker refused it, SUBACK reason code {refused}")
                     reissued.append(topic_filter)
                 except Exception as exc:
                     logger.error(
