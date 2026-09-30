@@ -111,10 +111,13 @@ def test_the_runner_is_launched_with_the_run_s_checkpoint_and_physics(trainer, t
 
 
 def test_a_second_status_reads_the_converted_dataset_back(trainer, tmp_path: Path, monkeypatch) -> None:
-    calls = []
-    monkeypatch.setattr(
-        il, "rollout_to_dataset", lambda raw, ds, **k: calls.append(ds) or {"dataset": ds, "episodes": 1}
-    )
+    calls: list[str] = []
+
+    def _convert(raw: object, ds: str, **k: object) -> dict[str, object]:
+        calls.append(ds)
+        return {"dataset": ds, "episodes": 1}
+
+    monkeypatch.setattr(il, "rollout_to_dataset", _convert)
     rec = trainer.record(_trained(trainer, tmp_path), str(tmp_path / "ds"), wait=True)
     again = trainer.status(rec.job_id)
     assert again.status == "success" and again.metrics["episodes"] == 1
