@@ -996,6 +996,8 @@ def _boot_watchdog(timeout_s: float | None) -> Iterator[None]:
         try:
             sys.stderr.flush()
         except (ValueError, OSError):
+            # A closed or broken stderr; the exit below is the message that
+            # matters and it needs no stream.
             pass
         os._exit(BOOT_TIMEOUT_EXIT_STATUS)
 
