@@ -787,6 +787,7 @@ class ProcessorBridge:
                     state_units=embodiment.state_units,
                     gripper_index=embodiment.gripper_index,
                     gripper_joint_range=list(embodiment.gripper_joint_range),
+                    gripper_fraction=list(embodiment.gripper_fraction),
                     joint_mids=list(embodiment.joint_mids),
                     strict_keys=strict_keys,
                     missing_keys_sink=self._state_missing_keys,

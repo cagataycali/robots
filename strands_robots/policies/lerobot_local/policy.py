@@ -2963,7 +2963,7 @@ class LerobotLocalPolicy(Policy):
         if self._processor_bridge and self._processor_bridge.has_postprocessor:
             action_tensor = self._processor_bridge.postprocess(action_tensor)
 
-        return self._tensor_to_action_dicts(action_tensor, hw_action_keys=_hw_action_keys)
+        return self._tensor_to_action_dicts(action_tensor, hw_action_keys=_hw_action_keys, observation=observation)
 
     # Observation batch building
 
@@ -3940,7 +3940,10 @@ class LerobotLocalPolicy(Policy):
         return type(policy).__name__ == "MolmoAct2Policy"
 
     def _tensor_to_action_dicts(
-        self, action_tensor: torch.Tensor, hw_action_keys: list[str] | None = None
+        self,
+        action_tensor: torch.Tensor,
+        hw_action_keys: list[str] | None = None,
+        observation: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Convert action tensor to list of robot action dicts.
 
@@ -4025,7 +4028,19 @@ class LerobotLocalPolicy(Policy):
             convert = False
         else:
             out_keys = list(self.robot_state_keys)
-            convert = emb is not None and getattr(emb, "action_units", "native") != "native"
+            convert = emb is not None and emb.converts_actions
+
+        # A velocity-trained model (DROID) emits joint velocities; integrate the
+        # chunk from the measured joints into the position targets send_action
+        # takes, before any unit conversion (see EmbodimentMap.velocities_to_targets).
+        if not hw_action_keys and emb is not None and emb.action_mode == "velocity":
+            obs = observation or {}
+            current = [obs.get(k) for k in out_keys]
+            current = [float(v) if isinstance(v, int | float) and not isinstance(v, bool) else None for v in current]
+            # Only the columns an actuator receives: a padded model width
+            # (pi05's 32) carries nothing past them to integrate.
+            width = len(out_keys)
+            actions_list = emb.velocities_to_targets([[float(v) for v in a][:width] for a in actions_list], current)
 
         result = []
         for action_values in actions_list:
@@ -4038,6 +4053,9 @@ class LerobotLocalPolicy(Policy):
             if convert and emb is not None:
                 vals = emb.model_action_to_sim(vals)
             action_dict = dict(zip(keys, vals, strict=True))
+            if not hw_action_keys and emb is not None and emb.gripper_followers and 0 <= emb.gripper_index < len(vals):
+                for follower in emb.gripper_followers:
+                    action_dict[follower] = vals[emb.gripper_index]
             result.append(action_dict)
 
         return result

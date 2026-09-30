@@ -223,6 +223,45 @@
       ],
       "dim_policy": "pad"
     },
+    "panda_droid": {
+      "__note__": "DROID (openpi / lerobot pi05_droid) on the SIM Franka Panda. state = 7 arm joints + gripper as the fraction closed (0 open .. 1 closed, from finger_joint1: 0.04 m open, 0 m closed); action = 7 arm joint VELOCITIES (rad/s) integrated at DROID's 15 Hz + the gripper fraction, driving both fingers. Cameras: DROID's exterior view -> base_0_rgb, wrist -> left_wrist_0_rgb.",
+      "obs_rename": {
+        "exterior": "observation.images.base_0_rgb",
+        "wrist": "observation.images.left_wrist_0_rgb"
+      },
+      "state_keys": [
+        "joint1",
+        "joint2",
+        "joint3",
+        "joint4",
+        "joint5",
+        "joint6",
+        "joint7",
+        "finger_joint1"
+      ],
+      "action_keys": [
+        "joint1",
+        "joint2",
+        "joint3",
+        "joint4",
+        "joint5",
+        "joint6",
+        "joint7",
+        "finger_joint1"
+      ],
+      "dim_policy": "pad",
+      "gripper_index": 7,
+      "gripper_fraction": [
+        0.04,
+        0.0
+      ],
+      "gripper_followers": [
+        "finger_joint2"
+      ],
+      "action_mode": "velocity",
+      "action_dt": 0.0666666666667,
+      "action_dim_policy": "truncate"
+    },
     "fr3": {
       "__note__": "SIM: franka_fr3/fr3.xml. 7 prefixed arm joints (no fingers in base xml).",
       "obs_rename": {
@@ -1201,6 +1240,7 @@
     "so100_follower": "so_real",
     "so101_follower": "so_real",
     "koch_follower": "koch_real",
-    "lekiwi_client": "lekiwi_real"
+    "lekiwi_client": "lekiwi_real",
+    "franka_droid": "panda_droid"
   }
 }
