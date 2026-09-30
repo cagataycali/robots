@@ -1044,38 +1044,48 @@ class WBCPolicy(Policy):
         return last if isinstance(last, int) else None
 
     @staticmethod
-    def _reject_sonic_inference_stack(checkpoint: str | None) -> None:
-        """Raise if ``checkpoint`` is the SONIC inference stack, not decoupled-WBC.
+    def _sonic_inference_stack_error(onnx_names: set[str], where: str) -> str | None:
+        """Return the refusal text if ``onnx_names`` is the SONIC stack, else None.
 
         The HuggingFace repo ``nvidia/GEAR-SONIC`` ships the SONIC VLA inference
         stack (``model_encoder.onnx`` / ``model_decoder.onnx`` /
         ``planner_sonic.onnx``), NOT the decoupled-WBC Balance/Walk policies this
-        provider runs. Loading it would fail later with a confusing
-        ``policy.onnx not found``; detect it up front and point at the correct
-        source. A directory holding both a SONIC marker and ``policy.onnx`` is
-        left alone (the caller knowingly colocated files).
+        provider runs. A set that also holds a main policy (``policy.onnx`` or
+        the canonical ``GR00T-WholeBodyControl-Balance.onnx``) is left alone:
+        the caller knowingly colocated files.
+
+        Args:
+            onnx_names: Bare ONNX file names found in, or listed for, a checkpoint.
+            where: What was inspected, quoted in the message (a dir or an HF id).
+        """
+        sonic_found = onnx_names & _SONIC_INFERENCE_STACK_FILES
+        if not sonic_found or onnx_names & {_MAIN_POLICY_FILENAME, _MAIN_POLICY_CANONICAL}:
+            return None
+        return (
+            f"WBCPolicy checkpoint {where!r} looks like the SONIC VLA inference stack "
+            f"(found {sorted(sonic_found)}), not the decoupled-WBC policy family. "
+            "WBCPolicy loads GR00T-WholeBodyControl-Balance.onnx (as policy.onnx) and "
+            "GR00T-WholeBodyControl-Walk.onnx (as walk_policy.onnx) from the "
+            "NVlabs/GR00T-WholeBodyControl git-LFS tree "
+            "(decoupled_wbc/sim2mujoco/resources/robots/g1/policy/). The SONIC "
+            "encoder/decoder/planner ONNX are a different runtime and are not loaded here."
+        )
+
+    @staticmethod
+    def _reject_sonic_inference_stack(checkpoint: str | None) -> None:
+        """Raise if the local ``checkpoint`` directory is the SONIC inference stack.
 
         Raises:
-            RuntimeError: If the checkpoint directory holds SONIC inference-stack
-                ONNX files but no ``policy.onnx``.
+            RuntimeError: If the directory holds SONIC inference-stack ONNX files
+                but no main policy (see :meth:`_sonic_inference_stack_error`).
         """
         if not checkpoint:
             return
         d = Path(checkpoint).expanduser()
         if not d.is_dir():
             return
-        onnx_names = {f.name for f in d.glob("*.onnx")}
-        sonic_found = onnx_names & _SONIC_INFERENCE_STACK_FILES
-        if sonic_found and _MAIN_POLICY_FILENAME not in onnx_names:
-            raise RuntimeError(
-                f"WBCPolicy checkpoint {str(d)!r} looks like the SONIC VLA inference stack "
-                f"(found {sorted(sonic_found)}), not the decoupled-WBC policy family. "
-                "WBCPolicy loads GR00T-WholeBodyControl-Balance.onnx (as policy.onnx) and "
-                "GR00T-WholeBodyControl-Walk.onnx (as walk_policy.onnx) from the "
-                "NVlabs/GR00T-WholeBodyControl git-LFS tree "
-                "(decoupled_wbc/sim2mujoco/resources/robots/g1/policy/). The SONIC "
-                "encoder/decoder/planner ONNX are a different runtime and are not loaded here."
-            )
+        if error := WBCPolicy._sonic_inference_stack_error({f.name for f in d.glob("*.onnx")}, str(d)):
+            raise RuntimeError(error)
 
     @staticmethod
     def _checkpoint_not_found_message(checkpoint: str | None, main_path: str | None) -> str:
@@ -1104,13 +1114,15 @@ class WBCPolicy(Policy):
 
         Checkpoint resolution order (issue #466): local path | HF download | cache.
         A value that already exists on disk (file or dir) is returned unchanged.
-        A bare ``org/repo`` id (e.g. an explicit ``org/repo`` checkpoint) is
+        A bare ``org/repo`` id whose file list names the SONIC inference stack is
+        refused before anything is fetched; any other ``org/repo`` id is
         fetched via ``huggingface_hub.snapshot_download`` - which is itself a
         cache (repeat calls are offline-fast) - and the local dir is returned.
 
         Raises:
             RuntimeError: If the id looks like an HF repo but ``huggingface_hub``
-                is not installed, or the download fails. Never silently proceeds
+                is not installed, the repo lists the SONIC inference stack, or
+                the download fails. Never silently proceeds
                 with an unresolved checkpoint (the session load would then raise
                 a less actionable error).
         """
@@ -1138,6 +1150,17 @@ class WBCPolicy(Policy):
                 f"but huggingface_hub is not installed to download it. If you meant a local "
                 f"path, pass an existing directory or .onnx file.\n{e}"
             ) from e
+        # Read the repo's file list (metadata only) before fetching a byte: the
+        # SONIC stack is ~1.3 GB of ONNX and is refused by name either way. A
+        # listing failure (private repo, offline) falls through so the download
+        # below reports the real cause.
+        try:
+            listed = hub.HfApi().list_repo_files(repo_id=checkpoint)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - the listing is advisory; snapshot_download reports the failure
+            listed = []
+        onnx_names = {Path(name).name for name in listed if name.endswith(".onnx")}
+        if error := WBCPolicy._sonic_inference_stack_error(onnx_names, checkpoint):
+            raise RuntimeError(f"{error} Refused before download: nothing was fetched.")
         # Log BEFORE the network call so an unexpected download (e.g. a bare
         # an explicit org/repo checkpoint, or a mistyped local path that happens
         # to be org/repo-shaped) is visible, not silent.
