@@ -161,7 +161,7 @@ class TestNumericConstructorDomain:
 
     def test_a_refused_knob_is_named_not_the_joint_it_would_have_poisoned(self) -> None:
         """The refusal names the parameter, which the per-action one cannot."""
-        with pytest.raises(ValueError, match=r"^IsaacDeltaEEFController: pos_scale must be > 0"):
+        with pytest.raises(ValueError, match=r"^IsaacDeltaEEFController: pos_scale must be a positive finite number"):
             _build(pos_scale=math.inf)
 
 
@@ -181,7 +181,7 @@ class TestAnOrderComparisonCannotSeeInf:
 
     def test_the_domain_refuses_what_the_order_comparison_accepted(self) -> None:
         for param in POSITIVE_KNOBS:
-            with pytest.raises(ValueError, match=r"must be > 0, got inf"):
+            with pytest.raises(ValueError, match=r"must be a positive finite number, got inf"):
                 _build(**{param: math.inf})
 
 
@@ -258,7 +258,7 @@ class TestRefusalsThatHadNoTest:
 
     @pytest.mark.parametrize("param", POSITIVE_KNOBS)
     def test_a_non_positive_scale_is_refused(self, param: str) -> None:
-        with pytest.raises(ValueError, match=rf"{param} must be > 0, got 0\.0"):
+        with pytest.raises(ValueError, match=rf"{param} must be a positive finite number, got 0\.0"):
             _build(**{param: 0.0})
 
     def test_an_inverted_limit_row_is_refused(self) -> None:

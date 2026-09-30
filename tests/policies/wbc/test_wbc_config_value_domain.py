@@ -83,7 +83,7 @@ class TestActionScaleDomain:
         assert float(_config(action_scale=value).action_scale) == pytest.approx(float(value))
 
     def test_the_refusal_names_the_field_and_the_value(self) -> None:
-        with pytest.raises(ValueError, match=r"WBCConfig: action_scale must be > 0, got 0\.0\."):
+        with pytest.raises(ValueError, match=r"WBCConfig: action_scale must be a positive finite number, got 0\.0\."):
             _config(action_scale=0.0)
 
 
@@ -223,7 +223,7 @@ class TestTheConfigFilePathIsCovered:
     """``from_dict`` / ``from_file`` are how a checkpoint's config arrives."""
 
     def test_from_dict_refuses_an_unusable_action_scale(self) -> None:
-        with pytest.raises(ValueError, match=r"action_scale must be > 0"):
+        with pytest.raises(ValueError, match=r"action_scale must be a positive finite number"):
             WBCConfig.from_dict({"policy_path": "p.onnx", "action_scale": 0})
 
     def test_from_dict_refuses_an_unusable_flat_upstream_scale_key(self) -> None:

@@ -45,6 +45,7 @@ pytest.importorskip("lerobot")
 
 from strands_robots.simulation.base import SimEngine  # noqa: E402
 from strands_robots.simulation.recording import RecordedFrame, undriven_robot_state  # noqa: E402
+from tests._recorder_stand_in import RecorderStandIn  # noqa: E402
 
 _ROBOT_XML = """
 <mujoco model="probe_arm">
@@ -370,16 +371,6 @@ class TestTheHelperReadsOnlyWhatItShould:
         assert engine.asked == [], "the refusal must precede any read"
 
 
-class _Recorder:
-    """Captures the one ``add_frame`` call :class:`RecordedFrame` makes."""
-
-    def __init__(self) -> None:
-        self.frames: list[dict[str, Any]] = []
-
-    def add_frame(self, **frame: Any) -> None:
-        self.frames.append(frame)
-
-
 class _KeyedEngine(TestTheHelperReadsOnlyWhatItShould._Engine):
     def __init__(self, states: dict[str, dict[str, Any]]) -> None:
         super().__init__(states)
@@ -423,7 +414,7 @@ def test_a_recorded_frame_is_the_schema_start_recording_declared(
 ) -> None:
     """Every entry point's frame: driven keys prefixed once the scene holds two robots, bystanders measured."""
     engine = _KeyedEngine({"alice": {"j": 1.0}, "bob": {"j": 2.0}, "carol": {"j": 3.0}})
-    recorder = _Recorder()
+    recorder = RecorderStandIn()
     frame = RecordedFrame(engine, driven, scene)
     states = {name: engine.states[name] for name in driven}
     actions = {name: {"j": round(0.1 * (index + 1), 1)} for index, name in enumerate(driven)}
@@ -433,6 +424,7 @@ def test_a_recorded_frame_is_the_schema_start_recording_declared(
         "observation": expected_observation,
         "action": expected_action,
         "task": "pick",
+        "camera_keys": None,
         "required_action_keys": expected_keys,
     }
     assert engine.key_reads == len(driven), "the action columns are resolved once per rollout, not per frame"

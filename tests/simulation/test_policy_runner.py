@@ -39,6 +39,7 @@ from strands_robots.simulation.policy_runner import (
     _RolloutVideoWriter,
 )
 from tests._module_reimport import reimport
+from tests._recorder_stand_in import RecorderStandIn
 from tests.simulation.mujoco._gl_probe import requires_gl
 
 #
@@ -802,7 +803,9 @@ def test_runner_substeps_at_control_rate():
     """Runner converts control_frequency + physics dt into substeps so a
     position-servo arm gets a full control period of physics per action.
 
-    15 Hz control with a 2 ms physics dt => round((1/15)/0.002) = 33 substeps.
+    15 Hz control with a 2 ms physics dt is (1/15)/0.002 = 33.33 substeps: the
+    schedule alternates 33 and 34 so four actions cover round(133.33) = 133
+    steps, 4/15 s to within one physics step (#4392), never a bare 1.
     """
     sim = _SubstepRecordingSim(dt=0.002)
     policy = MockPolicy()
@@ -811,7 +814,8 @@ def test_runner_substeps_at_control_rate():
     res = PolicyRunner(sim).run("fake_robot", policy, duration=4 / 15, control_frequency=15.0, fast_mode=True)
     assert res["status"] == "success"
     assert sim.substeps_seen, "no send_action calls recorded"
-    assert all(s == 33 for s in sim.substeps_seen), sim.substeps_seen
+    assert set(sim.substeps_seen) <= {33, 34}, sim.substeps_seen
+    assert sum(sim.substeps_seen[:4]) == 133, sim.substeps_seen
 
 
 def test_runner_control_substeps_override():
@@ -914,37 +918,29 @@ class TestChunkNotTruncatedBelowActionsPerStep:
 # mega-episode (issue #708). A failure at that boundary (a non-success status
 # dict, or an exception from `save_episode`) is not the loss of an episode
 # split: the recorder closes itself because the LeRobot episode buffer is in an
-# undefined state, and `add_frame` then returns on a closed recorder without
-# writing a frame, raising `RecordingFrameError`, or counting a
-# `dropped_frame_count` - so the remaining episodes are discarded in silence
-# and the whole dataset is lost, not just its boundaries. The eval therefore
+# undefined state, and a closed recorder refuses every later frame - so the
+# remaining episodes would record nothing. The eval therefore
 # stops at that episode and reports the reason in `recording_save_error`, the
 # same refusal every sibling flush makes. These pin that contract through the
 # public `evaluate()` API; the loop-level behaviour is pinned in
 # tests/simulation/test_recording_episode_loss_is_not_tolerated.py.
 
 
-class _FailingRecorder:
-    """Dataset-recorder stub whose per-episode `save_episode` fails.
-
-    `mode="non_success"` returns an error status dict; `mode="raise"` throws.
-    Reports a non-empty `episode_frame_count` so the finalize path actually
-    calls `save_episode` (an empty buffer is skipped by design).
-    """
-
-    def __init__(self, mode: str):
-        self.mode = mode
-        self.save_calls = 0
-
-    @property
-    def episode_frame_count(self) -> int:
-        return 5  # non-empty -> finalize will call save_episode
+class _RaisingSave(RecorderStandIn):
+    """A recorder whose ``save_episode`` raises instead of answering."""
 
     def save_episode(self) -> dict[str, Any]:
-        self.save_calls += 1
-        if self.mode == "raise":
-            raise RuntimeError("simulated recorder disk failure")
-        return {"status": "error", "content": [{"text": "disk full"}], "message": "disk full"}
+        self.calls.append("save_episode")
+        raise RuntimeError("simulated recorder disk failure")
+
+
+def _failing_recorder(mode: str) -> RecorderStandIn:
+    """Five buffered frames and a flush that fails: ``"raise"`` throws, else an error status."""
+    if mode == "raise":
+        return _RaisingSave(pending=5)
+    return RecorderStandIn(
+        pending=5, save_result={"status": "error", "content": [{"text": "disk full"}], "message": "disk full"}
+    )
 
 
 def _attach_recorder(sim: FakeSim, recorder: Any) -> None:
@@ -962,7 +958,7 @@ def test_evaluate_reports_a_per_episode_recorder_save_failure(mode):
     and reporting a success summary over data that does not exist.
     """
     sim = FakeSim()
-    recorder = _FailingRecorder(mode)
+    recorder = _failing_recorder(mode)
     _attach_recorder(sim, recorder)
 
     policy = MockPolicy()
@@ -975,7 +971,7 @@ def test_evaluate_reports_a_per_episode_recorder_save_failure(mode):
     # Episode 0 ran; episode 1 was never measured into the closed recorder.
     assert payload["episodes_completed"] == 1
     assert payload["stopped_early"] is False
-    assert recorder.save_calls == 1
+    assert recorder.calls.count("save_episode") == 1
 
     # The reason reaches the caller in the payload, not only a log line.
     reason = payload["recording_save_error"]

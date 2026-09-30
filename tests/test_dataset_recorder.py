@@ -21,6 +21,7 @@ from strands_robots.dataset_recorder import (
     DatasetRecorder,
     unrecordable_camera_columns_error,
 )
+from strands_robots.recording_errors import RecordingFrameError
 
 
 class _FakeDatasetWithClear:
@@ -334,16 +335,40 @@ def test_add_frame_non_strict_counts_drops_without_raising(caplog):
         record.getMessage().encode("ascii")
 
 
-def test_add_frame_noop_when_closed():
-    """A closed recorder ignores add_frame instead of corrupting the dataset."""
-    ds = _CapturingDataset(_state_action_features(["j1"], ["j1"]))
-    rec = DatasetRecorder(dataset=ds)
-    rec._closed = True
+class _FailingSave(_CapturingDataset):
+    def save_episode(self):
+        raise RuntimeError("encode failed")
 
+
+def _finalized(strict: bool) -> DatasetRecorder:
+    rec = DatasetRecorder(dataset=_CapturingDataset(_state_action_features(["j1"], ["j1"])), strict=strict)
+    rec.finalize()
+    return rec
+
+
+def _poisoned(strict: bool) -> DatasetRecorder:
+    rec = DatasetRecorder(dataset=_FailingSave(_state_action_features(["j1"], ["j1"])), strict=strict)
     rec.add_frame(observation={"j1": 1.0}, action={"j1": 0.1}, task="t")
+    assert rec.save_episode()["status"] == "error"
+    return rec
 
-    assert ds.frames == []
-    assert rec.frame_count == 0
+
+@pytest.mark.parametrize("close", [_finalized, _poisoned], ids=["after-finalize", "after-a-failed-save"])
+@pytest.mark.parametrize("strict", [True, False], ids=["strict", "best-effort"])
+def test_a_closed_recorder_refuses_a_frame_instead_of_swallowing_it(close, strict):
+    """The frame is neither written nor lost without a trace: raised, or counted as dropped."""
+    rec = close(strict)
+    assert rec.closed
+    written, counted = len(rec.dataset.frames), rec.frame_count
+
+    if strict:
+        with pytest.raises(RecordingFrameError, match="recorder is closed"):
+            rec.add_frame(observation={"j1": 1.0}, action={"j1": 0.1}, task="t")
+    else:
+        rec.add_frame(observation={"j1": 1.0}, action={"j1": 0.1}, task="t")
+
+    assert (len(rec.dataset.frames), rec.frame_count) == (written, counted)
+    assert rec.dropped_frame_count == (0 if strict else 1)
 
 
 def test_save_episode_reports_per_episode_frame_count():
@@ -371,18 +396,14 @@ def test_save_episode_reports_per_episode_frame_count():
 def test_save_episode_poisons_recorder_on_failure():
     """A failed save closes the recorder so later frames cannot corrupt data."""
 
-    class _BadSave(_CapturingDataset):
-        def save_episode(self):
-            raise RuntimeError("encode failed")
-
-    ds = _BadSave(_state_action_features(["j1"], ["j1"]))
+    ds = _FailingSave(_state_action_features(["j1"], ["j1"]))
     rec = DatasetRecorder(dataset=ds)
     rec.add_frame(observation={"j1": 1.0}, action={"j1": 0.1}, task="t")
 
     result = rec.save_episode()
 
     assert result["status"] == "error"
-    assert rec._closed is True
+    assert rec.closed
     # save_episode on a closed recorder returns a clean error, not a crash.
     assert rec.save_episode()["status"] == "error"
 

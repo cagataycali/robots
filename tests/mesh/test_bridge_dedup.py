@@ -850,7 +850,9 @@ class TestSafetyResumeQosPolicyR10:
         resume_qos, resume_retain = _qos_and_retain_for("strands/robot-a/safety/resume")
         estop_qos, estop_retain = _qos_and_retain_for("strands/robot-a/safety/estop")
         assert resume_qos == estop_qos == 1, f"safety/resume QoS={resume_qos}, expected 1"
-        assert resume_retain == estop_retain is True, f"safety/resume retain={resume_retain}"
+        # Both are events, never retained: a stored stop or release replayed at
+        # subscribe time is a lockout (or a release) nobody issued now (f013).
+        assert resume_retain == estop_retain is False, f"safety/resume retain={resume_retain}"
 
     def test_safety_resume_in_topic_policy(self):
         from strands_robots.mesh.transport.iot_transport import _TOPIC_POLICY
@@ -858,7 +860,7 @@ class TestSafetyResumeQosPolicyR10:
         assert "safety/resume" in _TOPIC_POLICY, "safety/resume missing from _TOPIC_POLICY"
         qos, retain = _TOPIC_POLICY["safety/resume"]
         assert qos == 1
-        assert retain is True
+        assert retain is False
 
 
 # ------------------------------------------------------------------------
