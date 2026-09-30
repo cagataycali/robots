@@ -373,10 +373,10 @@ def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], d
         try:
             resolved_provider, resolved_kwargs = resolve_policy(provider, **kwargs)
         except ImportError:
-            resolved_provider = None
-            resolved_kwargs = {}
-        if resolved_provider:
-            return resolved_provider, import_policy_class(resolved_provider), dict(resolved_kwargs)
+            pass  # not installed as a smart string; fall through to the registry lookup
+        else:
+            if resolved_provider:
+                return resolved_provider, import_policy_class(resolved_provider), dict(resolved_kwargs)
 
     # 3. Standard lookup from policies.json. The name returned is the canonical
     #    one, not the caller's spelling: create_policy keys the
