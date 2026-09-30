@@ -9,12 +9,12 @@ By the end of this page you know what the `isaac` backend requires, how to const
 ```bash
 pip install 'strands-robots[sim-isaac]'                                            # usd-core, imageio, mujoco+mink IK (not Isaac Sim)
 pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url https://pypi.nvidia.com   # Isaac Sim, Python 3.12 only
-# under uv, both extra flags are required (see _install.py):
+# under uv, both flags are required:
 # uv pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url https://pypi.nvidia.com --index-strategy unsafe-best-match --prerelease=allow
 export OMNI_KIT_ACCEPT_EULA=YES                                                     # first import
 ```
 
-Verified pip wheels: 6.0.1.0 and 6.1.0.0 (swap `==6.0.*` for `==6.1.*`). Both pin `numpy==2.3.1` and `torch==2.11.0`, so use a fresh venv; on 6.0.x reinstall `coverage>=7.6.1` (its 7.4.4 pin breaks numba). Docker: `nvcr.io/nvidia/isaac-sim:6.0.1`. Pins live in `strands_robots/simulation/isaac/_install.py`.
+Verified pip wheels: 6.0.1.0 and 6.1.0.0 (swap `==6.0.*` for `==6.1.*`). Both pin `numpy==2.3.1` and `torch==2.11.0`, so use a fresh venv; on 6.0.x reinstall `coverage>=7.6.1` (its 7.4.4 pin breaks numba). `lerobot` (recording) needs `numpy<2.3`: install it last (2.2.6 works on 6.1). Docker: `nvcr.io/nvidia/isaac-sim:6.0.1`. Pins live in `strands_robots/simulation/isaac/_install.py`.
 
 ## What it is
 

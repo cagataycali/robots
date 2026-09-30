@@ -192,3 +192,28 @@ def test_the_bridge_raises_the_import_error_the_page_describes() -> None:
 
     assert "setup.bash" in str(refusal.value)
     assert "PyPI" in str(refusal.value)
+
+
+#: The arguments each call in first-robot.md's "What each call did" table needs
+#: to run; a name missing here is a new row the pin cannot drive yet.
+_CALL_ARGS: dict[str, tuple] = {"send_action": ({"1": 0.0},), "step": (1,)}
+
+
+def _is_envelope(result: object) -> bool:
+    return isinstance(result, dict) and "status" in result and isinstance(result.get("content"), list)
+
+
+@pytest.mark.skipif(not _HAS_MUJOCO, reason="the calls run against a MuJoCo sim robot")
+def test_first_robot_names_every_call_that_does_not_return_the_envelope() -> None:
+    """The sentence under the table names, as exceptions, exactly the calls that return no envelope."""
+    from strands_robots import Robot
+
+    text = (START / "first-robot.md").read_text(encoding="utf-8")
+    calls = re.findall(r"^\| `(\w+)\(", text, re.MULTILINE)
+    assert "cleanup" in calls and calls[-1] == "cleanup", f"the table rows changed: {calls}"
+    sentence = re.search(r"^Every call but (.*?) returns the same envelope", text, re.MULTILINE)
+    assert sentence, "first-robot.md lost the sentence saying which calls return the envelope"
+
+    robot = Robot("so101")
+    plain = [name for name in calls if not _is_envelope(getattr(robot, name)(*_CALL_ARGS.get(name, ())))]
+    assert set(re.findall(r"`(\w+)\(\)`", sentence.group(1))) == set(plain)
