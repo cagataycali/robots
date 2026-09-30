@@ -425,6 +425,9 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         # WBCGaitPolicy
         "wbc_gait",
         "sonic_gait",
+        # WBCLatentPolicy (a VLA's SONIC motion tokens decoded into G1 joint targets)
+        "wbc_latent",
+        "sonic_latent",
         # KimodoPolicy
         "kimodo",
         "kimodo_g1",
