@@ -23,6 +23,7 @@ import pytest
 from strands_robots.training import _isaaclab_runtime as runtime
 from strands_robots.training import isaaclab as il
 from strands_robots.training.isaaclab import IsaacLabTrainer
+from tests._package_ast import parse_file
 
 RUNNER = Path(il.__file__).with_name("_isaaclab_record_runner.py")
 
@@ -88,7 +89,7 @@ def _trained(trainer: IsaacLabTrainer, tmp_path: Path, **extra) -> str:
 
 def test_the_runner_imports_no_strands() -> None:
     """It runs in the Isaac Lab interpreter, which has no strands installed."""
-    tree = ast.parse(RUNNER.read_text())
+    tree = parse_file(RUNNER)
     imported = {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     imported |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
     assert "strands_robots" not in imported
