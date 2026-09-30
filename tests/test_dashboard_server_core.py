@@ -1,4 +1,4 @@
-"""The dashboard server core: every route fails closed, the open posture is loopback-only.
+"""The dashboard server core: every route fails closed, the open posture is loopback plus the bootstrap proof.
 
 ``create_app`` wires the landed auth/settings/redaction modules to paths. What
 is graded here is the routing decision itself - which paths are public, when a
@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import access, auth, settings  # noqa: E402
 from strands_robots.dashboard.server import create_app, redacted_settings  # noqa: E402
+from tests._dashboard_bootstrap import bootstrap_headers, configure_bootstrap  # noqa: E402
 from tests._dashboard_passkeys import issue_enrolled  # noqa: E402
 
 
@@ -28,6 +29,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.delenv("STRANDS_DASH_AUTH_ENABLED", raising=False)
     monkeypatch.delenv("DASHBOARD_AUTH_TOKEN", raising=False)
     monkeypatch.setattr(settings, "SETTINGS_FILE", tmp_path / "settings.json")
+    configure_bootstrap(monkeypatch)
     settings.clear_overrides()
     settings.load(refresh=True)
     yield tmp_path
@@ -37,7 +39,8 @@ def isolated(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def client(isolated):
-    return TestClient(create_app())
+    """The operator's own page on a fresh install: it presents the bootstrap proof on every request."""
+    return TestClient(create_app(), headers=bootstrap_headers())
 
 
 PUBLIC = ("/api/health", "/api/auth/status")
@@ -45,7 +48,7 @@ GUARDED_GET = ("/api/whoami", "/api/settings", "/api/auth/credentials")
 
 
 class TestOpenPosture:
-    """Fresh install, loopback caller, nothing enrolled: usable on this machine."""
+    """Fresh install, loopback caller holding the bootstrap proof, nothing enrolled: usable on this machine."""
 
     def test_health_says_up_and_versioned(self, client):
         body = client.get("/api/health").json()
@@ -58,8 +61,17 @@ class TestOpenPosture:
         assert body["authenticated"] is False
         assert body["open_posture"] is True
 
-    def test_loopback_caller_is_admitted_as_loopback(self, client):
+    def test_loopback_caller_with_the_proof_is_admitted_as_loopback(self, client):
         assert client.get("/api/whoami").json()["via"] == "loopback"
+
+    def test_a_loopback_caller_without_the_proof_is_not_this_machine(self, isolated):
+        """f002: a same-host port forward or a second local account has the loopback
+        socket and every header this caller sends; only the proof separates them."""
+        bare = TestClient(create_app())
+        assert bare.get("/api/whoami").status_code == 401
+        assert bare.get("/api/auth/status").json()["open_posture"] is False
+        guessed = bare.get("/api/whoami", headers={"authorization": "Bearer not-the-proof"})
+        assert guessed.status_code == 401
 
     def test_a_proxied_loopback_is_not_this_machine(self, client):
         for header in ("x-forwarded-for", "x-real-ip", "forwarded"):
@@ -122,6 +134,8 @@ class TestSealed:
     @pytest.fixture(autouse=True)
     def _seal(self, client, monkeypatch):  # after `isolated` has cleared the env
         monkeypatch.setenv("STRANDS_DASH_AUTH_ENABLED", "1")
+        # Sealed: the bootstrap proof admits nobody, so these cells send what a stranger sends.
+        client.headers.pop("authorization", None)
 
     @pytest.mark.parametrize("path", PUBLIC)
     def test_public_routes_stay_public(self, client, path):
@@ -275,7 +289,7 @@ class TestThePreSignInRouteSaysOnlyWhatTheLoginScreenNeeds:
     def test_the_login_screen_still_gets_every_field_it_renders(self, client):
         body = client.get("/api/auth/status").json()
         assert body["setup_required"] is True
-        assert body["bootstrap_source"] == "file"
+        assert body["bootstrap_source"] == "env"  # the fixture configures the proof
         assert body["authenticated"] is False
         assert body["open_posture"] is True
         assert body["enabled"] is False

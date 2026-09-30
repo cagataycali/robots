@@ -37,6 +37,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from tests._package_ast import parse_file
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCANNED_TREES = ("examples", "strands_robots")
 
@@ -74,7 +76,7 @@ def _flush_lines(scope: ast.AST) -> list[int]:
 
 def _unflushed_exits(path: Path) -> list[int]:
     """Line numbers of every hard exit in ``path`` with no flush above it."""
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = parse_file(path)
     scopes: list[ast.AST] = [tree] + [
         node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
     ]
@@ -115,7 +117,7 @@ def test_the_scan_reaches_the_exits_it_grades() -> None:
     found = [
         f"{path.relative_to(_REPO_ROOT).as_posix()}:{call.lineno}"
         for path in _scanned_sources()
-        for call in _hard_exit_sites(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        for call in _hard_exit_sites(parse_file(path))
     ]
     assert found, f"no os._exit call found under {list(_SCANNED_TREES)}; the scan is not reaching the code"
 

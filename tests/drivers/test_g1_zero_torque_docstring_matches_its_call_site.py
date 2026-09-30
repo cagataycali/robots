@@ -33,6 +33,7 @@ import re
 from pathlib import Path
 
 import strands_robots.drivers.g1 as g1_module
+from tests._package_ast import parse_file
 
 # Prose that claims the function the reader is looking at has no caller. Each
 # alternative is a claim about *wiring*, which the module's own call graph
@@ -43,7 +44,7 @@ _G1_SOURCE = Path(g1_module.__file__).resolve()
 
 
 def _module_tree() -> ast.Module:
-    return ast.parse(_G1_SOURCE.read_text(encoding="utf-8"))
+    return parse_file(_G1_SOURCE)
 
 
 def _module_private_functions(tree: ast.Module) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:

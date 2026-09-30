@@ -529,19 +529,29 @@ let lastRenewalAtS = 0;
 function lastRenewalAt() {
   return lastRenewalAtS;
 }
-function absorbRenewedSession(res) {
+const RENEWAL_PATH = "/api/auth/renew";
+function absorbRenewedSession(res, path) {
   var _a;
+  if (!res || res.ok !== true) return false;
+  if (path !== RENEWAL_PATH) return false;
   let offered = null;
   try {
-    offered = ((_a = res == null ? void 0 : res.headers) == null ? void 0 : _a.get("X-Session-Token")) ?? null;
+    offered = ((_a = res.headers) == null ? void 0 : _a.get("X-Session-Token")) ?? null;
   } catch {
     return false;
   }
   const fresh = (offered ?? "").trim();
   if (!fresh) return false;
-  const current = (localStorage.getItem(TOKEN_KEY) ?? "").trim();
+  const current = authToken();
   if (!current || fresh === current) return false;
-  if (fresh.split(".").length !== 3) return false;
+  const was = tokenClaims(current);
+  const now = tokenClaims(fresh);
+  if (!was || !now) return false;
+  if (typeof now.sub !== "string" || now.sub !== was.sub) return false;
+  const wasExp = tokenExpiry(current);
+  const nowExp = tokenExpiry(fresh);
+  if (wasExp === null || nowExp === null || nowExp <= wasExp) return false;
+  if (nowExp <= Date.now() / 1e3) return false;
   setAuthToken(fresh);
   lastRenewalAtS = Date.now() / 1e3;
   return true;
@@ -557,7 +567,6 @@ async function api(path, init = {}) {
   } catch (e) {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`);
   }
-  absorbRenewedSession(res);
   const text = await res.text();
   let body = text;
   try {
@@ -574,6 +583,7 @@ async function api(path, init = {}) {
     throw new HttpError(res.status, message, body);
   }
   noteAuthAccepted(path);
+  absorbRenewedSession(res, path);
   return body;
 }
 const post = (path, body) => api(path, { method: "POST", body: body === void 0 ? "{}" : JSON.stringify(body) });
@@ -588,7 +598,6 @@ async function apiBlob(path) {
   } catch (e) {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`);
   }
-  absorbRenewedSession(res);
   if (!res.ok) {
     noteAuthRefusal(res.status);
     const text = await res.text();
@@ -600,6 +609,7 @@ async function apiBlob(path) {
     throw new HttpError(res.status, detailSentence(detail) || text || res.statusText);
   }
   noteAuthAccepted(path);
+  absorbRenewedSession(res, path);
   return URL.createObjectURL(await res.blob());
 }
 const ACTIVITY_CAP = 200;

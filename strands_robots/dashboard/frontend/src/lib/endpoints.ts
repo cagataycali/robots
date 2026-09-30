@@ -319,18 +319,42 @@ export function lastRenewalAt(): number {
   return lastRenewalAtS
 }
 
-export function absorbRenewedSession(res: { headers?: { get(name: string): string | null } } | null): boolean {
+/** The one route whose answer may carry a renewed session: the page asked for exactly that. */
+export const RENEWAL_PATH = '/api/auth/renew'
+
+/**
+ * A renewed session offered in a response header. No route in this repository sends one today
+ * (`POST /api/auth/renew` renews by re-setting the cookie), so the channel is held to the one
+ * shape a renewal has: a SUCCESSFUL answer to the renewal route this page called, while the page
+ * holds a token it is sending to that host, offering the same subject with a later expiry. Any
+ * other response, whatever host or status, leaves the sign-in exactly as it was: a header on a
+ * 404 from a re-pointed or injected host used to swap the credential silently.
+ */
+export function absorbRenewedSession(
+  res: { ok?: boolean; headers?: { get(name: string): string | null } } | null,
+  path: string,
+): boolean {
+  if (!res || res.ok !== true) return false
+  if (path !== RENEWAL_PATH) return false
   let offered: string | null = null
   try {
-    offered = res?.headers?.get('X-Session-Token') ?? null
+    offered = res.headers?.get('X-Session-Token') ?? null
   } catch {
     return false // a Response-like without real headers (a stub, a blob shim) is not an error
   }
   const fresh = (offered ?? '').trim()
   if (!fresh) return false
-  const current = (localStorage.getItem(TOKEN_KEY) ?? '').trim()
+  // The token this page presented to that host, not merely one in storage.
+  const current = authToken()
   if (!current || fresh === current) return false
-  if (fresh.split('.').length !== 3) return false
+  const was = tokenClaims(current)
+  const now = tokenClaims(fresh)
+  if (!was || !now) return false
+  if (typeof now.sub !== 'string' || now.sub !== was.sub) return false
+  const wasExp = tokenExpiry(current)
+  const nowExp = tokenExpiry(fresh)
+  if (wasExp === null || nowExp === null || nowExp <= wasExp) return false
+  if (nowExp <= Date.now() / 1000) return false
   setAuthToken(fresh)
   lastRenewalAtS = Date.now() / 1000
   return true
@@ -348,7 +372,6 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
   } catch (e) {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`)
   }
-  absorbRenewedSession(res)
   const text = await res.text()
   let body: any = text
   try { body = text ? JSON.parse(text) : null } catch { /* keep raw text */ }
@@ -363,6 +386,7 @@ export async function api<T = any>(path: string, init: RequestInit = {}): Promis
     throw new HttpError(res.status, message, body)
   }
   noteAuthAccepted(path)
+  absorbRenewedSession(res, path)
   return body as T
 }
 
@@ -383,7 +407,6 @@ export async function apiBlob(path: string): Promise<string> {
   } catch (e) {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`)
   }
-  absorbRenewedSession(res)
   if (!res.ok) {
     noteAuthRefusal(res.status)
     const text = await res.text()
@@ -394,5 +417,6 @@ export async function apiBlob(path: string): Promise<string> {
     throw new HttpError(res.status, detailSentence(detail) || text || res.statusText)
   }
   noteAuthAccepted(path)
+  absorbRenewedSession(res, path)
   return URL.createObjectURL(await res.blob())
 }

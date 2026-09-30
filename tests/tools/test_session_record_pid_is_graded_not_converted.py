@@ -47,6 +47,7 @@ import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
 import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
 from strands_robots.tools import _process_stop  # noqa: E402
 from strands_robots.tools._process_stop import session_is_running  # noqa: E402
+from tests._package_ast import parse_file
 
 #: A pid this process certainly holds, so "exists" is settled and the only thing
 #: under test is the spelling it is written down in.
@@ -302,7 +303,7 @@ def test_no_session_tool_converts_a_recorded_pid() -> None:
     tools_dir = Path(train_mod.__file__).parent
     converts: list[str] = []
     for module in sorted(tools_dir.rglob("*.py")):
-        for node in ast.walk(ast.parse(module.read_text())):
+        for node in ast.walk(parse_file(module)):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "int"):
                 continue
             if node.args and "pid" in ast.unparse(node.args[0]).lower():

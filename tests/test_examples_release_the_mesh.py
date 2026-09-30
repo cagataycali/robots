@@ -33,6 +33,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_file
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
 _ROBOT_PY = _REPO_ROOT / "strands_robots" / "robot.py"
@@ -50,7 +52,7 @@ def _factory_mesh_attributes() -> set[str]:
     locals are assigned to (``sim.mesh`` / ``hw.mesh``). Reading the factory
     means a rename updates this rule automatically.
     """
-    tree = ast.parse(_ROBOT_PY.read_text(encoding="utf-8"))
+    tree = parse_file(_ROBOT_PY)
     bound: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
