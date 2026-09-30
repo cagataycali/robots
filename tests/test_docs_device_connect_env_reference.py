@@ -35,6 +35,7 @@ import pytest
 
 import strands_robots
 from tests._docs_hooks import docs_hook
+from tests._package_ast import parse_file
 
 _REPO = pathlib.Path(strands_robots.__file__).parent.parent
 _PACKAGE = _REPO / "strands_robots" / "device_connect"
@@ -73,7 +74,7 @@ def _env_reads() -> dict[str, set[str]]:
     """
     found: dict[str, set[str]] = {}
     for path in [*sorted(_PACKAGE.rglob("*.py")), _DAEMON_LINK]:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             name = None
             if isinstance(node, ast.Call) and ast.unparse(node.func) in (

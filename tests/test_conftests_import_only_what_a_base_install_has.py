@@ -24,6 +24,8 @@ import ast
 import sys
 from pathlib import Path
 
+from tests._package_ast import parse_file
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # What ``pip install -e ".[dev]"`` guarantees: the standard library, the test
 # runner, and the two first-party trees. Everything else arrives with an extra.
@@ -33,7 +35,7 @@ ALWAYS_IMPORTABLE = {"__future__", "pytest", "strands_robots", "tests"} | set(sy
 def _module_scope_import_roots(path: Path) -> set[str]:
     """Return the root package names ``path`` imports at module scope."""
     roots: set[str] = set()
-    for node in ast.parse(path.read_text(encoding="utf-8"), filename=str(path)).body:
+    for node in parse_file(path).body:
         if isinstance(node, ast.Import):
             roots.update(alias.name.split(".")[0] for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:

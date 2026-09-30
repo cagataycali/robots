@@ -7,20 +7,30 @@ screen. Three ways in, in this order, and the first that answers wins:
    ``Authorization: Bearer`` or as the ``strands_dash`` cookie the login screen
    sets. Query-string tokens are not read: they land in access logs.
 2. The static ``security.auth_token`` from settings, compared in constant time.
-3. Nothing at all - but only while ``auth.auth_enabled()`` is False (no passkey
-   enrolled, no env override) AND the request is *this machine's browser at
-   this machine*: socket peer loopback, no proxy header, a loopback-shaped
-   ``Host``, and an ``Origin`` (when a browser sends one) that names that same
-   host. That is the fresh-install posture: the dashboard is usable on the
-   machine it runs on until the owner enrols a passkey, after which the store
-   turns auth on and this branch closes on its own.
+3. The bootstrap proof - but only while ``auth.auth_enabled()`` is False (no
+   passkey enrolled, no env override) and no static token is configured. The
+   bearer must equal the first-enrollment proof (``auth._first_enrollment_proof``:
+   the configured ``STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN`` or the ``0600`` file the
+   server minted beside the credential store), AND the request must be *this
+   machine's browser at this machine*: socket peer loopback, no proxy header, a
+   loopback-shaped ``Host``, and an ``Origin`` (when a browser sends one) that
+   names that same host. That is the fresh-install posture: the dashboard is
+   usable on the machine it runs on by whoever can read that file, until the
+   owner enrols a passkey, after which the store turns auth on and this branch
+   closes on its own.
 
-The last two conditions exist because the most common loopback caller that is
-not the operator is the operator's own browser running someone else's page. A
-DNS-rebound name still arrives on the loopback socket, but its ``Host`` is the
-attacker's name; a cross-site ``fetch`` or ``WebSocket`` still arrives on the
-loopback socket, but its ``Origin`` is the attacker's origin. Neither can be
-forged by a page, so both are checked before the open posture admits anyone.
+The proof is required because a loopback peer is not presence at the machine: a
+same-host L4 forwarder (``socat``, ``ssh -L``, ``docker -p``, a DNAT rule) hands
+every remote client a ``127.0.0.1`` peer and adds no header, and a second local
+account has the socket too. Reading a ``0600`` file as the service user is the
+act neither can perform (f002, the same reasoning that already guards the first
+enrollment). The topology conditions stay because the most common loopback
+caller that is not the operator is the operator's own browser running someone
+else's page. A DNS-rebound name still arrives on the loopback socket, but its
+``Host`` is the attacker's name; a cross-site ``fetch`` or ``WebSocket`` still
+arrives on the loopback socket, but its ``Origin`` is the attacker's origin.
+Neither can be forged by a page, so both are checked before the open posture
+admits anyone.
 
 Everything else is 401. There is no allow-list of paths inside this module: a
 route that wants to be public does not take the dependency, so the set of open
@@ -149,8 +159,29 @@ def static_token_matches(request: Request) -> bool:
     return hmac.compare_digest(presented_token(request), str(configured))
 
 
+def bootstrap_token_matches(request: Request) -> bool:
+    """Whether the presented token is the first-enrollment proof (constant time).
+
+    The expectation is the one ``auth.begin_registration`` checks: the
+    configured ``STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN``, else the ``0600`` file
+    beside the credential store. A request that presents nothing is refused
+    before the file is consulted, so an anonymous probe never mints it.
+    """
+    presented = presented_token(request)
+    if not presented:
+        return False
+    _source, expected = auth._first_enrollment_proof()
+    return hmac.compare_digest(presented.encode("utf-8"), expected.encode("utf-8"))
+
+
 def open_posture(request: Request) -> bool:
-    """Fresh install: no auth configured anywhere AND the caller is this machine's own browser, at this machine."""
+    """Fresh install: no auth configured anywhere, the caller holds the bootstrap proof, and is this machine's own browser, at this machine.
+
+    Every conjunct is necessary. The proof is what a forwarded or second-account
+    caller cannot present; the topology checks are what a page from elsewhere
+    in the operator's own browser cannot satisfy. Anything short of all of them
+    is 401, never a narrower admission.
+    """
     if auth.auth_enabled():
         return False
     if settings.get("security", "auth_token"):
@@ -160,6 +191,7 @@ def open_posture(request: Request) -> bool:
         and not came_through_a_proxy(request)
         and host_is_loopback(request)
         and origin_is_self(request)
+        and bootstrap_token_matches(request)
     )
 
 

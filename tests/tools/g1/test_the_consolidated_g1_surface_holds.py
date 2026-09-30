@@ -38,6 +38,7 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.g1 as g1_pkg
+from tests._package_ast import parse_file
 
 _PKG_DIR = pathlib.Path(g1_pkg.__file__).parent
 
@@ -52,7 +53,7 @@ def _tool_names_on_disk() -> dict[str, str]:
     for path in sorted(_PKG_DIR.glob("*.py")):
         if path.name == "__init__.py":
             continue
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(parse_file(path)):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for dec in node.decorator_list:

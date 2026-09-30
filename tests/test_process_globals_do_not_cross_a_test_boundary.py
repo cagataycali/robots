@@ -37,6 +37,7 @@ import strands_robots.dashboard.auth as auth
 import strands_robots.tools.robot_mesh as rmt
 from strands_robots.simulation.predicates import PREDICATE_REGISTRY, register_predicate
 from strands_robots.utils import require_optional
+from tests._package_ast import parse_file
 from tests.conftest import AUDIT_PROCESS_FLAGS, DASHBOARD_AUTH_PROCESS_STATE, WARN_ONCE_MEMOS
 
 #: The mesh action whose window a row spends. Any of them would do; this one is
@@ -257,7 +258,7 @@ def test_the_warn_once_roster_names_every_memo_in_the_package() -> None:
     for path in sorted(package.rglob("*.py")):
         module = ".".join(("strands_robots", *path.relative_to(package).with_suffix("").parts))
         module = module.removesuffix(".__init__")
-        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        for node in parse_file(path).body:
             value: ast.expr | None = None
             if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
                 target, value = node.targets[0].id, node.value

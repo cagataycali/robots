@@ -53,6 +53,7 @@ from strands_robots.drivers.unitree._common import (
     sdk_missing,
 )
 from strands_robots.drivers.unitree._dds_engine import DDSSubscriberSet
+from tests._package_ast import parse_file
 from tests.drivers.test_go2_driver import _released_driver, _text, install_unitree_sdk_stub
 
 _PACKAGE = Path(_common.__file__).resolve().parents[2]
@@ -309,7 +310,7 @@ def _called_name(node: ast.Call) -> str:
 
 
 def _trees() -> dict[Path, ast.Module]:
-    return {path: ast.parse(path.read_text(encoding="utf-8")) for path in sorted(_PACKAGE.rglob("*.py"))}
+    return {path: parse_file(path) for path in sorted(_PACKAGE.rglob("*.py"))}
 
 
 def _propagating_loaders(trees: dict[Path, ast.Module]) -> set[str]:
