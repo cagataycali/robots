@@ -793,7 +793,7 @@ class IsaacLabTrainer(Trainer):
         Isaac Lab's own ``play`` writes one viewport mp4 and has no route to a
         dataset, so every Isaac Lab dataset strands produced took an
         out-of-tree harness running strands inside the Isaac Lab interpreter.
-        This launches ``_isaaclab_record_runner.py`` - shipped with strands,
+        This launches :mod:`strands_robots.training._isaaclab_record_runner` - shipped with strands,
         run by ``ISAACLAB_PYTHON``, importing no strands - which rolls the
         newest checkpoint out in ``episodes`` parallel environments (env ``i``
         is episode ``i``, from one reset to its first ``done`` or ``frames``)
@@ -1279,7 +1279,7 @@ def _extra_problems(extra: dict[str, Any], ctx: str) -> list[str]:
 
 
 def rollout_to_dataset(raw_dir: str | Path, dataset_dir: str, *, repo_id: str, task: str) -> dict[str, Any]:
-    """Convert what ``_isaaclab_record_runner.py`` wrote into a LeRobotDataset at *dataset_dir*.
+    """Convert what :mod:`strands_robots.training._isaaclab_record_runner` wrote into a LeRobotDataset at *dataset_dir*.
 
     One dataset episode per rollout episode, with ``observation.state`` = joint
     positions by name + ``policy_obs`` + ``root_pos`` + ``root_quat`` (x-y-z-w),

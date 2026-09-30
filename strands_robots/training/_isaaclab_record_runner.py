@@ -28,8 +28,9 @@ import os
 import sys
 import time
 
-# Run as a script from inside strands_robots/training/, whose isaaclab.py would
-# otherwise shadow the real ``isaaclab`` package on ``sys.path[0]``.
+# Run as a script from inside strands_robots/training/, whose
+# ``strands_robots.training.isaaclab`` module would otherwise shadow the real
+# ``isaaclab`` package on ``sys.path[0]``.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:] = [p for p in sys.path if os.path.abspath(p or os.curdir) != _HERE]
 
