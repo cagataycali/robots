@@ -270,8 +270,8 @@ def _load_coverage():  # noqa: ANN202 - a sibling hook module
 
 @lru_cache(maxsize=1)
 def registry() -> dict[str, dict]:
-    """The robot registry, read once from ``robots.json``."""
-    return json.loads(_REGISTRY.read_text(encoding="utf-8"))["robots"]
+    """The robot registry, read once: ``robots.json`` plus the URDF tail (``registry_view.py``)."""
+    return dict(_registry_view().merged())
 
 
 @lru_cache(maxsize=1)
@@ -506,6 +506,17 @@ def driver_facts() -> str:
     return "\n".join(out)
 
 
+def _urdf_provenance(name: str, spec: dict) -> str:
+    """One line on where a URDF robot's model comes from and what the loader adds."""
+    repo, commit = spec.get("repository"), spec.get("commit")
+    module = (spec.get("asset") or {}).get("robot_descriptions_module") or f"{name}_description"
+    src = f"[{repo}@{commit[:7]}](https://github.com/{repo}/tree/{commit})" if repo and commit else f"`{module}`"
+    base = "floating base" if spec.get("floating") else "fixed base"
+    joints = spec.get("joints")
+    drive = f"{joints} position actuators" if joints else "position actuators"
+    return f"URDF from {src}, [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: {drive}, {base}."
+
+
 def robot_page(name: str) -> str:
     """Markdown for one robot."""
     spec = registry()[name]
@@ -528,15 +539,33 @@ def robot_page(name: str) -> str:
     ]
     if sim:
         intro = ""
+    elif spec.get("source") == "urdf":
+        intro = (
+            f"The loader could not compile this description at this commit: {spec.get('refusal', '')}. "
+            f'`Robot("{name}")` refuses with that sentence.'
+        )
     elif cov.real:
         intro = f'The registry ships no simulation asset for it, so `Robot("{name}")` in the default sim mode refuses by name.'
     else:
         intro = f"`{name}` is registered by name and alias, with no simulation asset and no driver at this commit."
     if intro:
         lines += [intro, ""]
+    if spec.get("source") == "urdf":
+        lines += [_urdf_provenance(name, spec), ""]
     if sim:
         if entry.get("viewer"):
             lines += [f'<robot-viewer name="{name}"></robot-viewer>', ""]
+        elif spec.get("source") == "urdf":
+            thumb = entry.get("thumbnail")
+            lines += (
+                [
+                    f'<img class="sr-thumb" src="../{thumb}" alt="{html.escape(name)}, a local MuJoCo render" '
+                    'loading="lazy" width="640" height="480">',
+                    "",
+                ]
+                if thumb
+                else []
+            )
         else:
             lines += [
                 "The model has no public source to stream, so this page has no 3D view; the thumbnail is a local render.",
@@ -728,6 +757,19 @@ def on_page_markdown(markdown: str, page, config, files) -> str:  # noqa: ANN001
     src = page.file.src_path.replace("\\", "/")
     link_prefix = "../" if re.fullmatch(r"robots/[a-z_]+/index\.md", src) else ""
     return substitute(markdown, _site_prefix(page, config), link_prefix)
+
+
+def _registry_view():  # noqa: ANN202 - a sibling hook module, loaded by path like the others
+    """``docs/hooks/registry_view.py``: robots.json merged with the URDF long tail."""
+    name = "docs_hooks_registry_view"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "registry_view.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 if __name__ == "__main__":
