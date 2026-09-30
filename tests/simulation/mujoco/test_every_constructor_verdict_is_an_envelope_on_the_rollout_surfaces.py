@@ -190,6 +190,30 @@ class TestTheBlockingSurfaces:
         assert f"pretrained_name_or_path={_MISSING_ID!r}" in _text(result)
         assert "extra=" in _text(result)
 
+    @pytest.mark.parametrize("key", ["api_token", "api_key", "password", "client_secret", "Authorization"])
+    def test_a_credential_in_the_configuration_never_reaches_the_envelope(self, sim, providers, key: str) -> None:
+        """The envelope is a tool result: it reaches the model, the transcript and every log of tool
+        output. moveit2 takes ``api_token`` and cosmos3 ``api_key``, so a credential-shaped key is
+        rendered as ``<redacted>`` (the keyed rail of dashboard/log_redaction.py, shared), whatever its
+        value's length; the other pairs are still named."""
+        secret = "sk-SUPER-SECRET-TOKEN"
+        config = {"pretrained_name_or_path": _MISSING_ID, key: secret, "port": -1}
+        result = sim.run_policy(
+            robot_name="so101", policy_provider="probe_hub_miss", policy_config=config, duration=0.2
+        )
+        assert result["status"] == "error"
+        text = _text(result)
+        assert secret not in text and "SUPER" not in text
+        assert f"{key}=<redacted>" in text and "port=-1" in text and f"pretrained_name_or_path={_MISSING_ID!r}" in text
+
+    def test_a_short_credential_is_redacted_too(self, sim, providers) -> None:
+        """Key-based, not length-based: a five-character token is still a token."""
+        config = {"pretrained_name_or_path": _MISSING_ID, "api_key": "abc12"}
+        text = _text(
+            sim.run_policy(robot_name="so101", policy_provider="probe_hub_miss", policy_config=config, duration=0.2)
+        )
+        assert "abc12" not in text and "api_key=<redacted>" in text
+
     def test_an_empty_configuration_adds_no_clause(self, sim, providers) -> None:
         result = sim.run_policy(robot_name="so101", policy_provider="probe_no_server", duration=0.2)
         assert result["status"] == "error"

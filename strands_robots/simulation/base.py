@@ -62,6 +62,7 @@ from strands_robots.utils import (
     positive_count_error,
     positive_finite_number_error,
     process_rss_mb,
+    redact_config_pairs,
     refusal_container_repr,
     refusal_repr,
     sequence_length,
@@ -1494,7 +1495,7 @@ class SimEngine(ABC):
         except Exception as exc:  # noqa: BLE001 - the shared rule below decides what travels on
             if construction_failure_keeps_its_raise(exc):
                 raise
-            judged = ", ".join(f"{key}={refusal_repr(value)}" for key, value in config.items())
+            judged = redact_config_pairs(config)  # credential keys never travel in a tool result
             return {
                 "status": "error",
                 "content": [
