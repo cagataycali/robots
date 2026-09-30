@@ -26,19 +26,17 @@ opt-in spelling, since it sits directly above the table.
 
 from __future__ import annotations
 
-import importlib.util
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
 from strands_robots.robot import _mesh_env_opt_in
+from tests._docs_hooks import docs_hook
 
 _ENV = "STRANDS_MESH"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CONFIG_REFERENCE = _REPO_ROOT / "docs" / "reference" / "configuration.md"
-_ENV_HOOK = _REPO_ROOT / "docs" / "hooks" / "env_vars.py"
 #: The configuration page states the accepted boolean spellings once, above the table.
 _BOOLEAN_RULE = re.compile(r"boolean variable accepts ((?:`[A-Za-z0-9]+`,\s*)*(?:and\s*)?`[A-Za-z0-9]+`)")
 #: A value marked as the default inline: ``unset (default)``.
@@ -51,12 +49,7 @@ _MINIMUM_DOCUMENTED_ROWS = 2
 
 def _rendered_configuration_page() -> str:
     """The configuration page with ``{{env_vars}}`` expanded by the shipped hook, ``<code>`` folded to backticks."""
-    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _ENV_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = sys.modules.get(spec.name) or importlib.util.module_from_spec(spec)
-    if spec.name not in sys.modules:
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+    module = docs_hook("env_vars")
     source = _CONFIG_REFERENCE.read_text(encoding="utf-8")
     rendered = module.on_page_markdown(source, page=None, config=None, files=None)
     assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"

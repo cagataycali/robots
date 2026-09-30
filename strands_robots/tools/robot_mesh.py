@@ -47,6 +47,7 @@ from typing import Any
 from strands import tool
 from strands.types.tools import ToolContext
 
+from strands_robots._command_gate import BYPASS_CONSENT_ENV
 from strands_robots._hitl_audit import log_operator_response
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.core import _reports_failure_to_stop, mesh_disabled_by_env
@@ -184,6 +185,25 @@ def _resolve_interrupt_actions() -> frozenset[str]:
     with the default (which would mask the operator's misconfiguration).
     """
     return _parse_interrupt_actions(os.getenv("STRANDS_MESH_HITL_ACTIONS", ""))
+
+
+def _headless_remedy(action: str, interrupt_actions: frozenset[str]) -> str:
+    """What pre-approves *action* when no operator can be asked.
+
+    The shared gate, :func:`~strands_robots._command_gate.gate_motion`, names
+    the allowlist variable and value that pre-approve a refused call; this
+    tool's gate is selected by ``STRANDS_MESH_HITL_ACTIONS`` instead (the set
+    of actions that still ask), so the value that pre-approves one action is
+    the current set without it, or ``none`` when it was the last one. Named
+    here so a headless refusal says what to set, the way ``agents.md``
+    promises for every gate (GH #4156).
+    """
+    remaining = ",".join(sorted(interrupt_actions - {action})) or "none"
+    return (
+        f"To pre-approve '{action}' in this process set STRANDS_MESH_HITL_ACTIONS={remaining} "
+        f"(the actions that still ask an operator), or {BYPASS_CONSENT_ENV}=true to skip every "
+        f"operator gate, logged as a WARNING."
+    )
 
 
 @functools.lru_cache(maxsize=1)
@@ -517,6 +537,21 @@ def _err(text: str) -> dict[str, Any]:
 
 def _ok(text: str) -> dict[str, Any]:
     return {"status": "success", "content": [{"text": text}]}
+
+
+def _relayed(label: str, envelope: Any, *, ok: bool = True) -> dict[str, Any]:
+    """A peer's answer handed back whole: a text label and the envelope as a ``json`` block.
+
+    ``tell``, ``send`` and ``stop`` used to render the envelope as
+    ``json.dumps(envelope)[:600]`` inside the label. A ``run_policy`` answer is
+    about 1,800 characters, so the agent read JSON cut mid key and lost the
+    rollout metrics the sim tool and the dashboard carry whole (GH #4172). The
+    block is the envelope re-read through the encoder the text used
+    (``default=str``), so a value the encoder cannot represent is rendered the
+    way it always was instead of making the block unencodable.
+    """
+    block = json.loads(json.dumps(envelope, default=str))
+    return {"status": "success" if ok else "error", "content": [{"text": label}, {"json": block}]}
 
 
 def _stop_not_confirmed(envelope: Any, budget: float) -> str | None:
@@ -1452,12 +1487,28 @@ def robot_mesh(
     # outside the LLM's tool-argument flow, so an injected prompt cannot
     # smuggle approval. Which actions are gated is operator-configurable
     # (see _resolve_interrupt_actions).
-    if action in interrupt_actions:
+    gated = action in interrupt_actions
+    if gated and os.environ.get(BYPASS_CONSENT_ENV, "").lower() == "true":
+        # The same second step as the shared gate: the operator who set this
+        # variable accepted unattended actuation for the whole process, so the
+        # interrupt is skipped, said at WARNING and recorded (GH #4156). The
+        # action then takes the ungated path below, so the rate limit still
+        # holds; nothing else is skipped.
+        logger.warning(
+            "[robot_mesh] %s=true: allowing gated action %r to %r without an operator interrupt",
+            BYPASS_CONSENT_ENV,
+            action,
+            target or "*ALL_PEERS*",
+        )
+        _audit_tool_action(action, target, True, f"{BYPASS_CONSENT_ENV}=true: interrupt skipped")
+        gated = False
+    if gated:
         if tool_context is None:
             _audit_tool_action(action, target, False, "interrupt unavailable: no tool_context")
             return _err(
                 f"action '{action}' requires a human-in-the-loop interrupt, "
-                "but no tool_context is available in this calling context."
+                "but no tool_context is available in this calling context. "
+                + _headless_remedy(action, interrupt_actions)
             )
         # Fleet-wide actions reach every peer; single-target actions hit
         # one peer. Surface the right scope so the operator's confirmation
@@ -1507,7 +1558,8 @@ def robot_mesh(
             # immediate "interrupt unavailable" error.
             _audit_tool_action(action, target, False, f"interrupt unavailable: {exc}")
             return _err(
-                f"action '{action}' requires a human-in-the-loop interrupt. Interrupts are not available here: {exc}"
+                f"action '{action}' requires a human-in-the-loop interrupt. Interrupts are not available here: {exc}. "
+                + _headless_remedy(action, interrupt_actions)
             )
 
         approved = _interrupt_approves(response)
@@ -1666,7 +1718,7 @@ def robot_mesh(
             _audit_tool_action(action, target, False, f"dispatch error: {type(exc).__name__}: {exc}")
             return _err(f"[tell -> {target}] dispatch error: {type(exc).__name__}: {exc}")
         _audit_tool_action(action, target, True, f"instruction={instruction[:200]}")
-        return _ok(f"[tell -> {target}] {json.dumps(result, default=str)[:600]}")
+        return _relayed(f"[tell -> {target}]", result)
 
     # ── action: send ──────────────────────────────────────────────────────
     if action == "ping":
@@ -1679,8 +1731,7 @@ def robot_mesh(
             return _err(f"[ping -> {target}] dispatch error: {type(exc).__name__}: {exc}")
         reachable = verdict.get("status") == "ok"
         _audit_tool_action(action, target, reachable, json.dumps(verdict, default=str)[:200])
-        text = f"[ping -> {target}] {json.dumps(verdict, default=str)[:600]}"
-        return _ok(text) if reachable else _err(text)
+        return _relayed(f"[ping -> {target}]", verdict, ok=reachable)
 
     if action == "send":
         # Parse + validation already happened in the pre-interrupt pass
@@ -1703,9 +1754,9 @@ def robot_mesh(
             # executed. Wrapping it in a success reads to an agent as a robot
             # that did the thing.
             _audit_tool_action(action, target, False, str(result.get("error", "error"))[:200])
-            return _err(f"[send -> {target}] {json.dumps(result, default=str)[:600]}")
+            return _relayed(f"[send -> {target}]", result, ok=False)
         _audit_tool_action(action, target, True, f"action={cmd.get('action')}")
-        return _ok(f"[send -> {target}] {json.dumps(result, default=str)[:600]}")
+        return _relayed(f"[send -> {target}]", result)
 
     # ── action: broadcast ─────────────────────────────────────────────────
     if action == "broadcast":
@@ -1758,7 +1809,7 @@ def robot_mesh(
             _audit_tool_action(action, target, False, f"did not stop: {reason}")
             return _err(f"[stop -> {target}] did NOT stop: {reason}")
         _audit_tool_action(action, target, True, "")
-        return _ok(f"[stop -> {target}] {json.dumps(result, default=str)[:600]}")
+        return _relayed(f"[stop -> {target}]", result)
 
     # ── action: emergency_stop ────────────────────────────────────────────
     if action == "emergency_stop":
@@ -1817,8 +1868,8 @@ def robot_mesh(
         # equality / trailing-`/**` and reach ``mesh.on_stream("*")`` -
         # subscribing to every peer's stream (the cross-peer telemetry-leak
         # this surface exists to close). Require a literal peer id BEFORE
-        # interpolating, mirroring the ``_REPO_TAG_RE`` shape-validation
-        # pattern in ``strands_robots.tools.gr00t_inference`` for the same
+        # interpolating: validate the shape of an operand before it is
+        # interpolated into a pattern, the same defence against the same
         # class of attack.
         if not _PEER_ID_RE.match(target):
             _audit_tool_action(action, target, False, "watch target not a literal peer id")

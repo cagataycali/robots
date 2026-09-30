@@ -135,7 +135,7 @@ class TestTheGuardJudgesTheProduct:
         refusal = SimEngine._validate_duration(0, "run_policy", 50.0)
 
         assert refusal is not None
-        assert _text(refusal) == "run_policy: duration must be > 0, got 0."
+        assert _text(refusal) == "run_policy: duration must be a positive finite number, got 0."
 
 
 class TestABooleanNeverReachesTheProduct:
@@ -155,7 +155,7 @@ class TestABooleanNeverReachesTheProduct:
         refusal = SimEngine._validate_duration(spelling, "run_policy", 50.0)
 
         assert refusal is not None
-        assert _text(refusal) == f"run_policy: duration must be > 0, got {spelling!r}."
+        assert _text(refusal) == f"run_policy: duration must be a positive finite number, got {spelling!r}."
 
     @pytest.mark.parametrize("spelling", [True, np.True_], ids=["bool", "numpy-bool"])
     def test_a_boolean_rate_is_refused_before_this_guard_is_reached(self, spelling: Any) -> None:

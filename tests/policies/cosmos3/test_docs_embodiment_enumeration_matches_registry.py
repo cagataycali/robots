@@ -54,9 +54,7 @@ that cannot see a missing embodiment would report a clean page forever.
 
 from __future__ import annotations
 
-import importlib.util
 import re
-import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -65,6 +63,7 @@ import pytest
 from strands_robots.policies import cosmos3 as cosmos3_package
 from strands_robots.policies.cosmos3.embodiments import EMBODIMENTS, Cosmos3Embodiment
 from strands_robots.policies.cosmos3.policy import Cosmos3Policy
+from tests._docs_hooks import docs_hook
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PAGE = _REPO_ROOT / "docs" / "learn" / "policies" / "cosmos3.md"
@@ -82,12 +81,7 @@ def _page_text() -> str:
 
 def _providers_hook() -> ModuleType:
     """Load ``docs/hooks/providers.py`` by path, the way mkdocs does."""
-    spec = importlib.util.spec_from_file_location("docs_hooks_providers", _PROVIDERS_HOOK)
-    assert spec is not None and spec.loader is not None, _PROVIDERS_HOOK
-    module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault("docs_hooks_providers", module)
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("providers")
 
 
 def _readme_text() -> str:

@@ -30,6 +30,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 import time
 from typing import Any, cast
 
@@ -76,6 +77,7 @@ WIRE_CMD_KEYS: tuple[str, ...] = (
     "server_address",
     "model_path",
     "pretrained_name_or_path",
+    "embodiment",
     "robot_name",
     "target_pose",
     "target_joints",
@@ -519,6 +521,58 @@ async def start_task(request: Request, peer_id: str, _: dict = Depends(access.re
     return payload
 
 
+#: Task states a reset must not interrupt: the rollout owns the joints until it ends or is stopped.
+_RESET_BLOCKED_TASK_STATES: frozenset[str] = frozenset({"connecting", "running"})
+
+
+@router.post("/robots/{peer_id}/reset")
+async def reset_robot(request: Request, peer_id: str, _: dict = Depends(access.require_session)) -> dict[str, Any]:
+    """Return one peer to its home pose through the same gate as any command.
+
+    A simulated peer resets ungated (a child ``<parent>__<robot>`` is routed to its
+    parent world, which resets every robot it holds). A real arm's reset drives every
+    joint to the home pose at once, so it is a motion: it passes :func:`task_gate` as
+    ``reset`` and needs the browser's confirmation or the operator's grant. A peer
+    whose presence reports a task in flight is refused with 409: stop it first, the
+    rollout owns the joints. Nothing is sent on a refusal.
+    """
+    require_peer(request, peer_id)
+    bridge = _bridge(request)
+    body = await _json_body(request)
+    peer = bridge.peers.get(peer_id)
+    verdict = task_gate(peer, confirmed=body.get("confirmed"), target=peer_id, action="reset")
+    if not verdict["allowed"]:
+        refusal: dict[str, Any] = {"error": verdict["reason"], "peer_id": peer_id, "ok": False, "verdict": verdict}
+        consent.attach_consent(refusal, verdict, subject=peer_id)
+        bridge.record_activity("api", "reset", target=peer_id, detail="refused: motion not confirmed", ok=False)
+        raise HTTPException(403, refusal)
+    presence = (peer or {}).get("presence") or {}
+    task_status = str(presence.get("task_status") or "").strip().lower()
+    if task_status in _RESET_BLOCKED_TASK_STATES:
+        bridge.record_activity("api", "reset", target=peer_id, detail=f"refused: task {task_status}", ok=False)
+        raise HTTPException(
+            409,
+            {
+                "error": f"refused: {peer_id} reports a task {task_status}; stop it before a reset. Nothing was sent.",
+                "peer_id": peer_id,
+                "ok": False,
+            },
+        )
+    target, cmd = route_task_target(peer_id, {"action": "reset"})
+    result = await bridge.send_cmd_async(target, cmd, timeout=10.0)
+    payload: dict[str, Any] = {
+        "peer_id": peer_id,
+        "routed_to": target if target != peer_id else None,
+        "ok": command_succeeded(result),
+        "result": result,
+    }
+    if not payload["ok"] and isinstance(result, dict):
+        consent.attach_consent(
+            payload, result, result.get("error"), result.get("detail"), result.get("message"), subject=peer_id
+        )
+    return payload
+
+
 @router.post("/robots/{peer_id}/stop")
 async def stop_task(request: Request, peer_id: str, _: dict = Depends(access.require_session)) -> dict[str, Any]:
     """Stop one peer. Never gated."""
@@ -752,6 +806,38 @@ async def _client_gone(ws: WebSocket) -> None:
         return
 
 
+def _finite_only(doc: Any) -> Any:
+    """*doc* with every non-finite float replaced by ``None``."""
+    if isinstance(doc, float):
+        return doc if math.isfinite(doc) else None
+    if isinstance(doc, dict):
+        return {k: _finite_only(v) for k, v in doc.items()}
+    if isinstance(doc, (list, tuple)):
+        return [_finite_only(v) for v in doc]
+    return doc
+
+
+def wire_json(doc: Any) -> str:
+    """Serialise one ``/ws/mesh`` frame so a browser can always parse it.
+
+    ``json.dumps`` writes ``nan`` and ``inf`` as the bare tokens ``NaN`` and
+    ``Infinity``, which are not JSON: the page's ``JSON.parse`` refuses the
+    whole frame, and when that frame is the snapshot the fleet view never
+    loads. One non-finite value anywhere (a forged safety ``t``, a joint
+    reading from a broken encoder) must not take the page down, so a frame
+    that fails ``allow_nan=False`` is written again with those values as
+    ``null`` and the event is logged.
+    """
+    try:
+        return json.dumps(doc, allow_nan=False)
+    except ValueError:
+        logger.warning(
+            "[ws/mesh] a %s frame carried a non-finite float; sent as null",
+            doc.get("type") if isinstance(doc, dict) else "?",
+        )
+        return json.dumps(_finite_only(doc), allow_nan=False)
+
+
 @ws_router.websocket("/ws/mesh")
 async def ws_mesh(ws: WebSocket) -> None:
     """Fan the bridge's events out to one page: a snapshot first, then every event as it lands."""
@@ -762,14 +848,14 @@ async def ws_mesh(ws: WebSocket) -> None:
     q = bridge.attach_queue()
     gone = asyncio.create_task(_client_gone(ws))
     try:
-        await ws.send_text(json.dumps(bridge.snapshot()))
+        await ws.send_text(wire_json(bridge.snapshot()))
         while True:
             getter = asyncio.create_task(q.get())
             done, _ = await asyncio.wait({getter, gone}, return_when=asyncio.FIRST_COMPLETED)
             if gone in done:
                 getter.cancel()
                 break
-            await ws.send_text(json.dumps(getter.result()))
+            await ws.send_text(wire_json(getter.result()))
     except (WebSocketDisconnect, RuntimeError):
         pass  # best effort: the browser closed the socket, there is nobody left to tell
     finally:

@@ -23,8 +23,6 @@ pin the contract.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 pytest.importorskip("mujoco")
@@ -32,43 +30,7 @@ pytest.importorskip("mujoco")
 from strands_robots.policies.mock import MockPolicy
 from strands_robots.simulation.mujoco.simulation import Simulation
 from strands_robots.simulation.policy_runner import PolicyRunner
-
-
-class _StubRecorder:
-    """Minimal stand-in for ``DatasetRecorder``.
-
-    Mimics the surface ``_finalize_recorder_episode`` touches:
-    * ``episode_frame_count``  - incremented by the test "step hook" so
-      :meth:`PolicyRunner._finalize_recorder_episode` doesn't skip the call
-      due to an empty buffer.
-    * ``save_episode``         - bumps ``episode_count``, resets
-      ``episode_frame_count``, and records the call for assertion.
-
-    We deliberately do NOT subclass the real recorder - keeping the contract
-    explicit and minimal documents what the fix actually depends on.
-    """
-
-    def __init__(self) -> None:
-        self.episode_count = 0
-        self.episode_frame_count = 0
-        self.frame_count = 0
-        self.save_calls: list[dict[str, int]] = []
-
-    def add_frame(self, *_a, **_kw) -> None:  # not used here but mimics surface
-        self.episode_frame_count += 1
-        self.frame_count += 1
-
-    def save_episode(self) -> dict[str, Any]:
-        ep_frames = self.episode_frame_count
-        self.episode_count += 1
-        self.episode_frame_count = 0
-        self.save_calls.append({"ep": self.episode_count, "frames": ep_frames})
-        return {
-            "status": "success",
-            "episode": self.episode_count,
-            "episode_frames": ep_frames,
-            "total_frames": self.frame_count,
-        }
+from tests._recorder_stand_in import RecorderStandIn
 
 
 @pytest.fixture
@@ -80,7 +42,7 @@ def sim_with_robot():
     s.cleanup()
 
 
-def _attach_recorder(sim: Simulation, frames_per_episode: int = 5) -> _StubRecorder:
+def _attach_recorder(sim: Simulation, frames_per_episode: int = 5) -> RecorderStandIn:
     """Attach a stub recorder + simulate per-step ``add_frame`` calls.
 
     The real recorder gets fed by ``Simulation`` send_action callbacks. For
@@ -88,7 +50,7 @@ def _attach_recorder(sim: Simulation, frames_per_episode: int = 5) -> _StubRecor
     inside an ``on_frame`` hook so :meth:`_finalize_recorder_episode` sees
     a non-empty buffer when it fires.
     """
-    rec = _StubRecorder()
+    rec = RecorderStandIn()
     assert sim._world is not None
     sim._world._backend_state["dataset_recorder"] = rec
     return rec
@@ -109,7 +71,7 @@ class TestRecorderEpisodeBoundary:
         # (rather than ``on_frame``) to keep the recorder feed independent of
         # the hook under test elsewhere.
         def fake_step_recorder() -> None:
-            rec.add_frame()
+            rec.add_frame({}, {})
 
         # Wrap policy.get_actions so each policy step bumps the recorder.
         orig_get = policy.get_actions
@@ -131,14 +93,12 @@ class TestRecorderEpisodeBoundary:
         assert result["status"] == "success"
 
         # The fix: save_episode must fire exactly once per evaluate iteration.
-        assert rec.episode_count == 3, (
-            f"Expected 3 episode boundaries, got {rec.episode_count}. Save calls: {rec.save_calls}"
-        )
-        assert len(rec.save_calls) == 3
+        assert rec.episode_count == 3, f"Expected 3 episode boundaries, got {rec.episode_count}. Saves: {rec.saves}"
+        assert len(rec.saves) == 3
         # Each boundary must have flushed some frames (not the empty-buffer
         # short-circuit path).
-        for call in rec.save_calls:
-            assert call["frames"] >= 1, f"empty-buffer save: {call}"
+        for saved in rec.saves:
+            assert saved["episode_frames"] >= 1, f"empty-buffer save: {saved}"
 
     def test_finalize_helper_no_op_without_recorder(self, sim_with_robot):
         """No recorder attached → helper must silently no-op (eval-only path)."""
@@ -164,20 +124,20 @@ class TestRecorderEpisodeBoundary:
         runner._finalize_recorder_episode()
 
         assert rec.episode_count == 0, "save_episode fired on empty buffer"
-        assert rec.save_calls == []
+        assert rec.saves == []
 
     def test_finalize_helper_calls_save_when_buffer_nonempty(self, sim_with_robot):
         rec = _attach_recorder(sim_with_robot)
-        rec.add_frame()
-        rec.add_frame()
-        rec.add_frame()
+        rec.add_frame({}, {})
+        rec.add_frame({}, {})
+        rec.add_frame({}, {})
         assert rec.episode_frame_count == 3
 
         runner = PolicyRunner(sim_with_robot)
         runner._finalize_recorder_episode()
 
         assert rec.episode_count == 1
-        assert rec.save_calls == [{"ep": 1, "frames": 3}]
+        assert rec.saves == [{"status": "success", "episode": 1, "episode_frames": 3, "total_frames": 3}]
         # After save, buffer is reset.
         assert rec.episode_frame_count == 0
 

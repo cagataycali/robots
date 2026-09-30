@@ -45,7 +45,6 @@ from strands_robots.tools.lerobot_train import build_train_command  # noqa: E402
 from strands_robots.training._validate import validation_episodes_problems  # noqa: E402
 from strands_robots.training.base import Trainer, TrainSpec  # noqa: E402
 from strands_robots.training.cosmos3 import Cosmos3Trainer  # noqa: E402
-from strands_robots.training.groot import Gr00tTrainer  # noqa: E402
 from strands_robots.training.lerobot import LerobotTrainer  # noqa: E402
 from strands_robots.training.mock import MockTrainer  # noqa: E402
 from strands_robots.utils import validation_split_fraction  # noqa: E402
@@ -405,7 +404,7 @@ class TestABackendThatIgnoresTheFieldReportsNothing:
     made universal like the learning-rate one.
     """
 
-    @pytest.mark.parametrize("trainer_cls", (MockTrainer, Gr00tTrainer, Cosmos3Trainer))
+    @pytest.mark.parametrize("trainer_cls", (MockTrainer, Cosmos3Trainer))
     @pytest.mark.parametrize("value", UNUSABLE)
     def test_it_validates_nothing_about_the_count(
         self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any
