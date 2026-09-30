@@ -635,7 +635,7 @@ def test_lerobot_local_page_names_lerobots_own_diffusion_extra() -> None:
         "pi0 has the same shape (transformers + scipy through lerobot[pi]); the fence names it"
     )
     # The sentence that lists the types must not read as if [lerobot] alone runs them.
-    intro = next(line for line in text.splitlines() if line.startswith("By the end of this page"))
+    intro = next(line for line in text.splitlines() if "(ACT, diffusion" in line)
     assert "diffusion" in intro and "extra" in intro, intro
 
 
