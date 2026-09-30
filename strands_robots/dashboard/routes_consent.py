@@ -19,6 +19,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from strands_robots.dashboard import access, config_api, consent
+from strands_robots.dashboard.routes_auth import _json_body
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ async def post_consent(request: Request, who: dict = Depends(access.require_sess
     """Approve one refusal, by kind + subject."""
     if who.get("via") == "loopback" and not access.peer_is_loopback(request):
         raise HTTPException(401, "sign in required")
-    req = _request_from(await request.json())
+    req = _request_from(await _json_body(request))
     patch = consent.env_patch(req, os.environ)
     if not patch:
         return {
@@ -99,7 +100,7 @@ async def revoke_consent(request: Request, who: dict = Depends(access.require_se
     """Take one grant back."""
     if who.get("via") == "loopback" and not access.peer_is_loopback(request):
         raise HTTPException(401, "sign in required")
-    req = _request_from(await request.json())
+    req = _request_from(await _json_body(request))
     patch = consent.revoke_patch(req, os.environ)
     if not patch:
         return {

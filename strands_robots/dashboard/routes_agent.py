@@ -10,13 +10,13 @@ tool_result, interrupt, done, error). One turn at a time per socket: a second
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 
 from strands_robots.dashboard import access, agent_console
+from strands_robots.dashboard.routes_auth import _json_body
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -50,9 +50,7 @@ async def agent_info(request: Request, _: dict = Depends(access.require_session)
 @router.post("/api/agent/reset")
 async def agent_reset(request: Request, _: dict = Depends(access.require_session)) -> dict[str, Any]:
     """Consoles are per socket, so a reset is the page reconnecting its dock; this says so and what it will get."""
-    body: Any = {}
-    with contextlib.suppress(Exception):
-        body = await request.json()
+    body = await _json_body(request)
     clear = bool(isinstance(body, dict) and body.get("clear_history"))
     return {"reset": True, "history_cleared": clear, "reconnect": True, "model": agent_console.model_id()}
 

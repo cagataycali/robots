@@ -27,6 +27,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from strands_robots.dashboard import access, safety_state, scene
 from strands_robots.dashboard.log_redaction import one_line
+from strands_robots.dashboard.routes_auth import _json_body
 from strands_robots.dashboard.sim_session import SessionStore, SimSession
 from strands_robots.utils import finite_number_error
 
@@ -182,7 +183,7 @@ async def create_session(request: Request, who: dict = Depends(access.require_se
     """
     safety = _safety(request)
     safety.gate("create")
-    body = await request.json() if await request.body() else {}
+    body = await _json_body(request)
     if not isinstance(body, dict) or not isinstance(body.get("robot"), str):
         raise HTTPException(400, 'body must be {"robot": "<name>"}')
     robot = _known_sim_robot(body["robot"])
@@ -258,7 +259,7 @@ async def set_joints(request: Request, session_id: str, _: dict = Depends(access
     safety = _safety(request)
     safety.gate("set_joints")
     session = _session(request, session_id)
-    body = await request.json() if await request.body() else {}
+    body = await _json_body(request)
     positions = body.get("positions") if isinstance(body, dict) else None
     if not isinstance(positions, (dict, list)) or not positions:
         raise HTTPException(400, "positions must be a non-empty object or list")

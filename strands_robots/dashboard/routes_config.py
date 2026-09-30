@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from strands_robots.dashboard import access, agent_console, config_api
+from strands_robots.dashboard.routes_auth import _json_body
 
 router = APIRouter(prefix="/api", tags=["config"])
 
@@ -37,9 +38,7 @@ async def post_config(request: Request, who: dict = Depends(access.require_sessi
     # loopback itself, the same rule ``/api/settings`` applies.
     if who.get("via") == "loopback" and not access.peer_is_loopback(request):
         raise HTTPException(401, "sign in required")
-    body = await request.json()
-    if not isinstance(body, dict):
-        raise HTTPException(400, "body must be a JSON object")
+    body = await _json_body(request)
     result = await asyncio.to_thread(config_api.apply, body)
     if result["errors"] and not result["applied"] and not result["env_written"]:
         raise HTTPException(422, "; ".join(result["errors"]))
