@@ -33,11 +33,9 @@ else in the shared lifecycle runs unchanged.
 
 **Pacing**: the recorded ``fps`` is dataset metadata; the actual frame cadence
 is ``run_policy(control_frequency=...)`` (one recorded frame per control
-step). The RTX renderer produces new frames at ``IsaacConfig.rendering_dt``
-(default 1/30 s), so a control frequency above ``1 / rendering_dt`` records
-duplicate frames from the same render product. For distinct per-step images
-keep ``control_frequency <= 1 / rendering_dt`` and set ``fps`` to match the
-control frequency.
+step). Every camera refreshes on the control step's last physics tick, so each
+recorded frame shows that step's state; set ``fps`` to match the control
+frequency.
 
 **Threading**: schema declaration probes ``get_observation`` once. When the
 main-thread pump (:meth:`IsaacSimulation.run_pump_forever`) owns the renderer

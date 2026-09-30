@@ -50,7 +50,8 @@
         "inference_kwargs",
         "pad_short_actions",
         "cache_model",
-        "revision"
+        "revision",
+        "compile_model"
       ],
       "defaults": {},
       "aliases": [

@@ -270,7 +270,16 @@ class IsaacLabTrainer(Trainer):
                 hint = f"; did you mean {close}?" if close else ""
                 problems.append(
                     f"{ctx}: extra['task'] {task!r} is not registered by the Isaac Lab install at {self._python} "
-                    f"({len(known)} tasks){hint}"
+                    f"({len(known)} tasks){hint}. A task from your own package is trained once the operator "
+                    f"names that package in ${runtime.TASK_PACKAGES_ENV} ('module:register_fn', importable in "
+                    "the Isaac Lab venv)"
+                )
+            owner = runtime.task_package_of(self._python, task)
+            if owner is not None and owner[1] is None:
+                problems.append(
+                    f"{ctx}: {task!r} is registered by {owner[0]!r}, which ${runtime.TASK_PACKAGES_ENV} names "
+                    f"without the function that registers it; name it as '{owner[0]}:<function>' so Isaac Lab "
+                    "can call it through --external_callback before looking the task up"
                 )
         return problems
 
@@ -405,6 +414,11 @@ class IsaacLabTrainer(Trainer):
         overrides += [f"{path}={_hydra_value(value)}" for path, value in user.items()]
         return flags, overrides
 
+    def _external_callback(self, task: str) -> str | None:
+        """``module.function`` Isaac Lab must call to register *task*, for an operator package's task."""
+        owner = runtime.task_package_of(str(self._python), task) if self._python else None
+        return f"{owner[0]}.{owner[1]}" if owner is not None and owner[1] else None
+
     def build_command(self, spec: TrainSpec, job_id: str) -> list[str]:
         """Return the ``python -m isaaclab train`` argv for *spec*.
 
@@ -438,6 +452,8 @@ class IsaacLabTrainer(Trainer):
             cmd += ["--num_envs", str(extra["num_envs"])]
         if spec.seed is not None:
             cmd += ["--seed", str(spec.seed)]
+        if (callback := self._external_callback(str(extra["task"]))) is not None:
+            cmd += ["--external_callback", callback]
         flags, overrides = self._forwarded(spec)
         return cmd + flags + overrides
 
@@ -694,6 +710,8 @@ class IsaacLabTrainer(Trainer):
             "--visualizer",
             "kit",
         ]
+        if (callback := self._external_callback(str(record["task"]))) is not None:
+            cmd += ["--external_callback", callback]
         if run.get("agent"):
             cmd += ["--agent", str(run["agent"])]
         # The environment the policy trained in: its physics preset and every

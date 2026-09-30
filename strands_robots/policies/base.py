@@ -477,11 +477,11 @@ class Policy(ABC):
         A chunk-emitting policy (ACT, diffusion, pi0, pi0.5, pi0-FAST, SmolVLA,
         MolmoAct2) returns more than one action per inference, so its inference
         latency can be hidden behind the EXECUTION of the current chunk while the
-        next chunk is computed in the background. The async-RTC pipeline in
-        :meth:`PolicyRunner.run` uses this signal to auto-enable latency masking
-        for exactly the policies that benefit (``run_policy(async_rtc=None)``);
-        single-step policies (``MockPolicy``, classical planners) gain nothing
-        from overlap and stay on the synchronous loop.
+        next chunk is computed in the background. :meth:`PolicyRunner.run`
+        auto-enables that overlap (``run_policy(async_rtc=None)``) only when this
+        is true AND the policy blends the seam (``supports_rtc``); single-step
+        policies (``MockPolicy``, classical planners) gain nothing from overlap
+        and stay on the synchronous loop.
 
         The default derives the answer from the re-query interval the consumer
         actually drives - :attr:`execution_horizon` - so ANY policy that emits a
