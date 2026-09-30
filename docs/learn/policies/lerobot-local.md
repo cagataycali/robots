@@ -31,7 +31,7 @@ policy = create_policy("robotfuel/act_so101_t16b", embodiment="so101")   # same 
 
 {{providers:kwargs:lerobot_local}}
 
-Inert normalization has a two-part remedy: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and `state_units` / `action_units` (`degrees` or `radians`) say which unit they were recorded in. `so100` and `so101` declare `state_units='degrees'`; radian stats need the unit half beside the stats half.
+Inert normalization has a two-part remedy: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and the embodiment's `state_units` / `action_units` (`degrees` or `native`) say which frame they were recorded in; `native` is what the robot emits, radians in MuJoCo. `so100` and `so101` declare `degrees`. Neither is a constructor keyword; `create_policy` refuses them.
 
 `pretrained_name_or_path` is required. `actions_per_step` left at `1` is auto-raised to the model's trained `n_action_steps`; a value above 1 pins it. `cache_model=True` keeps loaded weights across policies in this process (`clear_model_cache()`, `list_cached_models()`).
 
@@ -73,7 +73,7 @@ sim.run_policy(
 )
 ```
 
-`parent_body` mounts a camera on a link so a wrist view rides with the arm; `position` and `target` are then in that frame, both required. It works on `mujoco` and `newton`; `isaac` refuses it and names the world-frame alternative.
+`parent_body` mounts a camera on a link (a wrist view rides with the arm); `position` and `target` are then in that frame, both required. It works on `mujoco` and `newton`; `isaac` refuses it and names the world-frame alternative.
 
 ## Run it
 
@@ -129,6 +129,6 @@ policy = create_policy("ws://gpu-box:8765")                                     
 
 ## Limits
 
-- `trust_remote_code=True` is unconditional for this provider, hence the environment gate; load checkpoints only from organisations you trust.
+- `trust_remote_code=True` is unconditional here, hence the environment gate; load checkpoints only from organisations you trust.
 - `dim_policy="pad"` and `"truncate"` adapt the state vector to the model width by design, and most shipped embodiments declare `pad`; `strict` refuses a width mismatch and names the two opt-ins.
-- An embodiment that is not in `embodiments.json` needs its own entry: state keys, action keys, and camera renames. The [training](../training/lerobot.md) page shows how a trained checkpoint carries those names.
+- An embodiment missing from `embodiments.json` needs its own entry: state keys, action keys, camera renames; [training](../training/lerobot.md) shows how a checkpoint carries them.

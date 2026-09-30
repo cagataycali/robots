@@ -603,6 +603,13 @@ def policy_kwargs_error(provider: str, PolicyClass: type, kwargs: Mapping[str, A
     accepted, tolerates_unknown = _constructor_keywords(PolicyClass)
     if not accepted:
         return None
+    # A provider may know a name that its sink would otherwise swallow: a field
+    # that belongs on another object (lerobot_local's ``state_units`` is an
+    # embodiment field, #4164). Its ``misplaced_kwargs_error`` says where the
+    # name goes, and runs here so the caller learns it before the trust gate.
+    misplaced_error = getattr(PolicyClass, "misplaced_kwargs_error", None)
+    if callable(misplaced_error) and (misplaced := misplaced_error(kwargs)) is not None:
+        return str(misplaced)
     owner = f"{PolicyClass.__name__} (policy provider {provider!r})"
     misspelled: list[str] = []
     unknown: list[str] = []
