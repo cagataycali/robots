@@ -4,10 +4,10 @@ description: protomotions tracks a reference motion under physics with NVIDIA GE
 
 # protomotions
 
-!!! warning "Deprecated"
-    Removed in 0.7. Use [wbc](wbc.md) for G1 whole-body control.
+!!! warning "Deprecated, removed in 0.7"
+    The `DeprecationWarning` points at [wbc](wbc.md), which walks the G1 from velocity commands; it does not track a motion clip, so clip tracking has no in-tree replacement after 0.7.
 
-By the end of this page you can play a reference motion clip on a simulated Unitree G1 that balances and reacts to contact, and chain it after `kimodo` so a text prompt becomes a physically tracked motion.
+This page plays a reference motion clip on a simulated Unitree G1 that balances and reacts to contact, and chains it after `kimodo`.
 
 `onnx_path` and `yaml_path` take a local file each; a Hub id is not fetched for you.
 
