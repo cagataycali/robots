@@ -5545,14 +5545,13 @@ class IsaacSimulation(
                         pos = tuple(float(v) for v in np.asarray(state.handle.get_world_pose()[0]).reshape(-1))
                     physx.apply_force_at_pos(stage_id, body_int, tuple(f_vec), pos)
                 if any(t_vec):
-                    # Negated: measured on isaacsim 6.0.1, this binding spins a
-                    # body OPPOSITE to the right-handed world torque it is
-                    # handed - +0.3 z gave wz = -0.458 rad/s and -0.3 z gave
-                    # wz = +0.538, a clean mirror in both directions from rest.
-                    # The cross-backend contract (MuJoCo's xfrc_applied) is
-                    # right-handed world-frame, so the flip is applied here,
-                    # once, at the boundary to the binding that disagrees.
-                    physx.apply_torque(stage_id, body_int, tuple(-v for v in t_vec))
+                    # Handed over as is: the binding is right-handed world-frame,
+                    # like MuJoCo's xfrc_applied. Measured on Isaac Sim 6.0.1 and
+                    # 6.1 with a 1 kg, 10 cm cube in zero gravity: torque +0.01 z
+                    # for 0.5 s spins it to wz +3.0 (I_zz = 1/600 kg m^2), and a
+                    # +y force at +x off the centre spins it +z as well. The
+                    # negation this used to apply spun every body backwards.
+                    physx.apply_torque(stage_id, body_int, tuple(t_vec))
             except (RuntimeError, ValueError, AttributeError, TypeError) as e:
                 del self._applied_wrenches[name]
                 logger.error("apply_force: dropping the latched wrench on '%s' - reapply failed: %s", name, e)
