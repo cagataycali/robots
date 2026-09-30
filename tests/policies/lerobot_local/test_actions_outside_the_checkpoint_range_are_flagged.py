@@ -24,7 +24,7 @@ def _policy(mode: str = "warn") -> LerobotLocalPolicy:
     policy = LerobotLocalPolicy(out_of_range_actions=mode)
     policy.set_robot_state_keys(KEYS)
     # the checkpoint's action stats: every column recorded in [-1, 1]
-    policy._processor_bridge = types.SimpleNamespace(
+    policy._processor_bridge = types.SimpleNamespace(  # type: ignore[assignment]
         recorded_value_ranges=lambda key: [(-1.0, 1.0)] * 3, reset=lambda: None
     )
     return policy
