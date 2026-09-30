@@ -790,23 +790,35 @@ def check_serial_permissions() -> str:
     except (KeyError, OSError):
         in_effective = False
 
-    if in_dialout or in_effective:
-        # Check if any serial devices exist
-        devs = list(Path("/dev").glob("ttyACM*")) + list(Path("/dev").glob("ttyUSB*"))
-        if devs:
-            # Check read/write permission on first device
-            dev = devs[0]
-            if os.access(dev, os.R_OK | os.W_OK):
-                return _pass(f"serial: user in dialout, {dev} accessible")
-            return _fail(
-                f"serial: user in dialout but {dev} not accessible",
-                fix=f"sudo chmod 666 {dev}  # or add udev rule",
-            )
-        return _pass("serial: user in dialout (no devices connected)")
-    return _fail(
-        f"serial: user '{username}' not in dialout group",
-        fix="sudo usermod -aG dialout $USER && newgrp dialout  # then re-login",
-    )
+    member = in_dialout or in_effective
+    join = "sudo usermod -aG dialout $USER && newgrp dialout  # then re-login"
+    # Every connected device is judged, not the first one: the arm on ttyACM1 is
+    # the one that fails to open when ttyACM0 is a modem. A device is usable when
+    # this process can open it read/write, whichever way that was granted - the
+    # dialout group, a udev rule, or an ACL - so access decides, not membership.
+    devs = sorted(Path("/dev").glob("ttyACM*")) + sorted(Path("/dev").glob("ttyUSB*"))
+    if not devs:
+        if member:
+            return _pass("serial: user in dialout (no devices connected)")
+        # No serial device on this host (a cloud box, a sim-only machine, CI):
+        # nothing is broken today, so this is not a failure - but the arm will
+        # not open once it is plugged in, so say what to do first.
+        return _warn(
+            f"serial: no devices connected, and user '{username}' is not in dialout "
+            "(a real arm plugged in later would not open)",
+            note=f"Before plugging one in: {join}",
+        )
+    blocked = [str(d) for d in devs if not os.access(d, os.R_OK | os.W_OK)]
+    names = ", ".join(str(d) for d in devs)
+    if not blocked:
+        via = "user in dialout" if member else "accessible without dialout (udev rule or ACL)"
+        return _pass(f"serial: {via}, {names} accessible")
+    if member:
+        return _fail(
+            f"serial: user in dialout but {', '.join(blocked)} not accessible",
+            fix=f"sudo chmod 666 {blocked[0]}  # or add udev rule",
+        )
+    return _fail(f"serial: user '{username}' not in dialout group; {', '.join(blocked)} not accessible", fix=join)
 
 
 def check_hf_auth() -> str:

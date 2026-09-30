@@ -419,9 +419,11 @@ class TestDoctorSerialPermissions:
         assert "  SKIP  " in result
 
     def test_not_in_dialout_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Not in dialout with a device this process cannot open: the arm will not connect."""
         import grp
         import os
         import platform
+        from pathlib import Path
 
         from strands_robots.doctor import check_serial_permissions
 
@@ -429,6 +431,8 @@ class TestDoctorSerialPermissions:
         monkeypatch.setenv("USER", "nobody")
         monkeypatch.setattr(grp, "getgrnam", lambda _n: self._fake_group(["someone_else"], gid=20))
         monkeypatch.setattr(os, "getgroups", lambda: [1000])
+        monkeypatch.setattr(Path, "glob", lambda self, pat: iter([Path("/dev/ttyACM0")]) if "ACM" in pat else iter([]))
+        monkeypatch.setattr(os, "access", lambda _p, _m: False)
         result = check_serial_permissions()
         assert "  FAIL  " in result
 

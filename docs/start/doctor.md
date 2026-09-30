@@ -59,7 +59,7 @@ Four verdicts. A `FAIL` line carries a `Fix:` line under it and alone makes the 
 | CUDA/GPU | `torch.cuda.is_available()` against what the driver reports | `WARN` for no torch, a CPU-only build, or a torch blind to a present device |
 | Torch Arch | the torch build carries code for this GPU's `sm_` architecture | `SKIP` without a CUDA device; `FAIL` when the wheel was built for other architectures |
 | Warp Arch | the same question for `warp` (the `sim-newton` extra) | `SKIP` without a CUDA device or warp |
-| Serial | Linux: the user is in `dialout` and each connected `/dev/ttyACM*`/`/dev/ttyUSB*` is readable | `SKIP` on macOS; `FAIL` when the group is missing or a device is not accessible |
+| Serial | Linux: each connected `/dev/ttyACM*`/`/dev/ttyUSB*` opens read/write, through `dialout`, a udev rule or an ACL | `SKIP` on macOS; `WARN` with no device connected and the user outside `dialout`; `FAIL` when a connected device cannot be opened |
 | HF Auth | `HF_TOKEN` is set, or a cached login token exists where `huggingface_hub` looks | `WARN`: private checkpoints and dataset pushes will not authenticate |
 | Device Connect | the edge posture: authenticated transport, an explicit insecure opt-in, or neither | `SKIP` without the extra; `WARN` when `run()` would refuse; `FAIL` when it would be online unencrypted with no caller restriction |
 | Mesh | zenoh is installed and `mesh=True` would start under the configured ACL and TLS posture | `WARN` without zenoh or when it would refuse, listing the choices |
