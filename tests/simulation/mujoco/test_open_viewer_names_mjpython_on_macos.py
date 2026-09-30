@@ -23,7 +23,7 @@ MUJOCO_MESSAGE = "`launch_passive` requires that the Python script be run under 
 
 def test_the_mjpython_refusal_names_the_launcher_and_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
     """MuJoCo's own sentence is kept, and the remedy follows it."""
-    monkeypatch.setattr("sys.argv", ["/home/me/rollout.py"])
+    monkeypatch.setattr("sys.argv", [str(Path("scripts") / "rollout.py")])
     text = viewer_failure_text(RuntimeError(MUJOCO_MESSAGE))
     assert text.startswith(f"Viewer failed: {MUJOCO_MESSAGE}")
     assert f"run `{MJPYTHON_LAUNCHER} rollout.py` instead of `python rollout.py`" in text
