@@ -3503,6 +3503,43 @@ class MuJoCoSimEngine(
         except Exception as exc:  # noqa: BLE001 - non-fatal (mirrors set_robot_state_keys)
             logger.debug("bind_policy_sim_context(%s) failed: %s", robot_name, exc)
 
+    def _maybe_install_contract_pd(self, policy: Any, robot_name: str) -> Callable[[], None] | None:
+        """Install the Isaac Lab actuator PD an exported actor's deploy contract records, when it applies.
+
+        An exported Isaac Lab actor emits joint POSITION targets, and the run's
+        actuator model (Isaac Lab's Go2: a ``DCMotor`` PD, stiffness 25,
+        damping 0.5) turned them into torque on every physics step. On robots
+        whose actuators here are torque motors (strands' MuJoCo Go2) this closes
+        the same loop - see
+        :class:`~strands_robots.policies.isaaclab_actuator_pd.ContractPDController`
+        - or the targets are read as newton-metres. Position servos, a manual
+        controller already installed, or no such policy: ``None``, nothing done.
+        """
+        from strands_robots.policies.base import iter_policy_tree
+
+        member = next(
+            (p for p in iter_policy_tree(policy) if (getattr(p, "deploy_contract", None) or {}).get("actuators")),
+            None,
+        )
+        world = self._world
+        if member is None or world is None or world._model is None:
+            return None
+        state = getattr(world, "_backend_state", None)
+        if not isinstance(state, dict) or state.get("action_controller") is not None:
+            return None
+        from strands_robots.policies.isaaclab_actuator_pd import ContractPDController
+
+        pd = ContractPDController.from_sim(self, robot_name, member.deploy_contract, member.contract_joint_binding())  # type: ignore[attr-defined]
+        if pd is None:
+            return None
+        state["action_controller"] = pd
+        logger.info(
+            "installed the Isaac Lab actuator PD for %r: its actuators are torque motors and the policy's "
+            "deploy contract records the run's stiffness and damping",
+            robot_name,
+        )
+        return pd.uninstall
+
     def _maybe_install_action_controller(self, policy: Any, robot_name: str) -> Callable[[], None] | str | None:
         """Auto-install the WBC torque shim when a WBCPolicy drives a servo scene.
 
@@ -3541,6 +3578,9 @@ class MuJoCoSimEngine(
         motors or none of the WBC joints resolve in this scene.
         """
         from strands_robots.policies.base import iter_policy_tree
+
+        if (cleanup := self._maybe_install_contract_pd(policy, robot_name)) is not None:
+            return cleanup
 
         try:
             from strands_robots.policies.wbc import (

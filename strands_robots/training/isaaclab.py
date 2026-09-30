@@ -125,6 +125,15 @@ IO_DESCRIPTORS_FILE = "io_descriptors/IO_descriptors.yaml"
 #: Wall-clock limit for the one-environment, zero-iteration launch that writes
 #: the IO descriptors of a run trained before they were always requested.
 IO_DESCRIPTORS_TIMEOUT_S = 900
+
+# Parses a YAML file in the Isaac Lab interpreter and prints it as JSON, with
+# ``!!python/...`` tags read as null (see ``IsaacLabTrainer._read_yaml``).
+_YAML_TO_JSON = (
+    "import json, sys, yaml\n"
+    "class L(yaml.SafeLoader): pass\n"
+    "L.add_multi_constructor('tag:yaml.org,2002:python/', lambda l, s, n: None)\n"
+    "print(json.dumps(yaml.load(open(sys.argv[1]), Loader=L), default=str))"
+)
 _TAIL_LINES = 12
 
 #: How the end of a failed run is classified, with the next step for each.
@@ -655,7 +664,7 @@ class IsaacLabTrainer(Trainer):
         descriptors for manager-based tasks only, so a direct-workflow task has
         none and gets the reason instead.
         """
-        from strands_robots.training.rl.deploy_contract import contract_from_io_descriptors
+        from strands_robots.training.rl.deploy_contract import attach_env_cfg, contract_from_io_descriptors
 
         path = run_dir / IO_DESCRIPTORS_FILE
         if not path.is_file():
@@ -663,9 +672,16 @@ class IsaacLabTrainer(Trainer):
             if reason is not None:
                 return None, reason
         try:
-            return contract_from_io_descriptors(self._read_yaml(path), physics=run.get("physics")), None
+            contract = contract_from_io_descriptors(self._read_yaml(path), physics=run.get("physics"))
         except (OSError, ValueError) as exc:  # DeployContractError is a ValueError
             return None, f"{path} could not be read as IO descriptors: {exc}"
+        env_path = run_dir / "params" / "env.yaml"
+        try:
+            env_cfg = self._read_yaml(env_path) if env_path.is_file() else None
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            logger.warning("isaaclab: %s could not be read (%s); the contract has no actuator model", env_path, exc)
+            env_cfg = None
+        return attach_env_cfg(contract, env_cfg), None
 
     def _write_io_descriptors(self, run_dir: Path, run: dict[str, Any]) -> str | None:
         """Write *run_dir*'s IO descriptors with a zero-iteration launch; the reason on failure."""
@@ -699,17 +715,17 @@ class IsaacLabTrainer(Trainer):
         return None
 
     def _read_yaml(self, path: Path) -> dict[str, Any]:
-        """Parse a YAML file with PyYAML when installed, else with the Isaac Lab interpreter's."""
+        """Parse a YAML file with PyYAML when installed, else with the Isaac Lab interpreter's.
+
+        Isaac Lab's ``params/env.yaml`` carries ``!!python/...`` tags (tuples,
+        slices, callables); they are read as ``None`` - nothing here needs them
+        - rather than refused, and nothing is ever constructed from them.
+        """
         try:
             import yaml  # type: ignore[import-untyped]
         except ImportError:
             done = subprocess.run(  # noqa: S603 - argv, no shell
-                [
-                    str(self._python),
-                    "-c",
-                    "import json, sys, yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1]))))",
-                    str(path),
-                ],  # fmt: skip
+                [str(self._python), "-c", _YAML_TO_JSON, str(path)],
                 env=runtime.child_env(),
                 capture_output=True,
                 timeout=120,
@@ -717,7 +733,12 @@ class IsaacLabTrainer(Trainer):
             )
             parsed = json.loads(done.stdout)
         else:
-            parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+            class _Loader(yaml.SafeLoader):
+                pass
+
+            _Loader.add_multi_constructor("tag:yaml.org,2002:python/", lambda loader, suffix, node: None)
+            parsed = yaml.load(path.read_text(encoding="utf-8"), Loader=_Loader)  # noqa: S506 - SafeLoader subclass
         if not isinstance(parsed, dict):
             raise ValueError(f"{path} is not a YAML mapping")
         return parsed

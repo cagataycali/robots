@@ -276,7 +276,9 @@
         "checkpoint_dir",
         "device",
         "raw_actions",
-        "joint_map"
+        "joint_map",
+        "command",
+        "obs_terms"
       ],
       "defaults": {
         "device": "cpu"

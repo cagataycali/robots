@@ -61,6 +61,13 @@ class RLCheckpointPolicy(Policy):
             same name without its ``_joint`` suffix (Isaac Lab's
             ``FL_hip_joint`` is the MuJoCo Go2 actuator ``FL_hip``) when that
             pairing is one-to-one.
+        command: For an Isaac Lab export whose actor reads a command term
+            (``generated_commands``, e.g. a velocity command ``[vx, vy, wz]``):
+            the command the observation is built with. Default: zeros, i.e.
+            stand still.
+        obs_terms: For an Isaac Lab export: ``{term: values}`` for an
+            observation term strands cannot compute (a camera, a contact
+            sensor), or to replace one it can (``height_scan`` off flat ground).
         **kwargs: Ignored, for factory uniformity.
 
     Raises:
@@ -78,6 +85,8 @@ class RLCheckpointPolicy(Policy):
         device: str = "cpu",
         raw_actions: bool = False,
         joint_map: dict[str, str] | None = None,
+        command: list[float] | None = None,
+        obs_terms: dict[str, list[float]] | None = None,
         **kwargs: Any,
     ) -> None:
         if not checkpoint_dir or not str(checkpoint_dir).strip():
@@ -97,6 +106,11 @@ class RLCheckpointPolicy(Policy):
         ):
             raise ValueError(f"joint_map must be a dict of contract joint name -> robot key, got {joint_map!r}")
         self._joint_map = dict(joint_map or {})
+        self._command = [float(v) for v in command] if command is not None else None
+        self._obs_terms = {str(k): [float(x) for x in v] for k, v in (obs_terms or {}).items()}
+        # The actor's previous raw output, which Isaac Lab's ``last_action``
+        # term feeds back; zero at the start of every episode (see reset()).
+        self._last_raw_action: list[float] = [0.0] * self._actor.num_actions
         self._contract = None if raw_actions else self._actor.deploy_contract
         if not raw_actions and self._actor.isaaclab_task:
             self._check_contract(str(checkpoint_dir).strip())
@@ -168,6 +182,53 @@ class RLCheckpointPolicy(Policy):
             return list(self._contract["action_keys"])
         return list(self._actor.action_keys or self.robot_state_keys)
 
+    def reset(self, seed: int | None = None) -> None:
+        """Start a new episode: the ``last_action`` an Isaac Lab actor reads is zero again."""
+        super().reset(seed)
+        self._last_raw_action = [0.0] * self._actor.num_actions
+
+    def _build_policy_obs(self, observation: dict[str, Any]) -> list[float]:
+        """The actor's ``policy_obs`` vector built from a strands observation, per the deploy contract.
+
+        See :func:`~strands_robots.training.rl.deploy_contract.build_policy_obs`.
+        Joints are read under the robot key each contract joint binds to
+        (:func:`bind_contract_joints` against the observation's own joint keys).
+        """
+        from strands_robots.training.rl.deploy_contract import build_policy_obs
+
+        assert self._contract is not None
+        joints = list(self._contract["action_keys"])
+        present = [key for key in observation if isinstance(key, str) and not key.endswith(".vel")]
+        try:
+            keys = bind_contract_joints(
+                joints,
+                [k for k in present if k in joints or _bare_joint_name(k) in {_bare_joint_name(j) for j in joints}],
+                self._joint_map,
+            )
+            return build_policy_obs(
+                self._contract,
+                observation,
+                joint_keys=keys,
+                last_action=self._last_raw_action,
+                command=self._command,
+                obs_terms=self._obs_terms,
+            )
+        except ValueError as exc:  # DeployContractError is a ValueError
+            raise ValueError(
+                f"the Isaac Lab {self._actor.isaaclab_task} actor's observation cannot be built from this "
+                f"robot's state: {exc}"
+            ) from None
+
+    def contract_joint_binding(self) -> dict[str, str]:
+        """``{contract_joint: robot_key}`` for the robot bound by :meth:`set_robot_state_keys`.
+
+        What an engine needs to run the contract's actuator model on the right
+        actuators. Empty without a contract.
+        """
+        if self._contract is None:
+            return {}
+        return self._contract_binding(list(self._contract["action_keys"]))
+
     def _contract_binding(self, contract_joints: list[str]) -> dict[str, str]:
         """The robot key each contract joint drives (see :func:`bind_contract_joints`)."""
         try:
@@ -229,6 +290,12 @@ class RLCheckpointPolicy(Policy):
         """
         import torch
 
+        if (
+            self._contract is not None
+            and "policy_obs" not in observation_dict
+            and not any(key in observation_dict for key in self._actor.actor_obs_keys[:1])
+        ):
+            observation_dict = {**observation_dict, "policy_obs": self._build_policy_obs(observation_dict)}
         observation_dict = _expand_vector_observations(observation_dict, self._actor.actor_obs_keys)
         missing = [key for key in self._actor.actor_obs_keys if key not in observation_dict]
         if missing:
@@ -256,6 +323,7 @@ class RLCheckpointPolicy(Policy):
             device=self._device,
         )
         action = self._actor.act(obs)[0]
+        self._last_raw_action = [float(v) for v in action]
         if self._contract is not None:
             from strands_robots.training.rl.deploy_contract import apply_action_contract
 

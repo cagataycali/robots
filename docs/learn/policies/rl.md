@@ -81,6 +81,6 @@ The trainers, their fields and what `policy_meta.json` records are on the [RL tr
 
 ## Limits
 
-- The observation must carry every `actor_obs_keys` name. Rolling a checkpoint out on a robot whose joints are named differently is refused, not remapped.
-- Deterministic mean action only. There is no exploration noise at inference.
-- Only checkpoints written by this package's trainers load; a foreign `policy.pt` has no `policy_meta.json` and is refused by `FileNotFoundError`.
+- The observation must carry every `actor_obs_keys` name, unless an Isaac Lab export builds it from the robot's state (`command=` sets a velocity command); on MuJoCo torque motors the run's PD then drives the joints.
+- Deterministic mean action only.
+- A `policy.pt` without `policy_meta.json` is refused (`FileNotFoundError`).

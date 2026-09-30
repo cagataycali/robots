@@ -25,6 +25,7 @@ targets. Nothing here imports Isaac Lab, torch or YAML.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -215,6 +216,109 @@ def contract_problems(contract: Mapping[str, Any], *, num_actor_obs: int, num_ac
     return problems
 
 
+def _basename(func: Any) -> str:
+    """``isaaclab.envs.mdp.observations:joint_pos_rel`` -> ``joint_pos_rel``."""
+    return str(func or "").replace(":", ".").rsplit(".", 1)[-1]
+
+
+def _per_joint(value: Any, joint: str) -> float | None:
+    """A scalar, or the value of the first ``{regex: value}`` entry matching *joint*."""
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, Mapping):
+        for pattern, entry in value.items():
+            if re.fullmatch(str(pattern), joint) and isinstance(entry, int | float):
+                return float(entry)
+    return None
+
+
+def env_cfg_terms(env_cfg: Mapping[str, Any], *, group: str = "policy") -> list[dict[str, Any]]:
+    """The observation terms of *group* in the run's ``params/env.yaml``, in concatenation order."""
+    terms = []
+    for name, term in ((env_cfg.get("observations") or {}).get(group) or {}).items():
+        if not isinstance(term, Mapping) or "func" not in term:
+            continue
+        params = {k: v for k, v in (term.get("params") or {}).items() if isinstance(v, int | float | str | bool)}
+        terms.append(
+            {
+                "term": str(name),
+                "func": _basename(term["func"]),
+                "clip": term.get("clip"),
+                "scale": term.get("scale"),
+                "params": params,
+            }  # fmt: skip
+        )
+    return terms
+
+
+def env_cfg_actuators(env_cfg: Mapping[str, Any], joints: Sequence[str]) -> dict[str, dict[str, Any]]:
+    """Per joint: the actuator model the run's articulation used (class, stiffness, damping, effort limit).
+
+    Isaac Lab's Go2 is a ``DCMotor`` PD (stiffness 25, damping 0.5, effort
+    23.7 / 45.43 N m); strands' MuJoCo Go2 has torque motors. A policy trained
+    against the first sends position targets the second reads as torques, so
+    the deploying engine needs this to close the same PD loop.
+    """
+    groups = (((env_cfg.get("scene") or {}).get("robot") or {}).get("actuators")) or {}
+    out: dict[str, dict[str, Any]] = {}
+    for joint in joints:
+        for group in groups.values():
+            if not isinstance(group, Mapping):
+                continue
+            if not any(re.fullmatch(str(p), joint) for p in group.get("joint_names_expr") or []):
+                continue
+            effort = next(
+                (e for key in ("effort_limit_sim", "effort_limit", "actuator_effort_limit", "saturation_effort")
+                 if (e := _per_joint(group.get(key), joint)) is not None),
+                None,
+            )  # fmt: skip
+            out[joint] = {
+                "model": _basename(group.get("class_type")),
+                "stiffness": _per_joint(group.get("stiffness"), joint),
+                "damping": _per_joint(group.get("damping"), joint),
+                "effort_limit": effort,
+            }
+            break
+    return out
+
+
+def attach_env_cfg(contract: Mapping[str, Any], env_cfg: Mapping[str, Any] | None) -> dict[str, Any]:
+    """*contract* plus what only the run's ``params/env.yaml`` records: term order, clips and actuators."""
+    if not env_cfg:
+        return dict(contract)
+    group = str(contract.get("obs_group") or "policy")
+    return {
+        **contract,
+        "env_obs_terms": env_cfg_terms(env_cfg, group=group),
+        "actuators": env_cfg_actuators(env_cfg, list(contract.get("action_keys") or [])),
+    }
+
+
+def _merge_env_terms(contract: Mapping[str, Any], unaccounted: int) -> list[dict[str, Any]] | None:
+    """The full layout: env.yaml's term order, the descriptors' widths, the one undescribed term's gap."""
+    described = list(contract.get("obs_layout") or [])
+    env_terms = list(contract.get("env_obs_terms") or [])
+    if not env_terms:
+        return None
+    layout, start, missing = [], 0, 0
+    for term in env_terms:
+        match = next((d for d in described if d["name"] == term["func"]), None)
+        if match is not None:
+            described.remove(match)
+            width = int(match["width"])
+            entry = {**match, **term}
+        else:
+            missing += 1
+            width = unaccounted
+            entry = {"name": term["func"], "type": term["func"], **term}
+        entry.update(start=start, width=width)
+        layout.append(entry)
+        start += width
+    if described or missing > 1 or (missing == 1 and unaccounted == 0) or (missing == 0 and unaccounted):
+        return None
+    return layout
+
+
 def complete_obs_layout(contract: Mapping[str, Any], *, num_actor_obs: int) -> dict[str, Any]:
     """*contract* with ``obs_layout_complete`` and ``obs_unaccounted`` set against the actor's width.
 
@@ -224,7 +328,123 @@ def complete_obs_layout(contract: Mapping[str, Any], *, num_actor_obs: int) -> d
     export keeps it and says how many input values the layout leaves unnamed.
     """
     unaccounted = max(0, num_actor_obs - int(contract.get("num_obs") or 0))
+    merged = _merge_env_terms(contract, unaccounted)
+    if merged is not None and unaccounted:
+        # The run's env.yaml names the term the descriptors skip, in order.
+        return {**contract, "obs_layout": merged, "num_obs": num_actor_obs, "obs_layout_complete": True,
+                "obs_unaccounted": 0}  # fmt: skip
+    if merged is not None:
+        contract = {**contract, "obs_layout": merged}
     return {**contract, "obs_layout_complete": unaccounted == 0, "obs_unaccounted": unaccounted}
+
+
+def _rotate_to_body(quat_wxyz: Sequence[float], vec: Sequence[float]) -> list[float]:
+    """``R(q)^T v``: a world-frame vector in the body frame of unit quaternion ``(w, x, y, z)``."""
+    w, x, y, z = (float(c) for c in quat_wxyz)
+    vx, vy, vz = (float(c) for c in vec)
+    # Rotation by the conjugate quaternion (w, -x, -y, -z).
+    tx, ty, tz = 2 * (-y * vz + z * vy), 2 * (-z * vx + x * vz), 2 * (-x * vy + y * vx)
+    return [vx + w * tx + (-y * tz + z * ty), vy + w * ty + (-z * tx + x * tz), vz + w * tz + (-x * ty + y * tx)]
+
+
+def _vector(observation: Mapping[str, Any], key: str, width: int) -> list[float]:
+    value = observation.get(key)
+    if value is None or isinstance(value, str | bytes):
+        raise DeployContractError(f"the observation has no {key!r}, which the actor's observation is built from")
+    values = [float(v) for v in value]
+    if len(values) != width:
+        raise DeployContractError(f"observation {key!r} has {len(values)} values, expected {width}")
+    return values
+
+
+def build_policy_obs(
+    contract: Mapping[str, Any],
+    observation: Mapping[str, Any],
+    *,
+    joint_keys: Mapping[str, str],
+    last_action: Sequence[float],
+    command: Sequence[float] | None = None,
+    obs_terms: Mapping[str, Sequence[float]] | None = None,
+) -> list[float]:
+    """Assemble the actor's input vector from a strands observation, term by term, as Isaac Lab would.
+
+    strands reports ``base_quat`` as ``[w, x, y, z]``, ``base_lin_vel`` in the
+    WORLD frame and ``base_ang_vel`` in the BODY frame (MuJoCo's free-joint
+    convention); Isaac Lab 3.0's terms want body-frame velocities and gravity
+    projected into the body. Each supported term is computed in that frame:
+
+    * ``base_lin_vel`` = R(q)^T v_world; ``base_ang_vel`` as reported;
+      ``projected_gravity`` = R(q)^T (0, 0, -1);
+    * ``generated_commands``: *command* (default: zeros = stand still);
+    * ``joint_pos_rel`` = q - the run's default pose, ``joint_vel_rel`` = qd,
+      read by joint name through *joint_keys*;
+    * ``last_action``: *last_action*, the actor's previous raw output;
+    * ``height_scan``: flat ground at z = 0 under the base, i.e.
+      ``base_z - offset`` for every ray (Isaac Lab's default offset 0.5);
+    * any other term: *obs_terms*[name] (by env term name or function name).
+
+    The term's ``scale`` and ``clip`` from the run's config are then applied.
+
+    Raises:
+        DeployContractError: The layout is incomplete, a term is unknown and
+            not supplied, or the observation lacks what a term reads.
+    """
+    if not contract.get("obs_layout_complete"):
+        raise DeployContractError(
+            f"the contract describes {contract.get('num_obs')} of the actor's input values "
+            f"({contract.get('obs_unaccounted')} unaccounted), so the observation cannot be built; "
+            "pass the whole vector as 'policy_obs'"
+        )
+    supplied = dict(obs_terms or {})
+    out: list[float] = []
+    for term in contract["obs_layout"]:
+        func, name, width = (
+            str(term.get("func") or term["name"]),
+            str(term.get("term") or term["name"]),
+            int(term["width"]),
+        )
+        if name in supplied or func in supplied:
+            values = [float(v) for v in supplied.get(name, supplied.get(func, []))]
+        elif func == "base_lin_vel":
+            values = _rotate_to_body(_vector(observation, "base_quat", 4), _vector(observation, "base_lin_vel", 3))
+        elif func == "base_ang_vel":
+            values = _vector(observation, "base_ang_vel", 3)
+        elif func == "projected_gravity":
+            values = _rotate_to_body(_vector(observation, "base_quat", 4), [0.0, 0.0, -1.0])
+        elif func == "generated_commands":
+            values = [float(v) for v in (command if command is not None else [0.0] * width)]
+        elif func in ("joint_pos_rel", "joint_vel_rel"):
+            joints = term.get("joint_names") or list(contract.get("action_keys") or [])
+            default = contract.get("default_joint_pos") or {}
+            offsets = term.get("joint_offsets") or [float(default.get(j, 0.0)) for j in joints]
+            suffix = "" if func == "joint_pos_rel" else ".vel"
+            values = []
+            for joint, offset in zip(joints, offsets, strict=False):
+                key = joint_keys.get(joint, joint) + suffix
+                if key not in observation:
+                    raise DeployContractError(f"the observation has no {key!r} for the actor's {func} term")
+                values.append(float(observation[key]) - (float(offset) if suffix == "" else 0.0))
+        elif func == "last_action":
+            values = [float(v) for v in last_action]
+        elif func == "height_scan":
+            base = _vector(observation, "base_pos", 3)
+            offset = float((term.get("params") or {}).get("offset", 0.5))
+            values = [base[2] - offset] * width
+        else:
+            raise DeployContractError(
+                f"the actor reads an Isaac Lab {func!r} term ({name}) strands does not compute; pass its "
+                f"{width} values as obs_terms={{{name!r}: [...]}}"
+            )
+        if len(values) != width:
+            raise DeployContractError(f"term {name!r} produced {len(values)} values, the actor reads {width}")
+        scale = term.get("scale")
+        if isinstance(scale, int | float) and not isinstance(scale, bool):
+            values = [v * float(scale) for v in values]
+        clip = term.get("clip")
+        if isinstance(clip, Sequence) and len(clip) == 2:
+            values = [min(max(v, float(clip[0])), float(clip[1])) for v in values]
+        out += values
+    return out
 
 
 def apply_action_contract(contract: Mapping[str, Any], raw: Sequence[float]) -> dict[str, float]:
@@ -258,6 +478,8 @@ __all__ = [
     "ISAACLAB_QUAT_ORDER",
     "POSITION_ACTION_TERMS",
     "apply_action_contract",
+    "attach_env_cfg",
+    "build_policy_obs",
     "complete_obs_layout",
     "contract_from_io_descriptors",
     "contract_problems",
