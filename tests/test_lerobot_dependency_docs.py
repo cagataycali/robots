@@ -639,12 +639,17 @@ def test_lerobot_local_page_names_lerobots_own_diffusion_extra() -> None:
     assert "diffusion" in intro and "extra" in intro, intro
 
 
-def test_the_extras_the_page_names_exist_in_lerobot() -> None:
-    """Every ``lerobot[<extra>]`` the fence names is an extra the installed lerobot declares."""
+def _lerobot_provided_extras_or_skip() -> set[str]:
+    """The ``Provides-Extra`` names of the installed lerobot; skips the test without one."""
     try:
-        provided = set(metadata.metadata("lerobot").get_all("Provides-Extra") or [])
+        return set(metadata.metadata("lerobot").get_all("Provides-Extra") or [])
     except metadata.PackageNotFoundError:
         pytest.skip("lerobot is not installed here")
+
+
+def test_the_extras_the_page_names_exist_in_lerobot() -> None:
+    """Every ``lerobot[<extra>]`` the fence names is an extra the installed lerobot declares."""
+    provided = _lerobot_provided_extras_or_skip()
     fence = _LEROBOT_LOCAL.read_text().split("```bash", 1)[1].split("```", 1)[0]
     named = set(re.findall(r"lerobot\[([a-z0-9_,-]+)\]", fence))
     named = {part for group in named for part in group.split(",")}
