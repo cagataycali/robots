@@ -12,7 +12,7 @@ import pytest
 import torch  # real or conftest mock - both work
 
 from strands_robots.policies import create_policy
-from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
+from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy, best_inference_device
 from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 from strands_robots.policies.lerobot_local.resolution import (
     _read_policy_type_from_config,
@@ -446,7 +446,8 @@ class TestLoadModel:
                 policy._load_model()
 
         assert policy._loaded is True
-        assert policy._device == torch.device("cpu")
+        # The checkpoint's config.device is where it was trained, not a request.
+        assert policy._device == torch.device(best_inference_device())
 
     def test_load_without_policy_type_resolves_from_hub(self):
 
@@ -473,7 +474,7 @@ class TestLoadModel:
         assert policy.policy_type == "diffusion"
         assert policy._loaded is True
 
-    def test_device_from_config(self):
+    def test_the_config_device_is_not_a_request(self):
 
         mock_policy_cls = MagicMock()
         mock_inner = MagicMock()
@@ -495,7 +496,7 @@ class TestLoadModel:
             ):
                 policy._load_model()
 
-        assert policy._device == torch.device("cpu")
+        assert policy._device == torch.device(best_inference_device())
 
     def test_auto_generates_state_keys_from_output(self):
 

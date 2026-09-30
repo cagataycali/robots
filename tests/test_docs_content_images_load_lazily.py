@@ -17,15 +17,15 @@ or script claims the job the parser has already started.
 
 from __future__ import annotations
 
-import importlib.util
 import re
 from pathlib import Path
 
 import pytest
 
+from tests._docs_hooks import docs_hook
+
 _REPO = Path(__file__).resolve().parents[1]
 _DOCS = _REPO / "docs"
-_HOOK = _DOCS / "hooks" / "robot_pages.py"
 _OVERRIDES = _REPO / "overrides"
 _MKDOCS = _REPO / "mkdocs.yml"
 
@@ -37,11 +37,7 @@ _SCRIPT_SETS_LOADING = re.compile(r"""\.loading\s*=|setAttribute\(\s*["']loading
 
 def _hook():
     """The robot-pages hook, loaded by path: the docs venv is not the test venv."""
-    spec = importlib.util.spec_from_file_location("docs_robot_pages_hook", _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("robot_pages")
 
 
 def _emitted_html() -> dict[str, str]:

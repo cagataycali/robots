@@ -180,6 +180,14 @@ _SIM_INPUT_SCHEMA: dict[str, Any] = {
             "description": "execute/start with lerobot_local: the Hub checkpoint, e.g. lerobot/smolvla_base",
         },
         "policy_type": {"type": "string", "description": "execute/start with lerobot_local: act, smolvla, pi0, ..."},
+        "embodiment": {
+            "type": "string",
+            "description": (
+                "execute/start with lerobot_local: the registry embodiment the checkpoint was trained for "
+                "(e.g. so101); it carries the unit frame and the camera renames, so a degrees trained "
+                "checkpoint is not applied in radians"
+            ),
+        },
         "duration": {"type": "number", "description": "execute/start: seconds (positive, finite)"},
         "robot_name": {"type": "string", "description": "a Simulation holding several robots: which one"},
     },
@@ -298,8 +306,24 @@ _SIM_FIELDS: dict[str, tuple[str, ...]] = {
     "reset": ("robot_name",),
     "step": ("steps",),
     "stop": (),
-    "execute": ("instruction", "policy_provider", "pretrained_name_or_path", "policy_type", "duration", "robot_name"),
-    "start": ("instruction", "policy_provider", "pretrained_name_or_path", "policy_type", "duration", "robot_name"),
+    "execute": (
+        "instruction",
+        "policy_provider",
+        "pretrained_name_or_path",
+        "policy_type",
+        "embodiment",
+        "duration",
+        "robot_name",
+    ),
+    "start": (
+        "instruction",
+        "policy_provider",
+        "pretrained_name_or_path",
+        "policy_type",
+        "embodiment",
+        "duration",
+        "robot_name",
+    ),
 }
 
 

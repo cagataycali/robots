@@ -63,7 +63,7 @@
         "kind": "whole-body controller, SONIC",
         "provider": "wbc",
         "where": "sim, laptop CPU",
-        "result": "100 steps at 50 Hz in 2.0 s, 1.7 ms inference, the G1 walked 0.665 m and stayed upright (pelvis 0.793 to 0.747 m); drives 15 of 29 actuators by design, so partial_action_failure_rate reads 0.48 on a healthy rollout. A HuggingFace id is refused (#4161): pass the local directory",
+        "result": "100 steps at 50 Hz in 2.0 s, 1.7 ms inference, the G1 walked 0.665 m and stayed upright (pelvis 0.793 to 0.747 m); drives 15 of 29 actuators by design, so partial_action_failure_rate reads 0.48 on a healthy rollout. A HuggingFace id fails (#4161; `nvidia/GEAR-SONIC` pre-download): pass the directory",
         "source": "interface sweep 2026-09-28 script sim-policies/06b and issue #4161"
       },
       {
