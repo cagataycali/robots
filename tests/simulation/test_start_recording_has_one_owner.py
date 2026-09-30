@@ -17,14 +17,13 @@ import pytest
 
 import strands_robots.simulation as simulation_pkg
 from strands_robots.simulation.recording import DatasetRecordingMixin
+from tests._package_ast import parse_file
 
 _ROOT = Path(simulation_pkg.__file__).parent
 
 
 def _defines(path: Path, name: str) -> bool:
-    return any(
-        isinstance(node, ast.FunctionDef) and node.name == name for node in ast.walk(ast.parse(path.read_text()))
-    )
+    return any(isinstance(node, ast.FunctionDef) and node.name == name for node in ast.walk(parse_file(path)))
 
 
 @pytest.mark.parametrize("backend", ["mujoco", "isaac", "newton"])

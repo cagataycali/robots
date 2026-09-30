@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 from strands_robots.mesh.session import HEARTBEAT_HZ, PeerInfo
+from tests._package_ast import parse_file
 
 _EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "04_mesh_peer_discovery.py"
 
@@ -73,7 +74,7 @@ def _identity_expression() -> str:
     A name is resolved to the module-level expression assigned to it, so the
     identity is read whether it is written at the call or derived above it.
     """
-    tree = ast.parse(_EXAMPLE.read_text())
+    tree = parse_file(_EXAMPLE)
     given: ast.expr | None = None
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Robot":

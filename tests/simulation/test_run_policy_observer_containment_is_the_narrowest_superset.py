@@ -58,6 +58,7 @@ import pytest
 from strands_robots.simulation import policy_runner as policy_runner_module
 from strands_robots.simulation.observers import RunPolicyStep
 from strands_robots.simulation.policy_runner import CooperativeStop
+from tests._package_ast import parse_file
 from tests.simulation.test_run_policy_observer import (
     _json,
     _run,
@@ -78,7 +79,7 @@ def _module_tree() -> ast.Module:
     dedented fragment loses the enclosing ``try`` the second group is about.
     """
     path = Path(inspect.getfile(policy_runner_module))
-    return ast.parse(path.read_text(encoding="utf-8"))
+    return parse_file(path)
 
 
 def _handlers_in(owner: str) -> list[ast.ExceptHandler]:

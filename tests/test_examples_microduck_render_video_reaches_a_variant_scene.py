@@ -54,6 +54,8 @@ from types import ModuleType
 
 import pytest
 
+from tests._package_ast import parse_file
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLE = _REPO_ROOT / "examples" / "microduck" / "render_video.py"
 _DOCS_PAGE = _REPO_ROOT / "docs" / "learn" / "policies" / "microduck.md"
@@ -224,7 +226,7 @@ class TestTheResolutionIsSingleSourced:
 
     def test_the_resolver_consults_the_shared_search_paths(self) -> None:
         """Not a hardcoded ``~/.strands_robots`` path, so ``STRANDS_ASSETS_DIR`` is honored."""
-        tree = ast.parse(_EXAMPLE.read_text(encoding="utf-8"))
+        tree = parse_file(_EXAMPLE)
         resolver = next(
             node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_resolve_scene"
         )
@@ -234,7 +236,7 @@ class TestTheResolutionIsSingleSourced:
         assert "get_search_paths" in names, sorted(names)
 
     def test_the_command_line_declares_the_scene_flag(self) -> None:
-        tree = ast.parse(_EXAMPLE.read_text(encoding="utf-8"))
+        tree = parse_file(_EXAMPLE)
         flags = {
             argument.value
             for node in ast.walk(tree)
