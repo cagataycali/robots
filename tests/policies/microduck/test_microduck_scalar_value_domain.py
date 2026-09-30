@@ -48,6 +48,7 @@ import pytest
 
 from strands_robots.policies.microduck import MicroduckPolicy, MicroduckPolicyBundle
 from strands_robots.policies.microduck.policy import MICRODUCK_DEFAULT_POSE, MICRODUCK_JOINT_NAMES
+from tests._package_ast import parse_file
 from tests.policies.microduck.test_microduck_policy import _obs_dict, _StubSession
 
 #: The values neither knob can use. Every one of them was accepted before, and
@@ -259,7 +260,7 @@ class TestEveryCallerSuppliedScalarConsultsADomain:
     def _scalar_knobs() -> dict[str, list[str]]:
         found: dict[str, list[str]] = {}
         for path in sorted(_PACKAGE.glob("*.py")):
-            tree = ast.parse(path.read_text())
+            tree = parse_file(path)
             for klass in ast.walk(tree):
                 if not isinstance(klass, ast.ClassDef) or klass.name.startswith("_"):
                     continue
@@ -281,7 +282,7 @@ class TestEveryCallerSuppliedScalarConsultsADomain:
 
     @staticmethod
     def _consults_a_domain(path: pathlib.Path, fn_name: str, param: str) -> bool:
-        tree = ast.parse(path.read_text())
+        tree = parse_file(path)
         for fn in ast.walk(tree):
             if not isinstance(fn, ast.FunctionDef) or fn.name != fn_name:
                 continue

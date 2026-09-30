@@ -44,6 +44,7 @@ from typing import Any
 import pytest
 
 import strands_robots.policies as policies_pkg
+from tests._package_ast import parse_file
 
 _POLICIES_DIR = Path(policies_pkg.__file__).parent
 _PACKAGE_DIR = _POLICIES_DIR.parent
@@ -84,7 +85,7 @@ def _inferred_ordering_fallbacks() -> dict[str, str]:
     """
     found: dict[str, str] = {}
     for source_file in sorted(_PACKAGE_DIR.rglob("*.py")):
-        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        tree = parse_file(source_file)
         for node in ast.walk(tree):
             if not (isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)):
                 continue
@@ -146,7 +147,7 @@ def _resolver_inferred_returns() -> dict[str, str]:
     """
     found: dict[str, str] = {}
     for source_file in sorted(_PACKAGE_DIR.rglob("*.py")):
-        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        tree = parse_file(source_file)
         for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
@@ -204,7 +205,7 @@ def _rule_definitions() -> list[str]:
     """Every ``def drop_velocity_siblings`` in the package, as ``relpath:lineno``."""
     sites: list[str] = []
     for source_file in sorted(_PACKAGE_DIR.rglob("*.py")):
-        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        tree = parse_file(source_file)
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.endswith(_RULE_NAME):
                 sites.append(f"{source_file.relative_to(_PACKAGE_DIR)}:{node.lineno}")

@@ -50,6 +50,7 @@ from strands_robots.drivers import (
 )
 from strands_robots.registry import DEFAULT_DRIVER, DRIVER_CHOICES, get_driver, get_robot
 from strands_robots.registry.loader import _validate
+from tests._package_ast import parse_file
 
 # A robot every real-mode test builds. Registered, has a lerobot type, and its
 # driver comes from the default rather than a declaration.
@@ -597,7 +598,7 @@ class TestTheSeamIsReachableAsDocumented:
         """
         heavy = ("lerobot", "torch", "mujoco", "numpy", "cv2")
         for module_path in sorted(Path(__file__).parent.parent.glob("strands_robots/drivers/*.py")):
-            tree = ast.parse(module_path.read_text(encoding="utf-8"))
+            tree = parse_file(module_path)
             for node in tree.body:  # module level only; a lazy import is fine
                 names = []
                 if isinstance(node, ast.Import):

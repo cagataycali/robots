@@ -39,6 +39,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_file
 
 _PACKAGE_DIR = Path(strands_robots.__file__).resolve().parent
 _PACKAGE_NAME = _PACKAGE_DIR.name
@@ -114,7 +115,7 @@ def _docstring_offenders() -> dict[str, list[str]]:
     """Map ``relpath::qualname`` -> internal citations found in that docstring."""
     offenders: dict[str, list[str]] = {}
     for source_file in _SOURCE_FILES:
-        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        tree = parse_file(source_file)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
                 continue

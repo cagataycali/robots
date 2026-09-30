@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from strands_robots.doctor import check_sim_smoke
+from tests._package_ast import parse_file
 
 # The marker MuJoCo writes when a GL context is freed after EGL is gone. Stated
 # here rather than imported so these cells grade the observable text a reader
@@ -100,7 +101,7 @@ def _robot_doubles_in_the_doctor_suite() -> dict[str, set[str]]:
     ``step`` and ``get_observation`` is standing in for what ``check_sim_smoke``
     drives, whatever it is called.
     """
-    tree = ast.parse(_DOCTOR_SUITE.read_text(encoding="utf-8"))
+    tree = parse_file(_DOCTOR_SUITE)
     doubles: dict[str, set[str]] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):

@@ -48,6 +48,7 @@ from strands_robots.simulation.observers import (
     RunPolicyStarted,
     RunPolicyStep,
 )
+from tests._package_ast import parse_file
 
 N_STEPS = 12
 CONTROL_HZ = 30.0
@@ -245,7 +246,7 @@ def _observer_surfaces() -> list[tuple[str, ast.AST]]:
     found: list[tuple[str, ast.AST]] = []
     for path in sorted(_scan_root().rglob("*.py")):
         try:
-            tree = ast.parse(path.read_text())
+            tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - the package parses
             continue
         for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
