@@ -22,6 +22,8 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+import pytest
+
 from strands_robots.mesh import Mesh
 
 
@@ -344,12 +346,15 @@ def test_execute_forwards_optional_run_kwargs() -> None:
     assert kwargs["n_steps"] == 100
 
 
-def test_hardware_path_unchanged_when_run_policy_absent() -> None:
+def test_hardware_path_unchanged_when_run_policy_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     """A peer without ``run_policy`` / ``_world`` still hits the HardwareRobot branch.
 
     Regression guard: the sim branch must be additive - existing
     HardwareRobot peers see no behaviour change.
     """
+    # The operator on the robot host pre-approves wire motion; without it a
+    # hardware peer refuses execute/start/teleop_receive (f011).
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
 
     class _FakeHardware:
         def __init__(self) -> None:

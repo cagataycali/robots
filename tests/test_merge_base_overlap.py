@@ -39,6 +39,8 @@ from typing import cast
 
 import pytest
 
+from tests._docs_hooks import docs_hook
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SCRIPT_PATH = _REPO_ROOT / "scripts" / "check_merge_base_overlap.py"
 
@@ -1312,12 +1314,7 @@ def _budget_value(value: ast.expr) -> int:
     if isinstance(value, ast.Constant) and isinstance(value.value, int):
         return value.value
     assert isinstance(value, ast.Attribute) and value.attr == "LIMIT", ast.unparse(value)
-    hook_path = _REPO_ROOT / "docs" / "hooks" / "word_budget.py"
-    spec = importlib.util.spec_from_file_location("docs_word_budget_hook_overlap", hook_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    limit = module.LIMIT
+    limit = docs_hook("word_budget").LIMIT
     assert isinstance(limit, int)
     return limit
 
