@@ -5,8 +5,9 @@ import { planRetry, CHURN_OPENS_PER_MIN } from '../lib/cameraRetry'
 import { authToken } from '../lib/endpoints'
 import { sessionVerdict } from '../lib/sessionExpiry'
 import { pacingFromNotice, nextRequestedFps } from '../lib/cameraPacing'
+import { cameraLatencyLabel, cameraPathLabel } from '../lib/cameraPath'
 
-interface Meta { t?: number; shape?: number[]; encoding?: string; displayable?: boolean; error?: string }
+interface Meta { t?: number; shape?: number[]; encoding?: string; displayable?: boolean; error?: string; via?: string; latency_ms?: number | null }
 
 /** Binary JPEG stream over /ws/camera/{peer}/{cam} → <img>. */
 /** What a struggling viewer asks for: one frame a second still shows a moving arm. */
@@ -172,6 +173,10 @@ export default function CameraTile({ peerId, cam, big = false, meta, onConfigure
         {cam}
         {status.live && fps > 0 && <em> {fps.toFixed(0)}fps</em>}
         {shape && <em> {shape}</em>}
+        {/* Over AWS IoT Core the frame came through an S3 reference the bridge resolved, and the
+            publisher-to-dashboard latency is the number worth reading next to the picture. */}
+        {cameraPathLabel(meta) && <em title="the robot published an S3 reference; the dashboard fetched the frame"> {cameraPathLabel(meta)}</em>}
+        {cameraLatencyLabel(meta) && <em title="publisher clock to dashboard receive"> {cameraLatencyLabel(meta)}</em>}
       </span>
       {onConfigure && (
         <button className="camcfg" onClick={onConfigure}

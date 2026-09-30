@@ -2013,3 +2013,7 @@ pre.startsnip {
 .sim-joint .val { text-align: right; color: var(--text-2); }
 .sim-foot { display: flex; align-items: center; gap: 10px; font-size: var(--fs-small); color: var(--dim); flex-wrap: wrap; }
 .sim-foot .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }
+/* The ping verdict beside the registry card's button: one word, the broker's or the Thing's. */
+.card.registry .pingnote { font-family: var(--mono); font-size: var(--fs-micro); color: var(--dim); margin-left: var(--s2); }
+.card.registry .pingnote.answered { color: var(--accent); }
+.card.registry .pingnote.offline, .card.registry .pingnote.forbidden, .card.registry .pingnote.error { color: var(--amber); }

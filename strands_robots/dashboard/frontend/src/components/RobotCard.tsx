@@ -81,16 +81,6 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
             external
           </span>
         )}
-        {/* Which path the heartbeat took: a fleet owner reads lan / iot / both to know whether a robot is
-            reachable over the LAN, over AWS IoT Core, or over the bridge on both. */}
-        {(peer.reach === 'lan' || peer.reach === 'iot' || peer.reach === 'both') && (
-          <span className={`reachchip ${peer.reach}`}
-                title={peer.reach === 'lan' ? 'presence arrived on the Zenoh (LAN) leg'
-                  : peer.reach === 'iot' ? 'presence arrived over AWS IoT Core'
-                  : 'presence arrived on both the LAN and the AWS IoT Core leg (bridge)'}>
-            {peer.reach}
-          </span>
-        )}
         {/* the bus cure is silent by design, so the count is the only evidence a cable is failing. */}
         {(() => {
           const bus = busRecoveryBadge(peer.state?.bus_recoveries)
@@ -99,6 +89,17 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
           ) : null
         })()}
         {p?.hostname && <span className="host">{p.hostname}</span>}
+        {/* Which path the heartbeat took, beside the host it came from: a fleet owner reads lan / iot / both
+            to know whether a robot is reachable over the LAN, over AWS IoT Core, or over the bridge on both.
+            Sits after the host so a seventh badge never truncates the peer name. */}
+        {(peer.reach === 'lan' || peer.reach === 'iot' || peer.reach === 'both') && (
+          <span className={`reachchip ${peer.reach}`}
+                title={peer.reach === 'lan' ? 'presence arrived on the Zenoh (LAN) leg'
+                  : peer.reach === 'iot' ? 'presence arrived over AWS IoT Core'
+                  : 'presence arrived on both the LAN and the AWS IoT Core leg (bridge)'}>
+            {peer.reach}
+          </span>
+        )}
         {p?.connected === false && type === 'robot' && (
           <span className="badge warn" title="peer is online but its hardware is not connected">hw off</span>
         )}

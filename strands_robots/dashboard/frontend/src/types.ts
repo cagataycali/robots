@@ -135,7 +135,7 @@ export interface Peer {
   presence?: Presence
   state?: PeerState
   stream?: StreamStep
-  cameras?: Record<string, { t?: number; shape?: number[] }>
+  cameras?: Record<string, { t?: number; shape?: number[]; via?: string; latency_ms?: number | null; error?: string }>
   /** SensorLoops topics, each absent until the robot publishes it. An arm publishes none of
    *  them and is not broken, so absence is never rendered as a fault (lib/sensorFreshness). */
   pose?: PosePayload
@@ -291,7 +291,7 @@ export type MeshEvent =
   | { type: 'presence'; peer_id: string; data: Presence }
   | { type: 'state'; peer_id: string; data: PeerState }
   | { type: 'stream'; peer_id: string; data: StreamStep }
-  | { type: 'camera_meta'; peer_id: string; cam: string; data: { t?: number; shape?: number[] } }
+  | { type: 'camera_meta'; peer_id: string; cam: string; data: { t?: number; shape?: number[]; via?: string; latency_ms?: number | null; error?: string } }
   | { type: 'pose'; peer_id: string; data: PosePayload }
   | { type: 'health'; peer_id: string; data: HealthPayload }
   | { type: 'imu'; peer_id: string; data: ImuPayload }
@@ -322,4 +322,18 @@ export interface RegistryView {
   indexed?: boolean
   things: RegistryThing[]
   count?: number
+  /** The dashboard's mesh backend; `ping_available` is true on iot and bridge, where a Thing can be addressed. */
+  backend?: string
+  ping_available?: boolean
+}
+
+/** `POST /api/robots/{thing}/ping`: one direct round trip, mapped to a closed set of words. */
+export interface PingResult {
+  thing: string
+  verdict: 'answered' | 'offline' | 'forbidden' | 'silent' | 'unavailable' | 'refused' | 'error' | string
+  reason?: string
+  latency_ms?: number | null
+  /** Client side: when the answer arrived, so the label can age. */
+  at?: number
+  pending?: boolean
 }

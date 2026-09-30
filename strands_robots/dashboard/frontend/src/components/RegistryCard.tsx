@@ -1,4 +1,5 @@
-import type { RegistryThing } from '../types'
+import type { PingResult, RegistryThing } from '../types'
+import { pingLabel } from '../lib/pingVerdict'
 
 /** How long ago `t` (epoch seconds) was, or "never heard" when nothing is known. */
 export function lastSeenLabel(t: number | null | undefined, now = Date.now() / 1000): string {
@@ -11,9 +12,11 @@ export function lastSeenLabel(t: number | null | undefined, now = Date.now() / 1
 }
 
 /** A provisioned AWS IoT Thing that is not speaking on the mesh: a grey card so a fleet owner
- *  sees what exists next to what is live. Read only; the one action, ping, is wired in phase 2
- *  through the same command gate as every other command. */
-export default function RegistryCard({ thing, onPing }: { thing: RegistryThing; onPing?: (name: string) => void }) {
+ *  sees what exists next to what is live. Read only but for ping: one `status` read sent point to
+ *  point over AWS IoT Core, answered by the broker (404 = offline) or by the Thing. */
+export default function RegistryCard({ thing, onPing, ping }: {
+  thing: RegistryThing; onPing?: (name: string) => void; ping?: PingResult
+}) {
   const attrs = Object.entries(thing.attributes ?? {})
   const verdict = thing.connectivity === 'connected' ? 'broker says connected'
     : thing.connectivity === 'disconnected' ? 'broker says disconnected'
@@ -33,10 +36,11 @@ export default function RegistryCard({ thing, onPing }: { thing: RegistryThing; 
       )}
       {onPing && (
         <div className="controls">
-          <button className="btn ghost small" onClick={() => onPing(thing.thing_name)}
+          <button className="btn ghost small" onClick={() => onPing(thing.thing_name)} disabled={!!ping?.pending}
                   title="one direct message round trip over AWS IoT Core; an offline Thing answers 404 in under a second">
             ping
           </button>
+          {ping && <span className={`pingnote ${ping.verdict}`} role="status" title={ping.reason || undefined}>{pingLabel(ping)}</span>}
         </div>
       )}
     </div>
