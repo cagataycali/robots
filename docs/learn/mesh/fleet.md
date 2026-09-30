@@ -1,3 +1,7 @@
+---
+description: List peers, ask one for its state, hand one a task, fan a command out; the same from an agent, with approvals.
+---
+
 # Fleet
 
 At the end of this page you can list the peers on a mesh, ask one for its state, hand one a policy task, fan a command out to all, subscribe to a peer's topics, and do the same from an agent through the `robot_mesh` tool with its approvals in place.
@@ -17,7 +21,7 @@ a.mesh.unsubscribe("arm-b-state")
 
 ## Join and discover
 
-A peer joins when its `Mesh.start()` runs: `Robot(..., mesh=True)` does it in the constructor, `init_mesh(obj, peer_id=)` does it for anything else. `peer_id` starts with a letter or digit and continues with letters, digits, `.`, `_`, `-` (128 characters at most); one is generated when omitted. Presence is a 2 Hz heartbeat on `strands/<peer>/presence`; a peer silent for `STRANDS_MESH_PEER_RETENTION_S` drops out of `peers`.
+A peer joins when its `Mesh.start()` runs: `Robot(..., mesh=True)` does it in the constructor, `init_mesh(obj, peer_id=)` does it for anything else. `peer_id` is letters, digits, `.`, `_`, `-` (128 characters at most, first one a letter or digit); one is generated when omitted. Presence is a 2 Hz heartbeat on `strands/<peer>/presence`; a peer silent for `STRANDS_MESH_PEER_RETENTION_S` drops out of `peers`.
 
 Every process on one host meets at the local router on `STRANDS_MESH_PORT` (7447). Across machines set `ZENOH_CONNECT` to the router's endpoint, or turn on `STRANDS_MESH_MULTICAST=true` on a network you trust.
 
@@ -52,9 +56,9 @@ agent = Agent(tools=[robot_mesh])
 agent("Which robots are online? Ask arm-b to wave for two seconds with the mock policy.")
 ```
 
-`robot_mesh(action, target=, instruction=, command=, policy_provider=, duration=, timeout=, name=, limit=, function=)` answers `peers`, `status`, `tell`, `send`, `ping`, `rpc`, `broadcast`, `stop`, `emergency_stop`, `subscribe`, `unsubscribe`, `watch`, `inbox`. `ping` reports whether one peer is reachable and how fast; over AWS IoT an offline peer answers in one round trip ([direct messaging](direct.md)). It needs a mesh in the process (`Robot(mesh=True)` or a gateway).
+`robot_mesh(action, target=, instruction=, command=, policy_provider=, duration=, timeout=, name=, limit=, function=)` answers `peers`, `status`, `tell`, `send`, `ping`, `rpc`, `broadcast`, `stop`, `emergency_stop`, `subscribe`, `unsubscribe`, `watch`, `inbox`. `ping` reports whether one peer is reachable and how fast; over AWS IoT an offline peer answers in one round trip ([direct messaging](direct.md)). The tool needs a mesh in the process (a `Robot(mesh=True)` or a gateway).
 
-Six actions pause for operator approval by default: `emergency_stop`, `broadcast`, `tell`, `send`, `stop`, `rpc`. `STRANDS_MESH_HITL_ACTIONS` widens or narrows that set (an unknown token is a structured error, not a silent downgrade); `subscribe` and `watch` can be added for operators who treat telemetry as sensitive. Fleet-wide actions (`emergency_stop`, `broadcast`) say so in the prompt. Each action has a sliding-window rate limit (`emergency_stop` at 3 per minute) and the refusal names the wait. `rpc` calls a device-native function on a Device Connect peer (`function=`), charset-checked with bounded parameters.
+Six actions pause for operator approval by default: `emergency_stop`, `broadcast`, `tell`, `send`, `stop`, `rpc`. `STRANDS_MESH_HITL_ACTIONS` widens or narrows that set (an unknown token is a structured error, not a silent downgrade); add `subscribe` and `watch` where telemetry is sensitive. Fleet-wide actions (`emergency_stop`, `broadcast`) say so in the prompt. Each action has a sliding-window rate limit (`emergency_stop` at 3 per minute) and the refusal names the wait. `rpc` calls a device-native function on a Device Connect peer (`function=`), validated for charset and bounded parameters.
 
 `subscribe` and `watch` are bounded by `STRANDS_MESH_SUBSCRIBE_ALLOW`; `inbox` reads what a subscription collected, `limit` rows at a time.
 
