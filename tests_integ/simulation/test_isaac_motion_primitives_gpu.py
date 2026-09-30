@@ -8,7 +8,7 @@ physics stepping, real ``dof_properties`` limits - covering the #2156
 acceptance criteria:
 
 * ``move_to`` to a known-reachable pose converges within ``tol`` (real mink
-  IK on the registered MJCF, real servo descent on the articulation);
+  IK on the loaded URDF description, real servo descent on the articulation);
 * ``move_to`` to an unreachable target (inside the workspace sanity radius,
   beyond the arm's reach) answers with the structured unreachable envelope
   carrying the IK residual - no hang, no raise, and physics does not step;
@@ -18,11 +18,11 @@ acceptance criteria:
 
 The robot is a self-contained inline URDF (the same 4-DOF positioner + jaw
 kinematics the unit suites and the MuJoCo motion-primitive suite solve on -
-no asset downloads), imported through the real Isaac URDF importer; its IK
-model is the matching inline MJCF registered via
-:func:`strands_robots.simulation.model_registry.register_urdf` under a
-test-unique ``data_config``. Known-reachable / unreachable targets are the
-solver-verified points the unit suites use.
+no asset downloads), imported through the real Isaac URDF importer; ``move_to``
+compiles the same URDF as its IK model (the loaded description wins, see
+``tests/simulation/isaac/test_move_to_solves_on_the_loaded_description.py``).
+Known-reachable / unreachable targets are the solver-verified points the unit
+suites use.
 
 Reset caution (#1895): ``reset()`` kills articulation handles on this
 backend (see ``tests/simulation/isaac/test_reset_revives_articulations.py``
@@ -164,43 +164,6 @@ ARM_URDF = """<?xml version="1.0"?>
 </robot>
 """
 
-# The IK model move_to solves on: same kinematics, same joint names, an
-# ``ee_site`` TCP site for EE-frame discovery. Identical to the unit suite's
-# ARM_XML with the jaw renamed to the URDF's 'Jaw'.
-ARM_MJCF = """
-<mujoco model="prim_arm_integ">
-  <compiler angle="radian" autolimits="true"/>
-  <option timestep="0.002" gravity="0 0 0"/>
-  <worldbody>
-    <body name="base" pos="0 0 0">
-      <geom type="cylinder" size="0.04 0.02"/>
-      <body name="link1" pos="0 0 0.05">
-        <joint name="shoulder_pan" type="hinge" axis="0 0 1" range="-3.14 3.14"/>
-        <geom type="capsule" fromto="0 0 0 0 0 0.2" size="0.02"/>
-        <body name="link2" pos="0 0 0.2">
-          <joint name="shoulder_lift" type="hinge" axis="0 1 0" range="-3.14 3.14"/>
-          <geom type="capsule" fromto="0 0 0 0.15 0 0" size="0.02"/>
-          <body name="link3" pos="0.15 0 0">
-            <joint name="elbow" type="hinge" axis="0 1 0" range="-3.14 3.14"/>
-            <geom type="capsule" fromto="0 0 0 0.15 0 0" size="0.018"/>
-            <body name="link4" pos="0.15 0 0">
-              <joint name="wrist_roll" type="hinge" axis="1 0 0" range="-3.0 3.0"/>
-              <geom type="capsule" fromto="0 0 0 0.05 0 0" size="0.015"/>
-              <site name="ee_site" pos="0.05 0 0"/>
-              <body name="jaw_body" pos="0.05 0 0">
-                <joint name="Jaw" type="hinge" axis="0 0 1" range="-0.2 1.5"/>
-                <geom type="box" size="0.01 0.01 0.02" contype="0" conaffinity="0"/>
-              </body>
-            </body>
-          </body>
-        </body>
-      </body>
-    </body>
-  </worldbody>
-</mujoco>
-"""
-
-_DATA_CONFIG = "prim_arm_integ"
 _JAW_RANGE = (-0.2, 1.5)  # the URDF's declared limits; open=HIGH, close=LOW
 
 # Solver-verified targets from the unit suites: REACHABLE is inside the
@@ -241,7 +204,6 @@ def sim_arm(tmp_path_factory):
     ``sim.step()`` settles physics after the import instead, the same
     sequence ``test_isaac_delta_eef_gpu.py`` documents as live-verified.
     """
-    from strands_robots.simulation import model_registry
     from strands_robots.simulation.isaac import IsaacConfig, IsaacSimulation
 
     _skip_if_isaac_unavailable()
@@ -249,18 +211,16 @@ def sim_arm(tmp_path_factory):
     workdir = tmp_path_factory.mktemp("prim_arm_integ")
     urdf_path = workdir / "prim_arm_integ.urdf"
     urdf_path.write_text(ARM_URDF)
-    mjcf_path = workdir / "prim_arm_integ.xml"
-    mjcf_path.write_text(ARM_MJCF)
-
-    # Point move_to's IK-model resolution at the matching MJCF. register_urdf
-    # writes module state, so the key is removed at teardown.
-    model_registry.register_urdf(_DATA_CONFIG, str(mjcf_path))
+    # No data_config / registry MJCF: move_to solves IK on the description the
+    # robot was built from (this URDF), so the EE frame is discovered from it -
+    # its terminal link, ``jaw_link``. (A registered MJCF was the pre-"description
+    # wins" route; it is now ignored with a divergence WARNING.)
 
     sim = IsaacSimulation(IsaacConfig(num_envs=1, headless=True))
     try:
         r = sim.create_world()
         assert r["status"] == "success", f"create_world: {r}"
-        r = sim.add_robot("arm", urdf_path=str(urdf_path), data_config=_DATA_CONFIG)
+        r = sim.add_robot("arm", urdf_path=str(urdf_path))
         assert r["status"] == "success", f"add_robot: {r}"
         # Settle the physics view; deliberately no reset() (see module
         # docstring and #1895).
@@ -268,7 +228,6 @@ def sim_arm(tmp_path_factory):
         yield sim
     finally:
         sim.destroy()
-        model_registry._URDF_REGISTRY.pop(_DATA_CONFIG, None)
 
 
 class TestMoveToGPU:
@@ -282,8 +241,8 @@ class TestMoveToGPU:
         payload = _json_block(result)
         assert payload["reached"] is True
         assert payload["position_error_m"] <= tol
-        assert payload["frame"] == "ee_site"
-        assert payload["frame_type"] == "site"
+        assert payload["frame"] == "jaw_link"
+        assert payload["frame_type"] == "body"
         # The reported EE position is a real FK readback, not the target
         # echoed: it must sit within tol of the target it converged to.
         assert np.linalg.norm(np.array(payload["ee_position"]) - np.array(REACHABLE)) <= tol

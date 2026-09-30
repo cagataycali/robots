@@ -11,7 +11,7 @@ backend inventory from the ``create_simulation`` table, so this backend was
 held to the rule the moment these methods appeared).
 
 Until this module, ``randomize`` and ``set_obs_noise`` on Isaac were the
-``SimEngine`` raising stubs - while ``docs/reference/simulation/domain-randomization.md``
+``SimEngine`` raising stubs - while ``docs/learn/simulation/randomization.md``
 and ~30 example call sites drive ``randomize()`` and ~10 drive
 ``set_obs_noise()`` through the backend-agnostic surface, so the identical
 script randomized on MuJoCo and Newton and raised ``NotImplementedError`` on

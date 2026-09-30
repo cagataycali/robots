@@ -170,12 +170,12 @@ class TestARequiredKeywordIsJudgedBeforeTheBuild:
     ``requires`` names the keywords a provider cannot be built usefully without,
     and two of them are not enforced by the constructor they are for.
     ``LerobotLocalPolicy`` defaults ``pretrained_name_or_path=""`` and loads
-    lazily; ``Gr00tPolicy`` accepts no ``port`` and falls back to a default
+    lazily; a ZMQ sidecar client accepts no ``port`` and falls back to a default
     nobody serves. Both therefore *built*, this verb answered ``success``, and
     the rollout it started held a live arm for one step it could never take:
     measured on a fake controller, ``lerobot_local`` with no checkpoint reached
     ``exit_reason="policy"`` / ``steps: 0`` with "No model loaded and no
-    pretrained_name_or_path set", and ``groot`` with no port sat at
+    pretrained_name_or_path set", and a sidecar provider with no port sat at
     ``running=True`` / ``steps: 0`` for ~15 s of a 2 s budget before a
     ``ConnectionError`` to ``tcp://localhost:5555``.
 
@@ -212,7 +212,7 @@ class TestARequiredKeywordIsJudgedBeforeTheBuild:
         parameter and is judged by its own guard -- this verb puts it in the
         kwargs it builds from, so it is judged with the rest.
         """
-        text = text_of(driver.start_task("pick up the cube", policy_provider="groot"))
+        text = text_of(driver.start_task("pick up the cube", policy_provider="moveit2"))
         assert "builds its policy from port" in text
         assert "the port the policy server listens on" in text
 
@@ -225,7 +225,7 @@ class TestARequiredKeywordIsJudgedBeforeTheBuild:
             return ROLLED_OUT
 
         monkeypatch.setattr(URDriver, "run_policy", record)
-        envelope = driver.start_task("pick up the cube", policy_provider="groot", policy_port=5555)
+        envelope = driver.start_task("pick up the cube", policy_provider="remote", policy_port=5555)
         assert envelope == ROLLED_OUT
         assert reached == ["yes"]
 
@@ -261,7 +261,7 @@ class TestARequiredKeywordIsJudgedBeforeTheBuild:
         This is the domain the previous cell grades at one point: ``port``
         travels as the named ``policy_port`` and the rest inside
         ``**policy_kwargs``, so a guard that read only one of the two would pass
-        for ``groot`` and refuse ``lerobot_local`` for a checkpoint it was given.
+        for ``moveit2`` and refuse ``lerobot_local`` for a checkpoint it was given.
         """
         supplied: dict[str, Any] = {key: "smolvla" if key == "policy_type" else "x" for key in requires}
         port = supplied.pop("port", None) and 5555

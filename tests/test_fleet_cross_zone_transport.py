@@ -639,7 +639,9 @@ def test_serve_web_flag_domain_is_refused_before_anything_starts(dash, argv, mat
 # an explicit decision rather than derived, so a method added to ``Mesh`` falls
 # into neither this set nor the module's refusal list and fails the
 # classification test below instead of silently landing on the read-only peer.
-_READ_ONLY_MESH_METHODS = frozenset({"get_peer", "on_stream", "start", "stop", "subscribe", "unsubscribe"})
+_READ_ONLY_MESH_METHODS = frozenset(
+    {"get_peer", "on_stream", "peer_wire_zid", "start", "stop", "subscribe", "unsubscribe"}
+)
 
 # The write path that is neither refused nor confinable: the mesh's own safety
 # handlers call it (see the test below), so it must be documented instead.

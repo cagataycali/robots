@@ -60,7 +60,7 @@ def test_multicast_enabled_emits_warning(monkeypatch, caplog):
     """STRANDS_MESH_MULTICAST=true -> a WARNING naming the flag is emitted."""
     monkeypatch.setenv("STRANDS_MESH_MULTICAST", "true")
     # Keep the H-1 override-code warning out of the way so we assert only ours.
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "1234")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "code-1234567890abcdef")
 
     mesh = _make_mesh("mc-on")
     _run_start(mesh, caplog)
@@ -76,7 +76,7 @@ def test_multicast_enabled_emits_warning(monkeypatch, caplog):
 def test_multicast_default_is_silent(monkeypatch, caplog):
     """Default (flag unset) -> no multicast warning (safe posture stays quiet)."""
     monkeypatch.delenv("STRANDS_MESH_MULTICAST", raising=False)
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "1234")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "code-1234567890abcdef")
 
     mesh = _make_mesh("mc-default")
     _run_start(mesh, caplog)
@@ -89,7 +89,7 @@ def test_multicast_default_is_silent(monkeypatch, caplog):
 def test_multicast_false_is_silent(monkeypatch, caplog):
     """Explicit STRANDS_MESH_MULTICAST=false -> no warning."""
     monkeypatch.setenv("STRANDS_MESH_MULTICAST", "false")
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "1234")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "code-1234567890abcdef")
 
     mesh = _make_mesh("mc-off")
     _run_start(mesh, caplog)

@@ -44,13 +44,12 @@ import pytest
 from strands_robots.training._validate import launch_topology_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 
 # The two fields, and the backends that launch from them.
 TOPOLOGY_FIELDS = ("num_gpus", "num_nodes")
-LAUNCHING_BACKENDS = (LerobotTrainer, Gr00tTrainer, Cosmos3Trainer)
+LAUNCHING_BACKENDS = (LerobotTrainer, Cosmos3Trainer)
 
 # Values no launcher can honor, split by how each one failed before the gate.
 
@@ -136,7 +135,7 @@ class TestAUsableTopologyIsUntouched:
         spec.num_nodes = 1
         assert _problems_about(trainer_cls(), spec, "num_nodes") == []
 
-    @pytest.mark.parametrize("trainer_cls", (LerobotTrainer, Gr00tTrainer))
+    @pytest.mark.parametrize("trainer_cls", (LerobotTrainer,))
     def test_the_multi_node_refusal_still_fires_for_a_usable_count(
         self, spec: TrainSpec, trainer_cls: type[Trainer]
     ) -> None:

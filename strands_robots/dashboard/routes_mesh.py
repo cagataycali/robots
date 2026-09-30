@@ -30,6 +30,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 import time
 from typing import Any, cast
 
@@ -737,13 +738,8 @@ async def frame(request: Request, peer_id: str, cam: str, _: dict = Depends(acce
 
 
 async def _admit(ws: WebSocket) -> bool:
-    """Same admission as every route; a stranger is closed with 4401 and False is returned."""
-    try:
-        access.caller(ws)  # type: ignore[arg-type]  # WebSocket answers headers like a Request
-    except HTTPException:
-        await access.refuse_socket(ws, 4401)
-        return False
-    return True
+    """Same admission as every socket: Origin first, then the credential; a refused handshake returns False."""
+    return await access.admit_socket(ws) is not None
 
 
 async def _client_gone(ws: WebSocket) -> None:
@@ -757,6 +753,38 @@ async def _client_gone(ws: WebSocket) -> None:
         return
 
 
+def _finite_only(doc: Any) -> Any:
+    """*doc* with every non-finite float replaced by ``None``."""
+    if isinstance(doc, float):
+        return doc if math.isfinite(doc) else None
+    if isinstance(doc, dict):
+        return {k: _finite_only(v) for k, v in doc.items()}
+    if isinstance(doc, (list, tuple)):
+        return [_finite_only(v) for v in doc]
+    return doc
+
+
+def wire_json(doc: Any) -> str:
+    """Serialise one ``/ws/mesh`` frame so a browser can always parse it.
+
+    ``json.dumps`` writes ``nan`` and ``inf`` as the bare tokens ``NaN`` and
+    ``Infinity``, which are not JSON: the page's ``JSON.parse`` refuses the
+    whole frame, and when that frame is the snapshot the fleet view never
+    loads. One non-finite value anywhere (a forged safety ``t``, a joint
+    reading from a broken encoder) must not take the page down, so a frame
+    that fails ``allow_nan=False`` is written again with those values as
+    ``null`` and the event is logged.
+    """
+    try:
+        return json.dumps(doc, allow_nan=False)
+    except ValueError:
+        logger.warning(
+            "[ws/mesh] a %s frame carried a non-finite float; sent as null",
+            doc.get("type") if isinstance(doc, dict) else "?",
+        )
+        return json.dumps(_finite_only(doc), allow_nan=False)
+
+
 @ws_router.websocket("/ws/mesh")
 async def ws_mesh(ws: WebSocket) -> None:
     """Fan the bridge's events out to one page: a snapshot first, then every event as it lands."""
@@ -767,14 +795,14 @@ async def ws_mesh(ws: WebSocket) -> None:
     q = bridge.attach_queue()
     gone = asyncio.create_task(_client_gone(ws))
     try:
-        await ws.send_text(json.dumps(bridge.snapshot()))
+        await ws.send_text(wire_json(bridge.snapshot()))
         while True:
             getter = asyncio.create_task(q.get())
             done, _ = await asyncio.wait({getter, gone}, return_when=asyncio.FIRST_COMPLETED)
             if gone in done:
                 getter.cancel()
                 break
-            await ws.send_text(json.dumps(getter.result()))
+            await ws.send_text(wire_json(getter.result()))
     except (WebSocketDisconnect, RuntimeError):
         pass  # best effort: the browser closed the socket, there is nobody left to tell
     finally:

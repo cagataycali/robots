@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import access, auth, settings  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
+from tests._dashboard_passkeys import issue_enrolled  # noqa: E402
 
 
 @pytest.fixture()
@@ -54,7 +55,7 @@ def client(isolated):
 @pytest.fixture()
 def passkey(isolated):
     """A ``Bearer`` header carrying a session the auth module accepts."""
-    return {"authorization": f"Bearer {auth.issue_token('owner', 'Owner')}"}
+    return {"authorization": f"Bearer {issue_enrolled('owner', 'Owner')}"}
 
 
 def session_cookie(response) -> tuple[str, set[str]]:
@@ -95,8 +96,8 @@ class TestAFinishedCeremonyHandsTheBrowserASessionCookie:
         response = client.post(path, json={"challenge_id": "c1", "credential": {"id": "cred-touchid"}})
 
         assert response.status_code == 200
-        # The auth module's answer reaches the caller unedited.
-        assert response.json() == {"token": "minted-session", "user": "owner"}
+        # The auth module's answer reaches the caller minus the token, which the cookie carries.
+        assert response.json() == {"user": "owner"}
         value, attributes = session_cookie(response)
         assert value == "minted-session"
         assert "HttpOnly" in attributes, "a page script must not be able to read the session"

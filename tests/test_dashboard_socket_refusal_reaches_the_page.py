@@ -90,8 +90,8 @@ class TestARefusedSocketSaysWhy:
     @pytest.mark.parametrize(
         ("code", "headers", "auth_on"),
         [
-            pytest.param(4401, {"host": HOST}, True, id="sign-in-required"),
-            pytest.param(4404, {"host": HOST}, False, id="no-such-session"),
+            pytest.param(4401, {"host": HOST, "origin": f"http://{HOST}"}, True, id="sign-in-required"),
+            pytest.param(4404, {"host": HOST, "origin": f"http://{HOST}"}, False, id="no-such-session"),
         ],
     )
     def test_the_socket_is_accepted_first_so_the_close_code_reaches_the_page(
@@ -107,7 +107,7 @@ class TestARefusedSocketSaysWhy:
         """Unaccepted: HTTP 403 to the handshake, and the page is owed no reason."""
         messages = sent_while_refusing(app, "/ws/telemetry/nosuch", {"host": HOST, "origin": "http://evil.example"})
         assert [m["type"] for m in messages] == ["websocket.close"]
-        assert messages[-1]["code"] == 4401
+        assert messages[-1]["code"] == 4403  # the Origin verdict, made before any credential is read (f022)
 
     def test_the_agent_socket_delivers_the_4401_the_page_acts_on(self, app, monkeypatch) -> None:
         """``app.js``: ``ws.onclose = ev => { if (ev.code === 4401) showLogin(); ... }``.
@@ -123,6 +123,6 @@ class TestARefusedSocketSaysWhy:
         assert "ev.code === 4401" in app_js
 
         monkeypatch.setenv("STRANDS_DASH_AUTH_ENABLED", "1")
-        messages = sent_while_refusing(app, "/ws/agent", {"host": HOST})
+        messages = sent_while_refusing(app, "/ws/agent", {"host": HOST, "origin": f"http://{HOST}"})
         assert [m["type"] for m in messages] == ["websocket.accept", "websocket.close"]
         assert messages[-1]["code"] == 4401

@@ -1436,7 +1436,7 @@ class Robot(TeleopMixin, AgentTool):
         self,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "lerobot_local",
         **policy_kwargs: Any,
     ) -> Policy:
         """Create policy on-the-fly from invocation parameters.
@@ -1451,7 +1451,7 @@ class Robot(TeleopMixin, AgentTool):
         from .policies import create_policy
 
         # Per-provider port requirement: the registry's "requires"
-        # field is the source of truth - groot dials a server and needs
+        # field is the source of truth - moveit2 dials a server and needs
         # a port, while mock/lerobot_local build in-process and need
         # none. Hardcoding the port demand here made every port-less
         # provider unrunnable on hardware through the mesh execute path.
@@ -2025,7 +2025,7 @@ class Robot(TeleopMixin, AgentTool):
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "lerobot_local",
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
@@ -2504,7 +2504,7 @@ class Robot(TeleopMixin, AgentTool):
             policy_port: Port as supplied by the caller, ``None`` when absent.
 
         Returns:
-            A phrase for the approval prompt, e.g. ``"policy groot at
+            A phrase for the approval prompt, e.g. ``"policy moveit2 at
             localhost:5555"`` or ``"policy mock built in this process, no
             server"``.
         """
@@ -2604,7 +2604,7 @@ class Robot(TeleopMixin, AgentTool):
         was reported as ``"policy_port is required"`` for a provider that does
         not exist - the wrong reason, whose remedy leads to the next wrong
         reason, and indistinguishable from the same message for a correctly
-        spelled ``groot``. ``TestAPortTheProviderDoesNotReadIsRefused`` states
+        spelled ``moveit2``. ``TestAPortTheProviderDoesNotReadIsRefused`` states
         the rule this restores: "answering it here would report a port problem
         for a provider problem". It held for a *supplied* port, which
         :meth:`_policy_port_error` leaves to the provider, and not for a missing
@@ -2634,10 +2634,14 @@ class Robot(TeleopMixin, AgentTool):
             resolve, or ``None`` when a policy can be resolved from the value.
         """
         from strands_robots.policies.factory import list_providers, provider_can_be_created
-        from strands_robots.registry.policies import _url_scheme_refusal
+        from strands_robots.registry.policies import _url_scheme_refusal, removed_provider_error
 
         if not policy_provider or provider_can_be_created(refusal_str(policy_provider)):
             return None
+        if (removed := removed_provider_error(policy_provider)) is not None:
+            # A removed provider is not a typo: its sentence names the
+            # replacement, which the registry listing cannot.
+            return {"status": "error", "content": [{"text": f"{method}: {removed}"}]}
         reason = _url_scheme_refusal(refusal_str(policy_provider)) or (
             f"unknown policy_provider {refusal_repr(policy_provider)}. "
             f"Available: {', '.join(list_providers())} "
@@ -2681,8 +2685,8 @@ class Robot(TeleopMixin, AgentTool):
         ``policy_object`` there is nothing to build a policy from. Every other
         value is checked against
         :func:`~strands_robots.utils.tcp_port_error`, the shared domain whose
-        docstring already names "the policy providers that dial one (``groot``,
-        ``moveit2``, ``cosmos3``)" - the very providers this path
+        docstring already names "the policy providers that dial one (``moveit2``,
+        ``cosmos3``, ``remote``)" - the very providers this path
         forwards to - so the same port cannot be accepted by
         the arm's task entry points and refused by the provider they hand it to.
 
@@ -2719,15 +2723,13 @@ class Robot(TeleopMixin, AgentTool):
                         return None
                 except Exception:  # noqa: BLE001 - registry read is best-effort
                     pass
-            # Name the provider that needs the port - the DEFAULT (groot) is
-            # one the caller never chose, so "policy_port is required" read as
-            # a fact about the arm - and the way to run with no server at all.
+            # Name the provider that needs the port - a server-dialing provider
+            # the caller chose, so "policy_port is required" is not read as a
+            # fact about the arm - and the way to run with no server at all.
             # The old remedy ("use run_policy with a pre-built policy_object")
             # named a verb this tool does not have; an agent reading it asked
             # the operator for a port instead of picking mock.
             provider_clause = f"policy_provider '{policy_provider}'" if policy_provider else "the policy provider"
-            if policy_provider == "groot":
-                provider_clause += " (the default)"
             return {
                 "status": "error",
                 "content": [
@@ -2945,7 +2947,7 @@ class Robot(TeleopMixin, AgentTool):
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "lerobot_local",
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
@@ -3003,7 +3005,7 @@ class Robot(TeleopMixin, AgentTool):
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "lerobot_local",
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
@@ -3038,7 +3040,7 @@ class Robot(TeleopMixin, AgentTool):
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "lerobot_local",
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
@@ -3125,7 +3127,7 @@ class Robot(TeleopMixin, AgentTool):
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "lerobot_local",
         duration: float = 30.0,
         **policy_kwargs: Any,
     ) -> dict[str, Any]:
@@ -3702,9 +3704,9 @@ class Robot(TeleopMixin, AgentTool):
                 "Motion: execute (blocking), start (async), status, stop. execute/start pause for "
                 "operator approval before the arm moves (a headless script pre-approves with "
                 f"{COMMAND_ALLOW_ENV}=execute,start) and run for at most duration seconds (default 30). "
-                "They need instruction; the default provider groot also needs policy_port, while "
-                "mock and lerobot_local build in process with no server - mock ignores the instruction, "
-                "and lerobot_local needs pretrained_name_or_path. No set_joint_positions/move_to "
+                "They need instruction; the default provider lerobot_local builds in process and needs "
+                "pretrained_name_or_path in policy_config, mock ignores the instruction (test motion), "
+                "and moveit2 dials a server so it needs policy_port. No set_joint_positions/move_to "
                 "here: to read the arm call get_state, never execute."
             ),
             "inputSchema": {
@@ -3737,7 +3739,7 @@ class Robot(TeleopMixin, AgentTool):
                         },
                         "policy_port": {
                             "type": "integer",
-                            "description": "Policy service port. Required by groot and moveit2, read by the other server-dialing providers, refused for providers that build in process (mock, lerobot_local).",
+                            "description": "Policy service port. Required by moveit2, read by the other server-dialing providers (cosmos3, remote), refused for providers that build in process (mock, lerobot_local).",
                         },
                         "policy_host": {
                             "type": "string",
@@ -3747,16 +3749,17 @@ class Robot(TeleopMixin, AgentTool):
                         "policy_provider": {
                             "type": "string",
                             "description": (
-                                "Which policy backend runs: one of cosmos3, curobo, groot, kimodo, "
+                                "Which policy backend runs: one of cosmos3, curobo, flux3_action, kimodo, "
                                 "lerobot_local, microduck, mock, moveit2, protomotions, "
                                 "remote, rl, wbc, wbc_gait. "
-                                "groot (default, needs policy_port) and moveit2 dial a server; "
-                                "lerobot_local runs a local checkpoint in process and needs "
-                                "pretrained_name_or_path; mock is a test motion on every joint that "
+                                "lerobot_local (default) runs a local checkpoint in process and needs "
+                                "pretrained_name_or_path (GR00T N1.7 is policy_type groot there); "
+                                "moveit2 (needs policy_port) and remote dial a server; "
+                                "mock is a test motion on every joint that "
                                 "ignores the instruction. The model itself is named in policy_config. "
                                 "Not an action - an unknown name is refused listing the current registry."
                             ),
-                            "default": "groot",
+                            "default": "lerobot_local",
                         },
                         "duration": {
                             "type": "number",
@@ -3774,7 +3777,8 @@ class Robot(TeleopMixin, AgentTool):
                                 "the same bag the sim tool takes. For lerobot_local: pretrained_name_or_path "
                                 "(a Hugging Face repo id or a local checkpoint dir), embodiment (the robot's "
                                 "key map, e.g. so101_real for a LeRobot SO-arm follower), policy_type, device, "
-                                "actions_per_step. For groot: api_token, observation_mapping, action_mapping. "
+                                "actions_per_step. For flux3_action: model_id, revision, camera_map. "
+                                "For remote: endpoint, connect_timeout, request_timeout. "
                                 "Never host/port here: those are policy_host/policy_port. An entry the "
                                 "provider does not take is the provider's own refusal, before the arm moves."
                             ),
@@ -3834,7 +3838,7 @@ class Robot(TeleopMixin, AgentTool):
         if agent is not None:
             tool_context = ToolContext(tool_use=tool_use, agent=agent, invocation_state=dict(invocation_state))
         instruction = str(tool_input.get("instruction", ""))
-        provider = tool_input.get("policy_provider", "groot")
+        provider = tool_input.get("policy_provider", "lerobot_local")
         host = tool_input.get("policy_host", "localhost")
         port = tool_input.get("policy_port")
         duration = tool_input.get("duration", 30.0)
@@ -3970,7 +3974,7 @@ class Robot(TeleopMixin, AgentTool):
                 instruction = input_data.get("instruction", "")
                 policy_port = input_data.get("policy_port")
                 policy_host = input_data.get("policy_host", "localhost")
-                policy_provider = input_data.get("policy_provider", "groot")
+                policy_provider = input_data.get("policy_provider", "lerobot_local")
                 duration = input_data.get("duration", 30.0)
                 policy_config = input_data.get("policy_config")
                 method = "execute_task" if action == "execute" else "start_task"

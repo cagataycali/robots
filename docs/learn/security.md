@@ -38,7 +38,7 @@ Teleoperation frames are bounded too: `STRANDS_MESH_INPUT_VALUE_ABS` (720), `STR
 
 ## Paths, buses, subprocesses
 
-`validate_save_path` refuses a write into `/etc/`, `/usr/`, `/dev/`, `/proc/` and their macOS and Windows equivalents, and `resolve_output_path` refuses a file name that leaves the directory it was given; every tool that writes a caller-supplied path (`lerobot_camera`, `reachy_camera`, the judge's `write_label`, training) runs both. Dataset ids, bucket names and `run_id`s that reach the `hf` CLI are matched against allowlists before any subprocess. `use_lerobot` refuses `lerobot.scripts`, `push_to_hub`, `upload_folder` and `save_to_disk` by name so a prompt-injected call cannot push or spawn training. `lerobot_train`'s `extra_flags` are gated by `STRANDS_TRAIN_EXTRA_FLAGS_ALLOW`; GR00T container images by `STRANDS_GR00T_IMAGE_ALLOW`.
+`validate_save_path` refuses a write into `/etc/`, `/usr/`, `/dev/`, `/proc/` and their macOS and Windows equivalents, and `resolve_output_path` refuses a file name that leaves the directory it was given; every tool that writes a caller-supplied path (`lerobot_camera`, `reachy_camera`, the judge's `write_label`, training) runs both. Dataset ids, bucket names and `run_id`s that reach the `hf` CLI are matched against allowlists before any subprocess. `use_lerobot` refuses `lerobot.scripts`, `push_to_hub`, `upload_folder` and `save_to_disk` by name so a prompt-injected call cannot push or spawn training. `lerobot_train`'s `extra_flags` are gated by `STRANDS_TRAIN_EXTRA_FLAGS_ALLOW`.
 
 `bus_access.bus_lock` is an `RLock` on the device, held by every reader (state probe, camera publisher, sensors, IoT offload), the teleop writer and a rollout, so a serial bus is one conversation.
 
