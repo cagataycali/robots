@@ -4,7 +4,7 @@ description: lerobot_local runs any LeRobot checkpoint in process. Install extra
 
 # lerobot_local
 
-By the end of this page you can run a HuggingFace LeRobot checkpoint (ACT, diffusion, pi0, SmolVLA, GR00T N1.7, MolmoAct2, each behind an extra below) on a simulated or real arm in this process, and you know the two naming rules that decide whether the model sees your cameras and joints.
+By the end of this page you can run a HuggingFace LeRobot checkpoint (ACT, diffusion, pi0, SmolVLA, GR00T N1.7, MolmoAct2) on a simulated or real arm in this process, and know the two naming rules deciding whether the model sees your cameras and joints.
 
 ```bash
 pip install 'strands-robots[lerobot]'          # lerobot[feetech,dataset] + psutil
@@ -17,7 +17,7 @@ export STRANDS_TRUST_REMOTE_CODE=1             # required: models load with trus
 
 ## What it is
 
-`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works here unchanged. The processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations, unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the steps inference consumed; the policy blends the next chunk onto the seam.
+`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works here unchanged. The processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations, unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the steps consumed during inference; the policy blends the next chunk onto the seam.
 
 Build it by name or smart string; a HuggingFace id resolves here.
 
@@ -44,11 +44,11 @@ An embodiment is a declared key map from what the robot emits to what the model 
 
 ## Rule 1: state keys
 
-Without `set_robot_state_keys`, the policy infers the state vector from the observation's insertion order of numeric scalars. The sim backends write `obs[joint]` then `obs[f"{joint}.vel"]`, so `strands_robots.policies._state_keys.drop_velocity_siblings` removes each `.vel` whose position companion is present, keeping an orphan (LeKiwi declares `x.vel`, `y.vel`, `theta.vel` as state). Every inferring provider shares this rule; an explicit `robot_state_keys` list is never filtered.
+Without `set_robot_state_keys`, the policy infers the state vector from the observation's insertion order of numeric scalars. The sim backends write `obs[joint]` then `obs[f"{joint}.vel"]`, so `strands_robots.policies._state_keys.drop_velocity_siblings` removes each `.vel` whose position companion is present, keeping one that has none (LeKiwi declares `x.vel`, `y.vel`, `theta.vel` as state). Every provider that infers an ordering shares this rule; an explicit `robot_state_keys` list is not filtered.
 
 ## Rule 2: camera names
 
-A checkpoint declares image features such as `observation.images.image`; the embodiment's `obs_rename` maps the camera key you attach onto it. Name a sim camera after the model card (`realsense_top`) rather than the embodiment's source key (`front`) and the rename never fires; `preflight` refuses before any download, naming the expected source keys.
+A checkpoint declares image features such as `observation.images.image`. The embodiment's `obs_rename` maps the camera key you attach onto that feature. Name a sim camera after the model card (`realsense_top`) rather than the embodiment's source key (`front`) and the rename never fires; `preflight` refuses before any download, naming the expected source keys.
 
 Generated from `embodiments.json`:
 
@@ -78,7 +78,7 @@ sim.run_policy(
 
 ## Run it
 
-Needs the extra and an 865 MB download. `smolvla_base` declares `camera1..3` and ships no SO-101 stats, so `embodiment="so101"` (degrees) is refused; an inline native-units embodiment runs:
+Needs the extra and an 865 MB download. `smolvla_base` declares `camera1..3` and ships no SO-101 stats, so `embodiment="so101"` (degrees) is refused; an inline embodiment with native units runs:
 
 ```python
 import os
@@ -101,7 +101,8 @@ print(result["status"])
 sim.cleanup()
 ```
 
-A checkpoint fine-tuned on an SO-101 carries its stats; `embodiment="so101"` then converts units in sim and binds the arm's `.pos` keys on hardware ([First policy](../../start/first-policy.md)). A real arm's tool takes the same `policy_config` dict:
+An SO-101 fine-tune carries degree stats. On the sim joints `1`..`6` the `so101` embodiment applies even unnamed, converting both ways; other radian state is refused before the first action. On hardware it binds the `.pos` keys ([First policy](../../start/first-policy.md)). A real arm's tool takes the same `policy_config` dict:
+
 
 ```json
 {"action": "execute", "policy_provider": "lerobot_local",
@@ -111,7 +112,7 @@ A checkpoint fine-tuned on an SO-101 carries its stats; `embodiment="so101"` the
 
 ## GR00T N1.7 through lerobot
 
-`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` policy type and load here like any checkpoint, no Isaac-GR00T checkout, no ZMQ service; `embodiment_tag` comes from the checkpoint config.
+`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` policy type and load here like any checkpoint, no Isaac-GR00T checkout, no ZMQ service. `embodiment_tag` comes from the checkpoint config.
 
 ```python
 from strands_robots.policies import create_policy

@@ -110,7 +110,7 @@ class TestTheDeterministicBackendRefusesAnUnusableScale:
     def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec, field: str, value: Any) -> None:
         setattr(spec, field, value)
         (problem,) = _noise_reports(DETERMINISTIC_BACKEND, spec, field)
-        assert problem.startswith(f"fast_td3: {field} must be > 0"), problem
+        assert problem.startswith(f"fast_td3: {field} must be a positive finite number"), problem
         assert repr(value) in problem, problem
 
     def test_every_unusable_scale_is_reported_at_once(self, spec: RLTrainSpec) -> None:

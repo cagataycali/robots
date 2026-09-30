@@ -33,6 +33,7 @@ import pytest
 import strands_robots._command_gate as gate_mod
 import strands_robots.ros as ros_mod
 from strands_robots.drivers.ros import AckermannRosRobot
+from tests._package_ast import parse_file
 
 _ROS_DIR = Path(ros_mod.__file__).parent / "drivers" / "ros"
 _BRIDGE_SOURCE = _ROS_DIR / "ackermann_robot.py"
@@ -99,7 +100,7 @@ def _tool(robot: AckermannRosRobot, name: str) -> Any:
 @pytest.fixture(scope="module")
 def bridge_ast() -> ast.Module:
     """Parse the bridge source once for the structural guards below."""
-    return ast.parse(_BRIDGE_SOURCE.read_text(encoding="utf-8"))
+    return parse_file(_BRIDGE_SOURCE)
 
 
 class TestBridgeCommandsReachTheGate:
@@ -342,7 +343,7 @@ class TestEveryCommandingMeshBridgeHasAGateSuite:
     def _modules_sending_commands() -> set[str]:
         found: set[str] = set()
         for path in sorted(_ROS_DIR.glob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
             for node in ast.walk(tree):
                 if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "ros_action"):
                     continue
