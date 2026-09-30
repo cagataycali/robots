@@ -6879,6 +6879,8 @@ class MuJoCoSimEngine(
         # applies no action and then reports nothing running.
         if err := self._validate_policy_object(policy_object, "start_policy"):
             return err
+        if err := self._validate_instruction(instruction, "start_policy"):
+            return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "start_policy"):
             return err
         if err := self._validate_policy_mapping(policy_kwargs, "policy_kwargs", "start_policy"):
@@ -7193,6 +7195,8 @@ class MuJoCoSimEngine(
         # be driven is configuration, not a rollout, so it must be refused
         # before the robot is claimed.
         if err := self._validate_policy_object(policy_object, "run_policy"):
+            return err
+        if err := self._validate_instruction(instruction, "run_policy"):
             return err
 
         if self._world is None or self._world._model is None or self._world._data is None:

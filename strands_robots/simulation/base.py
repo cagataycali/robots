@@ -3016,6 +3016,35 @@ class SimEngine(ABC):
             return None
         return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
 
+    @staticmethod
+    def _validate_instruction(value: Any, method: str) -> dict[str, Any] | None:
+        """Reject an ``instruction`` that is not a string.
+
+        The instruction reaches ``policy.get_actions(obs, instruction)``, the
+        result summary and metadata, and the recorded dataset's ``task``
+        column, all of which are text. Unguarded, ``42`` or ``['pick', 'up']``
+        ran the rollout and wrote the value into the task label, and ``None``
+        became the literal ``'None'`` in the summary while the recorder
+        collapsed it to ``'untitled'`` - where ``run_multi_policy`` already
+        refused the same value. ``""`` (the default) stays valid.
+
+        Args:
+            value: The caller-supplied instruction.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            A structured ``{"status": "error", ...}`` dict to surface, or
+            ``None`` when the value is a string.
+        """
+        if isinstance(value, str):
+            return None
+        return {
+            "status": "error",
+            "content": [
+                {"text": f"{method}: 'instruction' must be a string (use \"\" for none), got {type(value).__name__}."}
+            ],
+        }
+
     def run_policy(
         self,
         robot_name: str | None = None,
@@ -3059,7 +3088,8 @@ class SimEngine(ABC):
                 ``trust_remote_code``, ``actions_per_step``,
                 ``use_processor``, ``processor_overrides``, ``device``,
                 ...). Forwarded verbatim to ``create_policy``.
-            instruction: Natural-language instruction for the policy.
+            instruction: Natural-language instruction for the policy. Must be
+                a string (``""`` for none); anything else is refused.
             duration: Wall-clock seconds to run, honored as such: the loop
                 paces on a deadline, so a step's own cost comes out of the
                 period rather than being added to it (``fast_mode=True``
@@ -3510,6 +3540,8 @@ class SimEngine(ABC):
         if err := self._validate_video_config(video, "run_policy"):
             return err
         if err := self._validate_policy_object(policy_object, "run_policy"):
+            return err
+        if err := self._validate_instruction(instruction, "run_policy"):
             return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "run_policy"):
             return err
@@ -5464,6 +5496,8 @@ class SimEngine(ABC):
         # byte-identical to the healthy call.
         if hook_error := optional_callable_error(on_frame, "on_frame", "eval_policy"):
             return {"status": "error", "content": [{"text": hook_error}]}
+        if err := self._validate_instruction(instruction, "eval_policy"):
+            return err
 
         robots = self.list_robots()
         if not robots:
@@ -5889,6 +5923,8 @@ class SimEngine(ABC):
         if err := self._validate_video_config(video, "evaluate_benchmark"):
             return err
         if err := self._validate_policy_object(policy_object, "evaluate_benchmark"):
+            return err
+        if err := self._validate_instruction(instruction, "evaluate_benchmark"):
             return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "evaluate_benchmark"):
             return err
