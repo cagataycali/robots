@@ -870,24 +870,46 @@ class TestDefaultCheckpoint:
         # Names GEAR-SONIC only to warn it is the wrong family.
         assert "GEAR-SONIC" in msg
 
-    def test_sonic_inference_stack_dir_rejected(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
-        # A directory holding the SONIC encoder/decoder/planner ONNX (and no
-        # policy.onnx) must be rejected up front with a clear error.
-        d = tmp_path / "GEAR-SONIC"
+    @pytest.mark.parametrize(
+        ("names", "refused"),
+        [
+            (("model_encoder.onnx", "model_decoder.onnx", "planner_sonic.onnx"), True),
+            (("model_encoder.onnx", "policy.onnx"), False),
+            (("model_encoder.onnx", "GR00T-WholeBodyControl-Balance.onnx"), False),
+            (("policy.onnx", "walk_policy.onnx"), False),
+        ],
+    )
+    def test_sonic_stack_is_refused_on_disk_and_before_download(self, tmp_path, monkeypatch, names, refused) -> None:  # type: ignore[no-untyped-def]
+        # One verdict for a local directory and for an HF repo's file list; the
+        # HF refusal must land before snapshot_download fetches a byte.
+        d = tmp_path / "ckpt"
         d.mkdir()
-        for name in ("model_encoder.onnx", "model_decoder.onnx", "planner_sonic.onnx"):
+        for name in names:
             (d / name).touch()
-        with pytest.raises(RuntimeError, match="SONIC VLA inference stack"):
-            WBCPolicy._reject_sonic_inference_stack(str(d))
+        fetched: list[str] = []
 
-    def test_sonic_marker_with_policy_onnx_is_allowed(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
-        # If policy.onnx is colocated with a SONIC marker, the caller knowingly
-        # placed it - do not reject.
-        d = tmp_path / "mixed"
-        d.mkdir()
-        (d / "model_encoder.onnx").touch()
-        (d / "policy.onnx").touch()
-        WBCPolicy._reject_sonic_inference_stack(str(d))  # no raise
+        class _Api:
+            def list_repo_files(self, repo_id):  # type: ignore[no-untyped-def]
+                return [f"sonic_v1_1/{n}" for n in names]
+
+        class _Hub:
+            HfApi = _Api
+
+            def snapshot_download(self, repo_id, allow_patterns=None):  # type: ignore[no-untyped-def]
+                fetched.append(repo_id)
+                return str(d)
+
+        monkeypatch.setattr(wbc_policy, "require_optional", lambda *a, **k: _Hub())
+        if refused:
+            with pytest.raises(RuntimeError, match="SONIC VLA inference stack"):
+                WBCPolicy._reject_sonic_inference_stack(str(d))
+            with pytest.raises(RuntimeError, match="nothing was fetched"):
+                WBCPolicy._maybe_download_checkpoint("nvidia/GEAR-SONIC")
+            assert fetched == []
+        else:
+            WBCPolicy._reject_sonic_inference_stack(str(d))
+            assert WBCPolicy._maybe_download_checkpoint("acme/wbc-g1") == str(d)
+            assert fetched == ["acme/wbc-g1"]
 
     def test_reject_sonic_noops_on_none_and_files(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         WBCPolicy._reject_sonic_inference_stack(None)  # no raise
