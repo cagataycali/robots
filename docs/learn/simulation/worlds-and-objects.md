@@ -1,5 +1,5 @@
 ---
-description: Build a scene on any backend: objects and their size conventions, cameras, articulated task objects, MJCF patches, meshes and materials, terrain.
+description: Build a scene on any backend: objects and their size conventions, cameras, articulated task objects, MJCF patches, meshes, materials, terrain.
 ---
 
 # Worlds and objects

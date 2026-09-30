@@ -41,7 +41,7 @@ arm = Robot("so101", mode="real", driver="strands", port="/dev/ttyACM0", calibra
 
 The two drivers behave differently, and both say so:
 
-- **lerobot driver.** lerobot itself prompts to calibrate on `connect()`. In a `lerobot_teleoperate` session `auto_accept_calibration` answers that prompt. The read-only `get_state` action does not connect through lerobot; it reads raw ticks over the bus and reports degrees estimated as `(ticks - 2048) * 360 / 4096`, labelled an estimate, so an agent can say the arm is uncalibrated instead of failing to read it. A calibration flag that could not be read is reported as unread, not as uncalibrated.
+- **lerobot driver.** lerobot itself prompts to calibrate on `connect()`. In a `lerobot_teleoperate` session `auto_accept_calibration` answers that prompt. The read-only `get_state` action does not connect through lerobot; it reads raw ticks over the bus and reports degrees estimated as `(ticks - 2048) * 360 / 4096`, labelled an estimate, so an agent can report the arm uncalibrated instead of failing to read it. A calibration flag that could not be read is reported as unread, not as uncalibrated.
 - **native driver.** With no `calibration=` the bus uses `full_travel_calibration`: count 0 is one end of the servo's rotation and 4095 the other. Readings and targets are then off by however far your arm's mechanical stops sit inside that rotation. `get_status()` reports `calibration_source: None` so you can see which is in force.
 
 ## Why it matters for data
@@ -50,4 +50,4 @@ A dataset recorded with one calibration and replayed on an arm with another move
 
 ## Other robots
 
-Network arms (UR, Franka), DDS robots (Unitree, Booster) and daemon robots (Reachy Mini, Microduck) carry their calibration in their own controllers; the package reads joint values in the controller's units and has nothing to calibrate. The Robotiq gripper runs its own open-close calibration stroke during activation, which is why `connect_eagerly()` waits for `gSTA == ACTIVE` before reporting connected.
+Network arms (UR, Franka), DDS robots (Unitree, Booster) and daemon robots (Reachy Mini, Microduck) carry their calibration in their own controllers; the package reads joint values in the controller's units, nothing to calibrate. The Robotiq gripper runs its own open-close calibration stroke during activation, which is why `connect_eagerly()` waits for `gSTA == ACTIVE` before reporting connected.

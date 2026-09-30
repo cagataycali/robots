@@ -74,16 +74,18 @@ def test_replay_steps_full_control_period(so101_sim):
     """Every replayed frame steps a full control period, not a single dt.
 
     Pre-fix each ``send_action`` call used the default ``n_substeps=1``; post-fix
-    it uses ``_control_substeps(fps)`` (17 for 30 Hz control at a 2 ms physics
-    dt), the same integration the recording used.
+    it follows ``_substep_schedule(fps)`` (16.67 steps for 30 Hz control at a 2 ms
+    physics dt, so 17 and 16 alternating since #4392), the same integration the
+    recording used, and the whole replay covers ``frames / fps`` of sim time.
     """
     pytest.importorskip("lerobot")
     root = tempfile.mkdtemp(prefix="so101_replay_period_")
     repo = "local/so101_replay_period"
     _record_episode(so101_sim, repo, root, fps=30)
 
-    expected = PolicyRunner(so101_sim)._control_substeps(30)
-    assert expected > 1, "precondition: a 30 Hz control period must span >1 physics dt"
+    schedule = PolicyRunner(so101_sim)._substep_schedule(30)
+    assert schedule.nominal > 1, "precondition: a 30 Hz control period must span >1 physics dt"
+    low, high = schedule.bounds
 
     used: list[int] = []
     original = so101_sim.send_action
@@ -100,8 +102,12 @@ def test_replay_steps_full_control_period(so101_sim):
 
     assert rep["status"] == "success"
     assert used, "replay applied no actions"
-    # Pre-fix: every element is 1. Post-fix: every element is the full period.
-    assert set(used) == {expected}
+    # Pre-fix: every element is 1. Post-fix: every element is the full period,
+    # the two neighbouring counts of an inexact one, and the sum is the span.
+    assert set(used) <= {low, high} and min(used) > 1
+    dt = so101_sim.physics_timestep()
+    assert dt is not None
+    assert sum(used) * dt == pytest.approx(len(used) / 30, abs=dt)
 
 
 def test_replay_reproduces_recorded_trajectory(so101_sim):

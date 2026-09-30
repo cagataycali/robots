@@ -1,10 +1,10 @@
 ---
-description: Simulation vs SimEngine, the three backends and what each needs, and a verified MuJoCo session from create_simulation to a policy rollout.
+description: Simulation vs SimEngine, the three backends and what each needs, a verified MuJoCo session from create_simulation to a policy rollout.
 ---
 
 # Simulation
 
-By the end of this page a MuJoCo world with a robot, an object and a camera runs on this machine, and you know the one interface every backend implements and what each backend needs.
+By the end of this page a MuJoCo world with a robot, an object and a camera runs on this machine, and you know the one interface every backend implements and what each needs.
 
 ```python
 from strands_robots.simulation import create_simulation, list_backends
@@ -61,7 +61,7 @@ You should see `MuJoCoSimEngine True True`.
 | [`newton`](newton.md) | `nt` | `strands-robots[sim-newton]` | an NVIDIA GPU with Warp; same MJCF assets | GPU stepping, ray-traced tiled cameras |
 | [`isaac`](isaac.md) | `isaac_sim`, `isaacsim`, `nvidia` | `strands-robots[sim-isaac]` plus Isaac Sim 6.0 | Isaac Sim on Python 3.12, an RTX GPU | photoreal rendering, USD scenes, batched envs |
 
-Built-ins win over entry-point plugins of the same name. A third-party package registers a backend under the `strands_robots.backends` entry-point group; `register_backend("my_sim", lambda: MySimEngine, aliases=["custom"])` does it at runtime. An unknown name is a `ValueError` listing what is available and, for `newton`, `warp` and `mjwarp`, the install line.
+Built-ins win over entry-point plugins of the same name. A third-party package registers a backend under the `strands_robots.backends` entry-point group; `register_backend("my_sim", lambda: MySimEngine, aliases=["custom"])` does so at runtime. An unknown name is a `ValueError` listing what is available and, for `newton`, `warp` and `mjwarp`, the install line.
 
 ## Constructor keywords
 

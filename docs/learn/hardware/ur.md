@@ -1,5 +1,5 @@
 ---
-description: A UR5e or UR10e streams joint setpoints over RTDE: the two gates every write passes and how a rollout runs.
+description: A UR5e or UR10e streams joint setpoints over RTDE: the two gates every write passes, how a rollout runs.
 ---
 
 # Universal Robots e-Series
@@ -23,7 +23,7 @@ arm.send_action({"shoulder_pan_joint": 0.0, "wrist_3_joint": 1.57})   # radians,
 
 ## Joint names and units
 
-Radians, in the order the wire and the MuJoCo assets both use: `shoulder_pan_joint`, `shoulder_lift_joint`, `elbow_joint`, `wrist_1_joint`, `wrist_2_joint`, `wrist_3_joint`. A recorded sim action indexes onto the wire without a remap. Every e-Series joint travels plus or minus 2 pi (`JOINT_LIMIT_RAD`).
+Radians, in the order the wire and the MuJoCo assets share: `shoulder_pan_joint`, `shoulder_lift_joint`, `elbow_joint`, `wrist_1_joint`, `wrist_2_joint`, `wrist_3_joint`. A recorded sim action indexes onto the wire unchanged. Every e-Series joint travels plus or minus 2 pi (`JOINT_LIMIT_RAD`).
 
 ## Two gates on every write
 
@@ -36,7 +36,7 @@ A UR controller does not refuse the way a servo bus does: it accepts the registe
 
 ## Rollouts
 
-`run_policy(policy)` rolls a caller-built policy at `control_frequency`; `start_task(instruction, policy_provider=...)`, which built one in the driver, is removed in 0.8. `get_task_status()` reports the live snapshot, `stop_task()` halts the loop. Both share the rollout class with the Feetech driver.
+`run_policy(policy)` rolls a caller-built policy at `control_frequency`; `start_task(instruction, policy_provider=...)`, which built one in the driver, is removed in 0.8. `get_task_status()` reports the live snapshot, `stop_task()` halts the loop; both share the Feetech driver's rollout class.
 
 ## Deliberately absent
 

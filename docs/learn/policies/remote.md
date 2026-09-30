@@ -1,5 +1,5 @@
 ---
-description: remote streams observations over a WebSocket to a PolicyServer on a GPU host and returns the action chunks it computes, so a CPU robot host runs any policy at control rate.
+description: remote streams observations over a WebSocket to a PolicyServer on a GPU host and returns its action chunks, so a CPU robot host runs any policy at control rate.
 ---
 
 # remote

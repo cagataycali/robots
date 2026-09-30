@@ -37,7 +37,7 @@ arm = Robot(
 | `opencv` | `OpenCVCameraConfig` | USB and built-in cameras; `index_or_path` is an index or a device path |
 | `intelrealsense` | `RealSenseCameraConfig` | `serial_number_or_name`; needs the Intel SDK on top of lerobot. The spelling `realsense` is refused with a hint |
 
-Every other key must be a declared field of the resolved config class; a typo is refused by name, not dropped. The camera names become the `observation.images.<name>` columns a recording writes and a policy reads, so pick them to match the `data_config` you train with (`so100_dualcam` names `front` and `wrist`).
+Every other key must be a declared field of the resolved config class; a typo is refused by name, not dropped. The camera names become the `observation.images.<name>` columns a recording writes and a policy reads, so match them to the `data_config` you train with (`so100_dualcam` names `front` and `wrist`).
 
 Native drivers address cameras through their own SDK (Reachy Mini, EarthRover `camera` verb, Microduck) and do not read `cameras=`; passing a non-empty dict to one is refused unless the class declares `reads_cameras = True`.
 
@@ -62,7 +62,7 @@ Actions: `discover`, `list`, `capture`, `capture_batch`, `record`, `preview`, `t
 
 ## Simulation cameras
 
-In `mode="sim"` cameras are not a constructor argument; add them after creation with `add_camera(name, position=, target=, fov=60.0, width=640, height=480)` or through the robot tool's `add_camera` action. `render(camera_name=)` returns the PNG, `render_depth` the depth map, `render_all` every camera at once, `start_cameras_recording` writes them into a dataset ([record](../data/record.md)). The `default` camera always exists.
+In `mode="sim"` cameras are not a constructor argument; add them afterwards with `add_camera(name, position=, target=, fov=60.0, width=640, height=480)` or through the robot tool's `add_camera` action. `render(camera_name=)` returns the PNG, `render_depth` the depth map, `render_all` every camera, `start_cameras_recording` writes them into a dataset ([record](../data/record.md)). The `default` camera always exists.
 
 A sim camera named `front` produces `observation.images.front`, the same column a real `front` camera does, which is what lets one policy checkpoint run in both modes.
 

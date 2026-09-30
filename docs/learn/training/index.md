@@ -1,5 +1,5 @@
 ---
-description: What trains where: the Trainer contract, the nine trainers create_trainer knows, TrainSpec, the validate to export lifecycle, and the two agent tools.
+description: What trains where: the Trainer contract, the nine trainers create_trainer knows, TrainSpec, the validate to export lifecycle, the two agent tools.
 ---
 
 # Training

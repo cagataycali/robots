@@ -48,9 +48,9 @@ The first passkey closes the third door. Its enrollment must present `STRANDS_DA
 
 ## The agent in the browser
 
-`/ws/agent` takes `{"type": "say", "text": ...}` and streams the console's events back (text, tool_use, tool_result, interrupt, done, error). Its tools share the HTTP routes' `Safety` object, so the e-stop refuses the agent like a button. `sim_set_joints` raises the real-hardware hook's interrupt (`MotionInterruptHook`, [the operator gate](agents.md#the-operator-gate)); the browser shows a consent card and `{"type": "resume", "id": ..., "approve": true, "always": false}` resumes the turn; `always` dies with the socket. One turn per socket; a second `say` is refused, not queued.
+`/ws/agent` takes `{"type": "say", "text": ...}` and streams the console's events back (text, tool_use, tool_result, interrupt, done, error). Its tools share the HTTP routes' `Safety` object, so the e-stop refuses the agent too. `sim_set_joints` raises the real-hardware hook's interrupt (`MotionInterruptHook`, [the operator gate](agents.md#the-operator-gate)); the browser shows a consent card and `{"type": "resume", "id": ..., "approve": true, "always": false}` resumes the turn; `always` dies with the socket. One turn per socket; a second `say` is refused, not queued.
 
-Two switches, off by default, matter once a physical peer is reachable: `STRANDS_DASH_AGENT_PHYSICAL_MOTION=1` lets the agent's tools move metal, and `STRANDS_DASH_TASK_REQUIRES_CONFIRM=1` makes a real-motion task or teleop POST carry an explicit boolean confirmation (strings are refused). Neither touches a simulated peer; both are granted and revoked from a consent card, never from Settings.
+Two switches, off by default, matter once a physical peer is reachable: `STRANDS_DASH_AGENT_PHYSICAL_MOTION=1` lets the agent's tools move metal; `STRANDS_DASH_TASK_REQUIRES_CONFIRM=1` makes a real-motion task or teleop POST carry an explicit boolean confirmation (strings are refused). Neither touches a simulated peer; both are granted and revoked from a consent card, never from Settings.
 
 ## Logs
 

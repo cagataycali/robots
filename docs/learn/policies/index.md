@@ -1,5 +1,5 @@
 ---
-description: The Policy contract, the provider matrix generated from the registry, create_policy, and how a policy is swapped without touching the robot.
+description: The Policy contract, the provider matrix generated from the registry, create_policy, and swapping a policy without touching the robot.
 ---
 
 # Policies

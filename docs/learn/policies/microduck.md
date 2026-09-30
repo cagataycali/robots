@@ -68,7 +68,7 @@ A weight and the scene it was trained in are one pair. `Robot("microduck")` reso
 | `roller`, `roller_crouch` | `scene_rollers.xml` | four passive ankle wheels |
 | `ball_kick_left`, `ball_kick_right` | `scene_ball.xml` | a 70 mm ball in front of the duck |
 
-Reach a variant by path: find `scene_rollers.xml` under `microduck/` on `get_search_paths()` and pass `Robot("microduck", urdf_path=str(scene))`. `scene_rollers.xml` inserts two wheel joints after each ankle, so a flat `qpos[7:21]` read gets wheels where `neck_pitch` and `head_pitch` sit on the default scene; the actuator order is the same on all three and `MicroduckPolicy` reads by joint name.
+Reach a variant by path: find `scene_rollers.xml` under `microduck/` on `strands_robots.assets.get_search_paths()` and pass `Robot("microduck", urdf_path=str(scene))`. `scene_rollers.xml` inserts two wheel joints after each ankle, so a flat `qpos[7:21]` read gets wheels where `neck_pitch` and `head_pitch` sit on the default scene; the actuator order is the same on all three and `MicroduckPolicy` reads by joint name.
 
 ### The ball scene places the ball, not the kick geometry
 

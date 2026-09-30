@@ -1,5 +1,5 @@
 ---
-description: Three ROS 2 transports, when to use each, one operator gate, and what a ROS 2 node can still tell apart.
+description: Three ROS 2 transports, when to use each, one operator gate, what a ROS 2 node can still tell apart.
 ---
 
 # ROS 2

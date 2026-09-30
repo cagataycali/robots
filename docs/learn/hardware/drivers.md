@@ -23,7 +23,7 @@ print(list_driver_coverage()["ability_hand"])    # ()
 | `"strands"` | the native driver class registered for the robot | the robots in the table below |
 | `"auto"` (the default) | the registry's `hardware.driver` if set, else lerobot | everything |
 
-Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"` in the registry, so a bare `Robot("unitree_go2", mode="real", port="192.168.123.161")` builds the native driver. `panda` and `ur5e` have native drivers but no `hardware` block, so they resolve to lerobot until you ask: `Robot("ur5e", mode="real", driver="strands", port="192.168.1.10")`. Asking for `driver="strands"` on a robot with no native driver is refused by name, never served the lerobot path quietly.
+Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"` in the registry, so `Robot("unitree_go2", mode="real", port="192.168.123.161")` builds the native driver. `panda` and `ur5e` have native drivers but no `hardware` block, so they resolve to lerobot until you ask: `Robot("ur5e", mode="real", driver="strands", port="192.168.1.10")`. Asking for `driver="strands"` on a robot with no native driver is refused by name, never served the lerobot path quietly.
 
 `port=` is polymorphic: a serial path for a Feetech bus, an IP for a controller, a `radio://` URI for a Crazyflie, `host:port` for a daemon. Each driver documents what it reads. A keyword the driver does not declare is refused (`Robot(..., prot="/dev/ttyACM0")` does not build an arm that auto-detects a port).
 
@@ -77,7 +77,7 @@ register_native_driver("koch_follower", MyKochDriver)   # refuses a class missin
 robot = Robot("koch_follower", mode="real", driver="strands", port="/dev/ttyUSB0")
 ```
 
-`register_native_driver` binds a driver class to a registry robot name after `missing_driver_members(cls)` passes; double registration is refused unless `overwrite=True`. It does not make a new name known: for a robot the registry does not know, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` first, then register the driver under that name. A package outside this repo registers at import time; the shipped table tolerates a caller registering first.
+`register_native_driver` binds a driver class to a registry robot name after `missing_driver_members(cls)` passes; double registration is refused unless `overwrite=True`. It does not make a new name known: for an unregistered robot, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` first, then register the driver under that name. A package outside this repo registers at import time; the shipped table tolerates a caller registering first.
 
 ## Where the gates are
 

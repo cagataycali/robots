@@ -28,7 +28,7 @@ duck.send_action({"vx": 0.1, "vyaw": 0.0})                   # a twist intent, m
 
 ## Intents, not joints
 
-`robotd` owns the 50 Hz control loop and runs the walking and skill policy on the board. Its JSON-RPC 2.0 surface (`duck-ipc-proto`, NDJSON over the socket) has no per-joint write. The whole `robot.*` surface is intent-level, so `mode="real"` is delegate-only by the robot's own design:
+`robotd` owns the 50 Hz control loop and runs the walking and skill policy on the board. Its JSON-RPC 2.0 surface (`duck-ipc-proto`, NDJSON over the socket) has no per-joint write. The whole `robot.*` surface is intent-level, so `mode="real"` is delegate-only by the robot's design:
 
 | intent | wire | kind |
 |---|---|---|
@@ -59,6 +59,6 @@ The driver reads the duck's camera through `robotd` and returns one frame as an 
 
 ## Safety
 
-The duck is velocity-commanded: it keeps walking until the twist is zeroed or `robot.stop` is sent. `stop()` cancels any held move and sends `robot.stop`; `cleanup()` closes the socket and the ssh forward. Whether `robotd` times out a twist when intents stop is the daemon's behaviour, not this driver's.
+The duck is velocity-commanded: it walks until the twist is zeroed or `robot.stop` is sent. `stop()` cancels any held move and sends `robot.stop`; `cleanup()` closes the socket and the ssh forward. Whether `robotd` times out a twist when intents stop is the daemon's call, not this driver's.
 
 <robot-viewer name="microduck"></robot-viewer>
