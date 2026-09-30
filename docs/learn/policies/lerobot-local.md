@@ -33,7 +33,7 @@ policy = create_policy("robotfuel/act_so101_t16b", embodiment="so101")   # same 
 
 Inert normalization has a two-part remedy: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and `state_units` / `action_units` (`degrees` or `radians`) say which unit they were recorded in. `so100` and `so101` declare `state_units='degrees'`; radian stats need the unit half beside the stats half.
 
-`pretrained_name_or_path` is required. `actions_per_step` left at `1` is auto-raised to the model's trained `n_action_steps`; a value above 1 pins it. `cache_model=True` keeps loaded weights across policies in this process (`clear_model_cache()`, `list_cached_models()`).
+`pretrained_name_or_path` is required. `actions_per_step=1` becomes the trained `n_action_steps`; above 1 pins it. `cache_model=True` shares weights in-process (`clear_model_cache()`, `list_cached_models()`). Without `device=` it uses CUDA if present; checkpoint `torch.compile` stays off unless `compile_model=True`.
 
 ## Embodiments
 

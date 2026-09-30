@@ -403,6 +403,16 @@ _MODEL_CACHE: dict[tuple[Any, ...], Any] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 
 
+def best_inference_device() -> str:
+    """``"cuda"`` when a CUDA device is visible, else ``"mps"`` when available, else ``"cpu"``."""
+    if torch.cuda.is_available():
+        return "cuda"
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def clear_model_cache(pretrained_name_or_path: str | None = None) -> int:
     """Evict cached lerobot_local models, freeing their held memory.
 
@@ -587,12 +597,24 @@ class LerobotLocalPolicy(Policy):
         pad_short_actions: bool = False,
         cache_model: bool = True,
         revision: str | None = None,
+        compile_model: bool | None = None,
         **ignored_kwargs: Any,
     ):
         self.pretrained_name_or_path = pretrained_name_or_path
         # Optional Hub revision (branch, tag, or commit SHA) to pin the
         # checkpoint to a reproducible version. None loads the default branch.
         self.revision = revision
+        # torch.compile of the model, which several checkpoints ask for in their
+        # config (the LIBERO pi0 / pi0.5 / pi0-FAST fine-tunes ship
+        # ``compile_model: true, compile_mode: max-autotune``). ``None`` (the
+        # default) turns it OFF for inference: the first ``select_action``
+        # would otherwise spend 8+ minutes in inductor autotuning inside the
+        # control loop, logging nothing, and the rollout reads as hung. ``True``
+        # keeps the checkpoint's compile (and says it will take minutes);
+        # ``False`` is the default made explicit.
+        if compile_model is not None and (error := boolean_flag_error(compile_model, "compile_model", "lerobot_local")):
+            raise ValueError(error)
+        self.compile_model = compile_model
         self.policy_type = policy_type
         self.requested_device = device
         # Validated here, where the caller's value arrives and before any
@@ -1252,6 +1274,58 @@ class LerobotLocalPolicy(Policy):
 
     # Model loading
 
+    def _inference_config(self) -> Any | None:
+        """The checkpoint's config with this process's device and compile choice, or ``None``.
+
+        Loaded here - rather than inside ``from_pretrained`` - so the two
+        inference-time decisions are made before the policy is built: the
+        device the weights load onto, and ``compile_model``, which a policy's
+        constructor reads to wrap ``sample_actions`` in ``torch.compile``.
+        ``None`` when lerobot's config loader is unavailable or the checkpoint
+        has no lerobot config (the caller's ``from_pretrained`` then loads as
+        before).
+        """
+        try:
+            from lerobot.configs.policies import PreTrainedConfig
+        except ImportError:
+            return None
+        try:
+            kwargs = {"revision": self.revision} if self.revision else {}
+            config = PreTrainedConfig.from_pretrained(self.pretrained_name_or_path, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - optional pre-read; from_pretrained reports the real error
+            logger.debug("lerobot_local: config pre-read failed (%s); loading with the checkpoint's own", exc)
+            return None
+        device = self.requested_device or best_inference_device()
+        shipped = getattr(config, "device", None)
+        if not self.requested_device and shipped and str(shipped) != device:
+            logger.warning(
+                "lerobot_local: %s's config names device %r (where it was trained or saved); running it on %r, "
+                "the best device here. Pass device= to choose.",
+                self.pretrained_name_or_path,
+                shipped,
+                device,
+            )
+        if hasattr(config, "device"):
+            config.device = device
+        if getattr(config, "compile_model", False) and self.compile_model is not True:
+            logger.warning(
+                "lerobot_local: %s's config enables torch.compile (mode %r), which compiles for minutes on the "
+                "first inference, inside the control loop; it is off for inference. Pass compile_model=True to "
+                "keep it.",
+                self.pretrained_name_or_path,
+                getattr(config, "compile_mode", None),
+            )
+            config.compile_model = False
+        elif getattr(config, "compile_model", False):
+            logger.warning(
+                "lerobot_local: compiling %s with torch.compile (mode %r): the first inference takes minutes.",
+                self.pretrained_name_or_path,
+                getattr(config, "compile_mode", None),
+            )
+        elif self.compile_model is True and hasattr(config, "compile_model"):
+            config.compile_model = True
+        return config
+
     def _model_cache_key(self, namespace: str, *extra: Any) -> tuple[Any, ...] | None:
         """Build the process-cache key for the underlying model load.
 
@@ -1276,6 +1350,7 @@ class LerobotLocalPolicy(Policy):
             self.requested_device,
             *self._rtc_identity,
             *extra,
+            ("compile_model", self.compile_model),
         )
 
     def _cache_get(self, key: tuple[Any, ...] | None) -> Any:
@@ -1365,20 +1440,24 @@ class LerobotLocalPolicy(Policy):
             # Pass revision only when set so the call matches lerobot's
             # default (revision=None) and stays compatible with policy
             # classes whose from_pretrained does not accept the kwarg.
-            from_pretrained_kwargs = {"revision": self.revision} if self.revision else {}
+            from_pretrained_kwargs: dict[str, Any] = {"revision": self.revision} if self.revision else {}
+            config = self._inference_config()
+            if config is not None:
+                from_pretrained_kwargs["config"] = config
             self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path, **from_pretrained_kwargs)
             assert self._policy is not None
 
             self._policy.eval()
             self._cache_put(cache_key, (self._policy, self.policy_type))
 
-        # Resolve device: prefer user-requested, then config.device, fallback to first param
+        # Resolve device: the caller's, else the best this machine has. The
+        # checkpoint's ``config.device`` is where it was TRAINED (or saved), not
+        # a request: lerobot/pi05_droid ships "cpu", and honouring it ran a
+        # 4-billion-parameter pi0.5 at 6.6-10 s per chunk on an idle L40S.
         if self.requested_device:
             self._device = torch.device(self.requested_device)
-        elif hasattr(self._policy, "config") and hasattr(self._policy.config, "device"):
-            self._device = torch.device(self._policy.config.device)
         else:
-            self._device = next(self._policy.parameters()).device
+            self._device = torch.device(best_inference_device())
 
         # Move the model onto the resolved device. LeRobot's from_pretrained
         # places weights on config.device (e.g. 'mps'/'cuda' baked into the
