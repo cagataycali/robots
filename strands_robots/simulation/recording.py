@@ -1115,6 +1115,13 @@ class DatasetRecordingMixin:
             :meth:`~strands_robots.simulation.base.SimEngine._validate_recording_start_rate`.
             """
 
+        def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
+            """Type-only stub for the engine-provided running-policy guard.
+
+            :meth:`discard_episode` calls it. Implemented by
+            :meth:`~strands_robots.simulation.base.SimEngine._require_no_running_policy`.
+            """
+
     def _recording_state(self) -> dict[str, Any] | None:
         """Mutable recording-state mapping, or ``None`` when no world exists.
 
