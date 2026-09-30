@@ -346,13 +346,26 @@ def _model_link(base_url: str | None) -> str | None:
     return f"[{label}]({href})"
 
 
+#: What the joints chip counts, as its tooltip. The registry figure is the count
+#: ``get_robot_state`` reports (issue #4147): every joint of the loaded model except
+#: a floating base, which the state carries as ``base``. Graded per robot by
+#: ``scripts/audit_registry_joints.py``.
+_JOINTS_TITLE = "joints get_robot_state reports: every joint of the loaded model except a floating base"
+
+
+def _joints_chip(joints: object) -> str:
+    """The ``N joints`` chip, or nothing for a robot that reports no joint (a quadrotor)."""
+    if not isinstance(joints, int) or joints <= 0:
+        return ""
+    return f'<span class="sr-chip" title="{_JOINTS_TITLE}">{joints} joints</span>'
+
+
 def _chips(name: str, spec: dict, cov, entry: dict) -> str:  # noqa: ANN001
-    joints = spec.get("joints")
     parts = [
         f'<span class="sr-chip sr-chip-family" data-family="{spec["category"]}">{html.escape(_label(spec["category"]))}</span>'
     ]
-    if isinstance(joints, int):
-        parts.append(f'<span class="sr-chip">{joints} joints</span>')
+    if chip := _joints_chip(spec.get("joints")):
+        parts.append(chip)
     if entry.get("sim"):
         parts.append(f'<span class="sr-chip sr-chip-sim">{"sim" if cov.real else "sim only"}</span>')
     if cov.real:
@@ -618,14 +631,12 @@ def card(name: str, prefix: str) -> str:
         if thumb
         else '<span class="sr-robot-nothumb">no simulation asset</span>'
     )
-    joints = spec.get("joints")
     badges = ""
     if entry.get("sim"):
         badges += '<span class="sr-chip sr-chip-sim">sim</span>'
     if cov.real:
         badges += '<span class="sr-chip sr-chip-real">real</span>'
-    if isinstance(joints, int):
-        badges += f'<span class="sr-chip">{joints} joints</span>'
+    badges += _joints_chip(spec.get("joints"))
     aliases = spec.get("aliases") or []
     alias_html = (
         '<p class="sr-robot-aliases">' + " ".join(f"<code>{html.escape(a)}</code>" for a in aliases[:4]) + "</p>"
