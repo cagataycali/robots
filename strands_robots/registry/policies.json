@@ -191,6 +191,7 @@
         "algorithm",
         "config",
         "target_velocity",
+        "revision",
         "driven_joints",
         "arm_observation",
         "allow_missing_models"
