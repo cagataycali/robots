@@ -29,6 +29,8 @@ The sim lane is the `MuJoCoSimEngine` class: `SimEngine` plus mixins for physics
 
 ## Layers
 
+{{drawing:d02_layers}}
+
 The package reads top to bottom as seven layers, and a module imports only from layers below its own:
 
 ```text

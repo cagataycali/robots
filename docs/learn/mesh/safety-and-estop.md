@@ -16,6 +16,8 @@ There is no runnable fence on this page on purpose. An e-stop reaches every peer
 
 ## What an e-stop does
 
+{{drawing:d07_estop}}
+
 1. Engages the local lockout and records the time.
 2. Stops the robot in this process through the same `_dispatch({"action": "stop"})` path a remote peer would run. `broadcast` never comes back to its sender, so without this step the one robot the operator is standing next to would be the one the fan-out missed.
 3. Broadcasts `{"action": "stop"}` and collects replies for 3 s.
