@@ -46,3 +46,23 @@ def test_tagged_config_is_left_to_the_normal_loader(tmp_path):
 def test_unknown_type_or_unreadable_checkpoint_returns_none(tmp_path):
     assert config_for_untagged_checkpoint(_act_config(tmp_path, tagged=False), "no_such_policy") is None
     assert config_for_untagged_checkpoint(str(tmp_path / "missing"), "act") is None
+
+
+def test_the_inference_config_falls_back_to_the_untagged_parse(tmp_path, monkeypatch):
+    """``_inference_config`` (the device and compile pre-read) hands the untagged parse to ``from_pretrained``.
+
+    The real ``PreTrainedConfig.from_pretrained`` raises on the tagless file; the
+    pre-read then parses it for the named type and still applies the device choice.
+    """
+    from unittest.mock import patch
+
+    from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
+
+    path = _act_config(tmp_path, tagged=False)
+    with patch.object(LerobotLocalPolicy, "_load_model"):
+        named = LerobotLocalPolicy(pretrained_name_or_path=path, policy_type="act", device="cpu")
+        unnamed = LerobotLocalPolicy(pretrained_name_or_path=path, device="cpu")
+    cfg = named._inference_config()
+    assert cfg is not None and type(cfg).__name__ == "ACTConfig"
+    assert cfg.device == "cpu"
+    assert unnamed._inference_config() is None

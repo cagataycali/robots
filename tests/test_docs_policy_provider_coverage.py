@@ -20,18 +20,17 @@ unlinked row is the dead end this rule exists to catch.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
-import sys
 from pathlib import Path
+
+from tests._docs_hooks import docs_hook
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 POLICIES_JSON = REPO_ROOT / "strands_robots" / "registry" / "policies.json"
 DOCS_DIR = REPO_ROOT / "docs"
 POLICIES_DIR = DOCS_DIR / "learn" / "policies"
 _MATRIX = POLICIES_DIR / "index.md"
-_HOOK = DOCS_DIR / "hooks" / "providers.py"
 
 # Providers documented inline rather than on a standalone page.
 _INLINE_DOCUMENTED = {"mock"}
@@ -47,13 +46,7 @@ def _registered_providers() -> set[str]:
 
 def _rendered_matrix() -> str:
     """The provider matrix page with ``{{providers:...}}`` expanded by the shipped hook."""
-    spec = importlib.util.spec_from_file_location("docs_hooks_providers", _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = sys.modules.get(spec.name)
-    if module is None:
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+    module = docs_hook("providers")
     source = _MATRIX.read_text(encoding="utf-8")
     rendered = module.substitute(source, "learn/policies/index.md")
     assert rendered != source, "learn/policies/index.md carries no {{providers:table}} token"
