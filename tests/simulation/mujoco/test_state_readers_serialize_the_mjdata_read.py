@@ -56,6 +56,7 @@ pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco import simulation as simulation_mod  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from tests._package_ast import parse_file
 
 # Long enough that an unserialised reader (sub-millisecond here) finishes inside
 # it by a wide margin, and irrelevant to the serialised verdict: a reader waiting
@@ -211,7 +212,7 @@ def _mjdata_touches() -> dict[str, list[tuple[int, str, bool]]]:
     package = Path(str(inspect.getsourcefile(simulation_mod))).parent
     out: dict[str, list[tuple[int, str, bool]]] = {}
     for path in sorted(package.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
             for fn in (m for m in cls.body if isinstance(m, ast.FunctionDef | ast.AsyncFunctionDef)):
                 if fn.name.startswith("_"):

@@ -20,7 +20,10 @@ until the operator says yes; a scheme ``fetch`` cannot speak is refused.
 
 from __future__ import annotations
 
+import base64
+import json
 import re
+import time
 
 from tests._dashboard_frontend import LIB, requires_node, run_frontend
 
@@ -28,6 +31,14 @@ ENDPOINTS = LIB / "endpoints.ts"
 
 EVIL = "https://evil.example"
 TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJvcGVyYXRvciJ9.sig"
+
+
+def _jwt(sub: str = "operator", exp_in_s: int = 3600) -> str:
+    """A JWT-shaped token whose payload the browser decodes (the signature is opaque to it), minted at call time."""
+    payload = json.dumps({"sub": sub, "exp": int(time.time()) + exp_in_s, "via": "passkey"})
+    seg = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+    return f"eyJhbGciOiJIUzI1NiJ9.{seg}.c2ln"
+
 
 SIGNED_IN = f"""
 localStorage.setItem('strands.token', {TOKEN!r})
@@ -170,11 +181,33 @@ out({{
         assert got["token_host"] == "robot.lan:8090", got
 
     def test_an_authenticated_request_to_the_page_s_own_host_still_renews(self) -> None:
-        """The rule takes nothing from the legitimate path: the bearer went out, the renewal is taken."""
-        script = SIGNED_IN + "localStorage.setItem('strands.token.host', 'robot.lan:8090')\n"
-        got = self._after_the_probe(script, page="http://robot.lan:8090/", call="m.api('/api/fleet')")
-        assert got["authorization"] == [f"Bearer {TOKEN}"], got
-        assert got["stored_token"] == "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJldmlsIn0.forged", got
+        """The rule takes nothing from the legitimate path: the bearer went out, the renewal is taken.
+
+        A legitimate renewal is what f018 admits: the renewal route answering with a
+        token for the same subject that expires later than the one presented. Minted
+        here, not at import, so the expiries are read against the clock of this cell.
+        """
+        current, fresh = _jwt(exp_in_s=1800), _jwt(exp_in_s=3600)
+        script = (
+            f"localStorage.setItem('strands.token', {current!r})\n"
+            "localStorage.setItem('strands.token.host', 'robot.lan:8090')\n"
+        )
+        got = run_frontend(
+            script
+            + f"""
+answer = {{ status: 200, headers: {{ 'X-Session-Token': {fresh!r} }}, body: '{{}}' }}
+const m = await import('./endpoints.ts')
+await m.api(m.RENEWAL_PATH).catch(() => null)
+out({{
+  stored_token: localStorage.getItem('strands.token'),
+  authorization: sent.map(s => s.headers.Authorization ?? null),
+  renewed_at: m.lastRenewalAt(),
+}})
+""",
+            page="http://robot.lan:8090/",
+        )
+        assert got["authorization"] == [f"Bearer {current}"], got
+        assert got["stored_token"] == fresh, got
         assert got["renewed_at"] > 0, got
 
 

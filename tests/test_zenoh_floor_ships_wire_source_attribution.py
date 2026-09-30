@@ -60,6 +60,7 @@ from packaging.requirements import Requirement
 from packaging.version import Version
 
 import strands_robots
+from tests._package_ast import parse_file
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PACKAGE_ROOT = Path(strands_robots.__file__).resolve().parent
@@ -126,7 +127,7 @@ def _zenoh_attributes_reached() -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
     probes = {"hasattr", "getattr"}
     for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         bound: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):

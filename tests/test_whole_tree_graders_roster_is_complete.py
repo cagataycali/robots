@@ -78,6 +78,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_file
+
 _TESTS_ROOT = Path(__file__).resolve().parent
 _REPO_ROOT = _TESTS_ROOT.parent
 
@@ -781,7 +783,7 @@ def _root_symbols_that_resolve_to_nothing(module_path: Path) -> dict[str, str]:
 
     :param module_path: The test module to read.
     """
-    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    tree = parse_file(module_path)
     unresolved: dict[str, str] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.ImportFrom) or not node.module or node.level:

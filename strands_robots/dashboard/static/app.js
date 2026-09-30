@@ -295,6 +295,75 @@ function connectionChange(c) {
 function needsConfirm(v) {
   return v.kind === "token_follows_host" || v.kind === "cleartext_token";
 }
+const EXPIRING_SOON_S = 300;
+function decodeSegment(seg) {
+  try {
+    const norm2 = seg.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = "=".repeat((4 - norm2.length % 4) % 4);
+    const bin = atob(norm2 + pad);
+    return decodeURIComponent(Array.from(bin, (c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0")).join(""));
+  } catch {
+    return null;
+  }
+}
+function tokenClaims(token) {
+  const raw = (token ?? "").trim();
+  if (!raw) return null;
+  const parts = raw.split(".");
+  if (parts.length !== 3) return null;
+  const json = decodeSegment(parts[1]);
+  if (!json) return null;
+  try {
+    const claims = JSON.parse(json);
+    return claims !== null && typeof claims === "object" && !Array.isArray(claims) ? claims : null;
+  } catch {
+    return null;
+  }
+}
+function tokenExpiry(token) {
+  var _a;
+  const exp = (_a = tokenClaims(token)) == null ? void 0 : _a.exp;
+  return typeof exp === "number" && Number.isFinite(exp) ? exp : null;
+}
+function humaniseSeconds(s) {
+  const abs = Math.abs(s);
+  if (abs < 90) return `${Math.round(abs)} seconds`;
+  if (abs < 5400) return `${Math.round(abs / 60)} minutes`;
+  const hours = abs / 3600;
+  const shown = hours < 10 ? Number(hours.toFixed(1)) : Math.round(hours);
+  return `${shown} hour${shown === 1 ? "" : "s"}`;
+}
+function sessionVerdict(token, nowS, renewedAtS = 0) {
+  const raw = (token ?? "").trim();
+  if (!raw) {
+    return { state: "none", expiresInS: null, text: null, refusesUntilSignIn: false };
+  }
+  return sessionVerdictAt(tokenExpiry(raw), nowS, renewedAtS);
+}
+function sessionVerdictAt(exp, nowS, renewedAtS = 0) {
+  if (exp === null) {
+    return { state: "opaque", expiresInS: null, text: null, refusesUntilSignIn: false };
+  }
+  const left = exp - nowS;
+  if (left <= 0) {
+    return {
+      state: "expired",
+      expiresInS: left,
+      // The two facts the operator needs: it is not the robot's fault, and one tap fixes it.
+      text: `this sign-in expired ${humaniseSeconds(left)} ago — sign in again to see cameras and control the fleet. Nothing is wrong with the robots; the page is being refused.`,
+      refusesUntilSignIn: true
+    };
+  }
+  if (left <= EXPIRING_SOON_S) {
+    return {
+      state: "expiring",
+      expiresInS: left,
+      text: renewedAtS > 0 ? `this sign-in lapses in ${humaniseSeconds(left)} and is no longer being renewed — this page renewed it automatically before, so the connection is now being refused or the session hit its 30-day maximum. Sign in again before starting a recording.` : `this sign-in lapses in ${humaniseSeconds(left)} — sign in again before starting a recording, or it will be refused part-way through.`,
+      refusesUntilSignIn: false
+    };
+  }
+  return { state: "valid", expiresInS: left, text: null, refusesUntilSignIn: false };
+}
 const BASE_KEY = "strands.backend";
 const TOKEN_KEY = "strands.token";
 const TOKEN_HOST_KEY = "strands.token.host";
@@ -540,19 +609,29 @@ let lastRenewalAtS = 0;
 function lastRenewalAt() {
   return lastRenewalAtS;
 }
-function absorbRenewedSession(res) {
+const RENEWAL_PATH = "/api/auth/renew";
+function absorbRenewedSession(res, path) {
   var _a;
+  if (!res || res.ok !== true) return false;
+  if (path !== RENEWAL_PATH) return false;
   let offered = null;
   try {
-    offered = ((_a = res == null ? void 0 : res.headers) == null ? void 0 : _a.get("X-Session-Token")) ?? null;
+    offered = ((_a = res.headers) == null ? void 0 : _a.get("X-Session-Token")) ?? null;
   } catch {
     return false;
   }
   const fresh = (offered ?? "").trim();
   if (!fresh) return false;
-  const current = (localStorage.getItem(TOKEN_KEY) ?? "").trim();
+  const current = authToken();
   if (!current || fresh === current) return false;
-  if (fresh.split(".").length !== 3) return false;
+  const was = tokenClaims(current);
+  const now = tokenClaims(fresh);
+  if (!was || !now) return false;
+  if (typeof now.sub !== "string" || now.sub !== was.sub) return false;
+  const wasExp = tokenExpiry(current);
+  const nowExp = tokenExpiry(fresh);
+  if (wasExp === null || nowExp === null || nowExp <= wasExp) return false;
+  if (nowExp <= Date.now() / 1e3) return false;
   setAuthToken(fresh);
   lastRenewalAtS = Date.now() / 1e3;
   return true;
@@ -568,7 +647,6 @@ async function api(path, init = {}) {
   } catch (e) {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`);
   }
-  if (token) absorbRenewedSession(res);
   const text = await res.text();
   let body = text;
   try {
@@ -585,6 +663,9 @@ async function api(path, init = {}) {
     throw new HttpError(res.status, message, body);
   }
   noteAuthAccepted(path);
+  if (token) {
+    absorbRenewedSession(res, path);
+  }
   return body;
 }
 const post = (path, body) => api(path, { method: "POST", body: body === void 0 ? "{}" : JSON.stringify(body) });
@@ -599,7 +680,6 @@ async function apiBlob(path) {
   } catch (e) {
     throw new HttpError(0, `cannot reach ${backendLabel()}: ${e instanceof Error ? e.message : e}`);
   }
-  if (token) absorbRenewedSession(res);
   if (!res.ok) {
     noteAuthRefusal(res.status);
     const text = await res.text();
@@ -611,72 +691,10 @@ async function apiBlob(path) {
     throw new HttpError(res.status, detailSentence(detail) || text || res.statusText);
   }
   noteAuthAccepted(path);
+  if (token) {
+    absorbRenewedSession(res, path);
+  }
   return URL.createObjectURL(await res.blob());
-}
-const EXPIRING_SOON_S = 300;
-function decodeSegment(seg) {
-  try {
-    const norm2 = seg.replace(/-/g, "+").replace(/_/g, "/");
-    const pad = "=".repeat((4 - norm2.length % 4) % 4);
-    const bin = atob(norm2 + pad);
-    return decodeURIComponent(Array.from(bin, (c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0")).join(""));
-  } catch {
-    return null;
-  }
-}
-function tokenExpiry(token) {
-  const raw = (token ?? "").trim();
-  if (!raw) return null;
-  const parts = raw.split(".");
-  if (parts.length !== 3) return null;
-  const json = decodeSegment(parts[1]);
-  if (!json) return null;
-  try {
-    const claims = JSON.parse(json);
-    const exp = claims == null ? void 0 : claims.exp;
-    return typeof exp === "number" && Number.isFinite(exp) ? exp : null;
-  } catch {
-    return null;
-  }
-}
-function humaniseSeconds(s) {
-  const abs = Math.abs(s);
-  if (abs < 90) return `${Math.round(abs)} seconds`;
-  if (abs < 5400) return `${Math.round(abs / 60)} minutes`;
-  const hours = abs / 3600;
-  const shown = hours < 10 ? Number(hours.toFixed(1)) : Math.round(hours);
-  return `${shown} hour${shown === 1 ? "" : "s"}`;
-}
-function sessionVerdict(token, nowS, renewedAtS = 0) {
-  const raw = (token ?? "").trim();
-  if (!raw) {
-    return { state: "none", expiresInS: null, text: null, refusesUntilSignIn: false };
-  }
-  return sessionVerdictAt(tokenExpiry(raw), nowS, renewedAtS);
-}
-function sessionVerdictAt(exp, nowS, renewedAtS = 0) {
-  if (exp === null) {
-    return { state: "opaque", expiresInS: null, text: null, refusesUntilSignIn: false };
-  }
-  const left = exp - nowS;
-  if (left <= 0) {
-    return {
-      state: "expired",
-      expiresInS: left,
-      // The two facts the operator needs: it is not the robot's fault, and one tap fixes it.
-      text: `this sign-in expired ${humaniseSeconds(left)} ago — sign in again to see cameras and control the fleet. Nothing is wrong with the robots; the page is being refused.`,
-      refusesUntilSignIn: true
-    };
-  }
-  if (left <= EXPIRING_SOON_S) {
-    return {
-      state: "expiring",
-      expiresInS: left,
-      text: renewedAtS > 0 ? `this sign-in lapses in ${humaniseSeconds(left)} and is no longer being renewed — this page renewed it automatically before, so the connection is now being refused or the session hit its 30-day maximum. Sign in again before starting a recording.` : `this sign-in lapses in ${humaniseSeconds(left)} — sign in again before starting a recording, or it will be refused part-way through.`,
-      refusesUntilSignIn: false
-    };
-  }
-  return { state: "valid", expiresInS: left, text: null, refusesUntilSignIn: false };
 }
 const ACTIVITY_CAP = 200;
 function useMesh() {
