@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
@@ -61,7 +61,7 @@ def _devices(request: Request) -> DeviceManager:
     return cast("DeviceManager", dm)
 
 
-def _audit(bridge: Any | None, action: str, *, target: str, detail: str | None = None, ok: bool) -> None:
+def _audit(bridge: Any | None, action: str, *, target: str, detail: str | None = None, ok: bool | None) -> None:
     """Land one lifecycle entry in the activity trail; a missing bridge is a missing trail, not a crash."""
     record = getattr(bridge, "record_activity", None)
     if record is None:
@@ -143,10 +143,13 @@ async def devices(request: Request, refresh: bool = False, _: dict = Depends(acc
 async def device_profiles(request: Request, _: dict = Depends(access.require_session)) -> dict[str, Any]:
     """Remembered USB device profiles, keyed by board serial number."""
     dm = _devices(request)
+    watcher = getattr(dm, "autospawn", None)
     return {
         "profiles": dm.profiles.all(),
         "path": dm.profiles.path,
         "autospawn": getattr(request.app.state, "autospawn_task", None) is not None,
+        # Real arms the watcher matched but did not start: the operator confirms each one.
+        "autospawn_pending": list((getattr(watcher, "pending", None) or {}).values()),
     }
 
 
@@ -348,14 +351,48 @@ async def device_logs(request: Request, peer_id: str, _: dict = Depends(access.r
 # ---------------------------------------------------------------------------
 
 
+def _board_words(seen: Mapping[str, Any]) -> str:
+    """``serial 5A7F (1a86:55d3) at /dev/ttyACM0``: what was actually observed, so a first-time
+    match and the hundredth replug of a known board do not read the same."""
+    usb = seen.get("usb") or "no vid:pid"
+    return f"serial {seen.get('serial')} ({usb}) at {seen.get('device') or 'an unknown path'}"
+
+
 def _audit_autospawn(bridge: Any | None, did: dict[str, Any] | None) -> None:
     """Land the auto-spawn watcher's poll results in the activity trail."""
     if not did:
         return
+    spawned_from = did.get("spawned_from") or {}
     for peer_id in did.get("spawned") or []:
-        _audit(bridge, "spawn", target=peer_id, detail="USB auto-spawn (board plugged in)", ok=True)
+        seen = spawned_from.get(peer_id)
+        words = f"USB auto-spawn: {_board_words(seen)}" if seen else "USB auto-spawn (board plugged in)"
+        _audit(bridge, "spawn", target=peer_id, detail=words, ok=True)
     for peer_id in did.get("despawned") or []:
         _audit(bridge, "despawn", target=peer_id, detail="USB auto-spawn (board unplugged)", ok=True)
+    for item in did.get("proposed") or []:
+        _audit(
+            bridge,
+            "autospawn_proposed",
+            target=str(item.get("peer_id") or item.get("serial") or ""),
+            detail=f"{_board_words(item)}: {item.get('reason')}",
+            ok=None,
+        )
+    for item in did.get("held") or []:
+        _audit(
+            bridge,
+            "autospawn_held",
+            target=str(item.get("peer_id") or item.get("serial") or ""),
+            detail=f"{_board_words(item)}: {item.get('reason')}",
+            ok=False,
+        )
+    for device in did.get("unidentified") or []:
+        _audit(
+            bridge,
+            "autospawn_unidentified",
+            target=str(device),
+            detail="this board reports no USB serial, so no remembered profile can be matched to it; spawn it by hand",
+            ok=None,
+        )
 
 
 async def _autospawn_loop(app: FastAPI, watcher: Any) -> None:

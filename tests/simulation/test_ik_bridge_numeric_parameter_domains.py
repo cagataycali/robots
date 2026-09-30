@@ -301,7 +301,7 @@ class TestTheSilentlyWrongSolvesAreRefused:
 
     def test_a_non_finite_timestep_no_longer_yields_nan_joints(self, fake_mink: types.ModuleType) -> None:
         """``dt`` scales the integrated velocity, so a non-finite one poisons every joint."""
-        with pytest.raises(ValueError, match=r"dt must be > 0"):
+        with pytest.raises(ValueError, match=r"dt must be a positive finite number"):
             _build(dt=float("nan"))
 
 

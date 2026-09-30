@@ -42,7 +42,6 @@ from strands_robots.tools.train_policy import train_policy
 from strands_robots.training._validate import resume_problems, streaming_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.isaaclab import IsaacLabTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
@@ -74,10 +73,10 @@ A_BOOLEAN = [
 # Which backend reads which field, by name or through a forwarding table. The
 # one-owner scan at the bottom derives the same sets from the tree, so a
 # backend that starts reading a field is graded on arrival.
-READS_RESUME = (LerobotTrainer, Gr00tTrainer, SagemakerTrainer, IsaacLabTrainer)
+READS_RESUME = (LerobotTrainer, SagemakerTrainer, IsaacLabTrainer)
 READS_STREAMING = (LerobotTrainer, SagemakerTrainer)
 IGNORES_RESUME = (MockTrainer, Cosmos3Trainer)
-IGNORES_STREAMING = (MockTrainer, Cosmos3Trainer, Gr00tTrainer)
+IGNORES_STREAMING = (MockTrainer, Cosmos3Trainer)
 
 
 @pytest.fixture
@@ -304,7 +303,6 @@ class TestTheListedReadersAgreeWithTheTree:
         """The hand-written reader tuples above agree with the derived ones."""
         by_module = {
             "lerobot.py": LerobotTrainer,
-            "groot.py": Gr00tTrainer,
             "sagemaker.py": SagemakerTrainer,
             "isaaclab.py": IsaacLabTrainer,
         }

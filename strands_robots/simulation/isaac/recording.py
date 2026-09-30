@@ -33,11 +33,9 @@ else in the shared lifecycle runs unchanged.
 
 **Pacing**: the recorded ``fps`` is dataset metadata; the actual frame cadence
 is ``run_policy(control_frequency=...)`` (one recorded frame per control
-step). The RTX renderer produces new frames at ``IsaacConfig.rendering_dt``
-(default 1/30 s), so a control frequency above ``1 / rendering_dt`` records
-duplicate frames from the same render product. For distinct per-step images
-keep ``control_frequency <= 1 / rendering_dt`` and set ``fps`` to match the
-control frequency.
+step). Every camera refreshes on the control step's last physics tick, so each
+recorded frame shows that step's state; set ``fps`` to match the control
+frequency.
 
 **Threading**: schema declaration probes ``get_observation`` once. When the
 main-thread pump (:meth:`IsaacSimulation.run_pump_forever`) owns the renderer
@@ -312,6 +310,9 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                 else:
                     scalars[k] = v
 
+            if _opens_on_an_unrendered_frame(rec, state, images):
+                return
+
             state["trajectory"].append(
                 TrajectoryStep(
                     timestamp=time.time(),
@@ -324,6 +325,7 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
             )
 
             frame.write(rec, {robot_name: scalars}, {robot_name: action}, images, instruction)
+            state["unrendered_skips"] = 0
 
         return _record
 
@@ -386,3 +388,46 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         robot = registry_entry(self._robots, robot_name)
         if robot is not None:
             robot.policy_running = False
+
+
+#: Frames an episode may skip at its start while a recorded camera has not
+#: rendered yet. Measured on one L40S (Isaac Sim 6.1): an so101 wrist camera
+#: returned all-zero frames for the first two rollout steps of every episode,
+#: and render-only ticks did not light it - only a physics step did.
+_MAX_UNRENDERED_SKIPS = 8
+
+
+def _opens_on_an_unrendered_frame(rec: Any, state: dict[str, Any], images: dict[str, Any]) -> bool:
+    """Whether this frame would open the episode with a camera that has not rendered.
+
+    An episode's first frames used to be written with an all-zero (black) image
+    for such a camera, so a policy trained on the dataset saw black inputs at
+    every episode start (MuJoCo: never). Until the episode has its first frame,
+    a frame whose declared camera image is missing or all zeros is skipped - up
+    to :data:`_MAX_UNRENDERED_SKIPS` in a row, after which it is written as it
+    is (a camera that really sees black). A frame after the episode's first is
+    always written, black or not.
+    """
+    if int(getattr(rec, "episode_frame_count", 1) or 0) > 0:
+        return False
+    declared = [safe for _src, safe, _w, _h in state.get("recording_cameras", [])]
+    if not declared:
+        return False
+    unrendered = [
+        name
+        for name in declared
+        if name not in images or not np.asarray(images[name]).size or not np.any(np.asarray(images[name])[..., :3])
+    ]
+    if not unrendered:
+        return False
+    skips = int(state.get("unrendered_skips", 0) or 0)
+    if skips >= _MAX_UNRENDERED_SKIPS:
+        logger.warning(
+            "recording: camera(s) %s still black after %d skipped frames at the episode start; recording them as black",
+            unrendered,
+            skips,
+        )
+        return False
+    state["unrendered_skips"] = skips + 1
+    logger.debug("recording: skipped an episode-opening frame, camera(s) %s not rendered yet", unrendered)
+    return True

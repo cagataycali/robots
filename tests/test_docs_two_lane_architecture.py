@@ -24,7 +24,11 @@ Three ways that arrangement can quietly break, each graded here:
   ``mkdocs-redirects`` serves each old URL a redirect to its new home, and a
   redirect is graded both ways: its source must not be a page on disk (that
   would shadow a real page), its destination must be, and no redirect points
-  at another redirect (the plugin does not chain).
+  at another redirect (the plugin does not chain). Shadowing is graded on the
+  URL, not the file: with ``use_directory_urls`` the pages ``robots/mobile.md``
+  and ``robots/mobile/index.md`` both render to ``robots/mobile/``, so a
+  redirect between them writes a stub over the real page that sends the
+  browser to itself, forever.
 """
 
 from __future__ import annotations
@@ -122,6 +126,15 @@ def _redirects() -> dict[str, str]:
     assert len(block) == 2, "mkdocs.yml declares no redirect_maps; moved URLs resolve to nothing"
     body = block[1].split("\nnav:", 1)[0]
     return {m["source"]: m["target"] for m in _REDIRECT_ROW.finditer(body)}
+
+
+def _url_of(page: str) -> str:
+    """The directory URL a docs page renders to under ``use_directory_urls``."""
+    if page.endswith("/index.md"):
+        return page[: -len("index.md")]
+    if page == "index.md":
+        return ""
+    return page[: -len(".md")] + "/"
 
 
 def _pages() -> set[str]:
@@ -235,6 +248,20 @@ class TestEveryMovedUrlStillResolves:
         )
         dangling = sorted(target for target in redirects.values() if target not in pages)
         assert not dangling, f"redirect_maps targets that are not pages on disk: {dangling}"
+
+    def test_no_redirect_renders_to_the_url_of_a_real_page(self) -> None:
+        """A redirect whose old URL equals a live page's URL replaces that page with a self-loop."""
+        urls = {_url_of(page): page for page in _pages()}
+        looping = sorted(
+            f"{source} -> {target} (both are {_url_of(source)})"
+            for source, target in _redirects().items()
+            if _url_of(source) in urls
+        )
+        assert not looping, (
+            f"redirect_maps sources that render to the URL of a page on disk: {looping}. "
+            "mkdocs-redirects writes its stub last, so the stub overwrites the page and "
+            "redirects to itself; the reader sees an endless reload."
+        )
 
     def test_no_redirect_points_at_another_redirect(self) -> None:
         redirects = _redirects()

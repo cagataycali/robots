@@ -31,7 +31,7 @@ def require_optional(
     Args:
         module_name: Dotted module name to import (e.g. ``"zmq"``).
         pip_install: Explicit pip package name if it differs from *module_name*.
-        extra: ``pyproject.toml`` extras group (e.g. ``"groot-service"``).
+        extra: ``pyproject.toml`` extras group (e.g. ``"moveit2"``).
         purpose: Human-readable description shown in the error message.
         system_install: Remedy for a module that arrives with a system package
             rather than from an index - the ROS 2 client libraries are the case
@@ -611,6 +611,10 @@ def _beyond_float_range(value: Any) -> bool:
 def positive_finite_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive finite number.
 
+    Every refusal names the whole domain - a real number that is finite and
+    greater than zero - so the text is true of whichever part the value missed:
+    ``inf > 0`` holds, and a message citing only the sign would be false of it.
+
     Args:
         value: The caller-supplied value.
         param: The parameter it came from, used in the message.
@@ -620,8 +624,9 @@ def positive_finite_number_error(value: Any, param: str, context: str) -> str | 
     Returns:
         An error message, or ``None`` when the value is usable.
     """
+    refusal = f"{context}: {param} must be a positive finite number, got {refusal_repr(value)}."
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
-        return f"{context}: {param} must be > 0, got {refusal_repr(value)}."
+        return refusal
     if _beyond_float_range(value):
         # A real past the float64 range is positive-or-negative and finite, so
         # neither of this guard's own reasons is true of it - hence its own text.
@@ -631,15 +636,13 @@ def positive_finite_number_error(value: Any, param: str, context: str) -> str | 
     try:
         # ``isfinite`` before the sign test: ``nan`` is never ``<= 0``, so
         # ordering these the other way lets it through.
-        unusable = not math.isfinite(float(value)) or float(value) <= 0
+        usable = math.isfinite(float(value)) and float(value) > 0
     except Exception:
         # A ``numbers.Real`` registration owes this guard no working
         # ``__float__``, and a value no number can be read from is refused for
-        # the same reason a non-real one is - the message it already had.
-        unusable = True
-    if unusable:
-        return f"{context}: {param} must be > 0, got {refusal_repr(value)}."
-    return None
+        # the same reason a non-real one is.
+        usable = False
+    return None if usable else refusal
 
 
 def finite_number_error(value: Any, param: str, context: str) -> str | None:
@@ -1011,37 +1014,6 @@ def dds_domain_id_error(value: Any, param: str, context: str) -> str | None:
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_DDS_DOMAIN_ID:
         return f"{context}: invalid {param}: {refusal_repr(value)} (expected 0-{MAX_DDS_DOMAIN_ID})"
     return None
-
-
-#: Isaac-GR00T releases :class:`~strands_robots.policies.groot.Gr00tPolicy` loads.
-#:
-#: The domain of its ``groot_version=``, which selects a loader rather than
-#: naming a package version: each spelling has a branch in
-#: ``Gr00tPolicy._load_local_policy`` that imports that release's own entry
-#: point. The tuple is the loaders the policy has, not the releases NVIDIA
-#: ships, which is why it is stated once here and graded against the dispatch.
-SUPPORTED_GROOT_VERSIONS = ("n1.5", "n1.6", "n1.7")
-
-
-def groot_version_error(value: Any, param: str, context: str) -> str | None:
-    """Error text when ``value`` names no Isaac-GR00T release with a loader.
-
-    Args:
-        value: The caller-supplied release selector.
-        param: The parameter name it came from, used in the message.
-        context: Message prefix identifying the surface that received it,
-            usually the class name for a constructor parameter.
-
-    Returns:
-        An error message, or ``None`` when the value is usable.
-    """
-    if value is None or value in SUPPORTED_GROOT_VERSIONS:
-        return None
-    return (
-        f"{context}: invalid {param}: {refusal_repr(value)} names no Isaac-GR00T release "
-        f"this policy has a loader for (expected one of {list(SUPPORTED_GROOT_VERSIONS)}, "
-        "or None to auto-detect the installed release)"
-    )
 
 
 MAX_ZMQ_TIMEOUT_MS = 2**31 - 1

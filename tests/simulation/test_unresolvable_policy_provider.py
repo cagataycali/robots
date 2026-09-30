@@ -69,7 +69,6 @@ RESOLVABLE: list[str] = [
     *BUILTIN_PROVIDERS,
     "lerobot/act_aloha_sim",
     "allenai/MolmoAct2-SO100_101",
-    "zmq://localhost:5555",
     "ws://localhost:8765",
 ]
 

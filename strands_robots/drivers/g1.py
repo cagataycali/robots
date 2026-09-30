@@ -29,7 +29,7 @@ What the driver actually does:
   exit); :meth:`stop_task` halts that loop and reports the join outcome;
   :meth:`get_task_status` reports the loop's snapshot or the last exit
   reason.  :meth:`start_task` still refuses with a named message because
-  the provider registry (Groot/ACT/Diffusion clients) is not yet plumbed
+  the provider registry (ACT / SmolVLA / GR00T N1.7 through lerobot_local) is not yet plumbed
   here - a caller with an already-built policy uses :meth:`run_policy`
   today.  Locomotion and arm-SDK-shaped verbs arrive with the ``g1_tools``
   motion verbs; the driver's job in issue #354 was the transport, and the
@@ -1238,7 +1238,7 @@ class G1Driver:
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "lerobot_local",
         duration: float = 30.0,
         **policy_kwargs: Any,
     ) -> dict[str, Any]:
@@ -1246,7 +1246,7 @@ class G1Driver:
 
         The lerobot driver runs its ``start_task`` through a policy provider
         registry.  Providers live in :mod:`strands_robots.policies`; wiring a
-        concrete inference client (Groot, ACT, Diffusion) here needs the
+        concrete inference client (lerobot_local, remote) here needs the
         ``g1_tools`` motion verbs so the loop has something to command with
         joint-name semantics.
 

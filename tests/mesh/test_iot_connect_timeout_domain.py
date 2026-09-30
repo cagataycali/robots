@@ -156,7 +156,7 @@ class TestTheTransportRefusesAConnectTimeoutThatNamesNoBudget:
         text = str(exc.value)
         assert "IotMqttTransport" in text, f"the refusal must name the class, got {text!r}"
         assert "connect_timeout" in text, f"the refusal must name the parameter, got {text!r}"
-        assert "must be > 0" in text, f"the refusal must state the domain, got {text!r}"
+        assert "must be a positive finite number" in text, f"the refusal must state the domain, got {text!r}"
 
     @pytest.mark.parametrize("value", USABLE_TIMEOUTS)
     def test_a_usable_budget_is_stored_unchanged(self, tmp_path: Any, value: Any) -> None:

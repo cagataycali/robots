@@ -28,18 +28,17 @@ names are read; one computed at runtime is not something this file can resolve.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
 from pathlib import Path
 
 import strands_robots
 from strands_robots.utils import scoped_camera_name_error
+from tests._docs_hooks import docs_hook
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _EMBODIMENTS = _REPO_ROOT / "strands_robots" / "policies" / "lerobot_local" / "embodiments.json"
 _CAMERA_NAMING_DOC = _REPO_ROOT / "docs" / "learn" / "policies" / "lerobot-local.md"
-_PROVIDERS_HOOK = _REPO_ROOT / "docs" / "hooks" / "providers.py"
 #: The page that documents ``add_camera`` itself, where the name rule is stated.
 _ADD_CAMERA_DOC = _REPO_ROOT / "docs" / "learn" / "simulation" / "worlds-and-objects.md"
 
@@ -70,10 +69,7 @@ def _rendered_camera_table() -> str:
     """The camera table as the build renders it into the policies page."""
     page = _CAMERA_NAMING_DOC.read_text(encoding="utf-8")
     assert "{{providers:cameras}}" in page, f"{_CAMERA_NAMING_DOC.name} no longer places the camera table"
-    spec = importlib.util.spec_from_file_location("docs_providers_hook", _PROVIDERS_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = docs_hook("providers")
     return module.cameras_table()
 
 
