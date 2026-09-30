@@ -6338,7 +6338,7 @@ class IsaacSimulation(
                 ``{robot_name: instruction}`` mapping.
             duration: Episode length in seconds (steps = duration x freq).
                 Used only when no ``n_steps`` / ``max_steps`` is given.
-            control_frequency: Target Hz for policy queries / physics steps.
+            control_frequency: Target Hz for policy queries. Each synchronized step advances one control period of physics, in whole ``physics_dt`` ticks, as ``run_policy`` does.
             action_horizon: Actions consumed from each policy's chunk before
                 re-querying it, as one int or a per-robot mapping.
             n_steps: Exact step horizon (overrides ``duration`` when set).
@@ -6516,6 +6516,13 @@ class IsaacSimulation(
         skip_images = not (any_needs_images or recording)
         render_on = self._config.render_mode != "headless"
         physics_dt = float(getattr(self._config, "physics_dt", 0.0) or 0.0)
+        # One synchronized step is one CONTROL period (MuJoCo parity, and what
+        # run_policy steps for the same rate): one physics tick at 1/120 s under
+        # a 50 Hz loop left each servo 42% of the way to its target, and a
+        # recording labelled at the control rate held frames 1/120 s apart.
+        from strands_robots.simulation.policy_runner import PolicyRunner
+
+        n_substeps = PolicyRunner(self)._control_substeps(control_frequency)
 
         # Honour the RESOLVED step count. ``_resolve_horizon`` above returns both
         # the wall-clock ``duration`` and the normalized ``n_steps``, and the
@@ -6562,7 +6569,7 @@ class IsaacSimulation(
             return per_obs, cams
 
         def _apply_all_and_step(per_robot_action: dict[str, dict[str, Any]]) -> None:
-            """Main-thread hop 2: apply EVERY robot's targets, step physics ONCE."""
+            """Main-thread hop 2: apply EVERY robot's targets, step one control period."""
             with self._lock:
                 # The preflight refused a view that was already stale; this
                 # catches one invalidated MID-rollout by a worker thread's
@@ -6584,11 +6591,16 @@ class IsaacSimulation(
                     self._apply_lockstep_action(rname, act, warned_unresolved)
                 # Same replay as ``step`` and ``send_action``: this tick advances
                 # ``_sim_time``, so a latched wrench has to act on it.
-                if getattr(self, "_applied_wrenches", None):
-                    self._reapply_wrenches()
-                self._world.step(render=render_on)
-                self._sim_time += physics_dt
-                self._step_count += 1
+                for tick in range(n_substeps):
+                    if getattr(self, "_applied_wrenches", None):
+                        self._reapply_wrenches()
+                    # Render once, after the last tick, as ``send_action`` does:
+                    # the frame read next is of the state this period ends in.
+                    self._world.step(render=False)
+                    if render_on and tick == n_substeps - 1:
+                        self._render_world()
+                    self._sim_time += physics_dt
+                    self._step_count += 1
 
         step_count = 0
         stopped_early = False

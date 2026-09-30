@@ -1325,6 +1325,48 @@ def _with_prefetch_keys(block: dict[str, Any], policy: Any) -> dict[str, Any]:
     return block
 
 
+class SubstepSchedule:
+    """Physics steps per applied action, following the cumulative control clock.
+
+    ``period_steps`` is the control period in physics steps (``1/hz/dt``). When
+    it is a whole number every action takes that many steps. When it is not,
+    :meth:`next` returns ``round((k+1) * period_steps) - round(k * period_steps)``
+    for the k-th action, so the sim time before action ``k`` is within half a
+    physics step of ``k * period`` and a rollout of ``n`` actions covers
+    ``n * period`` to within one step (#4392). The counts only ever take the two
+    values ``floor(period_steps)`` and ``ceil(period_steps)`` (never below 1).
+    """
+
+    __slots__ = ("_applied", "_stepped", "exact", "nominal", "period_steps")
+
+    def __init__(self, period_steps: float, *, exact: bool | None = None) -> None:
+        self.period_steps = float(period_steps)
+        self.nominal = max(1, round(self.period_steps))
+        if exact is None:
+            exact = abs(self.period_steps - self.nominal) <= 1e-6 * max(1.0, self.period_steps)
+        self.exact = bool(exact)
+        self._applied = 0
+        self._stepped = 0
+
+    @property
+    def bounds(self) -> tuple[int, int]:
+        """The two counts :meth:`next` alternates between (equal when exact)."""
+        if self.exact:
+            return self.nominal, self.nominal
+        low = max(1, math.floor(self.period_steps))
+        return low, max(low, math.ceil(self.period_steps))
+
+    def next(self) -> int:
+        """Physics steps for the next applied action (always ``>= 1``)."""
+        if self.exact:
+            return self.nominal
+        self._applied += 1
+        target = round(self._applied * self.period_steps)
+        count = max(1, target - self._stepped)
+        self._stepped += count
+        return count
+
+
 class PolicyRunner:
     """Backend-agnostic policy execution against a ``SimEngine``.
 
@@ -1502,16 +1544,14 @@ class PolicyRunner:
         )
 
     def _control_substeps(self, control_frequency: float, override: int | None = None) -> int:
-        """Physics steps per applied action so a position-servo arm tracks the
-        full control period (1/control_frequency), not a single physics dt.
+        """Nominal physics steps per applied action: ``round(period / dt)``.
 
-        Identical derivation to :meth:`run` - extracted so the eval paths
-        (:meth:`evaluate` / :meth:`_evaluate_with_spec`) step physics for the
-        SAME wall-clock period per action. Without this, eval called
-        ``send_action`` with the default ``n_substeps=1`` (a single ~2 ms
-        ``mj_step``), so the arm integrated ~10% of the way toward each target
-        before the next action overwrote ``ctrl`` - rollouts looked like the
-        policy was a no-op even when commanding valid targets.
+        The rollout loops step by :meth:`_substep_schedule`, which keeps this
+        count when the control period is a whole number of physics steps and
+        alternates the two neighbouring counts when it is not (#4392). This
+        method is the constant view of that schedule for callers that need one
+        number (logs, tools, the replay of a single frame) and it validates an
+        explicit ``override`` exactly as before.
 
         Args:
             control_frequency: Control-loop rate in Hz, used with the backend's
@@ -1530,10 +1570,50 @@ class PolicyRunner:
                 a structured error before reaching the runner; this raise is the
                 guarantee for callers driving ``PolicyRunner`` directly.
         """
+        return self._substep_schedule(control_frequency, override).nominal
+
+    def _substep_schedule(self, control_frequency: float, override: int | None = None) -> SubstepSchedule:
+        """Physics steps per applied action so a position-servo arm tracks the
+        full control period (1/control_frequency), not a single physics dt, and
+        so the k-th action starts within one physics step of ``k / control_frequency``.
+
+        Shared by :meth:`run`, :meth:`replay`, :meth:`evaluate` and
+        :meth:`_evaluate_with_spec` so every path steps physics for the SAME
+        period per action. Without this, eval called ``send_action`` with the
+        default ``n_substeps=1`` (a single ~2 ms ``mj_step``), so the arm
+        integrated ~10% of the way toward each target before the next action
+        overwrote ``ctrl`` - rollouts looked like the policy was a no-op even
+        when commanding valid targets.
+
+        A control period that is not a whole number of physics steps used to be
+        rounded once and held: 1/30 s on MuJoCo's 0.002 s dt is 16.67 steps ->
+        17, so every action advanced 0.034 s while the recorder stamped the
+        frame 1/30 s (LeRobot derives ``timestamp = frame_index / fps``). Sixty
+        frames declared 1.967 s over 2.040 s of simulation, 2 percent early on
+        the default recording path; Isaac's 1/120 s dt at 50 Hz (2.4 -> 2) was
+        17 percent. The schedule now follows the cumulative target
+        ``round(k * period / dt)``, so the counts alternate (17, 17, 16, ...)
+        and the recorded span matches the sim time to within one physics step.
+        The price is per-action jitter of one physics step, said once at
+        WARNING; the remedy that removes it is a physics_dt that divides the
+        control period.
+
+        Args:
+            control_frequency: Control-loop rate in Hz.
+            override: Explicit substeps per action, or ``None`` to derive.
+
+        Returns:
+            A :class:`SubstepSchedule`; call :meth:`SubstepSchedule.next` once
+            per applied action.
+
+        Raises:
+            ValueError: If ``override`` is not a positive integer (see
+                :meth:`_control_substeps`).
+        """
         if override is not None:
             if isinstance(override, bool) or not isinstance(override, int) or override < 1:
                 raise ValueError(f"control_substeps must be a positive integer, got {override!r}.")
-            return override
+            return SubstepSchedule(float(override), exact=True)
         dt = None
         try:
             dt = self.sim.physics_timestep()
@@ -1541,33 +1621,30 @@ class PolicyRunner:
             dt = None
         if dt and dt > 0 and control_frequency > 0:
             ratio = (1.0 / control_frequency) / dt
-            substeps = max(1, round(ratio))
-            # A control period that is not a whole number of physics steps is
-            # rounded, so simulated time per action is substeps*dt, not
-            # 1/control_frequency. Isaac's default physics_dt=1/120 against the
-            # default 50 Hz is 2.4 -> 2 steps: every action covers 16.7 ms of sim
-            # time, a 30-step rollout ends at sim_t=0.5 s instead of 0.6 s, and a
-            # recording labelled 50 fps holds frames 1/60 s apart. Said
-            # rather than silently absorbed: the remedy is a physics_dt that
-            # divides the control period.
-            if abs(ratio - substeps) > 1e-6 * max(1.0, ratio):
-                effective = 1.0 / (substeps * dt)
+            schedule = SubstepSchedule(ratio)
+            if not schedule.exact:
+                low, high = schedule.bounds
                 logger.warning(
-                    "PolicyRunner: control period 1/%g s is %.4g physics steps of %.6g s; "
-                    "rounding to %d, so each action advances %.6g s of sim time (an effective "
-                    "%.4g Hz, not %g Hz). Pick a physics_dt that divides 1/control_frequency "
+                    "PolicyRunner: control period 1/%g s is %.4g physics steps of %.6g s; actions "
+                    "alternate %d and %d steps so the k-th action starts within one physics step of "
+                    "k/%g s (a constant %d would run at %.4g Hz, not %g Hz, and stamp a %g fps "
+                    "recording %.1f%% off). Pick a physics_dt that divides 1/control_frequency "
                     "(e.g. 1/%d s) or a control_frequency that divides 1/physics_dt.",
                     control_frequency,
                     ratio,
                     dt,
-                    substeps,
-                    substeps * dt,
-                    effective,
+                    low,
+                    high,
                     control_frequency,
+                    schedule.nominal,
+                    1.0 / (schedule.nominal * dt),
+                    control_frequency,
+                    control_frequency,
+                    abs(schedule.nominal - ratio) / ratio * 100.0,
                     int(round(control_frequency)) * max(1, math.ceil(ratio)),
                 )
-            return substeps
-        return 1
+            return schedule
+        return SubstepSchedule(1.0, exact=True)
 
     def _reject_recording_rate_mismatch(self, control_frequency: float, method: str) -> None:
         """Refuse a rollout the engine's open dataset recording cannot describe.
@@ -2451,11 +2528,11 @@ class PolicyRunner:
                 # Single source of truth for the derivation AND for the
                 # positive-integer contract on an explicit override: an inline copy
                 # here drifted from the shared helper the eval paths use.
-                n_substeps = self._control_substeps(control_frequency, control_substeps)
+                substeps = self._substep_schedule(control_frequency, control_substeps)
                 logger.info(
                     "PolicyRunner: control_frequency=%.1f Hz, physics substeps/action=%d",
                     control_frequency,
-                    n_substeps,
+                    substeps.nominal,
                 )
                 # Per-actuator resolution tracking (issue #165). Init a counter to 0
                 # for EVERY robot actuator so a never-driven joint surfaces as
@@ -2501,7 +2578,7 @@ class PolicyRunner:
                     # positionally to every actuator, so a non-empty one commands.
                     if action_commands_robot(action_dict) if isinstance(action_dict, Mapping) else len(action_dict) > 0:
                         _actions_commanding += 1
-                    _send_result = self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                    _send_result = self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=substeps.next())
                     # ``send_action`` has returned. Count the call here rather than
                     # beside ``step_count`` below so the tally survives a legacy hook
                     # that aborts this step; the resolution records whether physical
@@ -3343,7 +3420,7 @@ class PolicyRunner:
         # silent record -> replay fidelity gap. ``speed`` scales only the
         # wall-clock playback rate (frame_interval), never the physics per
         # frame, so it is deliberately excluded here.
-        n_substeps = self._control_substeps(dataset_fps)
+        substeps = self._substep_schedule(dataset_fps)
         frames_applied = 0
         # A frame that ADVANCED and a frame that COMMANDED are two different
         # counts, and only the second one is a replay. The tolerated
@@ -3399,7 +3476,7 @@ class PolicyRunner:
                 # ``frames_with_action`` check after the loop.
                 if not actionless_frame_columns and isinstance(frame, dict):
                     actionless_frame_columns = sorted(str(k) for k in frame)
-                self.sim.step(n_steps=n_substeps)
+                self.sim.step(n_steps=substeps.next())
                 frames_applied += 1
             else:
                 if hasattr(action_vals, "numpy"):
@@ -3452,7 +3529,7 @@ class PolicyRunner:
                 # trajectory never reached the robot. Abort on the first
                 # unapplied frame instead of finishing a replay that is not
                 # happening.
-                send_result = self.sim.send_action(action_dict, robot_name=resolved_robot, n_substeps=n_substeps)
+                send_result = self.sim.send_action(action_dict, robot_name=resolved_robot, n_substeps=substeps.next())
                 if isinstance(send_result, dict) and send_result.get("status") == "error":
                     detail = next(
                         (
@@ -3998,7 +4075,7 @@ class PolicyRunner:
         _bodies = self._resolve_required_bodies(policy)
         # Step physics for the full control period per action, same derivation
         # as run(). The default n_substeps=1 made eval rollouts under-step.
-        n_substeps = self._control_substeps(control_frequency, control_substeps)
+        substeps = self._substep_schedule(control_frequency, control_substeps)
         policy.set_control_frequency(control_frequency)
 
         # Reproducibility for this path. ``seed`` reached exactly one statement
@@ -4169,7 +4246,7 @@ class PolicyRunner:
                         for _observation, action_dict in chunks:
                             if steps >= max_steps:
                                 break
-                            self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                            self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=substeps.next())
                             _fire_on_frame(_observation, action_dict, steps)
                             steps += 1
                             if action_commands_robot(action_dict):
@@ -4207,7 +4284,7 @@ class PolicyRunner:
                         for action_dict in chunk:
                             if steps >= max_steps:
                                 break
-                            self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                            self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=substeps.next())
                             _fire_on_frame(observation, action_dict, steps)
                             steps += 1
                             if action_commands_robot(action_dict):
@@ -4473,7 +4550,7 @@ class PolicyRunner:
         # overwhelming majority of policies, which adds no backend call.
         _bodies = self._resolve_required_bodies(policy)
         # Full control-period substeps per action (see run() / evaluate()).
-        n_substeps = self._control_substeps(control_frequency, control_substeps)
+        substeps = self._substep_schedule(control_frequency, control_substeps)
         policy.set_control_frequency(control_frequency)
         # #168: seed Python / NumPy / torch / cuDNN once before
         # the episode loop so policy stochastic ops (e.g. attention
@@ -4723,7 +4800,7 @@ class PolicyRunner:
                             if steps >= max_steps:
                                 break
                             action_applied = dict(action_in_chunk)
-                            self.sim.send_action(action_applied, robot_name=robot_name, n_substeps=n_substeps)
+                            self.sim.send_action(action_applied, robot_name=robot_name, n_substeps=substeps.next())
                             if action_commands_robot(action_applied):
                                 actions_applied += 1
                             # #191 - synchronous on_frame hook fires on the
