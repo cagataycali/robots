@@ -474,7 +474,7 @@ def test_a_dotted_path_does_not_answer_for_the_spelling() -> None:
 
 @pytest.mark.parametrize(
     ("spelled", "meant"),
-    [("gr00t", "groot"), ("GR00T", "groot"), ("WBC", "wbc"), ("cosmos", "cosmos3"), ("lerobot-local", "lerobot_local")],
+    [("WBC", "wbc"), ("cosmos", "cosmos3"), ("lerobot-local", "lerobot_local")],
 )
 def test_an_unknown_provider_names_the_close_spelling(spelled: str, meant: str) -> None:
     """A near-miss provider is refused naming the one meant, as ``Robot()`` does for a robot."""

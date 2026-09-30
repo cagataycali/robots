@@ -36,8 +36,8 @@ from strands_robots.hardware_robot import Robot as HwRobot
 from tests._hardware_robot import hardware_robot_on
 
 MOTION = {
-    "execute": {"instruction": "lift the cube", "policy_port": 5555},
-    "start": {"instruction": "wave", "policy_port": 5556},
+    "execute": {"instruction": "lift the cube", "policy_port": 5555, "policy_provider": "moveit2"},
+    "start": {"instruction": "wave", "policy_port": 5556, "policy_provider": "moveit2"},
 }
 
 

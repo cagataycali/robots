@@ -91,7 +91,7 @@ class _StubG1Driver:
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "lerobot_local",
         duration: float = 30.0,
         **_policy_kwargs: Any,
     ) -> dict[str, Any]:
@@ -405,10 +405,10 @@ class TestStartPassesTheDriversEnvelopeThrough:
             instruction="pick up the red cube",
             policy_port=8082,
             policy_host="10.10.4.42",
-            policy_provider="groot",
+            policy_provider="lerobot_local",
             duration=12.5,
         )
-        assert driver.calls == [("pick up the red cube", 8082, "10.10.4.42", "groot", 12.5)]
+        assert driver.calls == [("pick up the red cube", 8082, "10.10.4.42", "lerobot_local", 12.5)]
 
     def test_the_signature_defaults_reach_the_driver(self) -> None:
         """A caller naming only the action reaches the driver's own defaults.
@@ -418,7 +418,7 @@ class TestStartPassesTheDriversEnvelopeThrough:
         """
         driver = _StubG1Driver({"status": "error", "content": [{"text": "registry-not-wired"}]})
         _call(driver, "start")
-        assert driver.calls == [("", None, "localhost", "groot", 30.0)]
+        assert driver.calls == [("", None, "localhost", "lerobot_local", 30.0)]
 
 
 class TestTheDriverIsReachedExactlyOnce:

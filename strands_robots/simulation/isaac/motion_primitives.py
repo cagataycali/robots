@@ -414,7 +414,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
         if malformed_reason is not None:
             return [], None, _err(f"Cannot resolve the gripper for '{robot.name}': {malformed_reason}")
         if meta is not None:
-            wanted = {str(a).lower() for a in meta["actuators"]}
+            wanted = self._gripper_joint_vocabulary(robot, meta)
             matched = [i for i, short in enumerate(short_names) if short.lower() in wanted]
             if not matched:
                 return (
@@ -431,6 +431,26 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
             return matched, meta, None
         matched = [i for i, short in enumerate(short_names) if any(h in short.lower() for h in _GRIPPER_HINTS)]
         return matched, None, None
+
+    def _gripper_joint_vocabulary(self, robot: Any, meta: dict[str, Any]) -> set[str]:
+        """Lower-cased joint names the registry's ``gripper.actuators`` reach on this robot.
+
+        The registry spells grippers in MuJoCo's ACTUATOR vocabulary, and an
+        Isaac articulation has joints only. An actuator name that is also a
+        joint name (so100's ``Jaw``) resolves as itself; one that is not is
+        translated through the MJCF the robot was converted from: the Panda's
+        ``actuator8`` drives the ``split`` tendon over ``finger_joint1`` and
+        ``finger_joint2``, so both are its gripper DOFs. Before this, every
+        Panda ``set_gripper`` and ``move_to`` on Isaac was refused with "names
+        actuators ['actuator8'] but none match a joint".
+        """
+        from strands_robots.simulation.isaac.mjcf_assets import mjcf_actuator_joints
+
+        wanted = {str(a).lower() for a in meta["actuators"]}
+        by_actuator = {k.lower(): v for k, v in mjcf_actuator_joints(getattr(robot, "description_path", None)).items()}
+        for actuator in list(wanted):
+            wanted.update(self._short_joint_name(j).lower() for j in by_actuator.get(actuator, ()))
+        return wanted
 
     # -- move_to kinematics plumbing ---------------------------------------------
 
@@ -637,7 +657,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
         meta, malformed_reason = self._registry_gripper_metadata(robot)
         if malformed_reason is not None:
             return {}, {}, _err(f"Cannot resolve the gripper for '{robot.name}': {malformed_reason}")
-        wanted = {str(a).lower() for a in meta["actuators"]} if meta is not None else None
+        wanted = self._gripper_joint_vocabulary(robot, meta) if meta is not None else None
 
         def _is_gripper(short: str) -> bool:
             if wanted is not None:
