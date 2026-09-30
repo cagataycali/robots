@@ -24,22 +24,7 @@ pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco import recording as _recording_mod
 from strands_robots.simulation.mujoco.simulation import Simulation
-
-
-class _FakeRecorder:
-    """Counts frames like the LeRobot recorder does: monotonic total + open episode."""
-
-    def __init__(self) -> None:
-        self.frame_count = 0
-        self.episode_frame_count = 0
-        self.dataset = None
-
-    def add_frame(self, *_a, **_k) -> None:
-        self.frame_count += 1
-        self.episode_frame_count += 1
-
-    def save_episode(self) -> None:
-        self.episode_frame_count = 0
+from tests._recorder_stand_in import RecorderStandIn
 
 
 @pytest.fixture
@@ -59,7 +44,7 @@ def _json(result: dict) -> dict:
     return next(c["json"] for c in result["content"] if isinstance(c, dict) and "json" in c)
 
 
-def _recording(sim: Simulation, monkeypatch, recorder: _FakeRecorder) -> None:
+def _recording(sim: Simulation, monkeypatch, recorder: RecorderStandIn) -> None:
     monkeypatch.setattr(sim, "_is_recording", lambda: True)
     monkeypatch.setattr(sim, "_active_recorder", lambda: recorder)
     # The real hook feeds the recorder one frame per control step; drive the
@@ -70,7 +55,7 @@ def _recording(sim: Simulation, monkeypatch, recorder: _FakeRecorder) -> None:
         inner = real_hook(robot_name, instruction)
 
         def on_frame(*a, **k):
-            recorder.add_frame()
+            recorder.add_frame({}, {})
             if inner is not None:
                 return inner(*a, **k)
             return None
@@ -81,7 +66,7 @@ def _recording(sim: Simulation, monkeypatch, recorder: _FakeRecorder) -> None:
 
 
 def test_first_rollout_reports_the_open_episode_and_that_it_closed_none(sim, monkeypatch):
-    rec = _FakeRecorder()
+    rec = RecorderStandIn()
     _recording(sim, monkeypatch, rec)
     r = sim.run_policy("so101", policy_provider="mock", n_steps=10, control_frequency=10)
     assert r["status"] == "success", r
@@ -95,7 +80,7 @@ def test_first_rollout_reports_the_open_episode_and_that_it_closed_none(sim, mon
 
 
 def test_second_rollout_without_a_boundary_says_appended_and_names_the_prior_frames(sim, monkeypatch):
-    rec = _FakeRecorder()
+    rec = RecorderStandIn()
     _recording(sim, monkeypatch, rec)
     sim.run_policy("so101", policy_provider="mock", n_steps=10, control_frequency=10)
     r = sim.run_policy("so101", policy_provider="mock", n_steps=5, control_frequency=10)
@@ -107,7 +92,7 @@ def test_second_rollout_without_a_boundary_says_appended_and_names_the_prior_fra
 
 
 def test_a_closed_episode_starts_the_count_over(sim, monkeypatch):
-    rec = _FakeRecorder()
+    rec = RecorderStandIn()
     _recording(sim, monkeypatch, rec)
     sim.run_policy("so101", policy_provider="mock", n_steps=10, control_frequency=10)
     rec.save_episode()

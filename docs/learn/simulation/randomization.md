@@ -9,7 +9,7 @@ By the end of this page you can randomize colours, lights, friction, mass and ob
 ```python
 from strands_robots.simulation import create_simulation
 
-sim = create_simulation("mujoco")
+sim = create_simulation("mujoco", mesh=False)
 sim.create_world()
 sim.add_robot("so101")
 sim.add_object(name="cube", shape="box", size=[0.03, 0.03, 0.03], position=[0.25, 0.0, 0.015])
@@ -48,20 +48,20 @@ The full text also lists every friction and mass scale by geom and body name, so
 
 | axis | what changes |
 |---|---|
-| `randomize_colors` | every non-ground geom's RGB and its material colour, sampled in `color_range` |
+| `randomize_colors` | every non-ground geom's RGB and its material colour, sampled in `color_range`; on Isaac, objects only (robot visuals are instanced) |
 | `randomize_lighting` | each light's position inside 0.5 m of its authored spot, and its diffuse colour |
 | `randomize_physics` | every geom's friction scaled in `friction_range`, every body's mass in `mass_range` |
 | `randomize_positions` | every dynamic object's position perturbed by `position_noise` metres, written to `qpos0` too |
 
-The flags are strict booleans: `"false"`, `"no"`, `"off"` and `"0"` are truthy strings and are refused rather than turning an axis on. A keyword the call does not honour (`randomize_position`, `position_range`) is refused with the valid set; the `**kwargs` in both signatures only match the base class and forward nothing. With every flag off the call is a no-op; `seed` makes the draw deterministic.
+Flags are strict booleans: a truthy string such as `"false"` or `"0"` is refused. An unhonoured keyword (`randomize_position`, `position_range`) is refused with the valid set. All flags off is a no-op; `seed` makes the draw deterministic.
 
 ## When to call it
 
-Randomization writes the compiled model and survives `reset()`, which is why it reaches a rollout: `run_policy` and `eval_policy` reset before an episode's first step. It does not survive a scene mutation. `add_object`, `remove_object`, `add_camera`, `remove_camera`, `add_robot`, `remove_robot` and `patch_scene_mjcf` rebuild the model from the authored spec and restore every value. Randomizing before one of them is a silent no-op: both calls report success and the first observation is the authored scene. Build the scene, then randomize, then roll out.
+Randomization writes the compiled model and survives `reset()`, which is why it reaches a rollout: `run_policy` and `eval_policy` reset before an episode's first step. It does not survive a scene mutation. `add_object`, `remove_object`, `add_camera`, `remove_camera`, `add_robot`, `remove_robot` and `patch_scene_mjcf` rebuild the model from the authored spec and restore every value. Randomizing before one of them is a silent no-op: both calls report success and the policy's first observation is the authored scene. Build the scene, then randomize, then roll out.
 
 ## set_obs_noise
 
-`set_obs_noise(joint_pos_std=0.0, joint_vel_std=0.0, camera_jitter_px=0.0, seed=None)` adds Gaussian noise to every joint reading and jitters every rendered frame by up to the given pixels, on `get_observation`, `get_robot_state` and `render`, until reconfigured. All-zero standard deviations are an exact no-op: an unconfigured engine returns observations byte for byte. MuJoCo, Newton and Isaac share one implementation (`ObservationNoiseMixin`).
+`set_obs_noise(joint_pos_std=0.0, joint_vel_std=0.0, camera_jitter_px=0.0, seed=None)` adds Gaussian noise to every joint reading and jitters every rendered frame by up to the given pixels, on `get_observation`, `get_robot_state` and `render`, until reconfigured. All-zero standard deviations are an exact no-op, so an unconfigured engine returns observations byte for byte unchanged. MuJoCo, Newton and Isaac share one implementation (`ObservationNoiseMixin`), so one call behaves the same on each.
 
 ## From randomization to sim to real
 
