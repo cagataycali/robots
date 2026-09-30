@@ -37,7 +37,7 @@ def _fences() -> list[tuple[Path, str]]:
 
 
 def test_the_site_has_at_least_one_mermaid_fence() -> None:
-    assert _fences(), "the convention has no proof on a page; docs/learn/mesh/safety-and-estop.md carries two"
+    assert _fences(), "the convention has no proof on a page; docs/learn/mesh/safety-and-estop.md carries one"
 
 
 def test_no_fence_carries_a_colour_or_a_style_line() -> None:

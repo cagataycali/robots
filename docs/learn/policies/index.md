@@ -4,7 +4,7 @@ description: The Policy contract, the provider matrix generated from the registr
 
 # Policies
 
-By the end of this page you can pick a provider for what you have, build one with `create_policy`, write your own in twenty lines, and swap providers by changing one string; one `run_policy` call takes the provider name and a `policy_config`.
+After this page you can pick a provider for what you have, build one with `create_policy`, write your own in twenty lines, and swap providers by changing one string; one `run_policy` call takes the provider name and a `policy_config`.
 
 ## Which provider
 
