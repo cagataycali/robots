@@ -60,7 +60,7 @@ class TestRunPolicyHorizonGuards:
         # control_frequency duration); a bad frequency would otherwise raise
         # ZeroDivisionError or yield a negative duration deep in the runner.
         text = _err_text(sim.run_policy("arm1", n_steps=5, control_frequency=bad_freq))
-        assert "control_frequency must be > 0" in text
+        assert "control_frequency must be a positive finite number" in text
 
     def test_legacy_max_steps_alias_is_refused_under_its_own_name(self, sim):
         # max_steps is normalized to n_steps, but it is validated BEFORE that
@@ -99,7 +99,7 @@ class TestStartPolicyHorizonGuards:
 
     def test_non_positive_control_frequency_errors_synchronously(self, sim):
         text = _err_text(sim.start_policy("arm1", n_steps=5, control_frequency=0))
-        assert "control_frequency must be > 0" in text
+        assert "control_frequency must be a positive finite number" in text
 
     def test_rejected_start_does_not_mark_robot_running(self, sim):
         # A rejected start must not leave a future registered for the robot,
@@ -210,7 +210,7 @@ class TestControlFrequencyGuards:
         # n_steps omitted -> duration path; pre-fix this reached the runner and
         # raised ValueError instead of returning a structured error.
         text = _err_text(sim.run_policy("arm1", duration=1.0, control_frequency=bad_freq, fast_mode=True))
-        assert "control_frequency must be > 0" in text
+        assert "control_frequency must be a positive finite number" in text
         assert str(bad_freq) in text
 
     @pytest.mark.parametrize("bad_freq", ["fast", [50], {"hz": 50}])
@@ -218,7 +218,7 @@ class TestControlFrequencyGuards:
         # Pre-fix the n_steps inline check did `bad <= 0`, raising TypeError for
         # a str rather than returning a structured error.
         text = _err_text(sim.run_policy("arm1", n_steps=4, control_frequency=bad_freq))
-        assert "control_frequency must be > 0" in text
+        assert "control_frequency must be a positive finite number" in text
 
     def test_run_policy_none_means_unset_and_resolves_to_the_default(self, sim):
         # ``None`` is the entry-point default ("unset"): it resolves to the open
@@ -231,11 +231,11 @@ class TestControlFrequencyGuards:
         # bool is an int subclass; True would sneak through an isinstance(int)
         # check and act as a silent 1 Hz, so it is rejected explicitly.
         text = _err_text(sim.run_policy("arm1", n_steps=4, control_frequency=True))
-        assert "control_frequency must be > 0" in text
+        assert "control_frequency must be a positive finite number" in text
 
     def test_eval_policy_rejects_bool_control_frequency(self, sim):
         text = _err_text(sim.eval_policy(robot_name="arm1", max_steps=4, control_frequency=True))
-        assert "control_frequency must be > 0" in text
+        assert "control_frequency must be a positive finite number" in text
 
     def test_start_policy_duration_path_rejects_synchronously(self, sim):
         # Duration path on the background-threaded start_policy: pre-fix the
@@ -243,7 +243,7 @@ class TestControlFrequencyGuards:
         # and the robot was left marked running.
         result = sim.start_policy("arm1", duration=1.0, control_frequency=0)
         assert result["status"] == "error"
-        assert "control_frequency must be > 0" in result["content"][0]["text"]
+        assert "control_frequency must be a positive finite number" in result["content"][0]["text"]
         assert "arm1" not in sim._policy_threads
         # A well-formed start on the same robot still succeeds afterwards.
         ok = sim.start_policy("arm1", n_steps=2, control_frequency=50.0, fast_mode=True)
@@ -268,7 +268,7 @@ class TestControlFrequencyNumpyScalars:
     ``False`` for every NumPy scalar except ``np.float64`` (the only one that
     subclasses Python ``float``), so pre-fix a perfectly valid
     ``np.float32(50.0)`` / ``np.int64(50)`` frequency was rejected with the
-    misleading "control_frequency must be > 0" error. The guard now uses
+    misleading "control_frequency must be a positive finite number" error. The guard now uses
     ``numbers.Real`` while still rejecting ``bool`` / ``np.bool_``, non-finite
     values, and non-positive frequencies. This is shared by run_policy,
     eval_policy and evaluate_benchmark via ``_validate_positive_frequency``.
@@ -299,7 +299,7 @@ class TestControlFrequencyNumpyScalars:
         # A negative NumPy scalar, np.bool_, or non-finite value is still a
         # caller error and must surface the structured guard, not step physics.
         text = _err_text(sim.run_policy("arm1", n_steps=2, control_frequency=bad, fast_mode=True))
-        assert "control_frequency must be > 0" in text
+        assert "control_frequency must be a positive finite number" in text
 
     @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
     def test_run_policy_rejects_non_finite_python_float_frequency(self, sim, bad):
@@ -307,7 +307,7 @@ class TestControlFrequencyNumpyScalars:
         # ``<= 0``) and feed nan/inf into the ``1 / frequency`` and
         # ``n_steps / frequency`` arithmetic; it is now rejected up front.
         text = _err_text(sim.run_policy("arm1", n_steps=2, control_frequency=bad, fast_mode=True))
-        assert "control_frequency must be > 0" in text
+        assert "control_frequency must be a positive finite number" in text
 
 
 class TestEvalPolicyCountGuards:
@@ -344,7 +344,7 @@ class TestEvalPolicyCountGuards:
     @pytest.mark.parametrize("bad_freq", [0, -10.0])
     def test_rejects_non_positive_control_frequency(self, sim, bad_freq):
         text = _err_text(sim.eval_policy(robot_name="arm1", max_steps=3, control_frequency=bad_freq))
-        assert "control_frequency must be > 0" in text
+        assert "control_frequency must be a positive finite number" in text
 
     def test_count_error_is_ascii(self, sim):
         text = _err_text(sim.eval_policy(robot_name="arm1", n_episodes=-2))
@@ -427,7 +427,7 @@ class TestDurationGuards:
     @pytest.mark.parametrize("bad", [0, 0.0, -1, -0.5, -50.0])
     def test_non_positive_duration_errors(self, sim, bad):
         text = _err_text(sim.run_policy("arm1", duration=bad, fast_mode=True))
-        assert "duration must be > 0" in text
+        assert "duration must be a positive finite number" in text
         assert repr(bad) in text
 
     @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
@@ -435,17 +435,17 @@ class TestDurationGuards:
         # nan is never <= 0, so it must be rejected on finiteness before the
         # comparison; pre-fix it reached int(nan * frequency) and raised.
         text = _err_text(sim.run_policy("arm1", duration=bad, fast_mode=True))
-        assert "duration must be > 0" in text
+        assert "duration must be a positive finite number" in text
 
     @pytest.mark.parametrize("bad", ["2.0", None, [1.0]])
     def test_non_numeric_duration_errors(self, sim, bad):
         text = _err_text(sim.run_policy("arm1", duration=bad, fast_mode=True))
-        assert "duration must be > 0" in text
+        assert "duration must be a positive finite number" in text
 
     def test_bool_duration_errors(self, sim):
         # bool is an int subclass: True would act as a silent 1-second rollout.
         text = _err_text(sim.run_policy("arm1", duration=True, fast_mode=True))
-        assert "duration must be > 0" in text
+        assert "duration must be a positive finite number" in text
 
     def test_duration_error_is_ascii(self, sim):
         text = _err_text(sim.run_policy("arm1", duration=-1.0, fast_mode=True))
@@ -457,7 +457,7 @@ class TestDurationGuards:
         # about the parameter they control rather than about a robot name that
         # is only wrong in passing.
         text = _err_text(sim.run_policy("no_such_robot", duration=0, fast_mode=True))
-        assert "duration must be > 0" in text
+        assert "duration must be a positive finite number" in text
 
     def test_numpy_scalar_duration_accepted(self, sim):
         # Mirrors the control_frequency contract: any finite positive real
@@ -479,7 +479,7 @@ class TestDurationGuards:
         # captured. The request is now refused up front.
         out = tmp_path / "rollout.mp4"
         text = _err_text(sim.run_policy("arm1", duration=-1.0, video={"path": str(out)}, fast_mode=True))
-        assert "duration must be > 0" in text
+        assert "duration must be a positive finite number" in text
         assert not out.exists()
 
 
@@ -494,7 +494,7 @@ class TestStartPolicyDurationGuard:
     @pytest.mark.parametrize("bad", [0, -1.0, float("nan")])
     def test_bad_duration_errors_synchronously(self, sim, bad):
         text = _err_text(sim.start_policy("arm1", duration=bad))
-        assert "duration must be > 0" in text
+        assert "duration must be a positive finite number" in text
 
     def test_rejected_start_does_not_mark_robot_running(self, sim):
         result = sim.start_policy("arm1", duration=-1.0)
@@ -528,7 +528,7 @@ class TestRunMultiPolicyHorizonGuards:
     @pytest.mark.parametrize("bad", [0, -1.0, float("nan"), "2.0"])
     def test_bad_duration_errors(self, sim, policies, bad):
         text = _err_text(sim.run_multi_policy(policies, duration=bad))
-        assert "run_multi_policy: duration must be > 0" in text
+        assert "run_multi_policy: duration must be a positive finite number" in text
 
     def test_non_positive_n_steps_errors(self, sim, policies):
         text = _err_text(sim.run_multi_policy(policies, n_steps=0))
@@ -538,7 +538,7 @@ class TestRunMultiPolicyHorizonGuards:
         # Pre-fix the frequency was only checked alongside n_steps, so the
         # duration path reached 1 / control_frequency with a zero divisor.
         text = _err_text(sim.run_multi_policy(policies, duration=0.2, control_frequency=0))
-        assert "run_multi_policy: control_frequency must be > 0" in text
+        assert "run_multi_policy: control_frequency must be a positive finite number" in text
 
     def test_valid_horizon_still_runs(self, sim, policies):
         result = sim.run_multi_policy(policies, n_steps=2, control_frequency=50.0)
