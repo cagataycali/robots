@@ -28,14 +28,13 @@ both sides of this change - it is the reason the omission mattered.
 """
 
 import ast
-import importlib.util
 import pathlib
 import re
-import sys
 
 import pytest
 
 import strands_robots
+from tests._docs_hooks import docs_hook
 from tests._package_ast import parse_file
 
 _REPO = pathlib.Path(strands_robots.__file__).parent.parent
@@ -43,7 +42,6 @@ _PACKAGE = _REPO / "strands_robots" / "device_connect"
 #: The daemon link module, which moved beside the native Reachy driver.
 _DAEMON_LINK = _REPO / "strands_robots" / "drivers" / "reachy_transport.py"
 _PAGE = _REPO / "docs" / "reference" / "configuration.md"
-_HOOK = _REPO / "docs" / "hooks" / "env_vars.py"
 
 #: The module that owns the Reachy Mini daemon link. Its variables configure one
 #: channel, so the reference documents them together.
@@ -60,12 +58,7 @@ _BOOLEAN_RULE = re.compile(r"boolean variable accepts ((?:`[A-Za-z0-9]+`,\s*)*`[
 
 def _rendered_page() -> str:
     """The configuration page with ``{{env_vars}}`` expanded by the shipped hook."""
-    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = sys.modules.get(spec.name) or importlib.util.module_from_spec(spec)
-    if spec.name not in sys.modules:
-        sys.modules[spec.name] = module  # dataclasses in the hook resolve their module here
-        spec.loader.exec_module(module)
+    module = docs_hook("env_vars")
     source = _PAGE.read_text(encoding="utf-8")
     rendered = module.on_page_markdown(source, page=None, config=None, files=None)
     assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"

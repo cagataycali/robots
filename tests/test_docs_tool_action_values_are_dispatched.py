@@ -38,21 +38,19 @@ reads differently from the dispatch branches shows up here.
 from __future__ import annotations
 
 import ast
-import importlib.util
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 import strands_robots
+from tests._docs_hooks import docs_hook
 from tests._package_ast import parse_file
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _TOOLS_DIR = _REPO_ROOT / "strands_robots" / "tools"
 _TOOLS_PAGE = _REPO_ROOT / "docs" / "reference" / "tools.md"
-_TOOLS_HOOK = _REPO_ROOT / "docs" / "hooks" / "tools_ref.py"
 
 # A documented call: ``<tool>(action="<value>"`` anywhere in a page, fenced or
 # inline. The action is the first argument at every documented call site.
@@ -169,13 +167,7 @@ def _rendered(page: Path) -> str:
     text = page.read_text(encoding="utf-8")
     if page != _TOOLS_PAGE:
         return text
-    spec = importlib.util.spec_from_file_location("docs_hooks_tools_ref", _TOOLS_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = sys.modules.get(spec.name)
-    if module is None:
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+    module = docs_hook("tools_ref")
     rendered = module.on_page_markdown(text, page=None, config=None, files=None)
     assert rendered != text, "docs/reference/tools.md carries no {{tools_ref}} token for the hook to expand"
     return rendered

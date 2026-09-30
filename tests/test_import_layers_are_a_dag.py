@@ -561,7 +561,7 @@ class TestTheContract:
                 "strands_robots._motion_grants",
                 "core",
                 frozenset(),
-                frozenset({"app", "tools", "dashboard"}),
+                frozenset({"app", "tools", "dashboard", "drivers|mesh"}),
             ),
             (
                 "strands_robots.dataset_metadata",

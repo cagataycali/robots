@@ -23,12 +23,12 @@ import ast
 import importlib
 import importlib.util
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
 import strands_robots
+from tests._docs_hooks import docs_hook
 from tests._package_ast import parse_file
 
 _REPO = Path(strands_robots.__file__).resolve().parents[1]
@@ -42,15 +42,7 @@ _MINIMUM_TOOLS = 50
 
 def _hook():  # noqa: ANN202 - the loaded hook module
     """The hook module, loaded from the docs tree the build loads it from."""
-    name = "docs_tools_ref_hook"
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module  # the hook's dataclasses resolve their module by name
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("tools_ref")
 
 
 def _published() -> tuple:

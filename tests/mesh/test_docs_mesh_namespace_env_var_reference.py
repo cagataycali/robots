@@ -55,19 +55,17 @@ non-empty value is honoured verbatim.
 from __future__ import annotations
 
 import ast
-import importlib.util
 import pathlib
 import re
-import sys
 
 from strands_robots.mesh import _zenoh_config
+from tests._docs_hooks import docs_hook
 from tests._package_ast import parse_file
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "_zenoh_config.py"
 _PAGE = _ROOT / "docs" / "learn" / "mesh" / "topics.md"
 _README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
-_HOOK = _ROOT / "docs" / "hooks" / "env_vars.py"
 
 _PREFIX = "STRANDS_MESH_NAMESPACE"
 _KNOWN = frozenset({"STRANDS_MESH_NAMESPACE"})
@@ -80,12 +78,7 @@ def _matrix_text() -> str:
     The hook writes variables as ``<code>VAR</code>``; the text is folded to the
     backticks a hand-written row uses so the row rules read either spelling.
     """
-    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = sys.modules.get(spec.name) or importlib.util.module_from_spec(spec)
-    if spec.name not in sys.modules:
-        sys.modules[spec.name] = module  # dataclasses in the hook resolve their module here
-        spec.loader.exec_module(module)
+    module = docs_hook("env_vars")
     source = _README.read_text(encoding="utf-8")
     rendered = module.on_page_markdown(source, page=None, config=None, files=None)
     assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"
