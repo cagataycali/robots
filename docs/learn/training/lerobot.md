@@ -60,6 +60,8 @@ train_policy(action="export", provider="lerobot_local", output_dir="/tmp/ft")
 train_policy(action="list")
 ```
 
+In process means LeRobot's DataLoader workers are spawned from the calling script. They start without re-running that script, so an agent script needs no `if __name__ == "__main__":` guard. Set `STRANDS_TRAIN_WORKERS_IMPORT_MAIN=1` if your own objects defined in `__main__` must reach a worker.
+
 `lerobot_train` is the detached alternative: it launches `python -m lerobot.scripts.lerobot_train` (or `accelerate launch` for `num_gpus > 1`) as a background process and tracks it in the same on-disk session store as `lerobot_teleoperate`, so the run outlives the agent turn.
 
 | argument | meaning |

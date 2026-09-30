@@ -122,6 +122,59 @@ class capture_to_file:
                 self._stream.close()
 
 
+#: Set to ``1`` to let spawned training workers re-import the caller's
+#: ``__main__`` as Python normally does (see :func:`workers_skip_the_callers_main`).
+WORKERS_IMPORT_MAIN_ENV = "STRANDS_TRAIN_WORKERS_IMPORT_MAIN"
+
+_ABSENT = object()
+
+
+@contextlib.contextmanager
+def workers_skip_the_callers_main() -> Iterator[None]:
+    """Keep processes spawned inside this block from re-running the caller's script.
+
+    A ``spawn`` (or ``forkserver``) child re-imports the parent's ``__main__``
+    before it runs its target: :func:`multiprocessing.spawn.get_preparation_data`
+    records ``__main__.__spec__.name`` or ``__main__.__file__``, and the child
+    executes that module's top-level code again. A script guarded by
+    ``if __name__ == "__main__":`` survives that. The scripts this package is
+    driven from mostly are not guarded, because an agent script is top-level
+    code: ``agent("record, then train")``. Training runs in-process, and LeRobot
+    starts its ``DataLoader`` workers with ``spawn`` (``num_workers=4``, chosen
+    because PyAV and torchcodec are not fork-safe). So each worker ran the
+    whole caller script again - measured, a marker line at the top of the script
+    ran 5 times for one ``train_policy`` call. In an agent script that repeats
+    every model call, every sim and, on ``mode="real"``, every hardware command
+    made before training, once per worker.
+
+    For the duration of the block ``__main__`` hides the two attributes the
+    preparation step reads, so a child starts from the multiprocessing
+    bootstrap alone. ``spawn`` is kept, and so are LeRobot's reasons for it. The
+    workers need nothing from the caller's module: they unpickle LeRobot's
+    dataset and collate objects by their import path. Both attributes are
+    restored on exit, including on an exception. A caller whose own objects
+    defined in ``__main__`` must reach a worker sets
+    ``STRANDS_TRAIN_WORKERS_IMPORT_MAIN=1`` to keep Python's default.
+    """
+    main = sys.modules.get("__main__")
+    if main is None or os.environ.get(WORKERS_IMPORT_MAIN_ENV, "").strip() == "1":
+        yield
+        return
+    saved_spec = main.__dict__.get("__spec__", _ABSENT)
+    saved_file = main.__dict__.get("__file__", _ABSENT)
+    main.__dict__["__spec__"] = None
+    main.__dict__.pop("__file__", None)
+    try:
+        yield
+    finally:
+        if saved_spec is _ABSENT:
+            main.__dict__.pop("__spec__", None)
+        else:
+            main.__dict__["__spec__"] = saved_spec
+        if saved_file is not _ABSENT:
+            main.__dict__["__file__"] = saved_file
+
+
 @contextlib.contextmanager
 def resume_argv(config_path: str | None) -> Iterator[None]:
     """Expose ``--config_path=<train_config.json>`` on ``sys.argv`` for a resume.
@@ -159,7 +212,7 @@ def call_callable(
     built the upstream's own config object and just needs its function invoked
     here. No argv, no shell, no nested interpreter.
     """
-    with capture_to_file(log_path):
+    with capture_to_file(log_path), workers_skip_the_callers_main():
         return fn(*args, **kwargs)
 
 
@@ -384,4 +437,5 @@ def elastic_launch_callable(
         max_restarts=0,
         start_method="spawn",
     )
-    return elastic_launch(config, fn)(*fn_args)
+    with workers_skip_the_callers_main():
+        return elastic_launch(config, fn)(*fn_args)
