@@ -11,7 +11,7 @@ uv venv --python 3.12 && source .venv/bin/activate
 uv pip install "strands-robots[sim-mujoco]"
 ```
 
-`pip install` works the same way. The bare package has four dependencies: `strands-agents`, `numpy`, `opencv-python-headless`, `Pillow`. Everything else is an extra.
+`pip install` works too. The bare package has four dependencies: `strands-agents`, `numpy`, `opencv-python-headless`, `Pillow`. The rest are extras.
 
 ## Pick extras
 
