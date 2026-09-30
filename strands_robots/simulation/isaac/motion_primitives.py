@@ -351,7 +351,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
         (isaacsim runtime not importable). Returns ``None`` on success.
         """
         try:
-            from isaacsim.core.utils.types import (  # type: ignore[import-not-found]
+            from strands_robots.simulation.isaac._deprecated_api import (
                 ArticulationAction,
             )
 
@@ -414,7 +414,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
         if malformed_reason is not None:
             return [], None, _err(f"Cannot resolve the gripper for '{robot.name}': {malformed_reason}")
         if meta is not None:
-            wanted = {str(a).lower() for a in meta["actuators"]}
+            wanted = self._gripper_joint_vocabulary(robot, meta)
             matched = [i for i, short in enumerate(short_names) if short.lower() in wanted]
             if not matched:
                 return (
@@ -431,6 +431,26 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
             return matched, meta, None
         matched = [i for i, short in enumerate(short_names) if any(h in short.lower() for h in _GRIPPER_HINTS)]
         return matched, None, None
+
+    def _gripper_joint_vocabulary(self, robot: Any, meta: dict[str, Any]) -> set[str]:
+        """Lower-cased joint names the registry's ``gripper.actuators`` reach on this robot.
+
+        The registry spells grippers in MuJoCo's ACTUATOR vocabulary, and an
+        Isaac articulation has joints only. An actuator name that is also a
+        joint name (so100's ``Jaw``) resolves as itself; one that is not is
+        translated through the MJCF the robot was converted from: the Panda's
+        ``actuator8`` drives the ``split`` tendon over ``finger_joint1`` and
+        ``finger_joint2``, so both are its gripper DOFs. Before this, every
+        Panda ``set_gripper`` and ``move_to`` on Isaac was refused with "names
+        actuators ['actuator8'] but none match a joint".
+        """
+        from strands_robots.simulation.isaac.mjcf_assets import mjcf_actuator_joints
+
+        wanted = {str(a).lower() for a in meta["actuators"]}
+        by_actuator = {k.lower(): v for k, v in mjcf_actuator_joints(getattr(robot, "description_path", None)).items()}
+        for actuator in list(wanted):
+            wanted.update(self._short_joint_name(j).lower() for j in by_actuator.get(actuator, ()))
+        return wanted
 
     # -- move_to kinematics plumbing ---------------------------------------------
 
@@ -560,8 +580,44 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
                     "uv pip install 'strands-robots[sim-isaac]'."
                 ),
             )
+        # The registry's ``tool_frame`` (a TCP site on a named body) is part of
+        # the robot's IK contract on the MuJoCo backend, which adds it at
+        # ``add_robot`` for every non-URDF robot. The IK model here is compiled
+        # from the same MJCF but never got it, so ``discover_ee_frame`` fell to
+        # the wrist BODY: so100 tracked ``Wrist_Pitch_Roll`` where MuJoCo tracks
+        # ``so100/tcp`` - the same move_to target put a different point of the
+        # arm there. Same key and same URDF exemption as MuJoCo.
+        tool_frame = None
+        if not path.lower().endswith(".urdf"):
+            from strands_robots.simulation.tool_frame import registry_tool_frame
+
+            tool_frame, tool_frame_err = registry_tool_frame(data_config or getattr(robot, "name", None))
+            if tool_frame_err is not None:
+                return None, None, _err(f"move_to: {tool_frame_err}")
         try:
-            model = mj.MjModel.from_xml_path(path)
+            model = None
+            if tool_frame is not None:
+                from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
+                from strands_robots.simulation.tool_frame import ToolFrameRefused
+
+                spec = mj.MjSpec.from_file(path)
+                try:
+                    SpecBuilder.add_tool_site(spec, robot.name, tool_frame)
+                    model = spec.compile()
+                except ToolFrameRefused as refused:
+                    # The robot is already on the stage, so this is not an
+                    # add-time refusal: the file simulating is not the model the
+                    # declaration was written for (a custom description under a
+                    # registry data_config). Solve on it as it stands, loudly.
+                    logger.warning(
+                        "move_to: robot '%s': the registry tool_frame does not fit its IK model %s (%s); "
+                        "the end-effector frame is auto-discovered from the model instead.",
+                        robot.name,
+                        path,
+                        refused,
+                    )
+            if model is None:
+                model = mj.MjModel.from_xml_path(path)
         except (ValueError, OSError, RuntimeError, mj.FatalError) as e:
             return (
                 None,
@@ -601,7 +657,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
         meta, malformed_reason = self._registry_gripper_metadata(robot)
         if malformed_reason is not None:
             return {}, {}, _err(f"Cannot resolve the gripper for '{robot.name}': {malformed_reason}")
-        wanted = {str(a).lower() for a in meta["actuators"]} if meta is not None else None
+        wanted = self._gripper_joint_vocabulary(robot, meta) if meta is not None else None
 
         def _is_gripper(short: str) -> bool:
             if wanted is not None:

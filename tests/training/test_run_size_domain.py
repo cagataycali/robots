@@ -36,7 +36,6 @@ import pytest
 from strands_robots.training._validate import run_size_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.isaaclab import IsaacLabTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
@@ -62,7 +61,7 @@ UNUSABLE = NON_POSITIVE + WRONG_TYPE + NOT_COMPARABLE
 # Every backend that reads the run size. The RL trainers are deliberately
 # absent - see TestTheRLTrainersIgnoreAFieldTheyDoNotRead.
 # RslRlTrainer is RL but reads the run size (steps = PPO iterations, global_batch_size = worlds).
-SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, Gr00tTrainer, LerobotTrainer, RslRlTrainer, SagemakerTrainer)
+SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, LerobotTrainer, RslRlTrainer, SagemakerTrainer)
 
 # Backends that read ``steps`` (as an iteration count) and never
 # ``global_batch_size``: Isaac Lab's rsl_rl batch is num_envs x rollout length,

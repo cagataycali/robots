@@ -2,7 +2,7 @@
 
 ``_preflight_policy_config`` reports what can be judged without constructing: an
 unresolvable provider name, and the provider's own ``preflight`` hook. What a
-constructor judges for itself only exists once it runs -- ``Gr00tPolicy: invalid
+constructor judges for itself only exists once it runs -- ``MoveIt2Policy: invalid
 port: 70000 (expected 1-65535)``, or a keyword no pre-construction screen can
 judge -- and it used to escape differently on each surface. Measured on ``so101`` before this change:
 
@@ -33,10 +33,10 @@ from strands_robots.simulation.benchmark import register_benchmark, unregister_b
 from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 
-# A port outside 1-65535: refused by Gr00tPolicy.__init__ itself, which is the
+# A port outside 1-65535: refused by MoveIt2Policy.__init__ itself, which is the
 # point -- no screen that runs before construction can know this rule.
-_BAD_PORT = {"host": "127.0.0.1", "port": 70000, "data_config": "so101"}
-_PORT_VERDICT = "Gr00tPolicy: invalid port: 70000"
+_BAD_PORT = {"host": "127.0.0.1", "port": 70000}
+_PORT_VERDICT = "MoveIt2Policy: invalid port: 70000"
 # A misspelling of a parameter the provider does read. Cosmos3Policy declares no
 # **kwargs sink and its signature is readable, so ``policy_kwargs_error`` judges
 # this keyword before anything is constructed and names the parameter meant.
@@ -116,29 +116,29 @@ class TestTheBlockingSurfaces:
     """Each entry point returns the refusal it used to raise, and names itself."""
 
     def test_run_policy_reports_it(self, sim):
-        result = sim.run_policy(robot_name="so101", policy_provider="groot", policy_config=_BAD_PORT, duration=0.2)
+        result = sim.run_policy(robot_name="so101", policy_provider="moveit2", policy_config=_BAD_PORT, duration=0.2)
         assert result["status"] == "error"
         assert _text(result).startswith(
-            f"run_policy: policy provider 'groot' refused its configuration, so no rollout was started. {_PORT_VERDICT}"
+            f"run_policy: policy provider 'moveit2' refused its configuration, so no rollout was started. {_PORT_VERDICT}"
         )
 
     def test_eval_policy_reports_it(self, sim):
         result = sim.eval_policy(
-            robot_name="so101", policy_provider="groot", policy_config=_BAD_PORT, n_episodes=1, max_steps=2
+            robot_name="so101", policy_provider="moveit2", policy_config=_BAD_PORT, n_episodes=1, max_steps=2
         )
         assert result["status"] == "error"
         assert _text(result).startswith(
-            f"eval_policy: policy provider 'groot' refused its configuration, "
+            f"eval_policy: policy provider 'moveit2' refused its configuration, "
             f"so no rollout was started. {_PORT_VERDICT}"
         )
 
     def test_evaluate_benchmark_reports_it(self, sim, benchmark):
         result = sim.evaluate_benchmark(
-            benchmark, robot_name="so101", policy_provider="groot", policy_config=_BAD_PORT, n_episodes=1
+            benchmark, robot_name="so101", policy_provider="moveit2", policy_config=_BAD_PORT, n_episodes=1
         )
         assert result["status"] == "error"
         assert _text(result).startswith(
-            f"evaluate_benchmark: policy provider 'groot' refused its configuration, "
+            f"evaluate_benchmark: policy provider 'moveit2' refused its configuration, "
             f"so no rollout was started. {_PORT_VERDICT}"
         )
 
@@ -203,7 +203,7 @@ class TestTheBlockingSurfaces:
 
     def test_the_robot_is_left_free(self, sim):
         """A refusal before construction consumed no rollout slot."""
-        sim.run_policy(robot_name="so101", policy_provider="groot", policy_config=_BAD_PORT, duration=0.2)
+        sim.run_policy(robot_name="so101", policy_provider="moveit2", policy_config=_BAD_PORT, duration=0.2)
         assert _text(sim.list_policies_running()) == "No policies running."
         ok = sim.run_policy(robot_name="so101", policy_provider="mock", duration=0.1)
         assert ok["status"] == "success"
@@ -215,7 +215,7 @@ class TestTheAsynchronousSurface:
     def test_a_constructor_refusal_on_the_worker_is_reported_where_a_caller_reads(self, sim, caplog):
         with caplog.at_level(logging.ERROR, logger="strands_robots.simulation.mujoco.simulation"):
             started = sim.start_policy(
-                robot_name="so101", policy_provider="groot", policy_config=_BAD_PORT, duration=1.0
+                robot_name="so101", policy_provider="moveit2", policy_config=_BAD_PORT, duration=1.0
             )
             # Still a success: the verdict is given before the worker exists,
             # and inventing a synchronous build here would make start_policy
@@ -267,7 +267,7 @@ class TestTheAsynchronousSurface:
 
     def test_the_next_rollout_on_that_robot_replaces_the_record(self, sim):
         """The record is the last outcome, not a log: a later rollout clears it."""
-        sim.start_policy(robot_name="so101", policy_provider="groot", policy_config=_BAD_PORT, duration=1.0)
+        sim.start_policy(robot_name="so101", policy_provider="moveit2", policy_config=_BAD_PORT, duration=1.0)
         _await_idle(sim)
         _await_record(sim)
         assert sim._rollouts_ended_in_error() != {}

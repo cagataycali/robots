@@ -50,7 +50,6 @@ import pytest
 from strands_robots.training._validate import learning_rate_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 from strands_robots.training.rsl_rl import RslRlTrainer
@@ -75,7 +74,7 @@ NOT_A_NUMBER = ("1e-4", [1e-4], {"lr": 1e-4})
 
 UNUSABLE = SILENT_NO_OP + SILENT_DIVERGENCE + SILENT_MISREAD + LOUD_BUT_LATE + NOT_A_NUMBER
 
-SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, Gr00tTrainer, LerobotTrainer, RslRlTrainer, SagemakerTrainer)
+SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, LerobotTrainer, RslRlTrainer, SagemakerTrainer)
 RL_TRAINER_NAMES = ("FastSacTrainer", "FastTd3Trainer", "PpoTrainer")
 # RL transports: the run happens in another interpreter, which receives the rate as an override.
 RL_TRANSPORT_NAMES = ("IsaacLabTrainer",)

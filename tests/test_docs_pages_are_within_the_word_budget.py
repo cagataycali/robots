@@ -66,11 +66,11 @@ _BUDGET: int = _hook().LIMIT
 #: Raised to 49,508 when the mesh gained its direct messaging page (one new page under
 #: learn/mesh, a variable row and a sentence on the pages that point at it, and the `iot`
 #: verbs on the command line page).
-#: Raised to 50,058 for the mjlab backend page (a fourth SimEngine backend:
-#: learn/simulation/mjlab.md, its row on the simulation index and the rsl_rl_onnx
-#: section on learn/policies/rl.md, 550 words together), the ONE convention
-#: exception of that change.
-_SITE_BUDGET = 50_058
+#: Raised by 551 to 50,059 for the flux3_action provider page (one page per provider).
+#: Lowered to 49,433 when the GR00T provider page left with the provider (GR00T N1.7
+#: is a section of lerobot-local now).
+#: Raised by 530, to 49,963, for the mjlab backend page (learn/simulation/mjlab.md) and its cross-links.
+_SITE_BUDGET = 49_963
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

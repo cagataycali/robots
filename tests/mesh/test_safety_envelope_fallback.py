@@ -75,13 +75,13 @@ def test_bridge_backend_delivers_safety_envelopes_to_the_iot_leg(monkeypatch, to
     mesh._running = True
     monkeypatch.setattr(mesh, "broadcast", lambda cmd, timeout=5.0: [])
     monkeypatch.setattr(mesh, "publish_safety_event", lambda *a, **k: None)
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
 
     mesh.emergency_stop()
     if topic.endswith("resume"):
         iot.put.reset_mock()
         lan.put.reset_mock()
-        assert mesh._resume_lockout("secret") == {"status": "ok"}
+        assert mesh._resume_lockout("secret-code-1234567890abcdef") == {"status": "ok"}
 
     sent = [c.args for c in iot.put.call_args_list if c.args[0] == topic]
     assert len(sent) == 1, iot.put.call_args_list

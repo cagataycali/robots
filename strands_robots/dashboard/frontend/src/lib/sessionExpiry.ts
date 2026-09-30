@@ -68,7 +68,11 @@ export function sessionVerdict(
   if (!raw) {
     return { state: 'none', expiresInS: null, text: null, refusesUntilSignIn: false }
   }
-  const exp = tokenExpiry(raw)
+  return sessionVerdictAt(tokenExpiry(raw), nowS, renewedAtS)
+}
+
+/** The same verdict from an expiry alone: a cookie session the page cannot (and must not) read. */
+export function sessionVerdictAt(exp: number | null, nowS: number, renewedAtS = 0): SessionVerdict {
   if (exp === null) {
     // An opaque credential. It cannot lapse on its own, so this rule must not speculate about it.
     return { state: 'opaque', expiresInS: null, text: null, refusesUntilSignIn: false }

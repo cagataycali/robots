@@ -462,6 +462,10 @@ class RenderingMixin:
         # for the same reason as above.
         _apply_kinematic_attachments: Callable[[], None]
 
+        # Provided by PhysicsMixin; the action write accepts a registry joint
+        # label (``shoulder_pan``) the way the joint writes do.
+        _resolve_joint_label: Callable[[object, str | None], int]
+
     def _validate_render_dims(self, width: int, height: int, context: str) -> dict[str, Any] | None:
         """reject non-positive render dims; convert MuJoCo's framebuffer
         overflow to a plain-English message that tells the LLM the actual cap.
@@ -1101,6 +1105,11 @@ class RenderingMixin:
             # because their actuator_trnid points at the *tendon*, not the
             # finger joint - see issue #318.
             jnt_id = _lookup(mj.mjtObj.mjOBJ_JOINT, key)
+            if jnt_id < 0 and robot_name:
+                # A registry joint label (``shoulder_pan`` for the SO-101's
+                # joint ``1``), the spelling ``get_robot_state`` prints and
+                # ``set_joint_positions`` accepts for the same joint.
+                jnt_id = self._resolve_joint_label(key, robot_name)
             if jnt_id < 0:
                 # #367: an action key that resolves to neither an actuator nor
                 # a joint is silently dropped today. Silent gripper drops are
@@ -3342,7 +3351,7 @@ class RenderingMixin:
                     benchmark_name=task,
                     n_episodes=5,
                     seed=42,
-                    policy_provider="groot",
+                    policy_provider="lerobot_local",
                     policy_config={...},
                     on_frame=on_frame,
                 )

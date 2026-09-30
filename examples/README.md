@@ -16,7 +16,7 @@ MUJOCO_GL=egl python examples/01_sim_hello_world.py
 The numbered `01_*`..`15_*` scripts below are the core primitive walkthroughs and
 live at the top level. Everything else is grouped by topic:
 
-- [`vla/`](vla/) - vision-language-action provider examples (Cosmos 3, MolmoAct2)
+- [`vla/`](vla/) - vision-language-action provider examples (Cosmos 3, MolmoAct2, FLUX 3 Action)
 - [`wbc/`](wbc/) - whole-body control on the Unitree G1 (torque deploy, gait, composite)
 - [`locomotion/`](locomotion/) - G1 locomotion and the VLA-on-G1 record→tune→deploy workflow
 - [`training/`](training/) - from-scratch RL trainers (PPO, FastSAC)
@@ -53,7 +53,7 @@ record→train→deploy loop) as Jupyter notebooks - all CPU-only, no hardware o
 | 16 | [`16_harness_memory.py`](16_harness_memory.py) | `harness_memory` tool: save a solution trace, reuse it under spatial perturbation | No | No |
 | 17 | [`17_pour_task.py`](17_pour_task.py) | Articulated-container pouring: bundled task objects + particle-proxy pour predicates | No | No |
 | 17 | [`17_judge_recorded_episodes.py`](17_judge_recorded_episodes.py) | Episode-judge labeling: deterministic verdicts + judge annotations -> filtered re-training | No | No |
-| -- | [`locomotion/vla_g1_workflow.py`](locomotion/vla_g1_workflow.py) | VLA-on-G1: record -> GR00T fine-tune -> WBC deploy | No | Optional (tune) |
+| -- | [`locomotion/vla_g1_workflow.py`](locomotion/vla_g1_workflow.py) | VLA-on-G1: record -> GR00T N1.7 fine-tune (lerobot) -> WBC deploy | No | Optional (tune) |
 | — | [`isaac_gs/`](isaac_gs/) | Isaac RTX robot z-composited over a 3DGS / panorama backdrop (digital-twin) | No | **Yes** (Isaac Sim / RTX) |
 | — | [`mujoco_gs/`](mujoco_gs/) | MuJoCo + 3D Gaussian Splatting hybrid render (depth-aware composite) driven by the `Simulation` AgentTool | No | Optional (`gsplat`) |
 | -- | [`mesh/iot_direct_rpc.py`](mesh/iot_direct_rpc.py) | `Mesh.send` over AWS IoT Core Direct Messaging: confirmed delivery, direct reply, offline verdict in one round trip | No (AWS account) | No |
@@ -75,6 +75,8 @@ record→train→deploy loop) as Jupyter notebooks - all CPU-only, no hardware o
 |------|--------------|
 | [`vla/molmoact2_so101_pickplace.py`](vla/molmoact2_so101_pickplace.py) | Real hardware + MolmoAct2 VLA policy on SO-101 |
 | [`vla/cosmos3_sim_rollout.py`](vla/cosmos3_sim_rollout.py) | Cosmos 3 VLA in MuJoCo with WebSocket policy server |
+| [`vla/flux3_action_so101_sim.py`](vla/flux3_action_so101_sim.py) | FLUX 3 Action (BFL) in MuJoCo on the SO-101 at 30 Hz, LeRobot v3 recording, private Hub push. **GPU: Yes** |
+| [`vla/flux3_action_so101_agent.py`](vla/flux3_action_so101_agent.py) | One tool, one prompt: a Strands Agent runs FLUX 3 Action on the SO-101 (sim default, `--real PORT` for the arm). **GPU: Yes** |
 | [`wbc/wbc_g1_torque_deploy.py`](wbc/wbc_g1_torque_deploy.py) | GR00T-WBC (SONIC) locomotion on the Unitree G1 via the torque-control deploy loop |
 | [`lerobot/hub_to_hardware.py`](lerobot/hub_to_hardware.py) | Full agent-driven pipeline: record, train, deploy |
 | [`fleet/05_work_order_dispatch.py`](fleet/05_work_order_dispatch.py) | Structured work-order ingress (JSONL queue) mapped onto per-site capability manifests: deterministic feasibility filter + NACK, mesh dispatch behind HITL, order_id threaded through the signed audit log. **GPU: No** (`--dry-run` is dependency-free) |
