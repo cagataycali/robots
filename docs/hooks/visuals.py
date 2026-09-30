@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Expand ``{{drawing:<id>}}`` and ``{{sim:<id>}}`` tokens into the site's pictures.
 
-A drawing is an Excalidraw scene under ``docs/drawings/`` exported by
-``docs/drawings/_tools/render.py`` to ``docs/assets/drawings/<id>.paper.svg`` and
+A drawing is a scene module under ``docs/drawings/scenes/<id>.py`` rendered by
+``docs/drawings/_tools/scene.py`` to ``docs/assets/drawings/<id>.paper.svg`` and
 ``<id>.dark.svg``. A sim artifact is a frame or clip a page's own code produced,
 committed under ``docs/assets/sim/<id>.png`` (and optionally ``<id>.webm``) by
 ``docs/hooks/sim_frames.py``. Either way the page writes one token, so a picture
@@ -11,7 +11,7 @@ costs one word against the site ceiling, and this hook writes the ``<figure>``:
     {{drawing:d01_what_is}}
     {{sim:first-robot-1|what the code above built}}
 
-The drawing's alt text comes from the scene file (``strandsDrawing.alt``); the sim
+The drawing's alt text is the ``<title>`` the scene wrote into its SVG; the sim
 frame's caption is the text after ``|`` (default "what the code above built"). Both
 schemes ship for a drawing and Material's ``#only-light`` / ``#only-dark`` fragment
 convention swaps them with the palette toggle. Every image loads lazily. An unknown
@@ -22,7 +22,6 @@ token cannot ship as literal text.
 from __future__ import annotations
 
 import html
-import json
 import logging
 import re
 from pathlib import Path
@@ -30,19 +29,21 @@ from pathlib import Path
 log = logging.getLogger("mkdocs.hooks.visuals")
 
 _DOCS = Path(__file__).resolve().parents[1]
-_DRAWINGS = _DOCS / "drawings"
+_SCENES = _DOCS / "drawings" / "scenes"
 _DRAWING_SVGS = _DOCS / "assets" / "drawings"
+_SVG_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.DOTALL)
 _SIM = _DOCS / "assets" / "sim"
 _TOKEN = re.compile(r"\{\{(drawing|sim):([A-Za-z0-9_-]+)(?:\|([^}]*))?\}\}")
 
 
 def drawing_alt(drawing_id: str) -> str | None:
-    """The alt text the scene declares, or None when the scene does not exist."""
-    scene = _DRAWINGS / f"{drawing_id}.excalidraw"
-    if not scene.is_file():
+    """The alt text the scene wrote as the SVG's title, or None when the scene or the SVG is missing."""
+    scene = _SCENES / f"{drawing_id}.py"
+    paper = _DRAWING_SVGS / f"{drawing_id}.paper.svg"
+    if not scene.is_file() or not paper.is_file():
         return None
-    data = json.loads(scene.read_text(encoding="utf-8"))
-    return str((data.get("strandsDrawing") or {}).get("alt") or drawing_id)
+    match = _SVG_TITLE.search(paper.read_text(encoding="utf-8"))
+    return html.unescape(match.group(1)).strip() if match else drawing_id
 
 
 def drawing_html(drawing_id: str, prefix: str) -> str | None:
@@ -90,7 +91,7 @@ def substitute(markdown: str, page_path: str = "<string>") -> str:
         kind, ident, caption = match.group(1), match.group(2), match.group(3)
         out = drawing_html(ident, prefix) if kind == "drawing" else sim_html(ident, caption, prefix)
         if out is None:
-            where = "docs/assets/drawings + docs/drawings" if kind == "drawing" else "docs/assets/sim"
+            where = "docs/assets/drawings + docs/drawings/scenes" if kind == "drawing" else "docs/assets/sim"
             log.warning("%s: {{%s:%s}} has no files under %s", page_path, kind, ident, where)
             return match.group(0)
         return out

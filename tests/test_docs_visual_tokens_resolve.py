@@ -1,23 +1,29 @@
 """Every picture token on a page has its files, and every committed picture has a page.
 
 ``docs/hooks/visuals.py`` expands ``{{drawing:<id>}}`` into the paper and dark
-SVG exports of ``docs/drawings/<id>.excalidraw`` and ``{{sim:<id>}}`` into the
-frame under ``docs/assets/sim``. A token with no files would ship as literal
-text (the hook warns, and ``--strict`` fails the build, but only when the build
-runs); an export with no page is a picture nobody sees and a scene nobody
-rebuilds. Both are graded here, from the sources, without a build. The hook
-itself is loaded by path: the docs venv is not the test venv.
+SVGs that ``docs/drawings/_tools/scene.py`` renders from the scene module
+``docs/drawings/scenes/<id>.py``, and ``{{sim:<id>}}`` into the frame under
+``docs/assets/sim``. A token with no files would ship as literal text (the hook
+warns, and ``--strict`` fails the build, but only when the build runs); an SVG
+with no page is a picture nobody sees and a scene nobody rebuilds; an SVG that
+no longer matches its scene is a drawing whose source lies. All three are graded
+here, from the sources, without a build or a browser. The hook and the renderer
+are loaded by path: the docs venv is not the test venv.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
 _DOCS = _REPO / "docs"
 _HOOK = _DOCS / "hooks" / "visuals.py"
+_SCENE_TOOL = _DOCS / "drawings" / "_tools" / "scene.py"
+_SCENES = _DOCS / "drawings" / "scenes"
+_SVGS = _DOCS / "assets" / "drawings"
 
 
 def _hook():  # noqa: ANN202
@@ -40,6 +46,15 @@ def _references() -> set[tuple[str, str]]:
     return refs
 
 
+def _renderer():  # noqa: ANN202
+    spec = importlib.util.spec_from_file_location("scene", _SCENE_TOOL)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("scene", module)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_every_visual_token_resolves_to_committed_files() -> None:
     hook = _hook()
     missing = []
@@ -48,22 +63,51 @@ def test_every_visual_token_resolves_to_committed_files() -> None:
         if out is None:
             missing.append(f"{{{{{kind}:{ident}}}}}")
     assert not missing, (
-        f"visual tokens with no files: {missing}. A drawing needs docs/drawings/<id>.excalidraw and both "
-        "docs/assets/drawings/<id>.{paper,dark}.svg (run docs/drawings/_tools/render.py); a sim frame needs "
+        f"visual tokens with no files: {missing}. A drawing needs docs/drawings/scenes/<id>.py and both "
+        "docs/assets/drawings/<id>.{paper,dark}.svg (run docs/drawings/_tools/scene.py --all); a sim frame needs "
         "docs/assets/sim/<id>.png."
     )
 
 
 def test_every_committed_drawing_is_placed_on_a_page() -> None:
     placed = {ident for kind, ident in _references() if kind == "drawing"}
-    scenes = {p.stem for p in (_DOCS / "drawings").glob("*.excalidraw")}
-    exports = {p.name.split(".")[0] for p in (_DOCS / "assets" / "drawings").glob("*.svg")}
+    scenes = {p.stem for p in _SCENES.glob("*.py") if not p.name.startswith("_")}
+    exports = {p.name.split(".")[0] for p in _SVGS.glob("*.svg")}
     orphans = sorted((scenes | exports) - placed)
     assert not orphans, (
-        f"drawings no page references: {orphans}. Place {{{{drawing:<id>}}}} on the page that explains it, or delete the scene and its exports."
+        f"drawings no page references: {orphans}. Place {{{{drawing:<id>}}}} on the page that explains it, or delete the scene and its SVGs."
     )
     unexported = sorted(scenes - exports)
-    assert not unexported, f"scenes with no SVG export: {unexported}. Run docs/drawings/_tools/render.py."
+    assert not unexported, f"scenes with no SVG: {unexported}. Run docs/drawings/_tools/scene.py --all."
+
+
+def test_every_committed_svg_is_what_its_scene_renders() -> None:
+    """The scene module is the source of truth; a hand-edited or stale SVG is refused."""
+    renderer = _renderer()
+    scenes = renderer.load_scenes()
+    assert scenes, f"no scenes under {_SCENES}"
+    drift = renderer.verify_svgs(scenes, _SVGS)
+    assert drift == [], (
+        f"committed SVGs that differ from their scene: {drift}. Edit docs/drawings/scenes/<id>.py, then run "
+        "docs/drawings/_tools/scene.py --all and commit both."
+    )
+    stray = sorted(p.name for p in _SVGS.iterdir() if p.suffix != ".svg")
+    assert stray == [], f"only SVGs are committed under docs/assets/drawings; PNGs go to a shots directory: {stray}"
+
+
+def test_every_scene_keeps_the_brand_rules() -> None:
+    """One accent element, a title, a lead, a footnote, no em or en dash, every identifier in the docs."""
+    renderer = _renderer()
+    problems = renderer.check_labels(renderer.load_scenes(), _DOCS)
+    assert problems == [], problems
+    for name, scene in renderer.load_scenes().items():
+        svg = scene.svg("paper")
+        accents = svg.count('class="card accent-card"') + svg.count('class="chip accent-chip"') + svg.count('class="wire accent-wire')
+        assert accents >= 1, f"{name}: no accent element; every drawing has exactly one green thing it is about"
+        assert accents == 1, f"{name}: {accents} accent elements; one green element per drawing"
+        assert scene.title and scene.lead, f"{name}: a drawing has a mono title and a Grotesk lead"
+        assert scene.empty_fraction() <= 0.2, f"{name}: {scene.empty_fraction():.0%} of the canvas is empty (limit one fifth)"
+        assert 'class="grot muted" x="600.0"' in svg, f"{name}: no centred footnote"
 
 
 def test_every_committed_sim_frame_is_placed_on_a_page() -> None:

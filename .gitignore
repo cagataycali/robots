@@ -16,5 +16,5 @@ site/
 .DS_Store
 .venv-docs/
 
-# drawing exporter npm project (docs/drawings/_tools/render.py)
+# tool caches (playwright renders, scratch)
 .cache/
