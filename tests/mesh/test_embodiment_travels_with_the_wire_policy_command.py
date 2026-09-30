@@ -95,7 +95,10 @@ def test_sim_dispatch_hands_embodiment_to_the_policy_constructor() -> None:
     assert "embodiment" not in kwargs["policy_kwargs"]
 
 
-def test_hardware_dispatch_hands_embodiment_to_the_policy_constructor() -> None:
+def test_hardware_dispatch_hands_embodiment_to_the_policy_constructor(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A wire execute on a real robot passes the operator gate on the robot host
+    # first; pre-approve this one verb so the test reaches the dispatcher.
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "execute")
     arm = _FakeArm()
     Mesh(arm, peer_id="arm-a")._dispatch(_cmd())
     assert arm.calls[0]["embodiment"] == "so101"
