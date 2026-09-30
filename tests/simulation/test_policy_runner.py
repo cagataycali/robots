@@ -803,7 +803,9 @@ def test_runner_substeps_at_control_rate():
     """Runner converts control_frequency + physics dt into substeps so a
     position-servo arm gets a full control period of physics per action.
 
-    15 Hz control with a 2 ms physics dt => round((1/15)/0.002) = 33 substeps.
+    15 Hz control with a 2 ms physics dt is (1/15)/0.002 = 33.33 substeps: the
+    schedule alternates 33 and 34 so four actions cover round(133.33) = 133
+    steps, 4/15 s to within one physics step (#4392), never a bare 1.
     """
     sim = _SubstepRecordingSim(dt=0.002)
     policy = MockPolicy()
@@ -812,7 +814,8 @@ def test_runner_substeps_at_control_rate():
     res = PolicyRunner(sim).run("fake_robot", policy, duration=4 / 15, control_frequency=15.0, fast_mode=True)
     assert res["status"] == "success"
     assert sim.substeps_seen, "no send_action calls recorded"
-    assert all(s == 33 for s in sim.substeps_seen), sim.substeps_seen
+    assert set(sim.substeps_seen) <= {33, 34}, sim.substeps_seen
+    assert sum(sim.substeps_seen[:4]) == 133, sim.substeps_seen
 
 
 def test_runner_control_substeps_override():

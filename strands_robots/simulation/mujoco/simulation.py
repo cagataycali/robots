@@ -159,7 +159,7 @@ from strands_robots.simulation.mujoco.spec_builder import (
     material_spec_error,
 )
 from strands_robots.simulation.observers import RunPolicyObserver
-from strands_robots.simulation.policy_runner import CooperativeStop
+from strands_robots.simulation.policy_runner import CooperativeStop, PolicyRunner
 from strands_robots.simulation.recording import RecordedFrame
 from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_difficulty, validate_terrain
 from strands_robots.simulation.tool_frame import registry_tool_frame
@@ -7280,8 +7280,10 @@ class MuJoCoSimEngine(
                 a finite positive number; a non-positive, non-finite, or
                 non-numeric value is a caller error, not a zero-step rollout
                 reported as a success.
-            control_frequency: Target Hz for policy action queries / physics.
-                Must be a positive number.
+            control_frequency: Target Hz for policy action queries. Each
+                synchronized step advances one control period of physics
+                (``1 / control_frequency``, in whole physics steps, as
+                ``run_policy`` does). Must be a positive number.
             action_horizon: How many actions to consume from each policy's
                 returned chunk before re-querying it (open-loop chunk
                 execution, mirrors ``run_policy``). Either a single int applied
@@ -7418,6 +7420,12 @@ class MuJoCoSimEngine(
         # verbatim for exactly this reason; this is that rule for the
         # multi-robot loop.
         total_steps = n_steps if n_steps is not None else int(duration * control_frequency)
+        # One synchronized step is one CONTROL period, so it advances the same
+        # physics steps ``run_policy`` does for this rate. Stepping once (2 ms
+        # on the default MuJoCo dt) left every position servo 10% of the way
+        # to its target at 50 Hz, and a recording labelled at the control rate
+        # held frames 2 ms of sim time apart.
+        n_substeps = PolicyRunner(self)._control_substeps(control_frequency)
 
         # Mark all robots as running so stop_policy can interrupt the loop.
         for rname in policies:
@@ -7516,7 +7524,7 @@ class MuJoCoSimEngine(
                             )
                         per_robot_action[rname] = action_queues[rname].popleft()
 
-                    # --- 3. Apply ALL robots' ctrl, then step physics ONCE.
+                    # --- 3. Apply ALL robots' ctrl, then step ONE control period of physics.
                     with self._lock:
                         mj = self._mj
                         for rname, act in per_robot_action.items():
@@ -7525,14 +7533,15 @@ class MuJoCoSimEngine(
                             robot = self._world.robots[rname]
                             pfx = robot.namespace or ""
                             self._apply_action_by_name(self._world._model, self._world._data, act, pfx, mj, rname)
-                        mj.mj_step(self._world._model, self._world._data)
-                        # Kinematic attachments (attach_bodies mode="kinematic")
-                        # follow their parent every physics step, on this
-                        # synchronized loop as much as on the single-robot policy
-                        # path. Fast no-op when none are registered.
-                        self._apply_kinematic_attachments()
+                        for _ in range(n_substeps):
+                            mj.mj_step(self._world._model, self._world._data)
+                            # Kinematic attachments (attach_bodies mode="kinematic")
+                            # follow their parent every physics step, on this
+                            # synchronized loop as much as on the single-robot policy
+                            # path. Fast no-op when none are registered.
+                            self._apply_kinematic_attachments()
                         self._world.sim_time = self._world._data.time
-                        self._world.step_count += 1
+                        self._world.step_count += n_substeps
                         if hasattr(self, "_viewer_handle") and self._viewer_handle is not None:
                             self._viewer_handle.sync()
 

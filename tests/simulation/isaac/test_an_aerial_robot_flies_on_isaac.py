@@ -57,6 +57,7 @@ def test_a_quadrotor_is_read_as_one_body_and_its_motors(quad) -> None:
 
 def test_the_control_is_clipped_to_its_range_as_mujoco_clips_it(quad) -> None:
     drive = mjcf_site_drive(quad)
+    assert drive is not None
     assert drive.set_ctrl("m1", 9.0) == 5.0
     assert drive.set_ctrl("roll", -3.0) == -1.0
 
@@ -65,6 +66,7 @@ def test_the_control_is_clipped_to_its_range_as_mujoco_clips_it(quad) -> None:
 def test_the_wrench_is_mujocos_site_transmission(quad, seed) -> None:
     """Summed about the body origin and put in the free joint's frame, it IS qfrc_actuator."""
     drive = mjcf_site_drive(quad)
+    assert drive is not None
     model = mujoco.MjModel.from_xml_path(quad)
     data = mujoco.MjData(model)
     rng = np.random.default_rng(seed)
@@ -73,6 +75,7 @@ def test_the_wrench_is_mujocos_site_transmission(quad, seed) -> None:
     data.qpos[:3] = rng.normal(size=3)
     data.qpos[3:7] = quat
     for i, act in enumerate(drive.actuators):
+        assert act.ctrlrange is not None
         data.ctrl[i] = drive.set_ctrl(act.name, rng.uniform(*act.ctrlrange))
     mujoco.mj_forward(model, data)
 
@@ -88,6 +91,7 @@ def test_the_wrench_is_mujocos_site_transmission(quad, seed) -> None:
 
 def test_a_motor_that_is_off_pushes_nothing(quad) -> None:
     drive = mjcf_site_drive(quad)
+    assert drive is not None
     drive.set_ctrl("m1", 0.0)
     assert site_wrenches(drive, np.zeros(3), np.array([1.0, 0, 0, 0])) == []
 
