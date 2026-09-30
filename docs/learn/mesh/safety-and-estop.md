@@ -1,6 +1,6 @@
 # Safety and e-stop
 
-At the end of this page you know what one `emergency_stop()` does to every robot it can reach, why a stopped fleet stays stopped until an operator with the override code says otherwise, what a resume must prove, and where every one of those events is written down.
+At the end of this page you know what one `emergency_stop()` does to every robot it can reach, why a stopped fleet stays stopped until an operator with the override code says otherwise, what a resume must prove, and where each event is written down.
 
 ```python title="sketch"
 # STRANDS_MESH_OVERRIDE_CODE must be the SAME value on every peer, set before Python starts.
@@ -12,30 +12,30 @@ print(a.mesh.send("arm-b", {"action": "resume", "override_code": "<the code>"}))
 # {'status': 'ok'}  or  {'status': 'error', 'error': 'resume rejected'}
 ```
 
-No runnable fence on this page, on purpose: an e-stop reaches every peer the session can see, including a dashboard or a robot someone else left running on the network. Run it when you mean it.
+No runnable fence on this page, on purpose: an e-stop reaches every peer the session can see, including a dashboard or a robot someone else left running. Run it when you mean it.
 
 ## What an e-stop does
 
 1. Engages the local lockout and records the time.
-2. Stops the robot in this process through the same `_dispatch({"action": "stop"})` path a remote peer would run. `broadcast` never reaches its sender, so without this step the robot the operator stands next to is the one the fan-out misses.
+2. Stops the robot in this process through the same `_dispatch({"action": "stop"})` path a remote peer would run. `broadcast` never reaches its sender, so without this step the fan-out misses the robot the operator stands next to.
 3. Broadcasts `{"action": "stop"}` and collects replies for 3 s.
 4. Publishes the event on `strands/safety/estop` (fleet-wide lockout) and `strands/<peer>/safety/event`.
 5. Writes `emergency_stop` to the audit log.
 
-The return value is every reply, the local one first. A reply counts as "stopped" only if it says so: a peer whose robot exposes no `stop_task` answers `{"ok": False}`, is logged at CRITICAL and listed in `peers_not_stopped`. Counting it as an acknowledgement would report a halted fleet while a robot still moved. A mesh that is not running raises `RuntimeError` rather than returning `[]`: "asked nobody" cannot look like "asked, nobody answered".
+The return value is every reply, the local one first. A reply counts as "stopped" only if it says so: a peer whose robot exposes no `stop_task` answers `{"ok": False}`, is logged at CRITICAL and listed in `peers_not_stopped`. Counting it as an acknowledgement would report a halted fleet while a robot moved. A mesh that is not running raises `RuntimeError` instead of returning `[]`: "asked nobody" cannot look like "asked, nobody answered".
 
 ## The lockout
 
-While engaged, a peer answers only `status`, `ping`, `resume` and `stop`. `stop` stays admitted because it only de-energises: a second e-stop reaching a locked peer must still halt a rollout the first one missed. Every other action is refused and the refusal is audited.
+While engaged, a peer answers only `status`, `ping`, `resume` and `stop`. `stop` stays admitted because it only de-energises: a second e-stop reaching a locked peer must still halt a rollout the first missed. Every other action is refused, and audited.
 
-A peer that receives `strands/safety/estop` from another peer engages its own lockout; the log line reads `lockout engaged via remote estop from <issuer>`.
+A peer receiving `strands/safety/estop` from another peer engages its own lockout; the log line reads `lockout engaged via remote estop from <issuer>`.
 
-Replay defence there: the envelope's `t` must be fresh (`STRANDS_MESH_RESUME_FRESHNESS_S`, default 60 s), a per-receiver cache refuses a repeated `t`, and issuers are capped per window. Refusing a cache slot never refuses the stop, nor does a receiver clock behind the operator: an estop up to a window early latches and audits `estop_clock_skew`; `resume` alone keeps the forward-skew rule (5 s).
+Replay defence there: the envelope's `t` must be fresh (`STRANDS_MESH_RESUME_FRESHNESS_S`, default 60 s), a per-receiver cache refuses a repeated `t`, issuers are capped per window. Refusing a cache slot never refuses the stop, nor does a receiver clock behind the operator: an estop up to a window early latches and audits `estop_clock_skew`; only `resume` keeps the forward-skew rule (5 s).
 
 
 ## Resume
 
-A resume is second-factor gated. `STRANDS_MESH_OVERRIDE_CODE` (at least 16 characters, say `secrets.token_urlsafe(32)`) must be set on the peer that resumes and on every peer that honours it; a peer without one that long refuses every remote resume and says so at start:
+A resume is second-factor gated. `STRANDS_MESH_OVERRIDE_CODE` (at least 16 characters, say `secrets.token_urlsafe(32)`) must be set on the resuming peer and on every peer that honours it; a peer without one that long refuses every remote resume and says so at start:
 
 ```text
 [safety:arm-a] No emergency-stop resume code set. If any peer broadcasts an e-stop, this robot stays locked until you physically restart it (one message can freeze the whole fleet).
