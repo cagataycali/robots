@@ -588,6 +588,115 @@ def _author_position_drives(usd_file: str, mjcf_path: str) -> list[str]:
     return written
 
 
+def _attached_model_files(mjcf_path: str, _seen: frozenset[str] = frozenset()) -> list[str]:
+    """Absolute paths of every ``<asset><model file=...>`` the description attaches, transitively.
+
+    MuJoCo's ``<model>`` asset plus ``<attach>`` composes a second MJCF as its own
+    spec, so that model keeps its OWN ``<compiler meshdir>``: ``lekiwi`` attaches
+    ``../so_arm100/so_arm100.xml``, whose meshes live in ``so_arm100/assets/``. The
+    path is relative to the file that declares it (an ``<include>``d fragment
+    included), the same rule as an include.
+    """
+    entry = os.path.normpath(os.path.abspath(mjcf_path))
+    try:
+        root = ET.parse(entry).getroot()
+    except (ET.ParseError, OSError):
+        return []
+    found: list[str] = []
+
+    def _walk(el: ET.Element, base: str, seen: frozenset[str]) -> None:
+        for child in el:
+            if child.tag == "include" and child.get("file"):
+                rel = child.get("file", "")
+                inc = os.path.normpath(os.path.join(base, rel))
+                if inc in seen or not os.path.isfile(inc):
+                    continue
+                try:
+                    _walk(ET.parse(inc).getroot(), os.path.dirname(inc), seen | {inc})
+                except (ET.ParseError, OSError):
+                    continue
+            elif child.tag == "asset":
+                for model in child.iter("model"):
+                    model_file = model.get("file")
+                    if model_file:
+                        path = os.path.normpath(os.path.join(base, model_file))
+                        if path not in seen and os.path.isfile(path) and path not in found:
+                            found.append(path)
+                            found.extend(p for p in _attached_model_files(path, seen | {path}) if p not in found)
+
+    _walk(root, os.path.dirname(entry), _seen | {entry})
+    return found
+
+
+def _spec_asset_path(spec_dir: str, subdir: str, file: str) -> str:
+    return file if os.path.isabs(file) else os.path.normpath(os.path.join(spec_dir, subdir or "", file))
+
+
+def _flatten_attached_models(mjcf_path: str, work_dir: str) -> str:
+    """*mjcf_path*, or a single-file copy in *work_dir* whose asset paths are all absolute.
+
+    The Isaac MJCF importer resolves every mesh against the ENTRY model's
+    ``meshdir``, so a mesh an attached ``<model>`` declares against its own
+    ``meshdir`` is looked for in the wrong directory and the conversion fails -
+    ``lekiwi`` reports ``lekiwi/assets/Base.stl`` for the arm's
+    ``so_arm100/assets/Base.stl`` although MuJoCo loads the model. Only a model
+    that attaches another is rewritten; every other description goes to the
+    importer untouched. The copy is MuJoCo's own ``MjSpec.to_xml`` of the
+    composed model, with each mesh, texture, height field and skin path resolved
+    the way MuJoCo resolved it.
+    """
+    attached = _attached_model_files(mjcf_path)
+    if not attached:
+        return mjcf_path
+    import mujoco
+
+    # file string as the composed spec carries it -> where the attached model finds it
+    located: dict[str, str] = {}
+    for child in attached:
+        cspec = mujoco.MjSpec.from_file(child)
+        cdir = os.path.dirname(child)
+        for kind, subdir in (("meshes", cspec.meshdir), ("hfields", cspec.meshdir), ("skins", cspec.meshdir)):
+            for asset in getattr(cspec, kind, []):
+                if asset.file:
+                    located.setdefault(asset.file, _spec_asset_path(cdir, subdir, asset.file))
+        for tex in cspec.textures:
+            if tex.file:
+                located.setdefault(tex.file, _spec_asset_path(cdir, cspec.texturedir, tex.file))
+
+    spec = mujoco.MjSpec.from_file(mjcf_path)
+    pdir = os.path.dirname(os.path.abspath(mjcf_path))
+
+    def _resolve(file: str, subdir: str) -> str:
+        own = _spec_asset_path(pdir, subdir, file)
+        if os.path.isfile(own) or file not in located:
+            return own
+        return located[file]
+
+    for kind in ("meshes", "hfields", "skins"):
+        for asset in getattr(spec, kind, []):
+            if asset.file:
+                asset.file = _resolve(asset.file, spec.meshdir)
+    for tex in spec.textures:
+        if tex.file:
+            tex.file = _resolve(tex.file, spec.texturedir)
+    spec.meshdir = ""
+    spec.texturedir = ""
+    spec.compile()  # fails here, naming the file, if a path is still wrong
+    root = ET.fromstring(spec.to_xml())
+    # ``to_xml`` writes an attached model's root default class (``main`` under
+    # an empty prefix) as a nested ``<default>`` with no name, which MuJoCo's
+    # own parser then rejects ("empty class name"). Its children keep their
+    # names, so giving it one no element refers to reads back the same model.
+    for n, parent in enumerate(el for el in root.iter("default")):
+        for nested in parent.findall("default"):
+            if not nested.get("class"):
+                nested.set("class", f"strands_attached_root_{n}")
+    flat = os.path.join(work_dir, os.path.basename(mjcf_path))
+    ET.ElementTree(root).write(flat, encoding="unicode")
+    mujoco.MjModel.from_xml_path(flat)  # the copy must load as the original does
+    return flat
+
+
 def convert_mjcf_to_usd(
     mjcf_path: str,
     cache_dir: str | None = None,
@@ -708,12 +817,16 @@ def convert_mjcf_to_usd(
     # for a conversion that in fact succeeded.
     staging = tempfile.mkdtemp(prefix=f".{key}.{os.getpid()}.", suffix=".tmp", dir=out_dir)
     try:
-        config = MJCFImporterConfig()
-        config.mjcf_path = os.path.abspath(mjcf_path)
-        config.usd_path = staging
-        config.fix_base = fix_base
-        config.import_scene = import_scene
-        produced = MJCFImporter(config=config).import_mjcf()
+        # A model that attaches another goes to the importer as one flattened
+        # file (see _flatten_attached_models); the scratch copy is a temp
+        # directory beside staging and is gone before this returns.
+        with tempfile.TemporaryDirectory(prefix=f".{key}.flat.", dir=out_dir) as flat_dir:
+            config = MJCFImporterConfig()
+            config.mjcf_path = os.path.abspath(_flatten_attached_models(mjcf_path, flat_dir))
+            config.usd_path = staging
+            config.fix_base = fix_base
+            config.import_scene = import_scene
+            produced = MJCFImporter(config=config).import_mjcf()
     except BaseException:
         _remove_tree(staging)
         raise
