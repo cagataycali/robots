@@ -1,5 +1,5 @@
 ---
-description: Build a scene on any backend: objects and their size conventions, cameras, articulated task objects, MJCF patches, meshes and materials, terrain.
+description: Build a scene on any backend: objects and their size conventions, cameras, articulated task objects, MJCF patches, meshes, materials, terrain.
 ---
 
 # Worlds and objects
@@ -10,7 +10,7 @@ By the end of this page you can build a scene from primitives, an articulated ca
 from strands_robots.simulation import create_simulation
 from strands_robots.simulation.task_objects import list_task_objects, task_object_path
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world(terrain="stairs", difficulty=0.5)
 sim.add_robot("so101", position=[0.0, 0.0, 0.0])
 sim.add_object(name="cube", shape="box", size=[0.03, 0.03, 0.03], position=[0.25, 0.0, 0.2], color=[1, 0, 0, 1])
@@ -63,21 +63,21 @@ Ground height at (1.0000, 0.0000) = 0.0240m
 | `plane` | visual half-widths; infinite for collision, forced static |
 | `mesh` | ignored; the file's units define the extent, `mesh_path` required |
 
-A short vector is refused, not padded: padding would compile a different object and report success. `color` is RGB or RGBA; an RGB triple gets an opaque alpha. `is_static` is tri-state: `None` lets the backend decide (a plane is always static), `True` welds, `False` is a free body; a non-boolean is refused. `material` accepts `builtin` (`checker`, `gradient`, `flat`), `rgb1`, `rgb2`, `texrepeat`, `texdim`, `texture`, `reflectance`, `shininess`, `specular`; anything else is refused with the accepted list. Newton consumes half-extents and radii directly; Isaac pads trailing components from a documented default.
+A short vector is refused, not padded: padding would compile a different object and pass. `color` is RGB or RGBA; an RGB triple gets an opaque alpha. `is_static` is tri-state: `None` lets the backend decide (a plane is always static), `True` welds, `False` is a free body; a non-boolean is refused. `material` accepts `builtin` (`checker`, `gradient`, `flat`), `rgb1`, `rgb2`, `texrepeat`, `texdim`, `texture`, `reflectance`, `shininess`, `specular`; anything else is refused with the accepted list. Newton consumes half-extents and radii directly; Isaac pads trailing components from a documented default.
 
 `move_object(name, position, orientation)` places a dynamic object at rest or rebuilds a static one. `remove_object`, `list_objects` and `get_body_state` complete the set. `attach_bodies(parent, child, mode="weld")` and `detach_bodies(parent, child)` glue two bodies at their current pose.
 
 ## Cameras
 
-`add_camera(name, position, target, fov=60, width, height, parent_body=None)`; `fov` is vertical on every backend. World-frame by default. With `parent_body` the camera rides a body and `position` and `target` are in that body's frame; both are required then, since the world-frame defaults would put a wrist camera 1.7 m away. Every backend supports it. A name is a bare token (`wrist`, `front_cam`, `cam-2`), optionally scoped to one robot (`arm0/wrist_cam`); a space (`a b`), a dot (`wrist.rgb`) or `..` is refused with `status="error"` and the scene continues without the camera, so read the status. Every camera appears in `get_observation` as an `(H, W, 3)` array under its name; the policy pages explain [which names a model expects](../policies/lerobot-local.md).
+`add_camera(name, position, target, fov=60, width, height, parent_body=None)`; `fov` is vertical on every backend. World-frame by default. With `parent_body` the camera rides a body and `position` and `target` are in that body's frame, both required, since the world-frame defaults would put a wrist camera 1.7 m away. Every backend supports it. A name is a bare token (`wrist`, `front_cam`, `cam-2`), optionally scoped to one robot (`arm0/wrist_cam`); a space (`a b`), a dot (`wrist.rgb`) or `..` is refused with `status="error"` and the scene continues without the camera, so read the status. Every camera appears in `get_observation` as an `(H, W, 3)` array under its name; the policy pages explain [which names a model expects](../policies/lerobot-local.md).
 
 ## Task objects
 
-Three MJCF assets ship in `strands_robots/simulation/task_objects/`: `hinged_carton` (lid on a hinge, joint `cap_hinge`, radians), `sliding_carton` (lid slides, joint `cap_slide`, metres), `open_tray` (rigid receptacle, no joints). Load one with `add_robot(name=..., urdf_path=task_object_path(...))`; its joints are namespaced under `name/` and visible to `joint_above`, `joint_below` and `joint_progress`. Contents are not part of the assets; spawn small spheres per task and score them with `particles_inside` and `particles_spilled`.
+Three MJCF assets ship in `strands_robots/simulation/task_objects/`: `hinged_carton` (lid on a hinge, joint `cap_hinge`, radians), `sliding_carton` (lid slides, joint `cap_slide`, metres), `open_tray` (rigid receptacle, no joints). Load one with `add_robot(name=..., urdf_path=task_object_path(...))`; its joints are namespaced under `name/` and visible to `joint_above`, `joint_below` and `joint_progress`. Contents are not in the assets; spawn small spheres per task and score them with `particles_inside` and `particles_spilled`.
 
 ## Scene editing
 
-`patch_scene_mjcf(ops)` edits the live `MjSpec` atomically with `add_body`, `add_geom`, `add_site`, `set_body_pos`, `set_body_quat`, `delete_body`. Each op accepts only the keys it reads; a misspelled key is refused with a close match, since every field has a default and a typo would otherwise report success. `pos` is three finite numbers, `quat` four, `rgba` three or four. `replace_scene_mjcf(xml)` swaps the whole model, `load_scene(path)` starts from a file, `export_xml(path)` writes the current one. `SpecBuilder` in `mujoco/spec_builder.py` is the lower-level builder these use.
+`patch_scene_mjcf(ops)` edits the live `MjSpec` atomically with `add_body`, `add_geom`, `add_site`, `set_body_pos`, `set_body_quat`, `delete_body`. Each op accepts only the keys it reads; a misspelled key is refused with a close match, since every field has a default and a typo would otherwise pass. `pos` is three finite numbers, `quat` four, `rgba` three or four. `replace_scene_mjcf(xml)` swaps the whole model, `load_scene(path)` starts from a file, `export_xml(path)` writes the current one. `SpecBuilder` in `mujoco/spec_builder.py` is the lower-level builder these use.
 
 ## Meshes and materials
 
@@ -85,4 +85,4 @@ Three MJCF assets ship in `strands_robots/simulation/task_objects/`: `hinged_car
 
 ## Terrain
 
-`create_world(terrain="rough" | "stairs" | "pyramid", difficulty=1.0)` replaces the flat plane with a height field: `rough` is smoothed value noise, `stairs` five discrete steps rising along +x, `pyramid` concentric square plateaus. The field is 10 m across at 25 cm cells, seeded (`TERRAIN_SEED = 0`), so `reset()` regenerates the identical field. `get_ground_height(x, y)` reads it, and the locomotion predicates (`base_height`, `base_below_z`) measure against it. Constants: `strands_robots/simulation/terrain.py`.
+`create_world(terrain="rough" | "stairs" | "pyramid", difficulty=1.0)` replaces the flat plane with a height field: `rough` is smoothed value noise, `stairs` five discrete steps rising along +x, `pyramid` concentric square plateaus. The field is 10 m across at 25 cm cells and seeded (`TERRAIN_SEED = 0`), so `reset()` regenerates it identically. `get_ground_height(x, y)` reads it, and the locomotion predicates (`base_height`, `base_below_z`) measure against it. Constants: `strands_robots/simulation/terrain.py`.

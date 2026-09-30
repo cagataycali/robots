@@ -50,6 +50,8 @@ import ast
 import functools
 import pathlib
 
+from tests._package_ast import parse_file
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _PACKAGE = _REPO_ROOT / "strands_robots"
 _TESTS = _REPO_ROOT / "tests"
@@ -73,7 +75,7 @@ def _package_trees() -> tuple[ast.Module, ...]:
     subclass carries the obligation by base name alone, so every ``ClassDef`` in
     the tree is its input.
     """
-    return tuple(ast.parse(path.read_text(encoding="utf-8")) for path in sorted(_PACKAGE.rglob("*.py")))
+    return tuple(parse_file(path) for path in sorted(_PACKAGE.rglob("*.py")))
 
 
 def _probes_rclpy(node: ast.AST) -> bool:
