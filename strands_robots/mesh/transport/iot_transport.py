@@ -760,6 +760,9 @@ class IotMqttTransport:
         # newest first. Warned once per such set (``_publish_disconnect_warned``).
         self._recent_publishes: deque[tuple[float, str]] = deque(maxlen=16)
         self._publish_disconnect_warned: set[tuple[str, ...]] = set()
+        # Set by close() before the client is stopped: the disconnect that
+        # follows is this process's own doing, not the broker's verdict.
+        self._closing = threading.Event()
 
     # Lifecycle
 
@@ -822,6 +825,7 @@ class IotMqttTransport:
                     return False
 
             self._connected.clear()
+            self._closing.clear()  # a re-connect after close() judges its disconnects afresh
             # mtls_from_path (corrupt PEM -> AwsCrtError) and start() can raise
             # synchronously. Contain them here and return False: the mesh must
             # stay OFF rather than crash the host (and, in bridge mode, leave
@@ -901,6 +905,12 @@ class IotMqttTransport:
         with self._lock:
             if self._client is None:
                 return
+            # Raised before stop(): awscrt reports the stop through the same
+            # lifecycle callback as a broker DISCONNECT, sometimes while stop()
+            # is still running, and every 10 Hz publisher has a publish inside
+            # the blame window at shutdown. Without this, each normal exit told
+            # the owner to reprovision a healthy Thing.
+            self._closing.set()
             try:
                 self._client.stop()
             except Exception as exc:
@@ -1298,6 +1308,8 @@ class IotMqttTransport:
     def _on_disconnection(self, data: Any) -> None:
         logger.info("IoT MQTT disconnected (thing=%s)", self._thing_name)
         self._connected.clear()
+        if self._closing.is_set():
+            return
         self._warn_if_publish_ended_the_session(data)
 
     def _warn_if_publish_ended_the_session(self, data: Any) -> None:

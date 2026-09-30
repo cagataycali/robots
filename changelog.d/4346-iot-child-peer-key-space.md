@@ -43,3 +43,9 @@ presence reached the fleet once in 30 s, and nothing above DEBUG said why.
 Fleet Provisioning account re-runs `bootstrap_account()` so the template
 attaches the new policy to future devices. Nothing changes for the operator
 policy: `strands/+/state` already matched `strands/<thing>__so101/state`.
+
+The blame WARNING stays quiet for a disconnect this process asked for:
+`close()` raises a closing flag before stopping the client, since awscrt
+reports the stop through the same lifecycle callback as a broker DISCONNECT
+and every 10 Hz publisher has a publish inside the window at shutdown. Without
+it each normal exit told the owner to reprovision a healthy Thing.

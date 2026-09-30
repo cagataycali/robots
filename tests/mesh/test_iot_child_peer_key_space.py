@@ -588,3 +588,42 @@ class TestTheShadowMirrorStaysOnTheThing:
         mesh._build_presence()
         (topic, _payload) = transport.put.call_args.args
         assert topic == "$aws/things/childfix-a/shadow/name/presence/update"
+
+
+class TestAStopThisProcessAskedForIsNotBlamedOnThePolicy:
+    """``close()`` ends the session too, and awscrt reports it through the same
+    lifecycle callback. Every robot publishing state at 10 Hz has a publish
+    inside the window at shutdown, so without this rule each normal exit told
+    the owner to run ``strands-robots iot reprovision`` on a healthy Thing
+    (seen on every S01 run of the 2026-09-30 actor lane)."""
+
+    LOGGER = "strands_robots.mesh.transport.iot_transport"
+
+    def _warnings(self, caplog) -> list[str]:
+        return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+    def test_a_disconnect_after_close_is_quiet(self, transport, caplog):
+        transport._client.stop = lambda: None  # type: ignore[attr-defined]
+        with caplog.at_level(logging.INFO, logger=self.LOGGER):
+            transport.put("strands/childfix-a/state", {"t": 1.0})
+            transport.close()
+            transport._on_disconnection(_disconnect(None))
+        assert self._warnings(caplog) == []
+        assert "closed" in caplog.text
+
+    def test_the_callback_racing_ahead_of_close_completing_is_quiet_too(self, transport, caplog):
+        # awscrt may deliver the disconnect while close() is still inside stop().
+        def stop() -> None:
+            transport._on_disconnection(_disconnect(None))
+
+        transport._client.stop = stop  # type: ignore[attr-defined]
+        with caplog.at_level(logging.WARNING, logger=self.LOGGER):
+            transport.put("strands/childfix-a/state", {"t": 1.0})
+            transport.close()
+        assert self._warnings(caplog) == []
+
+    def test_a_broker_disconnect_before_any_close_still_warns(self, transport, caplog):
+        with caplog.at_level(logging.WARNING, logger=self.LOGGER):
+            transport.put("strands/childfix-a__so101/state", {"t": 1.0})
+            transport._on_disconnection(_disconnect(135))
+        assert len(self._warnings(caplog)) == 1
