@@ -21,6 +21,7 @@ reports it before anything launches.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import signal
@@ -50,11 +51,33 @@ EXIT_CODE_FILE = "exit_code"
 #: the path never enters the shell text.
 _EXIT_FILE_ENV = "STRANDS_ISAACLAB_EXIT_FILE"
 
+#: Environment variables the launch wrapper reads its deadline from: the
+#: seconds the run may take, and the marker file it writes when they pass.
+_DEADLINE_ENV = "STRANDS_ISAACLAB_DEADLINE_S"
+_TIMED_OUT_FILE_ENV = "STRANDS_ISAACLAB_TIMED_OUT_FILE"
+
 # ``"$@"`` runs the argv the wrapper was given, unquoted by no shell: every
 # token reaches the child verbatim. The status lands in the file only after the
 # child exits, so its absence while the process group is gone means the run was
 # killed.
-_WRAPPER = 'status=0; "$@" || status=$?; echo "$status" > "$STRANDS_ISAACLAB_EXIT_FILE"'
+#
+# With a deadline, a watchdog in the same process group enforces it whether or
+# not anyone polls: it writes the timed-out marker, sends SIGTERM to the whole
+# group (the wrapper leads it, see ``start_new_session``), gives the run up to
+# 15 s to exit, then sends SIGKILL to whatever is left - itself included. It
+# ignores SIGTERM so it survives to do that, and it checks every second that
+# the run is still alive, so it leaves within a second of a run that ends on
+# its own. Before, the deadline was checked only inside ``status()``: an agent
+# that died left a ``timeout_s=30`` run holding the GPU for as long as it liked.
+_WRAPPER = (
+    '"$@" & child=$!; '
+    'if [ -n "$STRANDS_ISAACLAB_DEADLINE_S" ]; then ( trap "" TERM; left="$STRANDS_ISAACLAB_DEADLINE_S"; '
+    'while [ "$left" -gt 0 ]; do sleep 1; kill -0 "$child" 2>/dev/null || exit 0; left=$((left - 1)); done; '
+    'date +%s > "$STRANDS_ISAACLAB_TIMED_OUT_FILE"; kill -TERM -$$ 2>/dev/null; grace=15; '
+    'while [ "$grace" -gt 0 ] && kill -0 "$child" 2>/dev/null; do sleep 1; grace=$((grace - 1)); done; '
+    "kill -KILL -$$ 2>/dev/null ) & fi; "
+    'status=0; wait "$child" || status=$?; echo "$status" > "$STRANDS_ISAACLAB_EXIT_FILE"'
+)
 
 
 def resolve_python(explicit: str | None = None) -> str | None:
@@ -82,7 +105,10 @@ def default_jobs_dir(explicit: str | None = None) -> Path:
     """
     configured = explicit or os.environ.get(JOBS_DIR_ENV)
     if configured:
-        return Path(configured).expanduser()
+        # Absolute, now: the launch wrapper runs in the run's output_dir, so a
+        # relative jobs dir named a different directory there and every run
+        # ended "killed" with no exit status to read.
+        return Path(configured).expanduser().resolve()
     return Path.home() / ".cache" / "strands_robots" / "isaaclab" / "jobs"
 
 
@@ -194,7 +220,15 @@ def _task_package_roots(python: Path) -> list[Path]:
     return roots
 
 
-def launch(cmd: list[str], *, cwd: Path, log_path: Path, exit_file: Path) -> subprocess.Popen[bytes]:
+def launch(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    log_path: Path,
+    exit_file: Path,
+    timeout_s: float | None = None,
+    timed_out_file: Path | None = None,
+) -> subprocess.Popen[bytes]:
     """Start *cmd* detached in its own session, logging to *log_path*.
 
     The child gets no stdin (a prompt fails instead of hanging), and a
@@ -205,12 +239,21 @@ def launch(cmd: list[str], *, cwd: Path, log_path: Path, exit_file: Path) -> sub
         cwd: Working directory (Isaac Lab writes ``logs/`` under it).
         log_path: File receiving stdout and stderr.
         exit_file: File the wrapper writes the exit status to.
+        timeout_s: Wall-clock limit the wrapper itself enforces on the whole
+            process group, polled or not. ``None`` = no limit.
+        timed_out_file: Marker the wrapper writes when *timeout_s* passes;
+            required with *timeout_s*.
 
     Returns:
         The wrapper process, leader of a new process group.
     """
     env = child_env()
-    env[_EXIT_FILE_ENV] = str(exit_file)
+    env[_EXIT_FILE_ENV] = str(Path(exit_file).resolve())
+    if timeout_s is not None:
+        if timed_out_file is None:
+            raise ValueError("launch: timeout_s needs a timed_out_file to mark the run with")
+        env[_DEADLINE_ENV] = str(max(1, math.ceil(float(timeout_s))))
+        env[_TIMED_OUT_FILE_ENV] = str(Path(timed_out_file).resolve())
     with open(log_path, "wb") as log:
         return subprocess.Popen(  # noqa: S603 - fixed argv, no shell interpolation of any token
             ["/bin/sh", "-c", _WRAPPER, "isaaclab-run", *cmd],

@@ -30,9 +30,10 @@ Spec mapping:
 * ``extra['wait']`` - block in :meth:`IsaacLabTrainer.train` until the run
   ends.
 * ``extra['timeout_s']`` - wall-clock limit in seconds, after which the run's
-  process group is stopped and the job reports ``error``. Enforced while
-  :meth:`IsaacLabTrainer.train` waits and on every
-  :meth:`IsaacLabTrainer.status` poll.
+  process group is stopped and the job reports ``error`` (``failure:
+  "timeout"``). The launch wrapper enforces it itself, so it holds when nobody
+  polls - an agent that died no longer leaves the run holding the GPU - and
+  :meth:`IsaacLabTrainer.status` checks it again on every poll.
 
 The run is always headless (``--visualizer none``).
 """
@@ -277,12 +278,17 @@ class IsaacLabTrainer(Trainer):
         job_dir.mkdir(parents=True, exist_ok=False)
         work_dir.mkdir(parents=True, exist_ok=True)
         cmd = self.build_command(spec, job_id)
+        timeout_s = extra.get("timeout_s")
         proc = runtime.launch(
-            cmd, cwd=work_dir, log_path=job_dir / _LOG_FILE, exit_file=job_dir / runtime.EXIT_CODE_FILE
+            cmd,
+            cwd=work_dir,
+            log_path=job_dir / _LOG_FILE,
+            exit_file=job_dir / runtime.EXIT_CODE_FILE,
+            timeout_s=float(timeout_s) if timeout_s is not None else None,
+            timed_out_file=job_dir / _TIMED_OUT_FILE,
         )
         _CHILDREN[job_id] = proc
         started = time.time()
-        timeout_s = extra.get("timeout_s")
         record = {
             "job_id": job_id,
             "pid": proc.pid,
@@ -501,7 +507,12 @@ class IsaacLabTrainer(Trainer):
         play_dir = self._jobs_dir / play_id
         play_dir.mkdir(parents=True, exist_ok=False)
         proc = runtime.launch(
-            cmd, cwd=Path(record["cwd"]), log_path=play_dir / _LOG_FILE, exit_file=play_dir / runtime.EXIT_CODE_FILE
+            cmd,
+            cwd=Path(record["cwd"]),
+            log_path=play_dir / _LOG_FILE,
+            exit_file=play_dir / runtime.EXIT_CODE_FILE,
+            timeout_s=float(timeout_s) if timeout_s is not None else None,
+            timed_out_file=play_dir / _TIMED_OUT_FILE,
         )
         _CHILDREN[play_id] = proc
         started = time.time()
@@ -600,18 +611,32 @@ class IsaacLabTrainer(Trainer):
         run record's task and physics preset in the metadata.
 
         Args:
-            spec: The validated spec (unused beyond the gate ``train_policy`` runs).
+            spec: The validated spec. Its ``extra['task']`` picks the run: when
+                *checkpoint_dir* trained another task, the newest run of the
+                asked-for task under ``spec.output_dir`` is exported instead.
             checkpoint_dir: The run directory :meth:`latest_checkpoint` returned.
 
         Returns:
             The ``strands_policy`` directory.
 
         Raises:
-            FileNotFoundError: If the run directory holds no ``model_<iteration>.pt``.
+            FileNotFoundError: If the run directory holds no ``model_<iteration>.pt``,
+                or ``spec.output_dir`` holds no run of the asked-for task.
         """
         from strands_robots.training.rl import rsl_rl
 
-        del spec
+        task = (spec.extra or {}).get("task") if spec is not None else None
+        if task and self.run_task(checkpoint_dir) != task:
+            # The caller's pick is not a run of the task it asked for (the
+            # train_policy tool asks for the newest run of ANY task): take the
+            # newest run of this one, or refuse.
+            chosen = self.latest_checkpoint(spec.output_dir, task=str(task)) if spec is not None else None
+            if chosen is None:
+                raise FileNotFoundError(
+                    f"{self.provider_name}: no {task} run under {spec.output_dir if spec else checkpoint_dir} "
+                    f"to export ({checkpoint_dir} trained {self.run_task(checkpoint_dir) or 'an unrecorded task'})"
+                )
+            checkpoint_dir = chosen
         model = latest_model(checkpoint_dir)
         if model is None:
             raise FileNotFoundError(f"{self.provider_name}: no model_<iteration>.pt in {checkpoint_dir}")
@@ -664,15 +689,48 @@ class IsaacLabTrainer(Trainer):
                 return str(record.get("job_id"))
         return None
 
-    def latest_checkpoint(self, output_dir: str) -> str | None:
-        """Return the newest rsl_rl run directory under ``output_dir`` holding a ``model_*.pt``."""
+    def latest_checkpoint(self, output_dir: str, task: str | None = None) -> str | None:
+        """Return the newest rsl_rl run directory under ``output_dir`` holding a ``model_*.pt``.
+
+        Newest by the run's own start time - the ``YYYY-MM-DD_HH-MM-SS`` prefix
+        Isaac Lab names the folder with - not by modification time, which a
+        later play, export or copy of an older run bumps. With *task*, only
+        runs of that task qualify (see :meth:`run_task`): one ``output_dir``
+        holding an ``Isaac-Cartpole`` and an ``Isaac-Cartpole-Camera`` run
+        exported the camera policy when the plain one was asked for.
+        """
         root = Path(output_dir).expanduser() / "logs" / "rsl_rl"
         if not root.is_dir():
             return None
         runs = [d for d in root.glob("*/*") if d.is_dir() and latest_model(str(d))]
+        if task is not None:
+            runs = [d for d in runs if self.run_task(d) == task]
         if not runs:
             return None
-        return str(max(runs, key=lambda d: d.stat().st_mtime))
+        return str(max(runs, key=lambda d: (d.name[:19], d.stat().st_mtime)))
+
+    def run_task(self, run_dir: str | Path) -> str | None:
+        """The Isaac Lab task a run directory trained, or ``None`` when nothing records it.
+
+        Read from the run record beside the checkpoints, else from the job
+        record whose id the folder name ends with (``--run_name`` is the job id).
+        """
+        run_dir = Path(run_dir)
+        record_path = run_dir / RUN_RECORD_FILE
+        try:
+            task = json.loads(record_path.read_text(encoding="utf-8")).get("task")
+        except (OSError, ValueError):
+            task = None
+        if task:
+            return str(task)
+        job_id = run_dir.name[20:]
+        if job_id.startswith("isaaclab-"):
+            try:
+                job = json.loads((self._jobs_dir / job_id / _JOB_FILE).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+            return str(job["task"]) if job.get("task") else None
+        return None
 
 
 def _extra_problems(extra: dict[str, Any], ctx: str) -> list[str]:
