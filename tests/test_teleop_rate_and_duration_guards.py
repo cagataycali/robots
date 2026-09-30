@@ -60,7 +60,7 @@ class TestTeleoperateRefusesAnUnusableRate:
         _attached(host)
         res = host.teleoperate(hz=hz)
         assert res["status"] == "error"
-        assert "hz must be > 0" in res["content"][0]["text"]
+        assert "hz must be a positive finite number" in res["content"][0]["text"]
         assert repr(hz) in res["content"][0]["text"]
 
     @pytest.mark.parametrize("hz", UNUSABLE)
@@ -98,7 +98,7 @@ class TestTeleoperateRefusesAnUnusableDuration:
         _attached(host)
         res = host.teleoperate(duration=duration)
         assert res["status"] == "error"
-        assert "duration must be > 0" in res["content"][0]["text"]
+        assert "duration must be a positive finite number" in res["content"][0]["text"]
 
     def test_zero_duration_is_refused_not_read_as_absent(self):
         """``duration=0`` used to be falsy, so it meant "run forever"."""
@@ -106,7 +106,7 @@ class TestTeleoperateRefusesAnUnusableDuration:
         dev = _attached(host)
         res = host.teleoperate(duration=0.0)
         assert res["status"] == "error"
-        assert "duration must be > 0" in res["content"][0]["text"]
+        assert "duration must be a positive finite number" in res["content"][0]["text"]
         assert dev.connect_calls == 0
 
     def test_duration_none_still_runs_until_stopped(self):
@@ -142,7 +142,7 @@ class TestARefusedRateNeverReachesTheMeshPublisher:
     @pytest.mark.parametrize("hz", [0, -5, float("nan"), float("inf"), "30", True, None])
     def test_input_publisher_refuses_it_at_construction(self, hz):
         """The publish loop divides by hz on a background thread."""
-        with pytest.raises(ValueError, match="hz must be > 0"):
+        with pytest.raises(ValueError, match="hz must be a positive finite number"):
             InputPublisher(mesh=object(), teleoperator=FakeTeleop({"a.pos": 1.0}), hz=hz)
 
     def test_input_publisher_accepts_a_usable_rate(self):
@@ -175,15 +175,17 @@ class TestOneDomainForEveryRateAndDurationKnob:
     def test_the_sim_rollout_messages_are_unchanged(self):
         """Callers (and tests) pin this exact text."""
         assert SimEngine._validate_duration(0, "run_policy", self.RATE)["content"][0]["text"] == (
-            "run_policy: duration must be > 0, got 0."
+            "run_policy: duration must be a positive finite number, got 0."
         )
         assert SimEngine._validate_positive_frequency(math.nan, "eval_policy")["content"][0]["text"] == (
-            "eval_policy: control_frequency must be > 0, got nan."
+            "eval_policy: control_frequency must be a positive finite number, got nan."
         )
 
     def test_a_numpy_rate_is_usable_but_a_bool_is_not(self):
         assert positive_finite_number_error(np.float32(50.0), "hz", "teleoperate") is None
-        assert positive_finite_number_error(True, "hz", "teleoperate") == ("teleoperate: hz must be > 0, got True.")
+        assert positive_finite_number_error(True, "hz", "teleoperate") == (
+            "teleoperate: hz must be a positive finite number, got True."
+        )
 
 
 class _FakeMesh:
