@@ -3164,9 +3164,17 @@ class SimEngine(ABC):
                 When set, reseeds Python / NumPy / torch / cuDNN and forwards
                 ``policy.reset(seed=...)`` so a stochastic policy (VLA action-
                 chunk sampling, diffusion noise) produces the same trajectory
-                on re-run of the same scene. ``None`` (default) leaves RNG
-                state untouched. Mirrors the per-episode reseed in
-                :meth:`eval_policy`.
+                on re-run of the same scene. Reproducible means bit-exact for
+                a state-only policy (``mock`` re-runs byte for byte), and to a
+                render tolerance for a policy that reads camera frames on GPU
+                rendering: under ``MUJOCO_GL=egl`` a static scene renders with
+                1 LSB differences between frames (measured 2 to 9 pixels per
+                640x480 frame), a VLA reads them, and two seeded ACT rollouts
+                ended 0.006 to 0.3 rad apart after 90 to 150 steps. Compare
+                seeded camera-policy runs by their outcome, not by equality;
+                a policy that reads no frame is exact on any renderer. ``None``
+                (default) leaves RNG state untouched. Mirrors the per-episode
+                reseed in :meth:`eval_policy`.
             policy_kwargs: Optional per-call goal payload forwarded verbatim to
                 every ``policy.get_actions(obs, instruction, **policy_kwargs)``
                 call. Carries the well-known #300 goal keys
@@ -5237,7 +5245,12 @@ class SimEngine(ABC):
         rollout: the client RNGs are reseeded once from it and then per episode
         from a master RNG derived from it, and each per-episode seed is
         forwarded to ``policy.reset`` so a service-mode policy can reseed its
-        own process. Two evals at the same seed replay identically; ``None``
+        own process. Two evals at the same seed replay identically for a
+        state-only policy (bit-exact), and to a render tolerance for a camera
+        policy on GPU rendering, where ``MUJOCO_GL=egl`` renders a static scene
+        with 1 LSB differences between frames and a VLA's trajectory drifts
+        from them (see :meth:`run_policy`); compare such evals by
+        ``success_rate``, not frame by frame. ``None``
         leaves RNG state untouched. Only a non-negative integer can seed those
         RNGs, so anything else is refused here rather than at the first draw.
         Each episode's record in the returned ``episodes`` list reports the
