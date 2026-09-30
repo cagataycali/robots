@@ -350,6 +350,8 @@ nav:
       - Talk to it: start/first-agent.md
       - Real arm: start/first-real-arm.md
       - Same checkpoint: start/first-policy.md
+      - Teach it: start/teach-it.md
+      - Fleet: start/fleet.md
       - Doctor: start/doctor.md
   - Concepts:
       - concepts/index.md

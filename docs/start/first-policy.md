@@ -108,4 +108,4 @@ With no operator to ask, the call fails closed. Inside an `Agent` the same sente
 
 ## Where next
 
-You now have one checkpoint and one call for both arms, and you saw the gate refuse it by name. Next rung: [Teach it](../learn/data/record.md) records on your arm and trains the checkpoint you run back on it. [Policies](../learn/policies/index.md) lists every provider; [LeRobot local](../learn/policies/lerobot-local.md) covers camera routing, units and `processor_overrides`.
+You now have one checkpoint and one call for both arms, and you saw the gate refuse it by name. Next rung: [Teach it](teach-it.md) records on your arm and trains the checkpoint you run back on it. [Policies](../learn/policies/index.md) lists every provider; [LeRobot local](../learn/policies/lerobot-local.md) covers camera routing, units and `processor_overrides`.
