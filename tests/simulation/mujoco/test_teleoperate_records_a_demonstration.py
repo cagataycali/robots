@@ -58,7 +58,9 @@ def test_a_teleoperated_session_records_one_frame_per_tick(tmp_path: Path) -> No
         assert opened["status"] == "success", opened
         ran = sim.teleoperate(hz=HZ, duration=1.0, block=True)
         frames = ran["content"][1]["json"]["frames"]
-        sim_time = float(re.search(r"t=([0-9.]+)s", sim.step(0)["content"][0]["text"]).group(1))
+        clock = re.search(r"t=([0-9.]+)s", sim.step(0)["content"][0]["text"])
+        assert clock is not None, "step(0) did not report the sim clock"
+        sim_time = float(clock.group(1))
         stopped = sim.stop_recording()
     finally:
         sim.destroy()
