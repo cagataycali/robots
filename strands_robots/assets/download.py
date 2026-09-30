@@ -427,7 +427,12 @@ def _fetch_lfs_objects(clone_dir: Path, repo: str, root: Path, *, timeout: int =
         return None
     try:
         sha = subprocess.run(
-            ["git", "-C", str(clone_dir), "rev-parse", "HEAD"], check=True, capture_output=True, text=True, timeout=30
+            ["git", "-C", str(clone_dir), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=30,
         ).stdout.strip()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
         return f"cannot read the cloned commit to fetch {len(pointers)} Git LFS object(s): {exc}"
