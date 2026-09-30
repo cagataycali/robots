@@ -7,6 +7,7 @@ import contextlib
 import io
 import json
 import logging
+import math
 import os
 import re
 import socket
@@ -361,7 +362,7 @@ def _latency_ms(published_at: Any, now: float) -> int | None:
     if isinstance(published_at, bool) or not isinstance(published_at, (int, float)):
         return None
     delta = now - float(published_at)
-    if delta != delta or delta < 0 or delta > 86_400:
+    if not math.isfinite(delta) or delta < 0 or delta > 86_400:
         return None
     return int(delta * 1000)
 
