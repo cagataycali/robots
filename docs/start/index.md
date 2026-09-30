@@ -6,7 +6,7 @@ copy_prompt: true
 
 # Start
 
-Six rungs. Each page ends with a checkpoint sentence saying what you now have, and every `python` fence ran against this commit on a laptop with no GPU. Fences that need an arm on USB are marked `sketch`.
+Six rungs. Each page ends with a checkpoint sentence saying what you now have, and every `python` fence ran against this commit on a laptop with no GPU. Fences that need an arm on USB are labelled, not run.
 
 | rung | page | time | you need | you leave with |
 |---|---|---|---|---|
