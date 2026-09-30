@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 from strands_robots.tools.train_policy import train_policy
+from strands_robots.training.isaaclab import RUN_RECORD_FILE
 from strands_robots.training.rl.deploy_contract import (
     DeployContractError,
     apply_action_contract,
@@ -112,12 +113,17 @@ class TestTheContractIsReadFromTheIoDescriptors:
         assert [targets[j] for j in _GO2] == pytest.approx(_GO2_OFFSET)
         assert apply_action_contract(contract, [1.0] * 12)["FL_calf_joint"] == pytest.approx(-1.25)
 
-    def test_a_clip_is_applied_before_the_scale(self) -> None:
+    def test_a_clip_bounds_the_processed_target_as_isaac_lab_does(self) -> None:
+        """``JointAction.process_actions`` computes ``raw * scale + offset`` and clamps THAT
+        (joint_actions.py); with offset 0.1, scale 0.5, clip (-1, 1) a raw 5.0 is 1.0, not 0.6."""
         desc = fake_io_descriptors()
         desc["actions"][0]["clip"] = [-1.0, 1.0]
         contract = contract_from_io_descriptors(desc)
         assert apply_action_contract(contract, [5.0, -5.0]) == pytest.approx(
-            {"slider_to_cart": 0.6, "cart_to_pole": -0.7}
+            {"slider_to_cart": 1.0, "cart_to_pole": -1.0}
+        )
+        assert apply_action_contract(contract, [1.0, 1.0]) == pytest.approx(
+            {"slider_to_cart": 0.6, "cart_to_pole": 0.3}
         )
 
     def test_widths_that_do_not_fit_the_actor_are_named(self) -> None:
@@ -226,6 +232,39 @@ class TestExportWritesTheContractAndDeployHonoursIt:
         argv = json.loads((tmp_path / "argv.json").read_text())
         assert argv[argv.index("--max_iterations") + 1] == "0" and argv[argv.index("--num_envs") + 1] == "1"
         assert "physics=isaacsim_physx" in argv and (run / "io_descriptors" / "IO_descriptors.yaml").is_file()
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            ("task", "Isaac-Cartpole --hydra.run.dir=/tmp/x"),
+            ("overrides", ["physics=isaacsim_physx", "--config-dir=/tmp/evil"]),
+            ("overrides", ["hydra.job.chdir=True"]),
+            ("overrides", ["physics=isaacsim_physx; rm -rf /"]),
+        ],
+    )
+    def test_a_crafted_run_record_never_reaches_the_relaunch_argv(
+        self,
+        fake_python: Path,  # noqa: F811
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        field: str,
+        value: Any,
+    ) -> None:
+        """The run record lives in a directory the caller points at (a downloaded checkpoint is a
+        realistic input), and export relaunches the operator's Isaac Lab interpreter from it. Its
+        ``task`` and ``overrides`` are re-validated against the shapes the train path accepts and
+        ``_run_record`` writes; anything else is the reason string, and no launch happens."""
+        run = _train_and_write_actor(tmp_path)
+        record = json.loads((run / RUN_RECORD_FILE).read_text())
+        record[field] = value
+        (run / RUN_RECORD_FILE).write_text(json.dumps(record))
+        monkeypatch.setenv("FAKE_IO_DESCRIPTORS", json.dumps(fake_io_descriptors()))
+        training_argv = (tmp_path / "argv.json").read_text()  # the train launch, before the record was touched
+        meta = json.loads((Path(_json_block(_export(tmp_path))["exported_model"]) / "policy_meta.json").read_text())
+        reason = meta["deploy_contract_missing"]
+        injected = value if isinstance(value, str) else value[-1]
+        assert RUN_RECORD_FILE in reason and repr(injected) in reason and "not rebuilt" in reason, reason
+        assert (tmp_path / "argv.json").read_text() == training_argv, "the crafted record reached a relaunch argv"
 
     def test_an_export_without_a_contract_is_refused_unless_raw_actions_are_asked_for(
         self,

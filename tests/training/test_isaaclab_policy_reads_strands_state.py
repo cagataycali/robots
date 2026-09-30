@@ -155,6 +155,17 @@ class TestTheObservationIsBuiltInIsaacLabsFrames:
         )  # fmt: skip
         assert built[48:] == [1.0] * 187  # the term's clip (-1, 1) still applies
 
+    def test_a_term_with_both_a_clip_and_a_scale_is_clipped_first_as_isaac_lab_does(self) -> None:
+        """Isaac Lab's ObservationManager.compute_group clips, then scales (its docstring: 4. clipping,
+        5. scaling). A locomotion ``joint_vel_rel`` with clip (-100, 100) and scale 0.05 must reach the
+        actor as ``clip(v) * 0.05``; scaling first would let a 3000 rad/s reading through as 100."""
+        contract = _rough_contract()
+        contract["obs_layout"][5] = {**contract["obs_layout"][5], "clip": [-100.0, 100.0], "scale": 0.05}
+        obs = _standing_obs()
+        obs["RL_thigh_joint.vel"] = 3000.0
+        built = build_policy_obs(contract, obs, joint_keys={j: j for j in _GO2}, last_action=[0.0] * 12)
+        assert built[24 + _GO2.index("RL_thigh_joint")] == pytest.approx(100.0 * 0.05)
+
     def test_an_incomplete_layout_is_refused(self) -> None:
         contract = complete_obs_layout(contract_from_io_descriptors(go2_io_descriptors()), num_actor_obs=235)
         with pytest.raises(DeployContractError, match="187 unaccounted"):

@@ -383,7 +383,8 @@ def build_policy_obs(
       ``base_z - offset`` for every ray (Isaac Lab's default offset 0.5);
     * any other term: *obs_terms*[name] (by env term name or function name).
 
-    The term's ``scale`` and ``clip`` from the run's config are then applied.
+    The term's ``clip`` and then its ``scale`` from the run's config are applied, in
+    Isaac Lab's order.
 
     Raises:
         DeployContractError: The layout is incomplete, a term is unknown and
@@ -437,12 +438,16 @@ def build_policy_obs(
             )
         if len(values) != width:
             raise DeployContractError(f"term {name!r} produced {len(values)} values, the actor reads {width}")
-        scale = term.get("scale")
-        if isinstance(scale, int | float) and not isinstance(scale, bool):
-            values = [v * float(scale) for v in values]
+        # Isaac Lab's ObservationManager.compute_group clips a term, THEN
+        # scales it ("4. Apply clipping ... 5. Apply scaling"); a term that
+        # sets both (a scaled, clipped joint_vel_rel) must reach the actor in
+        # that order or the input silently differs from training.
         clip = term.get("clip")
         if isinstance(clip, Sequence) and len(clip) == 2:
             values = [min(max(v, float(clip[0])), float(clip[1])) for v in values]
+        scale = term.get("scale")
+        if isinstance(scale, int | float) and not isinstance(scale, bool):
+            values = [v * float(scale) for v in values]
         out += values
     return out
 
@@ -450,8 +455,10 @@ def build_policy_obs(
 def apply_action_contract(contract: Mapping[str, Any], raw: Sequence[float]) -> dict[str, float]:
     """Turn a raw actor output into named joint position targets, as Isaac Lab's action terms do.
 
-    Per term: clip (when the term has a clip), then ``target = offset + scale * action``,
-    bound to the term's joints by name - never by the deploying robot's position.
+    Per term: ``target = offset + scale * action``, then the term's clip bounds that
+    PROCESSED target (``JointAction.process_actions`` clamps ``_processed_actions``, not
+    the raw output), bound to the term's joints by name - never by the deploying
+    robot's position.
 
     Raises:
         DeployContractError: *raw* is not as wide as the contract's action keys.
@@ -464,10 +471,10 @@ def apply_action_contract(contract: Mapping[str, Any], raw: Sequence[float]) -> 
         start = int(term["start"])
         clip = term.get("clip")
         for i, joint in enumerate(term["joint_names"]):
-            value = float(raw[start + i])
+            target = term["offset"][i] + term["scale"][i] * float(raw[start + i])
             if clip is not None:
-                value = min(max(value, clip[i][0]), clip[i][1])
-            targets[joint] = term["offset"][i] + term["scale"][i] * value
+                target = min(max(target, clip[i][0]), clip[i][1])
+            targets[joint] = target
     return targets
 
 

@@ -76,6 +76,14 @@ _TASK_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}\Z")
 # A physics preset name, passed as the ``physics=<name>`` override.
 _PHYSICS_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}\Z")
 
+# The two override shapes :func:`run_record` writes, and the only two a run
+# record read back from disk may put on the interpreter's argv again:
+# ``physics=<preset>`` and ``agent.algorithm.learning_rate=<float literal>``.
+_RECORD_OVERRIDE_RES = (
+    re.compile(r"^physics=[a-z][a-z0-9_]{0,63}\Z"),
+    re.compile(r"^agent\.algorithm\.learning_rate=[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?\Z"),
+)
+
 # ``isaaclab-<UTC stamp>-<12 hex>``; also the ``--run_name`` of the run, so the
 # run directory can be found from the job alone. Anchored so a job id read back
 # from an agent cannot name a path outside the jobs directory.
@@ -691,12 +699,15 @@ class IsaacLabTrainer(Trainer):
         task = run.get("task")
         if not task:
             return f"{run_dir} has no {RUN_RECORD_FILE} naming its task, so its IO descriptors cannot be rebuilt"
+        if reason := run_record_argv_problem(run):
+            return f"{run_dir / RUN_RECORD_FILE} {reason}, so its IO descriptors are not rebuilt from it"
+        overrides = [str(o) for o in run.get("overrides") or []]
         if problems := runtime.runtime_problems(self._python, context=self.provider_name):
             return "; ".join(problems)
         with tempfile.TemporaryDirectory(prefix="strands-io-") as tmp:
             cmd = [str(self._python), "-m", "isaaclab", "train", "--rl_library", "rsl_rl", "--task", str(task),
                    "--max_iterations", "0", "--num_envs", "1", "--visualizer", "none", "--run_name", "io",
-                   "--export_io_descriptors", *[str(o) for o in run.get("overrides") or []]]  # fmt: skip
+                   "--export_io_descriptors", *overrides]  # fmt: skip
             try:
                 done = subprocess.run(  # noqa: S603 - argv, no shell; the interpreter is the operator's
                     cmd, cwd=tmp, env=runtime.child_env(), capture_output=True, timeout=IO_DESCRIPTORS_TIMEOUT_S
@@ -972,6 +983,30 @@ def run_record(spec: TrainSpec) -> dict[str, Any]:
         "rl_library": extra.get("rl_library", "rsl_rl"),
         "overrides": overrides,
     }
+
+
+def run_record_argv_problem(run: dict[str, Any]) -> str | None:
+    """Why a run record read back from disk may not be relaunched, or ``None``.
+
+    The train path validates ``task`` and ``physics`` before any argv exists
+    (:func:`_extra_problems`); the export path relaunches the operator's Isaac
+    Lab interpreter from :data:`RUN_RECORD_FILE`, which lives in a directory
+    the caller points at, so a downloaded or shared checkpoint could carry a
+    record with a flag or a Hydra override the operator never wrote. The record
+    is held to the same shapes: ``task`` matches :data:`_TASK_RE` (a letter
+    first, so it cannot read as a flag) and every override is one of the two
+    shapes :func:`run_record` writes (:data:`_RECORD_OVERRIDE_RES`).
+    """
+    task = run.get("task")
+    if not isinstance(task, str) or not _TASK_RE.match(task):
+        return f"names a task that is not an Isaac Lab task id: {refusal_repr(task)}"
+    overrides = run.get("overrides") or []
+    if not isinstance(overrides, list):
+        return f"carries overrides that are not a list: {refusal_repr(overrides)}"
+    for override in overrides:
+        if not isinstance(override, str) or not any(rx.match(override) for rx in _RECORD_OVERRIDE_RES):
+            return f"carries an override this provider never writes: {refusal_repr(override)}"
+    return None
 
 
 def _write_run_record(run_dir: str | None, record: dict[str, Any]) -> None:

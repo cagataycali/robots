@@ -18,11 +18,8 @@ so :meth:`ContractPDController.uninstall` only drops the registration.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 
 def _is_torque_motor(model: Any, actuator_id: int, mujoco: Any) -> bool:
