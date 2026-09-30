@@ -21,7 +21,7 @@ import threading
 import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
 import pytest
@@ -230,7 +230,8 @@ class _RedirectingOrigin(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - http.server spelling
         if self.path == "/frame":
             self.send_response(302)
-            self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/followed")
+            port = cast(HTTPServer, self.server).server_port
+            self.send_header("Location", f"http://127.0.0.1:{port}/followed")
             self.end_headers()
             return
         self.send_response(200)
