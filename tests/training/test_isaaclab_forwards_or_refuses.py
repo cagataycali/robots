@@ -218,11 +218,12 @@ class TestAnOverridePathIsCheckedAgainstTheRealConfig:
         monkeypatch.setenv("FAKE_CFG_REPORT", json.dumps(report))
         trainer = IsaacLabTrainer(python=str(checker), jobs_dir=str(tmp_path / "jobs"))
         problems = trainer._cfg_path_problems(_spec(tmp_path), ["env.episode_lenght_s"])
-        assert problems == [
+        expected = (
             "isaaclab: extra['overrides'] path 'env.episode_lenght_s' names no field ('env.episode_lenght_s' does not "
             "exist in Isaac-Cartpole's config); did you mean ['episode_length_s']? - Hydra would add it silently and "
             "train the default"
-        ]
+        )
+        assert problems == [expected]
 
     def test_an_agent_config_the_task_lacks_is_refused(
         self,
