@@ -5,13 +5,13 @@ At the end of this page you can list a mesh's peers, ask one for its state, hand
 Continuing from the [mesh index](index.md) fence (two sims, `arm-a` and `arm-b`, `STRANDS_MESH_LOCAL_DEV=true`):
 
 ```python title="sketch"
-peers = a.mesh.peers                                       # presence dicts
+peers = a.mesh.peers                                       # presence dicts: peer_id, robot_id, robot_type, age, reachable, ...
 one = a.mesh.get_peer("arm-b", max_age_s=5.0)              # None if stale
 a.mesh.send("arm-b", {"action": "state"})                  # joints, sim time
 a.mesh.tell("arm-b", "stack the cubes", policy_provider="lerobot_local",
             pretrained_name_or_path="lerobot/smolvla_base", duration=10.0)
 a.mesh.broadcast({"action": "status"}, timeout=5.0)        # a reply per peer
-a.mesh.subscribe("arm-b-state", "strands/arm-b/state", lambda key, payload: print(payload["joints"]))
+a.mesh.subscribe("strands/arm-b/state", lambda key, payload: print(payload["joints"]), name="arm-b-state")
 a.mesh.unsubscribe("arm-b-state")
 ```
 

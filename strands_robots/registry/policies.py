@@ -135,6 +135,8 @@ def policy_provider_resolves(name: str | None) -> bool:
     canonical = _canonical_provider_name(name)
     if get_policy_provider(canonical) is not None:
         return True
+    if not canonical.isidentifier():
+        return False  # import_policy_class only auto-discovers a module name
     try:
         return importlib.util.find_spec(f"strands_robots.policies.{canonical}") is not None
     except (ImportError, ValueError):
@@ -322,13 +324,21 @@ def _url_scheme_refusal(policy: str) -> str | None:
     scheme = _URL_SCHEME_RE.match(url)
     if scheme is None:
         return None
-    for prov_info in _load("policies").get("providers", {}).values():
-        if any(re.match(pattern, url) for pattern in prov_info.get("url_patterns", [])):
-            return None
+    if _matches_declared_url_pattern(url):
+        return None
     return (
         f"No policy provider handles the URL scheme '{scheme.group(1)}://' "
         f"(from {policy!r}). Declared schemes: "
         f"{', '.join(f'{s}://' for s in _declared_url_schemes())}."
+    )
+
+
+def _matches_declared_url_pattern(policy: str) -> bool:
+    """Whether some provider's ``url_patterns`` entry matches ``policy`` as given."""
+    return any(
+        re.match(pattern, policy)
+        for prov_info in _load("policies").get("providers", {}).values()
+        for pattern in prov_info.get("url_patterns", [])
     )
 
 

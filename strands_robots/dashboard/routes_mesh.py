@@ -79,6 +79,7 @@ WIRE_CMD_KEYS: tuple[str, ...] = (
     "server_address",
     "model_path",
     "pretrained_name_or_path",
+    "embodiment",
     "robot_name",
     "target_pose",
     "target_joints",
