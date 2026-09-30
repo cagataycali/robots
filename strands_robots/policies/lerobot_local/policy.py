@@ -3332,9 +3332,9 @@ class LerobotLocalPolicy(Policy):
             "lerobot_local: %s was trained on degrees (%s stats span %s); the state is keyed like "
             "the registered %r simulation, so its embodiment was applied (state_units=%r, "
             "action_units=%r). Pass embodiment= explicitly to choose another.",
-            model,
+            sanitize_log_value(model),
             source,
-            spans,
+            sanitize_log_value(spans),
             registered.name,
             registered.state_units,
             registered.action_units,
