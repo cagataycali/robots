@@ -4,7 +4,7 @@ description: Two robots see each other on the mesh; three switches decide whethe
 
 # Mesh
 
-At the end of this page two robots in one process see each other on the mesh, one asks the other for its status and hands it a task, and you know the three switches: mesh on or off, how it is secured, which wire it rides.
+At the end of this page two robots in one process see each other on the mesh, one asks the other for status and hands it a task, and you know the three switches: mesh on or off, how it is secured, which wire it rides.
 
 No hardware needed. `STRANDS_MESH_LOCAL_DEV=true` is the single-machine preset (no TLS, no ACL, loud warnings); set it before the first `Robot(mesh=True)`.
 
@@ -56,7 +56,7 @@ Under `mtls` with no ACL file and no acknowledgement, `Mesh.start` refuses and p
 
 The mTLS trio is required together: with any of the three unset or pointing at a missing file or a symlink, session open refuses with the variable names; the loader never downgrades to plain TCP. The key file must be mode `0600` on POSIX, checked on the real file. On Windows the mode check is skipped and the loader logs one WARNING per key file, so restrict the key with an NTFS ACL instead.
 
-Discovery: the first process on a host listens on `tcp/127.0.0.1:<STRANDS_MESH_PORT>` (default 7447) and later ones connect to it, so every mesh process on one machine sees every other, a forgotten dashboard included. Across hosts set `ZENOH_CONNECT=tcp/10.0.0.1:7447` (comma-separated) or `ZENOH_LISTEN`. `STRANDS_MESH_MULTICAST=true` opens UDP `224.0.0.224:7446` so any device on the LAN can find your fleet; it is off by default and logs a warning when on.
+Discovery: the first process on a host listens on `tcp/127.0.0.1:<STRANDS_MESH_PORT>` (default 7447) and later ones connect to it, so every mesh process on one machine sees every other, forgotten dashboards included. Across hosts set `ZENOH_CONNECT=tcp/10.0.0.1:7447` (comma-separated) or `ZENOH_LISTEN`. `STRANDS_MESH_MULTICAST=true` opens UDP `224.0.0.224:7446` so any device on the LAN can find your fleet; it is off by default and logs a warning when on.
 
 ## Rates and caps
 

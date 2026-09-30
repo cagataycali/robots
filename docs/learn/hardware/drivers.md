@@ -4,7 +4,7 @@ description: How Robot(name, mode="real") picks its driver, the native drivers t
 
 # Drivers
 
-At the end of this page you know how `Robot(name, mode="real")` picks the code that talks to your robot, which of the {{n:native_drivers}} native drivers ship and over which wire, and what a driver must implement so the agent, the mesh and the teleop loop can use it.
+At the end of this page you know how `Robot(name, mode="real")` picks the code that talks to your robot, which of the {{n:native_drivers}} native drivers ship and over which wire, and what a driver must implement for the agent, the mesh and the teleop loop.
 
 ```python
 from strands_robots.drivers import list_native_drivers, list_driver_coverage
@@ -77,7 +77,7 @@ register_native_driver("koch_follower", MyKochDriver)   # refuses a class missin
 robot = Robot("koch_follower", mode="real", driver="strands", port="/dev/ttyUSB0")
 ```
 
-`register_native_driver` binds a driver class to a registry robot name after `missing_driver_members(cls)` passes; double registration is refused unless `overwrite=True`. It does not make a new name known: for a robot the registry has never heard of, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` first, then register the driver under that name. A package outside this repo registers at import time; the shipped table tolerates a caller registering first.
+`register_native_driver` binds a driver class to a registry robot name after `missing_driver_members(cls)` passes; double registration is refused unless `overwrite=True`. It does not make a new name known: for a robot the registry does not know, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` first, then register the driver under that name. A package outside this repo registers at import time; the shipped table tolerates a caller registering first.
 
 ## Where the gates are
 

@@ -4,9 +4,9 @@ description: Every mesh topic by its exact key, how often each is published, and
 
 # Topics
 
-At the end of this page you can read any mesh topic by its exact key, know how often each is published and which environment variable changes that, and which topics the bridge sends to the cloud.
+At the end of this page you can read any mesh topic by its exact key, know how often each is published and which environment variable changes that, and which topics the bridge sends cloudward.
 
-Keys are `strands/...` by default; `STRANDS_MESH_NAMESPACE` changes the prefix for a whole fleet, and two fleets with different prefixes cannot exchange a message. Keys are written where each publisher lives (`mesh/core.py`, `mesh/sensors.py`, `mesh/input.py`); this table is hand-checked against those files at this commit, not generated.
+Keys are `strands/...` by default; `STRANDS_MESH_NAMESPACE` changes the prefix for a whole fleet, and two fleets with different prefixes cannot exchange messages. Keys are written where each publisher lives (`mesh/core.py`, `mesh/sensors.py`, `mesh/input.py`); this table is hand-checked against those files at this commit, not generated.
 
 ```python title="sketch"
 a.mesh.subscribe("imu", "strands/arm-b/imu", lambda key, payload: print(payload))
@@ -32,7 +32,7 @@ a.mesh.subscribe("all-state", "strands/*/state", lambda key, payload: print(key,
 | `strands/{peer}/input/{device}` | the device's rate, capped at 100 Hz | `STRANDS_MESH_INPUT_MAX_HZ`; receivers refuse a value over `STRANDS_MESH_INPUT_VALUE_ABS` (720) or a step over `STRANDS_MESH_INPUT_SLEW_ABS` | teleoperation frames from `teleoperate(publish=True)` |
 | `strands/{peer}/safety/event` | on event | fixed | this peer's own e-stop and resume events |
 
-A sensor topic exists only when the robot exposes the attribute behind it (`_pose`, `_imu`, `_battery`, `_lidar_state`, ...): a driver without an IMU publishes no `imu` key. Every `*_HZ` variable is parsed alike: a value that is not a positive finite number is reported once and the default stands.
+A sensor topic exists only when the robot exposes the attribute behind it (`_pose`, `_imu`, `_battery`, `_lidar_state`, ...): a driver without an IMU publishes no `imu`. Every `*_HZ` variable is parsed alike: a value that is not a positive finite number is reported once; the default stands.
 
 ## Command topics
 

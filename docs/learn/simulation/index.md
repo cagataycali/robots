@@ -4,7 +4,7 @@ description: Simulation vs SimEngine, the three backends and what each needs, an
 
 # Simulation
 
-By the end of this page a MuJoCo world with a robot, an object and a camera runs on this machine, and you know the one interface every backend implements and which backend needs what.
+By the end of this page a MuJoCo world with a robot, an object and a camera runs on this machine, and you know the one interface every backend implements and what each backend needs.
 
 ```python
 from strands_robots.simulation import create_simulation, list_backends
@@ -42,7 +42,7 @@ Every call returns an agent-tool envelope: `{"status": "success" | "error", "con
 
 Cameras are per backend: MuJoCo, Newton and Isaac each define `add_camera`, and the base class does not, so a third-party engine adds its own.
 
-`Simulation` is the MuJoCo engine under its historical name. `from strands_robots.simulation import Simulation` and `create_simulation("mujoco")` give you the same `MuJoCoSimEngine`. `create_simulation` is the door: it resolves an alias, imports the backend lazily, and passes the remaining keywords to the constructor. `Robot("so101")` calls it for you and adds the robot; use the factory when you want an empty world, another backend or constructor keywords.
+`Simulation` is the MuJoCo engine under its historical name. `from strands_robots.simulation import Simulation` and `create_simulation("mujoco")` give the same `MuJoCoSimEngine`. `create_simulation` is the door: it resolves an alias, imports the backend lazily and passes the remaining keywords to the constructor. `Robot("so101")` calls it for you and adds the robot; use the factory when you want an empty world, another backend or constructor keywords.
 
 ```python
 from strands_robots.simulation import SimEngine, Simulation, create_simulation
