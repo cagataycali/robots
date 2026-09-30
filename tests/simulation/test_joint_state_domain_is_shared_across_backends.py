@@ -339,6 +339,7 @@ class TestEveryBackendJointStateWriterAppliesTheSharedDomain:
             ("mujoco", "set_joint_positions"),
             ("mujoco", "set_joint_velocities"),
             ("isaac", "set_joint_positions"),
+            ("newton", "set_joint_positions"),
         }
 
     def test_every_writer_calls_the_shared_domain(self) -> None:

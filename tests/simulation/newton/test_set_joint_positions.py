@@ -66,7 +66,8 @@ def test_hold_keeps_the_pose_through_a_step_and_the_default_does_not(engine) -> 
     [
         ({"2": 99.0}, "outside the joint limits"),
         ({"nope": 0.1}, "not joints of"),
-        ({"2": float("nan")}, ""),
+        ({"2": float("nan")}, "finite"),
+        ({"2": True}, "not a bool"),
         ({}, "empty"),
         (None, "required"),
     ],

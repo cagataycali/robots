@@ -1437,6 +1437,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if coerce_error is not None:
             return coerce_error
         assert pose is not None  # narrow for mypy: no error implies a mapping
+        # The shared joint-state domain every backend's kinematic writer applies
+        # (SimEngine._coerce_joint_state_map): a boolean is refused rather than
+        # read as a 1-radian target, a nan/inf is refused rather than written.
+        pose, domain_error = self._coerce_joint_state_map(pose, "positions", "set_joint_positions")
+        if domain_error is not None:
+            return domain_error
         valid = self.robot_action_keys(robot_name)
         unknown = [k for k in pose if k not in valid]
         if unknown:
