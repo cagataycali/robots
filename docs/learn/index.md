@@ -4,15 +4,26 @@ description: Each page answers one workflow question and ends with something tha
 
 # Learn
 
+Guides by subsystem, each ending in something that runs. New here? The [Start](../start/index.md) ladder orders these for a first week, and [Concepts](../concepts/index.md) explains the three objects every page uses.
+
+| you want to | read |
+|---|---|
+| hand a robot to an agent and see the gate work | [Agents](agents.md) |
+| build a scene, add objects and cameras, randomize | [Simulation](simulation/index.md) |
+| run a Hub checkpoint, pick a provider | [Policies](policies/index.md) |
+| record a dataset and train from it | [Record](data/record.md), [Training](training/index.md) |
+| plug in a real arm | [Drivers](hardware/drivers.md), [Feetech arms](hardware/feetech-arms.md) |
+| several robots, one e-stop | [Mesh](mesh/index.md), [Safety and e-stop](mesh/safety-and-estop.md) |
+
 ## Policies
 
-- [Policies](policies/index.md): which learned policies run where, the three known gaps, the provider matrix and one page per provider; [lerobot_local](policies/lerobot-local.md) runs a Hub checkpoint in process.
+- [Policies](policies/index.md): which provider for what you have, the provider matrix and one page per provider; [lerobot_local](policies/lerobot-local.md) runs a Hub checkpoint in process.
 
 ## Agents, simulation, training
 
 - [Agents](agents.md): a `Robot` as a Strands tool, the tools around it, the operator gate, what a refusal looks like.
 - [Simulation](simulation/index.md): MuJoCo, Isaac, Newton, worlds and objects, predicates and rollouts, randomization.
-- [Training](training/lerobot.md): LeRobot and [RL](training/rl.md).
+- [Training](training/index.md): what trains where; [LeRobot](training/lerobot.md), [RL](training/rl.md), [Isaac Lab](training/isaaclab.md).
 
 ## Data
 
