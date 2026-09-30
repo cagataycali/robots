@@ -33,6 +33,7 @@ DOCS = Path(__file__).resolve().parents[1] / "docs"
 VERIFIED: dict[str, tuple[str, str]] = {
     "allenai/MolmoAct2-SO100_101": ("152569fe", "2026-09-30"),
     "lerobot/smolvla_base": ("d9f33c94", "2026-09-30"),
+    "nepyope/pi05-can-to-martino-12k": ("fdc03a50", "2026-09-30"),
     "nvidia/Cosmos3-Nano-Policy-DROID": ("805c0d6d", "2026-09-30"),
     "nvidia/GEAR-SONIC": ("6733128a", "2026-09-30"),
     "nvidia/GR00T-N1.7-3B": ("2fc962b9", "2026-09-30"),
