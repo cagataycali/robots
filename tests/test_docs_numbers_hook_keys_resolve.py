@@ -9,24 +9,20 @@ the tree read independently here.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
 from pathlib import Path
 
 import pytest
 
+from tests._docs_hooks import docs_hook
+
 _REPO = Path(__file__).resolve().parents[1]
-_HOOK = _REPO / "docs" / "hooks" / "facts.py"
 _TOKEN = re.compile(r"\{\{\s*n:([a-z_]+)\s*\}\}")
 
 
 def _load_hook():
-    spec = importlib.util.spec_from_file_location("docs_facts_hook", _HOOK)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("facts")
 
 
 def _tokens_in_docs() -> dict[str, list[str]]:
