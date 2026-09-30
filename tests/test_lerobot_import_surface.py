@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_file
 
 pytest.importorskip("lerobot", reason="lerobot not installed - pip install 'strands-robots[lerobot]'")
 
@@ -91,7 +92,7 @@ def _collect_lerobot_imports() -> list[tuple[str, str | None, Path, int]]:
     found: list[tuple[str, str | None, Path, int]] = []
     for f in _python_sources():
         try:
-            tree = ast.parse(f.read_text(encoding="utf-8"))
+            tree = parse_file(f)
         except (SyntaxError, UnicodeDecodeError):
             continue
         for node in ast.walk(tree):
@@ -145,7 +146,7 @@ def _forward_compat_import_sites() -> dict[tuple[str, str], list[tuple[Path, int
     sites: dict[tuple[str, str], list[tuple[Path, int, bool]]] = {key: [] for key in _FORWARD_COMPAT_SYMBOLS}
     for f in _python_sources():
         try:
-            tree = ast.parse(f.read_text(encoding="utf-8"))
+            tree = parse_file(f)
         except (SyntaxError, UnicodeDecodeError):
             continue
         parents = _parent_map(tree)

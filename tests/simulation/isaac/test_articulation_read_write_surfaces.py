@@ -57,6 +57,7 @@ import pytest
 
 from strands_robots.simulation.isaac.motion_primitives import IsaacMotionPrimitivesMixin
 from strands_robots.simulation.isaac.simulation import IsaacSimulation, _RobotState
+from tests._package_ast import parse_file
 
 from .test_motion_primitives import (  # noqa: F401 - fake_articulation_action is an autouse fixture
     ARM_JOINTS,
@@ -612,7 +613,7 @@ def _self_assigned(cls: ast.ClassDef) -> dict[str, list[int]]:
 
 
 def _classes(path: pathlib.Path) -> dict[str, ast.ClassDef]:
-    return {n.name: n for n in ast.walk(ast.parse(path.read_text())) if isinstance(n, ast.ClassDef)}
+    return {n.name: n for n in ast.walk(parse_file(path)) if isinstance(n, ast.ClassDef)}
 
 
 def _base_owned_assignments(module: pathlib.Path, base_module: pathlib.Path) -> dict[str, list[tuple[int, str]]]:

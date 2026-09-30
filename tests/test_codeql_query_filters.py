@@ -43,6 +43,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
+from tests._package_ast import parse_file
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CONFIG_PATH = _REPO_ROOT / ".github" / "codeql" / "codeql-config.yml"
 _WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -240,7 +242,7 @@ def _base_exception_handlers() -> tuple[_Handler, ...]:
             continue
         for path in sorted(root.rglob("*.py")):
             try:
-                parsed = ast.parse(path.read_text(encoding="utf-8"))
+                parsed = parse_file(path)
             except (OSError, SyntaxError):  # pragma: no cover - unreadable source
                 continue
             for node in ast.walk(parsed):
