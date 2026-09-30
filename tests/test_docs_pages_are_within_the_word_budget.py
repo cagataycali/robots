@@ -65,8 +65,10 @@ _BUDGET: int = _hook().LIMIT
 #: Lowered to 49,433 when the GR00T provider page left with the provider (GR00T N1.7
 #: is a section of lerobot-local now).
 #: Raised by 733, to 50,166, for learn/policies/wbc-latent.md (the wbc_latent provider).
-#: Raised by 490, to 50,656, for the mjlab backend page (learn/simulation/mjlab.md) and its cross-links.
-_SITE_BUDGET = 50_656
+#: Raised to 57,259 for the 81 robot_descriptions URDF robots: one generated page each and the
+#: learn page that explains the loader once.
+#: Raised for the mjlab backend page (learn/simulation/mjlab.md) and its cross-links.
+_SITE_BUDGET = 57_800
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
