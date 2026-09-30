@@ -396,6 +396,74 @@ def _get_source(info: dict[str, Any] | None) -> dict[str, Any]:
     return source if source else {"type": "menagerie"}
 
 
+#: Where GitHub serves a public repository's LFS objects by commit and path -
+#: the file a pointer stands for, with no git-lfs install on this machine.
+_LFS_MEDIA_URL = "https://media.githubusercontent.com/media/{repo}/{sha}/{path}"
+_LFS_POINTER_OID_RE = re.compile(rb"^oid sha256:([0-9a-f]{64})$", re.MULTILINE)
+_LFS_POINTER_SIZE_RE = re.compile(rb"^size (\d+)$", re.MULTILINE)
+#: A robot description's meshes are tens of MB; this bounds a registry entry
+#: pointing at a repository whose LFS store is something else entirely.
+_LFS_MAX_TOTAL_BYTES = 1 << 30
+
+
+def _fetch_lfs_objects(clone_dir: Path, repo: str, root: Path, *, timeout: int = 60) -> str | None:
+    """Replace every Git LFS pointer under *root* with the object it stands for.
+
+    ``git clone`` without git-lfs writes each LFS-tracked file as a 130-byte text
+    pointer and exits 0; ``reachy_mini``'s upstream keeps all its meshes in LFS,
+    so its tree loaded as 49 pointers MuJoCo cannot decode. The object is fetched
+    from GitHub's LFS media endpoint at the cloned commit and kept only when its
+    SHA-256 and size are the ones the pointer names. Returns None when every
+    pointer was resolved (or there were none), else why not.
+    """
+    import hashlib
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    from concurrent.futures import ThreadPoolExecutor
+
+    pointers = [p for p in root.rglob("*") if p.is_file() and not p.is_symlink() and _is_lfs_pointer(p)]
+    if not pointers:
+        return None
+    try:
+        sha = subprocess.run(
+            ["git", "-C", str(clone_dir), "rev-parse", "HEAD"], check=True, capture_output=True, text=True, timeout=30
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        return f"cannot read the cloned commit to fetch {len(pointers)} Git LFS object(s): {exc}"
+    wanted: list[tuple[Path, str, int]] = []
+    for path in pointers:
+        text = path.read_bytes()
+        oid, size = _LFS_POINTER_OID_RE.search(text), _LFS_POINTER_SIZE_RE.search(text)
+        if oid is None or size is None:
+            return f"{path.relative_to(clone_dir)} is a malformed Git LFS pointer"
+        wanted.append((path, oid.group(1).decode(), int(size.group(1))))
+    total = sum(size for _, _, size in wanted)
+    if total > _LFS_MAX_TOTAL_BYTES:
+        return f"{len(wanted)} Git LFS object(s) total {total} bytes, over the {_LFS_MAX_TOTAL_BYTES}-byte limit"
+
+    def _one(item: tuple[Path, str, int]) -> str | None:
+        path, oid, size = item
+        rel = path.relative_to(clone_dir).as_posix()
+        url = _LFS_MEDIA_URL.format(repo=repo, sha=sha, path=urllib.parse.quote(rel))
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 - fixed https host
+                data = resp.read(size + 1)
+        except (urllib.error.URLError, OSError) as exc:
+            return f"{rel}: {exc}"
+        if len(data) != size or hashlib.sha256(data).hexdigest() != oid:
+            return f"{rel}: the fetched object does not match its pointer (size or sha256)"
+        path.write_bytes(data)
+        return None
+
+    logger.info("Fetching %d Git LFS object(s) (%d bytes) for %s", len(wanted), total, repo)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        errors = [e for e in pool.map(_one, wanted) if e is not None]
+    if errors:
+        return f"{len(errors)} of {len(wanted)} Git LFS object(s) could not be fetched: {errors[0]}"
+    return None
+
+
 def _shallow_clone(repo_url: str, dest: str, *, timeout: int = 120) -> None:
     """Shallow-clone *repo_url* into *dest*.
 
@@ -697,6 +765,9 @@ def _download_from_github(name: str, info: dict, dest_dir: Path) -> str:
             return f"failed: {exc}"
         if not src.exists():
             return f"failed: subdir '{subdir}' not found in {repo}"
+
+        if (lfs_error := _fetch_lfs_objects(Path(clone_dir), repo, src)) is not None:
+            return f"failed: {lfs_error}"
 
         dst = safe_join(dest_dir, asset_dir)
         try:
