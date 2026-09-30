@@ -34,10 +34,8 @@ sentence on it that names each skew bound is where the clock direction is read.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -47,10 +45,10 @@ import pytest
 
 import strands_robots
 from strands_robots.mesh import core
+from tests._docs_hooks import docs_hook
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _CONFIGURATION = _REPO_ROOT / "docs" / "reference" / "configuration.md"
-_ENV_VARS_HOOK = _REPO_ROOT / "docs" / "hooks" / "env_vars.py"
 _SAFETY_PAGE = _REPO_ROOT / "docs" / "learn" / "mesh" / "safety-and-estop.md"
 
 #: Long enough to be a realistic operator secret rather than a crackable PIN.
@@ -211,13 +209,7 @@ def _rendered_configuration() -> str:
     backticks so the same name regex reads the generated table and hand prose.
     """
     source = _CONFIGURATION.read_text(encoding="utf-8")
-    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _ENV_VARS_HOOK)
-    assert spec is not None and spec.loader is not None, _ENV_VARS_HOOK
-    module = sys.modules.get(spec.name)
-    if module is None:
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+    module = docs_hook("env_vars")
     rendered = module.on_page_markdown(source, page=None, config=None, files=None)
     assert rendered != source, "docs/reference/configuration.md carries no {{env_vars}} token for the hook to expand"
     return re.sub(r"</?code>", "`", rendered)
