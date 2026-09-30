@@ -346,13 +346,20 @@ def _model_link(base_url: str | None) -> str | None:
     return f"[{label}]({href})"
 
 
+def _joints_chip(joints: int) -> str:
+    """The registry's ``joints`` counts the joints in the MuJoCo model, which for a
+    hand or a humanoid with fixed or passive joints is more than the DOF in the
+    description (LEAP Hand: 41 model joints, 16 DOF). Say which one it is."""
+    return "1 model joint" if joints == 1 else f"{joints} model joints"
+
+
 def _chips(name: str, spec: dict, cov, entry: dict) -> str:  # noqa: ANN001
     joints = spec.get("joints")
     parts = [
         f'<span class="sr-chip sr-chip-family" data-family="{spec["category"]}">{html.escape(_label(spec["category"]))}</span>'
     ]
     if isinstance(joints, int):
-        parts.append(f'<span class="sr-chip">{joints} joints</span>')
+        parts.append(f'<span class="sr-chip">{_joints_chip(joints)}</span>')
     if entry.get("sim"):
         parts.append(f'<span class="sr-chip sr-chip-sim">{"sim" if cov.real else "sim only"}</span>')
     if cov.real:
@@ -369,6 +376,17 @@ def chips(name: str) -> str:
 
 # lerobot's bimanual configs declare no ``port``: each takes ``left_arm_config`` and
 # ``right_arm_config``, one single-arm config per side. (module, class) per lerobot type.
+#: lerobot robot types that are reached over a network, not a serial device: the
+#: keyword their lerobot config declares for the address and an example value,
+#: read off the config dataclasses (``lerobot.robots.<type>.config_<type>``).
+#: Every other lerobot type takes ``port=`` as the serial device of its bus.
+LEROBOT_NETWORK_ADDRESS: dict[str, tuple[str, str, str]] = {
+    "unitree_g1": ("robot_ip", '"192.168.123.164"', "the G1's address on the DDS network"),
+    "reachy2": ("ip_address", '"reachy2.local"', "the Reachy 2 host running its SDK server"),
+    "lekiwi_client": ("remote_ip", '"192.168.1.42"', "the Raspberry Pi running the `lekiwi` host"),
+    "earthrover_mini_plus": ("sdk_url", '"http://localhost:8000"', "the EarthRover SDK process"),
+}
+
 BIMANUAL_ARM_CONFIG: dict[str, tuple[str, str]] = {
     "bi_so_follower": ("lerobot.robots.so_follower.config_so_follower", "SOFollowerConfig"),
     "bi_openarm_follower": ("lerobot.robots.openarm_follower.config_openarm_follower", "OpenArmFollowerConfig"),
@@ -393,6 +411,10 @@ def _real_fences(name: str, spec: dict, cov) -> list[str]:  # noqa: ANN001
             f'              left_arm_config={cls}(port="/dev/ttyACM0"),',
             f'              right_arm_config={cls}(port="/dev/ttyACM1"))',
         ]
+    elif cov.lerobot_type in LEROBOT_NETWORK_ADDRESS:
+        field, example, _ = LEROBOT_NETWORK_ADDRESS[cov.lerobot_type]
+        pin = "" if cov.default_driver == "lerobot" else ', driver="lerobot"'
+        lines.append(f'robot = Robot("{name}", mode="real"{pin}, {field}={example})  # lerobot {cov.lerobot_type}')
     elif cov.lerobot_type:
         pin = "" if cov.default_driver == "lerobot" else ', driver="lerobot"'
         lines.append(f'robot = Robot("{name}", mode="real"{pin}, port="/dev/ttyACM0")  # lerobot {cov.lerobot_type}')
@@ -421,6 +443,9 @@ def _hardware_section(name: str, spec: dict, cov) -> str:  # noqa: ANN001
                 f"there is no single `port=`; pass `left_arm_config=` and `right_arm_config=`, one `{cls}` per arm "
                 f"with its own `port` and `cameras`."
             )
+        elif cov.lerobot_type in LEROBOT_NETWORK_ADDRESS:
+            field, _, what = LEROBOT_NETWORK_ADDRESS[cov.lerobot_type]
+            wiring = f"`{field}=` names {what}, `cameras=` the lerobot camera dict."
         else:
             wiring = "`port=` is the serial device, `cameras=` the lerobot camera dict."
         out.append(
@@ -625,7 +650,7 @@ def card(name: str, prefix: str) -> str:
     if cov.real:
         badges += '<span class="sr-chip sr-chip-real">real</span>'
     if isinstance(joints, int):
-        badges += f'<span class="sr-chip">{joints} joints</span>'
+        badges += f'<span class="sr-chip">{_joints_chip(joints)}</span>'
     aliases = spec.get("aliases") or []
     alias_html = (
         '<p class="sr-robot-aliases">' + " ".join(f"<code>{html.escape(a)}</code>" for a in aliases[:4]) + "</p>"
