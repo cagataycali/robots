@@ -335,11 +335,12 @@ def test_console_holds_sim_fleet_and_proxy_tools_and_gates_real_motion() -> None
     console = _console(bridge, FakeDevices(bridge))
     names = set(console.tool_names())
     assert {"sim_start", "fleet", "spawn_robot", "despawn_robot", "lane_so101__so101", "arm_1"} <= names
-    # The HITL rows are DERIVED from the built proxies: the real arm's execute/start, nothing for the sim.
+    # The HITL rows are DERIVED from the built proxies and the peers they stand for: the real
+    # arm's execute/start, nothing for a sim the gate reads as one (a plain record, not a wire claim).
     from strands_robots.dashboard.peer_tools import build_peer_tools, motion_actions_for
 
     proxies = build_peer_tools(bridge.peers, bridge.send_cmd)
-    assert motion_actions_for(proxies) == {"arm_1": frozenset({"execute", "start"})}
+    assert motion_actions_for(proxies, bridge.peers) == {"arm_1": frozenset({"execute", "start"})}
 
 
 def test_console_without_a_bridge_is_the_sim_only_agent() -> None:

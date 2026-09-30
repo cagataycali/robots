@@ -4,11 +4,13 @@
  * /api/fleet (guarded) in parallel. 2. Fleet answered 200 -> open.
  */
 import { useEffect, useRef, useState } from 'react'
-import { api, setAuthToken, authToken, authRefusedRecently, HttpError, lastRenewalAt } from '../lib/endpoints'
-import { sessionVerdict } from '../lib/sessionExpiry'
+import {
+  api, setAuthToken, authToken, authRefusedRecently, HttpError, lastRenewalAt, noteCookieSession, cookieSessionExpiry,
+} from '../lib/endpoints'
+import { sessionVerdict, sessionVerdictAt } from '../lib/sessionExpiry'
 import {
   fetchAuthStatus, enroll, webauthnReady, type AuthStatus,
-  beginLogin, completeLogin, loginFresh, type PreparedLogin,
+  beginLogin, completeLogin, loginFresh, type PreparedLogin, type SessionGrant,
 } from '../lib/passkey'
 import StrandsMark from './StrandsMark'
 
@@ -38,7 +40,10 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     let alive = true
     const check = () => {
       if (!alive) return
-      const v = sessionVerdict(authToken(), Date.now() / 1000, lastRenewalAt())
+      const held = authToken()
+      const v = held
+        ? sessionVerdict(held, Date.now() / 1000, lastRenewalAt())
+        : sessionVerdictAt(cookieSessionExpiry(), Date.now() / 1000, lastRenewalAt())
       if (v.refusesUntilSignIn) {
         setExpiring('')
         setError(v.text ?? 'this sign-in has expired')
@@ -134,12 +139,14 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     return () => { alive = false }
   }, [])
 
-  async function run(fn: () => Promise<string>) {
+  async function run(fn: () => Promise<SessionGrant>) {
     setBusy(true); setError('')
     try {
-      const token = await fn()
-      setAuthToken(token) // notifies subscribeAuth -> App remounts with the new key
-      setMode('open')     // and this gate instance opens NOW, not on the next refresh
+      const grant = await fn()
+      // The session is the HttpOnly cookie the ceremony set; the page keeps no copy of it
+      // (finding f015). A bearer typed on this door is another matter and still goes to storage.
+      noteCookieSession(grant.exp) // notifies subscribeAuth -> App remounts with the new key
+      setMode('open')              // and this gate instance opens NOW, not on the next refresh
     } catch (e) {
       const msg = e instanceof HttpError ? (e.body?.detail ?? e.message) : (e as Error).message
       setError(String(msg || 'the passkey ceremony failed'))

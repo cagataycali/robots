@@ -30,6 +30,7 @@ from fastapi import HTTPException
 
 from strands_robots.dashboard import auth
 from tests._dashboard_connection import STRANGER, connection
+from tests._dashboard_passkeys import issue_enrolled
 
 # Every way a store can parse and still be unusable, with the fault each one used to
 # produce. The reason fragment is what an operator reads out of `store_corruption()` and
@@ -79,7 +80,7 @@ class TestTheRequestGetsAnAnswerRatherThanATraceback:
     def test_signing_in_works_again(self, body, reason, tmp_path):
         """The point of the recovery: a session can be minted and verified after it."""
         (tmp_path / "auth.json").write_text(body)
-        claims = auth.verify_token(auth.issue_token("root", "root"))
+        claims = auth.verify_token(issue_enrolled("root", "root"))
         assert claims["sub"] == "root"
 
 

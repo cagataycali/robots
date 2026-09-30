@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 from strands_robots.dashboard import auth
 from tests._dashboard_connection import connection
+from tests._dashboard_passkeys import enroll
 
 
 def test_store_created_with_0600_and_secret(tmp_path):
@@ -41,6 +42,7 @@ def test_store_hot_reloads_on_file_change(tmp_path):
 
 
 def test_token_roundtrip_and_expiry():
+    enroll("cred1")
     token = auth.issue_token("cred1", name="phone")
     claims = auth.verify_token(token)
     assert claims["sub"] == "cred1"

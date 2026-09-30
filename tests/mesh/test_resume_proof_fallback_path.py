@@ -30,7 +30,7 @@ def _fallback_sample(payload: dict) -> object:
 
 
 def test_resume_proof_verifies_when_published_on_fallback_path(monkeypatch):
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "operator-secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "operator-secret-1234567890")
 
     # --- Issuer: an open session (so _local_session_zid resolves a real zid)
     # but the native SourceInfo path is unavailable, so the envelope is
@@ -53,7 +53,7 @@ def test_resume_proof_verifies_when_published_on_fallback_path(monkeypatch):
     issuer._estop_lockout.set()
     issuer._last_estop_ts = core.time.time()
     issuer._last_estop_mono = core.time.monotonic()
-    result = issuer._resume_lockout("operator-secret")
+    result = issuer._resume_lockout("operator-secret-1234567890")
     assert result == {"status": "ok"}
 
     assert published["key"] == "strands/safety/resume"

@@ -25,6 +25,16 @@ forged by a page, so both are checked before the open posture admits anyone.
 Everything else is 401. There is no allow-list of paths inside this module: a
 route that wants to be public does not take the dependency, so the set of open
 routes is visible at the route table, not buried in a string list here.
+
+WebSockets have one more rule, and it comes BEFORE any credential: the
+handshake's ``Origin`` must name this host (:func:`socket_origin_is_self`), or,
+when there is no ``Origin`` at all, the handshake must carry an explicit bearer.
+WebSockets are exempt from CORS, the cross-origin write middleware never sees a
+``websocket`` scope, and ``SameSite=Strict`` is scoped to the site, which ignores
+the port, so a page on ``http://localhost:3000`` opens a socket here with the
+operator's cookie attached. The ``Origin`` check used to live only inside the
+open posture, so that cookie was admitted with the header never read (f022).
+Every socket route calls :func:`admit_socket`, which owns both rules.
 """
 
 from __future__ import annotations
@@ -168,6 +178,46 @@ def caller(request: Request) -> dict[str, Any]:
     if open_posture(request):
         return {"via": "loopback"}
     raise HTTPException(401, "sign in required")
+
+
+def socket_origin_is_self(ws: WebSocket) -> bool:
+    """Whether a WebSocket handshake comes from this dashboard's own page, or from a script that says who it is.
+
+    A browser always sends ``Origin`` on a handshake, so one that is present must
+    name this host exactly as :func:`origin_is_self` demands (``null`` and a
+    sibling port are other origins). One that is absent is not a browser page:
+    it is admitted only when the handshake carries an explicit ``Authorization:
+    Bearer``, never on the cookie a browser would have attached, so a replayed
+    cookie with the header stripped is refused too.
+    """
+    if ws.headers.get("origin") is not None:
+        return origin_is_self(ws)  # type: ignore[arg-type]  # WebSocket answers headers like a Request
+    header = ws.headers.get("authorization", "")
+    return header.lower().startswith("bearer ") and bool(header[7:].strip())
+
+
+async def admit_socket(ws: WebSocket) -> dict[str, Any] | None:
+    """The caller of a WebSocket handshake, or None once the handshake has been refused.
+
+    Origin first, credential second, and the first refusal is final: a foreign
+    or missing ``Origin`` is a handshake rejection (never accepted, HTTP 403 on
+    the wire) before any cookie or token is read, so the credential can neither
+    rescue it nor be confirmed by it. A same-origin page without a session is
+    then refused the way :func:`refuse_socket` documents, with 4401 after
+    ``accept`` so the page can show the login screen.
+    """
+    if not socket_origin_is_self(ws):
+        tally = getattr(ws.app.state, "refusals", None)
+        if tally is not None:
+            tally.record(client=(ws.client.host if ws.client else "?"), path=ws.url.path, now=time.time())
+        await ws.close(code=4403)
+        return None
+    try:
+        who = caller(ws)  # type: ignore[arg-type]  # WebSocket answers headers like a Request
+    except HTTPException:
+        await refuse_socket(ws, 4401)
+        return None
+    return who
 
 
 async def refuse_socket(ws: WebSocket, code: int) -> None:

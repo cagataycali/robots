@@ -158,6 +158,11 @@ class _Sim:
         method = getattr(self, self._ACTION_ALIASES.get(action, action))
         return dict(method(**kwargs))
 
+    def wire_tool_spec(self) -> dict[str, Any]:
+        from strands_robots.simulation.mujoco.wire_surface import build_wire_tool_spec
+
+        return build_wire_tool_spec("sim", type(self))
+
 
 class _SimChild:
     """A child SimRobot peer: no actions of its own, a ``_sim_parent`` that has them."""
@@ -310,15 +315,16 @@ def _sending_mesh(published: list[tuple[str, dict[str, Any]]]) -> Any:
 
     mesh = mesh_core.Mesh.__new__(mesh_core.Mesh)
     mesh.peer_id = "dash"
+    mesh._direct = None
     mesh._running = True
     mesh._rpc_lock = threading.Lock()
     mesh._cmd_pace_lock = threading.Lock()
     mesh._last_cmd_publish_mono = None
-    mesh._direct = None  # a Zenoh session: no point-to-point sender
     mesh._stop_event = threading.Event()
     mesh._pending = {}
     mesh._responses = {}
     mesh._expected_responders = {}
+    mesh._turn_sources = {}
     mesh.publish = lambda key, payload: published.append((key, payload))  # type: ignore[method-assign]
     return mesh
 

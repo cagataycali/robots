@@ -382,6 +382,8 @@ _LEROBOT_POLICY_FAMILIES: frozenset[str] = frozenset(
         "pi0fast",
         "smolvla",
         "sac",
+        # GR00T N1.7, lerobot's native port (``lerobot_local`` policy_type).
+        "groot",
     }
 )
 
@@ -405,8 +407,6 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         "mock",
         "random",
         "test",
-        # Gr00tPolicy
-        "groot",
         # LerobotLocalPolicy
         "lerobot_local",
         "lerobot",
@@ -442,6 +442,10 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         "remote",
         # RLCheckpointPolicy
         "rl",
+        # Flux3ActionPolicy
+        "flux3_action",
+        "flux3",
+        "f3a",
     }
 )
 
@@ -456,6 +460,17 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
 #: and ``model_path`` allowlists to every ``execute`` / ``start`` payload
 #: regardless of which provider it names.
 _DEFAULT_POLICY_TYPES: frozenset[str] = _LEROBOT_POLICY_FAMILIES | _REGISTRY_POLICY_PROVIDERS
+
+#: The actions a peer still answers while its emergency-stop lockout is
+#: engaged (:meth:`Mesh._dispatch` raises :class:`LockoutError` for every
+#: other one). ``status`` and ``ping`` are reads, ``resume`` is the lockout's
+#: own exit and ``stop`` only ever de-energises: a second e-stop arriving
+#: while the lockout is already engaged must still halt a rollout the first
+#: one missed rather than be "rejected". Because a locked peer answers these,
+#: an acknowledgement of any of them proves NOTHING about its lockout; the
+#: dashboard reads this same set to decide what counts as proof of a clear
+#: peer (f033), so the two rules cannot drift apart.
+LOCKOUT_ADMITTED_ACTIONS: frozenset[str] = frozenset({"status", "resume", "stop", "ping"})
 
 #: Action vocabulary accepted by :func:`validate_command`. Mirrors the
 #: dispatch table in :meth:`Mesh._dispatch`. Keep these two sets in sync
@@ -478,6 +493,12 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
         # (``sim_action`` + ``params``) to a SIMULATION peer; the wire admits
         # the subset :func:`sim_call_allowed_actions` names. Hardware refuses.
         "sim_call",
+        # ``call`` invokes one function of the tool a peer ADVERTISES
+        # (``function`` + ``params``); the wire bounds shape and size, the peer
+        # refuses what its :meth:`wire_tool_spec` does not list. Hardware peers
+        # advertise nothing and refuse. ``describe_tool`` returns that spec.
+        "call",
+        "describe_tool",
         "teleop_status",
         "teleop_receive",
         "teleop_stop",
@@ -515,61 +536,42 @@ MAX_SIM_CALL_PARAMS_BYTES: int = 64 * 1024
 #: Max length of a ``sim_call`` action name or params key.
 MAX_SIM_CALL_NAME_LEN: int = 64
 
-#: Published simulation actions the wire refuses even on a simulation peer, each
-#: for one reason: it replaces or destroys the world the peer's mesh robots live
-#: in (``create_world`` ``load_scene`` ``replace_scene_mjcf`` ``destroy``), it
-#: opens a window or reads a path on the peer host (``open_viewer``
-#: ``close_viewer`` ``register_urdf`` ``register_benchmark_from_file``), it is a
-#: policy rollout whose own rail carries the allowlists (``run_policy`` ->
-#: ``execute``, ``start_policy`` -> ``start``, ``stop_policy`` -> ``stop``,
-#: ``eval_policy`` and ``evaluate_benchmark`` -> ``execute``), or it reads a
-#: dataset from the peer's disk or the Hub (``replay_episode``).
-SIM_CALL_DENIED_ACTIONS: frozenset[str] = frozenset(
-    {
-        "create_world",
-        "load_scene",
-        "replace_scene_mjcf",
-        "destroy",
-        "open_viewer",
-        "close_viewer",
-        "register_urdf",
-        "register_benchmark_from_file",
-        "run_policy",
-        "start_policy",
-        "stop_policy",
-        "eval_policy",
-        "evaluate_benchmark",
-        "replay_episode",
-    }
-)
+#: Max JSON-encoded byte size of a ``call`` params object; the same bound.
+MAX_CALL_PARAMS_BYTES: int = MAX_SIM_CALL_PARAMS_BYTES
+
+#: Max length of a ``call`` function name or params key; the same bound.
+MAX_CALL_NAME_LEN: int = MAX_SIM_CALL_NAME_LEN
+
+#: The peer-side deny tables, read as a file from
+#: ``simulation/mujoco/wire_surface.json`` (one reason per entry, next to the
+#: spec they apply to). The mesh layer reads them for two things only: to
+#: refuse a denied ``sim_call`` before the round trip with the peer's own
+#: wording, and for the offline test that enumerates every published action.
+#: The authority is the peer's :meth:`wire_tool_spec`.
+_WIRE_SURFACE_PATH = Path(__file__).resolve().parent.parent / "simulation" / "mujoco" / "wire_surface.json"
+
+
+@functools.lru_cache(maxsize=1)
+def _wire_surface() -> dict[str, Any]:
+    with open(_WIRE_SURFACE_PATH, encoding="utf-8") as handle:
+        surface: dict[str, Any] = json.load(handle)
+    return surface
+
+
+#: Published simulation actions the wire refuses even on a simulation peer
+#: (``wire_surface.json`` ``denied_actions``): it replaces or destroys the world
+#: the peer's mesh robots live in, opens a window or reads a path on the peer
+#: host, is a rollout whose own rail carries the allowlists, or reads a dataset.
+SIM_CALL_DENIED_ACTIONS: frozenset[str] = frozenset(_wire_surface()["denied_actions"])
 
 #: The rail a denied rollout action rides instead, named in the refusal.
-SIM_CALL_RAIL_FOR: dict[str, str] = {
-    "run_policy": "execute",
-    "start_policy": "start",
-    "stop_policy": "stop",
-    "eval_policy": "execute",
-    "evaluate_benchmark": "execute",
-}
+SIM_CALL_RAIL_FOR: dict[str, str] = dict(_wire_surface()["rail_for"])
 
-#: Published simulation params the wire refuses on EVERY ``sim_call`` action: a
-#: path on the peer host (``urdf_path`` ``spec_path`` ``scene_path``
-#: ``mesh_path`` ``output_path`` ``output_dir`` ``root``), raw MJCF (``xml``),
-#: or an egress switch (``push_to_hub``). Without them a recording or a render
-#: lands where the peer's own defaults put it.
-SIM_CALL_DENIED_PARAMS: frozenset[str] = frozenset(
-    {
-        "urdf_path",
-        "spec_path",
-        "scene_path",
-        "mesh_path",
-        "output_path",
-        "output_dir",
-        "root",
-        "xml",
-        "push_to_hub",
-    }
-)
+#: Published simulation params the wire refuses on EVERY served function
+#: (``wire_surface.json`` ``denied_params``): a path on the peer host, raw MJCF
+#: or an egress switch. Without them a recording or a render lands where the
+#: peer's own defaults put it.
+SIM_CALL_DENIED_PARAMS: frozenset[str] = frozenset(_wire_surface()["denied_params"])
 
 _SIM_CALL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
@@ -667,6 +669,58 @@ def _validate_sim_call(cmd: dict[str, Any], out: dict[str, Any]) -> None:
         )
     out["sim_action"] = sim_action
     out["params"] = dict(params)
+
+
+_CALL_NAME_RE = _SIM_CALL_NAME_RE
+
+
+def _validate_call_params(params: Any, *, what: str) -> dict[str, Any]:
+    """Shape and size of a ``call`` params object; the peer judges the names."""
+    if params is None:
+        return {}
+    if not isinstance(params, dict):
+        raise ValidationError(f"{what} params must be a JSON object (dict) or null")
+    for key in params:
+        if not isinstance(key, str) or not key:
+            raise ValidationError(f"{what} params keys must be non-empty strings")
+        if len(key) > MAX_CALL_NAME_LEN:
+            raise ValidationError(f"{what} params key length {len(key)} > MAX_CALL_NAME_LEN ({MAX_CALL_NAME_LEN}).")
+        if not _CALL_NAME_RE.fullmatch(key):
+            raise ValidationError(
+                f"{what} params key {key!r} must match [A-Za-z_][A-Za-z0-9_]* "
+                "(no dots, slashes, whitespace, control chars, or shell metacharacters)."
+            )
+    try:
+        encoded = json.dumps(params)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(f"{what} params is not JSON-serialisable: {exc}") from exc
+    if len(encoded.encode("utf-8")) > MAX_CALL_PARAMS_BYTES:
+        raise ValidationError(f"{what} params encoded size > MAX_CALL_PARAMS_BYTES ({MAX_CALL_PARAMS_BYTES}).")
+    return dict(params)
+
+
+def _validate_call(cmd: dict[str, Any], out: dict[str, Any]) -> None:
+    """``call``: an identifier-safe ``function`` and a bounded ``params`` object.
+
+    The shape :func:`validate_device_rpc` enforces for a device's own
+    functions, and for the same reason: the allowlist that fits here is the
+    peer's, not the package's. Whether *function* is served, and which params
+    it takes, is answered by the peer against its :meth:`wire_tool_spec`
+    when the command lands; the wire keeps the bounds (charset, length, size,
+    rate, lockout, audit).
+    """
+    function = cmd.get("function")
+    if not isinstance(function, str) or not function:
+        raise ValidationError("call requires `function` (the name of a function the peer advertises)")
+    if len(function) > MAX_CALL_NAME_LEN:
+        raise ValidationError(f"function length {len(function)} > MAX_CALL_NAME_LEN ({MAX_CALL_NAME_LEN}).")
+    if not _CALL_NAME_RE.fullmatch(function):
+        raise ValidationError(
+            "function must match [A-Za-z_][A-Za-z0-9_]* (no dots, slashes, whitespace, control chars, "
+            "or shell metacharacters)."
+        )
+    out["function"] = function
+    out["params"] = _validate_call_params(cmd.get("params", {}), what="call")
 
 
 #: Default allowlist for VLA policy server targets (loopback only).
@@ -1367,6 +1421,8 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             out["robot_name"] = _coerce_robot_name(cmd["robot_name"])
     if action == "sim_call":
         _validate_sim_call(cmd, out)
+    if action == "call":
+        _validate_call(cmd, out)
     if action in ("execute", "start"):
         instruction = cmd.get("instruction", "")
         if not isinstance(instruction, str) or not instruction.strip():
@@ -1905,6 +1961,8 @@ __all__ = [
     "MAX_DC_RPC_FUNC_LEN",
     "MAX_DC_RPC_PARAMS_BYTES",
     "MAX_SIM_CALL_NAME_LEN",
+    "MAX_CALL_NAME_LEN",
+    "MAX_CALL_PARAMS_BYTES",
     "MAX_SIM_CALL_PARAMS_BYTES",
     "SIM_CALL_DENIED_ACTIONS",
     "SIM_CALL_DENIED_PARAMS",
@@ -1914,4 +1972,5 @@ __all__ = [
     "sim_call_published_actions",
     "sim_call_published_params",
     "LockoutError",
+    "LOCKOUT_ADMITTED_ACTIONS",
 ]

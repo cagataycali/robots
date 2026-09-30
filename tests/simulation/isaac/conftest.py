@@ -116,6 +116,7 @@ def cloner(monkeypatch) -> type[_FakeCloner]:
     sys.modules["isaacsim"].core = sys.modules["isaacsim.core"]  # type: ignore[attr-defined]
     sys.modules["isaacsim.core"].cloner = sys.modules["isaacsim.core.cloner"]  # type: ignore[attr-defined]
     sys.modules["isaacsim.core.cloner"].GridCloner = _FakeCloner  # type: ignore[attr-defined]
+    sys.modules["isaacsim.core.cloner"].Cloner = _FakeCloner  # type: ignore[attr-defined]
 
     omni = types.ModuleType("omni")
     omni_usd = types.ModuleType("omni.usd")

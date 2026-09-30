@@ -8,9 +8,9 @@ Extended sensor loops (pose, IMU, health, etc.) are provided by
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import hmac
-import inspect
 import json
 import logging
 import math
@@ -23,6 +23,8 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from strands_robots._command_gate import gate_motion
+from strands_robots._motion_grants import consume_grant
 from strands_robots._pacing import Ticker
 from strands_robots.audit import log_safety_event
 from strands_robots.bus_access import joint_read_source, read_joints, read_observation
@@ -32,6 +34,7 @@ from strands_robots.mesh.sensors import SensorLoopsMixin
 from strands_robots.mesh.session import (
     CAMERA_HZ,
     HEARTBEAT_HZ,
+    PEER_TIMEOUT,
     STATE_HZ,
     _is_transport_backend,
     current_session,
@@ -107,6 +110,24 @@ def get_local_robots() -> dict[str, Mesh]:
     with _LOCAL_ROBOTS_LOCK:
         return dict(_LOCAL_ROBOTS)
 
+
+#: The verbs a wire command can carry that move REAL hardware: a policy
+#: rollout (``execute`` / ``start``) and following a remote leader's input
+#: stream (``teleop_receive``). On a hardware peer each one passes
+#: :func:`~strands_robots._command_gate.gate_motion` in ``_dispatch`` before
+#: anything is dispatched; ``teleop_stop`` and ``stop`` are never gated,
+#: stopping must not get harder. Simulation peers move no metal and are not
+#: gated. ``set_joints`` is not here because a hardware peer refuses it
+#: outright (``_dispatch_set_joints``).
+WIRE_MOTION_ACTIONS: frozenset[str] = frozenset({"execute", "start", "teleop_receive"})
+
+#: The allowlist variable the receiving robot host reads: the same
+#: ``STRANDS_ROBOT_COMMAND_ALLOW`` the hardware ``Robot`` agent tool reads
+#: (``hardware_robot.COMMAND_ALLOW_ENV``; spelled here because that module
+#: imports this one), so one operator setting on the robot machine
+#: pre-approves a verb whichever path it arrives by. Comma-separated verbs
+#: from :data:`WIRE_MOTION_ACTIONS`, or ``*``.
+WIRE_MOTION_ALLOW_ENV = "STRANDS_ROBOT_COMMAND_ALLOW"
 
 #: Sentinel stored in :attr:`Mesh._expected_responders` for
 #: broadcast turn_ids. Distinct from any real peer_id (no peer_id
@@ -293,6 +314,64 @@ def _resume_backoff_s() -> float:
     """Cooldown (seconds) the resume path is refused after the
     fail threshold is hit. Lazy. Defaults to 30s; bad input -> 30."""
     return _parse_positive_float_env("STRANDS_MESH_RESUME_BACKOFF_S", "30")
+
+
+#: Shortest ``STRANDS_MESH_OVERRIDE_CODE`` either side of a resume accepts. The
+#: code is the one secret that clears a fleet lockout, and every field the
+#: proof MAC covers travels on the wire beside the proof, so a captured
+#: envelope is an offline oracle for candidate codes. A code under this length
+#: is treated as unset on both sides (fail closed: remote resume refused, the
+#: reason logged at start) rather than read as a weaker version of the same
+#: authority. Generate one with ``python -c "import secrets;
+#: print(secrets.token_urlsafe(32))"``.
+OVERRIDE_CODE_MIN_LEN = 16
+
+#: Domain-separating salt for :func:`resume_proof_key`. Versioned so a future
+#: change of parameters can be told apart from a wrong code.
+_RESUME_KDF_SALT = b"strands-mesh-resume-proof-v1"
+
+
+def override_code() -> str | None:
+    """The operator override code, or ``None`` when unset or too short to use.
+
+    One reader for both sides of a resume (:meth:`Mesh._resume_lockout` mints
+    the proof, :meth:`Mesh._on_safety_resume` verifies it) so they cannot
+    disagree on what counts as configured. A value shorter than
+    :data:`OVERRIDE_CODE_MIN_LEN` is refused with a once-per-process WARNING
+    that says how to generate a usable one.
+    """
+    code = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
+    if not code:
+        return None
+    if len(code) < OVERRIDE_CODE_MIN_LEN:
+        _warn_posture_once(
+            "override_code_short",
+            "[safety] STRANDS_MESH_OVERRIDE_CODE is too short (%d chars, minimum %d) and is treated as "
+            "unset: remote resume is refused on this peer. A resume proof is checkable offline from one "
+            "captured envelope, so a short code is a guessable one. Generate a code with "
+            "python -c 'import secrets; print(secrets.token_urlsafe(32))' and set the SAME value on every peer.",
+            len(code),
+            OVERRIDE_CODE_MIN_LEN,
+        )
+        return None
+    return code
+
+
+_configured_override_code = override_code
+
+
+@functools.lru_cache(maxsize=8)
+def resume_proof_key(code: str) -> bytes:
+    """The key the resume proof MAC is computed with, derived from *code*.
+
+    scrypt (memory-hard, 16 MiB, about 50 ms) rather than the code itself:
+    every MAC input is public, so the per-guess cost of the derivation is the
+    whole cost of an offline search against a captured proof. Derived once per
+    process per code; the same parameters on every peer, so a proof minted by
+    one verifies on another. A proof keyed with the raw code, as older peers
+    minted, no longer verifies: the two sides of a fleet must upgrade together.
+    """
+    return hashlib.scrypt(code.encode(), salt=_RESUME_KDF_SALT, n=2**14, r=8, p=1, dklen=32)
 
 
 def _evict_replay_cache[K](
@@ -494,8 +573,11 @@ def _peers_that_did_not_stop(responses: list[dict[str, Any]]) -> set[str]:
     are flagged. A response shape this function does not recognise is left out
     rather than guessed at, because a false "did not stop" on the safety path
     trains operators to ignore the warning. Peers that never answered at all are
-    not represented here either -- they are visible as the gap between
-    ``responses_received`` and the known peer count.
+    not represented here either; :meth:`Mesh.emergency_stop` names them as
+    ``peers_silent`` by reconciling the answers against the presence roster.
+    The ``responder_id`` read here is trustworthy because
+    :meth:`Mesh._on_response` only records a reply whose wire source is the
+    session that peer announced itself from.
 
     Args:
         responses: Response envelopes collected by :meth:`Mesh.broadcast`.
@@ -572,21 +654,39 @@ SIM_CALL_MAX_IMAGE_BYTES: int = 1024 * 1024
 SIM_CALL_MAX_TEXT_CHARS: int = 256 * 1024
 
 
-def _sim_action_takes(sim: Any, sim_action: str, param: str) -> bool:
-    """Whether the simulation method behind *sim_action* declares *param*.
+def _wire_tool_target(robot: Any) -> tuple[Any, str | None]:
+    """The object that serves a peer's advertised tool, and the robot it binds.
 
-    Read off the class the way the simulation's own router resolves a name
-    (its alias table first), never off the instance, so no engine code runs
-    to answer a question about a signature.
+    A Simulation peer serves its own :meth:`wire_tool_spec`; a child SimRobot
+    peer (``<sim>__<robot>``) serves its parent's with ``robot_name`` bound to
+    itself. Anything else (hardware, a policy-only robot) advertises no tool
+    surface and ``(None, None)`` comes back.
     """
-    aliases = getattr(type(sim), "_ACTION_ALIASES", {}) or {}
-    method = getattr(type(sim), aliases.get(sim_action, sim_action), None)
-    if not callable(method):
-        return False
+    parent = getattr(robot, "_sim_parent", None)
+    if parent is not None and callable(getattr(parent, "wire_tool_spec", None)):
+        return parent, getattr(robot, "name", None)
+    if callable(getattr(robot, "wire_tool_spec", None)):
+        return robot, None
+    return None, None
+
+
+def _wire_tool_spec_of(robot: Any) -> dict[str, Any] | None:
+    """The served spec a peer advertises, or ``None``; never raises."""
     try:
-        return param in inspect.signature(method).parameters
-    except (TypeError, ValueError):
-        return False
+        target, _ = _wire_tool_target(robot)
+        if target is None:
+            return None
+        spec = target.wire_tool_spec()
+    except Exception:
+        logger.debug("wire_tool_spec not read from robot", exc_info=True)
+        return None
+    return spec if isinstance(spec, dict) else None
+
+
+def _wire_tool_spec_hash(spec: dict[str, Any]) -> str:
+    """sha256 of the canonical JSON (sorted keys, no whitespace); what presence carries."""
+    encoded = json.dumps(spec, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _wire_safe_result(result: Any) -> dict[str, Any]:
@@ -644,6 +744,24 @@ def _wire_safe_block(block: Any) -> Any:
         cut = len(text) - SIM_CALL_MAX_TEXT_CHARS
         return {"text": text[:SIM_CALL_MAX_TEXT_CHARS] + f"\n[... {cut} more characters not carried over the wire]"}
     return block
+
+
+def _routable_target_error(target: Any) -> str | None:
+    """Why *target* may not become the peer segment of a key expression, or ``None``.
+
+    The rule is the inbound one, :func:`~strands_robots.mesh.security.validate_mesh_identifier`
+    (``[A-Za-z0-9_.-]``, at most ``MAX_PEER_ID_LEN``): a peer id the receive
+    side would refuse in ``sender_id`` is one the send side must not address,
+    because ``strands/{target}/cmd`` with ``*`` or ``**`` in the segment is a
+    Zenoh key expression that reaches every peer, and ``a/b`` adds a segment.
+    Both presence registries apply it before a learned id is stored, so an
+    announced ``robot_id`` never widens a later ``send`` on its own.
+    """
+    try:
+        _security.validate_mesh_identifier(target, "target")
+    except _security.ValidationError as exc:
+        return f"target is not a routable peer id: {exc}"
+    return None
 
 
 def _responder_segment(key: str, me: str) -> str | None:
@@ -712,6 +830,18 @@ class Mesh(SensorLoopsMixin):
         self._pending: dict[str, threading.Event] = {}
         self._responses: dict[str, list[dict[str, Any]]] = {}
         self._expected_responders: dict[str, str] = {}
+        # peer_id -> (wire zid, monotonic time of the last presence from that
+        # zid). Learned by ``_on_presence`` from the TLS-bound
+        # ``sample.source_info.source_id.zid`` and read by ``_on_response``,
+        # which refuses a reply whose wire source is not the session this
+        # peer_id last announced itself from. The body's ``responder_id`` is a
+        # claim; the wire zid is the identity. A live peer cannot be rebound
+        # by a second session claiming its id; only a peer silent past
+        # ``PEER_TIMEOUT`` may come back on a new session. ``_turn_sources``
+        # remembers, per open turn, which verified identities already
+        # answered so a broadcast accepts one reply per session.
+        self._peer_wire_zids: dict[str, tuple[str, float]] = {}
+        self._turn_sources: dict[str, set[str]] = {}
         # The transport, when it can address ONE peer without a subscription
         # on its side (AWS IoT Core Direct Messaging). Decided once in
         # ``start()``: ``isinstance(session, DirectSender)`` and the
@@ -917,7 +1047,7 @@ class Mesh(SensorLoopsMixin):
             # (e.g. physical-only recovery) see the warning and accept it.
             # Once per process: the posture is the environment's, and a
             # second Mesh here (a sim's child peer) reads the same one.
-            if not os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip():
+            if override_code() is None and not os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip():
                 _warn_posture_once(
                     "override_code",
                     "[safety:%s] No emergency-stop resume code set. If any peer "
@@ -1353,6 +1483,12 @@ class Mesh(SensorLoopsMixin):
         except Exception:
             logger.debug("presence: action features not read from robot", exc_info=True)
 
+        # The tool this peer serves over the mesh, by hash only (presence stays
+        # small); ``describe_tool`` returns the spec itself.
+        spec = _wire_tool_spec_of(r)
+        if spec is not None:
+            payload["tool_spec_hash"] = _wire_tool_spec_hash(spec)
+
         try:
             world = getattr(r, "_world", None)
             if world is not None:
@@ -1442,6 +1578,11 @@ class Mesh(SensorLoopsMixin):
         peer_id = data.get("robot_id")
         if not isinstance(peer_id, str) or peer_id == self.peer_id:
             return
+        # A learned id is a future ``send`` target: refuse one the outbound
+        # rule could not address before it enters the registry (f012).
+        if (why := _routable_target_error(peer_id)) is not None:
+            logger.debug("[mesh] %s: presence dropped: %s", self.peer_id, why)
+            return
 
         # M-3: presence-freshness check. Presence heartbeats carry a
         # ``timestamp`` (wall clock at publish). Previously _on_presence parsed
@@ -1473,6 +1614,9 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
+        if not self._bind_peer_wire_zid(peer_id, _extract_sample_source_zid(sample)):
+            return
+
         is_new = update_peer(
             peer_id=peer_id,
             peer_type=str(data.get("robot_type", "robot")),
@@ -1481,6 +1625,55 @@ class Mesh(SensorLoopsMixin):
         )
         if is_new:
             logger.info("[mesh] new peer: %s (%s)", peer_id, data.get("robot_type", "?"))
+
+    def _bind_peer_wire_zid(self, peer_id: str, wire_zid: str | None) -> bool:
+        """Record which Zenoh session *peer_id* announces itself from.
+
+        Returns ``False`` when the presence must be dropped: a second session
+        is claiming the id of a peer that is still alive on its first one.
+        Rebinding on the spot would let any admitted member take over a
+        robot's name on the presence topic and then answer in that name (the
+        response check in :meth:`_on_response` keys on this table), so the
+        first live session wins and the attempt is written to the local audit
+        log. A peer whose last heartbeat from the bound session is older than
+        ``PEER_TIMEOUT`` is treated as gone and may return on a new session,
+        which is what a restarted robot looks like.
+
+        A presence with no wire zid (bridge and IoT transports, or a zenoh
+        older than the floor) binds nothing and clears nothing; that peer's
+        replies are then judged under the both-absent rule.
+        """
+        if wire_zid is None:
+            return True
+        now = time.monotonic()
+        with self._rpc_lock:
+            bound = self._peer_wire_zids.get(peer_id)
+            if bound is not None and bound[0] != wire_zid and now - bound[1] <= PEER_TIMEOUT:
+                conflict = True
+            else:
+                conflict = False
+                self._peer_wire_zids[peer_id] = (wire_zid, now)
+        if conflict:
+            logger.warning(
+                "[mesh] %s: dropped presence for %s -- a second session (%s) claims the id of a peer "
+                "still alive on session %s (possible identity takeover)",
+                self.peer_id,
+                peer_id,
+                wire_zid[:8],
+                bound[0][:8] if bound else "?",
+            )
+            self._audit_local(
+                "presence_identity_conflict",
+                {"peer_id": peer_id, "bound_zid": bound[0] if bound else None, "claimed_zid": wire_zid},
+            )
+            return False
+        return True
+
+    def peer_wire_zid(self, peer_id: str) -> str | None:
+        """The TLS-bound session id *peer_id* last announced itself from, or ``None``."""
+        with self._rpc_lock:
+            bound = self._peer_wire_zids.get(peer_id)
+        return None if bound is None else bound[0]
 
     # State - outgoing
     def _state_loop(self) -> None:
@@ -2351,7 +2544,7 @@ class Mesh(SensorLoopsMixin):
         # turn_id; the fallback exists only so a malformed envelope doesn't
         # crash dispatch).
         _action = cmd.get("action", "status") if isinstance(cmd, dict) else "status"
-        _READONLY = {"status", "state", "features"}
+        _READONLY = {"status", "state", "features", "describe_tool"}
         if _action not in _READONLY:
             _now_mono = time.monotonic()
             _key = (sender, turn)
@@ -2432,6 +2625,8 @@ class Mesh(SensorLoopsMixin):
                 payload: dict[str, Any] = {"sender": sender, "turn_id": turn, "action": _action}
                 if _action == "sim_call":
                     payload["sim_action"] = cmd.get("sim_action")
+                if _action == "call":
+                    payload["function"] = cmd.get("function")
                 if refused:
                     # A tool-envelope refusal (``{"status": "error", "content":
                     # [...]}``) carries no ``error`` key: name the shape that
@@ -2475,7 +2670,7 @@ class Mesh(SensorLoopsMixin):
             # the dispatch thread and silently kill the mesh") is
             # achievable with a narrow tuple: this catches every
             # realistic adapter failure (LeRobot raising RuntimeError,
-            # GR00T raising ValueError on bad inputs, type mismatches,
+            # a policy raising ValueError on bad inputs, type mismatches,
             # missing keys, OSError from device I/O) but lets
             # ``MemoryError``, ``SystemExit``, ``KeyboardInterrupt``,
             # and any future programmer-error type that doesn't fit
@@ -2523,16 +2718,15 @@ class Mesh(SensorLoopsMixin):
         action = cmd.get("action", "status")
         r = self.robot
 
-        # While the emergency-stop lockout is engaged, only ``status`` and
-        # ``resume`` are permitted. Raise so _exec_cmd handles the rejection
+        # While the emergency-stop lockout is engaged, only the actions
+        # ``security.LOCKOUT_ADMITTED_ACTIONS`` names are permitted (the
+        # dashboard reads the same set: answering one of them is not proof
+        # the lockout cleared). Raise so _exec_cmd handles the rejection
         # symmetrically with ValidationError -- emitting type="error" on the
         # response topic and recording an audit entry. The wire response is
         # intentionally generic so a remote caller cannot use it to map the
         # lockout window.
-        # ``stop`` is admitted too: it only ever de-energizes, and a second
-        # e-stop arriving while the lockout is already engaged must still halt
-        # a rollout the first one missed rather than be "rejected".
-        if self._estop_lockout.is_set() and action not in ("status", "resume", "stop", "ping"):
+        if self._estop_lockout.is_set() and action not in _security.LOCKOUT_ADMITTED_ACTIONS:
             raise _security.LockoutError("command rejected")
 
         if action == "resume":
@@ -2543,6 +2737,9 @@ class Mesh(SensorLoopsMixin):
             # is also answered under an e-stop lockout (a locked robot is
             # still a reachable one). :meth:`ping` measures the round trip.
             return {"pong": True, "peer_id": self.peer_id, "t": time.time()}
+
+        if action in WIRE_MOTION_ACTIONS and (refusal := self._wire_motion_refusal(action, cmd)) is not None:
+            return {"error": refusal}
 
         if action == "status":
             if hasattr(r, "get_task_status"):
@@ -2822,6 +3019,10 @@ class Mesh(SensorLoopsMixin):
             return self._dispatch_set_joints(cmd)
         if action == "sim_call":
             return self._dispatch_sim_call(cmd)
+        if action == "call":
+            return self._dispatch_call(cmd)
+        if action == "describe_tool":
+            return self._dispatch_describe_tool()
         if action == "step" and hasattr(r, "step"):
             return dict(r.step(cmd.get("steps", 1)))
         if action == "reset" and hasattr(r, "reset"):
@@ -2864,6 +3065,90 @@ class Mesh(SensorLoopsMixin):
     # ``target_velocity`` is the locomotion goal - WBC / wbc_gait read
     # ``[vx, vy, omega]``, microduck accepts that or ``[vx, vy]``. Every one of
     # those providers is reachable over the mesh: the policy-provider
+    def _is_simulation_host(self) -> bool:
+        """Whether the registered robot is a simulation (a world or a robot inside one).
+
+        The same two ducks the dispatch arms route on: a child ``SimRobot``
+        peer carries ``_sim_parent``, a ``Simulation`` peer answers
+        ``run_policy`` / ``_world`` / ``list_robots``. Anything else is metal.
+        """
+        r = self.robot
+        if r is None:
+            return False
+        if getattr(r, "_sim_parent", None) is not None:
+            return True
+        return hasattr(r, "run_policy") and hasattr(r, "_world") and hasattr(r, "list_robots")
+
+    def _wire_motion_refusal(self, action: str, cmd: Mapping[str, Any]) -> str | None:
+        """Operator approval for a wire command that moves REAL hardware, or ``None``.
+
+        The sending ``robot_mesh`` tool asks its own operator before it
+        publishes, and the hardware ``Robot`` agent tool gates ``execute`` /
+        ``start`` in-process. Neither is anything this peer can verify: the
+        envelope's ``sender_id`` is whatever the publisher wrote, and a peer
+        admitted to the mesh needs no agent at all to publish
+        ``{"action": "teleop_receive", "source_peer_id": <itself>}`` and then
+        stream joint targets straight onto the motor bus. So the receiving
+        side runs the one shared decision path
+        (:func:`~strands_robots._command_gate.gate_motion`): a dashboard grant
+        for this exact call is spent, ``STRANDS_ROBOT_COMMAND_ALLOW`` on the
+        robot host pre-approves the verb, ``BYPASS_TOOL_CONSENT=true`` lifts
+        the gate with a WARNING, and otherwise the command is refused with the
+        remedy, because a wire handler has no operator to interrupt. Fail
+        closed: with no approval reachable, a physical robot does not move.
+
+        Simulation peers are never gated (the dashboard's LAN demos spawn
+        sims and drive them from an agent turn); they move no metal.
+
+        Args:
+            action: One of :data:`WIRE_MOTION_ACTIONS`.
+            cmd: The validated command, shown to a grant lookup as the tool
+                input the operator was shown.
+
+        Returns:
+            The refusal sentence, or ``None`` when the command may proceed.
+        """
+        r = self.robot
+        if r is None or self._is_simulation_host():
+            return None
+        tool_name = str(getattr(r, "tool_name_str", None) or self.peer_id)
+        tool_input = {k: v for k, v in cmd.items() if v is not None}
+        if consume_grant(tool_name, tool_input):
+            return None
+        if action == "teleop_receive":
+            what = (
+                f"'teleop_receive' makes the real robot {tool_name!r} follow the input stream of peer "
+                f"{cmd.get('source_peer_id')!r} (device {cmd.get('device_name', 'leader')!r}) until stopped"
+            )
+        else:
+            what = (
+                f"{action!r} drives the real robot {tool_name!r} with {str(cmd.get('instruction', ''))!r} "
+                f"(policy_provider={cmd.get('policy_provider', 'mock')!r})"
+            )
+        refusal = gate_motion(
+            "robot",
+            action,
+            tool_name,
+            f"{what}; a command arriving over the mesh needs operator approval on this robot host.",
+            None,
+            allow_env=WIRE_MOTION_ALLOW_ENV,
+            allow_match=lambda allowed: "*" in allowed or action in allowed,
+        )
+        if refusal is None:
+            return None
+        logger.warning("[safety] %s: refused wire %s: %s", self.peer_id, action, what)
+        self._audit_local(
+            "wire_motion_refused",
+            {
+                "action": action,
+                "robot": tool_name,
+                "source_peer_id": cmd.get("source_peer_id"),
+                "device_name": cmd.get("device_name"),
+                "instruction": cmd.get("instruction"),
+            },
+        )
+        return refusal
+
     def _dispatch_set_joints(self, cmd: dict[str, Any]) -> dict[str, Any]:
         """``set_joints``: write a joint-space pose on a SIMULATION peer.
 
@@ -2903,40 +3188,86 @@ class Mesh(SensorLoopsMixin):
         return dict(result) if isinstance(result, dict) else {"result": result}
 
     def _dispatch_sim_call(self, cmd: dict[str, Any]) -> dict[str, Any]:
-        """``sim_call``: one published action of the simulation tool, on a SIMULATION peer.
+        """``sim_call``: the alias ``call`` keeps for its first callers.
 
-        The peer is resolved the way ``set_joints`` resolves it: a child SimRobot
-        peer (``<sim>__<robot>``) delegates to its parent Simulation with
-        ``robot_name`` bound to itself whenever the action takes one and the
-        caller named none; a Simulation peer is the target itself; a hardware
-        peer refuses with a sentence. ``validate_command`` has already refused
-        the actions and params the wire does not carry, so what reaches the
-        simulation is one of its own published calls, routed through
-        ``__call__`` exactly as an in-process agent's call is: the same alias
-        rewriting, signature validation, lock and refusal wording. The result is
-        the tool's own envelope, made wire-safe by :func:`_wire_safe_result`.
+        ``{"action": "sim_call", "sim_action": X, "params": P}`` is served as
+        ``{"action": "call", "function": X, "params": P}``; ``validate_command``
+        has already refused the denied names with the peer's wording, so the
+        two answer byte for byte alike.
         """
-        r = self.robot
-        parent = getattr(r, "_sim_parent", None)
-        target: Any
-        bound_robot: str | None = None
-        if parent is not None:
-            target = parent
-            bound_robot = getattr(r, "name", None)
-        elif callable(getattr(r, "__call__", None)) and hasattr(r, "_world") and hasattr(r, "list_robots"):
-            target = r
-        else:
+        target, _ = _wire_tool_target(self.robot)
+        if target is None:
             return {
                 "error": (
                     "sim_call is a simulation-only action; a real robot is driven through "
                     "execute/start, which ask the operator first"
                 )
             }
-        sim_action = str(cmd.get("sim_action") or "")
+        return self._dispatch_call({"action": "call", "function": cmd.get("sim_action"), "params": cmd.get("params")})
+
+    def _dispatch_describe_tool(self) -> dict[str, Any]:
+        """``describe_tool``: the spec this peer advertises, with its hash.
+
+        A peer with no wire tool surface (real hardware, a policy-only robot)
+        answers ``spec: null`` and says so; its verbs are the mesh actions.
+        """
+        r = self.robot
+        tool_name = getattr(r, "tool_name_str", None)
+        spec = _wire_tool_spec_of(r)
+        if spec is None:
+            return {
+                "tool_name": tool_name,
+                "tool_spec_hash": None,
+                "spec": None,
+                "note": "this peer advertises no tool surface over the mesh; its verbs are the mesh actions",
+            }
+        return {"tool_name": tool_name, "tool_spec_hash": _wire_tool_spec_hash(spec), "spec": spec}
+
+    def _dispatch_call(self, cmd: dict[str, Any]) -> dict[str, Any]:
+        """``call``: one function of the tool this peer ADVERTISES.
+
+        The wire has bounded the shape (identifier names, 64 KiB params); the
+        peer decides the rest against its own :meth:`wire_tool_spec`: a
+        function outside the served set is refused with the spec's reason
+        (``denied``) or as unknown, a param the function does not list is
+        refused by name. A child SimRobot peer serves its parent's tool with
+        ``robot_name`` bound to itself when the function takes one and the
+        caller named none; a peer with no tool surface (real hardware) refuses,
+        real motion stays on ``execute`` / ``start`` with the operator gate.
+        The call then goes through the tool's own ``__call__``: the same alias
+        rewriting, signature validation, lock and refusal wording an in-process
+        agent gets. The result is made wire-safe by :func:`_wire_safe_result`.
+        """
+        target, bound_robot = _wire_tool_target(self.robot)
+        if target is None:
+            return {
+                "error": (
+                    "call is served by peers that advertise a tool surface (a simulation); a real robot "
+                    "is driven through execute/start, which ask the operator first"
+                )
+            }
+        spec = _wire_tool_spec_of(self.robot) or {}
+        functions = spec.get("functions") or {}
+        function = str(cmd.get("function") or "")
         params: dict[str, Any] = dict(cmd.get("params") or {})
-        if bound_robot and "robot_name" not in params and _sim_action_takes(target, sim_action, "robot_name"):
+        if function not in functions:
+            reason = (spec.get("denied") or {}).get(function)
+            if reason:
+                return {"error": f"{function!r} is not served over the mesh: {reason}."}
+            return {"error": f"{function!r} is not a function this peer advertises; ask describe_tool for the list"}
+        accepted = functions[function].get("params") or {}
+        unknown = sorted(key for key in params if key not in accepted)
+        if unknown:
+            names = ", ".join(repr(key) for key in unknown)
+            return {
+                "error": (
+                    f"{function!r} on this peer does not take {names}; its params are "
+                    f"{', '.join(sorted(accepted)) or 'none'}"
+                )
+            }
+        if bound_robot and "robot_name" not in params and "robot_name" in accepted:
             params["robot_name"] = bound_robot
-        result = target(action=sim_action, **params)
+        result = target(action=function, **params)
         return _wire_safe_result(result)
 
     # allowlist is derived from the registry (see
@@ -3080,12 +3411,15 @@ class Mesh(SensorLoopsMixin):
         """Inbound response handler.
 
         Identity, fleet membership, and topic ACL have already been
-        enforced at the Zenoh transport. We additionally apply a
+        enforced at the Zenoh transport. We additionally bind the reply to
+        its wire source: the sample's TLS-bound zid must be the session the
+        claimed ``responder_id`` announced itself from on the presence topic
+        (or both must be absent, on transports that carry no zid). Then a
         point-to-point scope check: a response is accepted only if its
         ``responder_id`` matches the expected target recorded in
         :attr:`_expected_responders` by :meth:`send`. Broadcast turns
-        use the ``BROADCAST_RESPONDER`` sentinel and accept any
-        responder_id -- that is the broadcast contract.
+        use the ``BROADCAST_RESPONDER`` sentinel and accept any verified
+        responder, once per session -- that is the broadcast contract.
 
         Without the responder-id check, an ACL-authorised peer that
         observes a turn_id (a fellow operator) could publish a response
@@ -3127,6 +3461,48 @@ class Mesh(SensorLoopsMixin):
                 {"turn_prefix": turn[:12], "responder_id": responder, "topic_responder": topic_responder},
             )
             return
+        # The wire source is the identity; ``responder_id`` is the claim. The
+        # same three-state rule ``_decode_bound_safety_envelope`` applies to
+        # the safety envelopes: the sample's TLS-bound zid and the session
+        # this responder announced itself from (``_on_presence``) must both be
+        # present and equal, or both absent (bridge and IoT transports carry
+        # no wire zid and bind the topic segment instead). A reply carrying a
+        # wire zid in the name of a peer we never saw announce itself, a
+        # reply from a different session than the one bound to that name,
+        # and a reply with its SourceInfo stripped for a peer we know by
+        # session are all refused, on broadcast turns too: a broadcast
+        # accepts answers from MANY peers, not from an unidentified one.
+        wire_zid = _extract_sample_source_zid(sample)
+        bound_zid = self.peer_wire_zid(responder) if isinstance(responder, str) else None
+        if wire_zid != bound_zid:
+            if bound_zid is None:
+                why = "wire source is a session that never announced this peer id"
+            elif wire_zid is None:
+                why = "wire source absent for a peer known by session (SourceInfo stripped)"
+            else:
+                why = "wire source is not the session bound to this peer id"
+            logger.warning(
+                "[mesh] %s: dropped response on turn %s -- responder_id=%r refused: %s (possible response forgery)",
+                self.peer_id,
+                turn[:12],
+                responder,
+                why,
+            )
+            self._audit_local(
+                "response_hijack_rejected",
+                {
+                    "turn_prefix": turn[:12],
+                    "responder_id": responder,
+                    "wire_zid": wire_zid,
+                    "bound_zid": bound_zid,
+                    "reason": why,
+                },
+            )
+            return
+        # One answer per verified identity per turn. The wire zid is the key
+        # when the transport carries one; the (topic-bound) responder id
+        # otherwise.
+        source_key = f"zid:{wire_zid}" if wire_zid is not None else f"id:{responder}"
         with self._rpc_lock:
             event = self._pending.get(turn)
             if event is None:
@@ -3158,7 +3534,26 @@ class Mesh(SensorLoopsMixin):
                     },
                 )
                 return
-            self._responses.setdefault(turn, []).append(data)
+            answered = self._turn_sources.setdefault(turn, set())
+            if source_key in answered:
+                duplicate = True
+            else:
+                duplicate = False
+                answered.add(source_key)
+                self._responses.setdefault(turn, []).append(data)
+        if duplicate:
+            logger.warning(
+                "[mesh] %s: dropped duplicate response on turn %s from %s (responder_id=%r)",
+                self.peer_id,
+                turn[:12],
+                source_key,
+                responder,
+            )
+            self._audit_local(
+                "response_duplicate_rejected",
+                {"turn_prefix": turn[:12], "responder_id": responder, "source": source_key},
+            )
+            return
         event.set()
 
     # Safety -- inbound estop / resume
@@ -3222,6 +3617,22 @@ class Mesh(SensorLoopsMixin):
         except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
             return None
         if not isinstance(data, dict):
+            return None
+        # A retained MQTT delivery is a stored message the broker hands to a
+        # new subscriber, not an operator acting now; the payload's own ``t``
+        # cannot tell the two apart, so the transport's flag decides. Only a
+        # real ``True`` counts (a Zenoh sample has no such attribute, a unit
+        # fixture's MagicMock attribute is truthy but is not this flag).
+        if getattr(sample, "retain", False) is True:
+            logger.warning(
+                f"[safety] %s: refusing remote {kind} -- delivered as a RETAINED message at subscribe time, "
+                "not a live publish (broker replay of a stored envelope)",
+                self.peer_id,
+            )
+            self._audit_local(
+                "safety_retained_delivery_rejected",
+                {"kind": kind, "issuer": data.get("peer_id")},
+            )
             return None
         wire_zid = _extract_sample_source_zid(sample)
         body_zid = data.get("source_zid")
@@ -3472,13 +3883,19 @@ class Mesh(SensorLoopsMixin):
         if bound is None:
             return
         data, wire_zid = bound
-        local_code = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
-        if not local_code:
+        local_code = override_code()
+        if local_code is None:
             logger.warning(
                 "[safety] %s: refusing remote resume -- STRANDS_MESH_OVERRIDE_CODE "
-                "not configured locally (operator code missing)",
+                "not configured locally (operator code missing or too short)",
                 self.peer_id,
             )
+            return
+        # The same brute-force throttle the RPC ``resume`` action honours: this
+        # is the handler that actually clears a lockout, and it had none, so the
+        # wire was a free online oracle for the code.
+        if self._resume_throttled():
+            self._emit_resume_denied("resume rate-limited (brute-force throttle)", "warning")
             return
         proof_nonce = data.get("proof_nonce")
         provided_proof = data.get("override_proof")
@@ -3515,7 +3932,7 @@ class Mesh(SensorLoopsMixin):
             separators=(",", ":"),
         ).encode()
         expected_proof = hmac.new(
-            local_code.encode(),
+            resume_proof_key(local_code),
             mac_input,
             "sha256",
         ).hexdigest()
@@ -3527,6 +3944,8 @@ class Mesh(SensorLoopsMixin):
                 self.peer_id,
                 "+source_zid" if wire_zid is not None else "",
             )
+            self._note_resume_failure()
+            self._emit_resume_denied("override_proof mismatch on strands/safety/resume", "warning")
             return
         # Replay cache keyed per TLS session when known, else per body peer_id;
         # the tagged tuple keeps the two namespaces from colliding.
@@ -3686,6 +4105,11 @@ class Mesh(SensorLoopsMixin):
                 "status": "error",
                 "error": "send: target may not contain NUL or equal the BROADCAST_RESPONDER sentinel",
             }
+        # The target is interpolated into ``strands/{target}/cmd``; a wildcard
+        # or a slash there widens one robot's command to the fleet (f012).
+        if (why := _routable_target_error(target)) is not None:
+            logger.warning("[mesh] %s: send refused: %s", self.peer_id, why)
+            return {"status": "error", "error": f"send: {why}"}
         # client-side validate before publishing. Prior to this fix,
         # programmatic callers (tests, third-party integrations, anything
         # that imports Mesh directly) skipped validate_command -- only the
@@ -3747,6 +4171,7 @@ class Mesh(SensorLoopsMixin):
                 self._pending.pop(turn, None)
                 self._responses.pop(turn, None)
                 self._expected_responders.pop(turn, None)
+                self._turn_sources.pop(turn, None)
             return {"status": "error", "error": size_problem}
         # One deadline for the whole call: the direct delivery (its
         # confirmation window and socket timeouts) and the wait for the
@@ -3757,11 +4182,11 @@ class Mesh(SensorLoopsMixin):
         deadline = time.monotonic() + timeout
         delivery: dict[str, Any] | None = None
         try:
-            self._pace_cmd_publish()
             # Point-to-point first when the transport can address the target
             # (AWS IoT Core Direct Messaging); an offline target answers here
             # in one round trip instead of after the whole budget. Every other
             # outcome keeps the publish the Zenoh path has always done.
+            self._pace_cmd_publish()
             direct, delivery = self._send_cmd_direct(target, turn, msg, timeout)
             if direct == "offline":
                 return {"status": "error", "error": "peer offline (iot 404)", "peer": target, "delivery": delivery}
@@ -3775,6 +4200,7 @@ class Mesh(SensorLoopsMixin):
                 resps = self._responses.pop(turn, [])
                 self._pending.pop(turn, None)
                 self._expected_responders.pop(turn, None)
+                self._turn_sources.pop(turn, None)
         out = resps[0] if resps else {"status": "timeout"}
         if delivery is not None:
             # Only when a direct transport was in play: a Zenoh envelope is
@@ -3911,8 +4337,9 @@ class Mesh(SensorLoopsMixin):
 
         Phase-4 / D1: turn_id is a full 128-bit uuid4 (no truncation).
         Broadcast turns accept responses from any responder by design,
-        so the responder_id check is bypassed (sentinel
-        ``BROADCAST_RESPONDER``).
+        so the expected-target check is bypassed (sentinel
+        ``BROADCAST_RESPONDER``); the wire-source binding and the
+        one-reply-per-session rule in :meth:`_on_response` still apply.
         """
         if not self._running:
             action = cmd.get("action") if isinstance(cmd, dict) else cmd
@@ -3962,6 +4389,7 @@ class Mesh(SensorLoopsMixin):
                 self._pending.pop(turn, None)
                 self._responses.pop(turn, None)
                 self._expected_responders.pop(turn, None)
+                self._turn_sources.pop(turn, None)
             return []
         try:
             self._pace_cmd_publish()
@@ -3979,6 +4407,7 @@ class Mesh(SensorLoopsMixin):
                 resps = self._responses.pop(turn, [])
                 self._pending.pop(turn, None)
                 self._expected_responders.pop(turn, None)
+                self._turn_sources.pop(turn, None)
         return resps
 
     def tell(self, target: str, instruction: str, **kw: Any) -> dict[str, Any]:
@@ -4212,6 +4641,26 @@ class Mesh(SensorLoopsMixin):
                 len(responses),
                 sorted(not_stopped),
             )
+        # A peer on the presence roster that produced no verified answer is
+        # not a stopped peer; it is an unknown. ``_on_response`` only records
+        # replies whose wire source matches the session the peer announced
+        # itself from, so a forged success in a silent robot's name never
+        # reaches this list, and the silence is reported by name rather than
+        # left as a gap between ``responses_received`` and the peer count.
+        answered = {str(r.get("responder_id")) for r in responses if isinstance(r, dict)}
+        silent = sorted(
+            str(p.get("peer_id"))
+            for p in self.peers
+            if p.get("reachable", True) and str(p.get("peer_id")) not in answered
+        )
+        if silent:
+            logger.critical(
+                "[safety] %s: EMERGENCY STOP - %d peer(s) on the roster gave no acknowledgement: %s. "
+                "Treat them as still moving; use a hardware cutoff.",
+                self.peer_id,
+                len(silent),
+                silent,
+            )
         # Wire-level publisher attribution: bind the local TLS-bound zid
         # into both the body (so receivers can verify the body matches
         # ``sample.source_info.source_id.zid``) and the publish path (via
@@ -4225,6 +4674,7 @@ class Mesh(SensorLoopsMixin):
             "t": self._last_estop_ts,
             "responses_received": len(responses),
             "peers_not_stopped": sorted(not_stopped),
+            "peers_silent": silent,
             "lockout_engaged": True,
         }
         if local_zid is not None:
@@ -4237,11 +4687,53 @@ class Mesh(SensorLoopsMixin):
                 "sender_id": self.peer_id,
                 "responses_received": len(responses),
                 "peers_not_stopped": sorted(not_stopped),
+                "peers_silent": silent,
                 "lockout_engaged": True,
             },
         )
         logger.critical("[safety] %s: EMERGENCY STOP engaged -- lockout active", self.peer_id)
         return responses
+
+    def _ensure_resume_throttle_state(self) -> None:
+        # Created lazily for Mesh objects built without __init__ (tests).
+        if not hasattr(self, "_resume_bruteforce_lock"):
+            self._resume_bruteforce_lock = threading.Lock()
+            self._resume_fail_count = 0
+            self._resume_locked_until_mono = 0.0
+
+    def _resume_throttled(self) -> bool:
+        """Whether the resume brute-force cooldown is in force right now.
+
+        One counter for both resume paths, the RPC ``resume`` action and the
+        ``strands/safety/resume`` broadcast handler: a prober who is refused on
+        one must not get fresh guesses on the other.
+        """
+        self._ensure_resume_throttle_state()
+        with self._resume_bruteforce_lock:
+            return time.monotonic() < self._resume_locked_until_mono
+
+    def _note_resume_failure(self) -> None:
+        """Count one failed code or proof; engage the cooldown at the threshold."""
+        self._ensure_resume_throttle_state()
+        with self._resume_bruteforce_lock:
+            self._resume_fail_count += 1
+            if self._resume_fail_count >= _resume_max_fails():
+                self._resume_locked_until_mono = time.monotonic() + _resume_backoff_s()
+                self._resume_fail_count = 0
+                logger.warning(
+                    "[safety] %s: resume brute-force threshold hit -- throttling resume for %.0fs",
+                    self.peer_id,
+                    _resume_backoff_s(),
+                )
+
+    def _emit_resume_denied(self, reason_text: str, severity: str) -> None:
+        """Structured reason to the local audit log, generic reason on the wire."""
+        self._audit_local("resume_denied", {"sender_id": self.peer_id, "reason": reason_text, "severity": severity})
+        self._audit(
+            event_type="resume_denied",
+            severity=severity,
+            payload={"sender_id": self.peer_id, "reason_code": "denied"},
+        )
 
     def _resume_lockout(self, override_code: str) -> dict[str, Any]:
         """Clear the emergency-stop lockout if *override_code* matches.
@@ -4260,7 +4752,9 @@ class Mesh(SensorLoopsMixin):
         ``lockout_elapsed_s`` is measured on the monotonic clock.
         """
         _generic_error = {"status": "error", "error": "resume rejected"}
-        expected = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
+        # The parameter shadows the module-level reader; ``_configured_override_code``
+        # is that reader under a name the signature cannot hide.
+        expected = _configured_override_code() or ""
         provided = (override_code or "").strip()
         lockout_engaged = self._estop_lockout.is_set()
         # Fixed-length digests on both sides; an unconfigured code still runs the
@@ -4271,24 +4765,8 @@ class Mesh(SensorLoopsMixin):
         else:
             _EXPECTED_HASH = hashlib.sha256(b"\x00" * 32).digest()
         compare_ok = hmac.compare_digest(_EXPECTED_HASH, _PROVIDED_HASH)
-        # Brute-force throttle state is created lazily for Mesh objects built
-        # without __init__ (tests).
-        if not hasattr(self, "_resume_bruteforce_lock"):
-            self._resume_bruteforce_lock = threading.Lock()
-            self._resume_fail_count = 0
-            self._resume_locked_until_mono = 0.0
-        _now_mono_bf = time.monotonic()
-        with self._resume_bruteforce_lock:
-            _throttled = _now_mono_bf < self._resume_locked_until_mono
-
-        # Structured reason locally, generic reason on the wire.
-        def _emit_resume_denied(reason_text: str, severity: str) -> None:
-            self._audit_local("resume_denied", {"sender_id": self.peer_id, "reason": reason_text, "severity": severity})
-            self._audit(
-                event_type="resume_denied",
-                severity=severity,
-                payload={"sender_id": self.peer_id, "reason_code": "denied"},
-            )
+        _throttled = self._resume_throttled()
+        _emit_resume_denied = self._emit_resume_denied
 
         if _throttled:
             _emit_resume_denied("resume rate-limited (brute-force throttle)", "warning")
@@ -4300,16 +4778,7 @@ class Mesh(SensorLoopsMixin):
             _emit_resume_denied("STRANDS_MESH_OVERRIDE_CODE not configured", "warning")
             return _generic_error
         if not compare_ok:
-            with self._resume_bruteforce_lock:
-                self._resume_fail_count += 1
-                if self._resume_fail_count >= _resume_max_fails():
-                    self._resume_locked_until_mono = time.monotonic() + _resume_backoff_s()
-                    self._resume_fail_count = 0
-                    logger.warning(
-                        "[safety] %s: resume brute-force threshold hit -- throttling resume for %.0fs",
-                        self.peer_id,
-                        _resume_backoff_s(),
-                    )
+            self._note_resume_failure()
             _emit_resume_denied("bad override code", "warning")
             return _generic_error
         # Success: clear, reset the throttle, and publish the proof-bearing envelope.
@@ -4340,7 +4809,7 @@ class Mesh(SensorLoopsMixin):
             separators=(",", ":"),
         ).encode()
         override_proof = hmac.new(
-            expected.encode(),
+            resume_proof_key(expected),
             mac_input,
             "sha256",
         ).hexdigest()

@@ -496,7 +496,7 @@ class Console:
             tools.extend(proxies)
             self._hook = MotionInterruptHook(
                 peers_snapshot=lambda: bridge.peers,
-                proxy_motion=motion_actions_for(proxies),
+                proxy_motion=motion_actions_for(proxies, peers),
                 proxy_targets={t.tool_name: t.peer_id for t in proxies},
             )
             hooks.append(self._hook)
@@ -539,7 +539,7 @@ class Console:
             registry.register_tool(proxy)
             names.append(proxy.tool_name)
         if self._hook is not None:
-            self._hook.adopt(motion_actions_for(proxies), {t.tool_name: t.peer_id for t in proxies})
+            self._hook.adopt(motion_actions_for(proxies, peers), {t.tool_name: t.peer_id for t in proxies})
         self._signature = self._signature | fleet_signature(peers)
         logger.info("console: adopted %d peer tool(s) mid-turn: %s", len(names), ", ".join(names))
         return names

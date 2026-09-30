@@ -5,7 +5,7 @@
 :mod:`~strands_robots.policies.base.Policy` documents its runtime contract, and
 :mod:`tests.policies.test_builtin_policy_docstrings` already pins that guard for
 the dependency-free built-ins (``MockPolicy`` / ``CompositePolicy`` /
-``PersistentPolicy``). The backend providers - GR00T, cuRobo, cosmos3, the two
+``PersistentPolicy``). The backend providers - cuRobo, cosmos3, the two
 lerobot providers, Kimodo, MoveIt2 and the two WBC
 controllers - each override public members such as ``provider_name``,
 ``get_actions``, ``requires_images`` and ``config``. An agent picking a
@@ -15,7 +15,7 @@ leaning on the inherited one (a ``provider_name`` override still has to state
 the registry key it maps to).
 
 This guard walks the provider policy modules by AST (no import), so it never
-needs any optional policy backend (``[groot]`` / ``[cosmos3]`` /
+needs any optional policy backend (``[lerobot]`` / ``[cosmos3]`` /
 ``[moveit2]`` / ``[wbc]`` ...) installed. It descends one level into
 module-level ``if`` blocks because a provider class may be defined under an
 optional-dependency guard. The pinned provider set is cross-checked against the
@@ -38,7 +38,6 @@ _REGISTRY = Path(policies_pkg.__file__).parents[1] / "registry" / "policies.json
 # Pinned so a rename or a dropped provider trips the completeness guard below
 # instead of silently narrowing the docstring scan.
 _PROVIDER_POLICIES = {
-    "groot/policy.py": "Gr00tPolicy",
     "lerobot_local/policy.py": "LerobotLocalPolicy",
     "cosmos3/policy.py": "Cosmos3Policy",
     "moveit2/policy.py": "MoveIt2Policy",
@@ -48,6 +47,7 @@ _PROVIDER_POLICIES = {
     "kimodo/policy.py": "KimodoPolicy",
     "protomotions/policy.py": "ProtoMotionsPolicy",
     "microduck/policy.py": "MicroduckPolicy",
+    "flux3_action/policy.py": "Flux3ActionPolicy",
     "rl.py": "RLCheckpointPolicy",
 }
 

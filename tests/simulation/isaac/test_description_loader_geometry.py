@@ -529,7 +529,7 @@ class TestMjcfFromToLinkExtent:
     published as a 0.10 m stub - the same loss ``_geom_aabb`` consults
     ``_parse_fromto`` first to avoid on the scene-object side of this module.
 
-    ``load_mjcf`` is exported and documented (``docs/reference/simulation/isaac.md``) and
+    ``load_mjcf`` is exported and documented (``docs/learn/simulation/isaac.md``) and
     the ``ProceduralRobot`` it returns *is* its product, so a link extent it
     reports wrongly is the value a caller builds an articulation from.
     """

@@ -56,7 +56,7 @@ def _sample(payload: object) -> MagicMock:
 @pytest.fixture
 def engaged_mesh(monkeypatch: pytest.MonkeyPatch) -> Iterator[Mesh]:
     """A mesh with the e-stop lockout engaged, ready to (refuse to) resume."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "operator-secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "operator-secret-1234567890")
     m = _make_mesh()
     m._estop_lockout.set()
     assert m._estop_lockout.is_set()
