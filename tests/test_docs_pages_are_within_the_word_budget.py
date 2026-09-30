@@ -67,7 +67,9 @@ _BUDGET: int = _hook().LIMIT
 #: learn/mesh, a variable row and a sentence on the pages that point at it, and the `iot`
 #: verbs on the command line page).
 #: Raised by 551 to 50,059 for the flux3_action provider page (one page per provider).
-_SITE_BUDGET = 50_059
+#: Raised by 5 to 50,064 when the Isaac install page named the lerobot / Isaac Sim numpy
+#: conflict and the combination that works (#4280 landed without banking it).
+_SITE_BUDGET = 50_064
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
