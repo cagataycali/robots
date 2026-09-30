@@ -15,7 +15,11 @@ description: "Dynamixel 2R Educational Arm (2-DOF)"
 from strands_robots import Robot
 
 robot = Robot("dynamixel_2r")
+print(robot.robot_joint_names("dynamixel_2r"))
+robot.cleanup()
 ```
+
+Add a cube and a camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ## Policies verified on this robot
 

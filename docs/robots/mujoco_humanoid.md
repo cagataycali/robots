@@ -15,7 +15,11 @@ description: "MuJoCo Humanoid (21-DOF reference model)"
 from strands_robots import Robot
 
 robot = Robot("mujoco_humanoid")
+print(robot.robot_joint_names("mujoco_humanoid"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 Aliases: `humanoid`, `mjc_humanoid`.
 

@@ -15,7 +15,11 @@ description: "Boston Dynamics Spot (with arm)"
 from strands_robots import Robot
 
 robot = Robot("spot")
+print(robot.robot_joint_names("spot"))
+robot.cleanup()
 ```
+
+Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).
 
 Aliases: `boston_dynamics_spot`.
 

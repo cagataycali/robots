@@ -15,7 +15,11 @@ description: "AgileX Piper (6-DOF + gripper)"
 from strands_robots import Robot
 
 robot = Robot("piper")
+print(robot.robot_joint_names("piper"))
+robot.cleanup()
 ```
+
+Add a cube and a camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 Aliases: `agilex_piper`.
 

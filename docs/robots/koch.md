@@ -15,7 +15,11 @@ description: "Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel)"
 from strands_robots import Robot
 
 robot = Robot("koch")
+print(robot.robot_joint_names("koch"))
+robot.cleanup()
 ```
+
+Add a cube and a camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ```python title="sketch"
 robot = Robot("koch", mode="real", port="/dev/ttyACM0")  # lerobot koch_follower

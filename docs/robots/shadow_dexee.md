@@ -15,7 +15,11 @@ description: "Shadow DexEE Dexterous End-Effector (12-DOF)"
 from strands_robots import Robot
 
 robot = Robot("shadow_dexee")
+print(robot.robot_joint_names("shadow_dexee"))
+robot.cleanup()
 ```
+
+`robot_joint_names` lists the finger joints a policy drives; set them by name with `set_joint_positions` or from a [policy](../learn/policies/index.md).
 
 ## Policies verified on this robot
 

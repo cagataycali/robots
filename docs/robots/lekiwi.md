@@ -15,7 +15,11 @@ description: "LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuat
 from strands_robots import Robot
 
 robot = Robot("lekiwi")
+print(robot.robot_joint_names("lekiwi"))
+robot.cleanup()
 ```
+
+Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).
 
 ```python title="sketch"
 robot = Robot("lekiwi", mode="real", port="/dev/ttyACM0")  # lerobot lekiwi

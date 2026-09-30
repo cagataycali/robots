@@ -15,7 +15,11 @@ description: "Franka Research 3 (7-DOF + gripper)"
 from strands_robots import Robot
 
 robot = Robot("fr3")
+print(robot.robot_joint_names("fr3"))
+robot.cleanup()
 ```
+
+Add a cube and a camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ```python title="sketch"
 robot = Robot("fr3", mode="real", driver="strands", port="172.16.0.2")  # FrankaDriver
