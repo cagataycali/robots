@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import agent_console, routes_sim, sim_session  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
+from tests._dashboard_bootstrap import bootstrap_headers, configure_bootstrap  # noqa: E402
 
 #: The dashboard's own page at the TestClient host: a browser always sends Origin on a socket handshake (f022).
 OWN_PAGE = {"origin": "http://testserver"}
@@ -299,6 +300,7 @@ class ScriptedConsole:
 @pytest.fixture
 def app(monkeypatch, tmp_path):
     monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
+    configure_bootstrap(monkeypatch)
     monkeypatch.setenv("DASHBOARD_SETTINGS_FILE", str(tmp_path / "settings.json"))
     monkeypatch.setattr(sim_session, "_default_factory", FakeEngine)
     a = create_app()
@@ -308,7 +310,7 @@ def app(monkeypatch, tmp_path):
 
 
 def test_agent_info(app):
-    with TestClient(app, headers=OWN_PAGE) as c:
+    with TestClient(app, headers={**OWN_PAGE, **bootstrap_headers()}) as c:
         info = c.get("/api/agent").json()
     assert info["asks_first"] == ["sim_set_joints"] and info["interrupt"] == "sim_motion"
     assert info["model"] == agent_console.model_id()
@@ -323,7 +325,7 @@ def test_the_console_names_a_model_the_installed_sdk_knows(app, monkeypatch, con
     if configured is not None:
         monkeypatch.setenv(agent_console.MODEL_ENV, configured)
     expected = configured or DEFAULT_BEDROCK_MODEL_ID
-    with TestClient(app, headers=OWN_PAGE) as c:
+    with TestClient(app, headers={**OWN_PAGE, **bootstrap_headers()}) as c:
         assert c.get("/api/agent").json()["model"] == expected
     assert agent_console.default_model().config["model_id"] == expected
 
@@ -339,7 +341,7 @@ def test_ws_turn_interrupt_resume(app):
         ]
     )
     app.state.console_factory = lambda: console
-    with TestClient(app, headers=OWN_PAGE) as c, c.websocket_connect("/ws/agent") as ws:
+    with TestClient(app, headers={**OWN_PAGE, **bootstrap_headers()}) as c, c.websocket_connect("/ws/agent") as ws:
         ws.send_json({"type": "say", "text": "raise joint 2"})
         assert ws.receive_json()["type"] == "text"
         it = ws.receive_json()
@@ -355,7 +357,7 @@ def test_ws_turn_interrupt_resume(app):
 
 def test_ws_rejects_bad_frames_and_long_prompts(app):
     app.state.console_factory = lambda: ScriptedConsole([])
-    with TestClient(app, headers=OWN_PAGE) as c, c.websocket_connect("/ws/agent") as ws:
+    with TestClient(app, headers={**OWN_PAGE, **bootstrap_headers()}) as c, c.websocket_connect("/ws/agent") as ws:
         ws.send_json({"type": "dance"})
         assert "say|resume" in ws.receive_json()["message"]
         ws.send_json({"type": "say", "text": "   "})
@@ -369,7 +371,7 @@ def test_ws_without_an_agent_closes_with_a_reason(app):
         raise RuntimeError("no credentials")
 
     app.state.console_factory = boom
-    with TestClient(app, headers=OWN_PAGE) as c, c.websocket_connect("/ws/agent") as ws:
+    with TestClient(app, headers={**OWN_PAGE, **bootstrap_headers()}) as c, c.websocket_connect("/ws/agent") as ws:
         m = ws.receive_json()
         assert m["type"] == "error" and "no credentials" in m["message"]
 
@@ -382,7 +384,7 @@ def test_ws_stranger_is_closed(app, monkeypatch):
     # Accepted, then closed with 4401: that order is what carries the code to
     # the page, which shows the login screen on it.
     with (
-        TestClient(app, headers=OWN_PAGE) as c,
+        TestClient(app, headers={**OWN_PAGE, **bootstrap_headers()}) as c,
         c.websocket_connect("/ws/agent", headers={"x-forwarded-for": "10.0.0.9"}) as ws,
         pytest.raises(WebSocketDisconnect) as exc,
     ):

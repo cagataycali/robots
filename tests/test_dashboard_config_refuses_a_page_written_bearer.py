@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import config_api, settings  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
+from tests._dashboard_bootstrap import bootstrap_headers, configure_bootstrap  # noqa: E402
 
 PLANTED = "planted-by-a-visitor"
 
@@ -39,6 +40,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.delenv("DASHBOARD_AUTH_TOKEN", raising=False)
     monkeypatch.setattr(settings, "SETTINGS_FILE", tmp_path / "settings.json")
     monkeypatch.setattr(config_api, "ENV_FILE", tmp_path / ".env")
+    configure_bootstrap(monkeypatch)  # the fresh-install open posture admits the page only with the bootstrap proof
     settings.clear_overrides()
     settings.load(refresh=True)
     yield tmp_path
@@ -48,7 +50,7 @@ def isolated(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def client(isolated):
-    return TestClient(create_app())
+    return TestClient(create_app(), headers=bootstrap_headers())
 
 
 def _stored_token(isolated) -> object:
@@ -115,7 +117,8 @@ def test_post_config_from_the_open_posture_cannot_plant_a_bearer(client, isolate
     assert "security.auth_token" in r.json()["error"]
     assert _stored_token(isolated) is None
     refused = client.get("/api/whoami", headers={"authorization": f"Bearer {PLANTED}"})
-    assert refused.json()["via"] == "loopback", "the planted value admits nobody"
+    # On a fresh install a bearer that is not the bootstrap proof is refused outright (f002).
+    assert refused.status_code == 401 and "via" not in refused.json(), "the planted value admits nobody"
 
 
 def test_post_settings_from_the_open_posture_cannot_plant_a_bearer(client, isolated):

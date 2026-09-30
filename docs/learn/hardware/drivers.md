@@ -1,6 +1,10 @@
+---
+description: How Robot(name, mode="real") picks its driver, the native drivers that ship, and the contract a driver implements.
+---
+
 # Drivers
 
-At the end of this page you know how `Robot(name, mode="real")` picks the code that talks to your robot, which of the {{n:native_drivers}} native drivers ship in the package and over which wire each one speaks, and what a driver must implement so the agent, the mesh and the teleop loop can use it.
+At the end of this page you know how `Robot(name, mode="real")` picks the code that talks to your robot, which of the {{n:native_drivers}} native drivers ship and over which wire, and what a driver must implement for the agent, the mesh and the teleop loop.
 
 ```python
 from strands_robots.drivers import list_native_drivers, list_driver_coverage
@@ -15,11 +19,11 @@ print(list_driver_coverage()["ability_hand"])    # ()
 
 | `driver=` | builds | for |
 |---|---|---|
-| `"lerobot"` (the default, `DEFAULT_DRIVER`) | `strands_robots.hardware_robot.Robot` around a lerobot robot class | any robot whose registry entry has `hardware.lerobot_type` (`so101_follower`, `koch_follower`, `lekiwi`, `bi_so_follower`, ...) |
+| `"lerobot"` (`DEFAULT_DRIVER`, what `auto` falls back to) | `strands_robots.hardware_robot.Robot` around a lerobot robot class | any robot whose registry entry has `hardware.lerobot_type` (`so101_follower`, `koch_follower`, `lekiwi`, `bi_so_follower`, ...) |
 | `"strands"` | the native driver class registered for the robot | the robots in the table below |
-| `"auto"` (default value) | the registry's `hardware.driver` if set, else lerobot | everything |
+| `"auto"` (the default) | the registry's `hardware.driver` if set, else lerobot | everything |
 
-Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"` in the registry, so a bare `Robot("unitree_go2", mode="real", port="192.168.123.161")` builds the native driver. `panda` and `ur5e` have native drivers but no `hardware` block, so they resolve to lerobot until you ask: `Robot("ur5e", mode="real", driver="strands", port="192.168.1.10")`. Asking for `driver="strands"` on a robot with no native driver is refused by name, never served the lerobot path quietly.
+Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"` in the registry, so `Robot("unitree_go2", mode="real", port="192.168.123.161")` builds the native driver. `panda` and `ur5e` have native drivers but no `hardware` block, so they resolve to lerobot until you ask: `Robot("ur5e", mode="real", driver="strands", port="192.168.1.10")`. Asking for `driver="strands"` on a robot with no native driver is refused by name, never served the lerobot path quietly.
 
 `port=` is polymorphic: a serial path for a Feetech bus, an IP for a controller, a `radio://` URI for a Crazyflie, `host:port` for a daemon. Each driver documents what it reads. A keyword the driver does not declare is refused (`Robot(..., prot="/dev/ttyACM0")` does not build an arm that auto-detects a port).
 
@@ -41,7 +45,7 @@ A native driver is anything with these members (`HardwareDriver` is a `runtime_c
 |---|---|
 | `tool_name`, `tool_type`, `tool_spec`, `stream` | the Strands `AgentTool` surface, so `Agent(tools=[robot])` works |
 | `send_action(action, robot_name=None)` | one command, keyed by this driver's joint names; returns a status envelope |
-| `start_task(instruction, ...)` (removed 0.8), `run_policy(policy, ...)`, `get_task_status()`, `stop_task()` | the policy rollout path |
+| `run_policy(policy, ...)`, `get_task_status()`, `stop_task()`; `start_task(instruction, policy_provider=...)` builds the policy in the driver and is removed in 0.8 | the policy rollout path |
 | `get_status()` (async), `stop()` (async) | health and de-energise |
 | `cleanup()` | release the transport |
 
@@ -73,10 +77,10 @@ register_native_driver("koch_follower", MyKochDriver)   # refuses a class missin
 robot = Robot("koch_follower", mode="real", driver="strands", port="/dev/ttyUSB0")
 ```
 
-`register_native_driver` binds a driver class to a registry robot name and checks `missing_driver_members(cls)` first; it refuses double registration unless `overwrite=True`. It does not make a new name known: for a robot the registry has never heard of, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` from `strands_robots.registry` first, then register the driver under the same name. A package outside this repo registers at import time; the shipped table tolerates a caller registering first.
+`register_native_driver` binds a driver class to a registry robot name after `missing_driver_members(cls)` passes; double registration is refused unless `overwrite=True`. It does not make a new name known: for an unregistered robot, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` first, then register the driver under that name. A package outside this repo registers at import time; the shipped table tolerates a caller registering first.
 
 ## Where the gates are
 
-A driver refuses before it writes: the Feetech bus refuses a target outside the servo's travel, the G1 refuses outside its FSM handshake states or under 15 percent battery, the Go2 refuses until sport mode is released, the Booster T1 refuses until upper-body control is enabled, the Robotiq refuses until activation completes, the UR refuses in `PROTECTIVE_STOP`. Those are driver-level facts about the hardware. The operator approval that sits above all of them is the [agents](../agents.md) gate.
+A driver refuses before it writes: the Feetech bus refuses a target outside the servo's travel, the G1 refuses outside its FSM handshake states or under 15 percent battery, the Go2 refuses until sport mode is released, the Booster T1 refuses until upper-body control is enabled, the Robotiq refuses until activation completes, the UR refuses in `PROTECTIVE_STOP`. Those are facts about the hardware; the operator approval above all of them is [the operator gate](../agents.md#the-operator-gate).
 
 Next: [feetech-arms](feetech-arms.md), [teleoperation](teleoperation.md), [cameras](cameras.md), [calibration](calibration.md).

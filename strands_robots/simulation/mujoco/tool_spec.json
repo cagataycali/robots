@@ -225,7 +225,7 @@
     },
     "policy_provider": {
       "type": "string",
-      "description": "Which policy backend runs: one of cosmos3, curobo, flux3_action, holosoma, kimodo, lerobot_local, microduck, mock, moveit2, protomotions, remote, rl, wbc, wbc_gait (default mock - a no-op policy for smoke tests). The model or checkpoint itself is named inside policy_config (lerobot_local: pretrained_name_or_path, with policy_type groot for GR00T N1.7; remote: endpoint). Not an action - an unknown name is refused listing the current registry (strands_robots.policies.list_providers())."
+      "description": "Which policy backend runs: one of cosmos3, curobo, flux3_action, holosoma, kimodo, lerobot_local, microduck, mock, moveit2, protomotions, remote, rl, wbc, wbc_gait, wbc_latent (default mock - a no-op policy for smoke tests). The model or checkpoint itself is named inside policy_config (lerobot_local: pretrained_name_or_path, with policy_type groot for GR00T N1.7; remote: endpoint). Not an action - an unknown name is refused listing the current registry (strands_robots.policies.list_providers())."
     },
     "instruction": {
       "type": "string",

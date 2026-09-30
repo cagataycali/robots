@@ -18,7 +18,7 @@ robot = Robot("unitree_g1")
 ```
 
 ```python title="sketch"
-robot = Robot("unitree_g1", mode="real", driver="lerobot", port="/dev/ttyACM0")  # lerobot unitree_g1
+robot = Robot("unitree_g1", mode="real", driver="lerobot", robot_ip="192.168.123.164")  # lerobot unitree_g1
 robot = Robot("unitree_g1", mode="real", port="192.168.123.164", network_interface="eth0")  # G1Driver
 ```
 
@@ -26,7 +26,7 @@ Aliases: `g1`, `g1_wbc`, `real_g1_relative_eef_relative_joints`, `unitree_g1_ful
 
 ## Hardware
 
-**lerobot.** `Robot("unitree_g1", mode="real")` builds lerobot's `unitree_g1` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict.
+**lerobot.** `Robot("unitree_g1", mode="real")` builds lerobot's `unitree_g1` with `pip install 'strands-robots[lerobot]'`; `robot_ip=` is the robot's address (DDS over Ethernet), `cameras=` the lerobot camera dict.
 
 **`G1Driver`** (the default for this robot) speaks CycloneDDS through `unitree_sdk2py`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#g1driver).
 

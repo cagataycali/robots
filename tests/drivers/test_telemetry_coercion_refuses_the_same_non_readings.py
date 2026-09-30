@@ -47,6 +47,7 @@ from strands_robots.drivers.base import (
     telemetry_int,
     telemetry_int_list,
 )
+from tests._package_ast import parse_file
 
 #: ``(value, float, int, float_list, int_list)`` - the whole rule as one table.
 #: The bytes-like rows and the ``bool`` rows are the drift this replaced; the
@@ -143,7 +144,7 @@ class TestBothDriversReadThroughTheOneOwner:
         retired = {"_to_float", "_to_int", "_to_float_list", "_to_int_list"}
         found: list[str] = []
         for module_path in sorted(Path(base.__file__).parent.rglob("*.py")):
-            tree = ast.parse(module_path.read_text(encoding="utf-8"))
+            tree = parse_file(module_path)
             found += [
                 f"{module_path.name}:{node.name}"
                 for node in ast.walk(tree)
