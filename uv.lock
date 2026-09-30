@@ -4416,6 +4416,7 @@ crazyflie = [
 ]
 dashboard = [
     { name = "fastapi" },
+    { name = "huggingface-hub" },
     { name = "opencv-python-headless" },
     { name = "pyjwt" },
     { name = "pyserial" },
@@ -4595,6 +4596,7 @@ requires-dist = [
     { name = "gymnasium", marker = "extra == 'all'", specifier = ">=0.29,<2.0" },
     { name = "gymnasium", marker = "extra == 'rl'", specifier = ">=0.29,<2.0" },
     { name = "huggingface-hub", marker = "extra == 'all'", specifier = ">=1.5,<2.0.0" },
+    { name = "huggingface-hub", marker = "extra == 'dashboard'", specifier = ">=1.5,<2.0.0" },
     { name = "huggingface-hub", marker = "extra == 'kimodo'", specifier = ">=1.5,<2.0.0" },
     { name = "huggingface-hub", marker = "extra == 'microduck'", specifier = ">=1.5,<2.0.0" },
     { name = "huggingface-hub", marker = "extra == 'protomotions'", specifier = ">=1.5,<2.0.0" },
