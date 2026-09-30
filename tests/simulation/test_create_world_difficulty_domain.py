@@ -42,6 +42,7 @@ import pytest
 from strands_robots.simulation.mujoco.simulation import Simulation
 from strands_robots.simulation.terrain import terrain_elevation, validate_difficulty
 from strands_robots.utils import positive_finite_number_error
+from tests._package_ast import parse_file
 
 # The refusal text every backend must produce for an unusable scale. Matching on
 # it rather than on ``status == "error"`` is what distinguishes a domain refusal
@@ -312,10 +313,7 @@ class TestEveryCreateWorldRoutesThroughTheOneBinding:
         # somewhere else fails the non-vacuity test below rather than passing
         # over an empty tree.
         root = pathlib.Path(inspect.getfile(validate_difficulty)).parent
-        return {
-            path.parent.name: ast.parse(path.read_text(encoding="utf-8"))
-            for path in sorted(root.glob("*/simulation.py"))
-        }
+        return {path.parent.name: parse_file(path) for path in sorted(root.glob("*/simulation.py"))}
 
     @staticmethod
     def _difficulty_create_worlds(module: ast.Module) -> list[ast.FunctionDef]:

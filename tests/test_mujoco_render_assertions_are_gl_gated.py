@@ -57,6 +57,8 @@ from types import MappingProxyType
 
 import pytest
 
+from tests._package_ast import parse_file
+
 #: Envelope-returning render entry points. ``get_frame`` is excluded: it returns
 #: raw arrays rather than a status envelope, so it cannot carry this assertion.
 RENDER_ATTRS = frozenset({"render", "render_depth", "render_all"})
@@ -247,7 +249,7 @@ def survey(root: pathlib.Path) -> tuple[dict[str, list[int]], dict[str, list[int
     gated: dict[str, list[int]] = {}
     other_backend: list[str] = []
     for path in sorted(root.rglob("test_*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         lines = gl_dependent_reads(tree)
         if not lines:
             continue
@@ -599,7 +601,7 @@ class TestTheRuleCoversTheTreesCameraImageReads:
     def test_the_reset_render_readiness_read_is_in_scope_and_gated(self) -> None:
         """Deleting its ``@requires_gl`` left this guard green before the rule read the key."""
         path = _tests_root() / "simulation/mujoco/test_reset_forwards_derived_state.py"
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         assert camera_image_reads(tree), "the camera-image read this module is listed for is gone"
         assert not render_success_assertions(tree), "no render envelope here - the read is the whole dependency"
         _, gated, _ = _tree_survey()
@@ -608,6 +610,6 @@ class TestTheRuleCoversTheTreesCameraImageReads:
     def test_a_proprioception_read_in_the_tree_is_not_in_scope(self) -> None:
         """The measured discriminator, on a real module that reads ``base_pos`` ungated."""
         path = _tests_root() / "simulation/test_base_pose_is_the_robots_own_free_joint.py"
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         assert camera_image_reads(tree) == []
         assert gl_dependent_reads(tree) == []

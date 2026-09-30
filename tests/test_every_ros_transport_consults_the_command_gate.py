@@ -48,6 +48,7 @@ from strands_robots.drivers.ros import RosBridgedRobot, RosbridgeRobot, RtpsRobo
 from strands_robots.tools.use_ros import use_ros
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.tools.use_rtps import use_rtps
+from tests._package_ast import parse_file
 
 # A surface the blocklist has carried since the gate was introduced, and the
 # namespaced spelling a bare entry also has to cover.
@@ -321,7 +322,7 @@ def _commanding_transport_modules() -> dict[str, set[str]]:
     found: dict[str, set[str]] = {}
     for path in sorted(_TOOLS_DIR.glob("*.py")):
         verbs: set[str] = set()
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(parse_file(path)):
             if not (isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) and node.left.id == "action"):
                 continue
             for comparator in node.comparators:

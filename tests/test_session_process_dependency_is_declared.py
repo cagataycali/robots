@@ -66,6 +66,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 import strands_robots
+from tests._package_ast import parse_file
 from tests.uv_lock_closure import lock_closure
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -147,7 +148,7 @@ def _module_scope_imports(source: Path) -> set[str]:
     optional dependency with a fallback takes) or under ``if TYPE_CHECKING:`` is
     not one of these: neither makes the module unimportable when absent.
     """
-    tree = ast.parse(source.read_text(encoding="utf-8"))
+    tree = parse_file(source)
     names: set[str] = set()
     for node in tree.body:
         if isinstance(node, ast.Import):

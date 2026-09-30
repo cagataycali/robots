@@ -78,6 +78,7 @@ from strands_robots.simulation import base as sim_base
 # directly instead of failing the whole file at collection.
 from strands_robots.simulation.isaac import simulation as isaac_sim
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
+from tests._package_ast import parse_file
 from tests.simulation.test_pose_vector_domain_across_backends import _isaac_stub, _newton_stub
 
 #: Keywords no ``add_object`` can use: two misspellings of a real parameter, a
@@ -284,7 +285,7 @@ def _scan_add_object_sinks(root: pathlib.Path) -> tuple[set[tuple[str, str]], li
     for backend in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("_")):
         for path in sorted(backend.rglob("*.py")):
             try:
-                tree = ast.parse(path.read_text(encoding="utf-8"))
+                tree = parse_file(path)
             except SyntaxError:  # pragma: no cover - not expected in-tree
                 continue
             for node in ast.walk(tree):
