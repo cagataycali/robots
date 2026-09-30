@@ -469,15 +469,15 @@ _REGISTRY_ATTRS = frozenset(
 # this exemption cannot outlive them.
 _CREATION_FUNCTIONS = frozenset({"add_robot", "add_object", "add_camera"})
 
-# Two WBC helpers read the robot registry directly, and neither is reachable
-# with a name a caller supplied: both are internal, and the only route into
+# Three WBC helpers read the robot registry directly, and none is reachable
+# with a name a caller supplied: all are internal, and the only route into
 # them is ``MuJoCoSimEngine._maybe_install_action_controller``, which
 # ``run_policy`` / ``eval_policy`` / ``start_policy`` reach only after refusing
 # a ``robot_name`` that is not in ``list_robots()`` - a *list* membership test,
 # total for any type. That refusal is the whole reason this exemption is safe,
 # so :class:`TestTheRefusalTheUpstreamExemptionRestsOn` asserts it rather than
 # leaving the coupling to be remembered.
-_RESOLVED_UPSTREAM = frozenset({"from_sim", "wbc_uses_position_servo"})
+_RESOLVED_UPSTREAM = frozenset({"from_sim", "wbc_uses_position_servo", "wbc_latent_uses_position_servo"})
 
 # A floor on the scan, not an exact count: a ``_scanned_modules`` that stopped
 # resolving would report an empty offender list and read as a clean package.
