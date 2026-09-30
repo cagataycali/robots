@@ -49,6 +49,7 @@ from typing import Any
 import pytest
 
 from strands_robots.simulation.recording import DatasetRecordingMixin
+from tests._recorder_stand_in import RecorderStandIn
 
 #: The concrete engines that inherit the rule. Literal rather than derived from
 #: the package, so a backend dropped from the list fails
@@ -56,34 +57,8 @@ from strands_robots.simulation.recording import DatasetRecordingMixin
 BACKENDS = ("mujoco", "newton", "isaac")
 
 
-class _FakeRecorder:
-    """Stand-in for the LeRobot writer, shaped like the real one at the seam.
-
-    ``save_episode`` is the only call the flush makes, and the real recorder
-    answers it with the episode/frame counts the reset text quotes -- or an
-    error, after which it has closed itself.
-    """
-
-    def __init__(self, pending: int = 0, *, fail: bool = False) -> None:
-        self.episode_frame_count = pending
-        self.frame_count = pending
-        self.episode_count = 0
-        self.save_calls = 0
-        self._fail = fail
-
-    def save_episode(self) -> dict[str, Any]:
-        self.save_calls += 1
-        if self._fail:
-            return {"status": "error", "message": "parquet write refused"}
-        self.episode_count += 1
-        written = self.episode_frame_count
-        self.episode_frame_count = 0
-        return {
-            "status": "success",
-            "episode": self.episode_count,
-            "episode_frames": written,
-            "total_frames": self.frame_count,
-        }
+#: What the shipped recorder answers when its parquet write fails; it closes itself.
+_REFUSED_SAVE = {"status": "error", "message": "parquet write refused"}
 
 
 def _newton_engine() -> tuple[Any, dict[str, Any], list[bool]]:
@@ -144,7 +119,7 @@ def _mujoco_engine() -> tuple[Any, dict[str, Any], list[bool]]:
 ENGINES = {"mujoco": _mujoco_engine, "newton": _newton_engine, "isaac": _isaac_engine}
 
 
-def _recording(state: dict[str, Any], recorder: _FakeRecorder) -> None:
+def _recording(state: dict[str, Any], recorder: RecorderStandIn) -> None:
     """Open a recording session in the engine's own state seam."""
     state["recording"] = True
     state["dataset_recorder"] = recorder
@@ -158,13 +133,13 @@ class TestEveryBackendCutsTheBoundary:
     def test_buffered_frames_are_flushed_as_their_own_episode(self, backend: str) -> None:
         """The frames of the rollout that just ended become one episode."""
         engine, state, _ = ENGINES[backend]()
-        recorder = _FakeRecorder(pending=10)
+        recorder = RecorderStandIn(pending=10)
         _recording(state, recorder)
 
         result = engine.reset()
 
         assert result["status"] == "success", result
-        assert recorder.save_calls == 1, (
+        assert len(recorder.saves) == 1, (
             f"{backend}: reset did not flush the open episode, so the next rollout appends "
             "to the same buffer and both land in episode_index=0"
         )
@@ -174,7 +149,7 @@ class TestEveryBackendCutsTheBoundary:
     def test_the_reset_names_the_episode_it_wrote(self, backend: str) -> None:
         """An operator reading the reset sees the boundary it cut."""
         engine, state, _ = ENGINES[backend]()
-        _recording(state, _FakeRecorder(pending=10))
+        _recording(state, RecorderStandIn(pending=10))
 
         text = engine.reset()["content"][0]["text"]
 
@@ -183,7 +158,7 @@ class TestEveryBackendCutsTheBoundary:
     def test_a_failed_flush_is_reported_and_the_world_is_not_reset(self, backend: str) -> None:
         """A poisoned recorder stops the reset instead of being reset over."""
         engine, state, rebuilt = ENGINES[backend]()
-        _recording(state, _FakeRecorder(pending=10, fail=True))
+        _recording(state, RecorderStandIn(pending=10, save_result=_REFUSED_SAVE))
         # MuJoCo drives a real world, so the clock itself says whether the reset
         # happened; the two stand-ins record the rebuild they were asked for.
         before = engine._world._data.time if backend == "mujoco" else None
@@ -199,26 +174,26 @@ class TestEveryBackendCutsTheBoundary:
     def test_nothing_buffered_leaves_the_reset_as_it_was(self, backend: str) -> None:
         """Control: a reset not preceded by recorded frames is untouched."""
         engine, state, _ = ENGINES[backend]()
-        recorder = _FakeRecorder(pending=0)
+        recorder = RecorderStandIn(pending=0)
         _recording(state, recorder)
 
         result = engine.reset()
 
         assert result["status"] == "success", result
-        assert recorder.save_calls == 0
+        assert len(recorder.saves) == 0
         assert "Episode" not in result["content"][0]["text"]
 
     def test_a_reset_outside_a_recording_never_asks_the_recorder(self, backend: str) -> None:
         """Control: the boundary belongs to a recording, not to every reset."""
         engine, state, _ = ENGINES[backend]()
-        recorder = _FakeRecorder(pending=10)
+        recorder = RecorderStandIn(pending=10)
         state["recording"] = False
         state["dataset_recorder"] = recorder
 
         result = engine.reset()
 
         assert result["status"] == "success", result
-        assert recorder.save_calls == 0
+        assert len(recorder.saves) == 0
 
 
 class TestTheRuleHasOneOwner:
@@ -288,13 +263,13 @@ class TestIsaacRefusesAResetItCannotPerform:
     def test_a_refused_reset_leaves_the_recording_untouched(self) -> None:
         """Refused ahead of every side effect: no flush, and no discard either."""
         engine, state, _ = _isaac_engine()
-        recorder = _FakeRecorder(pending=10)
+        recorder = RecorderStandIn(pending=10)
         _recording(state, recorder)
 
         result = engine.reset(env_ids=[0])
 
         assert result["status"] == "error", result
-        assert recorder.save_calls == 0
+        assert len(recorder.saves) == 0
         assert recorder.episode_frame_count == 10
 
     def test_an_empty_selection_is_refused_too(self) -> None:
@@ -308,10 +283,10 @@ class TestIsaacRefusesAResetItCannotPerform:
     def test_the_whole_world_reset_is_still_a_boundary(self) -> None:
         """The control: removing the branch must not cost the flush."""
         engine, state, _ = _isaac_engine()
-        recorder = _FakeRecorder(pending=10)
+        recorder = RecorderStandIn(pending=10)
         _recording(state, recorder)
 
         result = engine.reset()
 
         assert result["status"] == "success", result
-        assert recorder.save_calls == 1
+        assert len(recorder.saves) == 1

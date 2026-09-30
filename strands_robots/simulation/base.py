@@ -837,6 +837,28 @@ def _bundled_benchmark_roster() -> str:
     return ", ".join(f"{name} ({specs[name]['default_robot']})" for name in sorted(specs))
 
 
+#: Capability -> the ``ManipulationOptional`` members that refuse it; claiming it needs overrides.
+_MIXIN_REFUSALS = {
+    _caps.OBJECTS: ("add_object", "remove_object"),
+    _caps.RENDER: ("render",),
+    _caps.JOINTS: ("robot_joint_names",),
+}
+
+
+def _underlying(member: Any) -> Any:
+    """The function behind ``member``, through ``functools.wraps`` and partials.
+
+    A lambda or method that merely calls a refusal is not seen through; the
+    check is structural and cannot follow a call.
+    """
+    for _ in range(8):
+        member = inspect.unwrap(member)
+        if not isinstance(member, (functools.partial, functools.partialmethod)):
+            break
+        member = member.func
+    return member
+
+
 class SimEngine(ABC):
     """Abstract base class for simulation engines.
 
@@ -909,7 +931,7 @@ class SimEngine(ABC):
         Raises:
             TypeError: The declaration is not a collection of str names, lacks a
                 core name, holds an unknown name that is not ``vendor:name``, or
-                or claims an optional capability whose method is the base stub.
+                claims a capability whose method is a base stub or mixin refusal.
         """
         super().__init_subclass__(**kwargs)
         declared = cls.__dict__.get("CAPABILITIES")
@@ -929,6 +951,9 @@ class SimEngine(ABC):
             impl = getattr(cls, method, None) if method else None
             if method and (impl is getattr(SimEngine, method) or not callable(impl)):
                 raise TypeError(f"{cls.__name__}.CAPABILITIES claims {name!r} but does not override {method}()")
+            refusals = [vars(_caps.ManipulationOptional)[m] for m in _MIXIN_REFUSALS.get(name, ())]
+            if any(_underlying(inspect.getattr_static(cls, m.__name__, None)) is m for m in refusals):
+                raise TypeError(f"{cls.__name__}.CAPABILITIES claims {name!r} but keeps a ManipulationOptional refusal")
 
     def capabilities(self) -> frozenset[str]:
         """Return ``CAPABILITIES``, or derive it: the default set plus each overridden optional method.
@@ -1452,7 +1477,7 @@ class SimEngine(ABC):
 
         ``_preflight_policy_config`` reports what can be judged without
         constructing - an unresolvable provider name, the provider's own
-        ``preflight``. What a constructor judges for itself - ``Gr00tPolicy:
+        ``preflight``. What a constructor judges for itself - ``MoveIt2Policy:
         invalid port: 70000``, a keyword a constructor with no ``**kwargs``
         sink does not bind - only exists once it runs, and it used to raise past the
         ``status=error`` envelope every other refusal on these surfaces is
