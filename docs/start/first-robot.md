@@ -1,6 +1,6 @@
 # First robot
 
-At the end of this page an SO-101 arm is standing in a MuJoCo world on your machine, you have moved two of its joints, read them back, and saved a camera frame to disk. No hardware, no GPU.
+At the end of this page an SO-101 arm stands in a MuJoCo world on your machine; you moved two joints, read them back, and saved a camera frame. No hardware, no GPU.
 
 ## Build it
 
@@ -23,7 +23,9 @@ MuJoCoSimEngine so101_sim
 {'1': 'shoulder_pan', '2': 'shoulder_lift', '3': 'elbow_flex', '4': 'wrist_flex', '5': 'wrist_roll', '6': 'gripper'}
 ```
 
-`Robot()` is a factory, not a wrapper. In `mode="sim"` it returns the simulation engine itself, with the world created and the robot added. The engine holds one world and can hold several robots, which is why every method that touches a robot takes its name. The SO-101 model names its joints by servo id, `1` to `6`; the labels tell you which is which.
+{{sim:first-robot-1|what the code above built: the SO-101 at its zero pose}}
+
+`Robot()` is a factory, not a wrapper. In `mode="sim"` it returns the simulation engine itself, world created, robot added. One engine holds one world and any number of robots, so every method that touches a robot takes its name. The SO-101 model names its joints by servo id, `1` to `6`; the labels tell you which is which.
 
 Any name or alias in the [catalog](../robots/index.md) works in place of `"so101"`. A misspelling is refused with the nearest matches: `Robot("so1000")` says `Did you mean: so100, so101?`.
 
@@ -48,7 +50,7 @@ print(frame["content"][0]["text"])
 robot.cleanup()
 ```
 
-You should see the two joints arrive near their targets and a PNG appear next to your script:
+You should see:
 
 ```text
 {'status': 'success', 'content': [{'text': "Action applied to 'so101' (2 keys)."}]}
@@ -63,6 +65,8 @@ You should see the two joints arrive near their targets and a PNG appear next to
 (480, 640, 3) uint8
 640x480 from 'free (default)' at t=1.200s
 ```
+
+{{sim:first-robot-2|what the code above built: joints 1 and 3 at their targets}}
 
 What each call did:
 

@@ -369,6 +369,6 @@ body.sr-viewer-fullscreen { overflow: hidden; }
    scheme name, which this site does not use). */
 .md-typeset figure.sr-drawing, .md-typeset figure.sr-sim { width: 100%; max-width: 100%; margin: 1.2rem 0; }
 .md-typeset figure.sr-drawing img, .md-typeset figure.sr-sim img, .md-typeset figure.sr-sim video { display: block; width: 100%; height: auto; border: 1px solid var(--sr-pill-border); border-radius: var(--sr-radius); background: var(--md-default-bg-color); }
-.md-typeset figure.sr-sim figcaption { font-family: var(--sr-mono); font-size: 0.68rem; color: var(--sr-muted); text-align: left; margin: 0.4rem 0 0; }
+.md-typeset figure.sr-sim figcaption { font-family: var(--sr-mono); font-style: normal; font-size: 0.68rem; color: var(--sr-muted); text-align: left; margin: 0.4rem 0 0; }
 [data-md-color-scheme="paper"] figure.sr-drawing img[src$="#only-dark"] { display: none; }
 [data-md-color-scheme="slate"] figure.sr-drawing img[src$="#only-light"] { display: none; }

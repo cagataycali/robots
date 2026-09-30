@@ -12,6 +12,7 @@ itself is loaded by path: the docs venv is not the test venv.
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -86,3 +87,23 @@ def test_the_hook_emits_lazy_images_for_both_schemes() -> None:
     assert out is not None
     assert out.count('loading="lazy"') == 2, out
     assert "#only-light" in out and "#only-dark" in out, out
+
+
+def test_every_sim_frame_has_a_manifest_entry_and_every_entry_a_frame() -> None:
+    """``docs/hooks/sim_frames.py`` renders frames from ``docs/hooks/data/sim_frames.json``;
+    a frame nobody can regenerate, or an entry nobody rendered, is graded here."""
+    manifest_path = _DOCS / "hooks" / "data" / "sim_frames.json"
+    if not manifest_path.is_file():
+        return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    frames = {p.stem for p in (_DOCS / "assets" / "sim").glob("*.png")}
+    assert sorted(set(manifest) - frames) == [], "manifest entries with no frame; run docs/hooks/sim_frames.py"
+    assert sorted(frames - set(manifest)) == [], (
+        "frames with no manifest entry; add them to docs/hooks/data/sim_frames.json"
+    )
+    for ident, entry in manifest.items():
+        page = _DOCS / entry["page"]
+        assert page.is_file(), f"{ident}: page {entry['page']} does not exist"
+        assert f"{{{{sim:{ident}" in page.read_text(encoding="utf-8"), (
+            f"{ident}: {entry['page']} does not place its own frame"
+        )
