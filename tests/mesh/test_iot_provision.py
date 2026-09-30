@@ -18,7 +18,7 @@ from strands_robots.mesh.iot.provision import (
     _OPERATOR_POLICY_DOC,
     _ROBOT_POLICY_DOC,
     OPERATOR_POLICY_NAME,
-    ROBOT_POLICY_NAME,
+    ROBOT_NO_ESTOP_POLICY_NAME,
     ProvisionedThing,
     _ensure_policy,
     _ensure_thing,
@@ -214,7 +214,8 @@ class TestProvisionRobot:
 
         assert isinstance(result, ProvisionedThing)
         assert result.thing_name == "test-robot-01"
-        assert result.policy_name == ROBOT_POLICY_NAME
+        # The default posture obeys fleet stops and cannot originate one (f010).
+        assert result.policy_name == ROBOT_NO_ESTOP_POLICY_NAME
         assert result.endpoint == "fake-ats.iot.us-west-2.amazonaws.com"
         assert result.cert_path.exists()
         assert result.key_path.exists()
@@ -230,10 +231,10 @@ class TestProvisionRobot:
 
         provision_robot("r", cert_dir=tmp_cert_dir)
 
-        # attach_policy was called with the robot policy
+        # attach_policy was called with the default (obey-only) robot policy
         assert fake_iot_client.attach_policy.called
         attach_kwargs = fake_iot_client.attach_policy.call_args.kwargs
-        assert attach_kwargs["policyName"] == ROBOT_POLICY_NAME
+        assert attach_kwargs["policyName"] == ROBOT_NO_ESTOP_POLICY_NAME
 
         # attach_thing_principal was called
         assert fake_iot_client.attach_thing_principal.called
