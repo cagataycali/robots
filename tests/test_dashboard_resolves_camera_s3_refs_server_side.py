@@ -211,3 +211,11 @@ def test_fetch_camera_ref_enforces_the_size_cap(monkeypatch: pytest.MonkeyPatch)
     assert mesh_bridge.fetch_camera_ref(URL, timeout=1.0, max_bytes=4096) == b"x" * 2048
     with pytest.raises(mesh_bridge.CameraRefError, match="1024"):
         mesh_bridge.fetch_camera_ref(URL, timeout=1.0, max_bytes=1024)
+
+
+def test_stopping_the_bridge_closes_the_resolver_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    b = MeshBridge(peer_id="dash")
+    b._running = True
+    b.stop()
+    with pytest.raises(RuntimeError):
+        b._ref_pool.submit(lambda: None)

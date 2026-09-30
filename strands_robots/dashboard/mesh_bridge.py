@@ -902,6 +902,9 @@ class MeshBridge:
             with contextlib.suppress(Exception):
                 s.undeclare()
         self._subs.clear()
+        # A camera reference still being fetched finishes on its own; no new one is taken.
+        with contextlib.suppress(Exception):
+            self._ref_pool.shutdown(wait=False)
         if self._session is not None:
             from strands_robots.mesh.session import release_session
 
