@@ -70,6 +70,7 @@ import math
 import numbers
 import os
 import re
+import sys
 import threading
 import time
 import weakref
@@ -824,6 +825,34 @@ def _load_scene_dropped_line(
             f"use a different name for a new one."
         )
     return line + "\n"
+
+
+#: The launcher the mujoco wheel installs next to ``python`` on macOS. ``launch_passive``
+#: needs the process's main thread for the window, which only that launcher gives it.
+MJPYTHON_LAUNCHER = "mjpython"
+
+
+def viewer_failure_text(exc: BaseException) -> str:
+    """The ``open_viewer`` refusal for ``exc``, with the remedy when there is one.
+
+    On macOS ``mujoco.viewer.launch_passive`` raises when the script is not run
+    under ``mjpython``; MuJoCo's own message names the launcher and nothing
+    else, and no docs page did either (#4169). The refusal now says what
+    ``mjpython`` is, how to run the script under it, and that :meth:`render`
+    captures frames without a window. Other viewer failures are reported as
+    MuJoCo phrased them.
+    """
+    text = f"Viewer failed: {exc}"
+    if MJPYTHON_LAUNCHER in str(exc):
+        argv0 = sys.argv[0] if sys.argv else ""
+        script = Path(argv0).name if argv0 and not argv0.startswith("-") else "your_script.py"
+        text += (
+            f". On macOS the passive viewer runs only under {MJPYTHON_LAUNCHER}, the launcher the mujoco "
+            f"wheel installs next to python: run `{MJPYTHON_LAUNCHER} {script}` instead of `python {script}` "
+            f"(an interactive session needs `{MJPYTHON_LAUNCHER}` too). To capture frames without a window, "
+            "use render() or render_all()."
+        )
+    return text
 
 
 class MuJoCoSimEngine(
@@ -5963,7 +5992,7 @@ class MuJoCoSimEngine(
             self._viewer_handle = viewer.launch_passive(self._world._model, self._world._data)
             return {"status": "success", "content": [{"text": "Interactive viewer opened."}]}
         except Exception as e:
-            return {"status": "error", "content": [{"text": f"Viewer failed: {e}"}]}
+            return {"status": "error", "content": [{"text": viewer_failure_text(e)}]}
 
     def _close_viewer(self) -> None:
         if self._viewer_handle is not None:
