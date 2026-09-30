@@ -222,7 +222,7 @@ def run_policy(
             Required when the simulation hosts more than one robot.
         policy_provider: Provider name passed to ``create_policy``
             inside the engine (``"mock"`` / ``"lerobot_local"`` /
-            ``"groot"`` / ``"molmoact2"`` / ...).
+            ``"remote"`` / ``"wbc"`` / ...).
         policy_config: Provider-specific kwargs forwarded verbatim.
         instruction: Natural-language instruction for the policy.
         n_episodes: Number of reset -> rollout episodes. MUST be a
@@ -593,7 +593,7 @@ def run_policy(
                 if recording_save_error is not None:
                     # This episode's frames did not reach the dataset and the
                     # recorder closed itself, so every later episode would run
-                    # into a recorder that drops frames without counting them -
+                    # into a recorder that refuses its frames -
                     # burning the remaining budget to record nothing. Stop and
                     # report the reason, which is the posture every sibling
                     # flush takes (PolicyRunner.evaluate breaks here too).

@@ -160,7 +160,7 @@ class TestRemoteResumeStillVerifiesWhenZenohIsAbsent:
     install must be clearable, or the fleet stays e-stopped forever."""
 
     def test_resume_proof_verifies_end_to_end(self, monkeypatch):
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "operator-secret")
+        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "operator-secret-1234567890")
 
         issuer = core.Mesh(robot=object(), peer_id="issuer")
         issuer.publish_safety_event = MagicMock()
@@ -182,7 +182,7 @@ class TestRemoteResumeStillVerifiesWhenZenohIsAbsent:
         issuer._estop_lockout.set()
         issuer._last_estop_ts = core.time.time()
         issuer._last_estop_mono = core.time.monotonic()
-        assert issuer._resume_lockout("operator-secret") == {"status": "ok"}
+        assert issuer._resume_lockout("operator-secret-1234567890") == {"status": "ok"}
 
         assert published["key"] == RESUME_KEY
         envelope = published["payload"]
@@ -203,7 +203,7 @@ class TestRemoteResumeStillVerifiesWhenZenohIsAbsent:
     def test_the_proof_is_bound_to_the_published_body(self, monkeypatch):
         """The MAC input must be the exact bytes the receiver recomputes over:
         a proof bound to a zid the body does not carry never verifies."""
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "operator-secret")
+        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "operator-secret-1234567890")
 
         issuer = core.Mesh(robot=object(), peer_id="issuer")
         issuer.publish_safety_event = MagicMock()
@@ -217,11 +217,11 @@ class TestRemoteResumeStillVerifiesWhenZenohIsAbsent:
         issuer._estop_lockout.set()
         issuer._last_estop_ts = core.time.time()
         issuer._last_estop_mono = core.time.monotonic()
-        issuer._resume_lockout("operator-secret")
+        issuer._resume_lockout("operator-secret-1234567890")
 
         envelope = published["payload"]
         expected = core.hmac.new(
-            b"operator-secret",
+            core.resume_proof_key("operator-secret-1234567890"),
             json.dumps(
                 {
                     "peer_id": "issuer",

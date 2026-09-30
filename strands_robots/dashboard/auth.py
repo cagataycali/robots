@@ -570,7 +570,9 @@ def delete_credential(cred_id: str) -> dict[str, Any]:
         raise HTTPException(409, "cannot remove the last passkey - enroll another first")
     store["credentials"] = [c for c in creds if c["id"] != cred_id]
     _save(store)
-    return {"ok": True, "removed": cred_id, "remaining": len(store["credentials"])}
+    # Every session minted for that passkey is refused from the next request on:
+    # verify_token admits a token only while its ``sub`` is enrolled.
+    return {"ok": True, "removed": cred_id, "remaining": len(store["credentials"]), "sessions_ended": True}
 
 
 # --- relying-party id / origin derivation -----------------------------------
@@ -1097,6 +1099,14 @@ def renewal_verdict(
 def verify_token(token: str) -> dict[str, Any]:
     """The claims of a session token, or a refusal the caller can return as-is.
 
+    A token is good for as long as the passkey it was minted for is enrolled.
+    Every issuer stamps that passkey's credential id as ``sub`` (registration,
+    authentication, renewal and handoff all carry it), so the claims are
+    admitted only when ``sub`` names a credential in the store now, and the
+    store is the one already loaded for the secret. Removing a passkey thereby
+    ends its sessions at the next request (f016, CWE-613); before, deleting a
+    passkey rotated nothing and its tokens lived on to their ``exp``.
+
     Args:
         token: The signed session token the client presented.
 
@@ -1104,15 +1114,21 @@ def verify_token(token: str) -> dict[str, Any]:
         The decoded claims.
 
     Raises:
-        HTTPException: 401, distinguishing an expired session from one that
-            does not verify at all.
+        HTTPException: 401, distinguishing an expired session, a revoked one
+            (its passkey is no longer enrolled) and one that does not verify at
+            all, so a reader of the log can tell them apart.
     """
+    store = _load()
     try:
-        return jwt.decode(token, _jwt_secret(), algorithms=["HS256"])
+        claims = jwt.decode(token, cast(str, store["jwt_secret"]), algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
         raise HTTPException(401, "session expired")
     except jwt.PyJWTError:
         raise HTTPException(401, "invalid session")
+    subject = claims.get("sub")
+    if not isinstance(subject, str) or not any(c.get("id") == subject for c in store.get("credentials", [])):
+        raise HTTPException(401, "session revoked - its passkey is no longer enrolled, sign in again")
+    return cast(dict[str, Any], claims)
 
 
 def renew_if_due(token: str, now: float | None = None) -> str | None:

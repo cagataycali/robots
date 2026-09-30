@@ -26,14 +26,15 @@ pytest.importorskip("mujoco")
 
 from strands_robots.dataset_recorder import DatasetRecorder  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from tests._recorder_stand_in import RecorderStandIn  # noqa: E402
 from tests.test_recorder_counters_track_on_disk_frames import (  # noqa: E402
     _BufferedDataset,
     _record,
 )
 
 
-class _FakeRecorder:
-    """Minimal stand-in for ``DatasetRecorder`` capturing orchestration order."""
+class _FakeRecorder(RecorderStandIn):
+    """The recorder stand-in plus the two publishing verbs ``stop_recording`` calls."""
 
     def __init__(
         self,
@@ -45,33 +46,20 @@ class _FakeRecorder:
         episode_frame_count=7,
         meta_total_episodes=None,
     ):
+        super().__init__(pending=episode_frame_count, save_result=save_result or {"status": "success"})
         self.repo_id = "local/finalize_test"
-        self.frame_count = frame_count
-        # Frames captured since the last save_episode (the pending trailing
-        # episode). stop_recording only flushes a final save_episode when this
-        # is > 0; see RecordingMixin.stop_recording.
-        self.episode_frame_count = episode_frame_count
-        self.episode_count = 1
         self.root = "/tmp/finalize_test"
-        self.calls: list[str] = []
+        self.frame_count = frame_count
+        self.episode_count = 1
         self._sync_result = sync_result
         self._push_result = push_result
-        self._save_result = save_result
         self.sync_args: tuple | None = None
         self.push_tags = None
         # stop_recording's #708 parquet-truth gate reads
-        # ``recorder.dataset.meta.total_episodes`` as the ground truth. Only
-        # expose ``dataset`` when a caller wants to exercise that gate so the
+        # ``recorder.dataset.meta.total_episodes`` as the ground truth; the
         # other tests keep the no-dataset (gate-skipped) path.
         if meta_total_episodes is not None:
             self.dataset = SimpleNamespace(meta=SimpleNamespace(total_episodes=meta_total_episodes))
-
-    def save_episode(self):
-        self.calls.append("save_episode")
-        return self._save_result
-
-    def finalize(self):
-        self.calls.append("finalize")
 
     def sync_to_bucket(self, bucket, run_id=None):
         self.calls.append("sync_to_bucket")

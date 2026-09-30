@@ -34,6 +34,8 @@ silently canonicalised into something else.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from strands_robots.policies.factory import (
@@ -131,6 +133,29 @@ def test_every_accepted_spelling_of_a_gated_provider_is_refused_without_opt_in(
         create_policy(spelling)
     # The refusal names the remedy, so a caller who typed the alias can act on it.
     assert _TRUST_ENV in str(excinfo.value)
+
+
+@pytest.mark.parametrize(("spelling", "canonical"), _gated_spellings())
+def test_a_misspelled_keyword_is_reported_before_the_opt_in_is_asked_for(
+    spelling: str, canonical: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A typo on a gated provider is a ``TypeError``, not a request to trust remote code.
+
+    ``create_policy`` promises the misspelled-keyword ``TypeError`` before
+    construction. When the gate ran first, the caller was told to set
+    ``STRANDS_TRUST_REMOTE_CODE`` for a call that would fail anyway, and saw the
+    typo only after flipping a security switch.
+    """
+    _name, policy_class, _kwargs = _resolve_policy_class(spelling)
+    bound = [
+        p.name
+        for p in inspect.signature(policy_class.__init__).parameters.values()
+        if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD and p.name != "self"
+    ]
+    typo = max(bound, key=len)[:-1]  # one character short of a keyword the constructor binds
+    monkeypatch.delenv(_TRUST_ENV, raising=False)
+    with pytest.raises(TypeError, match=typo):
+        create_policy(spelling, **{typo: "x"})
 
 
 @pytest.mark.parametrize("spelling", _every_accepted_spelling())

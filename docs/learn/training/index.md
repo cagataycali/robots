@@ -20,22 +20,22 @@ with open(f"{root}/meta/info.json", "w") as fh:
     json.dump({"codebase_version": "v3.0", "total_episodes": 10, "total_frames": 3000, "fps": 30}, fh)
 
 trainer = create_trainer("mock")
-spec = TrainSpec(dataset_root=root, base_model="lerobot/act_base", output_dir=tempfile.mkdtemp(), steps=10)
+spec = TrainSpec(dataset_root=root, base_model="lerobot/smolvla_base", output_dir=tempfile.mkdtemp(), steps=10)
 print(trainer.validate(spec))
 result = trainer.train(spec)
 print(result.status, sorted(os.listdir(result.checkpoint_dir)), sorted(result.metrics))
 print(trainer.status(result.job_id).status, trainer.export(spec, result.checkpoint_dir) is not None)
-print({name: create_trainer(name).hardware_floor for name in ("lerobot_local", "groot", "cosmos3")})
+print({name: create_trainer(name).hardware_floor for name in ("lerobot_local", "cosmos3")})
 ```
 
 You should see:
 
 ```text
-['cosmos3', 'fast_sac', 'fast_td3', 'groot', 'isaaclab', 'lerobot_local', 'mock', 'ppo', 'sagemaker']
+['cosmos3', 'fast_sac', 'fast_td3', 'isaaclab', 'lerobot_local', 'mock', 'ppo', 'sagemaker']
 []
 success ['config.json'] ['latest_loss', 'latest_step', 'learning', 'liveness_ok']
 success True
-{'lerobot_local': {'min_gpus': 1, 'min_vram_gb': 8, 'multinode': False}, 'groot': {'min_gpus': 1, 'min_vram_gb': 24, 'multinode': False}, 'cosmos3': {'min_gpus': 8, 'min_vram_gb': 80, 'multinode': True}}
+{'lerobot_local': {'min_gpus': 1, 'min_vram_gb': 8, 'multinode': False}, 'cosmos3': {'min_gpus': 8, 'min_vram_gb': 80, 'multinode': True}}
 ```
 
 ## What trains where
@@ -45,7 +45,6 @@ One name owns both halves: `create_policy("lerobot_local")` runs what `create_tr
 | trainer | drives | in process | floor |
 |---|---|---|---|
 | `lerobot_local` | `lerobot.scripts.lerobot_train.train(cfg)` for any LeRobot policy (`act`, `diffusion`, `smolvla`, `pi0`, `pi05`, `groot`, ...) or reward model (`sarm`) | yes, no subprocess | 1 GPU, 8 GB |
-| `groot` | Isaac-GR00T `gr00t.experiment.experiment.run` with a `FinetuneConfig`; multi-GPU through torch `elastic_launch` | yes | 1 GPU, 24 GB |
 | `cosmos3` | `cosmos_framework` SFT: `prepare()` converts the HF checkpoint to DCP, `train()` calls `scripts.train.launch` with a TOML recipe plus overrides | yes | 8 GPUs, 80 GB, multinode |
 | `sagemaker` | submits the same `TrainSpec` to one managed SageMaker job in a caller-supplied `image_uri`; reimplements nothing | no, AWS | `instance_type="ml.g5.xlarge"` default |
 | `isaaclab` | [`isaaclab train`](isaaclab.md) (rsl_rl PPO) in `$ISAACLAB_PYTHON` | no, subprocess | 1 RTX GPU, 8 GB |

@@ -23,7 +23,7 @@ strands-robots doctor --list
 | `--list` | print the check names and exit 0 without probing anything |
 | `-h`, `--help` | usage and exit |
 
-An argument the parser does not know exits 2 with the usage line. The checks run in this order: Python, Package, Strands SDK, MuJoCo, MuJoCo GL, LeRobot, Torchcodec, CUDA/GPU, Torch Arch, Warp Arch, Serial, HF Auth, Device Connect, Mesh, Sim Test. Each row prints `PASS`, `WARN`, `SKIP` or `FAIL` with one line of detail and, for a failure, the fix; only `FAIL` rows change the exit code. `NO_COLOR` or `TERM=dumb` turns the colour off. The walk-through with expected output is [start/doctor.md](../start/doctor.md).
+An argument the parser does not know exits 2 with the usage line. Each row prints `PASS`, `WARN`, `SKIP` or `FAIL` with one line of detail and, for a failure, the fix; only `FAIL` rows change the exit code. `NO_COLOR` or `TERM=dumb` turns the colour off. The walk-through with expected output is [start/doctor.md](../start/doctor.md).
 
 ## verify-dataset
 
@@ -76,7 +76,7 @@ strands-robots iot teardown so101-arm-01
 
 | verb | effect |
 |---|---|
-| `provision-robot THING [--no-estop-publish]` | Thing, CSR certificate with `CN=THING`, `strands-robot` policy (or `strands-robot-no-estop`) |
+| `provision-robot THING [--estop-publish]` | Thing, CSR certificate with `CN=THING`, `strands-robot-no-estop` policy (or `strands-robot`) |
 | `provision-operator THING` | the same, `strands-operator` policy |
 | `reprovision THING` | rotate the certificate: the new one is active before the old ones are deleted; the Thing, its attributes and policies stay. A running peer's MQTT session ends, so restart it |
 | `teardown THING` | delete the Thing, its certificates and the local files |

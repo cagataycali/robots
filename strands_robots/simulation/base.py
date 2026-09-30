@@ -1466,7 +1466,7 @@ class SimEngine(ABC):
 
         ``_preflight_policy_config`` reports what can be judged without
         constructing - an unresolvable provider name, the provider's own
-        ``preflight``. What a constructor judges for itself - ``Gr00tPolicy:
+        ``preflight``. What a constructor judges for itself - ``MoveIt2Policy:
         invalid port: 70000``, a keyword a constructor with no ``**kwargs``
         sink does not bind - only exists once it runs, and it used to raise past the
         ``status=error`` envelope every other refusal on these surfaces is
@@ -4181,6 +4181,25 @@ class SimEngine(ABC):
                         policy=policy,
                         instruction=instruction,
                         extra=f"reset() failed after episode {ep}: {self._first_text(reset_result)}",
+                    )
+                # The policy starts the next episode fresh too. ``runner.run``
+                # only resets it when a seed was given, so an unseeded
+                # recording with a history-keeping provider (flux3_action,
+                # groot, any RTC policy) otherwise conditions episode N+1 on
+                # episode N's frames while the scene has jumped back to rest:
+                # the SO-101 shoulder_lift command drifted a further ~5 rad per
+                # episode across a 10-episode flux3_action recording. Mirrors
+                # the per-episode reset in ``PolicyRunner.evaluate``; best-effort
+                # like every other reset call site.
+                next_seed = None if seed is None else seed + ep + 1
+                try:
+                    policy.reset(seed=next_seed)
+                except Exception as e:  # noqa: BLE001 - reset is best-effort
+                    logger.warning(
+                        "policy.reset(seed=%s) raised %s after episode %d; continuing without per-episode policy reset",
+                        next_seed,
+                        e,
+                        ep,
                     )
 
         return self._episodes_result(

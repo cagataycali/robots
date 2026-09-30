@@ -168,16 +168,16 @@ class TestResolvePolicy:
             assert provider == "mock", f"'{alias}' should resolve to 'mock'"
 
     def test_huggingface_model_id_nvidia(self):
-        """NVIDIA model IDs should resolve to groot via hf_orgs."""
-        provider, kwargs = resolve_policy("nvidia/gr00t-n1.5-3b")
-        assert provider == "groot"
-        assert kwargs["pretrained_name_or_path"] == "nvidia/gr00t-n1.5-3b"
+        """NVIDIA model IDs resolve to lerobot_local via hf_orgs (GR00T N1.7 is a lerobot policy type)."""
+        provider, kwargs = resolve_policy("nvidia/GR00T-N1.7-3B")
+        assert provider == "lerobot_local"
+        assert kwargs["pretrained_name_or_path"] == "nvidia/GR00T-N1.7-3B"
 
     def test_huggingface_model_id_override(self):
         """model_id_overrides should match before hf_orgs."""
-        provider, kwargs = resolve_policy("nvidia/groot-something-new")
-        assert provider == "groot"
-        assert kwargs["pretrained_name_or_path"] == "nvidia/groot-something-new"
+        provider, kwargs = resolve_policy("nvidia/cosmos3-nano-policy")
+        assert provider == "cosmos3"
+        assert kwargs["pretrained_name_or_path"] == "nvidia/cosmos3-nano-policy"
 
     def test_unknown_hf_org_falls_back_to_lerobot_local(self):
         """Unknown HF org should fall back to lerobot_local."""
@@ -185,12 +185,10 @@ class TestResolvePolicy:
         assert provider == "lerobot_local"
         assert kwargs["pretrained_name_or_path"] == "unknownorg/somemodel"
 
-    def test_zmq_url_extracts_host_and_port(self):
-        """ZMQ URLs should resolve to groot with parsed host/port."""
-        provider, kwargs = resolve_policy("zmq://myhost:9999")
-        assert provider == "groot"
-        assert kwargs["host"] == "myhost"
-        assert kwargs["port"] == 9999
+    def test_zmq_url_is_an_undeclared_scheme(self):
+        """No shipped provider dials a ``zmq://`` URL any more; it is refused as an address."""
+        with pytest.raises(ValueError, match="zmq://"):
+            resolve_policy("zmq://myhost:9999")
 
     def test_extra_kwargs_forwarded_on_shorthand(self):
         """Extra kwargs should pass through on shorthand resolution."""
@@ -199,13 +197,13 @@ class TestResolvePolicy:
 
     def test_extra_kwargs_forwarded_on_hf_model(self):
         """Extra kwargs should pass through on HF model resolution."""
-        _, kwargs = resolve_policy("nvidia/gr00t-n1.5-3b", batch_size=4)
+        _, kwargs = resolve_policy("nvidia/GR00T-N1.7-3B", batch_size=4)
         assert kwargs["batch_size"] == 4
 
-    def test_extra_kwargs_forwarded_on_zmq_url(self):
+    def test_extra_kwargs_forwarded_on_url(self):
         """Extra kwargs should pass through on URL resolution."""
-        _, kwargs = resolve_policy("zmq://host:1234", data_config="abc")
-        assert kwargs["data_config"] == "abc"
+        _, kwargs = resolve_policy("ws://host:1234", connect_timeout=3)
+        assert kwargs["connect_timeout"] == 3
 
     def test_unrecognised_string_falls_back(self):
         """A random string should fall back to lerobot_local."""
@@ -220,16 +218,21 @@ class TestResolvePolicy:
 
     def test_registered_provider_name_resolves(self):
         """A canonical provider name should resolve directly."""
-        provider, _ = resolve_policy("groot")
-        assert provider == "groot"
+        provider, _ = resolve_policy("remote")
+        assert provider == "remote"
 
     def test_case_insensitive_shorthand(self):
         """Shorthands should match case-insensitively."""
         provider, _ = resolve_policy("Mock")
         assert provider == "mock"
 
-        provider, _ = resolve_policy("GROOT")
-        assert provider == "groot"
+        provider, _ = resolve_policy("REMOTE")
+        assert provider == "remote"
+
+    def test_a_removed_provider_is_refused_not_rerouted(self):
+        """``groot`` left the registry in 1.0; its spelling is refused with one sentence."""
+        with pytest.raises(ValueError, match="removed in 1.0"):
+            resolve_policy("groot")
 
 
 # Provider lookup tests
@@ -239,10 +242,10 @@ class TestProviderLookup:
     """JSON-based provider config should be queryable."""
 
     def test_known_provider_returns_config(self):
-        config = get_policy_provider("groot")
+        config = get_policy_provider("moveit2")
         assert config is not None
         assert "port" in config["config_keys"]
-        assert config["class"] == "Gr00tPolicy"
+        assert config["class"] == "MoveIt2Policy"
 
     def test_unknown_provider_returns_none(self):
         assert get_policy_provider("nonexistent_xyz") is None
@@ -250,7 +253,8 @@ class TestProviderLookup:
     def test_list_providers_includes_all_json_entries(self):
         providers = list_policy_providers()
         assert "mock" in providers
-        assert "groot" in providers
+        assert "lerobot_local" in providers
+        assert "groot" not in providers
 
     def test_provider_has_required_keys(self):
         """Every provider entry should have module, class, and config_keys."""
@@ -274,21 +278,21 @@ class TestProviderLookup:
 class TestBuildPolicyKwargs:
     """build_policy_kwargs() should map generic params to provider-specific keys."""
 
-    def test_groot_port_and_host(self):
-        """groot provider should accept port and host."""
-        kwargs = build_policy_kwargs("groot", policy_port=5555, policy_host="gpu-box")
+    def test_moveit2_port_and_host(self):
+        """A server-dialing provider should accept port and host."""
+        kwargs = build_policy_kwargs("moveit2", policy_port=5555, policy_host="gpu-box")
         assert kwargs["port"] == 5555
         assert kwargs["host"] == "gpu-box"
 
-    def test_groot_defaults_host(self):
-        """groot should default host to 'localhost' when not provided."""
-        kwargs = build_policy_kwargs("groot", policy_port=5555)
-        assert kwargs["host"] == "localhost"
+    def test_moveit2_defaults_host(self):
+        """moveit2 should default host to '127.0.0.1' when not provided."""
+        kwargs = build_policy_kwargs("moveit2", policy_port=5555)
+        assert kwargs["host"] == "127.0.0.1"
 
-    def test_groot_data_config(self):
-        """groot should accept data_config when provided."""
-        kwargs = build_policy_kwargs("groot", data_config={"key": "val"})
-        assert kwargs["data_config"] == {"key": "val"}
+    def test_moveit2_planning_group(self):
+        """moveit2 should accept planning_group when provided."""
+        kwargs = build_policy_kwargs("moveit2", planning_group="gripper")
+        assert kwargs["planning_group"] == "gripper"
 
     def test_unknown_provider_returns_empty(self):
         """Unknown provider should return empty kwargs."""
@@ -297,19 +301,19 @@ class TestBuildPolicyKwargs:
 
     def test_extra_kwargs_for_allowed_keys(self):
         """Extra kwargs matching config_keys should be included."""
-        kwargs = build_policy_kwargs("groot", data_config={"some": "config"})
-        assert kwargs["data_config"] == {"some": "config"}
+        kwargs = build_policy_kwargs("moveit2", api_token="t0k")
+        assert kwargs["api_token"] == "t0k"
 
     def test_extra_kwargs_not_in_allowed_keys_ignored(self):
         """Extra kwargs NOT in config_keys should be ignored."""
-        kwargs = build_policy_kwargs("groot", not_a_real_key="ignored")
+        kwargs = build_policy_kwargs("moveit2", not_a_real_key="ignored")
         assert "not_a_real_key" not in kwargs
 
-    def test_groot_only_port_no_host_gets_default(self):
+    def test_moveit2_only_port_no_host_gets_default(self):
         """When only port is given, host should default from JSON defaults."""
-        kwargs = build_policy_kwargs("groot", policy_port=9999)
+        kwargs = build_policy_kwargs("moveit2", policy_port=9999)
         assert kwargs["port"] == 9999
-        assert kwargs["host"] == "localhost"  # from defaults
+        assert kwargs["host"] == "127.0.0.1"  # from defaults
 
 
 # Robot registry tests

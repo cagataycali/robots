@@ -1,7 +1,7 @@
 """Default Isaac scene for the 3DGS hybrid-render demo.
 
 A real Franka Panda (loaded from Isaac's bundled USD, *not* the
-procedural stick-figure -- see ``docs/reference/simulation/isaac.md`` (the
+procedural stick-figure -- see ``docs/learn/simulation/isaac.md`` (the
 ``isaac`` subcommand) for
 why) plus a small red cube on the ground, and an over-the-shoulder
 RTX camera. The robot + cube are the RTX foreground the compositor
@@ -295,7 +295,7 @@ def _default_franka_usd(sim: "object") -> str:
     root = get_assets_root_path()
     if not root:
         raise RuntimeError(
-            "Could not resolve the Isaac assets root for the default Franka USD. " "Pass robot_usd=... explicitly."
+            "Could not resolve the Isaac assets root for the default Franka USD. Pass robot_usd=... explicitly."
         )
     return _resolve_franka_usd(root)
 

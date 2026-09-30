@@ -345,10 +345,7 @@ async def telemetry(ws: WebSocket, session_id: str, poses: bool = False) -> None
     :mod:`strands_robots.dashboard.scene`). The joint strip never asks; the
     twin always does.
     """
-    try:
-        access.caller(ws)  # type: ignore[arg-type]  # WebSocket answers headers/cookies/client like a Request
-    except HTTPException:
-        await access.refuse_socket(ws, 4401)
+    if await access.admit_socket(ws) is None:
         return
     store: SessionStore = ws.app.state.safety.store
     session = store.get(session_id)
