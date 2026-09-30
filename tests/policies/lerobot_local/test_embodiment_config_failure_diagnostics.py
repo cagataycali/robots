@@ -63,47 +63,43 @@ def _patch_from_pretrained(monkeypatch, bridge) -> None:
     )
 
 
-# An embodiment whose action_keys length (3) disagrees with the model's action
-# dim (6) -> EmbodimentMap.validate raises ValueError inside _configure_embodiment.
+# An embodiment that renames a camera onto an image feature the model does not
+# declare -> EmbodimentMap.validate raises ValueError inside _configure_embodiment.
 def _incompatible_embodiment() -> EmbodimentMap:
     return EmbodimentMap(
-        name="wrong_dims",
-        obs_rename={},
+        name="wrong_camera",
+        obs_rename={"front": "observation.images.front"},
         state_keys=[],
-        action_keys=["a", "b", "c"],
+        action_keys=["a", "b", "c", "d", "e", "f"],
         dim_policy="pad",
     )
 
 
-def test_embodiment_config_failure_warns_with_real_cause_and_discards(monkeypatch, caplog):
-    """An active pipeline + incompatible embodiment -> accurate warning, bridge discarded."""
+def test_an_embodiment_that_cannot_be_configured_is_refused_not_run_without_the_pipeline(monkeypatch):
+    """An active pipeline + incompatible DECLARED embodiment -> ValueError at load, the pipeline kept.
+
+    Discarding the pipeline and falling back to the raw flow used to be the
+    answer: for pi0 / pi05 that dropped the normalization and the
+    state-in-the-prompt tokenizer while the run continued as if configured.
+    """
     bridge = _fake_bridge(active=True, has_postprocessor=True)
     _patch_from_pretrained(monkeypatch, bridge)
     pol = _make_policy(embodiment=_incompatible_embodiment())
-
-    with caplog.at_level(logging.WARNING):
+    with pytest.raises(
+        ValueError, match=r"declared embodiment cannot be configured.*camera_key_map=.*set_robot_state_keys"
+    ):
         pol._load_processor_bridge()
 
-    # The working pipeline was discarded (falls back to raw flow) ...
-    assert pol._processor_bridge is None
-    assert pol._embodiment_config_failed is True
-    # ... with a warning that names the real cause (embodiment misconfiguration) ...
-    msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
-    assert any("embodiment could not be configured" in m for m in msgs), msgs
-    # ... and NOT the misleading "no policy_postprocessor.json" message (the
-    # checkpoint shipped one; it was discarded here, not absent).
-    assert not any("policy_postprocessor.json" in m for m in msgs), msgs
 
-
-def test_embodiment_config_failure_raises_when_overrides_requested(monkeypatch):
-    """With processor_overrides the caller opted into fail-fast -> RuntimeError."""
+def test_the_refusal_holds_with_processor_overrides_too(monkeypatch):
+    """Overrides do not change the verdict: the same ValueError, not a different exception type."""
     bridge = _fake_bridge(active=True, has_postprocessor=True)
     _patch_from_pretrained(monkeypatch, bridge)
     pol = _make_policy(
         embodiment=_incompatible_embodiment(),
         processor_overrides={"normalizer_processor": {"stats": {}}},
     )
-    with pytest.raises(RuntimeError, match="Embodiment configuration failed"):
+    with pytest.raises(ValueError, match="declared embodiment cannot be configured"):
         pol._load_processor_bridge()
 
 
@@ -117,7 +113,6 @@ def test_active_bridge_without_postprocessor_still_warns(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         pol._load_processor_bridge()
 
-    assert pol._embodiment_config_failed is False
     assert pol._processor_bridge is bridge
     msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
     assert any("policy_postprocessor.json" in m for m in msgs), msgs
@@ -149,7 +144,6 @@ def test_from_pretrained_failure_falls_back_to_raw_flow(monkeypatch, caplog):
         pol._load_processor_bridge()
 
     assert pol._processor_bridge is None
-    assert pol._embodiment_config_failed is False
     msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
     # The generic missing-postprocessor diagnostic still fires for the raw flow.
     assert any("policy_postprocessor.json" in m for m in msgs), msgs

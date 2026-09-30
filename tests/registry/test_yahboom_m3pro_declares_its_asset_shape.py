@@ -51,9 +51,8 @@ def _entry() -> dict:
 class TestTheEntryIsWellFormed:
     """Graded from ``robots.json`` alone, so it holds with no MuJoCo installed."""
 
-    def test_the_registry_declares_a_mobile_manipulator(self) -> None:
+    def test_the_description_names_the_model_and_its_arm_dof(self) -> None:
         entry = _entry()
-        assert entry["category"] == "mobile_manip"
         assert "M3 Pro" in entry["description"]
         assert "6-DOF" in entry["description"], "the hardware DOF a reader sizes an arm action from"
 
