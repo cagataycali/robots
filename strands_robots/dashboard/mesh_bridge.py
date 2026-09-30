@@ -26,6 +26,13 @@ from strands_robots.utils import finite_number_error, refusal_repr
 
 logger = logging.getLogger(__name__)
 
+#: Appended to a lockout reason once, the first time a resume arrives that no wire
+#: identity vouches for; later unbound resumes leave the reason as it is.
+UNATTRIBUTED_RESUME_NOTE = (
+    "; a resume arrived that this dashboard could not attribute to any session, so it was not applied"
+    " - the lockout stands until a peer proves it clear"
+)
+
 
 def _env_float(name: str, default: str) -> float:
     """Read an operator-tunable float out of the environment.
@@ -1163,13 +1170,12 @@ class MeshBridge:
         with self._peers_lock:
             if kind == "resume" and binding != "bound":
                 # Not applied: whoever this was, nothing on the wire vouches for them.
-                self._lockout = replace(
-                    self._lockout,
-                    reason=(
-                        f"{self._lockout.reason}; a resume arrived that this dashboard could not attribute to any "
-                        f"session, so it was not applied - the lockout stands until a peer proves it clear"
-                    ),
-                )
+                # The note is appended once: an unbound resume can arrive at wire
+                # rate (or every few seconds from a legacy publisher for hours),
+                # and the reason is copied into every peer card of every
+                # snapshot, so an append per arrival would grow without bound.
+                if not self._lockout.reason.endswith(UNATTRIBUTED_RESUME_NOTE):
+                    self._lockout = replace(self._lockout, reason=f"{self._lockout.reason}{UNATTRIBUTED_RESUME_NOTE}")
                 applied = False
             else:
                 self._lockout = safety_state.apply_event(self._lockout, kind=kind, data=data, now=now)

@@ -98,6 +98,28 @@ def test_a_resume_the_dashboard_cannot_attribute_leaves_the_fleet_locked(bridge:
     assert _trail(bridge, "resume") == []
 
 
+def test_a_flood_of_unattributed_resumes_leaves_the_reason_bounded(bridge: MeshBridge) -> None:
+    """The note is appended once; the reason is copied into every peer card of every snapshot.
+
+    Before: each unbound resume appended the sentence to the already-appended
+    reason, so a wire-rate flood (or a legacy publisher retrying every few
+    seconds through a ten-hour lockout) grew the badge without bound.
+    """
+    from strands_robots.dashboard.mesh_bridge import UNATTRIBUTED_RESUME_NOTE
+
+    _locked(bridge)
+    base = bridge._lockout.reason
+    bridge._on_safety(_sample("resume", {"source": "op", "t": time.time()}))
+    once = bridge._lockout.reason
+    assert once == f"{base}{UNATTRIBUTED_RESUME_NOTE}"
+    for _ in range(20):
+        bridge._on_safety(_sample("resume", {"source": "op", "t": time.time()}))
+    assert bridge._lockout.reason == once, "twenty more unattributed resumes leave the reason exactly as it was"
+    assert bridge._lockout.reason.count("could not attribute") == 1
+    assert bridge._lockout.state == "locked"
+    assert len(_trail(bridge, "resume_unattributed")) == 21, "every arrival is still on the audit trail"
+
+
 def test_an_attributed_resume_lands_on_unknown_never_clear(bridge: MeshBridge) -> None:
     _locked(bridge)
     bridge._on_safety(_sample("resume", {"source": "op", "source_zid": ZID, "t": time.time()}, wire_zid=ZID))
