@@ -20,12 +20,13 @@ the pages it produces.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
 from pathlib import Path
 
 import pytest
+
+from tests._docs_hooks import docs_hook
 
 REPO = Path(__file__).resolve().parents[1]
 DOCS = REPO / "docs"
@@ -40,11 +41,7 @@ _NONE_LINE = "No checkpoint verified on this robot yet."
 
 
 def _hook():
-    spec = importlib.util.spec_from_file_location("docs_hooks_robot_pages_ckpt", DOCS / "hooks" / "robot_pages.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("robot_pages")
 
 
 def _data() -> dict[str, list[dict[str, str]]]:
