@@ -937,6 +937,8 @@ class Mesh(SensorLoopsMixin):
         # shape and reuses _evict_replay_cache for bounding. Key shape:
         # ((sender_id, turn_id)) -> monotonic insert ts.
         self._cmd_replay_cache: dict[tuple[str, str], float] = {}
+        # Topics whose retained command this peer has already warned about.
+        self._retained_cmd_warned: set[str] = set()
         self._cmd_replay_lock = threading.Lock()
         # M-1: resume override-code brute-force throttle. The crypto
         # oracles (timing / content / length) are all closed, but the resume
@@ -1041,6 +1043,25 @@ class Mesh(SensorLoopsMixin):
         if auth_mode != "mtls":
             return False
         if not is_permissive:
+            return False
+
+        # The ACL this gate inspects is the Zenoh ACL. The pure ``iot``
+        # backend opens no Zenoh session: every topic the peer may publish
+        # or receive is bounded by the AWS IoT policy attached to its
+        # certificate (:mod:`strands_robots.mesh.iot.provision`), so there
+        # is nothing here for a permissive Zenoh shape to expose. Refusing
+        # anyway sent operators to STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1, the
+        # opt-in the security docs tell them never to set in production
+        # (iot-deep lane, D1). ``bridge`` keeps the gate: it has a Zenoh leg.
+        from strands_robots.mesh._backend_select import select_backend
+
+        if select_backend() == "iot":
+            logger.info(
+                "[mesh] %s: permissive Zenoh ACL shape ignored on the iot backend -- "
+                "no Zenoh session opens there; the IoT policy on the thing's "
+                "certificate is the access-control list",
+                self.peer_id,
+            )
             return False
 
         if _acl_config.permissive_acl_acknowledged():
@@ -2295,6 +2316,15 @@ class Mesh(SensorLoopsMixin):
         sender_id = data.get("sender_id", "")
         if sender_id == self.peer_id:
             return
+        if getattr(sample, "retain", False) is True:
+            # The broker stored this command and replays it to every new
+            # subscription: this peer subscribes ``cmd`` and ``broadcast`` at
+            # every start, and the replay cache is per process, so a stored
+            # command would run at every boot until someone cleared the topic
+            # (live: a retained ``execute`` ran a rollout with nobody present).
+            # A command is a live request or nothing.
+            self._refuse_retained_command(sample, data)
+            return
         # A command that arrived as an AWS IoT direct message names the
         # sender's reply address in the MQTT5 Response Topic. A zenoh.Sample
         # has no such attribute, so the default keeps the computed reply key.
@@ -2306,6 +2336,35 @@ class Mesh(SensorLoopsMixin):
             name=f"mesh-exec-{self.peer_id}",
             daemon=True,
         ).start()
+
+    def _refuse_retained_command(self, sample: Any, data: dict[str, Any]) -> None:
+        """Audit and WARN (once per topic) a command the broker delivered from storage."""
+        topic = str(getattr(sample, "key_expr", "") or "")
+        sender = data.get("sender_id", "")
+        turn = data.get("turn_id", "")
+        command = data.get("command")
+        action = command.get("action", "") if isinstance(command, dict) else ""
+        self._audit_local(
+            "command_refused",
+            {
+                "action": str(action)[:64],
+                "reason": "retained",
+                "sender": str(sender)[:128],
+                "turn_id": str(turn)[:128],
+                "topic": topic[:256],
+            },
+        )
+        if topic in self._retained_cmd_warned:
+            return
+        self._retained_cmd_warned.add(topic)
+        logger.warning(
+            "[mesh] %s: refused a retained command on %s (the broker stored it and replays it at every "
+            "subscribe; a command is a live request or nothing). Clear it with "
+            "`aws iot-data publish --topic %s --retain --payload ''` and find who stored it.",
+            self.peer_id,
+            topic,
+            topic,
+        )
 
     def _select_direct_sender(self, session: Any) -> DirectSender | None:
         """Return *session* as a :class:`DirectSender` when direct messaging applies.
@@ -2984,9 +3043,14 @@ class Mesh(SensorLoopsMixin):
                     )
                 }
             duration = cmd.get("duration", 30.0)
+            # ``embodiment`` rides with the checkpoint it belongs to: it names
+            # the unit frame and the renames the policy is built with, and a
+            # checkpoint that arrives without it runs in the peer's default
+            # frame (GH #4180). Validated as a registry name by
+            # :func:`~strands_robots.mesh.security.validate_command`.
             extra = {
                 k: cmd[k]
-                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path")
+                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path", "embodiment")
                 if k in cmd
             }
             # Sim peer? Route to Simulation.start_policy / run_policy.
@@ -4849,11 +4913,6 @@ class Mesh(SensorLoopsMixin):
         with self._resume_bruteforce_lock:
             self._resume_fail_count = 0
             self._resume_locked_until_mono = 0.0
-        self.publish_safety_event(
-            event_type="resume_ok",
-            severity="info",
-            payload={"sender_id": self.peer_id, "lockout_elapsed_s": elapsed},
-        )
         proof_nonce = uuid.uuid4().hex
         envelope_t = time.time()
         wire_zid = self._safety_wire_zid("strands/safety/resume")
@@ -4884,7 +4943,22 @@ class Mesh(SensorLoopsMixin):
         }
         if wire_zid is not None:
             envelope["source_zid"] = wire_zid
+        # The envelope leaves BEFORE the ``resume_ok`` event, the order
+        # :meth:`emergency_stop` already uses. Every peer's ingress carries the
+        # ``**/safety/**`` downsampling rule from
+        # :func:`~strands_robots.mesh._zenoh_config.downsampling_block`, and
+        # Zenoh keeps one timestamp per rule per link, not per key: the second
+        # ``safety/**`` message from this peer inside one period is dropped
+        # before any subscriber runs. With the event first, the envelope was
+        # that second message, so the issuer cleared and every other peer
+        # stayed locked with nothing logged (GH #4171). The event copy may now
+        # be the one the wire loses; its audit record is written regardless.
         self._publish_safety_envelope("strands/safety/resume", envelope)
+        self.publish_safety_event(
+            event_type="resume_ok",
+            severity="info",
+            payload={"sender_id": self.peer_id, "lockout_elapsed_s": elapsed},
+        )
         logger.warning("[safety] %s: resume after %.1fs lockout", self.peer_id, elapsed)
         return {"status": "ok"}
 
