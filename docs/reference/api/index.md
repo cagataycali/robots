@@ -7,7 +7,7 @@ This section is the public Python surface of `strands_robots` at this commit, re
 | [Robot and factory](robot.md) | `Robot(...)` factory, the hardware `Robot` class, `Teleoperator` | `strands_robots` |
 | [Registry](registry.md) | `list_robots`, `get_robot`, `resolve_name`, discovery, user robots | `strands_robots.registry` |
 | [Simulation](simulation.md) | `create_simulation`, `SimEngine`, `SimWorld`, `SimRobot`, `SimObject`, `SimCamera`, backends | `strands_robots.simulation` |
-| [Policies](policies.md) | `Policy`, `create_policy`, `register_policy`, `MockPolicy`, `Gr00tPolicy`, persistent cache | `strands_robots.policies` |
+| [Policies](policies.md) | `Policy`, `create_policy`, `register_policy`, `MockPolicy`, `CompositePolicy`, persistent cache | `strands_robots.policies` |
 | [Drivers](drivers.md) | `HardwareDriver` protocol, native driver registry | `strands_robots.drivers` |
 | [Tools](tools.md) | the `@tool` functions re-exported at the top level | `strands_robots` |
 | [Data](data.md) | streaming datasets, bucket sync, episode judging | `strands_robots` |

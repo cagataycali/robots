@@ -42,6 +42,22 @@ def _granted(env: Mapping[str, str] | None) -> bool:
     return str(env.get(MOTION_ENV, "")).strip().lower() in _TRUE
 
 
+def hardware_evidence(presence: Mapping[str, Any] | None) -> str | None:
+    """The hardware a presence record names, or ``None`` when it names none.
+
+    The one read both the motion gate (:func:`peer_is_physical`) and the tool
+    factory (``peer_tools.classify_peer``) make FIRST, so a record that says
+    ``robot_type: "sim"`` and ``hw: "so101 @ /dev/ttyACM0"`` at once is metal
+    to both of them. The factory used to read ``robot_type`` first and mint a
+    sim tool for such a peer, and only real-arm tools entered the interrupt
+    table, so the gate never saw its ``execute`` (f030).
+    """
+    hw = (presence or {}).get("hw")
+    if isinstance(hw, str) and hw.strip():
+        return hw.strip()
+    return None
+
+
 def peer_is_physical(peer: Mapping[str, Any] | None) -> tuple[bool, str]:
     """Is this peer metal? Returns (physical, why) -- the server-side twin of lib/runRisk.ts.
 
@@ -60,9 +76,9 @@ def peer_is_physical(peer: Mapping[str, Any] | None) -> tuple[bool, str]:
     if not peer:
         return True, "this peer is not on the fleet snapshot, so it cannot be shown to be a sim"
     presence = peer.get("presence") or {}
-    hw = presence.get("hw")
-    if isinstance(hw, str) and hw.strip():
-        return True, f"it reports real hardware ({hw.strip()})"
+    hw = hardware_evidence(presence)
+    if hw is not None:
+        return True, f"it reports real hardware ({hw})"
     robot_type = str(presence.get("robot_type") or "").strip().lower()
     claim = ""
     if robot_type in ("sim", "simulation", "mujoco"):

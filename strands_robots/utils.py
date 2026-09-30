@@ -31,7 +31,7 @@ def require_optional(
     Args:
         module_name: Dotted module name to import (e.g. ``"zmq"``).
         pip_install: Explicit pip package name if it differs from *module_name*.
-        extra: ``pyproject.toml`` extras group (e.g. ``"groot-service"``).
+        extra: ``pyproject.toml`` extras group (e.g. ``"moveit2"``).
         purpose: Human-readable description shown in the error message.
         system_install: Remedy for a module that arrives with a system package
             rather than from an index - the ROS 2 client libraries are the case
@@ -1014,37 +1014,6 @@ def dds_domain_id_error(value: Any, param: str, context: str) -> str | None:
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_DDS_DOMAIN_ID:
         return f"{context}: invalid {param}: {refusal_repr(value)} (expected 0-{MAX_DDS_DOMAIN_ID})"
     return None
-
-
-#: Isaac-GR00T releases :class:`~strands_robots.policies.groot.Gr00tPolicy` loads.
-#:
-#: The domain of its ``groot_version=``, which selects a loader rather than
-#: naming a package version: each spelling has a branch in
-#: ``Gr00tPolicy._load_local_policy`` that imports that release's own entry
-#: point. The tuple is the loaders the policy has, not the releases NVIDIA
-#: ships, which is why it is stated once here and graded against the dispatch.
-SUPPORTED_GROOT_VERSIONS = ("n1.5", "n1.6", "n1.7")
-
-
-def groot_version_error(value: Any, param: str, context: str) -> str | None:
-    """Error text when ``value`` names no Isaac-GR00T release with a loader.
-
-    Args:
-        value: The caller-supplied release selector.
-        param: The parameter name it came from, used in the message.
-        context: Message prefix identifying the surface that received it,
-            usually the class name for a constructor parameter.
-
-    Returns:
-        An error message, or ``None`` when the value is usable.
-    """
-    if value is None or value in SUPPORTED_GROOT_VERSIONS:
-        return None
-    return (
-        f"{context}: invalid {param}: {refusal_repr(value)} names no Isaac-GR00T release "
-        f"this policy has a loader for (expected one of {list(SUPPORTED_GROOT_VERSIONS)}, "
-        "or None to auto-detect the installed release)"
-    )
 
 
 MAX_ZMQ_TIMEOUT_MS = 2**31 - 1

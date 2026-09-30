@@ -92,12 +92,11 @@ DOMAINS: tuple[SharedDomain, ...] = (
         "_launch_topology_problems",
         ("num_gpus", "num_nodes"),
         "cosmos3.py",
-        "groot.py",
         "lerobot.py",
         "sagemaker.py",
         # "Is this a topology I have to launch differently" - a launcher choice,
         # asked after the gate has established the counts are usable.
-        comparisons=("spec.num_gpus > 1", "spec.num_gpus <= 1", "spec.num_nodes > 1"),
+        comparisons=("spec.num_gpus > 1", "spec.num_nodes > 1"),
         # The count as SageMaker's InstanceCount API field.
         conversions=("int(spec.num_nodes)",),
     ),
@@ -116,7 +115,6 @@ DOMAINS: tuple[SharedDomain, ...] = (
         "_checkpoint_cadence_problems",
         ("save_freq",),
         "cosmos3.py",
-        "groot.py",
         "lerobot.py",
         "sagemaker.py",
         # The eval_steps fallback selector: which cadence to forward, not whether
@@ -132,7 +130,7 @@ DOMAINS: tuple[SharedDomain, ...] = (
         # relation against another quantity, which the gate cannot see.
         comparisons=("0 < spec.val_episodes < effective",),
     ),
-    _domain("_resume_problems", ("resume",), "groot.py", "lerobot.py", "sagemaker.py", "isaaclab.py"),
+    _domain("_resume_problems", ("resume",), "lerobot.py", "sagemaker.py", "isaaclab.py"),
     _domain("_streaming_problems", ("streaming",), "lerobot.py", "sagemaker.py"),
     _domain("_observation_normalization_problems", ("normalize_obs",), "ppo.py", "fast_sac.py", "fast_td3.py"),
     _domain("_advantage_normalization_problems", ("normalize_advantage",), "ppo.py"),

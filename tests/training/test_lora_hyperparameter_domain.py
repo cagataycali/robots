@@ -43,7 +43,6 @@ from strands_robots.tools.lerobot_train import build_train_command  # noqa: E402
 from strands_robots.training._validate import lora_hyperparameter_problems  # noqa: E402
 from strands_robots.training.base import Trainer, TrainSpec  # noqa: E402
 from strands_robots.training.cosmos3 import Cosmos3Trainer  # noqa: E402
-from strands_robots.training.groot import Gr00tTrainer  # noqa: E402
 from strands_robots.training.lerobot import LerobotTrainer  # noqa: E402
 from strands_robots.training.mock import MockTrainer  # noqa: E402
 
@@ -420,7 +419,7 @@ class TestABackendThatIgnoresTheFieldsReportsNothing:
     made universal like the learning-rate one.
     """
 
-    @pytest.mark.parametrize("trainer_cls", (MockTrainer, Gr00tTrainer, Cosmos3Trainer))
+    @pytest.mark.parametrize("trainer_cls", (MockTrainer, Cosmos3Trainer))
     @pytest.mark.parametrize("field", FIELDS)
     def test_it_validates_nothing_about_the_adapter(
         self, spec: TrainSpec, trainer_cls: type[Trainer], field: str
