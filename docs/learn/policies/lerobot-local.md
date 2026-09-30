@@ -43,7 +43,7 @@ An embodiment is a declared key map between what the robot emits and what the mo
 
 ## Rule 1: state keys
 
-Without `set_robot_state_keys`, the policy infers the state vector from the observation's insertion order over its numeric scalars. The sim backends write `obs[joint]` then `obs[f"{joint}.vel"]`, so `strands_robots.policies._state_keys.drop_velocity_siblings` removes each `.vel` whose position companion is present and keeps one that has none (LeKiwi declares `x.vel`, `y.vel`, `theta.vel` as state). Every provider that infers an ordering shares this rule; an explicit `robot_state_keys` list is never filtered.
+Without `set_robot_state_keys`, the policy infers the state vector from the observation's insertion order over its numeric scalars. The sim backends write `obs[joint]` then `obs[f"{joint}.vel"]`, so `strands_robots.policies._state_keys.drop_velocity_siblings` removes each `.vel` with a position companion and keeps one without (LeKiwi declares `x.vel`, `y.vel`, `theta.vel` as state). Every provider that infers an ordering shares this rule; an explicit `robot_state_keys` list is never filtered.
 
 ## Rule 2: camera names
 
@@ -53,7 +53,7 @@ From `embodiments.json`:
 
 {{providers:cameras}}
 
-Two ways to satisfy it:
+Two ways through it:
 
 ```python title="sketch"
 # 1. Name the cameras as the embodiment expects.
@@ -73,7 +73,7 @@ sim.run_policy(
 )
 ```
 
-`parent_body` mounts a camera on a link so a wrist view rides with the arm; `position` and `target` are then in that frame. `mujoco` and `newton` support it; `isaac` refuses it and names the world-frame alternative.
+`parent_body` mounts a camera on a link, so a wrist view rides with the arm; `position` and `target` are then in that frame. `mujoco` and `newton` support it; `isaac` refuses it and names the world-frame alternative.
 
 ## Run it
 
@@ -112,7 +112,7 @@ sim.cleanup()
 
 `nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` policy type and load here like any checkpoint: no Isaac-GR00T checkout, no ZMQ service. `embodiment_tag` comes from the checkpoint config.
 
-```python
+```python title="sketch: groot extra, 3B download"
 from strands_robots.policies import create_policy
 
 policy = create_policy("nvidia/GR00T-N1.7-3B", policy_type="groot", embodiment="so101")
@@ -131,4 +131,4 @@ policy = create_policy("ws://gpu-box:8765")                                     
 
 - `trust_remote_code=True` is unconditional for this provider, hence the environment gate; load checkpoints only from organisations you trust.
 - `dim_policy="pad"` and `"truncate"` adapt the state vector to the model width by design, and most shipped embodiments declare `pad`; `strict` refuses a width mismatch and names the two opt-ins.
-- An embodiment not in `embodiments.json` needs its own entry: state keys, action keys, camera renames. [Training](../training/lerobot.md) shows how a trained checkpoint carries those names.
+- An embodiment not in `embodiments.json` needs its own entry: state keys, action keys, camera renames; [Training](../training/lerobot.md) shows how a trained checkpoint carries them.
