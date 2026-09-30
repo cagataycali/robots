@@ -11,7 +11,7 @@ a.mesh.send("arm-b", {"action": "state"})                  # joints, sim time
 a.mesh.tell("arm-b", "stack the cubes", policy_provider="lerobot_local",
             pretrained_name_or_path="lerobot/smolvla_base", duration=10.0)
 a.mesh.broadcast({"action": "status"}, timeout=5.0)        # a reply per peer
-a.mesh.subscribe("arm-b-state", "strands/arm-b/state", lambda key, payload: print(payload["joints"]))
+a.mesh.subscribe("strands/arm-b/state", lambda key, payload: print(payload["joints"]), name="arm-b-state")
 a.mesh.unsubscribe("arm-b-state")
 ```
 
