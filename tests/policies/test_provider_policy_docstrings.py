@@ -45,6 +45,7 @@ _PROVIDER_POLICIES = {
     "curobo/policy.py": "CuroboPolicy",
     "wbc/policy.py": "WBCPolicy",
     "wbc/gait.py": "WBCGaitPolicy",
+    "wbc_latent/policy.py": "WBCLatentPolicy",
     "kimodo/policy.py": "KimodoPolicy",
     "protomotions/policy.py": "ProtoMotionsPolicy",
     "microduck/policy.py": "MicroduckPolicy",

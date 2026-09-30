@@ -18,7 +18,7 @@ export MUJOCO_GL=cgl                       # macOS. Linux without a display: egl
 ```python
 from strands_robots.simulation import create_simulation
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("so101")
 sim.add_object(name="cube", shape="box", size=[0.03, 0.03, 0.03], position=[0.25, 0.0, 0.15])
@@ -58,7 +58,7 @@ You should see the cube's `pos:` line with `z` near `0.015` (fallen and settled)
 
 ## Scene editing
 
-The scene is an `MjSpec` that is recompiled after every structural change, so `add_robot`, `add_object` and `add_camera` work on a live world. `patch_scene_mjcf(ops)` applies `add_body`, `add_geom`, `add_site`, `set_body_pos`, `set_body_quat`, `delete_body` atomically; `replace_scene_mjcf(xml)` swaps the whole model; `load_scene(path)` starts from an MJCF file; `export_xml(path)` writes the current model out. Details and the size conventions are on [worlds and objects](worlds-and-objects.md).
+The scene is an `MjSpec` that is recompiled after every structural change, so `add_robot`, `add_object` and `add_camera` work on a live world. `patch_scene_mjcf`, `replace_scene_mjcf`, `load_scene` and `export_xml` edit, swap, load and write the model; details and the size conventions are on [worlds and objects](worlds-and-objects.md#scene-editing).
 
 ## Time
 

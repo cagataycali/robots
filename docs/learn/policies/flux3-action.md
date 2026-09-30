@@ -1,5 +1,5 @@
 ---
-description: flux3_action runs Black Forest Labs' FLUX 3 Action SO-101 checkpoint in process and drives the arm in MuJoCo or on hardware at 30 Hz.
+description: Black Forest Labs' FLUX 3 Action SO-101 checkpoint in process, driving the arm in MuJoCo or on hardware at 30 Hz.
 ---
 
 # flux3_action
@@ -12,17 +12,17 @@ pip install 'flux-action[encoders] @ git+https://github.com/black-forest-labs/fl
 pip install natten==0.21.6 -f https://whl.natten.org   # the wheel for your torch + CUDA build
 ```
 
-`flux-action` is git-only, so the `flux3` extra is a placeholder.
+`flux-action` is git-only; the `flux3` extra is a placeholder.
 
 ## What it is
 
-`Flux3ActionPolicy` wraps the FLUX 3 Action inference library (Apache 2.0): a 3.9B flow-matching transformer over a video VAE that reads eight steps of two camera views plus joint state and an instruction, returning 42 absolute targets for the six SO-101 joints, replanning every 32 ticks at 30 Hz. Weights load in process on `load()`, the first `reset()` or `get_actions()`.
+`Flux3ActionPolicy` wraps the FLUX 3 Action inference library (Apache 2.0): a 3.9B flow-matching transformer over a video VAE that reads eight steps of two camera views plus joint state and an instruction, returning 42 absolute targets for the six SO-101 joints, replanning every 32 ticks at 30 Hz. Weights arrive on `load()`, the first `reset()` or the first `get_actions()`.
 
 ## Constructor keywords
 
 {{providers:kwargs:flux3_action}}
 
-`mode="queued"` (default) is the library's `select_action` loop: 32 of the 42 steps are queued and the model replans when the queue empties. `mode="chunk"` calls the stateless `predict_action_chunk` once per `get_actions` and returns the whole chunk.
+`mode="queued"` (default) is the library's `select_action` loop: 32 of the 42 steps are queued and the model replans when the queue empties; `mode="chunk"` calls the stateless `predict_action_chunk` once per `get_actions` and returns the whole chunk.
 
 ## Unit frame
 
@@ -59,10 +59,10 @@ robot.stop_recording()
 
 ## Jetson Thor
 
-The published NATTEN wheels carry kernels for sm_75 through sm_120 but not sm_110, so on Thor the default `cutlass-fna` dies mid-rollout with `no kernel image is available`. The provider reads the arch list off `libnatten` with `cuobjdump`, selects `flex-fna` when this device is missing (`natten_backend` or `F3_NATTEN_BACKEND` override it) and forwards the choice to `na2d` / `na3d` as `backend=`, which `flux_action` alone does not. Measured on Thor: 24 s warm load, about 5 s per replan, so sim runs about 8x slower than wall clock.
+The published NATTEN wheels carry kernels for sm_75 through sm_120 but not sm_110, so on Thor the default `cutlass-fna` dies mid-rollout (`no kernel image is available`). The provider reads the arch list off `libnatten` with `cuobjdump`, selects `flex-fna` when this device is missing (`natten_backend` or `F3_NATTEN_BACKEND` override it) and forwards the choice to `na2d` / `na3d` as `backend=`, which `flux_action` alone does not. Measured on Thor: 24 s warm load, about 5 s per replan, sim time about 8x slower than wall clock.
 
 ## Limits
 
 - SO-101 only; the DROID checkpoint (7 joints in radians plus gripper at 15 Hz) is not mapped.
-- About 22 GB of GPU memory in bf16; 14 GB of weights.
-- The shipped `so101` asset cannot hold a cube by friction (issues #2145 and #2167); scripted picks weld it with `attach_bodies`, a policy rollout cannot, so judge a sim episode on the reach and grasp.
+- About 22 GB of GPU memory in bf16, 14 GB of weights.
+- The shipped `so101` asset cannot hold a cube by friction (#2145, #2167); scripted picks weld it with `attach_bodies`, a policy rollout cannot, so judge a sim episode on reach and grasp.

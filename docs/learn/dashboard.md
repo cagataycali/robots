@@ -1,3 +1,7 @@
+---
+description: What strands-robots dashboard serves, who may click, the two e-stops, and the agent console behind the consent card.
+---
+
 # Dashboard
 
 At the end of this page `strands-robots dashboard` is serving, and you know what each tab does, who may click, and what the e-stops do.
@@ -11,7 +15,7 @@ Flags: `--host` (default `127.0.0.1`), `--port` (default `8090`), `--open`, `--l
 
 ## What it serves
 
-The process joins the Zenoh mesh as a robot-less gateway: one page drives hardware, simulators, or a mix. The UI is a built React SPA under `strands_robots/dashboard/static/`; no node at runtime. Each tab's rules live in the `strands_robots.dashboard` module named for it.
+The process joins the Zenoh mesh as a robot-less gateway, under the same posture as your peers (`STRANDS_MESH_LOCAL_DEV=true` on one machine): one page drives hardware, simulators, or both. The UI is a built React SPA under `strands_robots/dashboard/static/`; no node at runtime.
 
 | tab | shows |
 |---|---|
@@ -24,7 +28,7 @@ The process joins the Zenoh mesh as a robot-less gateway: one page drives hardwa
 | Agent | a Strands Agent over the fleet and the simulations; anything that moves a robot pauses on a consent card; a microphone opens voice |
 | Settings | agent model and prompt, mesh endpoints, voice provider, editable `.env` keys (a closed set; gates read-only), static token shown only as set / unset |
 
-Every path a client names is resolved and must sit under its home (`HF_LEROBOT_HOME`, `STRANDS_TRAIN_OUTPUT_DIR`, the Hub cache); anything else gets one refusal that never says whether the path exists. A port must be a `/dev/...` path, a robot id one segment, a camera name `[A-Za-z0-9._-]`: each becomes a file name or argv.
+Every path a client names is resolved and must sit under its home (`HF_LEROBOT_HOME`, `STRANDS_TRAIN_OUTPUT_DIR`, the Hub cache); anything else gets one refusal that never reveals whether the path exists. A port must be a `/dev/...` path, a robot id one segment, a camera name `[A-Za-z0-9._-]`: each becomes a file name or argv.
 
 Two e-stops: `POST /api/safety/estop` stops this process's simulations; `POST /api/mesh/safety/estop` is the signed fleet stop, whose answer names the peers that did not reply. The page fires both.
 
@@ -44,9 +48,9 @@ The first passkey closes the third door. Both need `STRANDS_DASH_AUTH_BOOTSTRAP_
 
 ## The agent in the browser
 
-`/ws/agent` takes `{"type": "say", "text": ...}` and streams the console's events back (text, tool_use, tool_result, interrupt, done, error). Its tools share the HTTP routes' `Safety` object, so the e-stop refuses the agent like a button. `sim_set_joints` raises the real-hardware hook's interrupt (`MotionInterruptHook`, see [agents](agents.md)); the browser shows a consent card and `{"type": "resume", "id": ..., "approve": true, "always": false}` resumes the turn; `always` lasts the conversation and dies with the socket. One turn per socket; a second `say` is refused, not queued.
+`/ws/agent` takes `{"type": "say", "text": ...}` and streams the console's events back (text, tool_use, tool_result, interrupt, done, error). Its tools share the HTTP routes' `Safety` object, so the e-stop refuses the agent too. `sim_set_joints` raises the real-hardware hook's interrupt (`MotionInterruptHook`, [the operator gate](agents.md#the-operator-gate)); the browser shows a consent card and `{"type": "resume", "id": ..., "approve": true, "always": false}` resumes the turn; `always` dies with the socket. One turn per socket; a second `say` is refused, not queued.
 
-Two switches, off by default, matter once a physical peer is reachable: `STRANDS_DASH_AGENT_PHYSICAL_MOTION=1` lets the agent's tools move metal at all, and `STRANDS_DASH_TASK_REQUIRES_CONFIRM=1` makes a real-motion task or teleop POST carry an explicit boolean confirmation (strings are refused). Neither touches a simulated peer; both are granted and revoked from a consent card, never from Settings.
+Two switches, off by default, matter once a physical peer is reachable: `STRANDS_DASH_AGENT_PHYSICAL_MOTION=1` lets the agent's tools move metal; `STRANDS_DASH_TASK_REQUIRES_CONFIRM=1` makes a real-motion task or teleop POST carry a boolean confirmation (strings are refused). Neither touches a simulated peer; both are granted and revoked from a consent card, never from Settings.
 
 ## Logs
 

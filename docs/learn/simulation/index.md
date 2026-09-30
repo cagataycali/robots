@@ -1,16 +1,16 @@
 ---
-description: Simulation vs SimEngine, the three backends and what each needs, and a verified MuJoCo session from create_simulation to a policy rollout.
+description: Simulation vs SimEngine, the three backends and what each needs, a verified MuJoCo session from create_simulation to a policy rollout.
 ---
 
 # Simulation
 
-By the end of this page you have a MuJoCo world with a robot, an object and a camera running on this machine, you know the one interface every backend implements, and you know which backend needs what.
+By the end of this page a MuJoCo world with a robot, an object and a camera runs on this machine, and you know the one interface every backend implements and what each needs.
 
 ```python
 from strands_robots.simulation import create_simulation, list_backends
 
 print(list_backends())
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world(timestep=0.002)
 sim.add_robot("so101")
 sim.add_object(name="cube", shape="box", size=[0.03, 0.03, 0.03], position=[0.25, 0.0, 0.015], color=[1, 0, 0, 1])
@@ -42,12 +42,12 @@ Every call returns an agent-tool envelope: `{"status": "success" | "error", "con
 
 Cameras are per backend: MuJoCo, Newton and Isaac each define `add_camera`, and the base class does not, so a third-party engine adds its own.
 
-`Simulation` is the MuJoCo engine under its historical name. `from strands_robots.simulation import Simulation` and `create_simulation("mujoco")` give you the same `MuJoCoSimEngine`. `create_simulation` is the door: it resolves an alias, imports the backend lazily, and passes the remaining keywords to the constructor.
+`Simulation` is the MuJoCo engine under its historical name. `from strands_robots.simulation import Simulation` and `create_simulation("mujoco")` give the same `MuJoCoSimEngine`. `create_simulation` is the door: it resolves an alias, imports the backend lazily and passes the remaining keywords to the constructor. `Robot("so101")` calls it for you and adds the robot; use the factory when you want an empty world, another backend or constructor keywords.
 
 ```python
 from strands_robots.simulation import SimEngine, Simulation, create_simulation
 
-sim = create_simulation("mj", mesh=False)
+sim = create_simulation("mj")
 print(type(sim).__name__, isinstance(sim, SimEngine), type(sim) is Simulation)
 ```
 
@@ -61,11 +61,11 @@ You should see `MuJoCoSimEngine True True`.
 | [`newton`](newton.md) | `nt` | `strands-robots[sim-newton]` | an NVIDIA GPU with Warp; same MJCF assets | GPU stepping, ray-traced tiled cameras |
 | [`isaac`](isaac.md) | `isaac_sim`, `isaacsim`, `nvidia` | `strands-robots[sim-isaac]` plus Isaac Sim 6.0 | Isaac Sim on Python 3.12, an RTX GPU | photoreal rendering, USD scenes, batched envs |
 
-Built-ins win over entry-point plugins of the same name. A third-party package registers a backend under the `strands_robots.backends` entry-point group; `register_backend("my_sim", lambda: MySimEngine, aliases=["custom"])` does the same at runtime. An unknown name is a `ValueError` listing what is available and, for `newton`, `warp` and `mjwarp`, the `pip install` line.
+Built-ins win over entry-point plugins of the same name. A third-party package registers a backend under the `strands_robots.backends` entry-point group; `register_backend("my_sim", lambda: MySimEngine, aliases=["custom"])` does so at runtime. An unknown name is a `ValueError` listing what is available and, for `newton`, `warp` and `mjwarp`, the install line.
 
 ## Constructor keywords
 
-Keywords after the backend name go to the engine constructor. MuJoCo takes `tool_name`, `default_timestep=0.002`, `default_width=640`, `default_height=480`, `mesh`, `peer_id`, `ros2_bridge`, `ros2_domain`, `render_dir`. `mesh=False` keeps the engine off the fleet mesh, which is what a standalone script wants. Newton takes `solver="mujoco"`, `substeps=10`, `device`. Isaac takes an `IsaacConfig` or its fields as shortcuts (`num_envs`, `headless`, `physics_dt`, ...).
+Keywords after the backend name go to the engine constructor. MuJoCo takes `tool_name`, `default_timestep=0.002`, `default_width=640`, `default_height=480`, `mesh`, `peer_id`, `ros2_bridge`, `ros2_domain`, `render_dir`. `mesh` takes a started mesh handle from `init_mesh`; the engine is off the fleet mesh unless you pass one (`Robot(..., mesh=True)` is the way to join). Newton takes `solver="mujoco"`, `substeps=10`, `device`. Isaac takes an `IsaacConfig` or its fields as shortcuts (`num_envs`, `headless`, `physics_dt`, ...).
 
 ## Robots you can add
 
