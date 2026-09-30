@@ -17,7 +17,7 @@ export STRANDS_TRUST_REMOTE_CODE=1             # required: models load with trus
 
 ## What it is
 
-`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works here unchanged. The processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations and unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the steps inference consumed, and the policy blends the next chunk onto the seam.
+`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works here unchanged. The processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations, unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the steps inference consumed; the policy blends the next chunk onto the seam.
 
 Build it by name or smart string; a HuggingFace id resolves here.
 
@@ -32,23 +32,23 @@ policy = create_policy("robotfuel/act_so101_t16b", embodiment="so101")   # same 
 
 {{providers:kwargs:lerobot_local}}
 
-Inert normalization has a two-part remedy: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and `state_units` / `action_units` (`degrees` or `radians`) say which unit they were recorded in. `so100` and `so101` declare `state_units='degrees'`; radian stats need the unit half beside the stats half.
+Inert normalization has a two-part remedy: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and the embodiment's `state_units` / `action_units` (`degrees` or `native`) say which frame they were recorded in; `native` is what the robot emits, radians in MuJoCo. `so100` and `so101` declare `degrees`. Neither is a constructor keyword; `create_policy` refuses them.
 
 `pretrained_name_or_path` is required. `actions_per_step=1` becomes the trained `n_action_steps`; above 1 pins it. `cache_model=True` shares weights in-process (`clear_model_cache()`, `list_cached_models()`). Without `device=` it uses CUDA if present; checkpoint `torch.compile` stays off unless `compile_model=True`.
 
 ## Embodiments
 
-An embodiment is a declared key map from what the robot emits to what the model was trained on: `state_keys`, `action_keys`, `obs_rename`, and a `dim_policy` (`strict`, `pad`, or `truncate`) for a state width unlike the robot's. They live in `strands_robots/policies/lerobot_local/embodiments.json`; sim entries use bare MuJoCo joint names, `*_real` entries LeRobot motor names with `.pos`. Known embodiments and aliases:
+An embodiment is a declared key map from what the robot emits to what the model was trained on: `state_keys`, `action_keys`, `obs_rename`, and a `dim_policy` (`strict`, `pad`, or `truncate`) for a state width unlike the robot's. They live in `strands_robots/policies/lerobot_local/embodiments.json`; sim entries use MuJoCo joint names, `*_real` entries LeRobot motor names with `.pos`. Known embodiments and aliases:
 
 {{providers:embodiments}}
 
 ## Rule 1: state keys
 
-Without `set_robot_state_keys`, the policy infers the state vector from the observation's insertion order of numeric scalars. The sim backends write `obs[joint]` then `obs[f"{joint}.vel"]`, so `strands_robots.policies._state_keys.drop_velocity_siblings` removes each `.vel` whose position companion is present and keeps an orphan (LeKiwi declares `x.vel`, `y.vel`, `theta.vel` as state). Every inferring provider shares this rule; an explicit `robot_state_keys` list is never filtered.
+Without `set_robot_state_keys`, the policy infers the state vector from the observation's insertion order of numeric scalars. The sim backends write `obs[joint]` then `obs[f"{joint}.vel"]`, so `strands_robots.policies._state_keys.drop_velocity_siblings` removes each `.vel` whose position companion is present, keeping an orphan (LeKiwi declares `x.vel`, `y.vel`, `theta.vel` as state). Every inferring provider shares this rule; an explicit `robot_state_keys` list is never filtered.
 
 ## Rule 2: camera names
 
-A checkpoint declares image features such as `observation.images.image`; the embodiment's `obs_rename` maps the camera key you attach onto it. Name a sim camera after the model card (`realsense_top`) instead of the embodiment's source key (`front`) and the rename never fires; `preflight` refuses before any download, naming the expected source keys.
+A checkpoint declares image features such as `observation.images.image`; the embodiment's `obs_rename` maps the camera key you attach onto it. Name a sim camera after the model card (`realsense_top`) rather than the embodiment's source key (`front`) and the rename never fires; `preflight` refuses before any download, naming the expected source keys.
 
 Generated from `embodiments.json`:
 
@@ -74,7 +74,7 @@ sim.run_policy(
 )
 ```
 
-`parent_body` mounts a camera on a link so a wrist view rides with the arm; `position` and `target` are then in that frame, both required. It works on `mujoco` and `newton`; `isaac` refuses it and names the world-frame alternative.
+`parent_body` mounts a camera on a link (a wrist view rides with the arm); `position` and `target` are then in that frame, both required. It works on `mujoco` and `newton`; `isaac` refuses it and names the world-frame alternative.
 
 ## Run it
 
@@ -130,6 +130,6 @@ policy = create_policy("ws://gpu-box:8765")                                     
 
 ## Limits
 
-- `trust_remote_code=True` is unconditional for this provider, hence the environment gate; load checkpoints only from organisations you trust.
+- `trust_remote_code=True` is unconditional here, hence the environment gate; load checkpoints only from organisations you trust.
 - `dim_policy="pad"` / `"truncate"` adapt the state width and take the first N values of a wider action (32-D pi0/pi0.5); `strict` refuses. An embodiment the pipeline cannot take is refused at load.
 - An embodiment not in `embodiments.json` needs its own entry (state keys, action keys, camera renames); [training](../training/lerobot.md) shows how a checkpoint carries those names.

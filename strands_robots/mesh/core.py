@@ -23,6 +23,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from strands_robots import refusal_codes
 from strands_robots._command_gate import gate_motion
 from strands_robots._motion_grants import consume_grant
 from strands_robots._pacing import Ticker
@@ -492,6 +493,38 @@ def _extract_sample_source_zid(sample: Any) -> str | None:
         return None
 
 
+def _coded_refusal(exc: BaseException) -> dict[str, Any] | None:
+    """The wire fields for a refusal that carries a code, or ``None``.
+
+    Reads ``exc.code`` and trusts it only when it is a member of
+    :data:`~strands_robots.refusal_codes.REFUSAL_CODES`: a stray ``code``
+    attribute on an adapter exception is not the refusal contract. The
+    sentence is built from the code and its grant in
+    :data:`~strands_robots.refusal_codes.REFUSAL_GRANTS`, never from the
+    exception text, so it says what the operator can do without carrying
+    anything about how this process failed. ``subject`` is the value the
+    caller supplied (a provider, a repo, a host), so it is theirs to read back.
+    """
+    code = getattr(exc, "code", None)
+    if not isinstance(code, str) or code not in refusal_codes.REFUSAL_CODES:
+        return None
+    grant = refusal_codes.REFUSAL_GRANTS.get(code)
+    fields: dict[str, Any] = {
+        "code": code,
+        "error": (
+            f"refused: {code}; the peer's operator can lift it by setting {grant} on the peer"
+            if grant
+            else f"refused: {code}"
+        ),
+    }
+    if grant:
+        fields["grant"] = grant
+    subject = getattr(exc, "subject", None)
+    if isinstance(subject, str) and subject:
+        fields["subject"] = subject
+    return fields
+
+
 def _reports_failure_to_stop(result: Mapping[str, Any]) -> bool:
     """Whether a result AFFIRMATIVELY reports that it did not do the thing.
 
@@ -904,6 +937,8 @@ class Mesh(SensorLoopsMixin):
         # shape and reuses _evict_replay_cache for bounding. Key shape:
         # ((sender_id, turn_id)) -> monotonic insert ts.
         self._cmd_replay_cache: dict[tuple[str, str], float] = {}
+        # Topics whose retained command this peer has already warned about.
+        self._retained_cmd_warned: set[str] = set()
         self._cmd_replay_lock = threading.Lock()
         # M-1: resume override-code brute-force throttle. The crypto
         # oracles (timing / content / length) are all closed, but the resume
@@ -2262,6 +2297,15 @@ class Mesh(SensorLoopsMixin):
         sender_id = data.get("sender_id", "")
         if sender_id == self.peer_id:
             return
+        if getattr(sample, "retain", False) is True:
+            # The broker stored this command and replays it to every new
+            # subscription: this peer subscribes ``cmd`` and ``broadcast`` at
+            # every start, and the replay cache is per process, so a stored
+            # command would run at every boot until someone cleared the topic
+            # (live: a retained ``execute`` ran a rollout with nobody present).
+            # A command is a live request or nothing.
+            self._refuse_retained_command(sample, data)
+            return
         # A command that arrived as an AWS IoT direct message names the
         # sender's reply address in the MQTT5 Response Topic. A zenoh.Sample
         # has no such attribute, so the default keeps the computed reply key.
@@ -2273,6 +2317,35 @@ class Mesh(SensorLoopsMixin):
             name=f"mesh-exec-{self.peer_id}",
             daemon=True,
         ).start()
+
+    def _refuse_retained_command(self, sample: Any, data: dict[str, Any]) -> None:
+        """Audit and WARN (once per topic) a command the broker delivered from storage."""
+        topic = str(getattr(sample, "key_expr", "") or "")
+        sender = data.get("sender_id", "")
+        turn = data.get("turn_id", "")
+        command = data.get("command")
+        action = command.get("action", "") if isinstance(command, dict) else ""
+        self._audit_local(
+            "command_refused",
+            {
+                "action": str(action)[:64],
+                "reason": "retained",
+                "sender": str(sender)[:128],
+                "turn_id": str(turn)[:128],
+                "topic": topic[:256],
+            },
+        )
+        if topic in self._retained_cmd_warned:
+            return
+        self._retained_cmd_warned.add(topic)
+        logger.warning(
+            "[mesh] %s: refused a retained command on %s (the broker stored it and replays it at every "
+            "subscribe; a command is a live request or nothing). Clear it with "
+            "`aws iot-data publish --topic %s --retain --payload ''` and find who stored it.",
+            self.peer_id,
+            topic,
+            topic,
+        )
 
     def _select_direct_sender(self, session: Any) -> DirectSender | None:
         """Return *session* as a :class:`DirectSender` when direct messaging applies.
@@ -2689,30 +2762,41 @@ class Mesh(SensorLoopsMixin):
                 exc,
                 exc_info=True,
             )
+            # A CONTINUABLE refusal (the trust-remote-code gate, an allowlist)
+            # carries a code from :data:`~strands_robots.refusal_codes.REFUSAL_CODES`
+            # and the grant that lifts it. Answering it with the fixed string
+            # left the remedy in this peer's own stderr while the operator at
+            # the other end read only ``dispatch error`` (GH #4173). The wire
+            # now carries the code, the grant and the subject the caller
+            # supplied, in a sentence built from the vocabulary; the exception
+            # text still never leaves this process, and an exception without a
+            # code from that vocabulary answers exactly as before.
+            coded = _coded_refusal(exc)
+            envelope: dict[str, Any] = {
+                "type": "error",
+                "responder_id": self.peer_id,
+                "turn_id": turn,
+                "error": "dispatch error",
+                "timestamp": time.time(),
+            }
+            if coded is not None:
+                envelope.update(coded)
             if rkey is not None:
-                reply(
-                    rkey,
-                    {
-                        "type": "error",
-                        "responder_id": self.peer_id,
-                        "turn_id": turn,
-                        "error": "dispatch error",
-                        "timestamp": time.time(),
-                    },
-                )
+                reply(rkey, envelope)
             # Audit the dispatch-error path so a remote prober cannot
             # silently fish for adapter exceptions without leaving a
             # forensic trail (issue #257). Reuses ``command_rejected``
             # event_type with reason="dispatch error" to keep the
-            # operator audit-walker grep simple.
-            self._audit_local(
-                "command_rejected",
-                {
-                    "sender": sender,
-                    "reason": "dispatch error",
-                    "action": cmd.get("action") if isinstance(cmd, dict) else None,
-                },
-            )
+            # operator audit-walker grep simple; a coded refusal adds its
+            # code next to that reason.
+            audit_payload: dict[str, Any] = {
+                "sender": sender,
+                "reason": "dispatch error",
+                "action": cmd.get("action") if isinstance(cmd, dict) else None,
+            }
+            if coded is not None:
+                audit_payload["code"] = coded["code"]
+            self._audit_local("command_rejected", audit_payload)
 
     def _dispatch(self, cmd: dict[str, Any]) -> dict[str, Any]:
         action = cmd.get("action", "status")
@@ -2940,9 +3024,14 @@ class Mesh(SensorLoopsMixin):
                     )
                 }
             duration = cmd.get("duration", 30.0)
+            # ``embodiment`` rides with the checkpoint it belongs to: it names
+            # the unit frame and the renames the policy is built with, and a
+            # checkpoint that arrives without it runs in the peer's default
+            # frame (GH #4180). Validated as a registry name by
+            # :func:`~strands_robots.mesh.security.validate_command`.
             extra = {
                 k: cmd[k]
-                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path")
+                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path", "embodiment")
                 if k in cmd
             }
             # Sim peer? Route to Simulation.start_policy / run_policy.
@@ -4805,11 +4894,6 @@ class Mesh(SensorLoopsMixin):
         with self._resume_bruteforce_lock:
             self._resume_fail_count = 0
             self._resume_locked_until_mono = 0.0
-        self.publish_safety_event(
-            event_type="resume_ok",
-            severity="info",
-            payload={"sender_id": self.peer_id, "lockout_elapsed_s": elapsed},
-        )
         proof_nonce = uuid.uuid4().hex
         envelope_t = time.time()
         wire_zid = self._safety_wire_zid("strands/safety/resume")
@@ -4840,7 +4924,22 @@ class Mesh(SensorLoopsMixin):
         }
         if wire_zid is not None:
             envelope["source_zid"] = wire_zid
+        # The envelope leaves BEFORE the ``resume_ok`` event, the order
+        # :meth:`emergency_stop` already uses. Every peer's ingress carries the
+        # ``**/safety/**`` downsampling rule from
+        # :func:`~strands_robots.mesh._zenoh_config.downsampling_block`, and
+        # Zenoh keeps one timestamp per rule per link, not per key: the second
+        # ``safety/**`` message from this peer inside one period is dropped
+        # before any subscriber runs. With the event first, the envelope was
+        # that second message, so the issuer cleared and every other peer
+        # stayed locked with nothing logged (GH #4171). The event copy may now
+        # be the one the wire loses; its audit record is written regardless.
         self._publish_safety_envelope("strands/safety/resume", envelope)
+        self.publish_safety_event(
+            event_type="resume_ok",
+            severity="info",
+            payload={"sender_id": self.peer_id, "lockout_elapsed_s": elapsed},
+        )
         logger.warning("[safety] %s: resume after %.1fs lockout", self.peer_id, elapsed)
         return {"status": "ok"}
 
