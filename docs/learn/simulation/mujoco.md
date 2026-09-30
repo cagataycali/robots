@@ -64,6 +64,8 @@ The scene is an `MjSpec` that is recompiled after every structural change, so `a
 
 `create_world(timestep=0.002)` sets physics at 500 Hz. `run_policy(control_frequency=50.0)` steps `1 / (50 * timestep)` physics substeps per action; `control_substeps` pins it. `step(n)` advances `n` physics steps; `physics_timestep()` reads the live value.
 
+If the physics diverges, MuJoCo resets the world; `step`, `send_action` and rollouts return `status="error"` with `{"diverged": true}`; `reset()` recovers.
+
 ## Limits
 
 - CPU only, one world per process; batched environments use `newton` or `isaac`.
