@@ -96,19 +96,21 @@ def test_a_motor_that_is_off_pushes_nothing(quad) -> None:
     assert site_wrenches(drive, np.zeros(3), np.array([1.0, 0, 0, 0])) == []
 
 
-@pytest.mark.parametrize(
-    "xml",
-    [
-        # a joint: an articulated robot, the articulation path's to load
-        '<mujoco><worldbody><body><joint name="j"/><geom size=".1"/></body></worldbody>'
-        '<actuator><motor joint="j"/></actuator></mujoco>',
-        # no actuators: nothing to drive
-        '<mujoco><worldbody><body><freejoint/><geom size=".1"/></body></worldbody></mujoco>',
-        # a welded body with a thruster cannot fly
-        '<mujoco><worldbody><body><geom size=".1"/><site name="s"/></body></worldbody>'
-        '<actuator><motor site="s" gear="0 0 1 0 0 0"/></actuator></mujoco>',
-    ],
+# a joint: an articulated robot, the articulation path's to load
+_ARTICULATED = (
+    '<mujoco><worldbody><body><joint name="j"/><geom size=".1"/></body></worldbody>'
+    '<actuator><motor joint="j"/></actuator></mujoco>'
 )
+# no actuators: nothing to drive
+_UNDRIVEN = '<mujoco><worldbody><body><freejoint/><geom size=".1"/></body></worldbody></mujoco>'
+# a welded body with a thruster cannot fly
+_WELDED_THRUSTER = (
+    '<mujoco><worldbody><body><geom size=".1"/><site name="s"/></body></worldbody>'
+    '<actuator><motor site="s" gear="0 0 1 0 0 0"/></actuator></mujoco>'
+)
+
+
+@pytest.mark.parametrize("xml", [_ARTICULATED, _UNDRIVEN, _WELDED_THRUSTER])
 def test_anything_else_stays_on_the_articulation_path(tmp_path, xml) -> None:
     path = tmp_path / "m.xml"
     path.write_text(xml)
