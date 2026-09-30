@@ -429,6 +429,10 @@ class TestEveryArticulationTouchConsultsTheGate:
         # flag being cleared. A gate here would refuse the very call that repairs
         # the view, so its exemption is structural rather than a concession.
         "_revive_articulations_after_reset": "reset() itself, which rebuilds the view",
+        # Also runs INSIDE reset(), after world.reset() rebuilt the view (and after
+        # _revive_articulations_after_reset), zeroing the velocities the camera
+        # lighting ticks left - the same structural exemption.
+        "_settle_after_lighting": "reset() itself, after the view is rebuilt",
         # _MultiArticulation's methods forward one articulation call to each of
         # a multi-root robot's parts. They are reached only through the gated
         # call sites that drive ``robot.articulation`` (send_action,

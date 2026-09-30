@@ -4459,6 +4459,24 @@ class Mesh(SensorLoopsMixin):
         re-declares its own subscriptions - which is what the WARNING above
         makes visible when a rejoin has not happened yet.
         """
+        # Checked before anything is recorded. The documented examples once read
+        # ``subscribe("imu", "strands/arm-b/imu", lambda ...)`` - name first -
+        # which subscribed to the literal key ``imu`` (the callback never
+        # fired), stored the lambda as the subscription NAME, and made the next
+        # ``stop()`` raise ``TypeError: sequence item 0: expected str instance,
+        # function found`` while joining the names.
+        if not isinstance(topic, str) or not topic:
+            raise TypeError(f"subscribe: topic must be a non-empty key expression string, got {topic!r}")
+        if callback is not None and not callable(callback):
+            raise TypeError(
+                f"subscribe: callback must be callable, got {callback!r} - the signature is "
+                "subscribe(topic, callback=None, name=None); did you pass the name first?"
+            )
+        if name is not None and not isinstance(name, str):
+            raise TypeError(
+                f"subscribe: name must be a string, got {type(name).__name__} - the signature is "
+                "subscribe(topic, callback=None, name=None)"
+            )
         if not self._running:
             # Silent until now, unlike the declare_subscriber failure below and
             # every other client-side refusal in this class. A caller
