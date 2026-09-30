@@ -23,13 +23,25 @@ import pathlib
 import pytest
 
 from strands_robots.dashboard import mesh_bridge
-from strands_robots.mesh.iot.provision import _OPERATOR_POLICY_DOC, _ROBOT_POLICY_DOC
+from strands_robots.mesh.iot import provision
+from strands_robots.mesh.iot.provision import _OPERATOR_OBSERVE_POLICY_DOC, _OPERATOR_POLICY_DOC, _ROBOT_POLICY_DOC
 from strands_robots.mesh.transport.iot_transport import _zenoh_to_mqtt_filter
 
 _BRIDGE_SOURCE = pathlib.Path(mesh_bridge.__file__)
 
 
-def _resources(doc: dict, action: str) -> list[str]:
+#: Every policy an operator certificate carries; the grants are graded as their union.
+OPERATOR_DOCS = (_OPERATOR_POLICY_DOC, _OPERATOR_OBSERVE_POLICY_DOC)
+
+
+def _resources(docs: dict | tuple[dict, ...], action: str) -> list[str]:
+    out: list[str] = []
+    for doc in (docs,) if isinstance(docs, dict) else docs:
+        out.extend(_statement_resources(doc, action))
+    return out
+
+
+def _statement_resources(doc: dict, action: str) -> list[str]:
     out: list[str] = []
     for statement in doc["Statement"]:
         if statement.get("Effect") != "Allow":
@@ -72,13 +84,13 @@ def _concrete_topic(mqtt_filter: str) -> str:
 def test_every_fleet_view_subscription_is_granted_to_the_operator(key_expr: str) -> None:
     mqtt_filter = _zenoh_to_mqtt_filter(key_expr)
     filter_arn = f"arn:aws:iot:*:*:topicfilter/{mqtt_filter}"
-    subscribe = _resources(_OPERATOR_POLICY_DOC, "iot:Subscribe")
+    subscribe = _resources(OPERATOR_DOCS, "iot:Subscribe")
     assert any(_arn_matches(r, filter_arn) for r in subscribe), (
         f"the fleet view subscribes to {key_expr!r} but no iot:Subscribe grant in the "
         f"strands-operator policy covers topicfilter {mqtt_filter!r}"
     )
     topic_arn = f"arn:aws:iot:*:*:topic/{_concrete_topic(mqtt_filter)}"
-    receive = _resources(_OPERATOR_POLICY_DOC, "iot:Receive")
+    receive = _resources(OPERATOR_DOCS, "iot:Receive")
     assert any(_arn_matches(r, topic_arn) for r in receive), (
         f"the operator may subscribe to {mqtt_filter!r} but no iot:Receive grant delivers "
         f"{_concrete_topic(mqtt_filter)!r}; the broker would accept the SUBSCRIBE and drop every message"
@@ -107,8 +119,8 @@ def test_the_bridge_subscribes_from_the_roster_and_nowhere_else() -> None:
 
 
 def test_the_operator_still_cannot_read_commands_responses_or_teleop_input() -> None:
-    receive = _resources(_OPERATOR_POLICY_DOC, "iot:Receive")
-    subscribe = _resources(_OPERATOR_POLICY_DOC, "iot:Subscribe")
+    receive = _resources(OPERATOR_DOCS, "iot:Receive")
+    subscribe = _resources(OPERATOR_DOCS, "iot:Subscribe")
     for forbidden in (
         "arn:aws:iot:*:*:topic/strands/robot-a/cmd",
         "arn:aws:iot:*:*:topic/strands/other-operator/response/robot-a/turn-1",
@@ -119,6 +131,38 @@ def test_the_operator_still_cannot_read_commands_responses_or_teleop_input() -> 
     for resource in subscribe + receive:
         assert "/input/" not in resource and "/hand/" not in resource, resource
         assert not resource.endswith(":topic/strands/*"), resource
+
+
+def test_every_shipped_policy_document_fits_the_aws_cap() -> None:
+    """AWS refuses a document over 2048 characters; the robot doc alone is 1971 compact.
+
+    The failure is at publish time, on the first fleet whose document changed, so
+    it is graded here for every document the package ships.
+    """
+    docs = {
+        provision.OPERATOR_POLICY_NAME: _OPERATOR_POLICY_DOC,
+        provision.OPERATOR_OBSERVE_POLICY_NAME: _OPERATOR_OBSERVE_POLICY_DOC,
+        "strands-robot": provision._robot_policy_doc(allow_estop_publish=True),
+        "strands-robot-no-estop": provision._robot_policy_doc(allow_estop_publish=False),
+    }
+    for name, doc in docs.items():
+        assert provision.policy_document_size_error(name, doc) is None, provision.policy_document_size_error(name, doc)
+    assert provision.POLICY_DOCUMENT_CAP == 2048
+    too_big = {"Version": "2012-10-17", "Statement": [{"Sid": "x" * 2100}]}
+    text = provision.policy_document_size_error("big", too_big)
+    assert text is not None and "2048" in text and "second policy" in text
+
+
+def test_an_operator_certificate_carries_both_policies() -> None:
+    """provision_operator attaches strands-operator AND strands-operator-observe; reprovision adds the second to an old operator."""
+    import inspect
+
+    src = inspect.getsource(provision.provision_operator)
+    assert "attach_policy(policyName=OPERATOR_POLICY_NAME" in src
+    assert "attach_policy(policyName=OPERATOR_OBSERVE_POLICY_NAME" in src
+    src = inspect.getsource(provision.reprovision_thing)
+    assert "policy_names.append(OPERATOR_OBSERVE_POLICY_NAME)" in src
+    assert provision.OPERATOR_OBSERVE_POLICY_NAME == "strands-operator-observe"
 
 
 def test_a_robot_may_publish_what_the_fleet_view_reads() -> None:
