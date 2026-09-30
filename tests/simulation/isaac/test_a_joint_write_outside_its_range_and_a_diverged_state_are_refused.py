@@ -118,6 +118,49 @@ class TestADivergedStateIsNotReportedAsSuccess:
         engine._physics_view_stale = True
         assert _diverged_robots_error(engine, "send_action") is None
 
+    def test_the_stale_check_and_the_reads_happen_under_the_engine_lock(self) -> None:
+        """A worker's remove_object between the check and the read would leave a stale view being read (#4076).
+
+        The callers release ``_lock`` after their last batch, so the helper takes
+        it itself: the stale flag is read and every articulation read happens
+        while the lock is held, as one step.
+        """
+        import threading
+
+        engine = _engine([0.1, float("nan"), 0.0, 0.0])
+        engine._lock = threading.RLock()
+        seen: list[bool] = []
+
+        class _LockAwareArticulation(_Articulation):
+            def get_joint_positions(self) -> Any:
+                # RLock.acquire(blocking=False) from ANOTHER thread fails iff this thread holds it.
+                probe: list[bool] = []
+
+                def _try() -> None:
+                    got = engine._lock.acquire(blocking=False)
+                    probe.append(got)
+                    if got:
+                        engine._lock.release()
+
+                t = threading.Thread(target=_try)
+                t.start()
+                t.join()
+                seen.append(not probe[0])
+                return super().get_joint_positions()
+
+        engine._robots["arm"].articulation = _LockAwareArticulation([0.1, float("nan"), 0.0, 0.0])
+        result = _diverged_robots_error(engine, "step")
+        assert result is not None and "'arm' (Pitch)" in _text(result)
+        assert seen == [True], "the articulation was read while the engine lock was held"
+        assert engine._lock.acquire(blocking=False), "and the lock is released afterwards"
+        engine._lock.release()
+
+    def test_an_engine_without_a_lock_is_still_checked(self) -> None:
+        engine = _engine([float("nan"), 0.0, 0.0, 0.0])
+        engine._lock = None
+        result = _diverged_robots_error(engine, "step")
+        assert result is not None and "Rotation" in _text(result)
+
     def test_step_returns_it(self) -> None:
         engine = _engine([float("inf"), 0.0, 0.0, 0.0])
         engine._world = types.SimpleNamespace(step=lambda render=False: None, current_time=0.0)

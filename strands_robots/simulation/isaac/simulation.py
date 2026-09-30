@@ -27,6 +27,7 @@ Environment variables:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import os
@@ -487,27 +488,35 @@ def _diverged_robots_error(engine: Any, verb: str, robot_names: list[str] | None
     taking the engine, for the reason :func:`_physics_view_stale_error` is:
     cross-backend suites drive ``step`` with a ``SimpleNamespace`` as ``self``.
     """
-    # A stale view is refused by the caller before it gets here, and reading
-    # through one would hang or raise; say nothing rather than touch it.
-    if _physics_view_stale_error(engine, verb) is not None:
-        return None
-    robots = getattr(engine, "_robots", None) or {}
-    names = robot_names if robot_names is not None else list(robots)
+    # The callers release the engine lock after their last batch, and a worker
+    # thread's remove_object / add_object(is_static=False) may land before this
+    # runs; the stale flag is written under the lock, and reading through a
+    # stale view hangs or raises a bare Exception (#4076). So the stale check
+    # and every articulation read happen as one step under the same lock.
+    # ``getattr``: cross-backend suites drive this with a SimpleNamespace.
+    lock = getattr(engine, "_lock", None)
     bad: list[str] = []
-    for name in names:
-        robot = registry_entry(robots, name)
-        articulation = getattr(robot, "articulation", None) if robot is not None else None
-        if articulation is None:
-            continue
-        try:
-            raw = articulation.get_joint_positions()
-            q = None if raw is None else np.asarray(raw.cpu().numpy() if hasattr(raw, "cpu") else raw, dtype=float)
-        except (RuntimeError, ValueError, AttributeError, TypeError):
-            q = None
-        if q is not None and q.size and not bool(np.all(np.isfinite(q))):
-            joints = list(getattr(robot, "joint_names", []) or [])
-            nan_joints = [joints[i] if i < len(joints) else str(i) for i in np.flatnonzero(~np.isfinite(q.reshape(-1)))]
-            bad.append(f"'{name}' ({', '.join(nan_joints[:6])}{', ...' if len(nan_joints) > 6 else ''})")
+    with lock if lock is not None else contextlib.nullcontext():
+        if _physics_view_stale_error(engine, verb) is not None:
+            return None
+        robots = getattr(engine, "_robots", None) or {}
+        names = robot_names if robot_names is not None else list(robots)
+        for name in names:
+            robot = registry_entry(robots, name)
+            articulation = getattr(robot, "articulation", None) if robot is not None else None
+            if articulation is None:
+                continue
+            try:
+                raw = articulation.get_joint_positions()
+                q = None if raw is None else np.asarray(raw.cpu().numpy() if hasattr(raw, "cpu") else raw, dtype=float)
+            except (RuntimeError, ValueError, AttributeError, TypeError):
+                q = None
+            if q is not None and q.size and not bool(np.all(np.isfinite(q))):
+                joints = list(getattr(robot, "joint_names", []) or [])
+                nan_joints = [
+                    joints[i] if i < len(joints) else str(i) for i in np.flatnonzero(~np.isfinite(q.reshape(-1)))
+                ]
+                bad.append(f"'{name}' ({', '.join(nan_joints[:6])}{', ...' if len(nan_joints) > 6 else ''})")
     if not bad:
         return None
     return {
