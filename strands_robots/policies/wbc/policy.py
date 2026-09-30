@@ -274,7 +274,22 @@ class WBCPolicy(Policy):
         # in _load_sessions (before any network call) rather than silently
         # downloading the wrong model family. An explicit local path / id wins.
 
-        # Resolve the config first - it tells us dims + default file layout.
+        # A HuggingFace id becomes a local snapshot directory BEFORE the config
+        # is resolved. ``_resolve_config`` reads the checkpoint as a path: for
+        # ``"org/repo"`` it found no directory, so ``_default_onnx_paths`` took
+        # the string for the main ONNX file itself and paired ``org/walk_policy.onnx``
+        # beside it; ``_load_sessions`` then downloaded the snapshot and looked
+        # for ``<snapshot>/org/repo``, which is not a file. The same files as a
+        # local directory worked, because the directory was a directory when
+        # the config looked. Resolving the id here lets the config find the
+        # snapshot's ``config.json`` and its canonical ONNX names the way it
+        # does for a local checkout; ``_load_sessions`` sees an existing path
+        # and downloads nothing more. The stub seam (``allow_missing_models``)
+        # loads no session, so it still makes no network call.
+        if not allow_missing_models:
+            checkpoint = self._maybe_download_checkpoint(checkpoint)
+
+        # Resolve the config next - it tells us dims + default file layout.
         self._config = self._resolve_config(config, checkpoint)
         # Fill the per-joint SONIC defaults for the 15-DOF G1 when the checkpoint
         # ships no config (empty kps/kds/default_angles). Done on the config
