@@ -13,6 +13,8 @@ shipped ``panda_droid`` embodiment uses them.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 import torch  # real or conftest mock - both work
@@ -28,8 +30,8 @@ from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 ARM = [f"joint{i}" for i in range(1, 8)]
 
 
-def _droid(**kw) -> EmbodimentMap:
-    base = dict(
+def _droid(**kw: Any) -> EmbodimentMap:
+    base: dict[str, Any] = dict(
         name="droid_probe",
         state_keys=[*ARM, "finger_joint1"],
         action_keys=[*ARM, "finger_joint1"],
@@ -63,20 +65,22 @@ class TestTheGripperFraction:
 class TestVelocityActions:
     def test_a_chunk_integrates_from_the_measured_joints(self) -> None:
         emb = _droid()
-        q = [0.1 * i for i in range(7)] + [0.04]
+        q: list[float | None] = [*(0.1 * i for i in range(7)), 0.04]
         chunk = [[1.0] * 7 + [0.5], [2.0] * 7 + [1.0]]
 
         targets = emb.velocities_to_targets(chunk, q)
 
         # action_dt = 0.1: first step +0.1, the second a further +0.2
-        np.testing.assert_allclose(targets[0][:7], np.array(q[:7]) + 0.1)
-        np.testing.assert_allclose(targets[1][:7], np.array(q[:7]) + 0.3)
+        measured = np.array(q[:7], dtype=float)
+        np.testing.assert_allclose(targets[0][:7], measured + 0.1)
+        np.testing.assert_allclose(targets[1][:7], measured + 0.3)
         # the gripper is a position, not integrated
         assert [targets[0][7], targets[1][7]] == [0.5, 1.0]
 
     def test_a_joint_with_no_measurement_is_refused_not_integrated_from_zero(self) -> None:
         with pytest.raises(ValueError, match="measured position"):
-            _droid().velocities_to_targets([[1.0] * 8], [0.0] * 6 + [None, 0.04])
+            unmeasured: list[float | None] = [*([0.0] * 6), None, 0.04]
+            _droid().velocities_to_targets([[1.0] * 8], unmeasured)
 
     def test_position_mode_leaves_the_chunk_alone(self) -> None:
         emb = EmbodimentMap(name="p", state_keys=["a"], action_keys=["a"])
