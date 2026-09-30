@@ -268,15 +268,17 @@ def build_fleet_tools(bridge: Any, devices: Any | None) -> list[Any]:
 
 
 def asks_first(bridge: Any | None) -> list[str]:
-    """The tools that put a motion to the operator before it runs: the real-arm peers' proxies.
+    """The tools that put a motion to the operator before it runs, read from the mesh.
 
-    Derived from the mesh the way :func:`~strands_robots.dashboard.peer_tools.motion_actions_for`
-    derives the gate table, so the badge and the gate cannot disagree. Sim peers never ask
-    (their rail is structurally sim-only), hosts offer no motion verbs, stopping is never gated.
+    The same table the interrupt hook is built from
+    (:func:`~strands_robots.dashboard.peer_tools.motion_actions_for`): every real-arm
+    proxy, plus a sim proxy whose peer the gate itself calls metal (a wire sim claim
+    this dashboard did not launch), so the badge and the gate cannot disagree. Hosts
+    offer no motion verbs; stopping is never gated.
     """
     if bridge is None:
         return []
-    from strands_robots.dashboard.peer_tools import KIND_REAL, classify_peer, sanitize_tool_name
+    from strands_robots.dashboard.peer_tools import build_peer_tools, motion_actions_for
 
     try:
         snap = bridge.snapshot()
@@ -284,14 +286,9 @@ def asks_first(bridge: Any | None) -> list[str]:
         logger.debug("asks_first: bridge snapshot unreadable", exc_info=True)
         return []
     peers = snap.get("peers") if isinstance(snap, Mapping) else None
-    names: list[str] = []
-    taken: set[str] = set()
-    for peer_id, peer in (peers or {}).items():
-        name = sanitize_tool_name(peer_id, taken)
-        taken.add(name)
-        if classify_peer(peer_id, peer) == KIND_REAL:
-            names.append(name)
-    return sorted(names)
+    peers = dict(peers) if isinstance(peers, Mapping) else {}
+    proxies = build_peer_tools(peers, lambda *_a, **_k: {"error": "badge only"})
+    return sorted(motion_actions_for(proxies, peers))
 
 
 def expected_tool_names(bridge: Any | None) -> list[str]:
