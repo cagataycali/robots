@@ -1,6 +1,6 @@
 """``export_xml(output_path=...)`` treats its destination as untrusted input.
 
-``export_xml`` is one of the 77 actions the MuJoCo simulation exposes as an
+``export_xml`` is one of the 78 actions the MuJoCo simulation exposes as an
 agent tool, so ``output_path`` arrives from an LLM tool call exactly as
 ``render``'s does. :mod:`strands_robots.simulation.safe_output` exists for that
 class of sink and its module docstring enumerates them; this module pins that

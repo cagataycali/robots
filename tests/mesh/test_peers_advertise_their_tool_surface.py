@@ -85,7 +85,7 @@ def test_every_published_action_is_served_or_denied_on_purpose() -> None:
     published = wire_surface.published_actions()
     served = wire_surface.served_actions()
     denied = frozenset(wire_surface.denied_actions())
-    assert len(published) == 77
+    assert len(published) == 78
     assert served | denied == published
     assert not (served & denied)
     for name, reason in wire_surface.denied_actions().items():

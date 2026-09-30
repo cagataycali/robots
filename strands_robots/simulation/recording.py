@@ -2269,6 +2269,75 @@ class DatasetRecordingMixin:
             ],
         }
 
+    def discard_episode(self) -> dict[str, Any]:
+        """Throw away the open episode's frames, so a bad take never reaches disk.
+
+        The episode boundaries a recording session offers all SAVE: ``reset``
+        flushes the open episode as its own, ``save_episode`` and
+        ``stop_recording`` write it. A take that went wrong - the arm knocked
+        the cube off the table, the policy was the wrong checkpoint - had no
+        way out except being written and deleted afterwards with LeRobot's
+        dataset tools. This drops the frames buffered since the last boundary
+        (and un-counts them, see
+        :meth:`~strands_robots.dataset_recorder.DatasetRecorder.clear_episode_buffer`);
+        the episodes already saved are untouched, and the next frame starts
+        the next episode at frame 0. The world is not reset - call ``reset``
+        next to start the retake from the scene pose.
+
+        Refused while a policy is running, because the rollout is still
+        writing into the buffer this would clear.
+
+        Returns:
+            Standard status dict. ``success`` names how many frames were
+            dropped (``0`` on an empty buffer, which is a no-op) and carries
+            ``{"discarded_frames", "saved_episodes"}`` in a ``json`` block;
+            ``error`` when no recording is open, a policy is running, or the
+            recorder has no way to clear its buffer (the frames are then still
+            buffered and nothing was dropped).
+        """
+        state = self._recording_state()
+        if state is None or not state.get("recording", False):
+            return {
+                "status": "error",
+                "content": [{"text": "discard_episode: not recording, so there is no open episode to discard."}],
+            }
+        if err := self._require_no_running_policy("discard_episode"):
+            return err
+        recorder = state.get("dataset_recorder", None)
+        if recorder is None:
+            return {"status": "error", "content": [{"text": "No dataset recorder active."}]}
+
+        pending = int(getattr(recorder, "episode_frame_count", 0) or 0)
+        saved = int(getattr(getattr(getattr(recorder, "dataset", None), "meta", None), "total_episodes", 0) or 0)
+        if pending > 0 and not recorder.clear_episode_buffer():
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"discard_episode: this LeRobot version offers no way to clear the episode buffer, "
+                            f"so the {pending} buffered frames are still there. stop_recording will write them; "
+                            "start a new recording for the retake instead."
+                        )
+                    }
+                ],
+            }
+        # The in-memory trajectory mirror follows the recorder's buffer, as it
+        # does on save_episode, so get_recording_status reports the retake from 0.
+        state["trajectory"] = []
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": (
+                        f"Discarded the open episode ({pending} frames); {saved} saved episode(s) are untouched. "
+                        "Call reset to start the retake from the scene pose."
+                    )
+                },
+                {"json": {"discarded_frames": pending, "saved_episodes": saved}},
+            ],
+        }
+
     def _flush_open_episode_before_reset(self) -> dict[str, Any] | None:
         """Close the open dataset episode before a reset re-initializes the world.
 
@@ -2557,8 +2626,8 @@ class DatasetRecordingMixin:
                 f"[recording] {steps} steps buffered in the open episode "
                 f"(episode_index {saved_episodes}){into}; {saved_episodes} episode(s) / "
                 f"{saved_frames} frames saved so far. reset closes the open episode as its own; "
-                "run_policy(n_episodes=N) records N distinct; stop_recording saves the open "
-                "episode and closes the dataset."
+                "discard_episode drops it instead; run_policy(n_episodes=N) records N distinct; "
+                "stop_recording saves the open episode and closes the dataset."
             )
         elif last is not None:
             text = (

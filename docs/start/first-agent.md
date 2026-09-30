@@ -24,7 +24,7 @@ You should see:
 ```text
 ['so101_sim']
 Programmatic MuJoCo simulation environment (stateful session). One world per instance. The world is ALREADY CREATED and holds robot(s) 'so101' (6 joints: 1, 2,
-77 actions
+78 actions
 1 (shoulder_pan): pos=0.0000, vel=0.0000
 ```
 

@@ -4,7 +4,7 @@
 list_cameras, render) and the motion/task ones (execute, start, status, stop). The
 quickstart once asked it, in one prompt, for ``start_recording``, ``teleoperate``
 and ``stop_recording`` - every call came back "Unknown action" with nothing about
-where the verb went. Measured against the simulation tool's 77 published actions,
+where the verb went. Measured against the simulation tool's 78 published actions,
 the three land in three different places: ``start_recording`` / ``stop_recording``
 are its actions, ``teleoperate`` is not an action of either tool but a Python
 method of the teleop mixin, and the recording of a real arm under a leader is the

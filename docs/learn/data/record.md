@@ -39,6 +39,7 @@ Layout after `stop_recording()`:
 | `start_recording(repo_id, task, fps=30, root=None, vcodec="h264", overwrite=False, cameras=None)` | declares the schema from the live model: every joint of every robot, every named camera |
 | `run_policy(..., n_episodes=, reset_between=True)` | records one `(observation, action)` frame per control step with the observation re-sampled at that step |
 | `save_episode()` | closes the open episode by hand when you step the loop yourself |
+| `discard_episode()` | drops the open episode's frames, so a bad take never reaches disk |
 | `stop_recording(push_to_hub=False, bucket=None, run_id=None)` | flushes, finalizes, optionally pushes or syncs ([stream and sync](stream-and-sync.md)) |
 | `get_recording_status()` | `recording`, `steps`, `last_save` |
 | `replay_episode(repo_id, episode=0, speed=1.0)` | plays a recorded action stream back into the world |

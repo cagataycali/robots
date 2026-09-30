@@ -3836,6 +3836,10 @@ class MuJoCoSimEngine(
             "boundary per episode automatically)"
         )
         base["methods"]["stop_recording"] = "(push_to_hub=False, bucket=None, run_id=None) -> dict"
+        base["methods"]["discard_episode"] = (
+            "() -> dict  (drop the open episode's frames so a bad take never reaches disk; "
+            "saved episodes are untouched; call reset next for the retake)"
+        )
         base["methods"]["get_recording_status"] = "() -> dict"
         base["methods"]["verify_dataset_episodes"] = (
             "(expected: int) -> dict  (after stop_recording, read the parquet "
@@ -6663,7 +6667,7 @@ class MuJoCoSimEngine(
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "
                 "render cameras, record trajectories, domain randomize. "
                 "Same Policy ABC as real robot control - sim and real with zero code changes. "
-                "Actions (77 total): "
+                "Actions (78 total): "
                 "[World] create_world, load_scene, reset, get_state, destroy, export_xml; "
                 "[Robots] add_robot, remove_robot, list_robots, get_robot_state, list_bodies; "
                 "[Objects] add_object, remove_object, move_object, list_objects; "
@@ -6678,7 +6682,7 @@ class MuJoCoSimEngine(
                 "[Motion primitives] move_to (Cartesian transport of the end_effector frame that get_robot_state names, via IK; not collision-aware), "
                 "set_gripper (open/close set-point), rotate_wrist (wrist-yaw set-point holding position); "
                 "[Scene MJCF] replace_scene_mjcf, patch_scene_mjcf, raycast, multi_raycast; "
-                "[Recording] start_recording, stop_recording, get_recording_status, "
+                "[Recording] start_recording, stop_recording, get_recording_status, discard_episode (drop the open take), "
                 "start_cameras_recording, stop_cameras_recording, get_cameras_recording_status; "
                 "[Randomize] randomize, set_obs_noise (additive Gaussian sensor noise on observations and rendered frames); "
                 "[Benchmark] list_benchmarks, register_benchmark_from_file, register_builtin_benchmarks, evaluate_benchmark; "

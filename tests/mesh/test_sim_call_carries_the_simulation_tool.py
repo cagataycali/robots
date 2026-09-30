@@ -1,13 +1,13 @@
 """``sim_call`` carries the simulation tool over the mesh, one published action at a time.
 
-A ``Robot("so101")`` in simulation exposes 77 actions to an in-process agent
+A ``Robot("so101")`` in simulation exposes 78 actions to an in-process agent
 (``tool_spec.json``) and answered seven verbs on the mesh, so an agent driving
 it from another process could move a joint but not add a cube. Pinned here:
 
 * the wire: ``sim_call`` is an allowed action whose ``sim_action`` must be a
   published simulation action outside :data:`SIM_CALL_DENIED_ACTIONS`, whose
   ``params`` keys must be published params outside :data:`SIM_CALL_DENIED_PARAMS`,
-  identifier-safe and size-bounded; every one of the 77 published actions is
+  identifier-safe and size-bounded; every one of the 78 published actions is
   either admitted or denied on purpose, never by omission;
 * the dispatch: ``Mesh._dispatch`` serves it through the simulation's own
   ``__call__`` (a child peer binds its robot when the action takes one), a
@@ -49,11 +49,11 @@ def test_sim_call_is_an_allowed_action_carrying_a_published_action_and_its_param
 
 
 def test_every_published_action_is_admitted_or_denied_on_purpose() -> None:
-    """The 77-name enum splits exactly into the admitted set and the deny list."""
+    """The 78-name enum splits exactly into the admitted set and the deny list."""
     published = security.sim_call_published_actions()
     allowed = security.sim_call_allowed_actions()
     denied = security.SIM_CALL_DENIED_ACTIONS
-    assert len(published) == 77
+    assert len(published) == 78
     assert denied <= published, sorted(denied - published)
     assert allowed | denied == published
     assert not (allowed & denied)
