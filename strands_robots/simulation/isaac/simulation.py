@@ -7286,7 +7286,7 @@ class IsaacSimulation(
             sx = float(cam.width) / float(cam.render_width)
             sy = float(cam.height) / float(cam.render_height)
             if sx != 1.0 or sy != 1.0:
-                K = np.diag([sx, sy, 1.0]) @ K
+                K = np.asarray(np.diag([sx, sy, 1.0]) @ K, dtype=np.float64).reshape(3, 3)
             position, quat_wxyz = cam.handle.get_world_pose()
             w_px, h_px = int(cam.width), int(cam.height)
 
