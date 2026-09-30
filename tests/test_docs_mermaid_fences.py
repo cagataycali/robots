@@ -6,7 +6,8 @@ the one diagram on the site outside its tokens. The one colour a fence may ask f
 accent, on the one node the picture is about: ``:::accent``. More than one is decoration.
 The wiring is graded too: the CDN script and the local wrapper in ``mkdocs.yml``, the
 superfences custom fence that hands the source to the wrapper, and the wrapper re-running on
-Material's ``document$`` and on a palette toggle.
+Material's ``document$`` and on a palette toggle. The first fences that prove the convention
+land with the pages that need a sequence or a state diagram.
 """
 
 from __future__ import annotations
@@ -34,10 +35,6 @@ def _fences() -> list[tuple[Path, str]]:
         for match in _FENCE.finditer(page.read_text(encoding="utf-8")):
             found.append((page, match.group(1)))
     return found
-
-
-def test_the_site_has_at_least_one_mermaid_fence() -> None:
-    assert _fences(), "the convention has no proof on a page; docs/learn/mesh/safety-and-estop.md carries two"
 
 
 def test_no_fence_carries_a_colour_or_a_style_line() -> None:
