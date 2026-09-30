@@ -245,6 +245,9 @@ _EDGE_NAMES = (
 )
 
 
+_ABSENT = object()
+
+
 def _stand_ins() -> dict[str, MagicMock]:
     return {name: MagicMock(name=name) for name in _EDGE_NAMES}
 
@@ -253,12 +256,24 @@ class TestTheEdgeSnapshotRecordsOnlyWhatIsReal:
     """``use_a_mock_edge`` / ``restore_the_edge``: the edge names themselves."""
 
     @pytest.fixture(autouse=True)
-    def _edge_names_put_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        for name in _EDGE_NAMES:
-            if name in sys.modules:
-                monkeypatch.setitem(sys.modules, name, sys.modules[name])
+    def _edge_names_put_back(self) -> Iterator[None]:
+        """Leave the edge names exactly as the cell found them, absent ones included.
+
+        ``monkeypatch.delitem(..., raising=False)`` on a name that is not
+        registered records no undo, so the fake modules these cells install
+        under an absent name used to outlive the class. They carry a
+        ``__file__``, which ``restore_the_edge`` reads as real, and the next
+        file on the same worker to import ``strands_robots.device_connect``
+        failed on ``cannot import name 'DeviceRuntime' from
+        'device_connect_edge' (/real/device_connect_edge.py)``.
+        """
+        held = {name: sys.modules.get(name, _ABSENT) for name in _EDGE_NAMES}
+        yield
+        for name, module in held.items():
+            if module is _ABSENT:
+                sys.modules.pop(name, None)
             else:
-                monkeypatch.delitem(sys.modules, name, raising=False)
+                sys.modules[name] = module
 
     def test_a_siblings_stand_in_is_not_recorded_as_the_original(self) -> None:
         first = _stand_ins()
@@ -388,6 +403,16 @@ class TestTheMeasuredOrderings:
             "tests/drivers/test_reachy_wireless_daemon_protocol.py",
             "-k",
             "not websocket_close",
+            cwd=_REPO_ROOT,
+        )
+        assert _counted(report, "failed") == 0 and _counted(report, "passed") > 0, report[-4000:]
+
+    def test_the_edge_snapshot_cells_ahead_of_the_insecure_transport_cells(self) -> None:
+        # Measured on main: 2 failed, on the fakes these cells left under names
+        # that were absent when they started.
+        report = _run_pytest(
+            "tests/test_device_connect_stand_in_is_not_handed_back.py::TestTheEdgeSnapshotRecordsOnlyWhatIsReal",
+            "tests/test_insecure_transport_posture_has_one_owner.py::TestTheAdvisoryFollowsTheTransport",
             cwd=_REPO_ROOT,
         )
         assert _counted(report, "failed") == 0 and _counted(report, "passed") > 0, report[-4000:]

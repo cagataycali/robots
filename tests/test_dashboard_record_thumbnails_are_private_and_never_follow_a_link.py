@@ -103,7 +103,7 @@ class TestTheReadRouteNeverFollowsALink:
         # The attacker's order of events: the directory exists before the dashboard ever
         # writes a frame, and the link inside it is named after the URL they will request.
         root = tmp_path / "thumbs"
-        root.mkdir()
+        root.mkdir(mode=0o700)  # owner-only whatever the umask: the product refuses a group-writable root
         (root / "0_x.jpg").symlink_to(secret_file)
         ctl = RecordController(devices=object(), thumb_root=str(root))
         response = _client(ctl, monkeypatch).get("/api/record/thumb/0/x")
