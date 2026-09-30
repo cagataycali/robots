@@ -43,13 +43,13 @@ print(type(actor).__name__, actor.actor_obs_keys)
 You should see (a few `[sim] action value ... outside the range` warnings on the gripper are the untrained actor):
 
 ```text
-success ['entropy', 'iteration', 'latest_loss', 'latest_step', 'mean_episode_return', 'mean_reward', 'surrogate_loss', 'value_loss']
+success ['entropy', 'iteration', 'iterations_recorded', 'latest_loss', 'latest_step', 'mean_episode_return', 'mean_reward', 'metrics_path', 'surrogate_loss', 'value_loss']
 {'provider': 'ppo', 'num_actor_obs': 6, 'num_actions': 6, 'actor_obs_keys': ['1', '2', '3', '4', '5', '6'], 'action_keys': ['1', '2', '3', '4', '5', '6'], 'hidden_dims': [128, 128]}
 ['episodes_successful_at_reset', 'max_return', 'mean_length', 'mean_return', 'min_return', 'num_episodes', 'returns', 'std_return', 'success_measured', 'success_rate']
 DeployableActor ['1', '2', '3', '4', '5', '6']
 ```
 
-Real runs use `total_timesteps` in the hundreds of thousands. `create_policy("rl", checkpoint_dir=result.checkpoint_dir)` drives a robot with it; see [rl](../policies/rl.md).
+Each iteration is appended to `output_dir/metrics.jsonl` (`metrics_path`). Real runs use `total_timesteps` in the hundreds of thousands. `create_policy("rl", checkpoint_dir=result.checkpoint_dir)` drives a robot with it; see [rl](../policies/rl.md).
 
 ```bash
 pip install 'strands-robots[rl]'    # torch + gymnasium + [sim-mujoco]
