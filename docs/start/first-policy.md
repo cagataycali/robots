@@ -39,7 +39,7 @@ Note: LerobotLocalPolicy does not read the instruction. Its actions - the act ch
 90 0 8.2
 ```
 
-{{sim:same-checkpoint-1|where the ACT checkpoint left the simulated arm after 90 actions from its wrist camera}}
+{{sim:same-checkpoint-1|where the ACT checkpoint left the simulated arm after ninety steps from its wrist camera}}
 
 Ninety of ninety actions applied. The 8.2 s is a laptop CPU inferring a 30-action chunk each second; the note says ACT has no language input, so the instruction is a label, not a command. `STRANDS_TRUST_REMOTE_CODE=1` is the consent lerobot checkpoints need. `obs_rename_override` routes your camera names onto the checkpoint's feature names and drops the one it does not read; without it the call refuses before any download and names the override.
 
@@ -73,7 +73,7 @@ The checkpoint never sees a robot. It sees `observation.state`, six numbers in t
 
 ## What it does not mean
 
-The arm moved; the cube was not picked up. A checkpoint trained on one physical arm and table meets other lighting, another camera pose and a rest pose at the edge of its training range, so 90 applied actions prove the plumbing, not the task. Measured success rates live on the [robot page](../robots/so101.md), each with its source; a number without one is not written down.
+The arm moved; the cube was not picked up. A checkpoint trained on one physical arm and table meets other lighting, another camera pose and a rest pose at the edge of its training range, so ninety applied steps prove the plumbing, not the task. Measured success rates live on the [robot page](../robots/so101.md), each with its source; a number without one is not written down.
 
 ## Behind the gate
 
