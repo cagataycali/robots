@@ -23,6 +23,8 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from strands_robots._command_gate import gate_motion
+from strands_robots._motion_grants import consume_grant
 from strands_robots._pacing import Ticker
 from strands_robots.audit import log_safety_event
 from strands_robots.bus_access import joint_read_source, read_joints, read_observation
@@ -108,6 +110,24 @@ def get_local_robots() -> dict[str, Mesh]:
     with _LOCAL_ROBOTS_LOCK:
         return dict(_LOCAL_ROBOTS)
 
+
+#: The verbs a wire command can carry that move REAL hardware: a policy
+#: rollout (``execute`` / ``start``) and following a remote leader's input
+#: stream (``teleop_receive``). On a hardware peer each one passes
+#: :func:`~strands_robots._command_gate.gate_motion` in ``_dispatch`` before
+#: anything is dispatched; ``teleop_stop`` and ``stop`` are never gated,
+#: stopping must not get harder. Simulation peers move no metal and are not
+#: gated. ``set_joints`` is not here because a hardware peer refuses it
+#: outright (``_dispatch_set_joints``).
+WIRE_MOTION_ACTIONS: frozenset[str] = frozenset({"execute", "start", "teleop_receive"})
+
+#: The allowlist variable the receiving robot host reads: the same
+#: ``STRANDS_ROBOT_COMMAND_ALLOW`` the hardware ``Robot`` agent tool reads
+#: (``hardware_robot.COMMAND_ALLOW_ENV``; spelled here because that module
+#: imports this one), so one operator setting on the robot machine
+#: pre-approves a verb whichever path it arrives by. Comma-separated verbs
+#: from :data:`WIRE_MOTION_ACTIONS`, or ``*``.
+WIRE_MOTION_ALLOW_ENV = "STRANDS_ROBOT_COMMAND_ALLOW"
 
 #: Sentinel stored in :attr:`Mesh._expected_responders` for
 #: broadcast turn_ids. Distinct from any real peer_id (no peer_id
@@ -724,6 +744,24 @@ def _wire_safe_block(block: Any) -> Any:
         cut = len(text) - SIM_CALL_MAX_TEXT_CHARS
         return {"text": text[:SIM_CALL_MAX_TEXT_CHARS] + f"\n[... {cut} more characters not carried over the wire]"}
     return block
+
+
+def _routable_target_error(target: Any) -> str | None:
+    """Why *target* may not become the peer segment of a key expression, or ``None``.
+
+    The rule is the inbound one, :func:`~strands_robots.mesh.security.validate_mesh_identifier`
+    (``[A-Za-z0-9_.-]``, at most ``MAX_PEER_ID_LEN``): a peer id the receive
+    side would refuse in ``sender_id`` is one the send side must not address,
+    because ``strands/{target}/cmd`` with ``*`` or ``**`` in the segment is a
+    Zenoh key expression that reaches every peer, and ``a/b`` adds a segment.
+    Both presence registries apply it before a learned id is stored, so an
+    announced ``robot_id`` never widens a later ``send`` on its own.
+    """
+    try:
+        _security.validate_mesh_identifier(target, "target")
+    except _security.ValidationError as exc:
+        return f"target is not a routable peer id: {exc}"
+    return None
 
 
 def _responder_segment(key: str, me: str) -> str | None:
@@ -1539,6 +1577,11 @@ class Mesh(SensorLoopsMixin):
             return
         peer_id = data.get("robot_id")
         if not isinstance(peer_id, str) or peer_id == self.peer_id:
+            return
+        # A learned id is a future ``send`` target: refuse one the outbound
+        # rule could not address before it enters the registry (f012).
+        if (why := _routable_target_error(peer_id)) is not None:
+            logger.debug("[mesh] %s: presence dropped: %s", self.peer_id, why)
             return
 
         # M-3: presence-freshness check. Presence heartbeats carry a
@@ -2695,6 +2738,9 @@ class Mesh(SensorLoopsMixin):
             # still a reachable one). :meth:`ping` measures the round trip.
             return {"pong": True, "peer_id": self.peer_id, "t": time.time()}
 
+        if action in WIRE_MOTION_ACTIONS and (refusal := self._wire_motion_refusal(action, cmd)) is not None:
+            return {"error": refusal}
+
         if action == "status":
             if hasattr(r, "get_task_status"):
                 return dict(r.get_task_status())
@@ -3019,6 +3065,90 @@ class Mesh(SensorLoopsMixin):
     # ``target_velocity`` is the locomotion goal - WBC / wbc_gait read
     # ``[vx, vy, omega]``, microduck accepts that or ``[vx, vy]``. Every one of
     # those providers is reachable over the mesh: the policy-provider
+    def _is_simulation_host(self) -> bool:
+        """Whether the registered robot is a simulation (a world or a robot inside one).
+
+        The same two ducks the dispatch arms route on: a child ``SimRobot``
+        peer carries ``_sim_parent``, a ``Simulation`` peer answers
+        ``run_policy`` / ``_world`` / ``list_robots``. Anything else is metal.
+        """
+        r = self.robot
+        if r is None:
+            return False
+        if getattr(r, "_sim_parent", None) is not None:
+            return True
+        return hasattr(r, "run_policy") and hasattr(r, "_world") and hasattr(r, "list_robots")
+
+    def _wire_motion_refusal(self, action: str, cmd: Mapping[str, Any]) -> str | None:
+        """Operator approval for a wire command that moves REAL hardware, or ``None``.
+
+        The sending ``robot_mesh`` tool asks its own operator before it
+        publishes, and the hardware ``Robot`` agent tool gates ``execute`` /
+        ``start`` in-process. Neither is anything this peer can verify: the
+        envelope's ``sender_id`` is whatever the publisher wrote, and a peer
+        admitted to the mesh needs no agent at all to publish
+        ``{"action": "teleop_receive", "source_peer_id": <itself>}`` and then
+        stream joint targets straight onto the motor bus. So the receiving
+        side runs the one shared decision path
+        (:func:`~strands_robots._command_gate.gate_motion`): a dashboard grant
+        for this exact call is spent, ``STRANDS_ROBOT_COMMAND_ALLOW`` on the
+        robot host pre-approves the verb, ``BYPASS_TOOL_CONSENT=true`` lifts
+        the gate with a WARNING, and otherwise the command is refused with the
+        remedy, because a wire handler has no operator to interrupt. Fail
+        closed: with no approval reachable, a physical robot does not move.
+
+        Simulation peers are never gated (the dashboard's LAN demos spawn
+        sims and drive them from an agent turn); they move no metal.
+
+        Args:
+            action: One of :data:`WIRE_MOTION_ACTIONS`.
+            cmd: The validated command, shown to a grant lookup as the tool
+                input the operator was shown.
+
+        Returns:
+            The refusal sentence, or ``None`` when the command may proceed.
+        """
+        r = self.robot
+        if r is None or self._is_simulation_host():
+            return None
+        tool_name = str(getattr(r, "tool_name_str", None) or self.peer_id)
+        tool_input = {k: v for k, v in cmd.items() if v is not None}
+        if consume_grant(tool_name, tool_input):
+            return None
+        if action == "teleop_receive":
+            what = (
+                f"'teleop_receive' makes the real robot {tool_name!r} follow the input stream of peer "
+                f"{cmd.get('source_peer_id')!r} (device {cmd.get('device_name', 'leader')!r}) until stopped"
+            )
+        else:
+            what = (
+                f"{action!r} drives the real robot {tool_name!r} with {str(cmd.get('instruction', ''))!r} "
+                f"(policy_provider={cmd.get('policy_provider', 'mock')!r})"
+            )
+        refusal = gate_motion(
+            "robot",
+            action,
+            tool_name,
+            f"{what}; a command arriving over the mesh needs operator approval on this robot host.",
+            None,
+            allow_env=WIRE_MOTION_ALLOW_ENV,
+            allow_match=lambda allowed: "*" in allowed or action in allowed,
+        )
+        if refusal is None:
+            return None
+        logger.warning("[safety] %s: refused wire %s: %s", self.peer_id, action, what)
+        self._audit_local(
+            "wire_motion_refused",
+            {
+                "action": action,
+                "robot": tool_name,
+                "source_peer_id": cmd.get("source_peer_id"),
+                "device_name": cmd.get("device_name"),
+                "instruction": cmd.get("instruction"),
+            },
+        )
+        return refusal
+
     def _dispatch_set_joints(self, cmd: dict[str, Any]) -> dict[str, Any]:
         """``set_joints``: write a joint-space pose on a SIMULATION peer.
 
@@ -3487,6 +3617,22 @@ class Mesh(SensorLoopsMixin):
         except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
             return None
         if not isinstance(data, dict):
+            return None
+        # A retained MQTT delivery is a stored message the broker hands to a
+        # new subscriber, not an operator acting now; the payload's own ``t``
+        # cannot tell the two apart, so the transport's flag decides. Only a
+        # real ``True`` counts (a Zenoh sample has no such attribute, a unit
+        # fixture's MagicMock attribute is truthy but is not this flag).
+        if getattr(sample, "retain", False) is True:
+            logger.warning(
+                f"[safety] %s: refusing remote {kind} -- delivered as a RETAINED message at subscribe time, "
+                "not a live publish (broker replay of a stored envelope)",
+                self.peer_id,
+            )
+            self._audit_local(
+                "safety_retained_delivery_rejected",
+                {"kind": kind, "issuer": data.get("peer_id")},
+            )
             return None
         wire_zid = _extract_sample_source_zid(sample)
         body_zid = data.get("source_zid")
@@ -3959,6 +4105,11 @@ class Mesh(SensorLoopsMixin):
                 "status": "error",
                 "error": "send: target may not contain NUL or equal the BROADCAST_RESPONDER sentinel",
             }
+        # The target is interpolated into ``strands/{target}/cmd``; a wildcard
+        # or a slash there widens one robot's command to the fleet (f012).
+        if (why := _routable_target_error(target)) is not None:
+            logger.warning("[mesh] %s: send refused: %s", self.peer_id, why)
+            return {"status": "error", "error": f"send: {why}"}
         # client-side validate before publishing. Prior to this fix,
         # programmatic callers (tests, third-party integrations, anything
         # that imports Mesh directly) skipped validate_command -- only the

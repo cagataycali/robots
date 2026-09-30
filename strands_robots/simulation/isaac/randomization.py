@@ -22,6 +22,10 @@ axes; the flags, not the mechanisms, are the shared contract):
 
 * ``randomize_colors`` - every registered object prim's USD
   ``primvars:displayColor`` is resampled per channel in ``color_range``. The
+  ROBOT is not recoloured (MuJoCo's axis does recolour it): converted robot
+  visuals are USD instance proxies, which refuse edits, and de-instancing them
+  mid-simulation invalidates PhysX's tensor view. The report names the robots
+  it skipped. The
   object handles ship no color setter (measured on isaacsim 6.0.1:
   ``DynamicCuboid`` has ``apply_visual_material`` but no ``set_color``), so the
   write goes to the USD attribute the RTX renderer reads.
@@ -176,7 +180,22 @@ class IsaacRandomizationMixin(ObservationNoiseMixin):
             try:
                 if randomize_colors:
                     n = self._randomize_colors(rng, color_range, applied)
-                    changes.append(f"Colors: {n} object(s) resampled")
+                    # MuJoCo's colour axis also recolours the robot; this one
+                    # cannot: converted robot visuals are USD instance
+                    # proxies, which refuse edits, and de-instancing them
+                    # mid-simulation invalidates PhysX's tensor view (measured
+                    # on 6.1: the next get_observation raised "Simulation view
+                    # object is invalidated"). Said, not implied by the count.
+                    robots_skipped = sorted(getattr(self, "_robots", {}) or {})
+                    applied["robots_not_recoloured"] = robots_skipped
+                    changes.append(
+                        f"Colors: {n} object(s) resampled"
+                        + (
+                            f" (robot visuals are not recoloured on Isaac: {', '.join(robots_skipped)})"
+                            if robots_skipped
+                            else ""
+                        )
+                    )
                 if randomize_lighting:
                     n = self._randomize_lighting(rng, color_range, applied)
                     changes.append(f"Lighting: {n} light(s) rescaled")
