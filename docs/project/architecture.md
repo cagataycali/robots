@@ -4,6 +4,8 @@
 
 ## Two lanes behind one factory
 
+{{drawing:d01_what_is}}
+
 ```python title="sketch"
 from strands_robots import Robot
 
