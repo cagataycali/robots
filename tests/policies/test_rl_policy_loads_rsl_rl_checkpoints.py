@@ -44,6 +44,14 @@ def _load(checkpoint_dir: str) -> RLCheckpointPolicy:
 
 
 def _acts(policy: RLCheckpointPolicy, x: Any) -> Any:
+    """Actions through the Policy surface, one observation per call.
+
+    Compared with the batched reference under ``rtol=1e-5``: a row-at-a-time
+    matmul and a batched one take different BLAS paths on x86, and float32
+    outputs in the tens differ in the last bits (a CI runner showed 1e-5 where
+    Apple silicon agreed exactly); the Tanh-vs-ELU divergence this guards
+    against is orders of magnitude larger.
+    """
     rows = []
     for row in x:
         out = policy.get_actions_sync({"policy_obs": row.tolist()}, "walk")[0]
@@ -62,7 +70,7 @@ class TestARunDirectoryLoads:
         policy = _load(str(tmp_path / "run"))
         _bind(policy)
         x = _obs()
-        assert torch.allclose(_acts(policy, x), _reference(actor, x), atol=1e-6)
+        assert torch.allclose(_acts(policy, x), _reference(actor, x), rtol=1e-5, atol=1e-5)
         assert policy.trained_by == "rsl_rl"
         assert (tmp_path / "run" / "strands_policy" / "policy_meta.json").is_file()
 
@@ -72,7 +80,7 @@ class TestARunDirectoryLoads:
         policy = _load(str(model))
         _bind(policy)
         x = _obs(2)
-        assert torch.allclose(_acts(policy, x), _reference(actor, x), atol=1e-6)
+        assert torch.allclose(_acts(policy, x), _reference(actor, x), rtol=1e-5, atol=1e-5)
 
     def test_a_strands_directory_still_loads_unchanged(self, tmp_path: Path) -> None:
         from strands_robots.training.rl import rsl_rl
@@ -82,7 +90,7 @@ class TestARunDirectoryLoads:
         policy = _load(out)
         _bind(policy)
         x = _obs(3)
-        assert torch.allclose(_acts(policy, x), _reference(actor, x), atol=1e-6)
+        assert torch.allclose(_acts(policy, x), _reference(actor, x), rtol=1e-5, atol=1e-5)
 
 
 class TestTheConvertedCopyIsReused:
@@ -98,7 +106,7 @@ class TestTheConvertedCopyIsReused:
         policy = _load(str(run))
         _bind(policy)
         x = _obs(4)
-        assert torch.allclose(_acts(policy, x), _reference(actor, x), atol=1e-6)
+        assert torch.allclose(_acts(policy, x), _reference(actor, x), rtol=1e-5, atol=1e-5)
         assert converted.stat().st_mtime > first
 
     def test_a_fresh_conversion_is_not_rewritten(self, tmp_path: Path) -> None:
@@ -161,7 +169,7 @@ class TestAHubRepoIdLoads:
         actor, calls = hub
         policy = _load(HUB_ID)
         x = _obs(5)
-        assert torch.allclose(_acts(policy, x), _reference(actor, x), atol=1e-6)
+        assert torch.allclose(_acts(policy, x), _reference(actor, x), rtol=1e-5, atol=1e-5)
         assert policy.action_keys == [f"joint_pos.j{i}" for i in range(ACT)]
         assert calls[0]["repo_id"] == HUB_ID and calls[0]["revision"] is None
 
