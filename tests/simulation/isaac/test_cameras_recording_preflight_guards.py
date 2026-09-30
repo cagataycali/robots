@@ -12,7 +12,7 @@ flush contract is best-effort and never-raise, with the recording state already
 cleared so every buffered frame was lost with no structured response.
 
 So ``fps`` (and the in-memory frame cap, whose sub-1 values drop every captured
-frame) is checked at ``start`` against the same domain the MuJoCo recorder uses,
+frame) is checked at ``start`` by the one guard every backend's recorder uses,
 and the flush reports a refusal on its artifact line either way.
 
 The engine is a skeleton ``IsaacSimulation`` built with ``__new__`` (the fixture
@@ -21,6 +21,8 @@ without the Isaac Sim Kit runtime.
 """
 
 from __future__ import annotations
+
+import inspect
 
 import numpy as np
 import pytest
@@ -101,16 +103,19 @@ def test_start_cameras_recording_accepts_a_usable_rate(tmp_path) -> None:
     assert callable(result["content"][0]["json"]["on_frame"])
 
 
-def test_isaac_refuses_the_same_rate_as_the_mujoco_recorder() -> None:
-    """One domain across the two recording surfaces, only the prefix differs."""
-    from strands_robots.simulation.isaac.simulation import _cameras_recording_option_error as isaac_error
-    from strands_robots.simulation.mujoco.rendering import _cameras_recording_option_error as mujoco_error
+def test_every_recorder_binds_the_one_option_guard() -> None:
+    """One guard, in :mod:`strands_robots.rendering.video`; no backend keeps a copy.
 
-    for fps in _UNUSABLE:
-        assert isaac_error("start_cameras_recording", fps, 3000) is not None
-        assert mujoco_error("start_cameras_recording", fps, None, None, 3000) is not None
-    assert isaac_error("start_cameras_recording", 30, 3000) is None
-    assert mujoco_error("start_cameras_recording", 30, None, None, 3000) is None
+    Two copies had already drifted in shape (MuJoCo's took pixel counts, Isaac's
+    did not); a copy re-grown in either backend would drift in domain next.
+    """
+    import strands_robots.simulation.isaac.simulation as isaac
+    import strands_robots.simulation.mujoco.rendering as mujoco
+
+    for module in (isaac, mujoco):
+        source = inspect.getsource(module)
+        assert "def _cameras_recording_option_error" not in source, module.__name__
+        assert "cameras_recording_option_error(" in source, module.__name__
 
 
 def test_stop_cameras_recording_reports_a_refused_rate_instead_of_raising(tmp_path) -> None:

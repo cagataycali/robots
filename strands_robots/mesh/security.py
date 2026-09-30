@@ -425,6 +425,9 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         # WBCGaitPolicy
         "wbc_gait",
         "sonic_gait",
+        # WBCLatentPolicy (a VLA's SONIC motion tokens decoded into G1 joint targets)
+        "wbc_latent",
+        "sonic_latent",
         # KimodoPolicy
         "kimodo",
         "kimodo_g1",
@@ -575,6 +578,21 @@ SIM_CALL_DENIED_PARAMS: frozenset[str] = frozenset(_wire_surface()["denied_param
 
 _SIM_CALL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
+#: The one shape a ``repo_id`` may take on the wire: a Hub id ``owner/name``.
+#: ``repo_id`` is not on the denied list because a recording needs a name, but
+#: :func:`strands_robots.dataset_source.local_dataset_dir` reads a ``/`` or
+#: ``./`` prefixed id as a verbatim directory on the peer host, and a recording
+#: started with ``overwrite`` removes that directory before it writes. A peer
+#: must not be able to name one, so the wire admits Hub ids only (one slash,
+#: two non-empty segments of letters, digits, ``.``, ``_`` and ``-``, neither
+#: segment ``.`` or ``..``).
+_SIM_CALL_HUB_ID_RE = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?/[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?\Z"
+)
+
+#: Params whose VALUE the wire bounds to a Hub id (see :data:`_SIM_CALL_HUB_ID_RE`).
+SIM_CALL_HUB_ID_PARAMS: frozenset[str] = frozenset({"repo_id"})
+
 #: The simulation tool's published schema, read once. A JSON file, not an
 #: import: the mesh layer must not load MuJoCo to validate a command.
 _SIM_TOOL_SPEC_PATH = Path(__file__).resolve().parent.parent / "simulation" / "mujoco" / "tool_spec.json"
@@ -659,6 +677,14 @@ def _validate_sim_call(cmd: dict[str, Any], out: dict[str, Any]) -> None:
             )
         if key not in sim_call_published_params():
             raise ValidationError(f"sim_call params key {key!r} is not a published simulation param")
+        if key in SIM_CALL_HUB_ID_PARAMS:
+            value = params[key]
+            if not isinstance(value, str) or not _SIM_CALL_HUB_ID_RE.fullmatch(value):
+                raise ValidationError(
+                    f"sim_call params {key!r} must be a Hub dataset id `owner/name` (letters, digits, `.`, `_`, `-`); "
+                    "a path on the peer host (a `/` or `./` prefix, a `..` segment) is refused on the wire: the peer "
+                    "would read it as a directory to write, or with `overwrite`, to remove."
+                )
     try:
         encoded = json.dumps(params)
     except (TypeError, ValueError) as exc:
