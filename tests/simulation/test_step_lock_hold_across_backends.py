@@ -256,8 +256,11 @@ class TestTheLockIsReleasedBetweenBatches:
         stub, calls = _isaac_stub(lock, batch=PROBE_BATCH)
         assert IsaacSimulation.step(stub, PROBE_BATCH * 4)["status"] == "success"
         assert calls["n"] == PROBE_BATCH * 4
-        # One extra for the precondition read, which precedes the loop.
-        assert lock.acquires == 5
+        # One extra for the precondition read, which precedes the loop, and one
+        # for the divergence check after it, which reads the stale flag and
+        # every articulation under the lock as one short step (a worker's
+        # remove_object between the two would otherwise be read through).
+        assert lock.acquires == 6
 
     def test_newton_releases_the_lock_every_batch(self) -> None:
         lock = CountingLock()
