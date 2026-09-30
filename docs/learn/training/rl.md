@@ -1,5 +1,5 @@
 ---
-description: Reinforcement learning from a reward: SimEnv over any SimEngine, the PPO, FastSAC and FastTD3 trainers, every RLTrainSpec field, the checkpoint format and how the rl policy provider reads it.
+description: Reinforcement learning from a reward: SimEnv over any SimEngine, the PPO, FastSAC and FastTD3 trainers, every RLTrainSpec field, the checkpoint format the rl provider reads.
 ---
 
 # RL training
@@ -16,7 +16,7 @@ from strands_robots.training.rl import RLTrainSpec, SimEnv, load_deployable_acto
 
 
 def make_env() -> SimEnv:
-    sim = create_simulation("mujoco", mesh=False)
+    sim = create_simulation("mujoco")
     sim.create_world()
     sim.add_robot("so101")
     return SimEnv(
@@ -109,7 +109,7 @@ Booleans are checked, not read by truthiness; counts are positive integers; the 
 
 ## The checkpoint
 
-`save_checkpoint` writes `policy.pt` (the `state_dict`, the frozen `EmpiricalNormalization` state, `provider`) and `policy_meta.json` with `provider`, `num_actor_obs`, `num_critic_obs`, `num_actions`, `actor_obs_keys`, `action_keys`, `hidden_dims`, `iteration`. `read_checkpoint_meta` refuses a file missing any of the first six by name. `load_deployable_actor(checkpoint_dir, device)` rebuilds the network the `provider` names (PPO emits raw means, FastTD3 a `tanh`, FastSAC a mean/log-std pair with the mean squashed), restores weights and normalizer, and returns a `DeployableActor` whose `act(obs)` is what `create_policy("rl")` calls.
+`save_checkpoint` writes `policy.pt` (the `state_dict`, the frozen `EmpiricalNormalization` state, `provider`) and `policy_meta.json` with `provider`, `num_actor_obs`, `num_critic_obs`, `num_actions`, `actor_obs_keys`, `action_keys`, `hidden_dims`, `iteration`. `read_checkpoint_meta` refuses a file missing any of the first six by name. `load_deployable_actor(checkpoint_dir, device)` rebuilds the network the `provider` names (PPO raw means, FastTD3 a `tanh`, FastSAC a squashed mean/log-std pair), restores weights and normalizer, and returns a `DeployableActor` whose `act(obs)` is what `create_policy("rl")` calls.
 
 ## Limits
 
