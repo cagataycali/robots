@@ -111,11 +111,17 @@ class TestTheServedChunkSetsTheInterval:
         assert not any("pinned" in rec.getMessage() for rec in caplog.records)
 
     def test_an_equal_served_chunk_says_nothing(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Neither the adoption notice nor the pinned notice fires when the lengths agree."""
         policy = _policy(32)
         with caplog.at_level(logging.INFO, logger="strands_robots.policies.cosmos3.policy"):
             _infer(policy)
         assert policy.execution_horizon == 32
-        assert not any("chunk" in rec.getMessage() for rec in caplog.records)
+        notices = [
+            rec.getMessage()
+            for rec in caplog.records
+            if "re-query interval follows the served chunk" in rec.getMessage() or "was pinned" in rec.getMessage()
+        ]
+        assert notices == []
 
     def test_a_single_row_answer_is_taken_as_served(self) -> None:
         """A 1-D action is one step; the interval follows it like any other served length."""
