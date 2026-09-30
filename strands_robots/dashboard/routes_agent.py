@@ -14,7 +14,7 @@ import contextlib
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 
 from strands_robots.dashboard import access, agent_console
 
@@ -69,11 +69,8 @@ def strict_flag(value: Any) -> bool:
 
 @router.websocket("/ws/agent")
 async def agent_socket(ws: WebSocket) -> None:
-    """A conversation. Admission is the same as every route; a stranger is closed with 4401."""
-    try:
-        access.caller(ws)  # type: ignore[arg-type]
-    except HTTPException:
-        await access.refuse_socket(ws, 4401)
+    """A conversation. Admission is the same as every socket: Origin first, then the credential."""
+    if await access.admit_socket(ws) is None:
         return
     await ws.accept()
     try:
