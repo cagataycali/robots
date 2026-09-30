@@ -93,6 +93,19 @@ ISAAC_SIM_PIP_CAVEATS: str = (
     "set OMNI_KIT_ACCEPT_EULA=YES for the first import"
 )
 
+#: Recording on Isaac needs the ``lerobot`` extra, and the two do not co-resolve:
+#: ``lerobot`` 0.6.x requires ``numpy<2.3`` while ``isaacsim-kernel`` pins
+#: ``numpy==2.3.1`` (both measured from the wheels' metadata). uv refuses the
+#: pair; pip installs it with a conflict warning and numpy 2.2.6. Measured on
+#: Isaac Sim 6.1 + lerobot 0.6.1 + numpy 2.2.6 (L40S): Kit boots and the GPU
+#: recording and run_multi_policy suites pass, so the downgrade is the working
+#: combination - install lerobot after Isaac Sim and let it move numpy.
+ISAAC_SIM_LEROBOT_CAVEAT: str = (
+    "lerobot needs numpy<2.3 and Isaac Sim pins numpy==2.3.1: install lerobot AFTER Isaac Sim "
+    "(pip downgrades numpy to 2.2.6 with a conflict warning; verified to work with Isaac Sim 6.1); "
+    "under uv add --override with numpy==2.2.6"
+)
+
 #: Pip extra users install to pull our Python helpers alongside an
 #: out-of-band Isaac Sim install.
 PIP_EXTRA: str = "pip install 'strands-robots[sim-isaac]'"
@@ -161,6 +174,7 @@ __all__ = [
     "ISAAC_SIM_PIP_CAVEATS",
     "ISAAC_SIM_UV_INSTALL",
     "ISAAC_SIM_VERIFIED_PIP_VERSIONS",
+    "ISAAC_SIM_LEROBOT_CAVEAT",
     "PIP_EXTRA",
     "install_options_block",
     "install_options_inline",
