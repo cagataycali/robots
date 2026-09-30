@@ -895,7 +895,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         held = self._finger_contacts(model, data, acts) if acts else None
         out: dict[int, np.ndarray] = {}
         for name in held or {}:
-            body_id = int(mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, name))
+            body_id = int(mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, name))
             if body_id < 0:
                 continue
             adr, num = int(model.body_jntadr[body_id]), int(model.body_jntnum[body_id])
@@ -940,9 +940,9 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             return []
         mj = self._mj
         frame_body = (
-            int(model.site_bodyid[mj.mj_name2id(model, mj.mjtObj.mjOBJ_SITE, frame_name)])
+            int(model.site_bodyid[mj_name_to_id(model, mj.mjtObj.mjOBJ_SITE, frame_name)])
             if frame_type == "site"
-            else int(mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, frame_name))
+            else int(mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, frame_name))
         )
         parent = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, frame_body) or frame_name
         out = []
