@@ -50,9 +50,17 @@ MOTION_ACTIONS: dict[str, frozenset[str]] = {
 }
 
 
-def _direct_serial_detail(action: str, tool_input: Mapping[str, Any]) -> str:
-    """The gated call's own motion fields as one readable line -- never invented."""
+def _direct_serial_detail(tool_name: str, action: str, tool_input: Mapping[str, Any]) -> str:
+    """The gated call's own motion fields as one readable line -- never invented.
+
+    A ``pose_tool`` motion without a ``calibration`` is read against the servo's
+    full rotation rather than the arm's measured travel, which is where its
+    numbers land, so the line says so instead of leaving the field out: the
+    operator is approving that frame of reference along with the numbers.
+    """
     fields = motion_fields(tool_input)
+    if tool_name == "pose_tool" and not any(f.startswith("calibration=") for f in fields):
+        fields = ("calibration=none (servo full rotation)", *fields)
     return " ".join((action, *fields)) if fields else ""
 
 
@@ -102,7 +110,7 @@ def motion_intent(
     if not instruction and tool_name in DIRECT_SERIAL_TOOLS:
         # pose/serial inputs carry the motion in named fields, not an
         # instruction string; show the operator WHAT a yes moves, verbatim.
-        instruction = _direct_serial_detail(action, tool_input)
+        instruction = _direct_serial_detail(tool_name, action, tool_input)
     reason: dict[str, Any] = {
         "tool": tool_name,
         "action": action,

@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import os
+import re
 import socket
 import threading
 import time
@@ -18,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
 from strands_robots.dashboard import safety_state
+from strands_robots.mesh import security as _security
 from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_bytes_cap
 from strands_robots.utils import finite_number_error, refusal_repr
 
@@ -250,6 +252,51 @@ def silent_arms(peers: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None
         **({"host_processes": hosts} if hosts else {}),
         **({"stale": stale} if stale else {}),
     }
+
+
+#: ``strands/<peer>/<topic>...``: the ``<peer>`` segment of a wildcard-subscribed peer topic.
+#: The peer segment is the shape ``init_mesh`` accepts for a peer id, so a ``*`` from a
+#: subscription expression or a Mock repr never reads as a peer.
+_WIRE_PEER_KEY = re.compile(r"\Astrands/([A-Za-z0-9][A-Za-z0-9._\-]{0,127})/[A-Za-z]")
+
+#: Topics whose key expression names no publisher: the safety rail and the broadcast
+#: channel. A peer id is never one of these words (``init_mesh`` reserves them).
+_NOT_A_PEER_SEGMENT = frozenset({"safety", "broadcast"})
+
+
+def wire_peer_id(sample: Any) -> str | None:
+    """The peer that published *sample*, read from its key expression, or ``None``.
+
+    The bridge subscribes to ``strands/*/presence``, ``strands/*/state``,
+    ``strands/*/camera/**`` and the sensor topics with one wildcard each, so
+    every peer's samples land in one callback. The ``*`` segment is the one
+    part of a sample that mTLS and the ACL bind to the publisher (``put`` rules
+    live in the ``ingress`` flow because the publisher's cert CN is known to
+    the receiver); the JSON body is whatever the publisher typed. Identity for
+    the peer registry, the frame store and the emitted events therefore comes
+    from here, and a body that names a different peer is a mismatch the caller
+    drops.
+
+    ``None`` when the sample carries no key expression, the key is not a peer
+    topic (``strands/safety/estop``, ``strands/broadcast``), or the peer
+    segment is not a peer id shape. The caller treats ``None`` as "drop the
+    sample": falling back to the body would restore the defect under exactly
+    the malformed-key conditions an attacker can arrange.
+    """
+    key = getattr(sample, "key_expr", None)
+    if key is None:
+        return None
+    try:
+        text = str(key)
+    except Exception:  # noqa: BLE001 - a key that cannot be read is no key
+        return None
+    match = _WIRE_PEER_KEY.match(text)
+    if match is None:
+        return None
+    peer_id = match.group(1)
+    if peer_id in _NOT_A_PEER_SEGMENT:
+        return None
+    return peer_id
 
 
 def peer_origins(
@@ -694,13 +741,26 @@ class MeshBridge:
             return False
         self.stop()
         with self._peers_lock:
+            departed = list(self.peers)
             self.peers.clear()
+        for pid in departed:
+            self._forget_grants(pid, "the mesh was re-pointed")
         with self._frames_lock:
             self.frames.clear()
         ok = self.start(loop)
         self.record_activity("mesh", "restart", detail=self._endpoints, ok=ok)
         self._emit({"type": "mesh_reconfigured", "ok": ok, "mesh": self.mesh_info()})
         return ok
+
+    def _forget_grants(self, peer_id: str, why: str) -> None:
+        """A human's yes about a peer leaves with the peer: drop its unspent motion grants."""
+        from strands_robots._motion_grants import forget_grants_for_peer
+
+        count = forget_grants_for_peer(peer_id)
+        if count:
+            self.record_activity(
+                "safety", "grants_forgotten", target=peer_id, detail={"count": count, "why": why}, ok=True
+            )
 
     def stop(self) -> None:
         """Leave the fleet: stop the safety rail, drop subscriptions, close the session.
@@ -795,25 +855,110 @@ class MeshBridge:
             entry["last_seen"] = now
             return entry
 
+    def _attributed(self, sample: Any, topic: str, data: Mapping[str, Any], *, body_key: str) -> str | None:
+        """The peer *sample* is attributed to, or ``None`` when it must be dropped.
+
+        Identity is the key expression's peer segment (:func:`wire_peer_id`).
+        The body's ``robot_id`` / ``peer_id`` stays on the wire for older
+        readers, but here it is a redundant check, not the authority: when it
+        names a different peer the sample is dropped and the attempt is written
+        to the activity trail, so an impersonation shows up next to the
+        commands and safety envelopes the bridge already records. A sample
+        with no usable key is dropped too, rather than falling back to the body.
+        """
+        source = wire_peer_id(sample)
+        if source is None:
+            logger.debug("[mesh] %s sample without a peer key expression dropped", topic)
+            return None
+        claimed = data.get(body_key)
+        if isinstance(claimed, str) and claimed and claimed != source:
+            logger.warning("[mesh] %s from %s claims to be %s: dropped", topic, source, claimed)
+            self.record_activity(
+                "security",
+                "identity_mismatch",
+                target=source,
+                detail={"topic": topic, "claimed": claimed},
+                ok=False,
+            )
+            return None
+        return source
+
+    def _announced(self, peer_id: str, topic: str) -> dict[str, Any] | None:
+        """The registry entry for *peer_id* when its presence has been seen, else ``None``.
+
+        Only presence establishes a peer: every real robot heartbeats presence
+        at ``HEARTBEAT_HZ`` before it publishes anything else, so telemetry for
+        an id this dashboard never saw announce itself is a fabricated robot,
+        not an early one, and must not mint an entry ``require_peer`` would
+        then accept as a command target.
+        """
+        with self._peers_lock:
+            entry = self.peers.get(peer_id)
+        if entry is None or "presence" not in entry:
+            logger.debug("[mesh] %s from unannounced peer %s dropped", topic, peer_id)
+            self.record_activity("security", "unannounced_peer", target=peer_id, detail={"topic": topic}, ok=False)
+            return None
+        return self._touch_peer(peer_id)
+
+    def _sim_corroborated(self, peer_id: str) -> bool:
+        """Did THIS dashboard launch *peer_id* (or its ``<host>__<robot>`` host) as a sim?
+
+        The one thing a publisher does not control about its own description:
+        the device manager's table of children this dashboard spawned, with
+        the mode it spawned them in. ``<peer>-twin`` peers are spawned through
+        the same table, so the twin convention is covered by it.
+        """
+        host = peer_id.partition("__")[0]
+        for child in self._managed_children():
+            if not isinstance(child, Mapping):
+                continue
+            if str(child.get("peer_id") or "") in (peer_id, host):
+                return str(child.get("mode") or "").strip().lower() == "sim"
+        return False
+
     def _on_presence(self, sample: Any) -> None:
         data = self._decode(sample)
         if not data:
             return
-        peer_id = data.get("robot_id")
-        if not isinstance(peer_id, str) or peer_id == self.peer_id:
+        peer_id = self._attributed(sample, "presence", data, body_key="robot_id")
+        if peer_id is None or peer_id == self.peer_id:
+            return
+        # The same freshness and forward-skew bounds ``Mesh._on_presence`` applies, on the
+        # same knobs, so a captured heartbeat cannot be replayed into this registry either.
+        stamp = _security.as_wire_timestamp(data.get("timestamp"))
+        if stamp is None:
+            logger.debug("[mesh] presence from %s without a numeric timestamp dropped", peer_id)
+            return
+        from strands_robots.mesh.core import _resume_forward_skew_s, _resume_freshness_window_s
+
+        age = time.time() - float(stamp)
+        if age > _resume_freshness_window_s() or age < -_resume_forward_skew_s():
+            logger.debug("[mesh] stale or future presence from %s (age=%.1fs) dropped", peer_id, age)
             return
         entry = self._touch_peer(peer_id)
-        entry["presence"] = data
-        self._emit({"type": "presence", "peer_id": peer_id, "data": data})
+        with self._peers_lock:
+            previous = entry.get("presence") or {}
+            hw = previous.get("hw")
+            record = dict(data)
+            # Hardware evidence is sticky for the life of the record: a peer once seen as metal
+            # cannot be re-described as a simulation by a later heartbeat.
+            if isinstance(hw, str) and hw.strip() and not (isinstance(record.get("hw"), str) and record["hw"].strip()):
+                record["hw"] = hw
+            entry["presence"] = record
+            entry["presence_source"] = "wire"
+            entry["sim_corroborated"] = self._sim_corroborated(peer_id)
+        self._emit({"type": "presence", "peer_id": peer_id, "data": record})
 
     def _on_state(self, sample: Any) -> None:
         data = self._decode(sample)
         if not data:
             return
-        peer_id = data.get("peer_id")
-        if not isinstance(peer_id, str):
+        peer_id = self._attributed(sample, "state", data, body_key="peer_id")
+        if peer_id is None:
             return
-        entry = self._touch_peer(peer_id)
+        entry = self._announced(peer_id, "state")
+        if entry is None:
+            return
         entry["state"] = data
         self._emit({"type": "state", "peer_id": peer_id, "data": data})
 
@@ -821,10 +966,12 @@ class MeshBridge:
         data = self._decode(sample)
         if not data:
             return
-        peer_id = data.get("peer_id")
-        if not isinstance(peer_id, str):
+        peer_id = self._attributed(sample, "stream", data, body_key="peer_id")
+        if peer_id is None:
             return
-        entry = self._touch_peer(peer_id)
+        entry = self._announced(peer_id, "stream")
+        if entry is None:
+            return
         entry["stream"] = data
         self._emit({"type": "stream", "peer_id": peer_id, "data": data})
 
@@ -832,10 +979,14 @@ class MeshBridge:
         data = self._decode(sample)
         if not data:
             return
-        peer_id = data.get("peer_id")
+        peer_id = self._attributed(sample, "camera", data, body_key="peer_id")
+        if peer_id is None:
+            return
         cam = data.get("cam")
         encoded = data.get("data")
-        if not (isinstance(peer_id, str) and isinstance(cam, str) and isinstance(encoded, str)):
+        if not (isinstance(cam, str) and isinstance(encoded, str)):
+            return
+        if self._announced(peer_id, "camera") is None:
             return
         import base64
 
@@ -879,15 +1030,18 @@ class MeshBridge:
 
         Returns:
             ``(peer_id, data)``, or ``(None, {})`` when the sample carries no
-            usable payload or names no peer to attribute it to.
+            usable payload, its key expression names no peer, its body names a
+            different peer, or the peer never announced itself.
         """
         data = self._decode(sample)
         if not data:
             return None, {}
-        peer_id = data.get("peer_id")
-        if not isinstance(peer_id, str):
+        peer_id = self._attributed(sample, slot, data, body_key="peer_id")
+        if peer_id is None:
             return None, {}
-        entry = self._touch_peer(peer_id)
+        entry = self._announced(peer_id, slot)
+        if entry is None:
+            return None, {}
         entry[slot] = data
         return peer_id, data
 
@@ -925,12 +1079,14 @@ class MeshBridge:
         data = self._decode(sample)
         if not data:
             return
-        peer_id = data.get("peer_id")
-        if not isinstance(peer_id, str):
+        peer_id = self._attributed(sample, "lidar", data, body_key="peer_id")
+        if peer_id is None:
             return
         key = str(getattr(sample, "key_expr", ""))
         kind = "state" if key.endswith("/state") else "summary"
-        entry = self._touch_peer(peer_id)
+        entry = self._announced(peer_id, "lidar")
+        if entry is None:
+            return
         with self._peers_lock:
             lidar = dict(entry.get("lidar") or {})
             lidar[kind] = data
@@ -943,6 +1099,14 @@ class MeshBridge:
             return
         key = str(getattr(sample, "key_expr", ""))
         kind = "estop" if key.endswith("estop") else "resume"
+        refusal = safety_state.envelope_refusal(data)
+        if refusal is not None:
+            # The peers refuse this envelope too, so nothing on the fleet locked or
+            # resumed; folding it would show a lockout that never happened and its
+            # non-finite ``t`` would poison every snapshot the page reads.
+            logger.warning("[safety] %s dropped: %s", kind, refusal)
+            self.record_activity("safety", f"{kind}_refused", detail={"why": refusal}, ok=False)
+            return
         # A five-second flash in the header was the ONLY representation of a lockout in
         # this product, so a reload erased it while two arms stayed locked for ten hours.
         with self._peers_lock:
@@ -1220,13 +1384,16 @@ class MeshBridge:
             peers = prune_peers(self.peers, now, PEER_TTL_S, protected)
             # Forget the aged-out peers for good: keeping them in self.peers
             # only feeds the same ghosts back on every later snapshot.
-            for pid in set(self.peers) - set(peers):
+            aged_out = set(self.peers) - set(peers)
+            for pid in aged_out:
                 self.peers.pop(pid, None)
                 # Drop coalescing bookkeeping too, so a peer that comes BACK with the same content as when it
                 # left is forwarded at once instead of waiting out a rate window against a memory of its
                 # former self.
                 with self._coalesce_lock:
                     self._coalescer.forget(pid)
+        for pid in aged_out:
+            self._forget_grants(pid, "aged out of the fleet")
         stamps: dict[str, float] = {}
         for m in self._managed_children():
             mid = getattr(m, "peer_id", None)

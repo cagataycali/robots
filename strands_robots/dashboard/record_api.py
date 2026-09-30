@@ -10,6 +10,8 @@ import asyncio
 import json
 import logging
 import os
+import shutil
+import stat
 import tempfile
 import threading
 import time
@@ -18,7 +20,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 
 from strands_robots.dashboard import access, record_crash, record_joints
 from strands_robots.dashboard.dataset_check import (
@@ -227,7 +229,11 @@ class RecordController:
         self._bridge = bridge
         self._backend_factory = backend_factory or hardware_backend
         self._recorder_factory_factory = recorder_factory_factory or _default_recorder_factory
-        self._thumb_root = Path(thumb_root or (Path(tempfile.gettempdir()) / "strands-record-thumbs"))
+        # Resolved on first use by :attr:`thumb_dir`: a private per-process directory when none
+        # is named, otherwise the named one once it has passed :func:`_private_thumb_root`.
+        self._thumb_root: Path | None = Path(thumb_root) if thumb_root else None
+        self._thumb_minted = False
+        self._thumb_lock = threading.Lock()
         self._lock = threading.Lock()
         self._worker: RecordWorker | None = None
         self._crumb = record_crash.crumb_path()
@@ -282,8 +288,27 @@ class RecordController:
 
     @property
     def thumb_dir(self) -> Path:
-        """Where episode thumbnails are written."""
-        return self._thumb_root
+        """Where episode thumbnails are written: a directory only the service user can reach.
+
+        The old default was ``<tmpdir>/strands-record-thumbs``, a guessable name in the shared
+        temp directory that nothing created until the first recorded frame, so another account
+        on the host could create it first and fill it with links (f006). Without a configured
+        root this is now a ``mkdtemp`` directory (``0700``, unguessable) made once per process;
+        a configured root is created ``0700`` and refused unless it is a real directory the
+        service user owns that nobody else can write.
+        """
+        with self._thumb_lock:
+            if self._thumb_root is None:
+                self._thumb_root = Path(tempfile.mkdtemp(prefix="strands-record-thumbs-"))
+                self._thumb_minted = True
+            return _private_thumb_root(self._thumb_root)
+
+    def close_thumbs(self) -> None:
+        """Remove the per-process thumbnail directory this controller minted; a configured root is left alone."""
+        with self._thumb_lock:
+            if self._thumb_minted and self._thumb_root is not None:
+                shutil.rmtree(self._thumb_root, ignore_errors=True)
+                self._thumb_root, self._thumb_minted = None, False
 
     # ---------------------------------------------------------------- open
 
@@ -374,6 +399,13 @@ class RecordController:
                     f"(known: {sorted(LEADER_TYPES)})",
                 )
 
+            # The thumbnail root is settled before anything is parked: a root that is not
+            # this user's private directory is a refusal, not a recording (f006).
+            try:
+                thumbs = self.thumb_dir
+            except PermissionError as exc:
+                raise HTTPException(503, str(exc)) from exc
+
             # Park the peers: remember their spawn configs, stop them, and
             # keep the watcher's hands off the freed ports.
             parked = [
@@ -404,7 +436,7 @@ class RecordController:
                     fps=int(body.get("fps", 30) or 30),
                     backend=backend,
                     recorder_factory=self._recorder_factory_factory(backend),
-                    thumb_dir=self._thumb_root,
+                    thumb_dir=thumbs,
                 )
             except HTTPException as exc:
                 lost = self._unpark_locked()
@@ -602,6 +634,61 @@ def _with_lost_arms(detail: Any, lost: Sequence[str]) -> Any:
     return f"{refusal_str(detail)} - {note}" if detail else note
 
 
+def _private_thumb_root(root: Path) -> Path:
+    """*root* as a directory only the service user can reach, or a refusal.
+
+    Created ``0700`` when absent. An existing path must be a directory and not a link (read with
+    ``lstat``, so the link itself is judged), owned by the effective user, with no group or
+    other write bit: a directory someone else made or can write into is theirs, and adopting
+    it would let them name what the thumbnail route serves. Fails closed with the reason.
+    """
+    try:
+        root.mkdir(mode=0o700, exist_ok=True)
+        facts = os.lstat(root)
+    except OSError as exc:
+        raise PermissionError(f"thumbnail directory {refusal_str(str(root))} is unusable: {exc}") from exc
+    if not stat.S_ISDIR(facts.st_mode):
+        raise PermissionError(f"thumbnail directory {refusal_str(str(root))} is not a directory (a link is refused)")
+    if hasattr(os, "geteuid") and facts.st_uid != os.geteuid():
+        raise PermissionError(f"thumbnail directory {refusal_str(str(root))} is owned by another user")
+    if facts.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise PermissionError(f"thumbnail directory {refusal_str(str(root))} is writable by other users")
+    return root
+
+
+def _read_thumbnail(root: Path, name: str) -> bytes | None:
+    """The bytes of ``root/name`` when it is a regular file inside *root*, else None.
+
+    The file is opened with ``O_NOFOLLOW`` and judged by ``fstat`` on the descriptor that is then
+    read, so a link at that name is refused rather than followed and nothing can be swapped in
+    between the check and the read (``Path.is_file`` and ``FileResponse`` both follow links).
+    The name is already a bare ``<int>_<alnum>.jpg``; the containment test on the folded path is
+    the second lock on the same door.
+    """
+    path = root / name
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    if path.is_symlink():
+        return None
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        facts = os.fstat(fd)
+        if not stat.S_ISREG(facts.st_mode):
+            return None
+        real_root = os.path.realpath(root)
+        real = os.path.realpath(path)
+        if os.path.dirname(real) != real_root:
+            return None
+        with os.fdopen(os.dup(fd), "rb") as handle:
+            return handle.read()
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
 def build_router(
     controller: RecordController | Callable[[Request], RecordController],
     on_activity: Callable[..., None] | Callable[[Request], Callable[..., None] | None] | None = None,
@@ -701,13 +788,13 @@ def build_router(
         return result
 
     @r.get("/thumb/{episode}/{camera}")
-    async def thumb(request: Request, episode: int, camera: str) -> FileResponse:
+    async def thumb(request: Request, episode: int, camera: str) -> Response:
         # camera comes from a URL path - keep it a bare name, no traversal (the writer in
         # record_worker.tick applies the same record_worker.thumb_name reduction)
         safe = thumb_name(camera)
-        path = ctl(request).thumb_dir / f"{int(episode)}_{safe}.jpg"
-        if not path.is_file():
+        data = _read_thumbnail(ctl(request).thumb_dir, f"{int(episode)}_{safe}.jpg")
+        if data is None:
             raise HTTPException(404, "no thumbnail for that episode/camera")
-        return FileResponse(path, media_type="image/jpeg")
+        return Response(data, media_type="image/jpeg")
 
     return r

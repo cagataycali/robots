@@ -39,6 +39,14 @@ import pytest
 from fastapi import HTTPException
 
 import strands_robots.dashboard.auth as auth
+from tests._dashboard_passkeys import enroll
+
+
+@pytest.fixture(autouse=True)
+def _cred1_is_enrolled():
+    """Every session here is cred1's; a token is only honoured while its passkey is enrolled."""
+    enroll("cred1")
+
 
 # Short, exact windows so the ladder below lands on whole boundaries. TTL is the
 # token lifetime; MAX_AGE is three of them, so a session renews four times and

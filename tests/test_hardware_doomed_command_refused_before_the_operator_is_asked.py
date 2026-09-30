@@ -89,14 +89,14 @@ DOOMED = [
         id="start-duration-not-a-number",
     ),
     pytest.param(
-        {"action": "execute", "instruction": "wave", "policy_provider": "groot", "policy_port": 99999, "duration": 5},
+        {"action": "execute", "instruction": "wave", "policy_provider": "moveit2", "policy_port": 99999, "duration": 5},
         "invalid policy_port: 99999",
         id="execute-port-out-of-range",
     ),
     pytest.param(
-        {"action": "start", "instruction": "wave", "policy_provider": "groot", "duration": 5},
+        {"action": "start", "instruction": "wave", "policy_provider": "moveit2", "duration": 5},
         "policy_port is required",
-        id="start-port-missing-for-groot",
+        id="start-port-missing-for-moveit2",
     ),
 ]
 

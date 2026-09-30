@@ -31,7 +31,7 @@ def require_optional(
     Args:
         module_name: Dotted module name to import (e.g. ``"zmq"``).
         pip_install: Explicit pip package name if it differs from *module_name*.
-        extra: ``pyproject.toml`` extras group (e.g. ``"groot-service"``).
+        extra: ``pyproject.toml`` extras group (e.g. ``"moveit2"``).
         purpose: Human-readable description shown in the error message.
         system_install: Remedy for a module that arrives with a system package
             rather than from an index - the ROS 2 client libraries are the case
@@ -146,6 +146,41 @@ def lerobot_version() -> str:
         return version("lerobot")
     except ImportError:
         return "unknown"
+
+
+# The lerobot that first accepts ``repo_type: Literal["dataset", "bucket"]``;
+# every lerobot-bearing extra in pyproject floors at or above it.
+BUCKET_STREAMING_MIN_LEROBOT = "0.6.1"
+LEROBOT_UPGRADE = "pip install -U 'strands-robots[lerobot]'"
+
+
+def lerobot_floor_error() -> str | None:
+    """Return why the installed lerobot is below ``BUCKET_STREAMING_MIN_LEROBOT``, else None.
+
+    pip leaves an already-installed older lerobot in place, and its
+    ``StreamingLeRobotDataset`` refuses the ``return_uint8`` / ``repo_type``
+    keywords :meth:`strands_robots.streaming_dataset.StreamingDatasetReader.open`
+    forwards - a ``TypeError`` naming a keyword the caller never passed.
+    :func:`strands_robots.doctor.check_lerobot` and
+    :mod:`strands_robots.streaming_dataset` both ask here, so one state is
+    reported one way.
+
+    Returns:
+        A message naming the installed version and the floor (callers add
+        ``LEROBOT_UPGRADE`` in their own frame), or ``None`` when the version
+        meets the floor or cannot be determined.
+    """
+    installed = lerobot_version()
+    release = re.match(r"\d+(?:\.\d+)*", installed)
+    if release is None:
+        return None
+    floor = tuple(int(part) for part in BUCKET_STREAMING_MIN_LEROBOT.split("."))
+    if tuple(int(part) for part in release.group().split(".")) >= floor:
+        return None
+    return (
+        f"lerobot {installed} is below the {BUCKET_STREAMING_MIN_LEROBOT} strands-robots needs: its "
+        "StreamingLeRobotDataset refuses the return_uint8 / repo_type keywords stream_dataset() passes"
+    )
 
 
 def lerobot_install_error() -> str | None:
@@ -976,37 +1011,6 @@ def dds_domain_id_error(value: Any, param: str, context: str) -> str | None:
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_DDS_DOMAIN_ID:
         return f"{context}: invalid {param}: {refusal_repr(value)} (expected 0-{MAX_DDS_DOMAIN_ID})"
     return None
-
-
-#: Isaac-GR00T releases :class:`~strands_robots.policies.groot.Gr00tPolicy` loads.
-#:
-#: The domain of its ``groot_version=``, which selects a loader rather than
-#: naming a package version: each spelling has a branch in
-#: ``Gr00tPolicy._load_local_policy`` that imports that release's own entry
-#: point. The tuple is the loaders the policy has, not the releases NVIDIA
-#: ships, which is why it is stated once here and graded against the dispatch.
-SUPPORTED_GROOT_VERSIONS = ("n1.5", "n1.6", "n1.7")
-
-
-def groot_version_error(value: Any, param: str, context: str) -> str | None:
-    """Error text when ``value`` names no Isaac-GR00T release with a loader.
-
-    Args:
-        value: The caller-supplied release selector.
-        param: The parameter name it came from, used in the message.
-        context: Message prefix identifying the surface that received it,
-            usually the class name for a constructor parameter.
-
-    Returns:
-        An error message, or ``None`` when the value is usable.
-    """
-    if value is None or value in SUPPORTED_GROOT_VERSIONS:
-        return None
-    return (
-        f"{context}: invalid {param}: {refusal_repr(value)} names no Isaac-GR00T release "
-        f"this policy has a loader for (expected one of {list(SUPPORTED_GROOT_VERSIONS)}, "
-        "or None to auto-detect the installed release)"
-    )
 
 
 MAX_ZMQ_TIMEOUT_MS = 2**31 - 1

@@ -531,6 +531,11 @@ def test_no_publish_loop_in_the_mesh_still_paces_on_an_inflated_wait() -> None:
         # number (a poll interval dropped to 100ms, say) invalidates the excuse
         # visibly instead of quietly.
         ("mesh/core.py", "self._stop_event.wait(timeout=timeout)"): "one-shot shutdown wait, not a loop tick",
+        ("mesh/core.py", "self._stop_event.wait(timeout=wait)"): (
+            "the cmd pacer: one wait of at most one receiver period (50 ms at the 20 Hz default) "
+            "before a single publish, so the send it protects is not dropped; inflation only widens "
+            "the gap, and there is no tick whose work it would add to"
+        ),
         ("hardware_ros_bridge.py", "self._stop.wait(self._spin_period)"): (
             "the EXCEPTION path only: a backoff after spin_once raised, where waiting longer "
             "than spin_period is the intent. The happy path has no wait at all"

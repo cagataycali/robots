@@ -431,14 +431,123 @@ def scan_camera_names() -> list[dict[str, Any]]:
     return names
 
 
+#: The mesh's own acknowledgement that wire auth is off. ``STRANDS_MESH_LOCAL_DEV`` stands in for
+#: it inside ``resolve_auth_mode`` so a localhost sim needs one variable, not two; a real arm does
+#: not get that shortcut here.
+INSECURE_ACK_ENV = "STRANDS_MESH_I_KNOW_THIS_IS_INSECURE"
+
+#: The operator's explicit yes to starting REAL hardware from a dashboard whose mesh runs without
+#: mTLS and ACL. Separate from the mesh knob above so a value inherited from a lab shell cannot be
+#: read as a decision about a physical arm.
+REAL_SPAWN_ACK_ENV = "STRANDS_DASH_REAL_SPAWN_WITHOUT_MESH_AUTH"
+
+_TRUTHY = ("1", "true", "yes")
+
+#: What every child gets when the dashboard did not say otherwise. Nothing about the mesh posture
+#: is here: a child inherits the dashboard's ``STRANDS_MESH_LOCAL_DEV``, ``STRANDS_MESH_AUTH_MODE``
+#: and ``STRANDS_MESH_MULTICAST`` exactly, present or absent.
+_CHILD_DEFAULTS: tuple[tuple[str, str], ...] = (
+    ("STRANDS_ROBOTS_NO_DYLD_SHIM", "1"),
+    ("STRANDS_MESH", "true"),
+    ("STRANDS_MESH_CAMERA_HZ", "5"),
+)
+
+
+def child_env(mode: str, parent: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The environment a spawned robot process starts with.
+
+    Composed here, in the parent, rather than by ``setdefault`` lines at the
+    top of the child script: the script used to open with
+    ``STRANDS_MESH_LOCAL_DEV=1`` and ``STRANDS_MESH_MULTICAST=true`` before it
+    read ``cfg["mode"]``, so a physical arm started from a dashboard whose own
+    environment never mentioned either joined the mesh with no mTLS, no ACL
+    and multicast discovery on. A child now runs in the posture the dashboard
+    runs in, whatever ``mode`` is; the defaults added are the ones that only
+    make the child usable (mesh on, a camera rate, no dyld shim).
+    """
+    env = dict(os.environ if parent is None else parent)
+    for name, value in _CHILD_DEFAULTS:
+        env.setdefault(name, value)
+    return env
+
+
+def real_spawn_posture_refusal(env: Mapping[str, str] | None = None) -> str | None:
+    """Why a ``mode=real`` spawn must not start under this mesh posture, or ``None``.
+
+    ``resolve_auth_mode`` is the one reader of the auth knobs, so its verdict
+    is the posture the child will inherit (the child gets this environment).
+    ``mtls`` passes. ``none``, whether from ``STRANDS_MESH_AUTH_MODE=none`` or
+    from ``STRANDS_MESH_LOCAL_DEV``, is refused unless the operator set
+    :data:`REAL_SPAWN_ACK_ENV` themselves: the mesh's generic acknowledgement
+    is satisfied by ``LOCAL_DEV`` on its own, so it cannot tell a decision about
+    physical hardware from a lab default. A value the resolver rejects (a
+    misspelt mode) refuses too, quoting the resolver, rather than guessing.
+    """
+    env = os.environ if env is None else env
+    if str(env.get(REAL_SPAWN_ACK_ENV, "")).strip().lower() in _TRUTHY:
+        return None
+    from strands_robots.mesh._zenoh_config import resolve_auth_mode
+
+    try:
+        with _environment(env):
+            mode = resolve_auth_mode()
+    except ValueError as exc:
+        return f"refused: a real arm cannot start until the mesh auth mode is settled ({exc}). Nothing was started."
+    if mode == "mtls":
+        return None
+    return (
+        "refused: starting real hardware on a mesh with wire auth off would let any process that "
+        "reaches the robot's mesh endpoint move it, with no certificate and no access list. Nothing "
+        "was started. This dashboard runs the mesh without mTLS (STRANDS_MESH_LOCAL_DEV or "
+        "STRANDS_MESH_AUTH_MODE=none). Run it with STRANDS_MESH_AUTH_MODE=mtls and the fleet's "
+        f"certificates for real arms, or, for a bench you control, set {REAL_SPAWN_ACK_ENV}=1 on the "
+        f"dashboard to say so explicitly; {INSECURE_ACK_ENV} is not enough on its own, because "
+        "STRANDS_MESH_LOCAL_DEV satisfies it without an operator deciding anything about hardware."
+    )
+
+
+class _environment:
+    """Run ``resolve_auth_mode`` against a caller-supplied mapping without touching the process env.
+
+    The resolver reads ``os.environ`` directly. Production callers pass
+    ``os.environ`` itself (a no-op here); a caller holding some other mapping
+    gets it swapped in for the duration and the real environment restored after.
+    """
+
+    def __init__(self, env: Mapping[str, str]) -> None:
+        self._env = env
+        self._saved: dict[str, str] | None = None
+
+    def __enter__(self) -> None:
+        if self._env is os.environ:
+            return
+        self._saved = dict(os.environ)
+        os.environ.clear()
+        os.environ.update(self._env)
+
+    def __exit__(self, *exc: object) -> None:
+        if self._saved is not None:
+            os.environ.clear()
+            os.environ.update(self._saved)
+            self._saved = None
+
+
+def _mesh_auth_label(env: Mapping[str, str] | None = None) -> str:
+    """``mtls``, ``none (acknowledged)`` or ``unknown``: how the spawn result names the child's posture."""
+    env = os.environ if env is None else env
+    from strands_robots.mesh._zenoh_config import resolve_auth_mode
+
+    try:
+        with _environment(env):
+            mode = resolve_auth_mode()
+    except ValueError:
+        return "unknown"
+    return "mtls" if mode == "mtls" else "none (acknowledged)"
+
+
 _SPAWNER = r"""
 import os, sys, time, json
 cfg = json.loads(sys.argv[1])
-os.environ.setdefault("STRANDS_ROBOTS_NO_DYLD_SHIM", "1")
-os.environ.setdefault("STRANDS_MESH_LOCAL_DEV", os.environ.get("STRANDS_MESH_LOCAL_DEV", "1"))
-os.environ.setdefault("STRANDS_MESH_MULTICAST", "true")
-os.environ.setdefault("STRANDS_MESH", "true")
-os.environ.setdefault("STRANDS_MESH_CAMERA_HZ", os.environ.get("STRANDS_MESH_CAMERA_HZ", "5"))
 
 from strands_robots import Robot
 
@@ -488,11 +597,6 @@ else:
 _COLLECT_SPAWNER = r"""
 import os, sys, time, json
 cfg = json.loads(sys.argv[1])
-os.environ.setdefault("STRANDS_ROBOTS_NO_DYLD_SHIM", "1")
-os.environ.setdefault("STRANDS_MESH_LOCAL_DEV", os.environ.get("STRANDS_MESH_LOCAL_DEV", "1"))
-os.environ.setdefault("STRANDS_MESH_MULTICAST", "true")
-os.environ.setdefault("STRANDS_MESH", "true")
-os.environ.setdefault("STRANDS_MESH_CAMERA_HZ", os.environ.get("STRANDS_MESH_CAMERA_HZ", "5"))
 
 from strands_robots import Robot
 from strands_robots.tools.run_policy import run_policy
@@ -540,11 +644,6 @@ os._exit(0)
 _REPLAY_SPAWNER = r"""
 import os, sys, time, json
 cfg = json.loads(sys.argv[1])
-os.environ.setdefault("STRANDS_ROBOTS_NO_DYLD_SHIM", "1")
-os.environ.setdefault("STRANDS_MESH_LOCAL_DEV", os.environ.get("STRANDS_MESH_LOCAL_DEV", "1"))
-os.environ.setdefault("STRANDS_MESH_MULTICAST", "true")
-os.environ.setdefault("STRANDS_MESH", "true")
-os.environ.setdefault("STRANDS_MESH_CAMERA_HZ", os.environ.get("STRANDS_MESH_CAMERA_HZ", "5"))
 
 from strands_robots import Robot
 
@@ -1822,6 +1921,10 @@ class DeviceManager:
 
         if mode == "real" and not port:
             return {"error": "port required for mode=real"}
+        # A real arm inherits the dashboard's mesh posture; when that posture has no wire auth the
+        # spawn is refused here, before a process owns the serial bus, unless the operator said yes.
+        if mode == "real" and (bad_posture := real_spawn_posture_refusal()) is not None:
+            return {"error": bad_posture}
         # The port reaches lsof argv (bus_claim) and is the path the child opens and writes
         # handshake bytes to; robot_id is a file name in the child. Both are shape-checked
         # here, before any subprocess, the way calibration_run.cli_args already does.
@@ -1866,6 +1969,7 @@ class DeviceManager:
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                env=child_env(mode),
             )
             managed = ManagedRobot(
                 peer_id=peer_id,
@@ -1889,6 +1993,8 @@ class DeviceManager:
         if remember and mode == "real" and port:
             self.remember_profile(cfg)
         out = {"peer_id": peer_id, "pid": proc.pid, "mode": mode}
+        if mode == "real":
+            out["mesh_auth"] = _mesh_auth_label()
         if mode == "real" and robot_id:
             try:
                 from strands_robots.dashboard.calibration import robot_calibration_gap
@@ -2047,6 +2153,7 @@ class DeviceManager:
                 [sys.executable, "-c", _REPLAY_SPAWNER, _json.dumps(cfg)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                env=child_env("replay"),
             )
             managed = ManagedRobot(
                 peer_id=peer_id,
@@ -2124,6 +2231,7 @@ class DeviceManager:
                 [sys.executable, "-c", _COLLECT_SPAWNER, _json.dumps(cfg)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                env=child_env("collect"),
             )
             managed = self.robots[peer_id]  # the reservation made above
             managed.process = proc

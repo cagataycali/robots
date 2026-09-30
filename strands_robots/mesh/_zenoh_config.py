@@ -396,6 +396,16 @@ def transport_caps_block() -> list[tuple[str, str]]:
     return [("transport/unicast/max_sessions", str(max_sessions))]
 
 
+def cmd_rate_hz() -> float:
+    """Effective cmd-topic rate cap in Hz (env override honoured).
+
+    The receiver's ``downsampling`` rule drops a cmd arriving sooner than one
+    period after the previous one on the same link; :meth:`Mesh.send` paces its
+    publishes under this so a second command is delivered, not dropped.
+    """
+    return _float_env("STRANDS_MESH_CMD_RATE_HZ", DEFAULT_CMD_RATE_HZ, lo=0.001, hi=10000.0)
+
+
 def downsampling_block() -> tuple[str, str]:
     """Return ``("downsampling", <json5>)`` capping the cmd-publish rate.
 
