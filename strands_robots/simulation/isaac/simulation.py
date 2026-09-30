@@ -1291,47 +1291,6 @@ class _RobotState:
         self.policy_steps = 0
 
 
-def _cameras_recording_option_error(
-    method: str,
-    fps: Any,
-    max_frames_per_camera: Any,
-) -> dict[str, Any] | None:
-    """Reject a rollout-video option the Isaac recorder cannot honor.
-
-    Pre-flight guard for :meth:`IsaacSimulation.start_cameras_recording`,
-    mirroring the MuJoCo backend's guard of the same name
-    (:func:`strands_robots.simulation.mujoco.rendering._cameras_recording_option_error`)
-    against the one shared domain
-    (:func:`~strands_robots.utils.positive_whole_number_error`), so the two
-    recording surfaces cannot disagree on what a usable ``fps`` is. Isaac takes
-    no ``width``/``height`` here - each camera carries its own resolution from
-    :meth:`IsaacSimulation.add_camera` - so only the two frame counts are
-    checked.
-
-    Refusing at ``start`` is what keeps the flush honest: ``fps`` is stored in
-    the recording state and handed to
-    :func:`~strands_robots.rendering.encode_clip` by
-    :meth:`IsaacSimulation.stop_cameras_recording`, which refuses a rate it
-    cannot encode at. Validating only at flush time would surface the mistake
-    after a whole rollout's frames had been buffered, and
-    ``max_frames_per_camera=0`` would drop every frame while both calls still
-    reported success.
-
-    Args:
-        method: Public method name, used to prefix the error message.
-        fps: Encoded MP4 frame rate.
-        max_frames_per_camera: In-memory per-camera frame cap.
-
-    Returns:
-        A structured ``{"status": "error", ...}`` dict naming the first
-        offending parameter, or ``None`` when both options are usable.
-    """
-    for param, value in (("fps", fps), ("max_frames_per_camera", max_frames_per_camera)):
-        if text := positive_whole_number_error(value, param, method):
-            return {"status": "error", "content": [{"text": text}]}
-    return None
-
-
 class _CameraState:
     """Internal bookkeeping for a camera in the Isaac simulation."""
 
@@ -7993,7 +7952,11 @@ class IsaacSimulation(
         # or buffer work: ``fps`` reaches ``encode_clip`` at flush time, which
         # refuses a rate it cannot encode at, and a non-positive frame cap
         # drops every captured frame.
-        if error := _cameras_recording_option_error("start_cameras_recording", fps, max_frames_per_camera):
+        from strands_robots.rendering.video import cameras_recording_option_error
+
+        if error := cameras_recording_option_error(
+            "start_cameras_recording", fps=fps, max_frames_per_camera=max_frames_per_camera
+        ):
             return error
         # ``cameras`` names an ordered list of DISTINCT camera names, so it is
         # refused on the shared name-list domain before any filesystem or buffer work. Neither
