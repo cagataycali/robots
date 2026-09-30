@@ -1,10 +1,10 @@
 ---
-description: What trains where: the Trainer contract, the nine trainers create_trainer knows, TrainSpec, the validate to export lifecycle, and the two agent tools.
+description: What trains where: the Trainer contract, the nine trainers create_trainer knows, TrainSpec, the validate to export lifecycle, the two agent tools.
 ---
 
 # Training
 
-By the end of this page you can name every trainer, what it drives and on what hardware, and run the `validate` to `export` lifecycle with the mock trainer.
+By the end of this page you can name every trainer, what it drives on what hardware, and run the `validate` to `export` lifecycle with the mock trainer.
 
 ```python
 import json
@@ -71,4 +71,4 @@ artifact = trainer.export(spec, result.checkpoint_dir)   # a path create_policy 
 
 ## From an agent
 
-`train_policy(action="train" | "validate" | "status" | "export" | "list", provider=..., ...)` mirrors `TrainSpec` and returns the same verdicts. `lerobot_train(action="start" | "status" | "stop" | "list", ...)` runs `lerobot-train` detached, for a run that outlives the agent turn. See [lerobot](lerobot.md) and the [tool reference](../../reference/tools.md).
+`train_policy(action="train" | "validate" | "status" | "export" | "list", provider=..., ...)` mirrors `TrainSpec` and returns the same verdicts. `lerobot_train(action="start" | "status" | "stop" | "list", ...)` runs `lerobot-train` detached, outliving the agent turn ([lerobot](lerobot.md), [tool reference](../../reference/tools.md)).
