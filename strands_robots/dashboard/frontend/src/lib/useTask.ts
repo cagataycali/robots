@@ -26,7 +26,8 @@ export function useTask(peer: Peer) {
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const [twinBusy, setTwinBusy] = useState(false)
   const [consent, setConsent] = useState<ConsentNeed | null>(null)
-  const lastBody = useRef<RunBody | null>(null)
+  /** the last refused request, so a grant from the consent sheet can re-send exactly it */
+  const lastBody = useRef<{ kind: 'run'; body: RunBody } | { kind: 'reset'; confirmed: boolean } | null>(null)
   const mounted = useRef(true)
   useEffect(() => () => { mounted.current = false }, [])
 
@@ -62,7 +63,7 @@ export function useTask(peer: Peer) {
 
   const run = async (body: RunBody) => {
     setPhase('starting'); setOutcome(null); setConsent(null)
-    lastBody.current = body
+    lastBody.current = { kind: 'run', body }
     try {
       const res = await post<{ ok: boolean; result: any; routed_to?: string; mirrored_to_twin?: boolean }>(
         `/api/robots/${encodeURIComponent(peer.peer_id)}/task`,
@@ -90,7 +91,10 @@ export function useTask(peer: Peer) {
   /** Re-send the exact request that was refused (after a grant). */
   const retryLast = async () => {
     setConsent(null)
-    if (lastBody.current) await run(lastBody.current)
+    const last = lastBody.current
+    if (!last) return
+    if (last.kind === 'run') await run(last.body)
+    else await reset(last.confirmed)
   }
 
   const stop = async () => {
@@ -115,6 +119,7 @@ export function useTask(peer: Peer) {
    */
   const reset = async (confirmed: boolean) => {
     setPhase('starting'); setOutcome(null); setConsent(null)
+    lastBody.current = { kind: 'reset', confirmed }
     try {
       const res = await post<ResetResponse>(
         `/api/robots/${encodeURIComponent(peer.peer_id)}/reset`,

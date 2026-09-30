@@ -1991,7 +1991,7 @@ function useTask(peer) {
     setPhase("starting");
     setOutcome(null);
     setConsent(null);
-    lastBody.current = body;
+    lastBody.current = { kind: "run", body };
     try {
       const res = await post(
         `/api/robots/${encodeURIComponent(peer.peer_id)}/task`,
@@ -2015,7 +2015,10 @@ function useTask(peer) {
   };
   const retryLast = async () => {
     setConsent(null);
-    if (lastBody.current) await run(lastBody.current);
+    const last = lastBody.current;
+    if (!last) return;
+    if (last.kind === "run") await run(last.body);
+    else await reset(last.confirmed);
   };
   const stop = async () => {
     setPhase("stopping");
@@ -2037,6 +2040,7 @@ function useTask(peer) {
     setPhase("starting");
     setOutcome(null);
     setConsent(null);
+    lastBody.current = { kind: "reset", confirmed };
     try {
       const res = await post(
         `/api/robots/${encodeURIComponent(peer.peer_id)}/reset`,
