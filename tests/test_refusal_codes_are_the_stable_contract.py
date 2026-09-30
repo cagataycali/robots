@@ -44,6 +44,7 @@ import pytest
 
 from strands_robots.mesh.security import ValidationError, validate_command, validate_input_frame
 from strands_robots.policies.factory import UntrustedRemoteCodeError, _check_trust_remote_code
+from tests._package_ast import parse_file
 
 _PACKAGE = pathlib.Path(__file__).resolve().parent.parent / "strands_robots"
 
@@ -222,7 +223,7 @@ def _raise_sites() -> list[tuple[str, int, ast.expr]]:
     """Every ``raise <expr>`` in the package, as (path, line, the expression)."""
     sites: list[tuple[str, int, ast.expr]] = []
     for path in sorted(_PACKAGE.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         rel = str(path.relative_to(_PACKAGE.parent))
         for node in ast.walk(tree):
             if isinstance(node, ast.Raise) and node.exc is not None:

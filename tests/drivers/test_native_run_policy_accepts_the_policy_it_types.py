@@ -43,6 +43,7 @@ from strands_robots.drivers.g1 import G1Driver
 from strands_robots.drivers.go2 import Go2Driver
 from strands_robots.drivers.ur import URDriver
 from strands_robots.policies.base import Policy
+from tests._package_ast import parse_file
 from tests.drivers.conftest import FakeServoPort
 from tests.drivers.test_g1_control_loop import install_unitree_sdk_stub as install_hg_sdk
 from tests.drivers.test_go2_driver import install_unitree_sdk_stub as install_go_sdk
@@ -389,7 +390,7 @@ class TestOneOwnerResolvesThePolicyShapes:
         offenders: list[str] = []
         for path in sorted(root.rglob("*.py")):
             scanned.append(path.name)
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef) and node.name in {"_policy_step", "policy_step"}:
                     if path.name != "base.py":

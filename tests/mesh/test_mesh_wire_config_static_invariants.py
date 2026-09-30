@@ -45,13 +45,15 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from tests._package_ast import parse_file
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MESH = _REPO_ROOT / "strands_robots" / "mesh"
 
 
 def _walk_except_handlers(src_path: Path) -> list[ast.ExceptHandler]:
     """Return every ``ExceptHandler`` AST node in *src_path*."""
-    tree = ast.parse(src_path.read_text(encoding="utf-8"))
+    tree = parse_file(src_path)
     return [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)]
 
 
@@ -155,7 +157,7 @@ def test_zenoh_config_resolve_tls_paths_one_symlink_check() -> None:
     -- the pin is on the ``is_symlink`` call count specifically.
     """
     src = _MESH / "_zenoh_config.py"
-    tree = ast.parse(src.read_text(encoding="utf-8"))
+    tree = parse_file(src)
     target_fn = None
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "_resolve_tls_paths":
@@ -197,7 +199,7 @@ def test_session_default_acl_check_passes_namespace() -> None:
     convention so the consistency cannot silently regress.
     """
     src = _MESH / "session.py"
-    tree = ast.parse(src.read_text(encoding="utf-8"))
+    tree = parse_file(src)
     target_fn = None
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "_build_config":

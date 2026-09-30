@@ -101,6 +101,7 @@ import pytest
 
 from strands_robots.mesh import _acl_config
 from tests._docs_hooks import docs_hook
+from tests._package_ast import parse_file
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PACKAGE = _ROOT / "strands_robots"
@@ -120,7 +121,7 @@ def _accept_env_reads() -> frozenset[str]:
     Derived from the module's own source so a sibling added later is held to
     the same documentation rule without editing a list here.
     """
-    tree = ast.parse(_MODULE.read_text(encoding="utf-8"))
+    tree = parse_file(_MODULE)
     names: set[str] = set()
     for node in ast.walk(tree):
         literal = None
@@ -174,7 +175,7 @@ def _reader_sites() -> dict[str, str]:
     sites: dict[str, str] = {}
     for path in sorted(_PACKAGE.rglob("*.py")):
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
         except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive
             continue
         for node in ast.walk(tree):

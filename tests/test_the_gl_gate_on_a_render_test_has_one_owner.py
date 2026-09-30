@@ -40,6 +40,8 @@ import sys
 
 import pytest
 
+from tests._package_ast import parse_file
+
 #: Names that answer "can this host render offscreen". A ``skipif`` condition
 #: mentioning one of these is a GL gate whichever spelling it uses.
 GL_CAPABILITY_NAMES = frozenset({"_can_render", "gl_available"})
@@ -79,7 +81,7 @@ def survey(root: pathlib.Path) -> dict[str, list[int]]:
     """Every module under *root* that builds a GL-gating marker, by path."""
     found: dict[str, list[int]] = {}
     for path in sorted(root.rglob("*.py")):
-        lines = gl_gating_markers(ast.parse(path.read_text(encoding="utf-8")))
+        lines = gl_gating_markers(parse_file(path))
         if lines:
             found[path.relative_to(root.parent).as_posix()] = lines
     return found
