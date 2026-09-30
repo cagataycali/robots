@@ -129,7 +129,18 @@ print("STRANDS_CFG_CHECK " + json.dumps(out))
 """
 
 #: RL libraries whose training log :meth:`IsaacLabTrainer.status` can read.
-SUPPORTED_RL_LIBRARIES: tuple[str, ...] = ("rsl_rl",)
+SUPPORTED_RL_LIBRARIES: tuple[str, ...] = ("rsl_rl", "skrl")
+
+#: The agent config each library trains from unless ``extra['agent']`` names
+#: another (``skrl_ippo_cfg_entry_point`` / ``skrl_mappo_cfg_entry_point`` for
+#: MARL, ``skrl_amp_cfg_entry_point`` for AMP).
+DEFAULT_AGENT_ENTRY_POINTS: dict[str, str] = {
+    "rsl_rl": "rsl_rl_cfg_entry_point",
+    "skrl": "skrl_cfg_entry_point",
+}
+
+#: skrl logs its scalars to TensorBoard, not stdout; this is its mean episode reward.
+SKRL_REWARD_TAG = "Reward / Total reward (mean)"
 
 # Isaac Lab task ids are gym ids: ``Isaac-Cartpole``, ``Isaac-Velocity-Flat-G1``,
 # ``IsaacContrib-Stack-Cube-SO101-v0``. The first character is a letter, so a
@@ -169,6 +180,11 @@ _EXCEPTION_RE = re.compile(
 _LOG_DIR_RE = re.compile(r"Logging experiment in directory: (\S+)")
 _TRAINING_TIME_RE = re.compile(r"Training time: (\d+(?:\.\d+)?) seconds")
 _MODEL_RE = re.compile(r"^model_(\d+)\.pt\Z")
+# skrl: ``checkpoints/agent_<timestep>.pt`` (``best_agent.pt`` is not a timestep).
+_SKRL_MODEL_RE = re.compile(r"^agent_(\d+)\.pt\Z")
+# skrl's tqdm bar: `` 45%|####5     | 144/320 [00:02<00:03, 58.1it/s]``.
+_SKRL_PROGRESS_RE = re.compile(r"\|\s*(\d+)/(\d+)\s*\[")
+_JOB_ID_IN_NAME_RE = re.compile(r"(isaaclab-\d{8}-\d{6}-[0-9a-f]{12})\Z")
 # Isaac Lab's video recorder: ``[VideoRecorder] Wrote 120 frames to <path>.mp4``.
 _VIDEO_RE = re.compile(r"\[VideoRecorder\] Wrote (\d+) frames to (\S+\.mp4)")
 
@@ -314,6 +330,11 @@ class IsaacLabTrainer(Trainer):
                 "provider launches one process; Isaac Lab's multi-GPU run is `python -m torch.distributed.run "
                 "--nproc_per_node=N -m isaaclab train ... --distributed`, which strands does not start"
             )
+        if _rl_library(spec.extra or {}) == "skrl" and spec.save_freq not in (0, _DEFAULT_SAVE_FREQ):
+            problems.append(
+                f"{ctx}: save_freq={spec.save_freq} is in rsl_rl iterations; skrl checkpoints every "
+                "agent.agent.experiment.checkpoint_interval TIMESTEPS - set that in extra['overrides']"
+            )
         if spec.base_model and spec.resume:
             problems.append(f"{ctx}: pass base_model or resume=True, not both - both name the checkpoint to start from")
         elif spec.base_model:
@@ -342,7 +363,7 @@ class IsaacLabTrainer(Trainer):
     def _cfg_path_problems(self, spec: TrainSpec, paths: list[str]) -> list[str]:
         """Check override paths and the agent entry point against the task's real configs (see ``_CFG_CHECK``)."""
         extra = spec.extra or {}
-        payload = json.dumps([extra["task"], extra.get("agent", "rsl_rl_cfg_entry_point"), paths])
+        payload = json.dumps([extra["task"], _agent_entry_point(extra), paths])
         try:
             done = subprocess.run(  # noqa: S603 - argv, no shell; the interpreter is the operator's
                 [str(self._python), "-c", _CFG_CHECK, payload],
@@ -362,7 +383,7 @@ class IsaacLabTrainer(Trainer):
         if report.get("load_error"):
             return [
                 f"{self.provider_name}: {extra['task']} has no loadable "
-                f"{extra.get('agent', 'rsl_rl_cfg_entry_point')!r} config: {report['load_error']}"
+                f"{_agent_entry_point(extra)!r} config: {report['load_error']}"
             ]
         problems = []
         for path, info in sorted(report.get("problems", {}).items()):
@@ -402,14 +423,21 @@ class IsaacLabTrainer(Trainer):
         if "physics" in extra:
             overrides.append(f"physics={extra['physics']}")
         user = dict(extra.get("overrides") or {})
-        if spec.learning_rate is not None:
+        skrl = _rl_library(extra) == "skrl"
+        if spec.learning_rate is not None and skrl:
+            overrides.append(f"agent.agent.learning_rate={spec.learning_rate!r}")
+            # skrl's KLAdaptiveLR scheduler (the Isaac Lab skrl PPO configs)
+            # rescales the rate every update; pin it unless the caller chose.
+            if "agent.agent.learning_rate_scheduler" not in user:
+                overrides.append("agent.agent.learning_rate_scheduler=null")
+        elif spec.learning_rate is not None:
             overrides.append(f"agent.algorithm.learning_rate={spec.learning_rate!r}")
             # rsl_rl's adaptive schedule (most Isaac Lab PPO configs) replaces the
             # rate from the first iteration and caps it at 1e-2, so a requested
             # rate is pinned unless the caller chose a schedule themselves.
             if "agent.algorithm.schedule" not in user:
                 overrides.append("agent.algorithm.schedule=fixed")
-        if spec.save_freq not in (0, _DEFAULT_SAVE_FREQ) and "agent.save_interval" not in user:
+        if spec.save_freq not in (0, _DEFAULT_SAVE_FREQ) and not skrl and "agent.save_interval" not in user:
             overrides.append(f"agent.save_interval={int(spec.save_freq)}")
         overrides += [f"{path}={_hydra_value(value)}" for path, value in user.items()]
         return flags, overrides
@@ -432,22 +460,25 @@ class IsaacLabTrainer(Trainer):
             The argv, interpreter first.
         """
         extra = spec.extra or {}
+        library = _rl_library(extra)
         cmd = [
             str(self._python),
             "-m",
             "isaaclab",
             "train",
             "--rl_library",
-            str(extra.get("rl_library", "rsl_rl")),
+            library,
             "--task",
             str(extra["task"]),
             "--max_iterations",
             str(spec.steps),
             "--visualizer",
             "none",
-            "--run_name",
-            job_id,
         ]
+        # The job id names the run directory, so status() finds this run and no
+        # other: rsl_rl takes it as --run_name; skrl has no --run_name and
+        # appends its agent.experiment.experiment_name instead.
+        cmd += ["--run_name", job_id] if library == "rsl_rl" else []
         if "num_envs" in extra:
             cmd += ["--num_envs", str(extra["num_envs"])]
         if spec.seed is not None:
@@ -455,6 +486,8 @@ class IsaacLabTrainer(Trainer):
         if (callback := self._external_callback(str(extra["task"]))) is not None:
             cmd += ["--external_callback", callback]
         flags, overrides = self._forwarded(spec)
+        if library == "skrl":
+            overrides.append(f"agent.agent.experiment.experiment_name={job_id}")
         return cmd + flags + overrides
 
     def train(self, spec: TrainSpec) -> TrainResult:
@@ -565,7 +598,11 @@ class IsaacLabTrainer(Trainer):
         exit_code = _read_exit_code(job_dir / runtime.EXIT_CODE_FILE)
         if record.get("kind") == "play":
             return self._play_status(job_id, job_dir, record, text, exit_code, alive)
-        metrics = parse_rsl_rl_log(text)
+        run_dir = find_run_dir(text, job_id)
+        if (record.get("run") or {}).get("rl_library") == "skrl":
+            metrics = parse_skrl_log(text, run_dir, record.get("max_iterations"))
+        else:
+            metrics = parse_rsl_rl_log(text)
         metrics.update(
             {
                 "max_iterations": record.get("max_iterations"),
@@ -575,7 +612,6 @@ class IsaacLabTrainer(Trainer):
                 "liveness_ok": alive,
             }
         )
-        run_dir = find_run_dir(text, job_id)
         model = latest_model(run_dir)
         metrics["latest_model"] = model
         tail = "\n".join(text.strip().splitlines()[-_TAIL_LINES:])
@@ -862,6 +898,12 @@ class IsaacLabTrainer(Trainer):
         record_path = Path(checkpoint_dir) / RUN_RECORD_FILE
         if record_path.is_file():
             run = json.loads(record_path.read_text(encoding="utf-8"))
+        if run.get("rl_library") == "skrl" or Path(model).name.startswith("agent_"):
+            raise ValueError(
+                f"{self.provider_name}: {model} is a skrl checkpoint; converting it to a strands policy is not "
+                "supported yet (only rsl_rl's). play(job_id) replays it in Isaac Lab, and "
+                "extra['rl_library']='rsl_rl' trains one export can convert"
+            )
         extra = {k: run[k] for k in ("task", "physics", "num_envs", "job_id", "overrides") if k in run}
         return rsl_rl.convert_checkpoint(model, str(Path(checkpoint_dir) / "strands_policy"), extra_meta=extra)
 
@@ -917,10 +959,14 @@ class IsaacLabTrainer(Trainer):
         holding an ``Isaac-Cartpole`` and an ``Isaac-Cartpole-Camera`` run
         exported the camera policy when the plain one was asked for.
         """
-        root = Path(output_dir).expanduser() / "logs" / "rsl_rl"
-        if not root.is_dir():
-            return None
-        runs = [d for d in root.glob("*/*") if d.is_dir() and latest_model(str(d))]
+        logs = Path(output_dir).expanduser() / "logs"
+        runs = [
+            d
+            for library in SUPPORTED_RL_LIBRARIES
+            if (logs / library).is_dir()
+            for d in (logs / library).glob("*/*")
+            if d.is_dir() and latest_model(str(d))
+        ]
         if task is not None:
             runs = [d for d in runs if self.run_task(d) == task]
         if not runs:
@@ -941,7 +987,8 @@ class IsaacLabTrainer(Trainer):
             task = None
         if task:
             return str(task)
-        job_id = run_dir.name[20:]
+        match = _JOB_ID_IN_NAME_RE.search(run_dir.name)  # rsl_rl: <time>_<job>; skrl: <time>_ppo_torch_<job>
+        job_id = match.group(1) if match else ""
         if job_id.startswith("isaaclab-"):
             try:
                 job = json.loads((self._jobs_dir / job_id / _JOB_FILE).read_text(encoding="utf-8"))
@@ -1047,6 +1094,153 @@ def _extra_problems(extra: dict[str, Any], ctx: str) -> list[str]:
             elif not extra.get("video"):
                 problems.append(f"{ctx}: extra['{key}'] is read only with extra['video']=True")
     return problems
+
+
+def _rl_library(extra: dict[str, Any]) -> str:
+    """The RL library a spec trains with: ``extra['rl_library']``, else rsl_rl."""
+    return str(extra.get("rl_library", "rsl_rl"))
+
+
+def _agent_entry_point(extra: dict[str, Any]) -> str:
+    """The agent config entry point a spec trains from."""
+    return str(extra.get("agent") or DEFAULT_AGENT_ENTRY_POINTS.get(_rl_library(extra), "rsl_rl_cfg_entry_point"))
+
+
+def _varint(buf: bytes, pos: int) -> tuple[int, int]:
+    result = shift = 0
+    while True:
+        byte = buf[pos]
+        pos += 1
+        result |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return result, pos
+        shift += 7
+
+
+def _proto_fields(buf: bytes):  # type: ignore[no-untyped-def]
+    """``(field, wire_type, value)`` of one protobuf message; bytes for length-delimited fields."""
+    import struct
+
+    pos = 0
+    value: int | float | bytes
+    while pos < len(buf):
+        key, pos = _varint(buf, pos)
+        field, wire = key >> 3, key & 7
+        if wire == 0:
+            value, pos = _varint(buf, pos)
+        elif wire == 1:
+            value, pos = struct.unpack_from("<d", buf, pos)[0], pos + 8
+        elif wire == 2:
+            size, pos = _varint(buf, pos)
+            value, pos = buf[pos : pos + size], pos + size
+        elif wire == 5:
+            value, pos = struct.unpack_from("<f", buf, pos)[0], pos + 4
+        else:
+            return
+        yield field, wire, value
+
+
+def read_tensorboard_scalars(run_dir: str | None, tag: str) -> list[tuple[int, float]]:
+    """``(step, value)`` of every *tag* scalar in the run's TensorBoard event files, in step order.
+
+    skrl reports its rewards only to TensorBoard, and strands does not depend
+    on TensorBoard, so the event files are read directly: TFRecord framing
+    (length, CRC, payload, CRC) around ``Event`` protos whose ``summary``
+    carries ``Value{tag, simple_value}``. A truncated tail - the run is still
+    writing - ends the read at the last whole record.
+    """
+    import struct
+
+    if not run_dir:
+        return []
+    points: dict[int, float] = {}
+    wanted = tag.encode()
+    for path in sorted(Path(run_dir).glob("events.out.tfevents.*")):
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        pos = 0
+        while pos + 12 <= len(data):
+            (length,) = struct.unpack_from("<Q", data, pos)
+            start, end = pos + 12, pos + 12 + length
+            if end + 4 > len(data):
+                break
+            event, pos = data[start:end], end + 4
+            try:
+                step, summary = 0, None
+                for field, _wire, value in _proto_fields(event):
+                    if field == 2:
+                        step = int(value)
+                    elif field == 5:
+                        summary = value
+                if summary is None:
+                    continue
+                for field, _wire, value in _proto_fields(summary):
+                    if field != 1:
+                        continue
+                    name = scalar = None
+                    for f2, _w2, v2 in _proto_fields(value):
+                        if f2 == 1:
+                            name = v2
+                        elif f2 == 2:
+                            scalar = float(v2)
+                    if name == wanted and scalar is not None:
+                        points[step] = scalar
+            except (IndexError, struct.error, ValueError):
+                break
+    return sorted(points.items())
+
+
+def parse_skrl_log(text: str, run_dir: str | None, max_iterations: int | None) -> dict[str, Any]:
+    """Read a skrl run's progress: the log's progress bar, and the rewards from TensorBoard.
+
+    Same keys as :func:`parse_rsl_rl_log`, iterations 0-based as rsl_rl's are.
+    skrl counts timesteps (``rollouts`` per iteration), so the progress bar's
+    timestep and each reward's TensorBoard step are scaled onto
+    ``--max_iterations``; ``steps_per_s`` and the task terms are not reported
+    by skrl and stay ``None`` / empty.
+    """
+    bars = _SKRL_PROGRESS_RE.findall(text)
+    latest_iteration = None
+    scale = None  # iterations per timestep
+    if bars:
+        done, total = (int(v) for v in bars[-1])
+        if total > 0 and max_iterations:
+            scale = int(max_iterations) / total
+            # 0-based, as rsl_rl's "Learning iteration N/M" is: the last of 50 is 49.
+            latest_iteration = max(0, math.ceil(done * scale) - 1) if done else None
+
+    def _iteration(step: int) -> int:
+        return max(0, math.ceil(step * scale) - 1) if scale else step
+
+    rewards = [(_iteration(step), r) for step, r in read_tensorboard_scalars(run_dir, SKRL_REWARD_TAG)]
+    finite = [(it, r) for it, r in rewards if math.isfinite(r)]
+    diverged_at = next((it for it, r in rewards if not math.isfinite(r)), None)
+    best = max(finite, key=lambda item: item[1]) if finite else None
+    window = max(1, min(_TREND_WINDOW, len(finite) // 2))
+    trend = (
+        sum(r for _, r in finite[-window:]) / window - sum(r for _, r in finite[:window]) / window
+        if len(finite) >= 2
+        else None
+    )
+    training_time = _TRAINING_TIME_RE.search(text)
+    return {
+        "latest_iteration": latest_iteration,
+        "first_reward": rewards[0][1] if rewards else None,
+        "latest_reward": rewards[-1][1] if rewards else None,
+        "best_reward": best[1] if best else None,
+        "best_iteration": best[0] if best else None,
+        "reward_trend": round(trend, 6) if trend is not None else None,
+        "diverged": diverged_at is not None,
+        "diverged_at_iteration": diverged_at,
+        "steps_per_s": None,
+        "total_steps": None,
+        "training_time_s": float(training_time.group(1)) if training_time else None,
+        "learning": diverged_at is None and trend is not None and trend > 0,
+        "task_metrics": {},
+        "success_rate": None,
+    }
 
 
 def _read_log(path: Path) -> str:
@@ -1244,6 +1438,11 @@ def latest_model(run_dir: str | None) -> str | None:
     models = []
     for path in Path(run_dir).glob("model_*.pt"):
         match = _MODEL_RE.match(path.name)
+        if match:
+            models.append((int(match.group(1)), path))
+    # skrl: checkpoints/agent_<timestep>.pt
+    for path in Path(run_dir).glob("checkpoints/agent_*.pt"):
+        match = _SKRL_MODEL_RE.match(path.name)
         if match:
             models.append((int(match.group(1)), path))
     return str(max(models)[1]) if models else None
