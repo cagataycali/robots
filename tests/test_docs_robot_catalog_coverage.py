@@ -36,18 +36,18 @@ reasoning in ``tests/test_docs_policy_coverage.py``.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
 from collections import Counter
 from pathlib import Path
+
+from tests._docs_hooks import docs_hook
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ROBOTS_JSON = REPO_ROOT / "strands_robots" / "registry" / "robots.json"
 URDF_ROBOTS_JSON = REPO_ROOT / "strands_robots" / "registry" / "urdf_robots.json"
 DOCS = REPO_ROOT / "docs"
 README = REPO_ROOT / "README.md"
-FACTS_HOOK = DOCS / "hooks" / "facts.py"
 CATALOG = DOCS / "robots" / "index.md"
 
 #: Claims that count something other than registry entries, so they are not
@@ -87,10 +87,7 @@ def _category_counts() -> Counter[str]:
 
 def _facts() -> dict[str, int]:
     """The numbers hook's table, loaded by path: the docs venv is not the test venv."""
-    spec = importlib.util.spec_from_file_location("docs_facts_hook", FACTS_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = docs_hook("facts")
     return module.numbers()
 
 

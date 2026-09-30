@@ -25,14 +25,14 @@ robot = Robot("atlas_v4", mode="sim")  # first call compiles the asset
 
 ## What the loader does
 
-`strands_robots/assets/urdf.py` runs once per robot, on the first `Robot()` resolving the name, and writes a Menagerie-shaped directory under `~/.strands_robots/assets/<module>/` (`robot.urdf`, `robot.xml`, `scene.xml`, `meshes/`, `urdf_asset.json`). The next call finds it like any other asset.
+`strands_robots/assets/urdf.py` runs once per robot, on the first `Robot()` resolving the name, and writes a Menagerie-shaped directory under `~/.strands_robots/assets/<module>/` (`robot.urdf`, `robot.xml`, `scene.xml`, `meshes/`, `urdf_asset.json`). Later calls reuse it.
 
 1. **Meshes.** Every `<mesh filename>` is resolved: `package://<pkg>/...` against the description's package and repository, relative paths against the URDF, package and repository, and must stay under them. STL and OBJ are copied. Collada (`.dae`), PLY and glTF are converted with trimesh to binary STL, or to OBJ above MuJoCo's 200,000-face STL limit. A Collada file with a missing texture image is read anyway.
 2. **Repairs.** An inertial that is zero, not positive definite or under MuJoCo's `mjMINVAL`, or a link with no inertial, gets a small positive one. A primitive with a zero dimension is dropped. A visual with several `<material>` children keeps the first. A xacro prefix left unbound is declared so the file parses. Gazebo, transmission and `ros2_control` elements are removed.
 3. **Compiler block.** `<mujoco><compiler meshdir="." discardvisual="false" fusestatic="false" balanceinertia="true"/></mujoco>` keeps the visual meshes and every link name, so `move_to` and cameras address the frames the URDF names.
 4. **Base.** Descriptions tagged humanoid, biped, quadruped, wheeled, mobile manipulator or drone get a free joint on the root unless the URDF already has one; arms, hands and educational rigs stay bolted to the world. Every root is lifted until its lowest geometry clears the floor by a centimetre: a URDF has no floor and its zero pose often sits below it.
 5. **Actuators.** One position actuator per hinge and slide joint, named after the joint. The gain is the URDF `effort` limit (clamped to 5..2000), the force range is plus or minus that effort, the control range is the joint range. Finger, thumb, knuckle, jaw and gripper joints are capped at 20 so arm effort does not crush the hand. Damping defaults to gain over 20 for hinges and over 10 for slides; hinges get 0.01 armature.
-6. **Scene.** `scene.xml` includes `robot.xml` and adds a checker floor, a sky and one directional light, like a Menagerie `scene.xml`, so cameras, renders and thumbnails behave as they do for every other robot.
+6. **Scene.** `scene.xml` includes `robot.xml` and adds a checker floor, a sky and one directional light, so cameras, renders and thumbnails behave as on every other robot.
 
 `urdf_asset.json` records the module, the upstream repository and commit, each mesh's source and format, the actuated joint list and `nu`. `scripts/build_urdf_registry.py` reads those files into `strands_robots/registry/urdf_robots.json`, so the joint count a page prints is the compiled model's.
 
@@ -60,7 +60,7 @@ At this commit the one refused description is `eve_r3`: its upstream repository 
 
 ## Viewer
 
-The compiled MJCF exists only on your machine, so the URDF robots have no in-browser 3D view. Their pages show a local render made by `docs/hooks/render_thumbnails.py --offscreen`, which loads the same `robot.xml` with MuJoCo's offscreen renderer.
+The compiled MJCF exists only on your machine, so URDF robots have no in-browser 3D view. Their pages show a local render made by `docs/hooks/render_thumbnails.py --offscreen`, which loads the same `robot.xml` with MuJoCo's offscreen renderer.
 
 ## Your own URDF
 
@@ -73,4 +73,4 @@ info = build_from_urdf("my_robot.urdf", "~/.strands_robots/assets/my_robot", nam
 print(info.nu, info.joints)
 ```
 
-`add_robot(urdf_path=...)` still loads a URDF directly, without actuators or repairs; use the builder when you want the same treatment the catalog robots get.
+`add_robot(urdf_path=...)` still loads a URDF directly, without actuators or repairs; use the builder for the treatment the catalog robots get.

@@ -26,25 +26,20 @@ file, front matter and fences included, so the number here is the number
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import pytest
 
 import strands_robots
+from tests._docs_hooks import docs_hook
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _DOCS = _REPO_ROOT / "docs"
-_HOOK = _DOCS / "hooks" / "word_budget.py"
 
 
 def _hook():
     """The word-budget hook, loaded by path: the docs venv is not the test venv."""
-    spec = importlib.util.spec_from_file_location("docs_word_budget_hook", _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("word_budget")
 
 
 #: The per-page ceiling, in words: the one the build-time hook enforces.
@@ -57,7 +52,6 @@ _BUDGET: int = _hook().LIMIT
 #: lowered to 51,184 when the robot-page template stopped restating its fences and
 #: to 48,896 when the per-driver facts moved to one section on the drivers page, and
 #: to 47,845 when the robot pages dropped the back-link footer the nav already gives, and
-#: to 46,418 when they dropped the lines their chips and the nav already state; the old
 #: to 46,418 when they dropped the lines their chips and the nav already state; the old
 #: site was 112,416. Raised once, to 49,800, when the site started saying where readers
 #: look that learned policies run on real robots: a new Start page (First learned

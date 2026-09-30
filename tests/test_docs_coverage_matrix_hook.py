@@ -17,13 +17,12 @@ either registry fails at the row that drifted.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
-import sys
 from pathlib import Path
 
 from strands_robots.drivers import list_driver_coverage, list_native_drivers
+from tests._docs_hooks import docs_hook
 
 _REPO = Path(__file__).resolve().parents[1]
 _PAGE = _REPO / "docs" / "robots" / "index.md"
@@ -46,15 +45,7 @@ _CODE = re.compile(r"`([^`]+)`")
 
 def _hook():
     """The hook module, loaded from the docs tree the build loads it from."""
-    name = "docs_coverage_hook"
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, _REPO / "docs/hooks/coverage.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module  # the hook's dataclass resolves its module by name
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("coverage")
 
 
 def _span(cell: str) -> str | None:
@@ -81,23 +72,7 @@ def _registry() -> dict[str, dict]:
     robots the MuJoCo backend compiles on first use: both ship in the package
     and both are rows of ``list_robots()``, so both are rows of the matrix.
     """
-    return dict(_registry_view().merged())
-
-
-def _registry_view():  # noqa: ANN202 - the docs hook, loaded by path: the docs venv is not the test venv
-    """``docs/hooks/registry_view.py``: robots.json merged with the robot_descriptions URDF tail."""
-    import importlib.util
-    import sys
-
-    name = "docs_hooks_registry_view"
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, _REPO / "docs" / "hooks" / "registry_view.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+    return dict(docs_hook("registry_view").merged())
 
 
 def _live_coverage() -> dict[str, tuple[str, ...]]:

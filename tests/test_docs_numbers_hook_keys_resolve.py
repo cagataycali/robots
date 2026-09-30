@@ -9,23 +9,19 @@ the tree read independently here.
 
 from __future__ import annotations
 
-import importlib.util
 import re
 from pathlib import Path
 
 import pytest
 
+from tests._docs_hooks import docs_hook
+
 _REPO = Path(__file__).resolve().parents[1]
-_HOOK = _REPO / "docs" / "hooks" / "facts.py"
 _TOKEN = re.compile(r"\{\{\s*n:([a-z_]+)\s*\}\}")
 
 
 def _load_hook():
-    spec = importlib.util.spec_from_file_location("docs_facts_hook", _HOOK)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("facts")
 
 
 def _tokens_in_docs() -> dict[str, list[str]]:
@@ -51,8 +47,8 @@ def test_robot_counts_match_the_registry() -> None:
     hook = _load_hook()
     values = hook.numbers()
     # The union the hooks document: robots.json plus the robot_descriptions URDF tail.
-    robots = _registry_view().merged()
-    curated = _registry_view().curated()
+    robots = docs_hook("registry_view").merged()
+    curated = docs_hook("registry_view").curated()
     assert values["robots"] == len(robots)
     assert values["robots_curated"] == len(curated)
     assert values["urdf_robots"] == len(robots) - len(curated)
@@ -67,19 +63,3 @@ def test_an_unknown_key_is_left_in_place_and_warned(caplog: pytest.LogCaptureFix
     assert out.startswith(f"we ship {hook.numbers()['robots']} robots")
     assert "{{n:nonsense}}" in out
     assert any("unknown numbers key" in rec.message for rec in caplog.records)
-
-
-def _registry_view():  # noqa: ANN202 - the docs hook, loaded by path: the docs venv is not the test venv
-    """``docs/hooks/registry_view.py``: robots.json merged with the robot_descriptions URDF tail."""
-    import importlib.util
-    import sys
-
-    name = "docs_hooks_registry_view"
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, _REPO / "docs" / "hooks" / "registry_view.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module

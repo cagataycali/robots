@@ -14,18 +14,16 @@ graded here, and so is the hook's ``DRIVERS`` entry the drivers page renders
 from __future__ import annotations
 
 import ast
-import importlib.util
 import re
-import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import strands_robots
 from strands_robots.drivers.earthrover import DEFAULT_SDK_URL
+from tests._docs_hooks import docs_hook
 
 _REPO = Path(strands_robots.__file__).resolve().parent.parent
 _PAGE = _REPO / "docs" / "robots" / "earthrover.md"
-_HOOK = _REPO / "docs" / "hooks" / "robot_pages.py"
 _PYTHON_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)  # fences may carry title="..."
 _PORT_LITERAL = re.compile(r":(\d{2,5})(?=[/\s`\"',|)]|$)")
 
@@ -67,11 +65,7 @@ def _earthrover_facts() -> str:
     Robot pages link to that one section instead of restating it, so the
     hook's ``DRIVERS`` entry is the whole claim about the SDK address.
     """
-    spec = importlib.util.spec_from_file_location("docs_robot_pages_hook", _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = docs_hook("robot_pages")
     facts = module.DRIVERS["EarthRoverDriver"]
     return f"{facts['port']} {facts['example']}"
 
