@@ -44,10 +44,10 @@ def test_no_fence_carries_a_colour_or_a_style_line() -> None:
     offenders = []
     for page, body in _fences():
         rel = page.relative_to(_REPO)
-        if _HEX.search(body):
-            offenders.append(f"{rel}: hex colour {_HEX.search(body).group(0)}")
-        if _STYLE_LINE.search(body):
-            offenders.append(f"{rel}: {_STYLE_LINE.search(body).group(1)} line")
+        if hex_colour := _HEX.search(body):
+            offenders.append(f"{rel}: hex colour {hex_colour.group(0)}")
+        if style_line := _STYLE_LINE.search(body):
+            offenders.append(f"{rel}: {style_line.group(1)} line")
         if _INIT.search(body):
             offenders.append(f"{rel}: %%{{init}}%% directive")
     assert offenders == [], (
@@ -72,7 +72,9 @@ def test_no_dash_in_a_fence_label() -> None:
 
 def test_the_wiring_hands_every_fence_to_the_wrapper() -> None:
     yml = _MKDOCS.read_text(encoding="utf-8")
-    assert re.search(r"mermaid@10/dist/mermaid\.min\.js", yml), "mkdocs.yml extra_javascript lacks the mermaid@10 CDN script"
+    assert re.search(r"mermaid@10/dist/mermaid\.min\.js", yml), (
+        "mkdocs.yml extra_javascript lacks the mermaid@10 CDN script"
+    )
     assert "assets/mermaid.js" in yml, "mkdocs.yml extra_javascript lacks docs/assets/mermaid.js"
     fence = re.search(r"custom_fences:\s*\n\s*-\s*name:\s*mermaid\s*\n\s*class:\s*(\S+)\s*\n\s*format:\s*(\S+)", yml)
     assert fence, "pymdownx.superfences declares no mermaid custom fence"
@@ -80,7 +82,11 @@ def test_the_wiring_hands_every_fence_to_the_wrapper() -> None:
     assert fmt.endswith("fence_code_format"), "the fence must keep its source as code for the wrapper to render"
     js = _WRAPPER.read_text(encoding="utf-8")
     assert f"pre.{holder_class}" in js, f"docs/assets/mermaid.js does not look for pre.{holder_class}"
-    assert "document$" in js and "data-md-color-scheme" in js, "the wrapper must re-render on document$ and on a palette toggle"
+    assert "document$" in js and "data-md-color-scheme" in js, (
+        "the wrapper must re-render on document$ and on a palette toggle"
+    )
     for token in ("--sr-mono", "--sr-fg", "--sr-muted", "--sr-accent", "--md-default-bg-color"):
         assert token in js, f"the wrapper reads its palette from the page; {token} is missing"
-    assert "prefers-reduced-motion" in js or "animate" not in js.lower(), "a wrapper that animates must read prefers-reduced-motion"
+    assert "prefers-reduced-motion" in js or "animate" not in js.lower(), (
+        "a wrapper that animates must read prefers-reduced-motion"
+    )

@@ -102,11 +102,17 @@ def test_every_scene_keeps_the_brand_rules() -> None:
     assert problems == [], problems
     for name, scene in renderer.load_scenes().items():
         svg = scene.svg("paper")
-        accents = svg.count('class="card accent-card"') + svg.count('class="chip accent-chip"') + svg.count('class="wire accent-wire')
+        accents = (
+            svg.count('class="card accent-card"')
+            + svg.count('class="chip accent-chip"')
+            + svg.count('class="wire accent-wire')
+        )
         assert accents >= 1, f"{name}: no accent element; every drawing has exactly one green thing it is about"
         assert accents == 1, f"{name}: {accents} accent elements; one green element per drawing"
         assert scene.title and scene.lead, f"{name}: a drawing has a mono title and a Grotesk lead"
-        assert scene.empty_fraction() <= 0.2, f"{name}: {scene.empty_fraction():.0%} of the canvas is empty (limit one fifth)"
+        assert scene.empty_fraction() <= 0.2, (
+            f"{name}: {scene.empty_fraction():.0%} of the canvas is empty (limit one fifth)"
+        )
         assert 'class="grot muted" x="600.0"' in svg, f"{name}: no centred footnote"
 
 
