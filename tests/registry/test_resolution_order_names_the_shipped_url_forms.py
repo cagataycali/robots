@@ -27,7 +27,7 @@ import re
 import pytest
 
 import strands_robots.registry.policies as policies_mod
-from strands_robots.policies.factory import policy_provider_error
+from strands_robots.policies.factory import policy_provider_error, provider_can_be_created
 from strands_robots.registry.policies import resolve_policy
 
 # A URL form as the prose spells one: a scheme with its separator, or the
@@ -151,9 +151,9 @@ class TestTheSchemeLessAddressIsAnExtensionPointNotAShippedForm:
         assert "server_address" not in kwargs
         assert "host" not in kwargs
 
-    def test_the_preflight_reports_no_reason_for_a_scheme_less_address(self):
-        """It resolves - as a checkpoint id - so the preflight has nothing to report."""
-        assert policy_provider_error("gpu-box:8080") is None
+    def test_the_preflight_refuses_a_scheme_less_address_as_an_unknown_provider(self):
+        """create_policy does not forward it to lerobot_local, so the preflight names it."""
+        assert policy_provider_error("gpu-box:8080").startswith("Unknown policy provider: 'gpu-box:8080'.")
 
     def test_a_declared_scheme_less_pattern_still_maps_to_server_address(self, monkeypatch):
         """The generic branch is a live extension point, just not a shipped form."""
@@ -161,3 +161,4 @@ class TestTheSchemeLessAddressIsAnExtensionPointNotAShippedForm:
         provider, kwargs = resolve_policy("myserver:8080")
         assert provider == "hostport"
         assert kwargs["server_address"] == "myserver:8080"
+        assert provider_can_be_created("myserver:8080") is True

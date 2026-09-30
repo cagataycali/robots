@@ -16,7 +16,7 @@ export STRANDS_TRUST_REMOTE_CODE=1             # required: models load with trus
 
 ## What it is
 
-`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works without a change here. The model's processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations and unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the steps consumed during inference, and the policy blends the next chunk onto the seam.
+`LerobotLocalPolicy` hands the checkpoint to LeRobot's own factory: the policy type is read from the model's `config.json`, so any class LeRobot registers works here unchanged. The processor pipeline (`preprocessor.json` / `postprocessor.json`) normalises observations and unnormalises actions. Flow-matching models get Real-Time Chunking when the config declares it: the runtime tells the policy its control rate and the steps consumed during inference, and the policy blends the next chunk onto the seam.
 
 Build it by name or smart string; a HuggingFace id resolves here.
 
@@ -31,13 +31,13 @@ policy = create_policy("robotfuel/act_so101_t16b", embodiment="so101")   # same 
 
 {{providers:kwargs:lerobot_local}}
 
-Inert normalization has a two-part remedy: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and `state_units` / `action_units` (`degrees` or `radians`) say which unit they were recorded in. `so100` and `so101` declare `state_units='degrees'`; radian stats need the unit half beside the stats half.
+Inert normalization has a two-part remedy: `processor_overrides={"normalizer_processor": {"stats": ...}}` replaces the stats, and the embodiment's `state_units` / `action_units` (`degrees` or `native`) say which frame they were recorded in; `native` is what the robot emits, radians in MuJoCo. `so100` and `so101` declare `degrees`. Neither is a constructor keyword; `create_policy` refuses them.
 
-`pretrained_name_or_path` is required. `actions_per_step` left at `1` is auto-raised to the model's trained `n_action_steps`; a value above 1 pins it. `cache_model=True` keeps loaded weights across policies in this process (`clear_model_cache()`, `list_cached_models()`).
+`pretrained_name_or_path` is required. `actions_per_step=1` becomes the trained `n_action_steps`; above 1 pins it. `cache_model=True` shares weights in-process (`clear_model_cache()`, `list_cached_models()`). Without `device=` it uses CUDA if present; checkpoint `torch.compile` stays off unless `compile_model=True`.
 
 ## Embodiments
 
-An embodiment is a declared key map between what the robot emits and what the model was trained on: `state_keys`, `action_keys`, `obs_rename`, and a `dim_policy` (`strict`, `pad`, or `truncate`) for a state width that differs from the robot's. They live in `strands_robots/policies/lerobot_local/embodiments.json`; sim entries use bare MuJoCo joint names, `*_real` entries LeRobot motor names with `.pos`. Known embodiments and aliases:
+An embodiment is a declared key map between what the robot emits and what the model was trained on: `state_keys`, `action_keys`, `obs_rename`, and a `dim_policy` (`strict`, `pad`, or `truncate`) for a state width unlike the robot's. They live in `strands_robots/policies/lerobot_local/embodiments.json`; sim entries use bare MuJoCo joint names, `*_real` entries LeRobot motor names with `.pos`. Known embodiments and aliases:
 
 {{providers:embodiments}}
 
@@ -73,7 +73,7 @@ sim.run_policy(
 )
 ```
 
-`parent_body` mounts a camera on a link so a wrist view rides with the arm; `position` and `target` are then in that frame, both required. It works on `mujoco` and `newton`; `isaac` refuses it and names the world-frame alternative.
+`parent_body` mounts a camera on a link (a wrist view rides with the arm); `position` and `target` are then in that frame, both required. It works on `mujoco` and `newton`; `isaac` refuses it and names the world-frame alternative.
 
 ## Run it
 
@@ -100,7 +100,7 @@ print(result["status"])
 sim.cleanup()
 ```
 
-A checkpoint fine-tuned on an SO-101 carries its stats; `embodiment="so101"` then converts units in sim and binds the arm's `.pos` keys on hardware ([First policy](../../start/first-policy.md)). A real arm's tool takes the same dict as `policy_config`:
+A checkpoint fine-tuned on an SO-101 carries its stats; `embodiment="so101"` then converts units in sim and binds the arm's `.pos` keys on hardware ([First policy](../../start/first-policy.md)). A real arm's tool takes the same `policy_config` dict:
 
 ```json
 {"action": "execute", "policy_provider": "lerobot_local",
@@ -110,7 +110,7 @@ A checkpoint fine-tuned on an SO-101 carries its stats; `embodiment="so101"` the
 
 ## GR00T N1.7 through lerobot
 
-`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` policy type and load here like any checkpoint: no Isaac-GR00T checkout, no ZMQ service. `embodiment_tag` comes from the checkpoint config.
+`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` policy type and load here like any checkpoint, no Isaac-GR00T checkout, no ZMQ service. `embodiment_tag` comes from the checkpoint config.
 
 ```python
 from strands_robots.policies import create_policy
@@ -119,7 +119,7 @@ policy = create_policy("nvidia/GR00T-N1.7-3B", policy_type="groot", embodiment="
 print(policy.provider_name)
 ```
 
-The 3B model wants a GPU: run `PolicyServer` where one is and dial it with [`remote`](remote.md).
+The 3B model wants a GPU: run `PolicyServer` there, dialled with [`remote`](remote.md).
 
 ```python title="sketch"
 cfg = {"pretrained_name_or_path": "nvidia/GR00T-N1.7-3B", "policy_type": "groot", "embodiment": "so101"}
@@ -129,6 +129,6 @@ policy = create_policy("ws://gpu-box:8765")                                     
 
 ## Limits
 
-- `trust_remote_code=True` is unconditional for this provider, hence the environment gate; load checkpoints only from organisations you trust.
-- `dim_policy="pad"` and `"truncate"` adapt the state vector to the model width by design, and most shipped embodiments declare `pad`; `strict` refuses a width mismatch and names the two opt-ins.
-- An embodiment that is not in `embodiments.json` needs its own entry: state keys, action keys, and camera renames. The [training](../training/lerobot.md) page shows how a trained checkpoint carries those names.
+- `trust_remote_code=True` is unconditional here, hence the environment gate; load checkpoints only from organisations you trust.
+- `dim_policy="pad"` / `"truncate"` adapt the state width and take the first N values of a wider action (32-D pi0/pi0.5); `strict` refuses. An embodiment the pipeline cannot take is refused at load.
+- An embodiment not in `embodiments.json` needs its own entry (state keys, action keys, camera renames); [training](../training/lerobot.md) shows how a checkpoint carries those names.

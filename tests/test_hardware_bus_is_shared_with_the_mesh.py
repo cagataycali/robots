@@ -65,6 +65,7 @@ from strands_robots.bus_access import read_observation
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.policies.base import Policy
 from tests._hardware_robot import hardware_robot_on
+from tests._package_ast import parse_file
 
 from .test_bus_access_serializes_motor_reads import RefusingBusRobot
 
@@ -358,7 +359,7 @@ def _device_holding_modules() -> list[pathlib.Path]:
     holders = []
     for path in sorted(PACKAGE.rglob("*.py")):
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - a module that does not parse
             continue
         for node in ast.walk(tree):
@@ -424,7 +425,7 @@ def _direct_device_touches() -> list[tuple[str, int, str]]:
         if path.name == "bus_access.py":
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - a module that does not parse
             continue
         held_locals: set[str] = set()

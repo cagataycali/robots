@@ -40,6 +40,7 @@ pytest.importorskip("psutil")
 import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
 import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
 from strands_robots.tools import _process_stop  # noqa: E402
+from tests._package_ast import parse_file
 
 #: A pid this process holds, so "the process exists" is settled and the only
 #: thing under test is what a read does to the record.
@@ -135,7 +136,7 @@ def test_the_store_class_has_one_definition() -> None:
     definitions = [
         str(path.relative_to(package))
         for path in sorted(package.rglob("*.py"))
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        for node in ast.walk(parse_file(path))
         if isinstance(node, ast.ClassDef) and node.name == "SessionManager"
     ]
     assert len(list(package.rglob("*.py"))) > 10, "premise: the package must have been read"
@@ -156,7 +157,7 @@ def test_the_store_path_has_one_definition() -> None:
     assignments = [
         str(path.relative_to(package))
         for path in sorted(package.rglob("*.py"))
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        for node in ast.walk(parse_file(path))
         if isinstance(node, ast.Assign)
         for target in node.targets
         if isinstance(target, ast.Name) and target.id == "SESSION_DIR"

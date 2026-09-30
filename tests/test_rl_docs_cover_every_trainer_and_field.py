@@ -32,6 +32,7 @@ import pytest
 import strands_robots
 from strands_robots.training.base import TrainSpec
 from strands_robots.training.rl import RLTrainSpec
+from tests._package_ast import parse_file
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _RL_PACKAGE = _REPO_ROOT / "strands_robots" / "training" / "rl"
@@ -86,7 +87,7 @@ def _spec_reads() -> dict[str, frozenset[str]]:
     reads: dict[str, set[str]] = {}
     for module in sorted(_RL_PACKAGE.glob("*.py")):
         owners = {backends[module.stem]} if module.stem in backends else set(_TRAINERS)
-        tree = ast.parse(module.read_text(encoding="utf-8"))
+        tree = parse_file(module)
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Attribute)

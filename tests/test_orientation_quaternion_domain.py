@@ -27,6 +27,7 @@ from strands_robots.utils import (
     coerce_orientation_quaternion,
     orientation_quaternion_error,
 )
+from tests._package_ast import parse_file
 
 #: The two shared helpers that hold a value to the orientation domain.
 QUATERNION_DOMAIN = frozenset({"coerce_orientation_quaternion", "orientation_quaternion_error"})
@@ -48,7 +49,7 @@ def _domain_calls():
     sites, scanned = [], 0
     for path in sorted(PACKAGE_ROOT.rglob("*.py")):
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - the package parses
             continue
         scanned += 1
@@ -159,7 +160,7 @@ class TestEveryOrientationParameterReachesThatDomain:
         # POSE_DOMAIN, so the quaternion domain's own read is not an offender.
         offenders, scanned = [], 0
         for path in sorted(PACKAGE_ROOT.rglob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
             scanned += 1
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):

@@ -33,6 +33,7 @@ import numpy as np
 import pytest
 
 from strands_robots.tools.pose_tool import PoseManager, pose_tool
+from tests._package_ast import parse_file
 
 _REAL_OPEN = io.open
 
@@ -212,7 +213,7 @@ class TestTheCommitItself:
     def test_the_library_is_never_encoded_into_its_own_destination(self) -> None:
         """No ``json.dump`` in the module: encoding into the destination is the defect."""
         source = Path(inspect.getsourcefile(PoseManager) or "")
-        tree = ast.parse(source.read_text(encoding="utf-8"))
+        tree = parse_file(source)
         streamed = [
             f"line {node.lineno}"
             for node in ast.walk(tree)

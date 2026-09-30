@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import settings, training  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
+from tests._dashboard_bootstrap import bootstrap_headers, configure_bootstrap  # noqa: E402
 
 
 @pytest.fixture()
@@ -32,10 +33,11 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(training.OUTPUT_HOME_ENV, str(tmp_path / "training"))
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
     monkeypatch.setattr(settings, "SETTINGS_FILE", tmp_path / "settings.json")
+    configure_bootstrap(monkeypatch)
     settings.clear_overrides()
     settings.load(refresh=True)
     app = create_app()
-    with TestClient(app) as c:
+    with TestClient(app, headers=bootstrap_headers()) as c:
         yield c
     app.state.safety.store.shutdown()
 
