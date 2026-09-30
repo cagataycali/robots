@@ -463,7 +463,7 @@ class Cosmos3Policy(Policy):
             return
         candidates = sorted(key for key in named if key != FLAT_STATE_KEY and key.count("/") == 0)
         raise ValueError(
-            f"Cosmos3Policy(embodiment={embodiment.name!r}) would key every action by the layout "
+            f"cosmos3: Cosmos3Policy(embodiment={embodiment.name!r}) would key every action by the layout "
             f"names {layout}, and none of them is an observation key of this robot "
             f"({candidates[:16]}), so send_action would drop every command while the rollout "
             f"reports it ran. Either pass robot=<name> for a built-in mapping "

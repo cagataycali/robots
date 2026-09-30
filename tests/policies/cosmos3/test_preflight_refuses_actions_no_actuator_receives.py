@@ -47,6 +47,7 @@ class TestTheMeasuredConfigurationIsRefused:
         with pytest.raises(ValueError) as excinfo:
             Cosmos3Policy.preflight(PANDA_SIM | CAMERAS, embodiment="droid")
         text = str(excinfo.value)
+        assert text.startswith("cosmos3: "), "the refusal names the provider spelling a caller passed"
         assert "joint_0" in text and "gripper" in text
         assert "joint1" in text and "finger_joint1" in text
         assert "robot=<name>" in text
