@@ -110,6 +110,14 @@
 .md-typeset .highlight span.filename + pre > code { border-radius: var(--sr-radius); }
 .md-typeset .language-text.highlight::before { content: "output"; }
 .md-typeset .highlight span.filename + pre, .md-typeset .language-text.highlight > pre { margin-top: 1.2em; }
+/* Mermaid fences (assets/mermaid.js): the theme paints ink on the page surface; the CSS gives 8px corners, 1px strokes, dashed clusters, filled heads. */
+.md-typeset .sr-mermaid { margin: 1.5rem auto; text-align: center; }
+.md-typeset .sr-mermaid svg { max-width: 100%; height: auto; font-family: var(--sr-mono); }
+.md-typeset .sr-mermaid svg :is(.node rect, .node polygon, .node path, .actor, rect.actor, .state-group rect, .statediagram-state rect, .note, .labelBox, .loopLine, .activation0, .activation1) { rx: 8px; ry: 8px; stroke-width: 1px !important; filter: none; }
+.md-typeset .sr-mermaid svg :is(.cluster rect, .cluster-label rect) { stroke: var(--sr-muted) !important; stroke-dasharray: 4 4; fill: var(--md-default-bg-color) !important; rx: 8px; ry: 8px; }
+.md-typeset .sr-mermaid svg :is(.edgePath path, .messageLine0, .messageLine1, .transition, .actor-line) { stroke-width: 1.5px !important; }
+.md-typeset .sr-mermaid svg :is(marker path, .arrowheadPath, .marker) { fill: var(--sr-fg) !important; stroke: var(--sr-fg) !important; }
+.md-typeset .sr-mermaid svg .messageLine1 { stroke-dasharray: 3 5; }
 
 /* Header: one row. Wordmark out to strandsagents.com, /robots home, the sections inline, then search, GitHub stars, Discord, theme. */
 .md-header { background: var(--md-default-bg-color); color: var(--sr-fg); box-shadow: none; border-bottom: 1px solid var(--md-default-fg-color--lightest); }
