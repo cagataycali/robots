@@ -313,6 +313,8 @@ export interface RegistryThing {
   /** A peer of this name has spoken inside the TTL: its own card exists, no registry card. */
   peer_live?: boolean
   heard_by_bridge?: boolean
+  /** This is the Thing the dashboard itself connects as: never a card. */
+  self?: boolean
 }
 
 export interface RegistryView {

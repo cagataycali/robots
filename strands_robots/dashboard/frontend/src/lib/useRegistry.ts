@@ -31,5 +31,6 @@ export function useRegistry(pollMs = 10_000, enabled = true): RegistryView | nul
 export function registryCards(view: RegistryView | null, peerIds: Iterable<string>): RegistryView['things'] {
   if (!view || view.status !== 'ok') return []
   const known = new Set(peerIds)
-  return view.things.filter(t => !t.peer_live && !t.heard_by_bridge && !known.has(t.thing_name))
+  // The dashboard's own Thing is in the registry too; a grey card saying it was never heard would be false.
+  return view.things.filter(t => !t.self && !t.peer_live && !t.heard_by_bridge && !known.has(t.thing_name))
 }

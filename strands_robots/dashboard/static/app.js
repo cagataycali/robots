@@ -2426,7 +2426,7 @@ function nextRequestedFps(own, paced) {
   const caps = [own, paced].filter((v) => typeof v === "number" && v > 0);
   return caps.length ? Math.min(...caps) : null;
 }
-const LATENCY_SHOWN_MS = 100;
+const LATENCY_SHOWN_MS = 50;
 function cameraPathLabel(meta) {
   return (meta == null ? void 0 : meta.via) === "s3" ? "S3" : "";
 }
@@ -4707,7 +4707,7 @@ function useRegistry(pollMs = 1e4, enabled = true) {
 function registryCards(view, peerIds) {
   if (!view || view.status !== "ok") return [];
   const known = new Set(peerIds);
-  return view.things.filter((t) => !t.peer_live && !t.heard_by_bridge && !known.has(t.thing_name));
+  return view.things.filter((t) => !t.self && !t.peer_live && !t.heard_by_bridge && !known.has(t.thing_name));
 }
 function cameraEvidence(peerId, announced, arrived, requested) {
   const frames = (arrived ?? []).filter(Boolean);

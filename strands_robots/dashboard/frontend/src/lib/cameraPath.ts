@@ -8,8 +8,9 @@
 
 export interface CameraPathMeta { via?: string; latency_ms?: number | null }
 
-/** Below this the latency is the LAN's and the caption stays quiet. */
-export const LATENCY_SHOWN_MS = 100
+/** Below this the latency is the LAN's (single digits on one switch) and the caption stays quiet;
+ *  a broker round trip through AWS IoT Core measured 90 to 155 ms from the same machine. */
+export const LATENCY_SHOWN_MS = 50
 
 /** `'S3'` for a fetched reference, `''` for an inline frame or an older server. */
 export function cameraPathLabel(meta: CameraPathMeta | undefined): string {

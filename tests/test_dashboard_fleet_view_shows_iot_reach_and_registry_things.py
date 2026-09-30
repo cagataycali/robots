@@ -390,3 +390,27 @@ def test_the_aws_read_is_cached_across_polls(monkeypatch: pytest.MonkeyPatch, br
 
 def test_the_cache_ttl_is_thirty_seconds() -> None:
     assert routes_mesh.IOT_REGISTRY_TTL_S == 30.0
+
+
+def test_the_dashboards_own_thing_is_flagged_and_never_a_registry_card(
+    monkeypatch: pytest.MonkeyPatch, bridge: MeshBridge
+) -> None:
+    """The Thing the dashboard connects as is in the registry like every other; a grey
+    "never heard" card for it would be false, so the view flags it and the page skips it."""
+    _cached_view(monkeypatch, ["dashiot-op", "dm-so101-02"])
+    monkeypatch.setenv("STRANDS_IOT_THING_NAME", "dashiot-op")
+    view = routes_mesh.iot_registry_view(bridge)
+    rows = {t["thing_name"]: t for t in view["things"]}
+    assert rows["dashiot-op"]["self"] is True and rows["dm-so101-02"]["self"] is False
+    monkeypatch.delenv("STRANDS_IOT_THING_NAME")
+    monkeypatch.setattr(
+        routes_mesh, "_IOT_REGISTRY_CACHE", type(routes_mesh._IOT_REGISTRY_CACHE)(routes_mesh.IOT_REGISTRY_TTL_S)
+    )
+    view = routes_mesh.iot_registry_view(bridge)
+    assert all(t["self"] is False for t in view["things"]), "without a Thing name nothing is self"
+    import pathlib
+
+    src = (pathlib.Path(str(routes_mesh.__file__)).parent / "frontend" / "src" / "lib" / "useRegistry.ts").read_text(
+        encoding="utf-8"
+    )
+    assert "!t.self" in src, "registryCards must skip the dashboard's own Thing"

@@ -31,6 +31,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import time
 from typing import Any, cast
 
@@ -718,6 +719,9 @@ def iot_registry_view(bridge: MeshBridge) -> dict[str, Any]:
     view = dict(cached)
     live = set(bridge.live_peers())
     peers = dict(bridge.peers)
+    # The Thing this dashboard connects as: it is in the registry like every
+    # other, but it is not a robot to ping and never a grey card.
+    own_thing = os.getenv("STRANDS_IOT_THING_NAME", "")
     things = []
     for row in view.get("things") or []:
         name = str(row.get("thing_name") or "")
@@ -728,6 +732,7 @@ def iot_registry_view(bridge: MeshBridge) -> dict[str, Any]:
             "peer_live": name in live,
             "heard_by_bridge": isinstance(stamp, (int, float)),
             "last_seen": float(stamp) if isinstance(stamp, (int, float)) else row.get("last_seen"),
+            "self": bool(own_thing) and name == own_thing,
         }
         things.append(merged)
     view["things"] = things

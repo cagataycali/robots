@@ -31,6 +31,7 @@ out({
   older: m.cameraPathLabel(undefined),
   wan: m.cameraLatencyLabel({ via: 's3', latency_ms: 420 }),
   lan: m.cameraLatencyLabel({ via: 'inline', latency_ms: 12 }),
+  iot: m.cameraLatencyLabel({ via: 'inline', latency_ms: 92 }),
   slow: m.cameraLatencyLabel({ via: 's3', latency_ms: 12_400 }),
   none: m.cameraLatencyLabel({ via: 's3', latency_ms: null }),
   nan: m.cameraLatencyLabel({ via: 's3', latency_ms: Number.NaN }),
@@ -40,8 +41,9 @@ out({
         )
         assert got["s3"] == "S3" and got["inline"] == "" and got["older"] == ""
         assert got["wan"] == "420 ms" and got["lan"] == "" and got["slow"] == "12 s"
+        assert got["iot"] == "92 ms"
         assert got["none"] == "" and got["nan"] == ""
-        assert got["threshold"] == 100
+        assert got["threshold"] == 50
 
 
 @requires_node
