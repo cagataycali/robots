@@ -472,7 +472,7 @@ class Console:
             hooks.append(
                 MotionInterruptHook(
                     peers_snapshot=lambda: bridge.peers,
-                    proxy_motion=motion_actions_for(proxies),
+                    proxy_motion=motion_actions_for(proxies, peers),
                     proxy_targets={t.tool_name: t.peer_id for t in proxies},
                 )
             )

@@ -4,7 +4,8 @@ The page used to say ``create`` refuses a frame whose shape disagrees with the
 schema with ``RecordingFrameError`` and names an action key it cannot record.
 Neither held (#4149): a missing declared column is a ``ValueError``
 (``RecordingFrameError`` subclasses ``RuntimeError``, so an ``except`` written
-from the page missed it), ``RecordingFrameError`` is the failed-write error,
+from the page missed it), ``RecordingFrameError`` is the lost-frame error (a
+failed write, or a frame offered to a closed recorder),
 and an undeclared action key is dropped without a word. This grader reads the
 page sentence, the ``add_frame`` docstring and the recorder itself, so the
 three cannot drift apart again.
@@ -39,7 +40,7 @@ class TestThePageAndTheDocstringAgree:
     def test_the_page_pairs_each_error_with_its_cause(self) -> None:
         s = _sentence()
         assert re.search(r"missing a declared column \(`ValueError`\)", s), s
-        assert re.search(r"failed write \(`RecordingFrameError`\)", s), s
+        assert re.search(r"lost frame \(`RecordingFrameError`\)", s), s
         assert "drops undeclared action keys" in s, s
         assert "`create`" in s and "vcodec" in s, s
 
@@ -48,7 +49,7 @@ class TestThePageAndTheDocstringAgree:
         raises = doc.split("Raises:", 1)[1]
         value_error, frame_error = raises.split("RecordingFrameError:", 1)
         assert "ValueError:" in value_error and "absent" in value_error, value_error
-        assert "write failed" in frame_error, frame_error
+        assert "write failed" in frame_error and "closed" in frame_error, frame_error
         assert issubclass(RecordingFrameError, RuntimeError) and not issubclass(RecordingFrameError, ValueError)
 
 

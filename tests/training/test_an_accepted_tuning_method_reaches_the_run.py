@@ -21,19 +21,11 @@ and scaling. Cosmos3 refuses it, naming the recipe TOML as the one surface that
 can express a different strategy, so the request can no longer be silently
 downgraded to the run the caller did not ask for.
 
-GR00T went the same way one value further in. It refuses ``lora`` by name, and
-it reads ``method`` again for ``frozen_backbone`` - so the field is forwarded
-and the module looked compliant - while ``expert_only``, also accepted, was
-named nowhere but the accepted set. GR00T freezes ``tune_llm`` / ``tune_visual``
-/ ``tune_projector`` / ``tune_diffusion_model`` individually and has no single
-expert-only switch, so an accepted ``expert_only`` produced the four flags of a
-plain ``full`` fine-tune: the projector the caller asked to freeze trained, and
-``validate`` reported no problems. lerobot's own gate already refuses
-``method="expert_only"`` for its native ``groot`` policy for the same reason -
-``GrootConfig`` carries the four switches, not a ``train_expert_only`` field -
-and its docstring names this exact failure ("the run silently full-finetunes the
-backbone while reporting success"). The component set is expressible here, just
-not as a method: ``tune={"projector": False}`` is honored.
+lerobot's own gate refuses ``method="expert_only"`` for its native ``groot``
+policy for a related reason - ``GrootConfig`` carries four ``tune_*`` switches,
+not a ``train_expert_only`` field - and its docstring names this exact failure
+("the run silently full-finetunes the backbone while reporting success"). The
+component set is expressible there as ``tune={"projector": False}``.
 
 The sweep at the bottom derives its scope and grades per VALUE, not per field:
 a backend that declares its own set of accepted methods *and* builds a launch
@@ -54,7 +46,6 @@ import pytest
 
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.groot import Gr00tTrainer
 from tests._package_ast import parse_file
 from tests.training._spec_field_reads import reads_spec_field
 
@@ -95,35 +86,6 @@ def cosmos_spec(tmp_path: pathlib.Path) -> TrainSpec:
         base_model="nvidia/cosmos-base",
         extra={"sft_toml": str(toml), "cosmos_root": str(root)},
     )
-
-
-@pytest.fixture
-def groot_spec(tmp_path: pathlib.Path) -> TrainSpec:
-    """A launchable GR00T spec whose ``method`` is the only thing under test.
-
-    Every input GR00T's ``validate`` reads is present and usable - a v3 dataset
-    root, a base model, an output dir, the required embodiment tag and a
-    checkout holding ``launch_finetune.py`` - so an empty problem list means
-    "launchable" and a non-empty one is about ``method``.
-    """
-    meta = tmp_path / "ds" / "meta"
-    meta.mkdir(parents=True)
-    meta.joinpath("info.json").write_text(json.dumps({"codebase_version": "v3.0"}))
-    launch = tmp_path / "groot" / "gr00t" / "experiment"
-    launch.mkdir(parents=True)
-    launch.joinpath("launch_finetune.py").write_text("")
-    return TrainSpec(
-        dataset_root=str(tmp_path / "ds"),
-        output_dir=str(tmp_path / "out"),
-        base_model="nvidia/GR00T-N1.5-3B",
-        embodiment="new_embodiment",
-        extra={"groot_root": str(tmp_path / "groot")},
-    )
-
-
-def _tune_flags(trainer: Gr00tTrainer, spec: TrainSpec) -> dict[str, str]:
-    """The four ``--tune_*`` flags of the command GR00T would launch."""
-    return dict(flag.lstrip("-").split("=", 1) for flag in trainer.build_command(spec) if flag.startswith("--tune_"))
 
 
 def _method_problems(trainer: Trainer, spec: TrainSpec) -> list[str]:
@@ -215,80 +177,6 @@ class TestThePeersShowBothHalvesOfThePosture:
         assert "--peft.method_type=LORA" in command("lora")
         assert command("lora") != command(BASELINE)
 
-    def test_groot_refuses_the_strategy_it_has_no_field_for(self, groot_spec: TrainSpec) -> None:
-        groot_spec.method = "lora"
-        assert _method_problems(Gr00tTrainer(), groot_spec)
-
-
-class TestGr00tReportsTheExpertOnlyRequestItCannotName:
-    """An accepted ``expert_only`` trained the projector and reported success.
-
-    GR00T's flags name components, not strategies, so the request only means
-    something once the caller says which components. Refusing it is a statement
-    about this backend: the peer above honors the same value.
-    """
-
-    def test_it_is_reported_as_a_problem(self, groot_spec: TrainSpec) -> None:
-        groot_spec.method = "expert_only"
-        assert _method_problems(Gr00tTrainer(), groot_spec), "method='expert_only' was accepted"
-
-    def test_the_refusal_names_the_component_set_that_expresses_it(self, groot_spec: TrainSpec) -> None:
-        """A dead end would leave the caller with nothing to do next."""
-        groot_spec.method = "expert_only"
-        problems = _method_problems(Gr00tTrainer(), groot_spec)
-        assert problems and "tune={'projector': False}" in problems[0], problems
-
-    def test_the_refusal_names_the_backend_and_the_value(self, groot_spec: TrainSpec) -> None:
-        groot_spec.method = "expert_only"
-        problems = _method_problems(Gr00tTrainer(), groot_spec)
-        assert problems and "GR00T" in problems[0] and "'expert_only'" in problems[0]
-
-    def test_validate_reports_rather_than_raises(self, groot_spec: TrainSpec) -> None:
-        """``validate`` is documented to *return* problems."""
-        groot_spec.method = "expert_only"
-        assert isinstance(Gr00tTrainer().validate(groot_spec), list)
-
-    def test_one_problem_is_reported_for_one_bad_value(self, groot_spec: TrainSpec) -> None:
-        """The named refusal replaces the generic one rather than joining it."""
-        groot_spec.method = "expert_only"
-        assert len(_method_problems(Gr00tTrainer(), groot_spec)) == 1
-
-
-class TestTheGr00tStrategiesThatSurviveAreUnchanged:
-    """The fix narrows what ``validate`` accepts and writes no new flag.
-
-    ``frozen_backbone`` is graded here as well as ``full``: its flags equal the
-    default because ``_DEFAULT_TUNE`` already freezes the backbone, so it is
-    honored rather than dropped, and it must keep launching what it launched.
-    """
-
-    @pytest.mark.parametrize("method", [BASELINE, "frozen_backbone"])
-    def test_it_is_launchable(self, groot_spec: TrainSpec, method: str) -> None:
-        groot_spec.method = method
-        assert Gr00tTrainer().validate(groot_spec) == []
-
-    @pytest.mark.parametrize("method", [BASELINE, "frozen_backbone"])
-    def test_it_builds_the_backbone_frozen_action_head_run(self, groot_spec: TrainSpec, method: str) -> None:
-        groot_spec.method = method
-        assert _tune_flags(Gr00tTrainer(), groot_spec) == {
-            "tune_llm": "false",
-            "tune_visual": "false",
-            "tune_projector": "true",
-            "tune_diffusion_model": "true",
-        }
-
-    def test_the_component_set_the_refusal_names_is_honored(self, groot_spec: TrainSpec) -> None:
-        """The refusal points at a route that works, not at a second dead end."""
-        groot_spec.tune = {"projector": False}
-        trainer = Gr00tTrainer()
-        assert trainer.validate(groot_spec) == []
-        assert _tune_flags(trainer, groot_spec) == {
-            "tune_llm": "false",
-            "tune_visual": "false",
-            "tune_projector": "false",
-            "tune_diffusion_model": "true",
-        }
-
 
 def _backends_that_declare_their_methods() -> dict[str, ast.Module]:
     """Trainer modules that declare an accepted-method set and build a run.
@@ -370,7 +258,7 @@ class TestEveryAcceptedStrategyIsNamedWhereTheRunIsBuilt:
 
     def test_the_scan_finds_the_backends_that_declare_a_method_set(self) -> None:
         """Non-vacuity: a mis-rooted scan cannot report a clean sweep of nothing."""
-        assert set(_backends_that_declare_their_methods()) == {"cosmos3.py", "groot.py", "lerobot.py"}
+        assert set(_backends_that_declare_their_methods()) == {"cosmos3.py", "lerobot.py"}
 
     def test_no_backend_accepts_a_strategy_it_never_names_again(self) -> None:
         adrift = {
@@ -387,7 +275,7 @@ class TestEveryAcceptedStrategyIsNamedWhereTheRunIsBuilt:
             for name, tree in _backends_that_declare_their_methods().items()
             if _accepted_methods(tree) - {BASELINE}
         )
-        assert in_scope == ["groot.py", "lerobot.py"]
+        assert in_scope == ["lerobot.py"]
 
     def test_the_scanner_detects_a_planted_defect(self) -> None:
         """A scanner that matched nothing would look like a clean tree."""

@@ -491,12 +491,21 @@ class TestShapeDependentAxesStayOutOfScope:
         finally:
             sim.cleanup()
 
-    def test_a_zero_extent_is_still_accepted_by_newton_and_isaac(self) -> None:
+    def test_a_zero_extent_is_still_accepted_by_newton(self) -> None:
         """Positivity is bounded per consumed component, so it needs the counts."""
         stub = _newton_stub()
         assert NewtonSimEngine.add_object(stub, "crate", size=[0.0, 0.0, 0.0])["status"] == "success"
-        isaac_stub, _ = _isaac_recording()
-        assert IsaacSimulation.add_object(isaac_stub, "crate", size=[0.0, 0.0, 0.0])["status"] == "success"
+
+    def test_a_zero_consumed_extent_is_refused_by_isaac_as_by_mujoco(self) -> None:
+        """Isaac now checks the components each shape consumes: a zero there
+        built a collider PhysX cannot hold (a zero-height cylinder fell to
+        z = -19.9 m in 2 s), while an unused component may still be 0."""
+        isaac_stub, seen = _isaac_recording()
+        result = IsaacSimulation.add_object(isaac_stub, "crate", size=[0.0, 0.0, 0.0])
+        assert result["status"] == "error" and "x=0" in _text(result) and seen["construct"] == 0
+        ok, _ = _isaac_recording()
+        cyl = IsaacSimulation.add_object(ok, "can", shape="cylinder", size=[0.04, 0.0, 0.06])
+        assert cyl["status"] == "success"
 
     def test_the_shared_helper_takes_no_shape(self) -> None:
         """The scope boundary in one signature: no shape means no count check."""

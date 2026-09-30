@@ -35,6 +35,7 @@ import pytest
 
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation, _RobotState
+from tests._recorder_stand_in import RecorderStandIn
 
 _SO100_JOINTS = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
 
@@ -59,24 +60,6 @@ def _engine_with_robot(name: str = "so100") -> IsaacSimulation:
             )
         }
     )
-
-
-class _RejectingRecorder:
-    """Recorder mid-flush: any further frame write is a hard error.
-
-    ``DatasetRecordingMixin.stop_recording`` flips ``recording`` to False and
-    only then flushes the trailing episode, leaving the recorder attached
-    across ``save_episode()``. A rollout thread whose hook fires inside that
-    window holds exactly this object, so the write the flag guard prevents is
-    not hypothetical.
-    """
-
-    def __init__(self) -> None:
-        self.add_frame_calls = 0
-
-    def add_frame(self, *_args: Any, **_kwargs: Any) -> None:
-        self.add_frame_calls += 1
-        raise RuntimeError("add_frame after the episode was saved")
 
 
 def _observation() -> dict[str, float]:
@@ -112,7 +95,7 @@ class TestRunPolicyHookGuards:
         engine = _engine_with_robot()
         hook = engine._make_run_policy_hook("so100", "pick")
         assert hook is not None
-        recorder = _RejectingRecorder()
+        recorder = RecorderStandIn()
         state = engine._recording_state()
         assert state is not None
         state["recording"] = False
@@ -120,7 +103,7 @@ class TestRunPolicyHookGuards:
 
         hook(4, _observation(), _observation())  # must not raise
 
-        assert recorder.add_frame_calls == 0
+        assert "add_frame" not in recorder.calls
         # The counter still advances: the hook ran and returned early rather
         # than not having been called at all.
         assert getattr(engine._robots["so100"], "policy_steps", None) == 5

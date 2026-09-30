@@ -194,7 +194,7 @@ class TestOnlyTheBoundPortIsValidated:
     """The guard runs on the branch that reads the port, and only there.
 
     Mirrors ``TestOnlyTheDialedPortIsValidated`` for the policy providers, where
-    GR00T's local mode ignores a port it never dials. ``"gl"`` opens a native
+    an in-process policy ignores a port it never dials. ``"gl"`` opens a native
     window and ``"null"`` is a sink; neither binds anything, so neither has an
     opinion about the port and refusing one there would reject a call that works.
     """
@@ -291,7 +291,7 @@ class TestNoSimulationSurfaceShipsAnUnguardedPort:
     been just as unreported. This closes that shape for the simulation package.
 
     Scoped to the simulation backends rather than the whole package on purpose:
-    the internal transport clients (``Gr00tInferenceClient`` and its siblings)
+    the internal transport clients (``MoveIt2InferenceClient`` and its siblings)
     take a ``port`` they deliberately do not re-validate, because their dialing
     provider refuses it first and ``TestRefusalPrecedesTheTransport`` pins that
     ordering. Widening this scan would demand a second, redundant guard there.

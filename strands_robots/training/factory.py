@@ -33,7 +33,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from strands_robots.registry.policies import get_policy_provider, list_policy_providers
+from strands_robots.registry.policies import get_policy_provider, list_policy_providers, removed_provider_error
 from strands_robots.training.base import Trainer
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,9 @@ def import_trainer_class(provider: str) -> type[Trainer]:
     Raises:
         ValueError: If no trainer can be resolved for the provider - not in
             the runtime registry, no ``trainer`` block in policies.json and no
-            ``strands_robots.training.<provider>`` module exists. The message
+            ``strands_robots.training.<provider>`` module exists - or the
+            provider was removed (``groot``: the sentence in
+            :data:`~strands_robots.registry.policies.REMOVED_PROVIDERS`). The message
             names the providers this resolver can serve, which is the same set
             :func:`list_trainers` advertises.
         ImportError: If a module that DOES exist can't be imported: the
@@ -123,6 +125,11 @@ def import_trainer_class(provider: str) -> type[Trainer]:
     resolved = _runtime_aliases.get(provider, provider)
     if resolved in _runtime_registry:
         return _runtime_registry[resolved]()
+
+    # A removed provider is refused with its own sentence, not "no trainer":
+    # its family still trains, under lerobot_local's policy_type.
+    if (removed := removed_provider_error(provider)) is not None:
+        raise ValueError(removed)
 
     cfg = get_policy_provider(provider)
     if cfg and "trainer" in cfg:
@@ -160,12 +167,12 @@ def create_trainer(provider: str, **kwargs: Any) -> Trainer:
     """Create a :class:`Trainer` for a policy provider.
 
     The training-side peer of ``create_policy``. The provider name is the SAME
-    one used for inference, so ``create_policy("groot")`` and
-    ``create_trainer("groot")`` address one family.
+    one used for inference, so ``create_policy("cosmos3")`` and
+    ``create_trainer("cosmos3")`` address one family.
 
     Args:
-        provider: Provider name or alias (``"lerobot_local"``, ``"groot"``,
-            ``"cosmos3"``, or a runtime-registered name).
+        provider: Provider name or alias (``"lerobot_local"``, ``"cosmos3"``,
+            ``"sagemaker"``, or a runtime-registered name).
         **kwargs: Forwarded to the trainer constructor.
 
     Returns:
