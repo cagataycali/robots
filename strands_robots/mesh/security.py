@@ -1412,6 +1412,7 @@ COMMAND_KEYS: dict[str, frozenset[str]] = {
             "target_pose",
             "target_joints",
             "target_velocity",
+            "walk",
             "world_update",
             "control_frequency",
             "action_horizon",
