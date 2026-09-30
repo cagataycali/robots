@@ -8,7 +8,7 @@ By the end of this page an operator's command reaches one robot as an [AWS IoT C
 
 ## What changes
 
-On the `iot` and `bridge` backends, `Mesh.send` makes one HTTPS call that delivers the command to the client it names, with confirmation (QoS 1 and the robot's PUBACK). The robot replies with a direct message on the `responseTopic` it received. No subscription is needed; a robot that is not connected answers `peer offline (iot 404)` at once, not after the caller's timeout. Measured 2026-09-29 in us-west-2: round trip p50 220 ms, offline verdict under 300 ms. `broadcast`, presence, state and safety stay publish/subscribe, and the `cmd` and `response/**` subscriptions stay, so an older peer is still heard.
+On the `iot` and `bridge` backends, `Mesh.send` makes one HTTPS call that delivers the command to the client it names, with confirmation (QoS 1 and the robot's PUBACK). The robot replies with a direct message on the given `responseTopic`. No subscription is needed; a robot that is offline answers `peer offline (iot 404)` at once, not after the caller's timeout. Measured 2026-09-29 in us-west-2: round trip p50 220 ms, offline verdict under 300 ms. `broadcast`, presence, state and safety stay publish/subscribe, and the `cmd` and `response/**` subscriptions stay, so an older peer is still heard.
 
 ## Grants
 

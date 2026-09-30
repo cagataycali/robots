@@ -15,7 +15,7 @@ Flags: `--host` (default `127.0.0.1`), `--port` (default `8090`), `--open`, `--l
 
 ## What it serves
 
-The process joins the Zenoh mesh as a robot-less gateway, under the same posture as your peers (`STRANDS_MESH_LOCAL_DEV=true` on one machine): one page drives hardware, simulators, or a mix. The UI is a built React SPA under `strands_robots/dashboard/static/`; no node at runtime.
+The process joins the Zenoh mesh as a robot-less gateway, under the same posture as your peers (`STRANDS_MESH_LOCAL_DEV=true` on one machine): one page drives hardware, simulators, or both. The UI is a built React SPA under `strands_robots/dashboard/static/`; no node at runtime.
 
 | tab | shows |
 |---|---|
@@ -50,7 +50,7 @@ The first passkey closes the third door. Its enrollment must present `STRANDS_DA
 
 `/ws/agent` takes `{"type": "say", "text": ...}` and streams the console's events back (text, tool_use, tool_result, interrupt, done, error). Its tools share the HTTP routes' `Safety` object, so the e-stop refuses the agent too. `sim_set_joints` raises the real-hardware hook's interrupt (`MotionInterruptHook`, [the operator gate](agents.md#the-operator-gate)); the browser shows a consent card and `{"type": "resume", "id": ..., "approve": true, "always": false}` resumes the turn; `always` dies with the socket. One turn per socket; a second `say` is refused, not queued.
 
-Two switches, off by default, matter once a physical peer is reachable: `STRANDS_DASH_AGENT_PHYSICAL_MOTION=1` lets the agent's tools move metal; `STRANDS_DASH_TASK_REQUIRES_CONFIRM=1` makes a real-motion task or teleop POST carry an explicit boolean confirmation (strings are refused). Neither touches a simulated peer; both are granted and revoked from a consent card, never from Settings.
+Two switches, off by default, matter once a physical peer is reachable: `STRANDS_DASH_AGENT_PHYSICAL_MOTION=1` lets the agent's tools move metal; `STRANDS_DASH_TASK_REQUIRES_CONFIRM=1` makes a real-motion task or teleop POST carry a boolean confirmation (strings are refused). Neither touches a simulated peer; both are granted and revoked from a consent card, never from Settings.
 
 ## Logs
 

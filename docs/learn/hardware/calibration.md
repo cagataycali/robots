@@ -50,4 +50,4 @@ A dataset recorded with one calibration and replayed on an arm with another move
 
 ## Other robots
 
-Network arms (UR, Franka), DDS robots (Unitree, Booster) and daemon robots (Reachy Mini, Microduck) carry their calibration in their own controllers; the package reads joint values in the controller's units, nothing to calibrate. The Robotiq gripper runs its own open-close calibration stroke during activation, which is why `connect_eagerly()` waits for `gSTA == ACTIVE` before reporting connected.
+Network arms (UR, Franka), DDS robots (Unitree, Booster) and daemon robots (Reachy Mini, Microduck) carry their calibration in their own controllers; the package reads joint values in the controller's units, nothing to calibrate. The Robotiq gripper runs its own open-close calibration stroke during activation, so `connect_eagerly()` waits for `gSTA == ACTIVE` before reporting connected.
