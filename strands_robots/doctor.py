@@ -306,9 +306,12 @@ def check_lerobot() -> str:
     rather than to a bare ``import lerobot``: a *directory* named ``lerobot`` on
     the import path imports as an empty namespace package, which passed this
     check as ``lerobot ?`` - the doctor reporting an install for a host that has
-    none, with the unresolvable version as the only tell.
+    none, with the unresolvable version as the only tell. An installed lerobot
+    below :data:`~strands_robots.utils.BUCKET_STREAMING_MIN_LEROBOT`
+    (pip keeps a pre-existing older one) is a FAIL, not a PASS with the version
+    printed: every streaming read would ``TypeError`` on it.
     """
-    from strands_robots.utils import lerobot_install_error
+    from strands_robots.utils import LEROBOT_UPGRADE, lerobot_floor_error, lerobot_install_error
 
     problem = lerobot_install_error()
     if problem is not None:
@@ -316,6 +319,9 @@ def check_lerobot() -> str:
             f"{problem} (needed for real hardware + dataset recording)",
             note='uv pip install "strands-robots[lerobot]"',
         )
+
+    if (below := lerobot_floor_error()) is not None:
+        return _fail(below, fix=LEROBOT_UPGRADE)
 
     import lerobot
 
