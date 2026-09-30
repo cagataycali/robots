@@ -23,6 +23,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from strands_robots import refusal_codes
 from strands_robots._command_gate import gate_motion
 from strands_robots._motion_grants import consume_grant
 from strands_robots._pacing import Ticker
@@ -490,6 +491,38 @@ def _extract_sample_source_zid(sample: Any) -> str | None:
         return zid_str
     except (AttributeError, TypeError):
         return None
+
+
+def _coded_refusal(exc: BaseException) -> dict[str, Any] | None:
+    """The wire fields for a refusal that carries a code, or ``None``.
+
+    Reads ``exc.code`` and trusts it only when it is a member of
+    :data:`~strands_robots.refusal_codes.REFUSAL_CODES`: a stray ``code``
+    attribute on an adapter exception is not the refusal contract. The
+    sentence is built from the code and its grant in
+    :data:`~strands_robots.refusal_codes.REFUSAL_GRANTS`, never from the
+    exception text, so it says what the operator can do without carrying
+    anything about how this process failed. ``subject`` is the value the
+    caller supplied (a provider, a repo, a host), so it is theirs to read back.
+    """
+    code = getattr(exc, "code", None)
+    if not isinstance(code, str) or code not in refusal_codes.REFUSAL_CODES:
+        return None
+    grant = refusal_codes.REFUSAL_GRANTS.get(code)
+    fields: dict[str, Any] = {
+        "code": code,
+        "error": (
+            f"refused: {code}; the peer's operator can lift it by setting {grant} on the peer"
+            if grant
+            else f"refused: {code}"
+        ),
+    }
+    if grant:
+        fields["grant"] = grant
+    subject = getattr(exc, "subject", None)
+    if isinstance(subject, str) and subject:
+        fields["subject"] = subject
+    return fields
 
 
 def _reports_failure_to_stop(result: Mapping[str, Any]) -> bool:
@@ -2689,30 +2722,41 @@ class Mesh(SensorLoopsMixin):
                 exc,
                 exc_info=True,
             )
+            # A CONTINUABLE refusal (the trust-remote-code gate, an allowlist)
+            # carries a code from :data:`~strands_robots.refusal_codes.REFUSAL_CODES`
+            # and the grant that lifts it. Answering it with the fixed string
+            # left the remedy in this peer's own stderr while the operator at
+            # the other end read only ``dispatch error`` (GH #4173). The wire
+            # now carries the code, the grant and the subject the caller
+            # supplied, in a sentence built from the vocabulary; the exception
+            # text still never leaves this process, and an exception without a
+            # code from that vocabulary answers exactly as before.
+            coded = _coded_refusal(exc)
+            envelope: dict[str, Any] = {
+                "type": "error",
+                "responder_id": self.peer_id,
+                "turn_id": turn,
+                "error": "dispatch error",
+                "timestamp": time.time(),
+            }
+            if coded is not None:
+                envelope.update(coded)
             if rkey is not None:
-                reply(
-                    rkey,
-                    {
-                        "type": "error",
-                        "responder_id": self.peer_id,
-                        "turn_id": turn,
-                        "error": "dispatch error",
-                        "timestamp": time.time(),
-                    },
-                )
+                reply(rkey, envelope)
             # Audit the dispatch-error path so a remote prober cannot
             # silently fish for adapter exceptions without leaving a
             # forensic trail (issue #257). Reuses ``command_rejected``
             # event_type with reason="dispatch error" to keep the
-            # operator audit-walker grep simple.
-            self._audit_local(
-                "command_rejected",
-                {
-                    "sender": sender,
-                    "reason": "dispatch error",
-                    "action": cmd.get("action") if isinstance(cmd, dict) else None,
-                },
-            )
+            # operator audit-walker grep simple; a coded refusal adds its
+            # code next to that reason.
+            audit_payload: dict[str, Any] = {
+                "sender": sender,
+                "reason": "dispatch error",
+                "action": cmd.get("action") if isinstance(cmd, dict) else None,
+            }
+            if coded is not None:
+                audit_payload["code"] = coded["code"]
+            self._audit_local("command_rejected", audit_payload)
 
     def _dispatch(self, cmd: dict[str, Any]) -> dict[str, Any]:
         action = cmd.get("action", "status")

@@ -492,6 +492,14 @@ class Policy(ABC):
         ``execution_horizon`` (e.g. a model that must be driven via
         ``predict_action_chunk``) override this.
 
+        :class:`~strands_robots.policies.mock.MockPolicy` returns eight actions
+        per call and still declares ``1`` on purpose: its sinusoid is a function
+        of a step counter, so a re-query continues the same curve wherever it
+        happens, there is no inference latency for the async pipeline to hide,
+        and ``1`` keeps the reference policy on the synchronous loop every
+        tutorial and test reads. A provider that pays for its chunk (Cosmos 3,
+        every LeRobot checkpoint) declares ``actions_per_step`` instead.
+
         Returns:
             ``True`` when the policy emits multi-action chunks; ``False`` for
             single-step policies.
