@@ -151,7 +151,9 @@ class TestTheRegistryMatchesTheLoadedModel:
         assert mujoco.MjModel.from_xml_path(str(xml)).njnt == 4
         assert _load_script().reported_joint_count(str(xml)) == 3
 
-    def test_the_audit_never_downloads_by_default(self, registry: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_the_audit_never_downloads_by_default(
+        self, registry: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """An absent asset is a skip, not a fetch of the corpus (the conftest's empty cache is that case)."""
         pytest.importorskip("mujoco")
         from strands_robots.assets import manager

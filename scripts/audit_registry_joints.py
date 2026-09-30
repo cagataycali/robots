@@ -43,6 +43,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = REPO / "strands_robots" / "registry" / "robots.json"
@@ -77,12 +78,12 @@ def reported_joint_count(model_path: str) -> int:
     return sum(1 for jnt_id in range(int(model.njnt)) if int(model.jnt_type[jnt_id]) != free)
 
 
-def simulated_robots(registry: dict[str, dict]) -> list[str]:
+def simulated_robots(registry: dict[str, dict[str, Any]]) -> list[str]:
     """Registry names that ship a simulation asset, sorted."""
     return sorted(name for name, spec in registry.items() if spec.get("asset"))
 
 
-def audit(registry: dict[str, dict], *, allow_download: bool = False) -> list[Row]:
+def audit(registry: dict[str, dict[str, Any]], *, allow_download: bool = False) -> list[Row]:
     """Compare every simulated robot's ``joints`` with the model it loads.
 
     A robot whose asset is not on disk (and ``allow_download`` is false) or whose
@@ -107,12 +108,13 @@ def audit(registry: dict[str, dict], *, allow_download: bool = False) -> list[Ro
     return rows
 
 
-def load_registry(path: Path = REGISTRY_PATH) -> dict:
+def load_registry(path: Path = REGISTRY_PATH) -> dict[str, Any]:
     """The registry document as shipped (the ``robots`` mapping lives under that key)."""
-    return json.loads(path.read_text(encoding="utf-8"))
+    document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return document
 
 
-def write_corrections(document: dict, rows: Sequence[Row], path: Path = REGISTRY_PATH) -> int:
+def write_corrections(document: dict[str, Any], rows: Sequence[Row], path: Path = REGISTRY_PATH) -> int:
     """Rewrite every mismatching ``joints`` in place; returns how many changed.
 
     ``ensure_ascii=True`` keeps every pre-existing escape as it is, so the diff
@@ -146,7 +148,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{row.name:<20} {row.declared!s:>8} {row.reported!s:>8}")
     for row in skipped:
         print(f"{row.name:<20} {row.declared!s:>8} {'-':>8}  {row.note}")
-    print(f"checked {len(checked)} of {len(rows)} simulated robots, {len(mismatches)} mismatches, {len(skipped)} not checked")
+    print(
+        f"checked {len(checked)} of {len(rows)} simulated robots, {len(mismatches)} mismatches, {len(skipped)} not checked"
+    )
 
     if args.write and mismatches:
         changed = write_corrections(document, mismatches)
