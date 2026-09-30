@@ -51,10 +51,12 @@ class ContractPDController:
         substeps: int,
         world: Any = None,
     ) -> None:
-        """Args:
-        joints: ``{action_key: (actuator_id, qpos_adr, dof_adr, kp, kd, effort_limit)}``.
-        substeps: Physics steps per applied action (the run's control period).
-        world: The world whose ``_backend_state`` registered this controller.
+        """Bind the controller to one robot's actuators.
+
+        Args:
+            joints: ``{action_key: (actuator_id, qpos_adr, dof_adr, kp, kd, effort_limit)}``.
+            substeps: Physics steps per applied action (the run's control period).
+            world: The world whose ``_backend_state`` registered this controller.
         """
         self._joints = joints
         self._substeps = max(1, int(substeps))
