@@ -62,14 +62,13 @@ a rule about its documented spellings be derived rather than restated.
 
 from __future__ import annotations
 
-import importlib.util
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
 from strands_robots.mesh import _backend_select
+from tests._docs_hooks import docs_hook
 
 _ENV = _backend_select.BACKEND_ENV_VAR
 _BACKENDS = _backend_select.BACKENDS
@@ -80,7 +79,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: The page whose IoT section tells the reader to consult the configuration
 #: matrix for the ``STRANDS_MESH_*`` knobs, so the selector has to be in it.
 _MATRIX_PAGE = "docs/reference/configuration.md"
-_ENV_VARS_HOOK = _REPO_ROOT / "docs" / "hooks" / "env_vars.py"
 
 #: The extra that installs the dependency ``iot`` and ``bridge`` need. Naming it
 #: is not a routing claim; naming it *as* the routing mechanism is.
@@ -110,11 +108,7 @@ def _text(page: Path) -> str:
     text = page.read_text(encoding="utf-8")
     if str(page.relative_to(_REPO_ROOT)) != _MATRIX_PAGE:
         return text
-    spec = importlib.util.spec_from_file_location("docs_env_vars_hook_backend", _ENV_VARS_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = docs_hook("env_vars")
     assert "{{env_vars}}" in text, f"{_MATRIX_PAGE} must carry the {{{{env_vars}}}} token"
     rendered = module.on_page_markdown(text, page=None, config=None, files=None)
     assert "{{env_vars}}" not in rendered, "the env_vars hook left the token unexpanded"
