@@ -71,7 +71,7 @@ def sim(tmp_path):
 
 
 def _call(engine: Simulation, facade: str, kwargs: dict[str, Any]) -> dict[str, Any]:
-    common = {"control_frequency": 30.0}
+    common: dict[str, Any] = {"control_frequency": 30.0}
     if facade in ("run_policy", "start_policy"):
         return getattr(engine, facade)(**kwargs, **common, n_steps=3, fast_mode=True)
     if facade == "eval_policy":
