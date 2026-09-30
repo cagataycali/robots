@@ -57,8 +57,9 @@ sim.destroy()
 
 Kit updates only on the `SimulationApp` thread; an unpumped worker-thread call is refused:
 
-```python
+```python title="sketch"
 import threading
+from strands_robots.simulation import create_simulation
 
 sim = create_simulation("isaac", headless=True)   # on the main thread
 sim.create_world()

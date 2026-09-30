@@ -190,7 +190,7 @@ def test_lerobot_local_docs_do_not_claim_molmoact2_needs_source() -> None:
 # instead) and no troubleshooting table (start/doctor.md documents the probe
 # report). The claims below therefore attach to the pages that now carry the
 # lerobot floor, the install lines and the accelerate refusal.
-_ARCHITECTURE = _DOCS / "project" / "architecture.md"
+_ARCHITECTURE = _DOCS / "concepts" / "architecture.md"
 _DOCTOR = _DOCS / "start" / "doctor.md"
 _STREAM_AND_SYNC = _DOCS / "learn" / "data" / "stream-and-sync.md"
 _POLICY_MATRIX = _DOCS / "learn" / "policies" / "index.md"  # absorbed molmoact2.md
