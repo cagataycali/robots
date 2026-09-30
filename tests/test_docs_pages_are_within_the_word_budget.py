@@ -65,9 +65,11 @@ _BUDGET: int = _hook().LIMIT
 #: Lowered to 49,433 when the GR00T provider page left with the provider (GR00T N1.7
 #: is a section of lerobot-local now).
 #: Raised by 733, to 50,166, for learn/policies/wbc-latent.md (the wbc_latent provider).
+#: Raised to 57,259 for the 81 robot_descriptions URDF robots: one generated page each and the
+#: learn page that explains the loader once.
 #: Raised to 51,187 for the two humanoid design pages under project/ (whole-body teleoperation,
 #: driver composition) plus their index rows.
-_SITE_BUDGET = 51_874
+_SITE_BUDGET = 59_018
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
