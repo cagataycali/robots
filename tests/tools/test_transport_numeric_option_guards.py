@@ -122,7 +122,7 @@ def test_an_unusable_rate_publishes_no_message(published_at: list[float], rate: 
     result = _publish_twist(count=6, rate=rate)
 
     assert result["status"] == "error"
-    assert f"rate must be > 0, got {rate!r}." in _texts(result)
+    assert f"rate must be a positive finite number, got {rate!r}." in _texts(result)
     assert published_at == []
 
 
@@ -166,7 +166,7 @@ def test_a_refusal_names_the_option_even_with_no_ros_installed(
     result = _publish_twist(count=6, rate=0.0)
 
     assert result["status"] == "error"
-    assert "rate must be > 0" in _texts(result)
+    assert "rate must be a positive finite number" in _texts(result)
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +264,7 @@ def test_every_transport_refuses_the_same_rate(value: Any) -> None:
     reasons = _refusal_reasons(_PUBLISH_CALLS, "rate", count=1, rate=value)
 
     for name, reason in reasons.items():
-        assert f"rate must be > 0, got {value!r}." in reason, (name, reason)
+        assert f"rate must be a positive finite number, got {value!r}." in reason, (name, reason)
 
 
 @pytest.mark.parametrize("value", UNUSABLE_COUNTS)
@@ -296,7 +296,7 @@ def test_every_transport_refuses_the_same_echo_timeout(value: Any) -> None:
     reasons = _refusal_reasons(echo_calls, "timeout", timeout=value)
 
     for name, reason in reasons.items():
-        assert f"timeout must be > 0, got {value!r}." in reason, (name, reason)
+        assert f"timeout must be a positive finite number, got {value!r}." in reason, (name, reason)
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +394,7 @@ def test_rosbridge_refuses_an_unusable_rate_before_publishing(rosbridge_publishe
     result = _publish_over_rosbridge(count=6, rate=rate)
 
     assert result["status"] == "error"
-    assert f"rate must be > 0, got {rate!r}." in _texts(result)
+    assert f"rate must be a positive finite number, got {rate!r}." in _texts(result)
     assert rosbridge_published_at == []
 
 
@@ -435,7 +435,7 @@ def test_a_non_finite_echo_timeout_is_refused_not_raised(rosbridge_published_at:
     result = rosbridge_mod.use_rosbridge(action="echo", topic="/odom", type="nav_msgs/Odometry", timeout=float("inf"))
 
     assert result["status"] == "error"
-    assert "echo: timeout must be > 0, got inf." in _texts(result)
+    assert "echo: timeout must be a positive finite number, got inf." in _texts(result)
 
 
 @pytest.mark.parametrize("action", sorted(_ROSBRIDGE_ACTION_ARGS))
@@ -452,7 +452,7 @@ def test_every_rosbridge_action_refuses_a_non_positive_timeout(
     result = rosbridge_mod.use_rosbridge(action=action, timeout=-1.0, **_ROSBRIDGE_ACTION_ARGS[action])
 
     assert result["status"] == "error"
-    assert f"{action}: timeout must be > 0, got -1.0." in _texts(result)
+    assert f"{action}: timeout must be a positive finite number, got -1.0." in _texts(result)
     assert rosbridge_transport_mod._backend._connections == {}, "refused, yet the bridge was dialed"
 
 
@@ -465,7 +465,7 @@ def test_a_rosbridge_refusal_names_the_option_with_no_roslibpy_installed(
     result = _publish_over_rosbridge(count=6, rate=0.0)
 
     assert result["status"] == "error"
-    assert "rate must be > 0" in _texts(result)
+    assert "rate must be a positive finite number" in _texts(result)
 
 
 def test_rosbridge_publish_reads_the_timeout_that_rclpy_publish_ignores(
@@ -484,7 +484,7 @@ def test_rosbridge_publish_reads_the_timeout_that_rclpy_publish_ignores(
     result = _publish_over_rosbridge(count=2, rate=100.0, timeout=-1.0)
 
     assert result["status"] == "error"
-    assert "publish: timeout must be > 0, got -1.0." in _texts(result)
+    assert "publish: timeout must be a positive finite number, got -1.0." in _texts(result)
     assert rosbridge_published_at == []
 
 

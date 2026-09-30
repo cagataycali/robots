@@ -146,7 +146,7 @@ class TestTheActionScaleConstructorRoute:
             MicroduckPolicy(session=_StubSession(), action_scale=0.0)
         text = str(excinfo.value)
         assert text.startswith("MicroduckPolicy (constructor): action_scale")
-        assert "must be > 0" in text
+        assert "must be a positive finite number" in text
 
     def test_the_scale_is_refused_before_it_is_stored(self) -> None:
         # A guard after the coercion would leave a nan on the instance.
@@ -201,7 +201,7 @@ class TestTheVelocityGateThreshold:
             _bundle(switch_on_velocity=float("nan"))
         text = str(excinfo.value)
         assert text.startswith("MicroduckPolicyBundle: switch_on_velocity")
-        assert "must be > 0" in text
+        assert "must be a positive finite number" in text
 
     def test_the_structural_checks_still_run_first(self) -> None:
         # An unusable threshold must not mask the identity error a caller would
