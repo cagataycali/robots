@@ -412,6 +412,10 @@ _SANITIZED_SINKS: dict[str, dict[str, list[str]]] = {
         # policy type off the checkpoint's own config - the same provenance
         # ``feat`` already carries above.
         "LerobotLocalPolicy._under_supplied_cameras_error": ["feat", "name", "self.policy_type"],
+        # Alert 1367, outside the #2853 census: the adopted-embodiment WARN names
+        # the model id (a caller-supplied Hub name or path) and the stat spans
+        # rendered from the checkpoint's own dataset statistics.
+        "LerobotLocalPolicy._adopt_registered_embodiment": ["model", "spans"],
     },
     "curobo/policy.py": {
         "CuroboPolicy._apply_world_update": ["repr(shown)"],
