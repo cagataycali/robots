@@ -85,7 +85,8 @@
         "backend",
         "mode",
         "model",
-        "pretrained_name_or_path"
+        "pretrained_name_or_path",
+        "actions_per_step"
       ],
       "defaults": {
         "host": "localhost",
