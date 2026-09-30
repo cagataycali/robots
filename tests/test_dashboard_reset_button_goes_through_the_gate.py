@@ -47,8 +47,8 @@ class FakeBridge:
         """The server's shutdown hook stops its bridge."""
 
 
-SIM_CHILD = {"presence": {"robot_type": "sim", "parent": "lane"}, "state": {"joints": {"j1": 0.0}}}
-REAL_ARM = {"presence": {"robot_type": "robot", "hw": "feetech"}, "state": {"joints": {"j1": 0.0}}}
+SIM_CHILD: dict[str, Any] = {"presence": {"robot_type": "sim", "parent": "lane"}, "state": {"joints": {"j1": 0.0}}}
+REAL_ARM: dict[str, Any] = {"presence": {"robot_type": "robot", "hw": "feetech"}, "state": {"joints": {"j1": 0.0}}}
 
 
 @pytest.fixture
@@ -108,7 +108,8 @@ def test_a_real_arm_resets_when_the_browser_confirmed(client) -> None:
 
 @pytest.mark.parametrize("state", ["running", "connecting"])
 def test_a_peer_with_a_task_in_flight_is_refused_before_anything_is_sent(client, state: str) -> None:
-    peer = {**SIM_CHILD, "presence": {**SIM_CHILD["presence"], "task_status": state}}
+    presence: dict[str, Any] = dict(SIM_CHILD["presence"])
+    peer = {**SIM_CHILD, "presence": {**presence, "task_status": state}}
     bridge = FakeBridge({"lane__so101": peer})
     with client(bridge) as c:
         r = c.post("/api/robots/lane__so101/reset")
