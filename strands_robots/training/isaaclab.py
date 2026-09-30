@@ -903,6 +903,8 @@ class IsaacLabTrainer(Trainer):
         Raises:
             FileNotFoundError: If the run directory holds no ``model_<iteration>.pt``,
                 or ``spec.output_dir`` holds no run of the asked-for task.
+            ValueError: If the run's newest checkpoint is skrl's or rl_games's;
+                only an rsl_rl actor converts to a strands policy today.
         """
         from strands_robots.training.rl import rsl_rl
 
