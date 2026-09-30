@@ -27,6 +27,7 @@ import time
 import uuid
 import warnings
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -1106,6 +1107,18 @@ def _certificate_cn(cert_path: Path) -> str | None:
         return None
 
 
+def _direct_403_names_the_target(result: Any) -> bool:
+    """True when a ``forbidden`` direct result was refused at the TARGET, not the sender.
+
+    The Direct Messaging API answers 403 with an empty body when the caller
+    holds no ``iot:SendDirectMessage`` grant, and with a body naming the
+    target client when the sender's grant passed but the session under the
+    target id may not receive on that topic. Only the second shape says the
+    caller's own grant is in place.
+    """
+    return "target client" in str(getattr(result, "detail", "") or "").lower()
+
+
 def check_iot_direct() -> str:
     """Whether this identity may send AWS IoT Core direct messages, over HTTPS alone.
 
@@ -1125,6 +1138,15 @@ def check_iot_direct() -> str:
     named when it is not the Thing name (a certificate issued before the CSR
     default carries ``AWS IoT Certificate``: re-run ``provision_robot``).
     ``STRANDS_MESH_IOT_DIRECT=0`` is reported as a deliberate SKIP.
+
+    A 403 comes in two shapes and the body tells them apart. An empty body is
+    the sender-side refusal above. A body naming the target client (measured
+    as ``Authorization failed for the target client``) means the broker
+    checked the sender's grant, passed it, and then found that the session
+    holding the target id has no ``iot:Receive`` on that topic: an operator
+    whose own Mesh is running takes no commands, so its cmd probe ends there.
+    That is the grant in place, so it is a PASS; the old FAIL told the user
+    to re-provision, which changed nothing.
     """
     from strands_robots.mesh._backend_select import select_backend
 
@@ -1164,7 +1186,7 @@ def check_iot_direct() -> str:
             confirm=True,
             timeout=5.0,
         )
-        if result.reason == "forbidden":
+        if result.reason == "forbidden" and not _direct_403_names_the_target(result):
             as_operator = transport.send_direct(
                 thing,
                 f"strands/{thing}/cmd",
@@ -1172,7 +1194,7 @@ def check_iot_direct() -> str:
                 confirm=True,
                 timeout=5.0,
             )
-            if as_operator.reason != "forbidden":
+            if as_operator.reason != "forbidden" or _direct_403_names_the_target(as_operator):
                 result, role = as_operator, "operator"
     finally:
         transport.close()
@@ -1181,6 +1203,12 @@ def check_iot_direct() -> str:
     if result.delivered:
         return _pass(
             f"iot direct: {role} grant OK, {thing} is connected and answered in {result.latency_ms:.0f} ms ({auth})"
+        )
+    if result.reason == "forbidden" and _direct_403_names_the_target(result):
+        return _pass(
+            f"iot direct: {role} grant OK for {thing} in {result.latency_ms:.0f} ms ({auth}); the session holding "
+            "that client id has no iot:Receive on the probe topic, so the broker stopped at the target "
+            "(the sender grant was checked first and passed)"
         )
     if result.reason == "offline":
         return _pass(

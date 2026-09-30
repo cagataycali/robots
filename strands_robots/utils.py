@@ -611,6 +611,10 @@ def _beyond_float_range(value: Any) -> bool:
 def positive_finite_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive finite number.
 
+    Every refusal names the whole domain - a real number that is finite and
+    greater than zero - so the text is true of whichever part the value missed:
+    ``inf > 0`` holds, and a message citing only the sign would be false of it.
+
     Args:
         value: The caller-supplied value.
         param: The parameter it came from, used in the message.
@@ -620,8 +624,9 @@ def positive_finite_number_error(value: Any, param: str, context: str) -> str | 
     Returns:
         An error message, or ``None`` when the value is usable.
     """
+    refusal = f"{context}: {param} must be a positive finite number, got {refusal_repr(value)}."
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
-        return f"{context}: {param} must be > 0, got {refusal_repr(value)}."
+        return refusal
     if _beyond_float_range(value):
         # A real past the float64 range is positive-or-negative and finite, so
         # neither of this guard's own reasons is true of it - hence its own text.
@@ -631,15 +636,13 @@ def positive_finite_number_error(value: Any, param: str, context: str) -> str | 
     try:
         # ``isfinite`` before the sign test: ``nan`` is never ``<= 0``, so
         # ordering these the other way lets it through.
-        unusable = not math.isfinite(float(value)) or float(value) <= 0
+        usable = math.isfinite(float(value)) and float(value) > 0
     except Exception:
         # A ``numbers.Real`` registration owes this guard no working
         # ``__float__``, and a value no number can be read from is refused for
-        # the same reason a non-real one is - the message it already had.
-        unusable = True
-    if unusable:
-        return f"{context}: {param} must be > 0, got {refusal_repr(value)}."
-    return None
+        # the same reason a non-real one is.
+        usable = False
+    return None if usable else refusal
 
 
 def finite_number_error(value: Any, param: str, context: str) -> str | None:

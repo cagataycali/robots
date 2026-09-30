@@ -11,6 +11,7 @@ import { runRisk } from '../lib/runRisk'
 import { fieldCopy, requirementSummary, missingSummary, localOnlySummary } from '../lib/policyCopy'
 import { policyLabel, groupPolicies } from '../lib/policyLabels'
 import RunConfirm from './RunConfirm'
+import { resetVerdict } from '../lib/resetAction'
 import type { Presence } from '../types'
 
 export interface RunBody {
@@ -29,6 +30,8 @@ interface Props {
   disabled?: boolean
   onRun: (body: RunBody) => void
   onStop: () => void
+  /** Reset to the home pose; `confirmed` is true when the confirm sheet was answered. */
+  onReset?: (confirmed: boolean) => void
 }
 
 interface ValidateResult {
@@ -56,7 +59,10 @@ export interface PolicyFit {
 }
 
 /** The run form is *generated from the policy registry*, not hardcoded. */
-export default function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop }: Props) {
+export default function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop, onReset }: Props) {
+  /** the reset confirm sheet is open (a real arm) */
+  const [resetPending, setResetPending] = useState(false)
+  const reset = resetVerdict({ running, busy, offline: !!disabled })
   const { policies } = useConfig()
   const [providerName, setProviderName] = useState('mock')
   const [instruction, setInstruction] = useState('')
@@ -223,6 +229,17 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
           onConfirm={() => { const body = pending; setPending(null); onRun(body) }}
         />
       )}
+      {resetPending && (
+        <RunConfirm
+          peerId={peerId}
+          risk={runRisk(presence)}
+          instruction="return every joint to its home pose"
+          provider="reset"
+          durationS={undefined}
+          onCancel={() => setResetPending(false)}
+          onConfirm={() => { setResetPending(false); onReset?.(true) }}
+        />
+      )}
       {staged && (
         <div className="deploy-banner">
           <span>🚀 prefilled from {staged.source} — review below, then press Run. Nothing has started.</span>
@@ -264,6 +281,15 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
           onKeyDown={e => e.key === 'Enter' && submit()}
           disabled={blocked}
         />
+        {onReset && (
+          <button
+            className="btn ghost reset"
+            aria-label="reset to home pose"
+            title={reset.title}
+            disabled={!reset.enabled}
+            onClick={() => (runRisk(presence).physical ? setResetPending(true) : onReset(false))}
+          >↺</button>
+        )}
         {running
           ? <button className="btn stop" onClick={onStop} disabled={busy} title="Stop this robot">■</button>
           : (
