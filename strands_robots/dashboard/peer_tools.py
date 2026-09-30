@@ -200,8 +200,8 @@ _SIM_INPUT_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": (
                 "execute/start: which policy backend. Pick from this peer's `policies.can_run` in the fleet "
-                "listing (e.g. wbc for a Unitree G1, lerobot_local with a checkpoint for an arm); mock is a "
-                "sine test, not a task (default mock)"
+                "listing, e.g. wbc, lerobot_local. A Unitree G1 walks with wbc; an arm runs lerobot_local "
+                "with a checkpoint; mock is a sine test, not a task (default mock)"
             ),
         },
         **_POLICY_PROPERTIES,
