@@ -1,10 +1,14 @@
+---
+description: Find the SO-101's USB port, rehearse the driver against the model, then move the physical arm through the native driver or lerobot.
+---
+
 # First real arm
 
 At the end of this page you know which USB port your SO-101 is on, you have rehearsed the exact hardware driver against the arm's model, and you have the two lines that move the physical arm: one through the native Feetech driver, one through lerobot.
 
 ## Find the port
 
-Plug the arm's controller board into USB. Then ask the host what it sees:
+Plug the arm's controller board into USB and ask the host what it sees:
 
 ```python
 from strands_robots._serial_discovery import scan_serial_devices, describe_serial_candidates
@@ -24,11 +28,11 @@ On a laptop with nothing plugged in you should see the built-in ports and a sent
 None of this host's 3 serial device(s) looks like a servo bus: /dev/cu.debug-console, /dev/cu.wlan-debug, /dev/cu.Bluetooth-Incoming-Port.
 ```
 
-With the arm attached one row reads `True`: `/dev/ttyACM0` on Linux, `/dev/cu.usbmodem...` on macOS. `stable_id` is the USB serial number, which survives a replug when the port path does not. On Linux, add yourself to the `dialout` group if the port exists but cannot be opened; `strands-robots doctor` checks this.
+With the arm attached one row reads `True`: `/dev/ttyACM0` on Linux, `/dev/cu.usbmodem...` on macOS. `stable_id` is the USB serial number, which survives a replug when the port path does not. On Linux a port that exists but cannot be opened means you are not in `dialout`; `strands-robots doctor` checks this.
 
 ## Rehearse on the twin
 
-The native driver has two transports: `serial`, the wire, and `twin`, the same driver with the arm's MuJoCo model at the far end of the bus. Same verbs, same units, same refusals. Run it before you touch the arm:
+The native driver has two transports: `serial`, the wire, and `twin`, the same driver with the arm's MuJoCo model on the bus. Same verbs, units and refusals. Run it before you touch the arm:
 
 ```python
 import asyncio
@@ -53,7 +57,7 @@ None
 {'shoulder_pan': 1, 'shoulder_lift': 2, 'elbow_flex': 3, 'wrist_flex': 4, 'wrist_roll': 5, 'gripper': 6}
 ```
 
-In `mode="real"` the factory returns the driver, not a simulation. Targets are degrees, the gripper is percent open, and a key can be spelled `shoulder_pan` or `shoulder_pan.pos`. `sync_read` is the bus read a real arm answers with, here answered by the model.
+In `mode="real"` the factory returns the driver, not a simulation. Targets are degrees, the gripper is percent open, and a key can be spelled `shoulder_pan` or `shoulder_pan.pos`. `sync_read` is the bus read a real arm answers; here the model answers it.
 
 ## Move the arm
 
@@ -85,17 +89,17 @@ arm.send_action({"shoulder_pan.pos": 20.0})
 arm.cleanup()
 ```
 
-Both are the `so101` tool when handed to an agent. The lerobot path connects on the first action; the native path connects on `connect_eagerly()` or the first action. `cleanup()` closes the port and leaves torque as it is, so an arm holding a payload does not drop when a process exits; `stop()` is the verb that de-energizes.
+Both take degrees for the joints (lerobot's `so101_follower` sets `use_degrees=True`; its `gripper.pos` is 0 to 100) and both are the `so101` tool in an agent. lerobot connects on the first action, the native driver on `connect_eagerly()` or the first action. `cleanup()` closes the port and leaves torque as it is, so a loaded arm does not drop at exit; `stop()` de-energizes.
 
 ## Calibrate
 
-Calibration is the arm's measured travel per servo. Without it the driver reads and commands the servo's full rotation, which is off by however far the mechanical stops sit inside it. lerobot writes the file, and both drivers read it:
+Calibration is the arm's measured travel per servo. Without it the driver reads and commands the servo's full rotation, off by however far the mechanical stops sit inside it. lerobot writes the file, both drivers read it:
 
 ```bash
 lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=so101
 ```
 
-The lerobot driver looks the file up by id, and the id it uses is the tool name, `so101` unless you pass `tool_name=` or `id=`. The native driver takes the file as `calibration=`; `lerobot_calibration_path("so101_follower", "so101")` returns where lerobot put it, and `get_status()` reports `calibration_source` so you can tell whether the arm's travel or the servo's full rotation is in force. Details in [Calibration](../learn/hardware/calibration.md).
+The lerobot driver looks the file up by id, the tool name `so101` unless you pass `tool_name=` or `id=`. The native driver takes it as `calibration=`; `lerobot_calibration_path("so101_follower", "so101")` returns where lerobot put it, and `get_status()` reports `calibration_source`. Details in [Calibration](../learn/hardware/calibration.md).
 
 ## What is refused before the arm moves
 
@@ -109,6 +113,6 @@ The lerobot driver looks the file up by id, and the id it uses is the tool name,
 | a keyword the driver does not declare (`prot=`) | `ValueError` listing what `FeetechDriver` accepts |
 | a port that cannot be opened | `connect_eagerly()` returns the OS error as a string; `is_connected` stays `False` |
 
-## The approval gate
+## The operator gate
 
-When the lerobot-driver `Robot` is mounted as an agent tool, its `execute` and `start` actions stop for operator approval before any rollout is dispatched, and refuse when no operator can be reached. The native driver's `move_to` action does not ask at this commit. [First agent](first-agent.md) shows the gate; [Drivers](../learn/hardware/drivers.md) covers the other {{n:native_drivers}} native drivers.
+Mounted as an agent tool, the lerobot-driver `Robot` stops `execute` and `start` for operator approval before a rollout is dispatched, and refuses when no operator can be reached. The native driver's `move_to` does not ask at this commit. [First agent](first-agent.md) shows the gate; [Drivers](../learn/hardware/drivers.md) covers the other {{n:native_drivers}} native drivers.
