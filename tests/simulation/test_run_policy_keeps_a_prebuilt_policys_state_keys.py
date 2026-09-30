@@ -15,6 +15,7 @@ import pytest
 pytest.importorskip("mujoco")
 
 from strands_robots.policies import create_policy  # noqa: E402
+from strands_robots.policies.mock import MockPolicy  # noqa: E402
 from strands_robots.simulation import create_simulation  # noqa: E402
 
 
@@ -34,6 +35,7 @@ def _robot(sim) -> str:
 def test_a_subset_the_caller_chose_is_kept(sim) -> None:
     keys = sim.robot_action_keys(_robot(sim))
     policy = create_policy("mock")
+    assert isinstance(policy, MockPolicy)
     policy.set_robot_state_keys(keys[:5])
     result = sim.run_policy(robot_name=_robot(sim), policy_object=policy, n_steps=2, control_frequency=50.0)
     assert result["status"] == "success", result
@@ -44,6 +46,7 @@ def test_a_subset_the_caller_chose_is_kept(sim) -> None:
 def test_placeholders_foreign_or_missing_keys_are_rebound(sim, given: list[str]) -> None:
     keys = sim.robot_action_keys(_robot(sim))
     policy = create_policy("mock")
+    assert isinstance(policy, MockPolicy)
     if given:
         policy.set_robot_state_keys(given)
     sim.run_policy(robot_name=_robot(sim), policy_object=policy, n_steps=1, control_frequency=50.0)
