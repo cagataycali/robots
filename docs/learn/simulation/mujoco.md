@@ -4,7 +4,7 @@ description: The MuJoCo backend: install, offscreen rendering, physics queries, 
 
 # MuJoCo
 
-By the end of this page you can run the default backend headless on a laptop, read physics quantities out of it, save and restore states, and know which calls are MuJoCo-only.
+By the end of this page you can run the default backend headless on a laptop, read physics quantities, save and restore states, and know which calls are MuJoCo-only.
 
 ```bash
 pip install 'strands-robots[sim-mujoco]'   # mujoco, robot_descriptions, imageio(-ffmpeg), mink, qpsolvers[daqp]
@@ -32,11 +32,11 @@ print(sim.export_xml()["status"], sim.get_total_mass()["status"], sim.get_energy
 sim.cleanup()
 ```
 
-You should see the cube's `pos:` line with `z` near `0.015` (it fell and settled), then three `success` values.
+You should see the cube's `pos:` line with `z` near `0.015` (fallen and settled), then three `success` values.
 
 ## Rendering
 
-`render(camera_name="default", width=None, height=None)` returns a PNG in the content list; `get_observation(robot)` returns the raw `(H, W, 3)` array for every camera plus a scalar per joint and its `.vel` companion. `skip_images=True` skips rendering, which is the 10x throughput win a non-VLA policy gets from `requires_images = False`. `open_viewer()` opens the interactive MuJoCo viewer when a display exists.
+`render(camera_name="default", width=None, height=None)` returns a PNG in the content list; `get_observation(robot)` returns the raw `(H, W, 3)` array per camera plus a scalar per joint and its `.vel` companion. `skip_images=True` skips rendering, the 10x throughput win a non-VLA policy gets from `requires_images = False`. `open_viewer()` opens the interactive MuJoCo viewer when a display exists; on macOS run the script with `mjpython` (installed by the mujoco wheel) or the call is refused naming it.
 
 ## Physics surface
 
@@ -54,7 +54,7 @@ You should see the cube's `pos:` line with `z` near `0.015` (it fell and settled
 | `set_gravity(...)`, `set_timestep(...)` | world parameters after creation |
 | `get_ground_height(x, y)` | terrain height under a point |
 
-`mj_model` and `mj_data` expose the compiled model and data when you need the raw API.
+`mj_model` and `mj_data` expose the compiled model and data for the raw API.
 
 ## Scene editing
 
@@ -62,12 +62,12 @@ The scene is an `MjSpec` that is recompiled after every structural change, so `a
 
 ## Time
 
-`create_world(timestep=0.002)` sets physics at 500 Hz. `run_policy(control_frequency=50.0)` steps `1 / (50 * timestep)` physics substeps per action; pass `control_substeps` to pin it. `step(n)` advances `n` physics steps. `physics_timestep()` reads the live value.
+`create_world(timestep=0.002)` sets physics at 500 Hz. `run_policy(control_frequency=50.0)` steps `1 / (50 * timestep)` physics substeps per action; `control_substeps` pins it. `step(n)` advances `n` physics steps; `physics_timestep()` reads the live value.
 
 If the physics diverges, MuJoCo resets the world; `step`, `send_action` and rollouts then return `status="error"` with `{"diverged": true}`. `reset()` recovers.
 
 ## Limits
 
-- CPU only. One process steps one world; for batched environments use `newton` or `isaac`.
-- Offscreen rendering needs a working GL backend. On a headless Linux box without EGL, set `MUJOCO_GL=osmesa` and accept slow frames.
-- `mjx` is accepted as an alias but resolves to the same CPU engine; there is no JAX path.
+- CPU only, one world per process; batched environments use `newton` or `isaac`.
+- Offscreen rendering needs a GL backend; a headless Linux box without EGL sets `MUJOCO_GL=osmesa` and accepts slow frames.
+- `mjx` is an alias for the same CPU engine; there is no JAX path.

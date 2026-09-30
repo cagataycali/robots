@@ -59,11 +59,6 @@ class TestCreatePolicy:
         p = create_policy("kwarg_test", some_key="some_val")
         assert p.captured == {"some_key": "some_val"}
 
-    def test_create_via_hf_model_id_triggers_smart_resolution(self):
-        """An org/model string should trigger smart-string resolution."""
-        with pytest.raises(Exception):
-            create_policy("unknownorg/somemodel")
-
     def test_create_via_grpc_url_triggers_smart_resolution(self):
         """A grpc:// URL should trigger smart-string resolution."""
         with pytest.raises(Exception):
@@ -186,6 +181,44 @@ class TestSmartResolutionFallThrough:
         monkeypatch.setattr("strands_robots.policies.factory.resolve_policy", boom)
         with pytest.raises(ValueError, match="^resolver refused this address$"):
             create_policy("unknownorg/doesnotexist")
+
+
+class TestOnlyAddressAndCheckpointShapesAreSmartStrings:
+    """Punctuation alone does not make a spelling an address or a checkpoint.
+
+    A typo carrying a ``/`` or ``:`` used to be forwarded to ``lerobot_local``
+    as a checkpoint id, so the caller got a trust-remote-code refusal naming a
+    provider they never typed, and the pre-flight check reported it buildable.
+    """
+
+    @pytest.mark.parametrize(
+        ("spelling", "suggestion"),
+        [
+            ("wbc/", "'wbc'"),
+            ("protomotions:", "'protomotions'"),
+            (":", None),
+            ("/", None),
+            ("C:\\path", None),
+            ("myserver:8080", None),
+        ],
+    )
+    def test_a_typo_is_an_unknown_provider(self, spelling, suggestion, monkeypatch):
+        monkeypatch.delenv("STRANDS_TRUST_REMOTE_CODE", raising=False)
+        assert provider_can_be_created(spelling) is False
+        with pytest.raises(ValueError, match="^Unknown policy provider") as ei:
+            create_policy(spelling)
+        if suggestion:
+            assert f"Did you mean: {suggestion}" in str(ei.value)
+
+    @pytest.mark.parametrize(
+        "spelling",
+        ["unknownorg/somemodel", "/tmp/ft/checkpoints/last/pretrained_model", "outputs/train/act", "./ckpt", "~/ckpt"],
+    )
+    def test_a_checkpoint_still_reaches_lerobot_local(self, spelling, monkeypatch):
+        monkeypatch.delenv("STRANDS_TRUST_REMOTE_CODE", raising=False)
+        assert provider_can_be_created(spelling) is True
+        with pytest.raises(UntrustedRemoteCodeError, match="'lerobot_local'"):
+            create_policy(spelling)
 
 
 class _KwargCapture(Policy):
