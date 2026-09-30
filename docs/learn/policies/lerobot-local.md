@@ -100,7 +100,7 @@ print(result["status"])
 sim.cleanup()
 ```
 
-An SO-101 fine-tune carries degree stats. On the sim joints `1`..`6` the `so101` embodiment applies even unnamed, converting both ways; any other radian state is refused before the first action. On hardware it binds the `.pos` keys ([First policy](../../start/first-policy.md)). A real arm's tool takes the same dict as `policy_config`; host/port stay `policy_host`/`policy_port`:
+An SO-101 fine-tune carries degree stats. On the sim joints `1`..`6` the `so101` embodiment applies even unnamed, converting both ways; any other radian state is refused before the first action. On hardware it binds the `.pos` keys ([First policy](../../start/first-policy.md)). A real arm's tool takes the same `policy_config` dict; host/port stay `policy_host`/`policy_port`:
 
 ```json
 {"action": "execute", "policy_provider": "lerobot_local",
@@ -110,7 +110,7 @@ An SO-101 fine-tune carries degree stats. On the sim joints `1`..`6` the `so101`
 
 ## GR00T N1.7 through lerobot
 
-`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` policy type and load here like any checkpoint, with no Isaac-GR00T checkout or ZMQ service. `embodiment_tag` comes from the checkpoint config.
+`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` policy type and load here like any checkpoint, no Isaac-GR00T checkout, no ZMQ service. `embodiment_tag` comes from the checkpoint config.
 
 ```python
 from strands_robots.policies import create_policy
@@ -119,7 +119,7 @@ policy = create_policy("nvidia/GR00T-N1.7-3B", policy_type="groot", embodiment="
 print(policy.provider_name)
 ```
 
-The 3B model wants a GPU: run `PolicyServer` where one is and dial it with [`remote`](remote.md).
+The 3B model wants a GPU: run `PolicyServer` there, dialled with [`remote`](remote.md).
 
 ```python title="sketch"
 cfg = {"pretrained_name_or_path": "nvidia/GR00T-N1.7-3B", "policy_type": "groot", "embodiment": "so101"}
