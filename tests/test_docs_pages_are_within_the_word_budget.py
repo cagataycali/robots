@@ -64,8 +64,9 @@ _BUDGET: int = _hook().LIMIT
 #: Raised by 551 to 50,059 for the flux3_action provider page (one page per provider).
 #: Lowered to 49,433 when the GR00T provider page left with the provider (GR00T N1.7
 #: is a section of lerobot-local now).
+#: Raised by 733, to 50,166, for learn/policies/wbc-latent.md (the wbc_latent provider).
 #: Raised to 50,012 for the Foxglove page (learn/data/foxglove.md, live view and MCAP export) and its two index lines.
-_SITE_BUDGET = 50_012
+_SITE_BUDGET = 50_696
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

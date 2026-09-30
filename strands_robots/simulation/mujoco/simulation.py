@@ -3614,6 +3614,11 @@ class MuJoCoSimEngine(
         # WBCPolicy. Walk the declared tree instead of type-testing the argument.
         wbc_policy = next((p for p in iter_policy_tree(policy) if isinstance(p, WBCPolicy)), None)
         if wbc_policy is None:
+            # The SONIC latent decoder needs its own shim: the same PD-on-torque
+            # idea, on all 29 joints with the decoder's gains.
+            latent = self._maybe_install_wbc_latent_controller(policy, robot_name)
+            if latent is not None:
+                return latent
             # Any other declared controller is one this engine cannot install.
             return super()._maybe_install_action_controller(policy, robot_name)
         world = self._world
@@ -3637,6 +3642,52 @@ class MuJoCoSimEngine(
         # ``uninstall`` releases both halves of the install - the registration it
         # made and the actuator gains - so the caller of the *documented manual*
         # API gets the same teardown this hook does, from one implementation.
+        return controller.uninstall
+
+    def _maybe_install_wbc_latent_controller(self, policy: Any, robot_name: str) -> Callable[[], None] | str | None:
+        """Install the SONIC latent torque shim when a ``WBCLatentPolicy`` drives a servo scene.
+
+        The same contract as the WBC branch of
+        :meth:`_maybe_install_action_controller`, for
+        :class:`~strands_robots.policies.wbc_latent.WBCLatentPolicy`: its
+        decoder emits joint targets the stock ``kp=500`` servos would track with
+        gains 5x to 35x stiffer than the armature-derived ones the network was
+        trained with. Returns ``None`` when no ``WBCLatentPolicy`` is in the
+        tree (the caller falls through to the base refusal), when the ``[wbc]``
+        extra is missing, when no world is compiled, when a controller is
+        already registered (a manual install wins), or when the driven
+        actuators are already torque motors. Otherwise installs
+        :func:`~strands_robots.policies.wbc_latent.install_wbc_latent_torque_control`
+        and returns its ``uninstall``.
+        """
+        from strands_robots.policies.base import iter_policy_tree
+
+        try:
+            from strands_robots.policies.wbc_latent import (
+                WBCLatentPolicy,
+                install_wbc_latent_torque_control,
+                wbc_latent_uses_position_servo,
+            )
+        except ImportError:
+            return None
+        latent = next((p for p in iter_policy_tree(policy) if isinstance(p, WBCLatentPolicy)), None)
+        if latent is None:
+            return None
+        world = self._world
+        if world is None or world._model is None:
+            return None
+        backend_state = getattr(world, "_backend_state", None)
+        if isinstance(backend_state, dict) and backend_state.get("action_controller") is not None:
+            return None
+        if not wbc_latent_uses_position_servo(self, robot_name):
+            return None
+        controller = install_wbc_latent_torque_control(self, latent, robot_name)
+        logger.info(
+            "auto-installed wbc_latent torque control on %r (position-servo actuators detected): the SONIC "
+            "decoder's joint targets are tracked with its own per-joint PD gains on all 29 joints. Pass "
+            "wbc_install_torque_control=False to opt out.",
+            robot_name,
+        )
         return controller.uninstall
 
     def list_robots_info(self) -> dict[str, Any]:
