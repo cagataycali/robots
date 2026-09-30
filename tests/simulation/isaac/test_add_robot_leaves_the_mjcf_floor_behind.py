@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("mujoco")
 Usd = pytest.importorskip("pxr.Usd")
-from pxr import UsdGeom, UsdPhysics  # noqa: E402
+from pxr import UsdGeom, UsdPhysics  # type: ignore[import-not-found]  # noqa: E402
 
 from strands_robots.simulation.isaac import mjcf_assets  # noqa: E402
 
