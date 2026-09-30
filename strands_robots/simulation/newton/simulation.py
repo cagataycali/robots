@@ -78,6 +78,7 @@ from strands_robots.simulation.newton.recording import NewtonRecordingMixin
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
+    boolean_flag_error,
     camera_fov_error,
     camera_name_error,
     coerce_orientation_quaternion,
@@ -117,6 +118,13 @@ _DEFAULT_TIMESTEP = 1.0 / 600.0
 # registry has no asset, so the URDF-only long tail resolves without an
 # explicit selector.
 _ROBOT_SOURCES = (None, "registry", "robot_descriptions")
+
+
+#: The ground plane's colour. Newton's own default, (0.125, 0.125, 0.15), is
+#: within a few levels of the renderer's clear colour, so a frame showed the
+#: robot floating over what read as empty space where MuJoCo and Isaac draw a
+#: floor. MuJoCo's ``groundplane`` checker averages this blue-grey.
+_GROUND_COLOR = (0.30, 0.37, 0.45)
 
 
 def _short_joint_name(label: str) -> str:
@@ -1373,6 +1381,118 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             }
         return {"status": "success", "content": [{"text": f"Action applied to '{robot_name}' ({len(applied)} keys)."}]}
 
+    def set_joint_positions(
+        self,
+        positions: dict[str, float] | Sequence[float] | None = None,
+        robot_name: str | None = None,
+        hold: bool = False,
+    ) -> dict[str, Any]:
+        """Set joint positions directly, bypassing the drives - the MuJoCo and Isaac verb, on Newton.
+
+        Newton had no way to pose a robot, so a scene script that posed one
+        before rendering or rolling out raised ``AttributeError`` here while
+        it worked on the other two backends. This writes the coordinates of the
+        named joints into the live state, zeroes their velocities and runs
+        forward kinematics, so the bodies are where the joints say at once.
+
+        As on MuJoCo the write is kinematic: the position drives are still
+        commanded to their previous targets, and the next step pulls the joints
+        back toward them. ``hold=True`` moves those targets with the pose, which
+        is what makes "teleport and stay there" expressible.
+
+        Args:
+            positions: ``{joint_name: value}`` (short names, as
+                :meth:`robot_action_keys` lists them) or an ordered vector bound
+                to those keys. Values are in each joint's own unit (radians for
+                a revolute joint, metres for a prismatic one), finite, and
+                inside the joint's limits.
+            robot_name: The robot to pose; optional with exactly one robot.
+            hold: Also move the joints' position targets to the pose.
+
+        Returns:
+            A ``{status, content}`` envelope. The write is all-or-nothing: an
+            unknown key, a non-finite value or one outside a joint's limits
+            writes nothing and names the problem.
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        if text := boolean_flag_error(hold, "hold", "set_joint_positions"):
+            return {"status": "error", "content": [{"text": text}]}
+        if positions is None:
+            return {
+                "status": "error",
+                "content": [{"text": "set_joint_positions: 'positions' is required (list or dict of joint values)."}],
+            }
+        if err := self._require_no_running_policy("set_joint_positions"):
+            return err
+        try:
+            robot_name = self._resolve_single_robot(robot_name)
+        except ValueError as exc:
+            return {"status": "error", "content": [{"text": str(exc)}]}
+        if not registered(self._world.robots, robot_name):
+            return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+        if isinstance(positions, dict) and not positions:
+            return {"status": "error", "content": [{"text": "set_joint_positions: 'positions' is empty."}]}
+        pose, coerce_error = self._coerce_action(positions, robot_name)
+        if coerce_error is not None:
+            return coerce_error
+        assert pose is not None  # narrow for mypy: no error implies a mapping
+        valid = self.robot_action_keys(robot_name)
+        unknown = [k for k in pose if k not in valid]
+        if unknown:
+            return {
+                "status": "error",
+                "content": [
+                    {"text": f"set_joint_positions: {unknown} are not joints of '{robot_name}'. Joints: {valid}"}
+                ],
+            }
+        with self._lock:
+            lower = self._model.joint_limit_lower.numpy() if self._model.joint_limit_lower is not None else None
+            upper = self._model.joint_limit_upper.numpy() if self._model.joint_limit_upper is not None else None
+            out_of_range = []
+            for jname, value in pose.items():
+                dof = self._joint_dof_index.get((robot_name, jname))
+                if dof is None or lower is None or upper is None or dof >= len(lower):
+                    continue
+                lo, hi = float(lower[dof]), float(upper[dof])
+                if lo < hi and not lo - 1e-9 <= float(value) <= hi + 1e-9:
+                    out_of_range.append(f"{jname}={float(value):g} (range [{lo:g}, {hi:g}])")
+            if out_of_range:
+                return {
+                    "status": "error",
+                    "content": [{"text": f"set_joint_positions: outside the joint limits: {', '.join(out_of_range)}"}],
+                }
+            q = self._state_0.joint_q.numpy().copy()
+            qd = self._state_0.joint_qd.numpy().copy()
+            for jname, value in pose.items():
+                coord = self._joint_coord_index.get((robot_name, jname))
+                dof = self._joint_dof_index.get((robot_name, jname))
+                if coord is not None and coord < len(q):
+                    q[coord] = float(value)
+                if dof is not None and dof < len(qd):
+                    qd[dof] = 0.0
+                if hold:
+                    self._targets[(robot_name, jname)] = float(value)
+            wp, device = self._wp, self._model.device
+            for state in (self._state_0, self._state_1):
+                state.joint_q = wp.array(q, dtype=state.joint_q.dtype, device=device)
+                state.joint_qd = wp.array(qd, dtype=state.joint_qd.dtype, device=device)
+                self._nt.eval_fk(self._model, state.joint_q, state.joint_qd, state)
+            if hold:
+                self._write_targets()
+        note = (
+            " The position targets moved with the pose (hold=True)."
+            if hold
+            else " The drives still hold their previous targets; pass hold=True to keep the pose through a step."
+        )
+        return {
+            "status": "success",
+            "content": [
+                {"text": f"Set {len(pose)} joint position(s) on '{robot_name}'.{note}"},
+                {"json": {"robot": robot_name, "positions": {k: float(v) for k, v in pose.items()}, "hold": hold}},
+            ],
+        }
+
     def physics_timestep(self) -> float | None:
         """Return the physics integration timestep in seconds."""
         if self._world is None:
@@ -1882,6 +2002,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             cam = sensors.SensorTiledCamera(model=self._model)
             light_dir = self._wp.vec3f(*self._dr_light_dir) if self._dr_light_dir is not None else None
             cam.utils.create_default_light(enable_shadows=False, direction=light_dir)
+            self._checker_the_ground(cam)
             rays = cam.utils.compute_pinhole_camera_rays(w, h, math.radians(fov_deg))
             color = cam.utils.create_color_image_output(w, h, 1)
             q = self._look_at_quat(tuple(eye), tuple(target))
@@ -1899,6 +2020,27 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         frame = rgba[0, 0] if rgba.ndim == 5 else rgba[0]
         frame = np.ascontiguousarray(frame[..., :3])
         return self._maybe_jitter_frame(frame)
+
+    def _checker_the_ground(self, cam: Any) -> None:
+        """Draw the ground plane as a checkerboard, as MuJoCo's ``groundplane`` is drawn.
+
+        A flat colour gives a frame no depth cue: the floor reads as a backdrop
+        and nothing shows how far the robot is from it. The renderer's
+        checkerboard is assigned to the ground shape alone - and only when no
+        shape carries a texture of its own, because the assignment replaces the
+        render context's texture table and would strip a textured mesh.
+        """
+        ground = getattr(self, "_ground_shape", None)
+        if ground is None or ground < 0:
+            return
+        context = getattr(cam, "_SensorTiledCamera__render_context", None)
+        ids = getattr(context, "shape_texture_ids", None)
+        try:
+            if ids is not None and (np.asarray(ids.numpy()) >= 0).any():
+                return  # a textured shape: keep the flat-coloured floor rather than strip it
+            cam.utils.assign_checkerboard_material(shape_indices=[ground], resolution=64, checker_size=32)
+        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+            logger.debug("newton: ground checkerboard unavailable, keeping the flat floor colour: %s", exc)
 
     def get_frame(
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
@@ -3046,8 +3188,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         for obj in self._world.objects.values():
             self._object_body_map[obj.name] = self._add_object_to_builder(builder, obj)
 
+        self._ground_shape: int | None = None
         if self._world.ground_plane:
-            builder.add_ground_plane()
+            self._ground_shape = builder.add_ground_plane(color=_GROUND_COLOR)
 
         # Apply active domain randomization (mass/friction/colors) to the
         # builder arrays before the immutable model is finalized.
