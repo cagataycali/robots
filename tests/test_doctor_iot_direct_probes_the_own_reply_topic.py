@@ -181,6 +181,47 @@ class TestTheProbe:
         line = doctor.check_iot_direct()
         assert line.startswith("  PASS  ") and "operator grant OK" in line and "90 ms" in line
 
+    def test_a_403_that_names_the_target_client_is_the_target_side_verdict_operator(self, iot_env, monkeypatch):
+        # Measured on the account (iot-deep lane, D5): with the operator's own
+        # Mesh running, the cmd probe to its own client id returns 403 with the
+        # body "Authorization failed for the target client". The broker checked
+        # the SENDER grant first and passed it; the TARGET (the operator itself)
+        # simply holds no iot:Receive on a cmd topic, because an operator does
+        # not take commands. That is the grant in place, not a policy problem,
+        # and the earlier advice to re-provision changed nothing.
+        _Transport.result = DirectResult(delivered=False, reason="forbidden", latency_ms=80.0)
+        _Transport.result_for_cmd = DirectResult(
+            delivered=False, reason="forbidden", latency_ms=95.0, detail="Authorization failed for the target client"
+        )
+        monkeypatch.setattr(doctor, "_certificate_cn", lambda path: "thor-op")
+        line = doctor.check_iot_direct()
+        assert line.startswith("  PASS  "), line
+        assert "operator grant OK" in line and "95 ms" in line
+        assert "target" in line and "iot:Receive" in line
+        assert "re-run provision" not in line
+
+    def test_a_403_that_names_the_target_client_on_the_robot_probe_passes_the_robot_grant(self, iot_env, monkeypatch):
+        # The same verdict on the first probe: the robot's sender grant held and
+        # the running peer under that id holds no iot:Receive on the reply
+        # topic. Role stays robot; no second probe is needed.
+        _Transport.result = DirectResult(
+            delivered=False, reason="forbidden", latency_ms=70.0, detail="Authorization failed for the target client"
+        )
+        monkeypatch.setattr(doctor, "_certificate_cn", lambda path: "thor-arm")
+        line = doctor.check_iot_direct()
+        assert line.startswith("  PASS  ") and "robot grant OK" in line, line
+        (t,) = _Transport.instances
+        assert len(t.sent) == 1
+
+    def test_a_403_with_an_empty_body_is_still_the_sender_side_refusal(self, iot_env, monkeypatch):
+        # The sender-side 403 (no SendDirectMessage grant) carries an empty
+        # body; that one stays a FAIL that points at the policy version.
+        _Transport.result = DirectResult(delivered=False, reason="forbidden", latency_ms=80.0, detail="")
+        _Transport.result_for_cmd = DirectResult(delivered=False, reason="forbidden", latency_ms=80.0, detail="")
+        monkeypatch.setattr(doctor, "_certificate_cn", lambda path: "thor-arm")
+        line = doctor.check_iot_direct()
+        assert line.startswith("  FAIL  ") and "predates the direct messaging grants" in line
+
     def test_forbidden_without_a_readable_cn_still_explains(self, iot_env, monkeypatch):
         _Transport.result = DirectResult(delivered=False, reason="forbidden", latency_ms=80.0)
         monkeypatch.setattr(doctor, "_certificate_cn", lambda path: None)
