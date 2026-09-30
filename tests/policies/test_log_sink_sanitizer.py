@@ -350,7 +350,6 @@ def test_a_state_key_mismatch_names_the_observation_keys_on_one_record(
         strict_keys=False,
         generic_state_keys_used=False,
         _state_key_mismatch_warned=False,
-        _embodiment_config_failed=False,
         # The remedy's unit half: read as an attribute off this stand-in.
         _normalization_is_inert=lambda: False,
     )
@@ -371,7 +370,6 @@ def test_missing_state_keys_name_the_absent_keys_on_one_record(caplog: pytest.Lo
         strict_keys=False,
         missing_state_keys_used=False,
         _state_missing_keys_warned=False,
-        _embodiment_config_failed=False,
         _normalization_is_inert=lambda: False,
     )
     with caplog.at_level(logging.WARNING):

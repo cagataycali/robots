@@ -74,18 +74,16 @@ lowercasing normaliser.
 from __future__ import annotations
 
 import ast
-import importlib.util
 import pathlib
 import re
-import sys
 
 from strands_robots.mesh import security as _security
+from tests._docs_hooks import docs_hook
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "security.py"
 _PAGE = _ROOT / "docs" / "learn" / "security.md"
 _README = _ROOT / "docs" / "reference" / "configuration.md"  # the generated env-var matrix
-_ENV_VARS_HOOK = _ROOT / "docs" / "hooks" / "env_vars.py"
 
 _HEADING = "## Allowlists on the mesh"
 _PREFIX = "STRANDS_MESH_POLICY_TYPE_ALLOW"
@@ -99,13 +97,7 @@ def _rendered_matrix() -> str:
     backticks so the rules below can look for ```NAME``` as on a hand-written page.
     """
     source = _README.read_text(encoding="utf-8")
-    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _ENV_VARS_HOOK)
-    assert spec is not None and spec.loader is not None, _ENV_VARS_HOOK
-    module = sys.modules.get(spec.name)
-    if module is None:
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+    module = docs_hook("env_vars")
     rendered = module.on_page_markdown(source, page=None, config=None, files=None)
     assert rendered != source, "docs/reference/configuration.md carries no {{env_vars}} token for the hook to expand"
     return re.sub(r"</?code>", "`", rendered)

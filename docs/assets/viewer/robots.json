@@ -688,7 +688,7 @@
   "lekiwi": {
    "aliases": [],
    "base_url": "https://cdn.jsdelivr.net/gh/Ekumen-OS/lekiwi@32cf6a69eb320cc22620cdaa529e35f20fc12b1f/packages/lekiwi_sim/lekiwi_sim/assets/",
-   "category": "mobile",
+   "category": "mobile_manip",
    "description": "LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuators)",
    "driver": null,
    "joints": 9,
@@ -1203,7 +1203,7 @@
     "boston_dynamics_spot"
    ],
    "base_url": "https://cdn.jsdelivr.net/gh/google-deepmind/mujoco_menagerie@c96a32d28fb5da84da38c1da4d749e7a13212855/boston_dynamics_spot/",
-   "category": "mobile",
+   "category": "mobile_manip",
    "description": "Boston Dynamics Spot (with arm)",
    "driver": null,
    "joints": 20,
