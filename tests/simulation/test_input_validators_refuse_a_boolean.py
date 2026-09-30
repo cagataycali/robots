@@ -522,6 +522,9 @@ _NOT_AN_INPUT_DOMAIN = {
     # Isaac set_joint_positions' range check runs on the map
     # _coerce_joint_state_map has already accepted, which refuses a boolean.
     "_joint_range_error": "checks values _coerce_joint_state_map already accepted",
+    # Isaac add_object's per-shape extent check runs on the vector
+    # coerce_size_vector has already accepted, which refuses a boolean component.
+    "_primitive_size_error": "checks a size coerce_size_vector already accepted",
     # Measures the distance between a target _validate_move_to_args has already
     # coerced (its position runs through coerce_pose_vector, which refuses a
     # boolean component) and the engine-owned robot base position - a boolean

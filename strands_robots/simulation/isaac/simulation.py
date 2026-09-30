@@ -40,6 +40,7 @@ import numpy as np
 
 from strands_robots.simulation.base import SimEngine, unknown_kwargs_error, unknown_model_msg
 from strands_robots.simulation.isaac.config import IsaacConfig
+from strands_robots.simulation.isaac.introspection import IsaacIntrospectionMixin
 from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, mjcf_joint_names, urdf_joint_names
 from strands_robots.simulation.isaac.loaders import mjcf_declares_floating_base
 from strands_robots.simulation.isaac.mjcf_assets import MJCF_EXTENSIONS, convert_mjcf_to_usd
@@ -537,6 +538,55 @@ def _dof_units(articulation: Any, n_dofs: int) -> list[str]:
     except (KeyError, ValueError, IndexError, TypeError):
         types_ = []
     return [{1: "rad", 2: "m"}.get(types_[i], "") if i < len(types_) else "" for i in range(n_dofs)]
+
+
+def _round_shape_dims(size: list[float] | None) -> tuple[float, float]:
+    """``(radius, height)`` of a cylinder or capsule from an ``add_object`` ``size``.
+
+    Two layouts, told apart by length. Two components are this backend's own
+    ``[radius, height]``. Three are the ``[diameter, unused, height]`` layout
+    the MuJoCo backend and the published tool schema use, so a size written for
+    one backend builds the same object on this one instead of reading the unused
+    middle component (often 0) as the height. Missing trailing components take
+    the documented defaults (radius 0.05, height 0.10).
+    """
+    values = list(size or [])
+    if len(values) >= 3:
+        return float(values[0]) / 2.0, float(values[2])
+    radius = float(values[0]) if len(values) >= 1 else 0.05
+    height = float(values[1]) if len(values) >= 2 else 0.10
+    return radius, height
+
+
+def _primitive_size_error(shape: str, size: list[float] | None) -> str | None:
+    """Why ``size`` cannot build ``shape``, naming the component; ``None`` when it can.
+
+    Only the components the shape consumes are checked, after the layout is
+    resolved, so a cylinder's unused middle component may be 0. Every consumed
+    extent must be > 0: a zero or negative one either builds a collider PhysX
+    cannot hold (a zero-height cylinder falls through the ground) or fails deep
+    in USD ("Non-positive determinant ... in rotation matrix" for a flat box).
+    """
+    values = list(size or [])
+    if shape == "box":
+        dims = [(axis, float(values[i]) if len(values) > i else 0.05) for i, axis in enumerate("xyz")]
+        layout = "[x, y, z] full edge lengths"
+    elif shape == "sphere":
+        dims = [("radius", float(values[0]) if values else 0.05)]
+        layout = "[radius]"
+    elif shape in ("cylinder", "capsule"):
+        radius, height = _round_shape_dims(values)
+        dims = [("radius", radius), ("height", height)]
+        layout = "[radius, height], or [diameter, unused, height] as the MuJoCo backend spells it"
+    else:
+        return None
+    bad = [f"{label}={value:g}" for label, value in dims if not value > 0]
+    if not bad:
+        return None
+    return (
+        f"add_object: a {shape} needs every extent > 0, got {', '.join(bad)} from size={values} "
+        f"({shape} size is {layout}, in meters). Nothing was added."
+    )
 
 
 def _physics_scene_path(stage: Any) -> str:
@@ -1283,7 +1333,9 @@ class _ObjectState:
         self.handle = handle
 
 
-class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, IsaacRecordingMixin, SimEngine):
+class IsaacSimulation(
+    IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, IsaacRecordingMixin, IsaacIntrospectionMixin, SimEngine
+):
     """GPU-native simulation backend built on NVIDIA Isaac Sim.
 
     Implements the ``SimEngine`` ABC. Provides photorealistic rendering,
@@ -3430,8 +3482,15 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
 
             * ``box``:      ``[width, height, depth]`` (default ``[0.05, 0.05, 0.05]``).
             * ``sphere``:   ``[radius]`` (default ``[0.05]``).
-            * ``cylinder``: ``[radius, height]`` (default ``[0.05, 0.10]``).
-            * ``capsule``:  ``[radius, height]`` (default ``[0.05, 0.10]``).
+            * ``cylinder``: ``[radius, height]`` (default ``[0.05, 0.10]``), or
+              three components ``[diameter, unused, height]`` - the MuJoCo
+              backend's layout, which the published tool schema documents - so
+              one ``size`` builds the same object on both backends.
+            * ``capsule``:  the same two layouts as ``cylinder``.
+
+            Every extent a shape consumes must be > 0 and is refused by name
+            otherwise: a zero-height cylinder used to fall through the ground
+            under a success envelope.
             * ``mesh``:     ignored -- the asset's own units define the extent
               (the MuJoCo backend's contract for a mesh ``size``; the Newton
               backend consumes it as a scale instead, see #2300). The result
@@ -3723,6 +3782,14 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             size, _serr = coerce_size_vector("add_object", "size", size)
             if _serr is not None:
                 return {"status": "error", "content": [{"text": _serr}]}
+            # The shape-dependent half: which components a shape consumes, and
+            # that each consumed one is a positive extent. A zero reached PhysX
+            # as a zero-height collider (``cylinder size=[0.04, 0, 0.06]``, the
+            # MuJoCo ``[diameter, _, height]`` layout the published tool schema
+            # documents, read here as ``[radius, height=0]``): the body fell
+            # through the ground to z = -19.9 m in 2 s under a success envelope.
+            if shape != "mesh" and (_derr := _primitive_size_error(shape, size)) is not None:
+                return {"status": "error", "content": [{"text": _derr}]}
 
             pos = [0.0, 0.0, 0.5] if position is None else position
             orient = [1.0, 0.0, 0.0, 0.0] if orientation is None else orientation
@@ -4134,15 +4201,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
             cls = FixedSphere if is_static else DynamicSphere
             radius = float(size[0]) if size and len(size) >= 1 else 0.05
             return cls(radius=radius, **common), [radius]
-        if shape == "cylinder":
-            cls = FixedCylinder if is_static else DynamicCylinder
-            radius = float(size[0]) if size and len(size) >= 1 else 0.05
-            height = float(size[1]) if size and len(size) >= 2 else 0.10
-            return cls(radius=radius, height=height, **common), [radius, height]
-        if shape == "capsule":
-            cls = FixedCapsule if is_static else DynamicCapsule
-            radius = float(size[0]) if size and len(size) >= 1 else 0.05
-            height = float(size[1]) if size and len(size) >= 2 else 0.10
+        if shape in ("cylinder", "capsule"):
+            if shape == "cylinder":
+                cls = FixedCylinder if is_static else DynamicCylinder
+            else:
+                cls = FixedCapsule if is_static else DynamicCapsule
+            radius, height = _round_shape_dims(size)
             return cls(radius=radius, height=height, **common), [radius, height]
         # Unreachable: shape was validated by add_object before this call;
         # raise loudly if a future caller bypasses that guard.
@@ -4503,7 +4567,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, Isaac
                 # renders with stale joint reads, `send_action` targets a
                 # view that never integrates -- and every envelope still
                 # reports success, so the eval reads green with a
-                # motionless robot (measured: 5-episode groot evals at
+                # motionless robot (measured: 5-episode GR00T evals at
                 # success_rate=0.00 with byte-similar videos).
                 #
                 # `world.play()` rather than `timeline.play()`: on 6.0.x a

@@ -192,7 +192,7 @@ class TestBringUpWindowIsExclusive:
         thread, _ = _rollout_in_bringup(hw, bus, "A", steps=4)
         before = hw._task_state.task_future
 
-        result = hw.start_task("rollout B", policy_port=5555)
+        result = hw.start_task("rollout B", policy_port=5555, policy_provider="moveit2")
 
         # Refused by the caller's own thread: start_task returns before its
         # executor job runs, so a claim taken inside the job would have reported
@@ -210,7 +210,7 @@ class TestBringUpWindowIsExclusive:
         # this method directly, bypassing run_policy/start_task entirely.
         thread, _ = _rollout_in_bringup(hw, bus, "A", steps=4)
 
-        result = hw._execute_task_sync("rollout B", policy_port=5555)
+        result = hw._execute_task_sync("rollout B", policy_port=5555, policy_provider="moveit2")
 
         assert result["status"] == "error"
         assert "already running" in result["content"][0]["text"].lower()
@@ -311,7 +311,7 @@ class TestTheClaimIsAlwaysReleased:
         hw._executor.shutdown(wait=True)
 
         with pytest.raises(RuntimeError):
-            hw.start_task("rollout B", policy_port=5555)
+            hw.start_task("rollout B", policy_port=5555, policy_provider="moveit2")
 
         # Nothing ran to release the claim, so start_task has to unwind it
         # itself or the robot refuses every task for the rest of its life.

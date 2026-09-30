@@ -382,6 +382,8 @@ _LEROBOT_POLICY_FAMILIES: frozenset[str] = frozenset(
         "pi0fast",
         "smolvla",
         "sac",
+        # GR00T N1.7, lerobot's native port (``lerobot_local`` policy_type).
+        "groot",
     }
 )
 
@@ -405,8 +407,6 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         "mock",
         "random",
         "test",
-        # Gr00tPolicy
-        "groot",
         # LerobotLocalPolicy
         "lerobot_local",
         "lerobot",
@@ -460,6 +460,17 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
 #: and ``model_path`` allowlists to every ``execute`` / ``start`` payload
 #: regardless of which provider it names.
 _DEFAULT_POLICY_TYPES: frozenset[str] = _LEROBOT_POLICY_FAMILIES | _REGISTRY_POLICY_PROVIDERS
+
+#: The actions a peer still answers while its emergency-stop lockout is
+#: engaged (:meth:`Mesh._dispatch` raises :class:`LockoutError` for every
+#: other one). ``status`` and ``ping`` are reads, ``resume`` is the lockout's
+#: own exit and ``stop`` only ever de-energises: a second e-stop arriving
+#: while the lockout is already engaged must still halt a rollout the first
+#: one missed rather than be "rejected". Because a locked peer answers these,
+#: an acknowledgement of any of them proves NOTHING about its lockout; the
+#: dashboard reads this same set to decide what counts as proof of a clear
+#: peer (f033), so the two rules cannot drift apart.
+LOCKOUT_ADMITTED_ACTIONS: frozenset[str] = frozenset({"status", "resume", "stop", "ping"})
 
 #: Action vocabulary accepted by :func:`validate_command`. Mirrors the
 #: dispatch table in :meth:`Mesh._dispatch`. Keep these two sets in sync
@@ -1961,4 +1972,5 @@ __all__ = [
     "sim_call_published_actions",
     "sim_call_published_params",
     "LockoutError",
+    "LOCKOUT_ADMITTED_ACTIONS",
 ]

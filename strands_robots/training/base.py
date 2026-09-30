@@ -6,15 +6,14 @@ model produces actions, ``Trainer`` hides how a model is post-tuned. The
 pipelines differ per provider:
 
 * **LeRobot** - build a ``TrainPipelineConfig``, call
-  ``lerobot.scripts.lerobot_train.train(cfg)``. HF-native checkpoints.
-* **GR00T N1.7** - build a ``FinetuneConfig`` -> ``Config``, call
-  ``gr00t.experiment.experiment.run(config)``.
+  ``lerobot.scripts.lerobot_train.train(cfg)``. HF-native checkpoints. GR00T
+  N1.7 trains here too, as ``policy_type="groot"`` (lerobot's native port).
 * **Cosmos3** - build the SFT ``Config`` via ``load_experiment_from_toml``,
   call ``cosmos_framework.scripts.train.launch(config, args)``, with a DCP
   checkpoint conversion prepare step and a DCP -> safetensors export step.
 * **SageMaker** - submit the same spec as one managed AWS training job.
 
-The first three are *local*: they run in-process and multi-GPU goes through
+The first two are *local*: they run in-process and multi-GPU goes through
 torch's programmatic ``elastic_launch``. SageMaker is pure *transport*: it
 imports no training library and its run outlives the submitting process, which
 is what decides each shape's :meth:`Trainer.train` return contract.
@@ -58,9 +57,9 @@ class TrainSpec:
         base_model: HF model id or local checkpoint path to post-tune from.
         output_dir: Directory for checkpoints, logs and the final artifact.
         embodiment: Embodiment tag / robot id - which state/action projector
-            head the run trains. Required by GR00T. On LeRobot it is read by
-            the policies whose config declares ``embodiment_tag`` (GR00T's
-            native port); every other LeRobot policy takes its state/action
+            head the run trains. On LeRobot it is read by the policies whose
+            config declares ``embodiment_tag`` (GR00T N1.7, where it is
+            required); every other LeRobot policy takes its state/action
             shape from the dataset features and has no such field, so a
             backend MUST refuse the request rather than train the default head
             while reporting success.
@@ -89,10 +88,9 @@ class TrainSpec:
             domain as ``lora_r``.
         lora_target_modules: Target modules, or ``None`` for the policy's
             built-in defaults.
-        tune: Component toggles for backends that expose them (GR00T:
-            ``{"llm", "visual", "projector", "diffusion"} -> bool``, both
-            through Isaac-GR00T's ``--tune_*`` flags and through LeRobot's
-            native ``GrootConfig.tune_*`` fields). A key naming no component,
+        tune: Component toggles for backends that expose them (GR00T N1.7:
+            ``{"llm", "visual", "projector", "diffusion"} -> bool``, through
+            LeRobot's native ``GrootConfig.tune_*`` fields). A key naming no component,
             or a component the policy cannot freeze, MUST be refused: an
             unforwarded toggle trains the config default, which is
             indistinguishable from never having asked.
@@ -104,9 +102,8 @@ class TrainSpec:
             fraction whose ceiling lerobot takes. A backend MUST make the
             reserved episodes produce a validation signal, not merely shrink
             the training set.
-        augmentation: Backend-specific data augmentation (GR00T
-            ``color_jitter_params`` / ``random_rotation_angle``; Cosmos
-            dataset filter dict).
+        augmentation: Backend-specific data augmentation (Cosmos dataset
+            filter dict).
         fps: Dataset control rate, when a backend needs it explicitly.
         extra: Raw passthrough; keys become backend-native flags or overrides
             (lerobot ``--key=value``, Cosmos Hydra ``key.path=value``). A value
@@ -185,8 +182,8 @@ class Trainer(ABC):
 
     Concrete trainers come in two shapes and neither reimplements training. A
     **local** trainer imports the backend package and calls its own training
-    function in-process (LeRobot ``train(cfg)``, GR00T
-    ``experiment.run(config)``, Cosmos ``train.launch(config, args)``), with
+    function in-process (LeRobot ``train(cfg)``, Cosmos
+    ``train.launch(config, args)``), with
     multi-GPU driven by torch's programmatic ``elastic_launch``. A
     **transport** trainer imports no training library: it submits the same
     :class:`TrainSpec` to a managed runner whose image packages a local trainer.
@@ -513,8 +510,8 @@ class Trainer(ABC):
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
 
-        Cosmos converts the base checkpoint to PyTorch DCP; GR00T registers a
-        modality-config ``.py``; LeRobot needs nothing here.
+        Cosmos converts the base checkpoint to PyTorch DCP; LeRobot needs
+        nothing here.
         """
         return None
 
