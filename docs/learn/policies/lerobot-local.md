@@ -11,7 +11,7 @@ pip install 'strands-robots[lerobot]'          # lerobot[feetech,dataset] + psut
 pip install 'strands-robots[smolvla]'          # adds lerobot[smolvla]
 pip install 'strands-robots[molmoact2]'        # adds lerobot[molmoact2]
 pip install 'strands-robots[groot]'            # adds lerobot[groot] (GR00T N1.7)
-pip install 'lerobot[diffusion]'               # diffusion: lerobot's own extra, none of ours installs it; pi0 needs lerobot[pi]
+pip install 'lerobot[diffusion]'               # diffusion: lerobot's own extra, none of ours installs it; pi0: lerobot[pi]
 export STRANDS_TRUST_REMOTE_CODE=1             # required: models load with trust_remote_code=True
 ```
 
@@ -111,7 +111,7 @@ A checkpoint fine-tuned on an SO-101 carries its stats; `embodiment="so101"` the
 
 ## GR00T N1.7 through lerobot
 
-`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` policy type and load here like any checkpoint, with no Isaac-GR00T checkout and no ZMQ service; `embodiment_tag` comes from the checkpoint config.
+`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` policy type and load here like any checkpoint, no Isaac-GR00T checkout, no ZMQ service; `embodiment_tag` comes from the checkpoint config.
 
 ```python
 from strands_robots.policies import create_policy
@@ -120,7 +120,7 @@ policy = create_policy("nvidia/GR00T-N1.7-3B", policy_type="groot", embodiment="
 print(policy.provider_name)
 ```
 
-The 3B model wants a GPU: run `PolicyServer` there and dial it with [`remote`](remote.md).
+The 3B model wants a GPU: run `PolicyServer` there, dialled with [`remote`](remote.md).
 
 ```python title="sketch"
 cfg = {"pretrained_name_or_path": "nvidia/GR00T-N1.7-3B", "policy_type": "groot", "embodiment": "so101"}
