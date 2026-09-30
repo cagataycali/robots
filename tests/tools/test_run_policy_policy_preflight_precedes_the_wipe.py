@@ -214,6 +214,67 @@ class TestThePolicyIsBuiltOnceAndBeforeTheRecording:
         assert result["status"] == "success"  # the fake facade accepts anything
 
 
+class _HistoryKeepingPolicy(MockPolicy):
+    """A policy whose state would carry across episodes unless it is reset (flux3_action, groot, RTC)."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.reset_seeds: list[int | None] = []
+        self.raise_on_reset: Exception | None = None
+
+    def reset(self, seed: int | None = None) -> None:
+        if self.raise_on_reset is not None:
+            raise self.raise_on_reset
+        self.reset_seeds.append(seed)
+        super().reset(seed=seed)
+
+
+class TestTheSharedPolicyStartsEveryEpisodeFresh:
+    """The one built object is handed to every episode, so the tool resets it between them.
+
+    ``PolicyRunner.run`` resets a policy only when a seed was given, and this
+    tool's default is ``seed=None``: without the reset an unseeded recording
+    conditioned episode N+1 on episode N's history while the scene had jumped
+    back to rest, and the drifted actions were what the dataset kept. Mirrors
+    the facade's between-episode reset (``SimEngine.run_policy``).
+    """
+
+    @pytest.fixture
+    def stateful(self, monkeypatch: pytest.MonkeyPatch) -> _HistoryKeepingPolicy:
+        policy = _HistoryKeepingPolicy()
+        monkeypatch.setattr(rp_mod, "_build_policy_before_recording", lambda *a, **k: policy)
+        return policy
+
+    def test_an_unseeded_recording_resets_the_policy_between_episodes(self, stateful) -> None:
+        sim = _OrderedSim()
+        _run_tool(sim, policy_provider="mock", n_episodes=3, n_steps=4, dataset_root=ROOT)
+        assert len(sim.run_policy_calls) == 3
+        assert stateful.reset_seeds == [None, None], "episodes 2 and 3 must start from a reset policy"
+
+    def test_a_seeded_recording_resets_with_the_episodes_seed(self, stateful) -> None:
+        sim = _OrderedSim()
+        _run_tool(sim, policy_provider="mock", n_episodes=3, n_steps=4, seed=10, dataset_root=ROOT)
+        assert stateful.reset_seeds == [11, 12]
+
+    def test_one_episode_needs_no_reset(self, stateful) -> None:
+        _run_tool(_OrderedSim(), policy_provider="mock", n_episodes=1, n_steps=4, dataset_root=ROOT)
+        assert stateful.reset_seeds == []
+
+    def test_a_reset_that_raises_is_logged_and_the_recording_goes_on(self, stateful, caplog) -> None:
+        stateful.raise_on_reset = RuntimeError("no reset today")
+        sim = _OrderedSim()
+        with caplog.at_level("WARNING", logger=rp_mod.logger.name):
+            _run_tool(sim, policy_provider="mock", n_episodes=2, n_steps=4, dataset_root=ROOT)
+        assert len(sim.run_policy_calls) == 2
+        assert any("no reset today" in r.getMessage() and "reset" in r.getMessage() for r in caplog.records)
+
+    def test_the_recording_less_path_resets_nothing_itself(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Without a recording no object is shared; each episode builds its own policy in the facade."""
+        sim = _OrderedSim()
+        _run_tool(sim, policy_provider="mock", n_episodes=2, n_steps=4)
+        assert all("policy_object" not in call for call in sim.run_policy_calls)
+
+
 class TestTheFirstEpisodeErrorReachesTheSummaryLine:
     """An agent reads the first content block; the reason must be in it."""
 

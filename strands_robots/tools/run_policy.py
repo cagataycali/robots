@@ -547,6 +547,23 @@ def run_policy(
     try:
         for ep in range(n_episodes):
             ep_seed = None if seed is None else seed + ep
+            if ep > 0 and "policy_object" in forwarded_policy:
+                # The one built policy serves every episode, and ``PolicyRunner.run``
+                # resets it only when a seed was given: unseeded, a history-keeping
+                # provider (flux3_action, groot, any RTC policy) would condition
+                # episode N+1 on episode N's frames while the scene has jumped
+                # back to rest, and the drifted actions are what the dataset keeps.
+                # Mirrors the facade's between-episode reset (SimEngine.run_policy);
+                # best-effort like every other reset call site.
+                try:
+                    forwarded_policy["policy_object"].reset(seed=ep_seed)
+                except Exception as e:  # noqa: BLE001 - reset is best-effort
+                    logger.warning(
+                        "policy.reset(seed=%s) raised %s before episode %d; continuing without per-episode policy reset",
+                        ep_seed,
+                        e,
+                        ep + 1,
+                    )
             try:
                 ep_video, ep_video_path = _episode_video_config(video, ep, n_episodes)
                 if ep_video_path:
