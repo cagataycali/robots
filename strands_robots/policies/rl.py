@@ -385,8 +385,13 @@ def _expand_vector_observations(observation_dict: dict[str, Any], keys: list[str
     An exported Isaac Lab actor reads one concatenated observation group
     (``policy_obs.<i>``); a caller holding that vector passes it whole. Only a
     key the observation lacks is filled, and only from a 1-D sequence whose
-    length covers every index the actor reads, so a short vector is still
-    reported as missing keys rather than padded.
+    length is exactly the width the actor reads. Any other length is refused:
+    an actor that reads 1,600 values used to accept a 55,296-value image (or
+    100,000 values of anything) by reading its first 1,600, and a 48-value state
+    handed to a 256-input actor was reported as 256 "missing" keys.
+
+    Raises:
+        ValueError: A vector's length differs from the width the actor reads.
     """
     wanted: dict[str, list[int]] = {}
     for key in keys:
@@ -406,6 +411,13 @@ def _expand_vector_observations(observation_dict: dict[str, Any], keys: list[str
             values = [float(v) for v in vector]
         except (TypeError, ValueError):
             continue
-        if max(indices) < len(values):
-            expanded.update({f"{base}.{i}": values[i] for i in indices})
+        width = max(indices) + 1
+        if len(values) != width:
+            raise ValueError(
+                f"observation {base!r} carries {len(values)} values, but the actor reads {width} "
+                f"({base}.0 .. {base}.{width - 1}); a longer vector is not truncated and a shorter one "
+                "is not padded, because either would feed the actor a different observation than the "
+                "one it was trained on"
+            )
+        expanded.update({f"{base}.{i}": values[i] for i in indices})
     return expanded
