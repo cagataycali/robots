@@ -22,7 +22,7 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
   onOpen?: (peerId: string) => void
   onBusyChange?: (peerId: string, running: boolean) => void
 }) {
-  const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin, consent, clearConsent, retryLast } = useTask(peer)
+  const { phase, outcome, running, busy, twinBusy, run, stop, reset, toggleTwin, consent, clearConsent, retryLast } = useTask(peer)
 
   // The sheet opens on request: a refusal must not steal focus from an
   // operator who is watching an arm move.
@@ -182,6 +182,7 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
         disabled={offline}
         onRun={run}
         onStop={stop}
+        onReset={reset}
       />
 
       {/* ambiguous = the command may have reached the arm; '✗ failed' would be a guess with a hand in the workspace behind it (lib/taskOutcome.ts). */}
