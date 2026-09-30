@@ -17,8 +17,8 @@ train_policy(action="train", provider="isaaclab", steps=50, output_dir="runs",
              extra={"task": "Isaac-Cartpole", "num_envs": 4096, "physics": "newton_mjwarp", "timeout_s": 600})
 ```
 
-It returns a `job_id`; `action="status"` reports rewards, `success_rate`, a failure's cause and `checkpoint_dir`; `action="stop"` ends it; `action="play"` records a video; `action="export"` writes what `create_policy("rl", checkpoint_dir=...)` loads. `extra['rl_library']` accepts only `rsl_rl`.
+It returns a `job_id`; `action="status"` reports rewards, `success_rate`, a failure's cause and `checkpoint_dir`; `action="stop"` ends it; `action="play"` records a video; `action="export"` writes what `create_policy("rl", checkpoint_dir=...)` loads. `extra['rl_library']` accepts only `rsl_rl`. Your own task package trains once the operator sets `STRANDS_ISAACLAB_TASK_PACKAGES=module:register_fn` (importable in the Isaac Lab venv).
 
-Measured on one L40S with 4096 envs: Cartpole 291k env steps/s, G1 flat locomotion 110k.
+One L40S, 4096 envs: Cartpole 291k env steps/s, G1 flat locomotion 110k.
 
 Caveats: Isaac Lab 3.0 is an RC; first RTX use compiles shaders (~4 min); PhysX and Newton differ, even in joint order, so export records a `deploy_contract` that `create_policy("rl")` applies by name.

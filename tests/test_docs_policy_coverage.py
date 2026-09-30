@@ -24,23 +24,20 @@ the mkdocs nav (one page per provider). This file ties it to the matrix.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
 from pathlib import Path
 
+from tests._docs_hooks import docs_hook
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OVERVIEW_MD = REPO_ROOT / "docs" / "learn" / "policies" / "index.md"
 POLICIES_JSON = REPO_ROOT / "strands_robots" / "registry" / "policies.json"
-PROVIDERS_HOOK = REPO_ROOT / "docs" / "hooks" / "providers.py"
 
 
 def _rendered_overview() -> str:
     """The page as the build sees it: ``{{providers:*}}`` tokens expanded by the hook."""
-    spec = importlib.util.spec_from_file_location("docs_providers_hook", PROVIDERS_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = docs_hook("providers")
     return module.substitute(OVERVIEW_MD.read_text(encoding="utf-8"), "learn/policies/index.md")
 
 
