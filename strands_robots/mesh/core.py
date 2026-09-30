@@ -32,6 +32,7 @@ from strands_robots.mesh.sensors import SensorLoopsMixin
 from strands_robots.mesh.session import (
     CAMERA_HZ,
     HEARTBEAT_HZ,
+    PEER_TIMEOUT,
     STATE_HZ,
     _is_transport_backend,
     current_session,
@@ -552,8 +553,11 @@ def _peers_that_did_not_stop(responses: list[dict[str, Any]]) -> set[str]:
     are flagged. A response shape this function does not recognise is left out
     rather than guessed at, because a false "did not stop" on the safety path
     trains operators to ignore the warning. Peers that never answered at all are
-    not represented here either -- they are visible as the gap between
-    ``responses_received`` and the known peer count.
+    not represented here either; :meth:`Mesh.emergency_stop` names them as
+    ``peers_silent`` by reconciling the answers against the presence roster.
+    The ``responder_id`` read here is trustworthy because
+    :meth:`Mesh._on_response` only records a reply whose wire source is the
+    session that peer announced itself from.
 
     Args:
         responses: Response envelopes collected by :meth:`Mesh.broadcast`.
@@ -788,6 +792,18 @@ class Mesh(SensorLoopsMixin):
         self._pending: dict[str, threading.Event] = {}
         self._responses: dict[str, list[dict[str, Any]]] = {}
         self._expected_responders: dict[str, str] = {}
+        # peer_id -> (wire zid, monotonic time of the last presence from that
+        # zid). Learned by ``_on_presence`` from the TLS-bound
+        # ``sample.source_info.source_id.zid`` and read by ``_on_response``,
+        # which refuses a reply whose wire source is not the session this
+        # peer_id last announced itself from. The body's ``responder_id`` is a
+        # claim; the wire zid is the identity. A live peer cannot be rebound
+        # by a second session claiming its id; only a peer silent past
+        # ``PEER_TIMEOUT`` may come back on a new session. ``_turn_sources``
+        # remembers, per open turn, which verified identities already
+        # answered so a broadcast accepts one reply per session.
+        self._peer_wire_zids: dict[str, tuple[str, float]] = {}
+        self._turn_sources: dict[str, set[str]] = {}
         # The transport, when it can address ONE peer without a subscription
         # on its side (AWS IoT Core Direct Messaging). Decided once in
         # ``start()``: ``isinstance(session, DirectSender)`` and the
@@ -1555,6 +1571,9 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
+        if not self._bind_peer_wire_zid(peer_id, _extract_sample_source_zid(sample)):
+            return
+
         is_new = update_peer(
             peer_id=peer_id,
             peer_type=str(data.get("robot_type", "robot")),
@@ -1563,6 +1582,55 @@ class Mesh(SensorLoopsMixin):
         )
         if is_new:
             logger.info("[mesh] new peer: %s (%s)", peer_id, data.get("robot_type", "?"))
+
+    def _bind_peer_wire_zid(self, peer_id: str, wire_zid: str | None) -> bool:
+        """Record which Zenoh session *peer_id* announces itself from.
+
+        Returns ``False`` when the presence must be dropped: a second session
+        is claiming the id of a peer that is still alive on its first one.
+        Rebinding on the spot would let any admitted member take over a
+        robot's name on the presence topic and then answer in that name (the
+        response check in :meth:`_on_response` keys on this table), so the
+        first live session wins and the attempt is written to the local audit
+        log. A peer whose last heartbeat from the bound session is older than
+        ``PEER_TIMEOUT`` is treated as gone and may return on a new session,
+        which is what a restarted robot looks like.
+
+        A presence with no wire zid (bridge and IoT transports, or a zenoh
+        older than the floor) binds nothing and clears nothing; that peer's
+        replies are then judged under the both-absent rule.
+        """
+        if wire_zid is None:
+            return True
+        now = time.monotonic()
+        with self._rpc_lock:
+            bound = self._peer_wire_zids.get(peer_id)
+            if bound is not None and bound[0] != wire_zid and now - bound[1] <= PEER_TIMEOUT:
+                conflict = True
+            else:
+                conflict = False
+                self._peer_wire_zids[peer_id] = (wire_zid, now)
+        if conflict:
+            logger.warning(
+                "[mesh] %s: dropped presence for %s -- a second session (%s) claims the id of a peer "
+                "still alive on session %s (possible identity takeover)",
+                self.peer_id,
+                peer_id,
+                wire_zid[:8],
+                bound[0][:8] if bound else "?",
+            )
+            self._audit_local(
+                "presence_identity_conflict",
+                {"peer_id": peer_id, "bound_zid": bound[0] if bound else None, "claimed_zid": wire_zid},
+            )
+            return False
+        return True
+
+    def peer_wire_zid(self, peer_id: str) -> str | None:
+        """The TLS-bound session id *peer_id* last announced itself from, or ``None``."""
+        with self._rpc_lock:
+            bound = self._peer_wire_zids.get(peer_id)
+        return None if bound is None else bound[0]
 
     # State - outgoing
     def _state_loop(self) -> None:
@@ -3214,12 +3282,15 @@ class Mesh(SensorLoopsMixin):
         """Inbound response handler.
 
         Identity, fleet membership, and topic ACL have already been
-        enforced at the Zenoh transport. We additionally apply a
+        enforced at the Zenoh transport. We additionally bind the reply to
+        its wire source: the sample's TLS-bound zid must be the session the
+        claimed ``responder_id`` announced itself from on the presence topic
+        (or both must be absent, on transports that carry no zid). Then a
         point-to-point scope check: a response is accepted only if its
         ``responder_id`` matches the expected target recorded in
         :attr:`_expected_responders` by :meth:`send`. Broadcast turns
-        use the ``BROADCAST_RESPONDER`` sentinel and accept any
-        responder_id -- that is the broadcast contract.
+        use the ``BROADCAST_RESPONDER`` sentinel and accept any verified
+        responder, once per session -- that is the broadcast contract.
 
         Without the responder-id check, an ACL-authorised peer that
         observes a turn_id (a fellow operator) could publish a response
@@ -3261,6 +3332,48 @@ class Mesh(SensorLoopsMixin):
                 {"turn_prefix": turn[:12], "responder_id": responder, "topic_responder": topic_responder},
             )
             return
+        # The wire source is the identity; ``responder_id`` is the claim. The
+        # same three-state rule ``_decode_bound_safety_envelope`` applies to
+        # the safety envelopes: the sample's TLS-bound zid and the session
+        # this responder announced itself from (``_on_presence``) must both be
+        # present and equal, or both absent (bridge and IoT transports carry
+        # no wire zid and bind the topic segment instead). A reply carrying a
+        # wire zid in the name of a peer we never saw announce itself, a
+        # reply from a different session than the one bound to that name,
+        # and a reply with its SourceInfo stripped for a peer we know by
+        # session are all refused, on broadcast turns too: a broadcast
+        # accepts answers from MANY peers, not from an unidentified one.
+        wire_zid = _extract_sample_source_zid(sample)
+        bound_zid = self.peer_wire_zid(responder) if isinstance(responder, str) else None
+        if wire_zid != bound_zid:
+            if bound_zid is None:
+                why = "wire source is a session that never announced this peer id"
+            elif wire_zid is None:
+                why = "wire source absent for a peer known by session (SourceInfo stripped)"
+            else:
+                why = "wire source is not the session bound to this peer id"
+            logger.warning(
+                "[mesh] %s: dropped response on turn %s -- responder_id=%r refused: %s (possible response forgery)",
+                self.peer_id,
+                turn[:12],
+                responder,
+                why,
+            )
+            self._audit_local(
+                "response_hijack_rejected",
+                {
+                    "turn_prefix": turn[:12],
+                    "responder_id": responder,
+                    "wire_zid": wire_zid,
+                    "bound_zid": bound_zid,
+                    "reason": why,
+                },
+            )
+            return
+        # One answer per verified identity per turn. The wire zid is the key
+        # when the transport carries one; the (topic-bound) responder id
+        # otherwise.
+        source_key = f"zid:{wire_zid}" if wire_zid is not None else f"id:{responder}"
         with self._rpc_lock:
             event = self._pending.get(turn)
             if event is None:
@@ -3292,7 +3405,26 @@ class Mesh(SensorLoopsMixin):
                     },
                 )
                 return
-            self._responses.setdefault(turn, []).append(data)
+            answered = self._turn_sources.setdefault(turn, set())
+            if source_key in answered:
+                duplicate = True
+            else:
+                duplicate = False
+                answered.add(source_key)
+                self._responses.setdefault(turn, []).append(data)
+        if duplicate:
+            logger.warning(
+                "[mesh] %s: dropped duplicate response on turn %s from %s (responder_id=%r)",
+                self.peer_id,
+                turn[:12],
+                source_key,
+                responder,
+            )
+            self._audit_local(
+                "response_duplicate_rejected",
+                {"turn_prefix": turn[:12], "responder_id": responder, "source": source_key},
+            )
+            return
         event.set()
 
     # Safety -- inbound estop / resume
@@ -3889,6 +4021,7 @@ class Mesh(SensorLoopsMixin):
                 self._pending.pop(turn, None)
                 self._responses.pop(turn, None)
                 self._expected_responders.pop(turn, None)
+                self._turn_sources.pop(turn, None)
             return {"status": "error", "error": size_problem}
         # One deadline for the whole call: the direct delivery (its
         # confirmation window and socket timeouts) and the wait for the
@@ -3917,6 +4050,7 @@ class Mesh(SensorLoopsMixin):
                 resps = self._responses.pop(turn, [])
                 self._pending.pop(turn, None)
                 self._expected_responders.pop(turn, None)
+                self._turn_sources.pop(turn, None)
         out = resps[0] if resps else {"status": "timeout"}
         if delivery is not None:
             # Only when a direct transport was in play: a Zenoh envelope is
@@ -4053,8 +4187,9 @@ class Mesh(SensorLoopsMixin):
 
         Phase-4 / D1: turn_id is a full 128-bit uuid4 (no truncation).
         Broadcast turns accept responses from any responder by design,
-        so the responder_id check is bypassed (sentinel
-        ``BROADCAST_RESPONDER``).
+        so the expected-target check is bypassed (sentinel
+        ``BROADCAST_RESPONDER``); the wire-source binding and the
+        one-reply-per-session rule in :meth:`_on_response` still apply.
         """
         if not self._running:
             action = cmd.get("action") if isinstance(cmd, dict) else cmd
@@ -4104,6 +4239,7 @@ class Mesh(SensorLoopsMixin):
                 self._pending.pop(turn, None)
                 self._responses.pop(turn, None)
                 self._expected_responders.pop(turn, None)
+                self._turn_sources.pop(turn, None)
             return []
         try:
             self._pace_cmd_publish()
@@ -4121,6 +4257,7 @@ class Mesh(SensorLoopsMixin):
                 resps = self._responses.pop(turn, [])
                 self._pending.pop(turn, None)
                 self._expected_responders.pop(turn, None)
+                self._turn_sources.pop(turn, None)
         return resps
 
     def tell(self, target: str, instruction: str, **kw: Any) -> dict[str, Any]:
@@ -4354,6 +4491,26 @@ class Mesh(SensorLoopsMixin):
                 len(responses),
                 sorted(not_stopped),
             )
+        # A peer on the presence roster that produced no verified answer is
+        # not a stopped peer; it is an unknown. ``_on_response`` only records
+        # replies whose wire source matches the session the peer announced
+        # itself from, so a forged success in a silent robot's name never
+        # reaches this list, and the silence is reported by name rather than
+        # left as a gap between ``responses_received`` and the peer count.
+        answered = {str(r.get("responder_id")) for r in responses if isinstance(r, dict)}
+        silent = sorted(
+            str(p.get("peer_id"))
+            for p in self.peers
+            if p.get("reachable", True) and str(p.get("peer_id")) not in answered
+        )
+        if silent:
+            logger.critical(
+                "[safety] %s: EMERGENCY STOP - %d peer(s) on the roster gave no acknowledgement: %s. "
+                "Treat them as still moving; use a hardware cutoff.",
+                self.peer_id,
+                len(silent),
+                silent,
+            )
         # Wire-level publisher attribution: bind the local TLS-bound zid
         # into both the body (so receivers can verify the body matches
         # ``sample.source_info.source_id.zid``) and the publish path (via
@@ -4367,6 +4524,7 @@ class Mesh(SensorLoopsMixin):
             "t": self._last_estop_ts,
             "responses_received": len(responses),
             "peers_not_stopped": sorted(not_stopped),
+            "peers_silent": silent,
             "lockout_engaged": True,
         }
         if local_zid is not None:
@@ -4379,6 +4537,7 @@ class Mesh(SensorLoopsMixin):
                 "sender_id": self.peer_id,
                 "responses_received": len(responses),
                 "peers_not_stopped": sorted(not_stopped),
+                "peers_silent": silent,
                 "lockout_engaged": True,
             },
         )

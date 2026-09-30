@@ -347,7 +347,7 @@ lerobot = [
     # that accepts `repo_type`, and 0.6.1 is the first release that does
     # (0.6.0's constructor has no such parameter). Flooring here makes the
     # flagship streaming path resolver-guaranteed instead of docs-guaranteed;
-    # `strands_robots.streaming_dataset.BUCKET_STREAMING_MIN_LEROBOT` carries
+    # `strands_robots.utils.BUCKET_STREAMING_MIN_LEROBOT` carries
     # the same version for the runtime guard that protects an environment with
     # a pre-existing older lerobot.
     "lerobot[feetech,dataset]>=0.6.1,<0.7.0",
