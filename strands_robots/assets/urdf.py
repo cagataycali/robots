@@ -524,6 +524,7 @@ def rewrite_urdf(
     Raises:
         UrdfBuildError: a mesh is missing, outside the tree, unconvertible or of
             an unknown format.
+        ValueError: ``allow_outside_tree`` is not a boolean.
     """
     if error := boolean_flag_error(allow_outside_tree, "allow_outside_tree", "rewrite_urdf"):
         raise ValueError(error)
