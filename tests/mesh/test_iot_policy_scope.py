@@ -162,11 +162,11 @@ class TestRobotPolicy:
         assert "${iot:Connection.Thing.ThingName}/safety/event" not in recv_joined
 
     def test_publish_still_scoped_to_own_thing(self):
-        """Sanity: publish remains scoped to the robot's own topics."""
+        """Sanity: publish remains scoped to the robot's own topics and its child peers' (``<thing>__*``)."""
         sids = _statements_by_sid(_ROBOT_POLICY_DOC)
         st = sids["AllowOwnTopics"]
         for r in st["Resource"]:
-            assert "${iot:Connection.Thing.ThingName}/" in r
+            assert "${iot:Connection.Thing.ThingName}/" in r or "${iot:Connection.Thing.ThingName}__*/" in r
 
     def test_no_receive_on_arbitrary_camera(self):
         """A robot must not be able to subscribe to another robot's camera."""

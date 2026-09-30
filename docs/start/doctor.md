@@ -1,16 +1,16 @@
 # Doctor
 
-At the end of this page you can read a `strands-robots doctor` report line by line and know, for each row, what was probed and what to change when it is not `PASS`.
+This page reads a `strands-robots doctor` report line by line: per row, what was probed and what to change when it is not `PASS`.
 
 ```bash
 strands-robots doctor
 ```
 
-`python -m strands_robots doctor` is the same command; `--list` prints the probe names without probing. Every probe is read-only and sub-second, none opens a serial port, only a configured `IoT Direct` makes one HTTPS call, and each returns the verdict the runtime would reach on the same configuration: a `PASS` here never precedes a refusal there.
+`python -m strands_robots doctor` is the same command; `--list` prints the probe names. Every probe is read-only and sub-second, none opens a serial port, only a configured `IoT Direct` or `IoT Child Peers` calls AWS, and each returns the verdict the runtime would reach on the same configuration: a `PASS` here never precedes a refusal there.
 
 ## A report
 
-A macOS laptop with the `sim-mujoco` and `lerobot` extras and no GPU:
+A macOS laptop with the `sim-mujoco` and `lerobot` extras, no GPU:
 
 ```text
 strands-robots doctor
@@ -38,12 +38,13 @@ strands-robots doctor
           - Production?  Point STRANDS_MESH_ACL_FILE at a role-separated ACL (see examples/mesh/mesh_acl_example.json5).
           - Don't need the mesh?  It is OFF by default now -- just drop mesh=True (or set STRANDS_MESH=false).
   SKIP  iot direct: STRANDS_MESH_BACKEND=zenoh (no AWS IoT leg)
+  SKIP  iot child peers: STRANDS_MESH_BACKEND=zenoh (no AWS IoT leg)
   PASS  sim smoke test: Robot('so100') works (13 obs keys)
 
 All checks passed. Ready to use strands-robots.
 ```
 
-Four verdicts. A `FAIL` line carries a `Fix:` line under it and alone makes the exit code 1, which is what makes the command usable in CI. `WARN` means the package works but a path is narrowed, and says which. `SKIP` means the probe does not apply on this host or its extra is not installed.
+Four verdicts. A `FAIL` line carries a `Fix:` line under it and alone makes the exit code 1, so the command works in CI. `WARN` means the package works but a path is narrowed, and says which. `SKIP` means the probe does not apply here or its extra is not installed.
 
 ## The probes
 
@@ -64,12 +65,13 @@ Four verdicts. A `FAIL` line carries a `Fix:` line under it and alone makes the 
 | Device Connect | the edge posture: authenticated transport, an explicit insecure opt-in, or neither | `SKIP` without the extra; `WARN` when `run()` would refuse; `FAIL` when it would be online unencrypted with no caller restriction |
 | Mesh | zenoh is installed and `mesh=True` would start under the configured ACL and TLS posture | `WARN` without zenoh or when it would refuse, listing the choices |
 | IoT Direct | `STRANDS_MESH_BACKEND=iot` or `bridge` only: one HTTPS `SendDirectMessage` to this identity's own reply topic | `SKIP` otherwise or with `STRANDS_MESH_IOT_DIRECT=0`; `FAIL` when the grant, thing name, endpoint or credential is missing; `WARN` on a transient error |
+| IoT Child Peers | `iot` or `bridge` only: the Thing's policy grants `strands/<thing>__*/*`, where its child peers publish | `SKIP` otherwise; `FAIL` with `strands-robots iot reprovision <thing>` when missing; `WARN` when unreadable |
 | Sim Test | `Robot("so100")` builds in sim and returns an observation | `FAIL` with the exception, pointing at `MUJOCO_GL` and the MuJoCo install |
 
-A failed `pip install 'strands-robots[ros2]'` on a Jetson is not a doctor row; it is the aarch64 build, see [ROS 2](../learn/ros2.md#linux-aarch64-jetson).
+A failed `pip install 'strands-robots[ros2]'` on a Jetson is not a doctor row, see [ROS 2](../learn/ros2.md#linux-aarch64-jetson).
 
-The `Mesh` row is the one people meet first: a bare `Robot("so101")` never starts a mesh, so the warning costs nothing until you pass `mesh=True`; [Fleet](../learn/mesh/fleet.md) explains the three postures it lists.
+The `Mesh` row is the one people meet first: a bare `Robot("so101")` never starts a mesh, so the warning costs nothing until `mesh=True`; [Fleet](../learn/mesh/fleet.md) explains the postures.
 
 ## When a fence on these pages fails
 
-Run the doctor first. A `FAIL` on `MuJoCo GL` or `Sim Test` explains a `Robot()` that raises; a `WARN` on `LeRobot` explains a `mode="real"` build with no driver. A clean report and a failing fence is an issue: paste the report in.
+Run the doctor first. A `FAIL` on `MuJoCo GL` or `Sim Test` explains a `Robot()` that raises; a `WARN` on `LeRobot` explains a `mode="real"` build with no driver. A clean report and a failing fence is an issue: attach the report.
