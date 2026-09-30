@@ -3751,7 +3751,7 @@ class Robot(TeleopMixin, AgentTool):
                             "description": (
                                 "Which policy backend runs: one of cosmos3, curobo, flux3_action, kimodo, "
                                 "lerobot_local, microduck, mock, moveit2, protomotions, "
-                                "remote, rl, wbc, wbc_gait. "
+                                "remote, rl, wbc, wbc_gait, wbc_latent. "
                                 "lerobot_local (default) runs a local checkpoint in process and needs "
                                 "pretrained_name_or_path (GR00T N1.7 is policy_type groot there); "
                                 "moveit2 (needs policy_port) and remote dial a server; "

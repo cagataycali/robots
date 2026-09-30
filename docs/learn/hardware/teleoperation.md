@@ -30,7 +30,7 @@ print(result["content"][1]["json"])
 
 `Teleoperator(name, **kwargs)` is the input-device factory, `Robot`'s sibling. It resolves lerobot's `TeleoperatorConfig` registry, so every lerobot teleoperator is available by name: `so101_leader`, `koch_leader`, `gamepad`, `keyboard`, `keyboard_ee`, `phone`, and the bimanual variants. It needs `[lerobot]`.
 
-`TeleopMixin` is the loop, shared by the hardware `Robot` and the MuJoCo simulation, so the same code drives both:
+`TeleopMixin` is the loop, shared by the hardware `Robot`, the native `FeetechDriver` and the MuJoCo simulation:
 
 | call | does |
 |---|---|
