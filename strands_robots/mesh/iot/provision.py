@@ -246,9 +246,13 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             # engaged. Publishing a resume peers will honour additionally needs
             # the HMAC ``_on_safety_resume`` recomputes over
             # ``STRANDS_MESH_OVERRIDE_CODE``.
+            # ``iot:Publish`` only: a fleet stop is an event, not a state
+            # the broker should hand to every robot that subscribes later. A
+            # retained stop, refreshed once a freshness window, kept every
+            # robot that booted or reconnected locked out indefinitely (f013).
             "Sid": "AllowSafetyEstop",
             "Effect": "Allow",
-            "Action": ["iot:Publish", "iot:RetainPublish"],
+            "Action": "iot:Publish",
             "Resource": [
                 "arn:aws:iot:*:*:topic/strands/safety/estop",
                 "arn:aws:iot:*:*:topic/strands/safety/resume",
@@ -382,15 +386,31 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             # require a per-robot policy document, which explodes the
             # policy count linearly with fleet size. This fleet-wildcard
             # scope is deliberate, not an oversight.
+            # ``iot:Publish`` only: a RETAINED command is replayed to a robot
+            # at every subscribe, so a stored ``execute`` ran at every boot
+            # with nobody present (measured live). The robot refuses a
+            # retained command too; this keeps an operator cert from storing
+            # one in the first place.
             "Sid": "OperatorPublishToFleet",
             "Effect": "Allow",
-            "Action": ["iot:Publish", "iot:RetainPublish"],
+            "Action": "iot:Publish",
             "Resource": [
                 "arn:aws:iot:*:*:topic/strands/*/cmd",
                 "arn:aws:iot:*:*:topic/strands/broadcast",
+            ],
+        },
+        {
+            # The two safety commands, ``iot:Publish`` only: a retained stop
+            # or resume is replayed to every robot at subscribe time, which
+            # under a more trusted credential creates the same latch f013
+            # closes for robot certificates. The operator is the role that
+            # clears a fleet lockout; the release was the only half of the
+            # cycle it could not publish.
+            "Sid": "OperatorPublishSafety",
+            "Effect": "Allow",
+            "Action": "iot:Publish",
+            "Resource": [
                 "arn:aws:iot:*:*:topic/strands/safety/estop",
-                # The operator is the role that clears a fleet lockout; the
-                # release was the only half of the cycle it could not publish.
                 "arn:aws:iot:*:*:topic/strands/safety/resume",
             ],
         },

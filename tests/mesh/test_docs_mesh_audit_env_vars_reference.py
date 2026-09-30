@@ -35,18 +35,16 @@ lands. Four properties, plus one keep-the-derivation-honest premise:
 """
 
 import ast
-import importlib.util
 import pathlib
 import re
-import sys
 
 from strands_robots import audit as _audit_module
+from tests._docs_hooks import docs_hook
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "audit.py"
 _PAGE = _ROOT / "docs" / "learn" / "security.md"
 _README = _ROOT / "docs" / "reference" / "configuration.md"  # the generated env-var matrix
-_ENV_VARS_HOOK = _ROOT / "docs" / "hooks" / "env_vars.py"
 
 _PREFIX = "STRANDS_MESH_AUDIT_"
 _KNOWN = frozenset(
@@ -96,13 +94,7 @@ def _rendered_matrix() -> str:
     hand-written one.
     """
     source = _README.read_text(encoding="utf-8")
-    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _ENV_VARS_HOOK)
-    assert spec is not None and spec.loader is not None, _ENV_VARS_HOOK
-    module = sys.modules.get(spec.name)
-    if module is None:
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+    module = docs_hook("env_vars")
     rendered = module.on_page_markdown(source, page=None, config=None, files=None)
     assert rendered != source, "docs/reference/configuration.md carries no {{env_vars}} token for the hook to expand"
     return re.sub(r"</?code>", "`", rendered)
