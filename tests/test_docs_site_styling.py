@@ -22,15 +22,15 @@ together. This module pins the joins that a silent edit would break:
 
 from __future__ import annotations
 
-import importlib.util
 import re
 from pathlib import Path
+
+from tests._docs_hooks import docs_hook
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MKDOCS_YML = REPO_ROOT / "mkdocs.yml"
 DOCS_DIR = REPO_ROOT / "docs"
 STYLESHEET = DOCS_DIR / "stylesheets" / "extra.css"
-ROBOT_PAGES_HOOK = REPO_ROOT / "docs" / "hooks" / "robot_pages.py"
 
 # The stylesheet carries the palette with GitHub code colours, the one-row
 # header, the page head and pager, the landing hero and footer, the 3D viewer
@@ -98,10 +98,7 @@ def _hook_class_lists() -> set[tuple[str, ...]]:
     Covers the catalog cards, every generated robot page and every family page,
     so a chip that only appears on a per-robot page is checked too.
     """
-    spec = importlib.util.spec_from_file_location("docs_robot_pages_hook", ROBOT_PAGES_HOOK)
-    assert spec is not None and spec.loader is not None
-    hook = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(hook)
+    hook = docs_hook("robot_pages")
     html = [hook.cards(None, "")]
     html += [hook.substitute(hook.robot_page(name), "") for name in hook.registry()]
     html += [hook.family_page(category) for category in hook._families_in_order()]
