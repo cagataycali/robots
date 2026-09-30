@@ -358,6 +358,7 @@ def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DIS
     # listing cannot mask the more specific diagnosis, and vice versa.
     asset_gap: tuple[str, str, str, bool, list[str]] | None = None
     hardware_only: tuple[str, str] | None = None
+    urdf_refused: tuple[str, str] | None = None
     try:
         from strands_robots.assets.manager import get_search_paths, is_robot_asset_present
         from strands_robots.registry import get_robot as _get_robot
@@ -378,6 +379,10 @@ def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DIS
                 asset.get("auto_download") is False,
                 [str(path) for path in get_search_paths()],
             )
+        elif entry and not asset and entry.get("source") == "urdf":
+            # A robot_descriptions URDF the loader could not compile; the sweep
+            # recorded why, and that sentence is the whole diagnosis.
+            urdf_refused = (canonical, str(entry.get("refusal") or "the description does not build"))
         elif entry and not asset:
             # Registered, correct, and simply not a simulation robot. The LeRobot
             # type is what the hardware route is keyed on, so it is quoted when
@@ -386,6 +391,7 @@ def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DIS
     except Exception:  # noqa: BLE001 - the diagnosis is best-effort
         asset_gap = None
         hardware_only = None
+        urdf_refused = None
 
     if asset_gap is not None:
         canonical, asset_dir, model_xml, never_downloads, search_paths = asset_gap
@@ -407,6 +413,14 @@ def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DIS
         else:
             msg += f" Fetch it with the download_assets tool (robots='{canonical}')."
         return msg
+
+    if urdf_refused is not None:
+        canonical, refusal = urdf_refused
+        return (
+            f"Robot '{requested}' is a robot_descriptions URDF that does not compile for MuJoCo: {refusal}. "
+            f"The name is correct; pass urdf_path= to supply a model of your own, or use "
+            f"list_robots(mode='sim') to see the robots this backend can spawn."
+        )
 
     if hardware_only is not None:
         canonical, lerobot_type = hardware_only
