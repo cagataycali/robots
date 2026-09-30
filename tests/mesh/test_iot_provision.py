@@ -231,10 +231,11 @@ class TestProvisionRobot:
 
         provision_robot("r", cert_dir=tmp_cert_dir)
 
-        # attach_policy was called with the default (obey-only) robot policy
+        # attach_policy was called with the default (obey-only) robot policy and
+        # the child key space policy every robot certificate carries next to it
         assert fake_iot_client.attach_policy.called
-        attach_kwargs = fake_iot_client.attach_policy.call_args.kwargs
-        assert attach_kwargs["policyName"] == ROBOT_NO_ESTOP_POLICY_NAME
+        attached = [c.kwargs["policyName"] for c in fake_iot_client.attach_policy.call_args_list]
+        assert attached == [ROBOT_NO_ESTOP_POLICY_NAME, "strands-robot-children"]
 
         # attach_thing_principal was called
         assert fake_iot_client.attach_thing_principal.called

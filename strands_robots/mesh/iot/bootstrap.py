@@ -909,28 +909,9 @@ def _grant_iot_invoke_provisioning_hook(lam: Any, hook_arn: str, account: Bootst
         account.skipped.append(PROVISIONING_HOOK_INVOKE_PERMISSION)
 
 
-def _ensure_provisioning_template(
-    iot: Any, iam: Any, account: BootstrappedAccount, *, hook_lambda_arn: str = ""
-) -> str:
-    """Fleet Provisioning template - claim cert → real cert + attach robot policy.
-
-    F-19 / B-13: a ``PreProvisioningHook`` is wired so a leaked claim cert
-    cannot register an arbitrary Thing. ``hook_lambda_arn`` is the ARN of
-    the gating Lambda (see :func:`_ensure_provisioning_hook_lambda`); when
-    supplied it is attached via ``preProvisioningHook`` and AWS IoT calls
-    it before every registration, denying unless the Lambda returns
-    ``{"allowProvisioning": True}``.
-    """
-    name = PROVISIONING_TEMPLATE
-    try:
-        iot.describe_provisioning_template(templateName=name)
-        account.skipped.append(f"iot-prov-template:{name}")
-        return f"arn:aws:iot:{account.region}:{account.account_id}:provisioningtemplate/{name}"
-    except iot.exceptions.ResourceNotFoundException:
-        pass
-
-    role_arn = _ensure_provisioning_role(iam, account)
-    body = {
+def _provisioning_template_body() -> dict[str, Any]:
+    """The Fleet Provisioning template document: Thing, certificate, and the two robot policies."""
+    return {
         "Parameters": {
             "ThingName": {"Type": "String"},
             "SerialNumber": {"Type": "String"},
@@ -965,13 +946,59 @@ def _ensure_provisioning_template(
                 "Type": "AWS::IoT::Policy",
                 "Properties": {"PolicyName": _provision.ROBOT_NO_ESTOP_POLICY_NAME},
             },
+            # The child key space grant every robot certificate carries next
+            # to its robot policy (``provision_robot`` attaches the same pair).
+            "childrenPolicy": {
+                "Type": "AWS::IoT::Policy",
+                "Properties": {"PolicyName": _provision.ROBOT_CHILDREN_POLICY_NAME},
+            },
         },
     }
+
+
+def _ensure_provisioning_template(
+    iot: Any, iam: Any, account: BootstrappedAccount, *, hook_lambda_arn: str = ""
+) -> str:
+    """Fleet Provisioning template - claim cert → real cert + attach robot policy.
+
+    F-19 / B-13: a ``PreProvisioningHook`` is wired so a leaked claim cert
+    cannot register an arbitrary Thing. ``hook_lambda_arn`` is the ARN of
+    the gating Lambda (see :func:`_ensure_provisioning_hook_lambda`); when
+    supplied it is attached via ``preProvisioningHook`` and AWS IoT calls
+    it before every registration, denying unless the Lambda returns
+    ``{"allowProvisioning": True}``.
+    """
+    name = PROVISIONING_TEMPLATE
+    body = _provisioning_template_body()
+    try:
+        existing = iot.describe_provisioning_template(templateName=name)
+    except iot.exceptions.ResourceNotFoundException:
+        existing = None  # expected: created below
+    if existing is not None:
+        arn = f"arn:aws:iot:{account.region}:{account.account_id}:provisioningtemplate/{name}"
+        body_text = existing.get("templateBody") if isinstance(existing, dict) else None
+        if isinstance(body_text, str) and _provision.ROBOT_CHILDREN_POLICY_NAME not in body_text:
+            # A template from before the child key space grant: every device
+            # it registers would carry the robot policy alone and reconnect
+            # on each child heartbeat. A new default version attaches the
+            # pair; devices already registered are repaired by
+            # ``reprovision_thing``.
+            _provision._ensure_policy(iot, _provision.ROBOT_CHILDREN_POLICY_NAME, _provision._ROBOT_CHILDREN_POLICY_DOC)
+            iot.create_provisioning_template_version(
+                templateName=name, templateBody=json.dumps(body), setAsDefault=True
+            )
+            account.created.append(f"iot-prov-template-version:{name}")
+            return arn
+        account.skipped.append(f"iot-prov-template:{name}")
+        return arn
+
+    role_arn = _ensure_provisioning_role(iam, account)
     _provision._ensure_policy(
         iot,
         _provision.ROBOT_NO_ESTOP_POLICY_NAME,
         _provision._robot_policy_doc(allow_estop_publish=False),
     )
+    _provision._ensure_policy(iot, _provision.ROBOT_CHILDREN_POLICY_NAME, _provision._ROBOT_CHILDREN_POLICY_DOC)
     # IAM role propagation can still race with the IoT AssumeRole check the
     # very first time, so retry a few times with backoff before giving up.
     last_exc: Exception | None = None

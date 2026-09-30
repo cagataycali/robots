@@ -9,10 +9,13 @@ granted ``strands/<thing>/*`` alone every child heartbeat reconnected the robot
 (a connect/disconnect cycle about every 150 ms, presence heard once per 30 s,
 nothing above DEBUG in the log). These tests pin the repair on all four sides:
 
-* the robot policy documents (both estop postures) grant the child key space
-  ``strands/${iot:Connection.Thing.ThingName}__*/...`` next to the Thing's own,
-  in every statement the child needs (publish, reply, direct reply, subscribe,
-  receive), and the operator policy needs nothing new;
+* ``strands-robot-children``, attached to every robot certificate next to its
+  robot policy, grants the child key space
+  ``strands/${iot:Connection.Thing.ThingName}__*/...`` in every statement the
+  child needs (publish, reply, direct reply, subscribe, receive); it is a policy
+  of its own because an AWS IoT policy document is capped at 2,048 characters
+  and the robot documents have no room (2,227 and 2,420 with the grants folded
+  in, refused live), and the operator policy needs nothing new;
 * the grant cannot alias another Thing: a policy evaluator that substitutes the
   variable and matches ``*`` the way AWS does shows Thing ``a``'s certificate
   reaching ``strands/a__x/...`` and neither ``strands/b/...`` nor
@@ -44,7 +47,11 @@ from strands_robots import doctor
 from strands_robots.mesh.iot import provision as prov
 from strands_robots.mesh.iot.provision import (
     _OPERATOR_POLICY_DOC,
+    _ROBOT_CHILDREN_POLICY_DOC,
     CHILD_PEER_SEPARATOR,
+    ROBOT_CHILDREN_POLICY_NAME,
+    ROBOT_NO_ESTOP_POLICY_NAME,
+    ROBOT_POLICY_NAME,
     _robot_policy_doc,
     child_key_space_granted,
 )
@@ -68,36 +75,56 @@ def robot_doc(request) -> dict[str, Any]:
     return _robot_policy_doc(allow_estop_publish=request.param)
 
 
-class TestRobotPolicyGrantsTheChildKeySpace:
-    def test_own_topics_publish_covers_the_children(self, robot_doc):
-        resources = _as_list(_stmt(robot_doc, "AllowOwnTopics")["Resource"])
-        assert f"arn:aws:iot:*:*:topic/strands/{THING_VAR}/*" in resources
-        assert f"arn:aws:iot:*:*:topic/strands/{THING_VAR}{CHILD_PEER_SEPARATOR}*/*" in resources
+#: What one certificate carries: its robot policy plus the children policy.
+def _certificate_documents(robot_doc: dict[str, Any]) -> list[dict[str, Any]]:
+    return [robot_doc, _ROBOT_CHILDREN_POLICY_DOC]
 
-    def test_reply_publish_covers_the_children(self, robot_doc):
-        resources = _as_list(_stmt(robot_doc, "AllowResponseToAnyOperator")["Resource"])
-        assert f"arn:aws:iot:*:*:topic/strands/*/response/{THING_VAR}{CHILD_PEER_SEPARATOR}*/*" in resources
 
-    def test_direct_reply_condition_covers_the_children(self, robot_doc):
-        topics = _as_list(_stmt(robot_doc, "AllowDirectResponseToAnyOperator")["Condition"]["StringLike"]["iot:Topic"])
-        assert f"strands/*/response/{CN_VAR}{CHILD_PEER_SEPARATOR}*/*" in topics
+class TestTheChildrenPolicyGrantsTheChildKeySpace:
+    def test_own_topics_publish_covers_the_children(self):
+        st = _stmt(_ROBOT_CHILDREN_POLICY_DOC, "ChildOwnTopics")
+        assert set(_as_list(st["Action"])) == {"iot:Publish", "iot:RetainPublish"}
+        assert _as_list(st["Resource"]) == [f"arn:aws:iot:*:*:topic/strands/{THING_VAR}{CHILD_PEER_SEPARATOR}*/*"]
 
-    def test_subscribe_and_receive_cover_the_children(self, robot_doc):
-        subs = _as_list(_stmt(robot_doc, "AllowOwnSubscriptions")["Resource"])
-        assert f"arn:aws:iot:*:*:topicfilter/strands/{THING_VAR}{CHILD_PEER_SEPARATOR}*/*" in subs
-        recv = _as_list(_stmt(robot_doc, "AllowReceiveScoped")["Resource"])
-        assert f"arn:aws:iot:*:*:topic/strands/{THING_VAR}{CHILD_PEER_SEPARATOR}*/cmd" in recv
-        assert f"arn:aws:iot:*:*:topic/strands/{THING_VAR}{CHILD_PEER_SEPARATOR}*/response/*" in recv
+    def test_reply_publish_covers_the_children(self):
+        st = _stmt(_ROBOT_CHILDREN_POLICY_DOC, "ChildResponseToAnyOperator")
+        assert _as_list(st["Resource"]) == [
+            f"arn:aws:iot:*:*:topic/strands/*/response/{THING_VAR}{CHILD_PEER_SEPARATOR}*/*"
+        ]
 
-    def test_receive_stays_off_the_children_health_and_state(self, robot_doc):
-        # The same asymmetry the Thing's own topics keep: the robot publishes
-        # them, the operator consumes them, the robot never receives its own copy.
-        recv = json.dumps(_stmt(robot_doc, "AllowReceiveScoped")["Resource"])
-        for suffix in ("/state", "/health", "/presence", "/safety/event"):
-            assert f"{THING_VAR}{CHILD_PEER_SEPARATOR}*{suffix}" not in recv
+    def test_direct_reply_condition_covers_the_children(self):
+        st = _stmt(_ROBOT_CHILDREN_POLICY_DOC, "ChildDirectResponseToAnyOperator")
+        assert st["Action"] == "iot:SendDirectMessage" and st["Resource"] == "arn:aws:iot:*:*:client/*"
+        assert st["Condition"]["StringLike"]["iot:Topic"] == f"strands/*/response/{CN_VAR}{CHILD_PEER_SEPARATOR}*/*"
+        assert "Connection.Thing.ThingName" not in json.dumps(st)
 
-    def test_the_shadow_stays_the_things_own(self, robot_doc):
-        assert CHILD_PEER_SEPARATOR not in json.dumps(_stmt(robot_doc, "AllowShadow"))
+    def test_subscribe_and_receive_cover_the_children(self):
+        subs = _as_list(_stmt(_ROBOT_CHILDREN_POLICY_DOC, "ChildSubscriptions")["Resource"])
+        assert subs == [f"arn:aws:iot:*:*:topicfilter/strands/{THING_VAR}{CHILD_PEER_SEPARATOR}*/*"]
+        recv = _as_list(_stmt(_ROBOT_CHILDREN_POLICY_DOC, "ChildReceiveScoped")["Resource"])
+        assert recv == [
+            f"arn:aws:iot:*:*:topic/strands/{THING_VAR}{CHILD_PEER_SEPARATOR}*/cmd",
+            f"arn:aws:iot:*:*:topic/strands/{THING_VAR}{CHILD_PEER_SEPARATOR}*/response/*",
+        ]
+
+    def test_every_resource_is_pinned_to_this_things_children(self):
+        # No statement reaches beyond ``<thing>__``: no bare ``strands/*`` publish,
+        # no shadow, no safety topic.
+        for st in _ROBOT_CHILDREN_POLICY_DOC["Statement"]:
+            text = json.dumps(st)
+            assert st["Effect"] == "Allow"
+            if st["Action"] != "iot:SendDirectMessage":
+                for r in _as_list(st["Resource"]):
+                    assert f"{THING_VAR}{CHILD_PEER_SEPARATOR}*/" in r, r
+            assert "safety" not in text and "shadow" not in text and "broadcast" not in text
+
+    def test_the_robot_documents_are_unchanged_and_within_the_aws_cap(self, robot_doc):
+        # 2,048 characters is AWS IoT's hard limit on a policy document; the
+        # robot documents are left as they were (no new version for the fleet),
+        # and the children policy is well inside it.
+        assert CHILD_PEER_SEPARATOR not in json.dumps(robot_doc)
+        assert len(json.dumps(robot_doc, separators=(",", ":"))) <= 2048
+        assert len(json.dumps(_ROBOT_CHILDREN_POLICY_DOC, separators=(",", ":"))) <= 2048
 
     def test_the_operator_policy_needs_nothing_new(self):
         # ``strands/+/state`` matches ``strands/a__so101/state``: ``__`` is not a
@@ -106,32 +133,41 @@ class TestRobotPolicyGrantsTheChildKeySpace:
         assert CHILD_PEER_SEPARATOR not in json.dumps(_OPERATOR_POLICY_DOC)
         assert "arn:aws:iot:*:*:topicfilter/strands/+/state" in json.dumps(_OPERATOR_POLICY_DOC)
 
-    def test_documents_serialise(self, robot_doc):
-        json.dumps(robot_doc)
+    def test_the_policy_is_named_and_owned(self):
+        assert ROBOT_CHILDREN_POLICY_NAME == "strands-robot-children"
+        assert prov._OWNED_POLICY_DOCUMENTS[ROBOT_CHILDREN_POLICY_NAME]() is _ROBOT_CHILDREN_POLICY_DOC
+        assert prov._ROBOT_POLICY_NAMES == {ROBOT_POLICY_NAME, ROBOT_NO_ESTOP_POLICY_NAME}
 
 
-def _may_publish(doc: dict[str, Any], thing: str, topic: str) -> bool:
-    """AWS IoT's Allow evaluation for ``iot:Publish``: substitute the variable, then ``*`` matches any run."""
-    for st in doc["Statement"]:
-        if st.get("Effect") != "Allow" or "iot:Publish" not in _as_list(st["Action"]):
-            continue
-        for resource in _as_list(st["Resource"]):
-            pattern = resource.replace(THING_VAR, thing)
-            if fnmatch.fnmatchcase(f"arn:aws:iot:us-west-2:1:topic/{topic}", pattern):
-                return True
+def _may_publish(docs: list[dict[str, Any]], thing: str, topic: str) -> bool:
+    """AWS IoT's Allow evaluation for ``iot:Publish`` over every policy on the certificate.
+
+    Substitute the variable, then ``*`` matches any run of characters.
+    """
+    for doc in docs:
+        for st in doc["Statement"]:
+            if st.get("Effect") != "Allow" or "iot:Publish" not in _as_list(st["Action"]):
+                continue
+            for resource in _as_list(st["Resource"]):
+                pattern = resource.replace(THING_VAR, thing)
+                if fnmatch.fnmatchcase(f"arn:aws:iot:us-west-2:1:topic/{topic}", pattern):
+                    return True
     return False
 
 
 class TestTheGrantCannotAliasAnotherThing:
     def test_a_reaches_its_children_and_no_other_thing(self, robot_doc):
-        assert _may_publish(robot_doc, "childfix-a", "strands/childfix-a/state")
-        assert _may_publish(robot_doc, "childfix-a", "strands/childfix-a__so101/state")
-        assert _may_publish(robot_doc, "childfix-a", "strands/childfix-a__so101/camera/front")
-        assert _may_publish(robot_doc, "childfix-a", "strands/childfix-op/response/childfix-a__so101/turn-1")
-        assert not _may_publish(robot_doc, "childfix-a", "strands/childfix-b/state")
-        assert not _may_publish(robot_doc, "childfix-a", "strands/childfix-ax/state")
-        assert not _may_publish(robot_doc, "childfix-a", "strands/childfix-a_so101/state")
-        assert not _may_publish(robot_doc, "childfix-a", "strands/childfix-op/response/childfix-b/turn-1")
+        docs = _certificate_documents(robot_doc)
+        assert _may_publish(docs, "childfix-a", "strands/childfix-a/state")
+        assert _may_publish(docs, "childfix-a", "strands/childfix-a__so101/state")
+        assert _may_publish(docs, "childfix-a", "strands/childfix-a__so101/camera/front/ref")
+        assert _may_publish(docs, "childfix-a", "strands/childfix-op/response/childfix-a__so101/turn-1")
+        assert not _may_publish(docs, "childfix-a", "strands/childfix-b/state")
+        assert not _may_publish(docs, "childfix-a", "strands/childfix-ax/state")
+        assert not _may_publish(docs, "childfix-a", "strands/childfix-a_so101/state")
+        assert not _may_publish(docs, "childfix-a", "strands/childfix-op/response/childfix-b/turn-1")
+        # The robot policy alone is the bug: the child topic is not granted.
+        assert not _may_publish([robot_doc], "childfix-a", "strands/childfix-a__so101/state")
 
     def test_a_thing_name_with_the_separator_is_refused(self):
         with pytest.raises(ValueError, match="child peer separator") as e:
@@ -271,11 +307,22 @@ OLD_DOC = {
 
 
 class TestChildKeySpaceGranted:
-    def test_the_current_document_grants_it(self):
-        iot = _Account({"strands-robot-no-estop": _robot_policy_doc(allow_estop_publish=False)})
+    def test_the_children_policy_grants_it(self):
+        iot = _Account(
+            {
+                "strands-robot-no-estop": _robot_policy_doc(allow_estop_publish=False),
+                "strands-robot-children": _ROBOT_CHILDREN_POLICY_DOC,
+            }
+        )
         granted, detail = child_key_space_granted(iot, "childfix-a")
         assert granted is True
-        assert detail == "strands-robot-no-estop v3 grants strands/childfix-a__*/*"
+        assert detail == "strands-robot-children v3 grants strands/childfix-a__*/*"
+
+    def test_a_robot_policy_alone_is_the_bug(self):
+        iot = _Account({"strands-robot-no-estop": _robot_policy_doc(allow_estop_publish=False)})
+        granted, detail = child_key_space_granted(iot, "childfix-a")
+        assert granted is False
+        assert detail == "strands-robot-no-estop grant strands/childfix-a/* only"
 
     def test_the_document_from_before_the_grant_does_not(self):
         iot = _Account(
@@ -361,11 +408,19 @@ class TestDoctorRow:
         assert "FAIL" in out and "STRANDS_IOT_THING_NAME" in out
 
     def test_passes_on_the_current_policy_in_the_endpoints_region(self, iot_env, monkeypatch):
-        fake = _install_boto3(monkeypatch, _Account({"strands-robot": _robot_policy_doc(allow_estop_publish=True)}))
+        fake = _install_boto3(
+            monkeypatch,
+            _Account(
+                {
+                    "strands-robot": _robot_policy_doc(allow_estop_publish=True),
+                    "strands-robot-children": _ROBOT_CHILDREN_POLICY_DOC,
+                }
+            ),
+        )
         out = doctor.check_iot_child_peers()
-        assert "PASS" in out and "strands-robot v3 grants strands/childfix-a__*/*" in out
+        assert "PASS" in out and "strands-robot-children v3 grants strands/childfix-a__*/*" in out
         assert fake.regions == ["us-west-2"]
-        assert fake.account.calls == ["list_thing_principals", "list_attached_policies", "get_policy"]
+        assert fake.account.calls == ["list_thing_principals", "list_attached_policies", "get_policy", "get_policy"]
 
     def test_fails_with_the_reprovision_command_on_the_old_policy(self, iot_env, monkeypatch):
         _install_boto3(monkeypatch, _Account({"strands-robot-no-estop": OLD_DOC}))
@@ -410,3 +465,70 @@ class TestDoctorRow:
 
         page = (Path(__file__).resolve().parents[2] / "docs" / "start" / "doctor.md").read_text(encoding="utf-8")
         assert "| IoT Child Peers |" in page
+
+
+class TestFleetProvisioningTemplate:
+    """Zero-touch devices get the pair too, and a template from before the grant is re-versioned."""
+
+    @staticmethod
+    def _iot(existing_body: str | None) -> Any:
+        from unittest.mock import MagicMock
+
+        iot = MagicMock()
+        not_found = type("NotFound", (Exception,), {})
+        iot.exceptions.ResourceNotFoundException = not_found
+        if existing_body is None:
+            iot.describe_provisioning_template.side_effect = not_found()
+        else:
+            iot.describe_provisioning_template.return_value = {"templateBody": existing_body}
+        iot.get_policy.side_effect = not_found()
+        iot.create_policy.return_value = {"policyArn": "arn:aws:iot:us-west-2:1:policy/p"}
+        iot.create_provisioning_template.return_value = {"templateArn": "arn:iot:template"}
+        return iot
+
+    def test_a_new_template_attaches_both_policies(self):
+        from unittest.mock import MagicMock, patch
+
+        from strands_robots.mesh.iot import bootstrap
+
+        iot = self._iot(None)
+        with patch("strands_robots.mesh.iot.bootstrap._ensure_provisioning_role", return_value="arn:iam:role"):
+            bootstrap._ensure_provisioning_template(
+                iot, MagicMock(), bootstrap.BootstrappedAccount(region="us-west-2", account_id="1")
+            )
+        body = json.loads(iot.create_provisioning_template.call_args.kwargs["templateBody"])
+        names = {r["Properties"]["PolicyName"] for r in body["Resources"].values() if r["Type"] == "AWS::IoT::Policy"}
+        assert names == {ROBOT_NO_ESTOP_POLICY_NAME, ROBOT_CHILDREN_POLICY_NAME}
+        created = [c.kwargs["policyName"] for c in iot.create_policy.call_args_list]
+        assert created == [ROBOT_NO_ESTOP_POLICY_NAME, ROBOT_CHILDREN_POLICY_NAME]
+
+    def test_a_template_from_before_the_grant_gets_a_new_default_version(self):
+        from unittest.mock import MagicMock
+
+        from strands_robots.mesh.iot import bootstrap
+
+        old_body = json.dumps(
+            {
+                "Resources": {
+                    "policy": {"Type": "AWS::IoT::Policy", "Properties": {"PolicyName": ROBOT_NO_ESTOP_POLICY_NAME}}
+                }
+            }
+        )
+        iot = self._iot(old_body)
+        account = bootstrap.BootstrappedAccount(region="us-west-2", account_id="1")
+        bootstrap._ensure_provisioning_template(iot, MagicMock(), account)
+        kw = iot.create_provisioning_template_version.call_args.kwargs
+        assert kw["setAsDefault"] is True and ROBOT_CHILDREN_POLICY_NAME in kw["templateBody"]
+        assert not iot.create_provisioning_template.called
+        assert f"iot-prov-template-version:{bootstrap.PROVISIONING_TEMPLATE}" in account.created
+
+    def test_a_current_template_is_left_alone(self):
+        from unittest.mock import MagicMock
+
+        from strands_robots.mesh.iot import bootstrap
+
+        iot = self._iot(json.dumps(bootstrap._provisioning_template_body()))
+        account = bootstrap.BootstrappedAccount(region="us-west-2", account_id="1")
+        bootstrap._ensure_provisioning_template(iot, MagicMock(), account)
+        assert not iot.create_provisioning_template_version.called and not iot.create_provisioning_template.called
+        assert f"iot-prov-template:{bootstrap.PROVISIONING_TEMPLATE}" in account.skipped

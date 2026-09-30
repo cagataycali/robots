@@ -8,12 +8,17 @@ IoT answers an ungranted publish by ending the session: every real robot on
 the iot backend lived in a connect/disconnect cycle of about 150 ms, its
 presence reached the fleet once in 30 s, and nothing above DEBUG said why.
 
-- The robot policies now grant `strands/${iot:Connection.Thing.ThingName}__*/*`
-  next to the Thing's own topics in every statement a child needs (publish,
-  reply, direct reply, subscribe, receive on `cmd` and `response`). Verified
-  live: 574 publishes on `strands/childfix-a__so101/state` in 60 s with zero
-  disconnects, while `strands/childfix-b/state` and `strands/childfix-ax/state`
-  from the same certificate each ended the session (reason code 135).
+- A new policy, `strands-robot-children`, grants
+  `strands/${iot:Connection.Thing.ThingName}__*/*` in every statement a child
+  needs (publish, reply, direct reply, subscribe, receive on `cmd` and
+  `response`). `provision_robot` and the Fleet Provisioning template attach it
+  to every robot certificate next to `strands-robot` or
+  `strands-robot-no-estop`; those two documents are unchanged (an AWS IoT
+  policy document is capped at 2,048 characters and they have no room, which
+  AWS refused live). Verified live: 574 publishes on
+  `strands/childfix-a__so101/state` in 60 s with zero disconnects, while
+  `strands/childfix-b/state` and `strands/childfix-ax/state` from the same
+  certificate each ended the session (reason code 135).
 - A Thing name may not contain `__`, the child separator, so a second Thing can
   never sit inside another's key space (`provision_robot`, `provision_operator`
   and `reprovision_thing` refuse it before any AWS call).
@@ -22,11 +27,12 @@ presence reached the fleet once in 30 s, and nothing above DEBUG said why.
 - `strands-robots doctor` has an `IoT Child Peers` row that reads the Thing's
   attached policy from the control plane and fails with the fix when the grant
   is missing.
-- `reprovision_thing` (`strands-robots iot reprovision <thing>`) republishes
-  the module-owned policies as the new default version.
+- `reprovision_thing` (`strands-robots iot reprovision <thing>`) attaches
+  `strands-robot-children` to a robot certificate that predates it and
+  republishes the module-owned policies when their documents changed.
 
-**Existing fleets:** run `strands-robots iot reprovision <thing>` once for any
-Thing (the policy is shared, every certificate it is attached to picks the grant
-up at its next connect), or re-run `provision_robot(<thing>)`, then restart the
-robots. Nothing changes for the operator policy: `strands/+/state` already
-matched `strands/<thing>__so101/state`.
+**Existing fleets:** run `strands-robots iot reprovision <thing>` (or re-run
+`provision_robot(<thing>)`) for each robot Thing, then restart the robot; a
+Fleet Provisioning account re-runs `bootstrap_account()` so the template
+attaches the new policy to future devices. Nothing changes for the operator
+policy: `strands/+/state` already matched `strands/<thing>__so101/state`.

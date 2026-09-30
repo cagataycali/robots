@@ -210,7 +210,7 @@ class TestProvisionRobotHonoursBothPostures:
         assert result.policy_name == provision_mod.ROBOT_POLICY_NAME
         sids = [st.get("Sid") for st in iot.created_policies[result.policy_name]["Statement"]]
         assert ESTOP_SID in sids
-        assert iot.attached_policies == [provision_mod.ROBOT_POLICY_NAME]
+        assert iot.attached_policies == [provision_mod.ROBOT_POLICY_NAME, provision_mod.ROBOT_CHILDREN_POLICY_NAME]
 
     def test_false_withholds_the_estop_publish_statement(self, iot: _RecordingIot, tmp_path: Path) -> None:
         result = _provision(tmp_path, allow_estop_publish=False)
@@ -218,7 +218,10 @@ class TestProvisionRobotHonoursBothPostures:
         assert result.policy_name == provision_mod.ROBOT_NO_ESTOP_POLICY_NAME
         sids = [st.get("Sid") for st in iot.created_policies[result.policy_name]["Statement"]]
         assert ESTOP_SID not in sids
-        assert iot.attached_policies == [provision_mod.ROBOT_NO_ESTOP_POLICY_NAME]
+        assert iot.attached_policies == [
+            provision_mod.ROBOT_NO_ESTOP_POLICY_NAME,
+            provision_mod.ROBOT_CHILDREN_POLICY_NAME,
+        ]
 
     def test_the_default_withholds_the_grant(self, iot: _RecordingIot, tmp_path: Path) -> None:
         """Obeying a stop needs subscribe and receive only; originating one is an opt-in (f010)."""

@@ -44,7 +44,7 @@ strands-robots doctor
 All checks passed. Ready to use strands-robots.
 ```
 
-Four verdicts. A `FAIL` line carries a `Fix:` line under it and alone makes the exit code 1, so the command works in CI. `WARN` means the package works but a path is narrowed, and says which. `SKIP` means the probe does not apply here or its extra is not installed.
+Four verdicts. A `FAIL` line carries a `Fix:` line under it and alone makes the exit code 1, so it works in CI. `WARN` means the package works but a path is narrowed, and says which. `SKIP` means the probe does not apply here or its extra is not installed.
 
 ## The probes
 
@@ -65,7 +65,7 @@ Four verdicts. A `FAIL` line carries a `Fix:` line under it and alone makes the 
 | Device Connect | the edge posture: authenticated transport, an explicit insecure opt-in, or neither | `SKIP` without the extra; `WARN` when `run()` would refuse; `FAIL` when it would be online unencrypted with no caller restriction |
 | Mesh | zenoh is installed and `mesh=True` would start under the configured ACL and TLS posture | `WARN` without zenoh or when it would refuse, listing the choices |
 | IoT Direct | `STRANDS_MESH_BACKEND=iot` or `bridge` only: one HTTPS `SendDirectMessage` to this identity's own reply topic | `SKIP` otherwise or with `STRANDS_MESH_IOT_DIRECT=0`; `FAIL` when the grant, thing name, endpoint or credential is missing; `WARN` on a transient error |
-| IoT Child Peers | `iot` or `bridge` only: the Thing's policy grants `strands/<thing>__*/*`, where its child peers publish | `SKIP` otherwise; `FAIL` with `strands-robots iot reprovision <thing>` when missing; `WARN` when unreadable |
+| IoT Child Peers | `iot` or `bridge` only: the Thing's certificate grants `strands/<thing>__*/*`, where its child peers publish | `SKIP` otherwise; `FAIL` with `strands-robots iot reprovision <thing>` when missing; `WARN` when unreadable |
 | Sim Test | `Robot("so100")` builds in sim and returns an observation | `FAIL` with the exception, pointing at `MUJOCO_GL` and the MuJoCo install |
 
 A failed `pip install 'strands-robots[ros2]'` on a Jetson is not a doctor row, see [ROS 2](../learn/ros2.md#linux-aarch64-jetson).

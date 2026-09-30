@@ -187,21 +187,17 @@ class ProvisionedThing:
 #: publishes presence, state and cameras on ``strands/so101-arm-01__so101/...``
 #: over the SAME MQTT session as its parent: the process holds one transport
 #: (:mod:`strands_robots.mesh.transport.factory`) under the Thing's client id.
-#: The robot policies therefore grant ``strands/<thing>__*/*`` next to
-#: ``strands/<thing>/*``. AWS IoT does not answer an ungranted publish with an
-#: error; it ends the session, so before the child grant every child heartbeat
-#: reconnected the robot (a connect/disconnect cycle about every 150 ms, presence
-#: heard once per 30 s, nothing above DEBUG in the log). A Thing name may not
-#: contain the separator (:func:`_validate_thing_name`): ``a__b`` would be a
-#: second Thing whose whole key space Thing ``a`` may publish into.
+#: Every robot certificate therefore carries :data:`ROBOT_CHILDREN_POLICY_NAME`
+#: next to its robot policy, granting ``strands/<thing>__*/*``. AWS IoT does not
+#: answer an ungranted publish with an error; it ends the session, so before
+#: that grant every child heartbeat reconnected the robot (a connect/disconnect
+#: cycle about every 150 ms, presence heard once per 30 s, nothing above DEBUG
+#: in the log). A Thing name may not contain the separator
+#: (:func:`_validate_thing_name`): ``a__b`` would be a second Thing whose whole
+#: key space Thing ``a`` may publish into.
 CHILD_PEER_SEPARATOR = "__"
 
-# Policy documents - verified working in the spike; the ``__*`` child
-# resources were verified live on 2026-09-29 (a policy variable composes with
-# literal text and ``*`` inside one topic segment: 574 publishes on
-# ``strands/childfix-a__so101/state`` in 60 s with zero disconnects, while
-# ``strands/childfix-b/state`` and ``strands/childfix-ax/state`` each ended the
-# session with reason code 135, not authorized).
+# Policy documents - verified working in the spike
 
 _ROBOT_POLICY_DOC: dict[str, Any] = {
     "Version": "2012-10-17",
@@ -218,9 +214,6 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             "Action": ["iot:Publish", "iot:RetainPublish"],
             "Resource": [
                 "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}/*",
-                # The Thing's child peers (``<thing>__<robot>``, see
-                # ``CHILD_PEER_SEPARATOR``) publish over the Thing's session.
-                "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}__*/*",
             ],
         },
         {
@@ -237,8 +230,6 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             "Action": "iot:Publish",
             "Resource": [
                 "arn:aws:iot:*:*:topic/strands/*/response/${iot:Connection.Thing.ThingName}/*",
-                # A child peer answers under its own id, ``<thing>__<robot>``.
-                "arn:aws:iot:*:*:topic/strands/*/response/${iot:Connection.Thing.ThingName}__*/*",
             ],
         },
         {
@@ -260,10 +251,7 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             "Resource": "arn:aws:iot:*:*:client/*",
             "Condition": {
                 "StringLike": {
-                    "iot:Topic": [
-                        "strands/*/response/${iot:Certificate.Subject.CommonName}/*",
-                        "strands/*/response/${iot:Certificate.Subject.CommonName}__*/*",
-                    ],
+                    "iot:Topic": "strands/*/response/${iot:Certificate.Subject.CommonName}/*",
                 },
             },
         },
@@ -300,7 +288,6 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             "Action": "iot:Subscribe",
             "Resource": [
                 "arn:aws:iot:*:*:topicfilter/strands/${iot:Connection.Thing.ThingName}/*",
-                "arn:aws:iot:*:*:topicfilter/strands/${iot:Connection.Thing.ThingName}__*/*",
                 "arn:aws:iot:*:*:topicfilter/strands/broadcast",
                 "arn:aws:iot:*:*:topicfilter/strands/safety/estop",
                 # ``Mesh.start`` subscribes estop and resume as a PAIR, and
@@ -326,11 +313,6 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             "Resource": [
                 "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}/cmd",
                 "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}/response/*",
-                # The child peers are addressable: an operator commands
-                # ``strands/<thing>__<robot>/cmd`` and the child's replies to
-                # its own turns arrive on ``.../<thing>__<robot>/response/*``.
-                "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}__*/cmd",
-                "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}__*/response/*",
                 "arn:aws:iot:*:*:topic/strands/broadcast",
                 "arn:aws:iot:*:*:topic/strands/safety/estop",
                 # Subscribe without Receive is the deliberate asymmetry
@@ -393,6 +375,72 @@ def _robot_policy_doc(*, allow_estop_publish: bool) -> dict[str, Any]:
     if not allow_estop_publish:
         doc["Statement"] = [st for st in doc["Statement"] if st.get("Sid") != "AllowSafetyEstop"]
     return doc
+
+
+#: The child key space grant, attached to every robot certificate next to
+#: ``strands-robot`` or ``strands-robot-no-estop``. A policy of its own because
+#: an AWS IoT policy document is capped at 2,048 characters and the robot
+#: document has no room left for six more resources (2,227 and 2,420 characters
+#: with them, measured); a certificate may carry ten. The ``__*`` resources
+#: were verified live on 2026-09-29: a policy variable composes with literal
+#: text and ``*`` inside one topic segment (574 publishes on
+#: ``strands/childfix-a__so101/state`` in 60 s with zero disconnects, while
+#: ``strands/childfix-b/state`` and ``strands/childfix-ax/state`` from the same
+#: certificate each ended the session with reason code 135, not authorized).
+ROBOT_CHILDREN_POLICY_NAME = "strands-robot-children"
+
+_ROBOT_CHILDREN_POLICY_DOC: dict[str, Any] = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            # The child peers (``<thing>__<robot>``, see ``CHILD_PEER_SEPARATOR``)
+            # publish presence, state and camera refs over the Thing's session.
+            "Sid": "ChildOwnTopics",
+            "Effect": "Allow",
+            "Action": ["iot:Publish", "iot:RetainPublish"],
+            "Resource": "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}__*/*",
+        },
+        {
+            # A child answers an operator under its own id; the responder
+            # segment stays pinned to this Thing's children.
+            "Sid": "ChildResponseToAnyOperator",
+            "Effect": "Allow",
+            "Action": "iot:Publish",
+            "Resource": "arn:aws:iot:*:*:topic/strands/*/response/${iot:Connection.Thing.ThingName}__*/*",
+        },
+        {
+            # Same reply as a direct message; see ``AllowDirectResponseToAnyOperator``.
+            "Sid": "ChildDirectResponseToAnyOperator",
+            "Effect": "Allow",
+            "Action": "iot:SendDirectMessage",
+            "Resource": "arn:aws:iot:*:*:client/*",
+            "Condition": {
+                "StringLike": {
+                    "iot:Topic": "strands/*/response/${iot:Certificate.Subject.CommonName}__*/*",
+                },
+            },
+        },
+        {
+            "Sid": "ChildSubscriptions",
+            "Effect": "Allow",
+            "Action": "iot:Subscribe",
+            "Resource": "arn:aws:iot:*:*:topicfilter/strands/${iot:Connection.Thing.ThingName}__*/*",
+        },
+        {
+            # The children are addressable: an operator commands
+            # ``strands/<thing>__<robot>/cmd`` and the child's own turns answer
+            # on ``.../<thing>__<robot>/response/*``. Receive stays off the
+            # child's state, health and presence, as it does for the Thing's own.
+            "Sid": "ChildReceiveScoped",
+            "Effect": "Allow",
+            "Action": "iot:Receive",
+            "Resource": [
+                "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}__*/cmd",
+                "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}__*/response/*",
+            ],
+        },
+    ],
+}
 
 
 _OPERATOR_POLICY_DOC: dict[str, Any] = {
@@ -530,8 +578,13 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
 _OWNED_POLICY_DOCUMENTS: dict[str, Callable[[], dict[str, Any]]] = {
     ROBOT_POLICY_NAME: lambda: _robot_policy_doc(allow_estop_publish=True),
     ROBOT_NO_ESTOP_POLICY_NAME: lambda: _robot_policy_doc(allow_estop_publish=False),
+    ROBOT_CHILDREN_POLICY_NAME: lambda: _ROBOT_CHILDREN_POLICY_DOC,
     OPERATOR_POLICY_NAME: lambda: _OPERATOR_POLICY_DOC,
 }
+
+#: The robot policies; a certificate carrying one also carries
+#: :data:`ROBOT_CHILDREN_POLICY_NAME`.
+_ROBOT_POLICY_NAMES = frozenset({ROBOT_POLICY_NAME, ROBOT_NO_ESTOP_POLICY_NAME})
 
 #: The resource segment every robot policy statement grants a Thing's children by.
 _CHILD_KEY_SPACE_MARKER = "${iot:Connection.Thing.ThingName}" + CHILD_PEER_SEPARATOR + "*/"
@@ -789,6 +842,7 @@ def provision_robot(
     policy_name = ROBOT_POLICY_NAME if allow_estop_publish else ROBOT_NO_ESTOP_POLICY_NAME
     policy_doc = _robot_policy_doc(allow_estop_publish=allow_estop_publish)
     policy_arn = _ensure_policy(iot, policy_name, policy_doc)
+    _ensure_policy(iot, ROBOT_CHILDREN_POLICY_NAME, _ROBOT_CHILDREN_POLICY_DOC)
     logger.info("[provision] %s: using policy %s (estop_publish=%s)", thing_name, policy_arn, allow_estop_publish)
 
     # 3. Cert + key
@@ -805,6 +859,7 @@ def provision_robot(
 
     # 4. Attach policy → cert → thing
     iot.attach_policy(policyName=policy_name, target=cert_arn)
+    iot.attach_policy(policyName=ROBOT_CHILDREN_POLICY_NAME, target=cert_arn)
     iot.attach_thing_principal(thingName=thing_name, principal=cert_arn)
     logger.info("[provision] %s: cert %s attached", thing_name, cert_id)
 
@@ -930,12 +985,12 @@ def reprovision_thing(
     follows a renamed Thing.
 
     The policies this module owns (``strands-robot``, ``strands-robot-no-estop``,
-    ``strands-operator``) are re-published on the way when the account's
-    default version differs from the document here, so a fleet provisioned
-    before a grant existed (the child peer key space, for one) picks it up:
-    every certificate the policy is attached to sees the new default at its
-    next connect, and this is the command the doctor's ``IoT Child Peers``
-    row names. A policy of another name is carried over untouched.
+    ``strands-robot-children``, ``strands-operator``) are re-published on the
+    way when the account's default version differs from the document here, and
+    a robot certificate provisioned before the child key space grant existed
+    gets ``strands-robot-children`` attached next to its robot policy, so this
+    is the command the doctor's ``IoT Child Peers`` row names. A policy of
+    another name is carried over untouched.
 
     Deleting the old certificate ends the MQTT session a running robot holds
     on it; restart the robot afterwards. The new files land under *cert_dir*
@@ -979,6 +1034,9 @@ def reprovision_thing(
             "over; use provision_robot or provision_operator instead"
         )
 
+    if _ROBOT_POLICY_NAMES & set(policy_names) and ROBOT_CHILDREN_POLICY_NAME not in policy_names:
+        # A robot provisioned before the child key space had its own policy.
+        policy_names.append(ROBOT_CHILDREN_POLICY_NAME)
     for name in policy_names:
         document = _OWNED_POLICY_DOCUMENTS.get(name)
         if document is not None:

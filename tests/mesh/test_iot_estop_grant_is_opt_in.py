@@ -69,6 +69,11 @@ def iot() -> MagicMock:
     return c
 
 
+def _created_policies(iot: MagicMock) -> dict[str, Any]:
+    """Every policy document ``create_policy`` was given, by name (the robot policy and the children policy)."""
+    return {c.kwargs["policyName"]: json.loads(c.kwargs["policyDocument"]) for c in iot.create_policy.call_args_list}
+
+
 def _provision(iot: MagicMock, tmp_path: Any, **kw: Any) -> Any:
     with (
         patch("strands_robots.mesh.iot.provision._require_boto3", lambda: MagicMock(client=lambda *a, **k: iot)),
@@ -82,16 +87,15 @@ class TestTheDefaultIsObeyOnly:
         result = _provision(iot, tmp_path)
 
         assert result.policy_name == ROBOT_NO_ESTOP_POLICY_NAME
-        assert iot.attach_policy.call_args.kwargs["policyName"] == ROBOT_NO_ESTOP_POLICY_NAME
-        created = iot.create_policy.call_args.kwargs
-        doc = json.loads(created["policyDocument"])
-        assert not (_publish_resources(doc) & _SAFETY_TOPICS), "default robot cert may publish a fleet stop"
+        assert iot.attach_policy.call_args_list[0].kwargs["policyName"] == ROBOT_NO_ESTOP_POLICY_NAME
+        created = _created_policies(iot)[ROBOT_NO_ESTOP_POLICY_NAME]
+        assert not (_publish_resources(created) & _SAFETY_TOPICS), "default robot cert may publish a fleet stop"
 
     def test_a_designated_safety_authority_opts_in(self, iot: MagicMock, tmp_path: Any) -> None:
         result = _provision(iot, tmp_path, allow_estop_publish=True)
 
         assert result.policy_name == ROBOT_POLICY_NAME
-        doc = json.loads(iot.create_policy.call_args.kwargs["policyDocument"])
+        doc = _created_policies(iot)[ROBOT_POLICY_NAME]
         assert _SAFETY_TOPICS <= _publish_resources(doc)
 
     def test_the_default_robot_still_receives_both_safety_topics(self) -> None:
@@ -163,6 +167,6 @@ class TestFleetProvisioningTemplate:
         """A template naming a policy nobody created fails every registration; the robot path created it before."""
         iot = self._create_template()
 
-        assert iot.create_policy.call_args.kwargs["policyName"] == ROBOT_NO_ESTOP_POLICY_NAME
-        doc = json.loads(iot.create_policy.call_args.kwargs["policyDocument"])
-        assert not (_publish_resources(doc) & _SAFETY_TOPICS)
+        created = _created_policies(iot)
+        assert ROBOT_NO_ESTOP_POLICY_NAME in created
+        assert not (_publish_resources(created[ROBOT_NO_ESTOP_POLICY_NAME]) & _SAFETY_TOPICS)

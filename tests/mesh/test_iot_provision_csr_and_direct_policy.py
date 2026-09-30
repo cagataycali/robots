@@ -303,12 +303,8 @@ class TestPolicyGrants:
         assert st["Effect"] == "Allow"
         assert st["Action"] == "iot:SendDirectMessage"
         assert st["Resource"] == "arn:aws:iot:*:*:client/*"
-        topics = st["Condition"]["StringLike"]["iot:Topic"]
-        # The Thing's own reply topic and its child peers' (``<thing>__<robot>``).
-        assert topics == [
-            "strands/*/response/${iot:Certificate.Subject.CommonName}/*",
-            "strands/*/response/${iot:Certificate.Subject.CommonName}__*/*",
-        ]
+        topic = st["Condition"]["StringLike"]["iot:Topic"]
+        assert topic == "strands/*/response/${iot:Certificate.Subject.CommonName}/*"
         assert "Connection.Thing.ThingName" not in json.dumps(st)
 
     def test_robot_publish_reply_grant_is_still_there(self):
@@ -455,17 +451,19 @@ class TestReprovisionThing:
         assert names.index("attach_policy") < names.index("update_certificate")
         # The old certificate is gone, the new one carries the same policy.
         assert iot.principals == ["arn:aws:iot:us-west-2:1:cert/abc"]
-        assert iot.attached["arn:aws:iot:us-west-2:1:cert/abc"] == ["strands-robot"]
+        # A robot certificate from before the child key space grant also gets
+        # ``strands-robot-children`` (the stand-in account has no such policy
+        # yet, so it is created; a real account already holds it).
+        assert iot.attached["arn:aws:iot:us-west-2:1:cert/abc"] == ["strands-robot", "strands-robot-children"]
         assert result.policy_name == "strands-robot" and result.subject_cn == "so101-r"
         assert result.stale_certificates == ()
         # Nothing about the Thing itself is touched; the module-owned policy the
         # Thing carries is republished as a new default version, before the new
         # certificate is issued, so the rotated identity connects under it.
-        assert "create_thing" not in names and "update_thing" not in names and "create_policy" not in names
+        assert "create_thing" not in names and "update_thing" not in names
         assert names.index("create_policy_version") < names.index("create_certificate_from_csr")
         (_, kw), *_ = [c for c in iot.calls if c[0] == "create_policy_version"]
-        assert kw["setAsDefault"] is True
-        assert "${iot:Connection.Thing.ThingName}__*/*" in kw["policyDocument"]
+        assert kw["setAsDefault"] is True and kw["policyName"] == "strands-robot"
 
     def test_a_policy_this_module_does_not_own_is_carried_over_untouched(self, rotating, tmp_path):
         iot = rotating()
