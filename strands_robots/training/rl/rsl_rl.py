@@ -33,6 +33,15 @@ from typing import Any
 ACTIVATIONS: tuple[str, ...] = ("elu", "selu", "relu", "lrelu", "tanh", "sigmoid", "identity")
 
 _LINEAR_WEIGHT_RE = re.compile(r"^mlp\.(\d+)\.weight\Z")
+
+#: The one rsl_rl actor class :func:`convert_checkpoint` rebuilds.
+SUPPORTED_ACTOR_CLASS = "MLPModel"
+#: ``actor_state_dict`` key prefixes an ``MLPModel`` writes. ``distribution``
+#: holds the exploration noise, which a deployed (deterministic) actor drops.
+#: Anything else is a part of the network this reader would silently leave out
+#: - ``cnns.`` (a ``CNNModel``'s image encoder), ``rnn.`` (an ``RNNModel``'s
+#: LSTM/GRU) - so it is refused rather than exported without it.
+_MLP_ACTOR_PREFIXES: frozenset[str] = frozenset({"mlp", "obs_normalizer", "distribution"})
 _MODEL_RE = re.compile(r"^model_(\d+)\.pt\Z")
 
 
@@ -120,6 +129,42 @@ def read_agent_activation(run_dir: str) -> str:
     return match.group(1).lower()
 
 
+def read_agent_actor_class(run_dir: str) -> str | None:
+    """Return the actor ``class_name`` the run's ``params/agent.yaml`` names, if any.
+
+    rsl_rl 5.x records which model class it built (``MLPModel``, ``CNNModel``,
+    ``RNNModel``) under ``actor.class_name``. Older dumps carry none, and a run
+    exported without its ``params/`` directory has no file at all: both return
+    ``None``, and the key-prefix check in :func:`convert_checkpoint` is then the
+    only evidence.
+    """
+    path = Path(run_dir) / "params" / "agent.yaml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    block = re.search(r"^actor:\s*\n((?:[ \t]+.*\n?)*)", text, re.M)
+    match = re.search(r"^[ \t]+class_name:[ \t]*([A-Za-z_][A-Za-z0-9_]*)", block.group(1) if block else "", re.M)
+    return match.group(1) if match else None
+
+
+def _unsupported_actor_reason(model_path: str, actor: dict[str, Any], actor_class: str | None) -> str | None:
+    """Why *actor* cannot be rebuilt as an MLP, or ``None`` when it can."""
+    extra = sorted({key.split(".", 1)[0] for key in actor} - _MLP_ACTOR_PREFIXES)
+    if (actor_class is None or actor_class == SUPPORTED_ACTOR_CLASS) and not extra:
+        return None
+    kind = {"CNNModel": "an image (CNN) encoder", "RNNModel": "a recurrent (LSTM/GRU) memory"}.get(
+        actor_class or "", "layers an MLP does not have"
+    )
+    return (
+        f"{model_path}: the actor is an rsl_rl {actor_class or 'model'} with {kind} "
+        f"(actor_state_dict parts {extra or sorted({k.split('.', 1)[0] for k in actor})}), and this reader "
+        f"rebuilds only {SUPPORTED_ACTOR_CLASS} actors - exporting it would drop those parts and deploy a "
+        "network that computes something else. Run it with the trainer's play() instead, or deploy the "
+        "TorchScript/ONNX policy Isaac Lab's play step exports under the run's exported/ directory."
+    )
+
+
 def latest_model(run_dir: str) -> str | None:
     """Return the ``model_<iteration>.pt`` with the highest iteration in *run_dir*."""
     models = []
@@ -154,8 +199,9 @@ def convert_checkpoint(
         *out_dir*, which ``create_policy("rl", checkpoint_dir=...)`` loads.
 
     Raises:
-        ValueError: If the file is not an rsl_rl actor checkpoint, or its layers
-            do not form one MLP.
+        ValueError: If the file is not an rsl_rl actor checkpoint, its actor is
+            not an ``MLPModel`` (a ``CNNModel`` image encoder or an ``RNNModel``
+            memory would be dropped), or its layers do not form one MLP.
     """
     import torch
 
@@ -166,6 +212,9 @@ def convert_checkpoint(
             f"{model_path} is not an rsl_rl checkpoint with an 'actor_state_dict' (rsl_rl 5.x, as Isaac Lab "
             f"3.0 writes it); keys: {sorted(state) if isinstance(state, dict) else type(state).__name__}"
         )
+    run_dir = os.path.dirname(os.path.abspath(model_path))
+    if reason := _unsupported_actor_reason(model_path, actor, read_agent_actor_class(run_dir)):
+        raise ValueError(reason)
     linear = sorted((int(m.group(1)), key) for key in actor if (m := _LINEAR_WEIGHT_RE.match(key)))
     if not linear:
         raise ValueError(f"{model_path}: actor_state_dict has no mlp.<i>.weight layers")
@@ -176,7 +225,6 @@ def convert_checkpoint(
     num_actor_obs = int(widths[0][1])
     num_actions = int(widths[-1][0])
     hidden_dims = [int(w[0]) for w in widths[:-1]]
-    run_dir = os.path.dirname(os.path.abspath(model_path))
     activation = (activation or read_agent_activation(run_dir)).lower()
     critic = state.get("critic_state_dict") or {}
     critic_in = next((tuple(v.shape)[1] for k, v in critic.items() if k == "mlp.0.weight"), num_actor_obs)
