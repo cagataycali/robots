@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from strands_robots.dashboard import access
 
@@ -34,10 +34,7 @@ async def _voice_error(ws: WebSocket, text: str, *, code: int) -> None:
 @router.websocket("/ws/voice")
 async def voice_socket(ws: WebSocket) -> None:
     """One spoken conversation; strangers are closed with 4401, a missing provider with 4503."""
-    try:
-        access.caller(ws)  # type: ignore[arg-type]
-    except HTTPException:
-        await access.refuse_socket(ws, 4401)
+    if await access.admit_socket(ws) is None:
         return
     await ws.accept()
     try:

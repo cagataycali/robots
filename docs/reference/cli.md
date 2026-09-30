@@ -80,7 +80,7 @@ strands-robots iot teardown so101-arm-01
 
 | verb | effect |
 |---|---|
-| `provision-robot THING [--no-estop-publish]` | Thing, CSR certificate with `CN=THING`, `strands-robot` policy (or `strands-robot-no-estop`) |
+| `provision-robot THING [--estop-publish]` | Thing, CSR certificate with `CN=THING`, `strands-robot-no-estop` policy (or `strands-robot`) |
 | `provision-operator THING` | the same, `strands-operator` policy |
 | `reprovision THING` | rotate the certificate: the new one is active before the old ones are deleted; Thing, attributes and policies stay; a running peer's MQTT session ends, so restart it |
 | `teardown THING` | delete the Thing, its certificates and the local files |

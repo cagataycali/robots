@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any
 
+from strands_robots.mesh.iot import provision as _provision
 from strands_robots.utils import boolean_flag_error
 
 logger = logging.getLogger(__name__)
@@ -952,12 +953,25 @@ def _ensure_provisioning_template(
                     "Status": "Active",
                 },
             },
+            # Every zero-touch device is an ordinary robot: it obeys fleet
+            # stops and cannot originate or clear one. The template used to
+            # name ``strands-robot``, whose ``AllowSafetyEstop`` grant let any
+            # factory-provisioned certificate halt the whole fleet (f010). A
+            # designated safety authority is provisioned through
+            # ``provision_robot(..., allow_estop_publish=True)`` instead. The
+            # policy is created here because the template names it and a
+            # registration against a missing policy fails.
             "policy": {
                 "Type": "AWS::IoT::Policy",
-                "Properties": {"PolicyName": "strands-robot"},
+                "Properties": {"PolicyName": _provision.ROBOT_NO_ESTOP_POLICY_NAME},
             },
         },
     }
+    _provision._ensure_policy(
+        iot,
+        _provision.ROBOT_NO_ESTOP_POLICY_NAME,
+        _provision._robot_policy_doc(allow_estop_publish=False),
+    )
     # IAM role propagation can still race with the IoT AssumeRole check the
     # very first time, so retry a few times with backoff before giving up.
     last_exc: Exception | None = None

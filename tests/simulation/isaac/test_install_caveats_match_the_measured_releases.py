@@ -43,3 +43,16 @@ def test_the_verified_releases_are_declared_and_documented() -> None:
     doc = _DOC.read_text(encoding="utf-8")
     for version in _install.ISAAC_SIM_VERIFIED_PIP_VERSIONS:
         assert version in doc
+
+
+def test_the_lerobot_numpy_conflict_is_named_and_documented() -> None:
+    """lerobot 0.6 needs numpy<2.3, isaacsim-kernel pins numpy==2.3.1.
+
+    uv refuses the pair; pip downgrades numpy to 2.2.6, which Isaac Sim 6.1 +
+    lerobot 0.6.1 run the GPU recording suite on (7/7, L40S).
+    """
+    caveat = _install.ISAAC_SIM_LEROBOT_CAVEAT
+    assert "numpy<2.3" in caveat and "numpy==2.3.1" in caveat
+    assert "AFTER Isaac Sim" in caveat
+    doc = _DOC.read_text(encoding="utf-8")
+    assert "`lerobot` (recording) needs `numpy<2.3`" in doc

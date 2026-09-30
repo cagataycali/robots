@@ -38,9 +38,12 @@ def _parser() -> argparse.ArgumentParser:
         p.add_argument("--cert-dir", default=None, help="where the PEM files live (default ~/.strands_robots/iot)")
         if verb == "provision-robot":
             p.add_argument(
-                "--no-estop-publish",
+                "--estop-publish",
                 action="store_true",
-                help="attach the strands-robot-no-estop policy (this robot may not originate a fleet stop)",
+                help=(
+                    "attach the strands-robot policy: this robot may ORIGINATE and clear a fleet-wide stop. "
+                    "Only for a designated safety authority; the default strands-robot-no-estop obeys stops"
+                ),
             )
     return parser
 
@@ -60,7 +63,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.thing_name,
                 region=args.region,
                 cert_dir=args.cert_dir,
-                allow_estop_publish=not args.no_estop_publish,
+                allow_estop_publish=bool(args.estop_publish),
             )
         elif args.verb == "provision-operator":
             result = prov.provision_operator(args.thing_name, region=args.region, cert_dir=args.cert_dir)
