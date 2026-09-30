@@ -12,7 +12,7 @@ pip install 'strands-robots[sim-newton]'   # newton 1.5, warp-lang, mujoco 3.11,
 
 ## What it is
 
-`NewtonSimEngine` (`strands_robots/simulation/newton/simulation.py`) implements `SimEngine` on newton-physics/newton, NVIDIA Warp plus MuJoCo-Warp. It ingests the same MJCF assets the MuJoCo backend uses, builds a GPU model, and steps it with one of Newton's rigid-body solvers. Rendering is headless through Newton's ray-traced `SensorTiledCamera`, so no display server is involved. Policy orchestration (`run_policy`, `eval_policy`, `replay_episode`, recording in `newton/recording.py`) is inherited from the base class.
+`NewtonSimEngine` (`strands_robots/simulation/newton/simulation.py`) implements `SimEngine` on newton-physics/newton, NVIDIA Warp plus MuJoCo-Warp. It ingests the same MJCF assets the MuJoCo backend uses, builds a GPU model, and steps it with one of Newton's rigid-body solvers. Rendering is headless through Newton's ray-traced `SensorTiledCamera`. Policy orchestration (`run_policy`, `eval_policy`, `replay_episode`, recording in `newton/recording.py`) is inherited from the base class.
 
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
@@ -48,4 +48,4 @@ sim.destroy()
 
 - NVIDIA GPU and CUDA-capable Warp. There is no CPU device for the articulated solvers at useful speed.
 - Pinned to `mujoco>=3.11,<3.12` and `mujoco-warp` of the same series, while `[sim-mujoco]` allows any 3.5+. Install `[sim-newton]` in its own environment if you also want the newest MuJoCo release.
-- Rendering is ray-traced and tiled; per-frame cost is higher than MuJoCo's rasteriser, per-batch cost lower.
+- Rendering is ray-traced and tiled: per-frame cost above MuJoCo's rasteriser, per-batch cost below.
