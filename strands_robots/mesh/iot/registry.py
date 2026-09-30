@@ -23,6 +23,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from strands_robots.mesh.security import as_wire_timestamp
 from strands_robots.utils import refusal_str
 
 logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ def _thing_row(raw: dict[str, Any], connectivity: dict[str, Any] | None) -> Regi
         connected = connectivity.get("connected")
         if isinstance(connected, bool):
             verdict = "connected" if connected else "disconnected"
-        stamp = connectivity.get("timestamp")
+        stamp = as_wire_timestamp(connectivity.get("timestamp"))
         if isinstance(stamp, (int, float)) and not isinstance(stamp, bool) and stamp > 0:
             # The index reports milliseconds.
             last_seen = float(stamp) / 1000.0

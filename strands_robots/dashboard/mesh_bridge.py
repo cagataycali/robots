@@ -22,7 +22,7 @@ from strands_robots.dashboard import safety_state
 from strands_robots.mesh import security as _security
 from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_bytes_cap
 from strands_robots.mesh.transport.base import SAMPLE_LEGS, sample_leg
-from strands_robots.utils import finite_number_error, refusal_repr
+from strands_robots.utils import finite_number_error, refusal_repr, refusal_str
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +271,78 @@ FLEET_SUBSCRIPTIONS: tuple[str, ...] = (
     "strands/safety/estop",
     "strands/safety/resume",
 )
+
+#: Budget for resolving one camera S3 reference: the presigned GET must answer
+#: within this many seconds or the reference is dropped and the next one tried.
+CAMERA_REF_TIMEOUT_S = 3.0
+#: A camera frame fetched through a reference may not exceed this many bytes;
+#: a 640x480 JPEG is 30 to 80 KB, so the cap only bites on something that is not a frame.
+CAMERA_REF_MAX_BYTES = 8 * 1024 * 1024
+#: The only host suffix a camera reference may point at: S3 presigned URLs
+#: (:mod:`~strands_robots.mesh.iot.camera_offload`) live on ``*.amazonaws.com``.
+CAMERA_REF_HOST_SUFFIX = ".amazonaws.com"
+
+
+class CameraRefError(RuntimeError):
+    """A camera reference could not be resolved into a frame (message is the reason)."""
+
+
+def camera_ref_url_error(url: Any) -> str | None:
+    """Why *url* may not be fetched as a camera reference, or ``None`` when it may.
+
+    The URL arrives in a JSON body any mesh publisher can type; the bridge
+    fetches it from inside the operator's network with the operator's egress.
+    Only ``https`` on an S3 host is a camera frame; anything else (plain http,
+    a file URL, a link-local metadata address, a look-alike host) is refused.
+    """
+    from urllib.parse import urlsplit
+
+    if not isinstance(url, str) or not url:
+        return "camera reference has no url"
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "camera reference url does not parse"
+    if parts.scheme != "https":
+        return f"camera reference scheme is {refusal_str(parts.scheme)}, not https"
+    host = (parts.hostname or "").lower()
+    if not host.endswith(CAMERA_REF_HOST_SUFFIX):
+        return f"camera reference host {refusal_str(host)} is not an S3 host"
+    return None
+
+
+def _urlopen(url: str, timeout: float) -> Any:
+    """``urllib.request.urlopen`` behind a name a test can replace."""
+    from urllib.request import Request, urlopen
+
+    return urlopen(Request(url, method="GET"), timeout=timeout)  # noqa: S310 - scheme and host were checked by camera_ref_url_error
+
+
+def fetch_camera_ref(url: str, *, timeout: float, max_bytes: int) -> bytes:
+    """GET a presigned camera frame within *timeout* seconds and *max_bytes*.
+
+    Raises:
+        CameraRefError: The request failed, or the body exceeds *max_bytes*.
+    """
+    try:
+        with _urlopen(url, timeout) as response:
+            body = response.read(max_bytes + 1)
+    except Exception as exc:  # noqa: BLE001 - urllib raises URLError, HTTPError, socket.timeout, ssl errors
+        raise CameraRefError(f"camera reference fetch failed: {type(exc).__name__}") from exc
+    if len(body) > max_bytes:
+        raise CameraRefError(f"camera reference body exceeds the {max_bytes} byte frame cap")
+    return cast(bytes, body)
+
+
+def _latency_ms(published_at: Any, now: float) -> int | None:
+    """Milliseconds between the publisher's clock and *now*, or ``None`` when *t* is not usable."""
+    if isinstance(published_at, bool) or not isinstance(published_at, (int, float)):
+        return None
+    delta = now - float(published_at)
+    if delta != delta or delta < 0 or delta > 86_400:
+        return None
+    return int(delta * 1000)
+
 
 #: ``strands/<peer>/<topic>...``: the ``<peer>`` segment of a wildcard-subscribed peer topic.
 #: The peer segment is the shape ``init_mesh`` accepts for a peer id, so a ``*`` from a
@@ -611,6 +683,9 @@ class MeshBridge:
         # Latest camera frames: (peer_id, cam) -> {"t": float, "jpeg": bytes, "shape": [...]}
         self.frames: dict[tuple[str, str], dict[str, Any]] = {}
         self._frames_lock = threading.Lock()
+        # Camera S3 references being fetched right now, one slot per (peer_id, cam).
+        self._ref_inflight: set[tuple[str, str]] = set()
+        self._ref_pool: Any = ThreadPoolExecutor(max_workers=2, thread_name_prefix="camera-ref")
 
         # Async fan-out. Subscribers get JSON-able event dicts.
         self._queues: set[asyncio.Queue] = set()
@@ -1013,31 +1088,87 @@ class MeshBridge:
         if peer_id is None:
             return
         cam = data.get("cam")
-        encoded = data.get("data")
-        if not (isinstance(cam, str) and isinstance(encoded, str)):
+        if not isinstance(cam, str):
             return
         if self._announced(peer_id, "camera") is None:
             return
-        import base64
+        encoded = data.get("data")
+        if isinstance(encoded, str):
+            import base64
 
-        try:
-            raw: bytes | None = base64.b64decode(encoded)
-        except Exception:
+            try:
+                raw: bytes | None = base64.b64decode(encoded)
+            except Exception:
+                return
+            self._file_frame(peer_id, cam, raw, data, via="inline")
             return
+        # The S3 reference form (camera_offload): the frame sits behind a presigned
+        # URL and is fetched here, off the transport thread, never by the browser.
+        if "presigned_url" not in data:
+            return
+        url = data.get("presigned_url")
+        if camera_ref_url_error(url) is not None:
+            return
+        slot = (peer_id, cam)
+        with self._frames_lock:
+            if slot in self._ref_inflight:
+                return
+            self._ref_inflight.add(slot)
+        try:
+            self._ref_pool.submit(self._resolve_camera_ref, peer_id, cam, url, dict(data))
+        except Exception:  # noqa: BLE001 - a pool shut down at exit; the slot must not stay taken
+            with self._frames_lock:
+                self._ref_inflight.discard(slot)
+
+    def _resolve_camera_ref(self, peer_id: str, cam: str, url: str, data: dict[str, Any]) -> None:
+        """Fetch one camera reference and file it like an inline frame (runs on the ref pool)."""
+        try:
+            try:
+                raw: bytes | None = fetch_camera_ref(url, timeout=CAMERA_REF_TIMEOUT_S, max_bytes=CAMERA_REF_MAX_BYTES)
+                error: str | None = None
+            except CameraRefError as exc:
+                raw, error = None, str(exc)
+            self._file_frame(peer_id, cam, raw, data, via="s3", error=error)
+        finally:
+            with self._frames_lock:
+                self._ref_inflight.discard((peer_id, cam))
+
+    def _file_frame(
+        self,
+        peer_id: str,
+        cam: str,
+        raw: bytes | None,
+        data: Mapping[str, Any],
+        *,
+        via: str,
+        error: str | None = None,
+    ) -> None:
+        """Store a decoded frame for *cam* on *peer_id* and tell the UI a frame arrived.
+
+        *data* is the publisher's body; only its ``t``, ``shape`` and ``encoding``
+        are copied out, so a presigned URL or an S3 URI in a reference body stays
+        in this process. A fetch that failed (``raw`` is ``None`` with *error*)
+        keeps the last good frame and records the reason on the camera meta.
+        """
+        now = time.time()
         meta: dict[str, Any] = {
             "t": data.get("t"),
             "shape": data.get("shape"),
             "encoding": data.get("encoding"),
+            "via": via,
+            "latency_ms": _latency_ms(data.get("t"), now),
         }
-        # A peer may publish raw pixel bytes instead of JPEG.
-        if str(meta["encoding"] or "jpeg").lower() not in ("jpeg", "jpg"):
-            raw, error = _raw_to_jpeg(cast(bytes, raw), meta.get("shape"))
-            meta["converted"] = error is None
-            if error:
-                meta["error"] = error
+        if raw is not None:
+            # A peer may publish raw pixel bytes instead of JPEG.
+            if str(meta["encoding"] or "jpeg").lower() not in ("jpeg", "jpg"):
+                raw, error = _raw_to_jpeg(raw, meta.get("shape"))
+                meta["converted"] = error is None
+        if error:
+            meta["error"] = error
         meta["displayable"] = raw is not None
-        with self._frames_lock:
-            self.frames[(peer_id, cam)] = {"jpeg": raw, **meta}
+        if raw is not None:
+            with self._frames_lock:
+                self.frames[(peer_id, cam)] = {"jpeg": raw, **meta}
         entry = self._touch_peer(peer_id)
         cams = entry.setdefault("cameras", {})
         cams[cam] = meta
