@@ -16,8 +16,11 @@ Two kinds of route feed the recorder on the MuJoCo backend:
   time - which makes ``set_joint_positions(hold=True)`` + ``step`` a scripted
   demonstration.
 
-``teleoperate`` and ``replay_episode`` take no hook and cannot record however
-they are called, so they are the only loops the denial clause may name. The
+* ``teleoperate``, which steps the world one control period per frame through
+  ``step``.
+
+``replay_episode`` takes no hook and cannot record however it is called, so it is
+the only loop the denial clause may name. The
 roster is derived from the code rather than spelled here, so a rollout added
 later fails this until the advice is updated.
 """
@@ -41,8 +44,8 @@ from strands_robots.simulation.mujoco import recording  # noqa: E402
 # by ``describe()`` rather than the enum, so it is graded on naming alone.
 DIALABLE_ROUTES = frozenset({"run_policy", "start_policy", "step"})
 ROLLOUTS = frozenset({"run_policy", "start_policy", "run_multi_policy"})
-# The loops that take no on_frame hook, so nothing a caller does makes them record.
-CANNOT_RECORD = ("teleoperate", "replay_episode")
+# The loop that takes no on_frame hook and does not step, so nothing makes it record.
+CANNOT_RECORD = ("replay_episode",)
 
 _DENIAL_MARKERS = ("cannot feed", "cannot fill", "do not feed", "does not feed", "never feed", "no such hook")
 
@@ -140,7 +143,8 @@ class TestTheAdviceNamesEveryRouteThatCaptures:
         clause = _denial_clause(_advice())
         for loop in CANNOT_RECORD:
             assert _names(clause, loop), f"{loop} genuinely cannot record and is worth naming: {clause!r}"
-        for route in ("step", "set_joint_positions", *sorted(ROLLOUTS)):
+        assert _names(_advice(), "teleoperate"), "teleoperate records through step"
+        for route in ("step", "set_joint_positions", "teleoperate", *sorted(ROLLOUTS)):
             assert not _names(clause, route), f"{route} fills a recording but is denied: {clause!r}"
 
     def test_every_route_the_advice_names_is_a_dialable_action(self) -> None:
