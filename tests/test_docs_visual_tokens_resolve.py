@@ -18,20 +18,13 @@ import json
 import sys
 from pathlib import Path
 
+from tests._docs_hooks import docs_hook
+
 _REPO = Path(__file__).resolve().parents[1]
 _DOCS = _REPO / "docs"
-_HOOK = _DOCS / "hooks" / "visuals.py"
 _SCENE_TOOL = _DOCS / "drawings" / "_tools" / "scene.py"
 _SCENES = _DOCS / "drawings" / "scenes"
 _SVGS = _DOCS / "assets" / "drawings"
-
-
-def _hook():  # noqa: ANN202
-    spec = importlib.util.spec_from_file_location("docs_visuals_hook", _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _pages() -> list[Path]:
@@ -39,7 +32,7 @@ def _pages() -> list[Path]:
 
 
 def _references() -> set[tuple[str, str]]:
-    hook = _hook()
+    hook = docs_hook("visuals")
     refs: set[tuple[str, str]] = set()
     for page in _pages():
         refs |= hook.referenced_ids(page.read_text(encoding="utf-8"))
@@ -56,7 +49,7 @@ def _renderer():  # noqa: ANN202
 
 
 def test_every_visual_token_resolves_to_committed_files() -> None:
-    hook = _hook()
+    hook = docs_hook("visuals")
     missing = []
     for kind, ident in sorted(_references()):
         out = hook.drawing_html(ident, "") if kind == "drawing" else hook.sim_html(ident, None, "")
@@ -129,7 +122,7 @@ def test_every_committed_sim_frame_is_placed_on_a_page() -> None:
 
 
 def test_the_hook_emits_lazy_images_for_both_schemes() -> None:
-    hook = _hook()
+    hook = docs_hook("visuals")
     ident = next((i for k, i in _references() if k == "drawing"), None)
     if ident is None:
         return
