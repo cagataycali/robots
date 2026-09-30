@@ -449,7 +449,7 @@ def _fetch_lfs_objects(clone_dir: Path, repo: str, root: Path, *, timeout: int =
         try:
             with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 - fixed https host
                 data = resp.read(size + 1)
-        except (urllib.error.URLError, OSError) as exc:
+        except OSError as exc:  # URLError (and HTTPError) are OSErrors; a timeout is one too
             return f"{rel}: {exc}"
         if len(data) != size or hashlib.sha256(data).hexdigest() != oid:
             return f"{rel}: the fetched object does not match its pointer (size or sha256)"
