@@ -48,8 +48,8 @@ class TestTheDescription:
 
     def test_names_who_needs_a_port_and_who_does_not(self, spec) -> None:
         text = _description(spec)
-        assert "default provider groot also needs policy_port" in text
-        assert "mock and lerobot_local build in process with no server" in text
+        assert "default provider lerobot_local builds in process and needs pretrained_name_or_path" in text
+        assert "moveit2 dials a server so it needs policy_port" in text
 
     def test_says_mock_ignores_the_instruction(self, spec) -> None:
         assert "mock ignores the instruction" in _description(spec)
@@ -59,10 +59,11 @@ class TestTheDescription:
 
     def test_provider_parameter_carries_the_same_facts(self, spec) -> None:
         prop = spec["inputSchema"]["json"]["properties"]["policy_provider"]
-        assert "groot (default, needs policy_port)" in prop["description"]
-        assert "needs pretrained_name_or_path" in prop["description"]
+        assert "lerobot_local (default) runs a local checkpoint in process and needs" in prop["description"]
+        assert "pretrained_name_or_path" in prop["description"]
+        assert "moveit2 (needs policy_port)" in prop["description"]
         assert "ignores the instruction" in prop["description"]
-        assert prop["default"] == "groot"
+        assert prop["default"] == "lerobot_local"
 
 
 class TestItNamesWhatEachProviderItMentionsStillNeeds:
@@ -92,7 +93,7 @@ class TestItNamesWhatEachProviderItMentionsStillNeeds:
 
     def test_it_mentions_the_default_and_an_in_process_alternative(self, spec) -> None:
         mentioned = self._mentioned(_description(spec))
-        assert {"groot", "mock", "lerobot_local"} <= mentioned, mentioned
+        assert {"moveit2", "mock", "lerobot_local"} <= mentioned, mentioned
 
     def test_every_mentioned_provider_has_its_requirements_named(self, spec) -> None:
         text = _description(spec)
@@ -104,6 +105,6 @@ class TestItNamesWhatEachProviderItMentionsStillNeeds:
                 graded += 1
         assert graded, "no requirement was graded - the registry declared none"
 
-    def test_only_groot_and_moveit2_ask_for_a_port(self) -> None:
+    def test_only_moveit2_asks_for_a_port(self) -> None:
         needs_port = {n for n in list_policy_providers() if "port" in self._requires(n)}
-        assert needs_port == {"groot", "moveit2"}, needs_port
+        assert needs_port == {"moveit2"}, needs_port

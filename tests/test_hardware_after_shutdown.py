@@ -339,7 +339,7 @@ class TestAHealthyRolloutIsUnaffected:
         rollout is joined before the fixture tears down. With the real build the
         cell raced the fixture's ``cleanup()`` against its own bring-up: when the
         teardown won, the stage gate stopped the task in 0.06 s; when the worker
-        won, it built a ``Gr00tPolicy`` that dialed ``tcp://localhost:5555`` for
+        won, it built a ``MoveIt2Policy`` that dialed ``tcp://localhost:5555`` for
         a server no test provides, and ``executor.shutdown(wait=True)`` waited
         out the client's 15 s ``reset`` budget (measured at 15.0 s on one CI
         run). A rollout joined here has no race to lose, opens no socket, and
@@ -352,7 +352,7 @@ class TestAHealthyRolloutIsUnaffected:
 
         monkeypatch.setattr(hw, "_get_policy", _counting_policy)
 
-        result = hw.start_task("healthy", policy_port=5555, duration=0.05)
+        result = hw.start_task("healthy", policy_port=5555, policy_provider="moveit2", duration=0.05)
 
         assert result["status"] == "success"
         assert "Task started" in _text(result)
@@ -463,7 +463,7 @@ class TestAShutdownDuringBringUpStopsBeforeTheNextEffect:
         async def recording_get_policy(
             policy_port: int | None = None,
             policy_host: str = "localhost",
-            policy_provider: str = "groot",
+            policy_provider: str = "moveit2",
             **kwargs: Any,
         ) -> Any:
             # The real one is called positionally, so the stand-in has to accept
@@ -475,7 +475,7 @@ class TestAShutdownDuringBringUpStopsBeforeTheNextEffect:
         monkeypatch.setattr(hw, "_get_policy", recording_get_policy)
         bus.connect_gate = threading.Event()
 
-        started = hw.start_task("interrupted", policy_port=5555, n_steps=6)
+        started = hw.start_task("interrupted", policy_port=5555, policy_provider="moveit2", n_steps=6)
         assert started["status"] == "success"
         assert bus.connect_entered.wait(DEADLINE), "rollout never reached connect()"
         assert hw._task_state.status is TaskStatus.CONNECTING

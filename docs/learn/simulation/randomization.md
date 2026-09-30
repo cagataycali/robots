@@ -48,12 +48,12 @@ The full text also lists every friction and mass scale by geom and body name, so
 
 | axis | what changes |
 |---|---|
-| `randomize_colors` | every non-ground geom's RGB and its material colour, sampled in `color_range` |
+| `randomize_colors` | every non-ground geom's RGB and its material colour, sampled in `color_range`; on Isaac, objects only (robot visuals are instanced) |
 | `randomize_lighting` | each light's position inside 0.5 m of its authored spot, and its diffuse colour |
 | `randomize_physics` | every geom's friction scaled in `friction_range`, every body's mass in `mass_range` |
 | `randomize_positions` | every dynamic object's position perturbed by `position_noise` metres, written to `qpos0` too |
 
-The flags are strict booleans: `"false"`, `"no"`, `"off"` and `"0"` are truthy strings and are refused rather than turning an axis on. A keyword the call does not honour (`randomize_position`, `position_range`) is refused with the valid set; both methods declare `**kwargs` only to match the base signature and forward nothing. With every flag off the call is a no-op. `seed` makes the draw deterministic.
+Flags are strict booleans: a truthy string such as `"false"` or `"0"` is refused. An unhonoured keyword (`randomize_position`, `position_range`) is refused with the valid set. All flags off is a no-op; `seed` makes the draw deterministic.
 
 ## When to call it
 

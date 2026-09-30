@@ -1452,7 +1452,7 @@ class SimEngine(ABC):
 
         ``_preflight_policy_config`` reports what can be judged without
         constructing - an unresolvable provider name, the provider's own
-        ``preflight``. What a constructor judges for itself - ``Gr00tPolicy:
+        ``preflight``. What a constructor judges for itself - ``MoveIt2Policy:
         invalid port: 70000``, a keyword a constructor with no ``**kwargs``
         sink does not bind - only exists once it runs, and it used to raise past the
         ``status=error`` envelope every other refusal on these surfaces is

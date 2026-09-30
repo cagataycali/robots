@@ -84,7 +84,7 @@ STATES: dict[str, tuple[Callable[[HwRobot], None], str, Any, Any, dict[str, Any]
     "shut down": (lambda hw: hw._shutdown_event.set(), "mock", None, 1.0, {}, _ROLLOUTS, "shut down"),
     "zero budget": (lambda hw: None, "mock", None, 0, {}, _ROLLOUTS, "duration"),
     "unknown provider": (lambda hw: None, "grooot", None, 1.0, {}, _BUILDERS, "grooot"),
-    "port out of range": (lambda hw: None, "groot", 70000, 1.0, {}, _BUILDERS, "70000"),
+    "port out of range": (lambda hw: None, "moveit2", 70000, 1.0, {}, _BUILDERS, "70000"),
     "zero step cap": (lambda hw: None, "mock", None, 1.0, {"n_steps": 0}, ("execute_task", "run_policy"), "n_steps"),
     "checkpoint missing": (lambda hw: None, "lerobot_local", None, 1.0, {}, _BUILDERS, "pretrained_name_or_path"),
 }

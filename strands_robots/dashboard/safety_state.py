@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
+
+from strands_robots.mesh import security as _security
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,25 @@ def _source_of(data: dict[str, Any]) -> str | None:
     return None
 
 
+def envelope_refusal(data: Mapping[str, Any]) -> str | None:
+    """Why a safety envelope's ``t`` cannot be folded, or ``None`` when it can.
+
+    ``t`` may be absent (the dashboard then records its own clock), but when
+    present it must be the wire timestamp the peers themselves accept:
+    :func:`strands_robots.mesh.security.as_wire_timestamp` refuses ``NaN``,
+    the infinities, booleans and non-numbers. ``json.loads`` accepts the bare
+    ``NaN`` and ``Infinity`` tokens, so one forged e-stop carrying ``t: NaN``
+    used to give the lockout ``since=nan``, which every card in the snapshot
+    repeated and ``/ws/mesh`` wrote as a token the browser's ``JSON.parse``
+    refuses: the fleet view then never loaded again (f032).
+    """
+    if "t" not in data:
+        return None
+    if _security.as_wire_timestamp(data.get("t")) is None:
+        return "envelope t is not a finite wire timestamp (NaN, an infinity, a boolean or a non-number)"
+    return None
+
+
 def apply_event(current: Lockout, *, kind: str, data: dict[str, Any], now: float) -> Lockout:
     """Fold one `strands/safety/**` event into the verdict.
 
@@ -66,8 +88,12 @@ def apply_event(current: Lockout, *, kind: str, data: dict[str, Any], now: float
             observations (see :func:`_learned_at`).
         now: This dashboard's clock, recorded as :attr:`Lockout.arrived`.
     """
+    if envelope_refusal(data) is not None:
+        # Every peer refuses this envelope (``Mesh._check_safety_envelope_timing``),
+        # so it is not a fleet lockout; the caller logs the refusal.
+        return current
     t_val = data.get("t")
-    when = t_val if isinstance(t_val, (int, float)) else now
+    when = t_val if isinstance(t_val, (int, float)) and not isinstance(t_val, bool) else now
     who = _source_of(data)
     if kind == "estop":
         return Lockout(
@@ -106,7 +132,11 @@ def note_command_accepted(current: Lockout, *, now: float) -> Lockout:
 
 
 #: Actions a locked-out peer still answers, so accepting one proves nothing.
-LOCKOUT_EXEMPT_ACTIONS = frozenset({"status", "resume"})
+#: This is the peer's own list (:data:`strands_robots.mesh.security.LOCKOUT_ADMITTED_ACTIONS`),
+#: not a copy: it once named only ``status`` and ``resume`` while the peer also
+#: admitted ``stop`` and ``ping``, so STOP ALL against an already locked fleet
+#: collected an acknowledgement from every peer and painted each card clear (f033).
+LOCKOUT_EXEMPT_ACTIONS: frozenset[str] = _security.LOCKOUT_ADMITTED_ACTIONS
 
 
 def proves_clear(action: str) -> bool:

@@ -57,7 +57,7 @@ def get_policy_provider(name: str) -> dict[str, Any] | None:
     """Get policy provider config by name or alias.
 
     Args:
-        name: Provider name or alias (e.g. "groot", "lerobot", "cosmos").
+        name: Provider name or alias (e.g. "lerobot", "cosmos", "remote").
 
     Returns:
         Provider dict with module, class, config_keys, defaults, etc.
@@ -65,6 +65,35 @@ def get_policy_provider(name: str) -> dict[str, Any] | None:
     """
     reg = _load("policies")
     return reg.get("providers", {}).get(_canonical_provider_name(name))
+
+
+#: Providers removed from the registry, each with the one sentence that refuses
+#: its spelling. A removed name is refused, never rerouted: without this table
+#: ``create_policy("groot")`` would fall through :func:`resolve_policy`'s last
+#: stage and reach ``lerobot_local`` as a checkpoint id, and the caller's next
+#: report would name a HuggingFace repo it never asked for.
+REMOVED_PROVIDERS: dict[str, str] = {
+    "groot": (
+        "policy_provider 'groot' was removed in 1.0: GR00T N1.7 runs through "
+        "lerobot_local(policy_type='groot'); for a remote GPU host run "
+        "strands_robots.inference.server.PolicyServer there and use policy_provider='remote'."
+    ),
+}
+
+
+def removed_provider_error(name: Any) -> str | None:
+    """Return the refusal for a provider spelling that was removed, else ``None``.
+
+    Args:
+        name: Any spelling a caller may supply; matched case-insensitively.
+
+    Returns:
+        The fixed sentence from :data:`REMOVED_PROVIDERS`, or ``None`` when the
+        name was never a provider or is still one.
+    """
+    if not isinstance(name, str):
+        return None
+    return REMOVED_PROVIDERS.get(name.strip().lower())
 
 
 def policy_provider_resolves(name: str | None) -> bool:
@@ -101,7 +130,7 @@ def policy_provider_resolves(name: str | None) -> bool:
     Returns:
         True when the name is one ``import_policy_class`` could resolve.
     """
-    if not name:
+    if not name or removed_provider_error(name) is not None:
         return False
     canonical = _canonical_provider_name(name)
     if get_policy_provider(canonical) is not None:
@@ -121,7 +150,7 @@ def provider_reads_a_port(name: str | None) -> bool | None:
     one of them unanswerable:
 
     - ``requires`` lists the keywords a caller MUST supply, so it is the oracle
-      for refusing a *missing* port. Only ``groot`` and ``moveit2`` name it -
+      for refusing a *missing* port. Only ``moveit2`` names it -
       ``cosmos3`` dials a server too but defaults its port, so a caller may
       legally omit it.
     - ``config_keys`` lists the keywords the provider UNDERSTANDS, so it is the
@@ -177,8 +206,8 @@ def policy_requires_error(
     thread, with the arm already energized and nobody left to tell.
     ``LerobotLocalPolicy`` defaults ``pretrained_name_or_path=""`` and loads
     lazily, so it builds and then raises "No model loaded and no
-    pretrained_name_or_path set"; ``Gr00tPolicy`` builds with no ``port`` and
-    then blocks ~15 s dialing a server nobody serves. Both end at ``steps: 0``
+    pretrained_name_or_path set"; ``MoveIt2Policy`` builds with no ``port`` and
+    then blocks dialing a server nobody serves. Both end at ``steps: 0``
     after a success envelope said the task had started.
 
     This lives beside :func:`provider_reads_a_port` rather than beside either
@@ -268,7 +297,7 @@ def list_policy_aliases() -> dict[str, str]:
     return {alias: canonical for alias, canonical in _build_alias_map().items() if alias != canonical}
 
 
-#: A leading URL scheme, e.g. the ``zmq`` in ``zmq://gpu-box:5555``. The scheme
+#: A leading URL scheme, e.g. the ``ws`` in ``ws://gpu-box:8765``. The scheme
 #: grammar is RFC 3986 section 3.1: an ALPHA followed by ALPHA / DIGIT / "+" /
 #: "-" / ".".
 _URL_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*)://")
@@ -306,8 +335,8 @@ def _url_scheme_refusal(policy: str) -> str | None:
 def _with_lowercase_url_scheme(policy: str) -> str:
     """Fold a leading ``scheme://`` to lowercase, leaving the rest untouched.
 
-    URL schemes are case-insensitive (RFC 3986 section 3.1), so ``ZMQ://`` and
-    ``zmq://`` name the same transport. Stage 1 of :func:`resolve_policy`
+    URL schemes are case-insensitive (RFC 3986 section 3.1), so ``WS://`` and
+    ``ws://`` name the same transport. Stage 1 of :func:`resolve_policy`
     matches the ``url_patterns`` each provider declares in ``policies.json`` --
     every one of them spelled lowercase -- and the per-scheme branches then
     re-read the same string for host and port. Folding the scheme once, here,
@@ -368,7 +397,7 @@ def _declared_url_schemes() -> list[str]:
 
     Returns:
         Lowercase scheme names without the ``://``, e.g.
-        ``["cosmos3", "ws", "wss", "zmq"]``.
+        ``["cosmos3", "ws", "wss"]``.
     """
     schemes: set[str] = set()
     for prov_info in _load("policies").get("providers", {}).values():
@@ -384,9 +413,10 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
     and returns the canonical provider + ready-to-use kwargs.
 
     Resolution order:
-        1. URL patterns declared in ``policies.json`` (ws://, wss://, zmq://,
+        1. URL patterns declared in ``policies.json`` (ws://, wss://,
            cosmos3://)
-        2. Shorthand names (mock, groot, lerobot_local, ...)
+        2. Shorthand names (mock, lerobot_local, remote, ...); a removed
+           provider's spelling (:data:`REMOVED_PROVIDERS`) is refused here
         3. HuggingFace model IDs (org/model)
         4. Registered provider name
         5. Fallback to lerobot_local
@@ -408,7 +438,7 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
     either.
 
     Every stage matches case-insensitively. A URL scheme is folded per RFC 3986
-    section 3.1 (``ZMQ://gpu:5555`` resolves exactly as ``zmq://gpu:5555``, and
+    section 3.1 (``WS://gpu:8765`` resolves exactly as ``ws://gpu:8765``, and
     the emitted URL carries the lowercased scheme); shorthands and provider
     names are lowercased; a HuggingFace org is matched lowercased while the repo
     id itself is forwarded exactly as given, since repo ids are case-sensitive.
@@ -427,8 +457,8 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
         resolve_policy("lerobot/act_aloha_sim")
         # → ("lerobot_local", {"pretrained_name_or_path": "lerobot/act_aloha_sim"})
 
-        resolve_policy("zmq://localhost:5555")
-        # → ("groot", {"host": "localhost", "port": 5555})
+        resolve_policy("ws://gpu-box:8765")
+        # → ("remote", {"url": "ws://gpu-box:8765"})
 
         resolve_policy("mock")
         # → ("mock", {})
@@ -465,11 +495,6 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
                     if match:
                         kwargs["host"] = match.group(1)
                         kwargs["port"] = int(match.group(2) or 8000)
-                elif pattern.startswith("^zmq://"):
-                    match = re.match(r"zmq://([^:]+):(\d+)", url)
-                    if match:
-                        kwargs["host"] = match.group(1)
-                        kwargs["port"] = int(match.group(2))
                 elif ":" in url and "/" not in url:
                     # Generic scheme-less ``host:port``. Reached only when a
                     # provider declares a scheme-less ``url_patterns`` entry
@@ -489,7 +514,11 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
     if (refusal := _url_scheme_refusal(policy)) is not None:
         raise ValueError(refusal)
 
-    # 2. Shorthand names - built from each provider's shorthands list
+    # 2. Shorthand names - built from each provider's shorthands list. A removed
+    #    provider's spelling is refused here, before stage 5 could forward it
+    #    to ``lerobot_local`` as a checkpoint id.
+    if (removed := removed_provider_error(policy)) is not None:
+        raise ValueError(removed)
     alias_map = _build_alias_map()
     if policy.lower() in alias_map:
         kwargs.update(extra_kwargs)
@@ -554,14 +583,13 @@ def build_policy_kwargs(
 
     Args:
         provider: Policy provider name.
-        policy_port: Port number (groot, cosmos3, moveit2, remote).
+        policy_port: Port number (cosmos3, moveit2, remote).
         policy_host: Hostname.  ``None`` leaves the key unset so the
             provider's registry default -- or, failing that, its own
             constructor default -- applies.
         model_path: Local model path or HF ID.
         server_address: Full server address host:port (grpc:// URLs, remote providers).
         policy_type: Sub-type (pi0, act, smolvla, ...).
-        data_config: Data configuration for groot.
         **extra: Any additional provider-specific kwargs.  A key declared in
             the provider's ``config_keys`` is forwarded; any other key is
             dropped, which is what ``config_keys`` exists to decide.

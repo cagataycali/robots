@@ -424,8 +424,11 @@ _TOPIC_POLICY: dict[str, tuple[int, bool]] = {
     "lidar/state": (0, True),
     "map/info": (0, True),
     "safety/event": (1, True),
-    "safety/estop": (1, True),
-    "safety/resume": (1, True),  # paired with safety/estop; closes incident windows
+    # A fleet stop and its release are EVENTS: retained, the broker replayed
+    # the last one to every robot that subscribed later, so a stop published
+    # an hour ago engaged the lockout on a robot that booted now (f013).
+    "safety/estop": (1, False),
+    "safety/resume": (1, False),  # paired with safety/estop; closes incident windows
     "stream": (0, False),
     "stream/meta": (0, False),
     # Camera frames are too big for MQTT - IotMqttTransport drops them.
@@ -442,6 +445,17 @@ _NEVER_BRIDGE_PREFIXES: tuple[str, ...] = (
 )
 
 
+#: MQTT topic filters whose messages are fleet safety COMMANDS (a stop, its
+#: release), as opposed to per-robot safety state. Subscriptions on these ask
+#: the broker not to replay a retained message at subscribe time.
+_SAFETY_COMMAND_FILTERS: frozenset[str] = frozenset({"strands/safety/estop", "strands/safety/resume"})
+
+
+def _is_safety_command_filter(topic_filter: str) -> bool:
+    """Whether *topic_filter* names a fleet safety command topic."""
+    return topic_filter in _SAFETY_COMMAND_FILTERS
+
+
 class _MqttSample:
     """Zenoh-shaped Sample wrapper around an MQTT message.
 
@@ -456,9 +470,15 @@ class _MqttSample:
     "response_topic", None)`` and takes ``None`` as "reply on the computed
     key". They carry the reply address of a command that arrived as an AWS IoT
     Core direct message (see :class:`~strands_robots.mesh.transport.base.DirectSender`).
+
+    ``retain`` is the packet's RETAIN flag: ``True`` when the broker delivered
+    a stored message at subscribe time rather than a live publish. A
+    ``zenoh.Sample`` has no such attribute, and a handler reads it with
+    ``getattr(sample, "retain", False) is True``, so the Zenoh path reads as
+    live rather than unknown. The safety handlers refuse a retained delivery.
     """
 
-    __slots__ = ("correlation_data", "key_expr", "payload", "response_topic")
+    __slots__ = ("correlation_data", "key_expr", "payload", "response_topic", "retain")
 
     def __init__(
         self,
@@ -466,11 +486,13 @@ class _MqttSample:
         payload_bytes: bytes,
         response_topic: str | None = None,
         correlation_data: str | None = None,
+        retain: bool = False,
     ) -> None:
         self.key_expr = topic
         self.payload = _MqttPayload(payload_bytes)
         self.response_topic = response_topic
         self.correlation_data = correlation_data
+        self.retain = retain
 
 
 class _MqttPayload:
@@ -1240,16 +1262,19 @@ class IotMqttTransport:
             self._handlers.setdefault(topic_filter, []).append(handler)
 
         if not already_subscribed:
+            # A safety command stored on the broker must not arrive as a side
+            # effect of subscribing: MQTT 5 retain handling 0 (the default)
+            # replays the retained message the moment the subscription is
+            # accepted, which turned a stop published an hour ago into a
+            # lockout on every robot that booted or reconnected (f013). State
+            # topics (presence, health) keep the default; a late joiner wants
+            # the last known state.
+            subscription_kwargs: dict[str, Any] = {"topic_filter": topic_filter, "qos": mqtt5.QoS.AT_LEAST_ONCE}
+            if _is_safety_command_filter(topic_filter):
+                subscription_kwargs["retain_handling_type"] = mqtt5.RetainHandlingType.DONT_SEND
             try:
                 self._client.subscribe(
-                    mqtt5.SubscribePacket(
-                        subscriptions=[
-                            mqtt5.Subscription(
-                                topic_filter=topic_filter,
-                                qos=mqtt5.QoS.AT_LEAST_ONCE,
-                            )
-                        ]
-                    )
+                    mqtt5.SubscribePacket(subscriptions=[mqtt5.Subscription(**subscription_kwargs)])
                 ).result(timeout=5)
             except Exception as exc:
                 # Roll back the handler registration so a retry works cleanly.
@@ -1386,7 +1411,12 @@ class IotMqttTransport:
             logger.debug("IoT inbound on %s matched no subscription (thing=%s); dropped", topic, self._thing_name)
             return
 
-        sample = _MqttSample(topic, payload, *_mqtt5_reply_properties(data.publish_packet))
+        sample = _MqttSample(
+            topic,
+            payload,
+            *_mqtt5_reply_properties(data.publish_packet),
+            retain=getattr(data.publish_packet, "retain", False) is True,
+        )
         for _filter, handlers in matching:
             for handler in handlers:
                 try:

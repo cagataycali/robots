@@ -2,7 +2,7 @@
 
 Pins that ``reseed_client_rngs`` reseeds Python ``random`` + NumPy (and torch
 when present) deterministically, and that every provider holding its sampler in
-this process - Gr00tPolicy, Cosmos3Policy, LerobotLocalPolicy - routes its
+this process - Cosmos3Policy, LerobotLocalPolicy - routes its
 reset reseed through it, so they behave identically for #187 reproducibility
 whether the rollout drives them in-process or over a ``PolicyServer``.
 """
@@ -60,7 +60,6 @@ def test_distinct_seeds_diverge():
 #: or lost for all three alike.
 RESEEDING_PROVIDERS = [
     ("strands_robots.policies.cosmos3.policy", "Cosmos3Policy"),
-    ("strands_robots.policies.groot.policy", "Gr00tPolicy"),
     ("strands_robots.policies.lerobot_local.policy", "LerobotLocalPolicy"),
 ]
 

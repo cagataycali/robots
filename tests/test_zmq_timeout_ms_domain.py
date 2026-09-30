@@ -1,7 +1,7 @@
-"""The ZMQ inference clients' ``timeout_ms`` is one shared wait-budget domain.
+"""The ZMQ inference client's ``timeout_ms`` is one shared wait-budget domain.
 
-Both ZMQ REQ inference clients hand ``timeout_ms`` to ``setsockopt(RCVTIMEO)``
-and ``setsockopt(SNDTIMEO)``. Neither validated it, so the third
+The ZMQ REQ inference client hands ``timeout_ms`` to ``setsockopt(RCVTIMEO)``
+and ``setsockopt(SNDTIMEO)``. It did not validate it, so the third
 remote-inference transport carried the misattribution that #1984 removed from
 the WebSocket and gRPC pair: an unusable wait budget reported as an absent
 server.
@@ -9,8 +9,9 @@ server.
 The tests are grouped by what they protect rather than by client:
 
 * :class:`TestTheSharedDomain` - the verdicts, on the helper alone.
-* :class:`TestBothClientsRefuseTheSameBudgets` - the two clients agree, so a
-  budget cannot be usable on one sidecar transport and refused on the other.
+* :class:`TestBothClientsRefuseTheSameBudgets` - every ZMQ client agrees with
+  the shared helper, so a budget cannot be usable on one sidecar transport and
+  refused on another.
 * :class:`TestAHealthyServerIsNoLongerReportedUnreachable` - the defect itself,
   against a real loopback REP sidecar. This is the reason the change exists,
   and it is asserted on behaviour rather than on the raise.
@@ -42,17 +43,15 @@ from typing import Any
 import pytest
 
 import strands_robots
-from strands_robots.policies.groot.client import Gr00tInferenceClient
-from strands_robots.policies.groot.client import MsgSerializer as GrootSerializer
 from strands_robots.policies.moveit2.client import MoveIt2InferenceClient
 from strands_robots.utils import MAX_ZMQ_TIMEOUT_MS, coerce_zmq_timeout_ms, positive_whole_number_error
 
 # ``pyzmq`` is imported optionally rather than through a module-level
 # ``importorskip``, so that the tests which need no socket keep running without
-# it. Both clients load ZMQ lazily (``_load_zmq``) and refuse an unusable
+# it. The clients load ZMQ lazily (``_load_zmq``) and refuse an unusable
 # ``timeout_ms`` *before* that call, so the domain verdicts, the refusal path,
 # the constructor ordering and the structural drift guard are all answerable on
-# an install without the ``[groot]`` / ``[moveit2]`` extra. A module-level skip
+# an install without the ``[moveit2]`` extra. A module-level skip
 # would have taken the drift guard with it - which is the one check here whose
 # whole job is to still be running when someone changes something unrelated.
 try:
@@ -123,7 +122,7 @@ MIN_ROUND_TRIP_BUDGET_MS = 1000
 #: and a tight one cannot be given one by hand.
 ROUND_TRIP: list[tuple[str, Any, int]] = [row for row in USABLE if row[2] >= MIN_ROUND_TRIP_BUDGET_MS]
 
-CLIENTS = [Gr00tInferenceClient, MoveIt2InferenceClient]
+CLIENTS = [MoveIt2InferenceClient]
 
 
 def _numpy_spellings() -> list[tuple[str, Any, int]]:
@@ -200,8 +199,6 @@ def _free_port() -> int:
 
 
 def _encoder_for(cls: type) -> Any:
-    if cls is Gr00tInferenceClient:
-        return GrootSerializer.to_bytes
     return lambda payload: msgpack.packb(payload, use_bin_type=True)
 
 
@@ -273,9 +270,9 @@ class TestTheSharedDomain:
         assert type(coerced) is int
 
     def test_the_message_names_the_surface_and_the_parameter(self) -> None:
-        _, reason = coerce_zmq_timeout_ms("Gr00tInferenceClient", "timeout_ms", 0)
+        _, reason = coerce_zmq_timeout_ms("MoveIt2InferenceClient", "timeout_ms", 0)
         assert reason is not None
-        assert "Gr00tInferenceClient" in reason
+        assert "MoveIt2InferenceClient" in reason
         assert "timeout_ms" in reason
 
     def test_the_ceiling_refusal_states_the_bound_rather_than_the_floor(self) -> None:
@@ -309,7 +306,7 @@ class TestTheSharedDomain:
 
 
 class TestBothClientsRefuseTheSameBudgets:
-    """The two clients share one domain, so their verdicts must agree."""
+    """Every ZMQ client shares one domain, so its verdicts are the helper's."""
 
     @pytest.mark.parametrize("cls", CLIENTS, ids=lambda c: c.__name__)
     @pytest.mark.parametrize(("label", "value"), UNUSABLE, ids=[c[0] for c in UNUSABLE])
@@ -323,15 +320,18 @@ class TestBothClientsRefuseTheSameBudgets:
             cls(host="127.0.0.1", port=5555, timeout_ms=0)
 
     @pytest.mark.parametrize(("label", "value"), UNUSABLE, ids=[c[0] for c in UNUSABLE])
-    def test_the_two_clients_agree_on_every_verdict(self, label: str, value: Any) -> None:
-        reasons: list[str | None] = []
+    def test_every_client_agrees_with_the_shared_domain(self, label: str, value: Any) -> None:
+        """Each client's verdict is the helper's verdict, word for word.
+
+        Stated against the helper rather than pairwise so it holds with one
+        client as it did with two, and a third joins by construction.
+        """
         for cls in CLIENTS:
-            try:
+            _, expected = coerce_zmq_timeout_ms(cls.__name__, "timeout_ms", value)
+            assert expected is not None
+            with pytest.raises(ValueError) as excinfo:
                 cls(host="127.0.0.1", port=5555, timeout_ms=value)
-                reasons.append(None)
-            except ValueError as exc:
-                reasons.append(str(exc).replace(cls.__name__, "<client>"))
-        assert reasons[0] == reasons[1]
+            assert str(excinfo.value) == expected
 
     @pytest.mark.parametrize("cls", CLIENTS, ids=lambda c: c.__name__)
     def test_a_refused_budget_opens_no_socket(self, cls: type) -> None:
@@ -730,7 +730,6 @@ class TestNoZmqTimeoutSurfaceDrifts:
     def test_the_scan_finds_every_known_zmq_timeout_surface(self) -> None:
         """Non-vacuity: a scan that found nothing would pass everything below."""
         assert set(self._modules_setting_a_timeout()) == {
-            "policies/groot/client.py",
             "policies/moveit2/client.py",
         }
 
@@ -833,7 +832,7 @@ class TestTheCoercionReadsTheValueOnce:
     helper that stopped converting at all would satisfy the first alone.
     """
 
-    METHOD = "Gr00tInferenceClient"
+    METHOD = "MoveIt2InferenceClient"
     PARAM = "timeout_ms"
 
     @staticmethod

@@ -726,6 +726,24 @@ def _wire_safe_block(block: Any) -> Any:
     return block
 
 
+def _routable_target_error(target: Any) -> str | None:
+    """Why *target* may not become the peer segment of a key expression, or ``None``.
+
+    The rule is the inbound one, :func:`~strands_robots.mesh.security.validate_mesh_identifier`
+    (``[A-Za-z0-9_.-]``, at most ``MAX_PEER_ID_LEN``): a peer id the receive
+    side would refuse in ``sender_id`` is one the send side must not address,
+    because ``strands/{target}/cmd`` with ``*`` or ``**`` in the segment is a
+    Zenoh key expression that reaches every peer, and ``a/b`` adds a segment.
+    Both presence registries apply it before a learned id is stored, so an
+    announced ``robot_id`` never widens a later ``send`` on its own.
+    """
+    try:
+        _security.validate_mesh_identifier(target, "target")
+    except _security.ValidationError as exc:
+        return f"target is not a routable peer id: {exc}"
+    return None
+
+
 def _responder_segment(key: str, me: str) -> str | None:
     """The ``<responder>`` of ``strands/<me>/response/<responder>/<turn>``, or ``None``.
 
@@ -1539,6 +1557,11 @@ class Mesh(SensorLoopsMixin):
             return
         peer_id = data.get("robot_id")
         if not isinstance(peer_id, str) or peer_id == self.peer_id:
+            return
+        # A learned id is a future ``send`` target: refuse one the outbound
+        # rule could not address before it enters the registry (f012).
+        if (why := _routable_target_error(peer_id)) is not None:
+            logger.debug("[mesh] %s: presence dropped: %s", self.peer_id, why)
             return
 
         # M-3: presence-freshness check. Presence heartbeats carry a
@@ -2627,7 +2650,7 @@ class Mesh(SensorLoopsMixin):
             # the dispatch thread and silently kill the mesh") is
             # achievable with a narrow tuple: this catches every
             # realistic adapter failure (LeRobot raising RuntimeError,
-            # GR00T raising ValueError on bad inputs, type mismatches,
+            # a policy raising ValueError on bad inputs, type mismatches,
             # missing keys, OSError from device I/O) but lets
             # ``MemoryError``, ``SystemExit``, ``KeyboardInterrupt``,
             # and any future programmer-error type that doesn't fit
@@ -2675,16 +2698,15 @@ class Mesh(SensorLoopsMixin):
         action = cmd.get("action", "status")
         r = self.robot
 
-        # While the emergency-stop lockout is engaged, only ``status`` and
-        # ``resume`` are permitted. Raise so _exec_cmd handles the rejection
+        # While the emergency-stop lockout is engaged, only the actions
+        # ``security.LOCKOUT_ADMITTED_ACTIONS`` names are permitted (the
+        # dashboard reads the same set: answering one of them is not proof
+        # the lockout cleared). Raise so _exec_cmd handles the rejection
         # symmetrically with ValidationError -- emitting type="error" on the
         # response topic and recording an audit entry. The wire response is
         # intentionally generic so a remote caller cannot use it to map the
         # lockout window.
-        # ``stop`` is admitted too: it only ever de-energizes, and a second
-        # e-stop arriving while the lockout is already engaged must still halt
-        # a rollout the first one missed rather than be "rejected".
-        if self._estop_lockout.is_set() and action not in ("status", "resume", "stop", "ping"):
+        if self._estop_lockout.is_set() and action not in _security.LOCKOUT_ADMITTED_ACTIONS:
             raise _security.LockoutError("command rejected")
 
         if action == "resume":
@@ -3489,6 +3511,22 @@ class Mesh(SensorLoopsMixin):
             return None
         if not isinstance(data, dict):
             return None
+        # A retained MQTT delivery is a stored message the broker hands to a
+        # new subscriber, not an operator acting now; the payload's own ``t``
+        # cannot tell the two apart, so the transport's flag decides. Only a
+        # real ``True`` counts (a Zenoh sample has no such attribute, a unit
+        # fixture's MagicMock attribute is truthy but is not this flag).
+        if getattr(sample, "retain", False) is True:
+            logger.warning(
+                f"[safety] %s: refusing remote {kind} -- delivered as a RETAINED message at subscribe time, "
+                "not a live publish (broker replay of a stored envelope)",
+                self.peer_id,
+            )
+            self._audit_local(
+                "safety_retained_delivery_rejected",
+                {"kind": kind, "issuer": data.get("peer_id")},
+            )
+            return None
         wire_zid = _extract_sample_source_zid(sample)
         body_zid = data.get("source_zid")
         if wire_zid is not None and body_zid is not None:
@@ -3960,6 +3998,11 @@ class Mesh(SensorLoopsMixin):
                 "status": "error",
                 "error": "send: target may not contain NUL or equal the BROADCAST_RESPONDER sentinel",
             }
+        # The target is interpolated into ``strands/{target}/cmd``; a wildcard
+        # or a slash there widens one robot's command to the fleet (f012).
+        if (why := _routable_target_error(target)) is not None:
+            logger.warning("[mesh] %s: send refused: %s", self.peer_id, why)
+            return {"status": "error", "error": f"send: {why}"}
         # client-side validate before publishing. Prior to this fix,
         # programmatic callers (tests, third-party integrations, anything
         # that imports Mesh directly) skipped validate_command -- only the
