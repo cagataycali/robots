@@ -225,8 +225,11 @@ class IsaacConfig:
         ``nan``, ``inf``, boolean or non-real default cannot be held by a
         constructed object.
     rendering_dt : float
-        Rendering timestep in seconds. Default 1/30 s. Same domain as
-        ``physics_dt``.
+        Accepted for compatibility (same domain as ``physics_dt``); the World
+        is built with ``rendering_dt == physics_dt``, so each rendered step
+        integrates ONE physics step and refreshes every camera - a coarser
+        render step made each camera refresh advance four physics steps
+        nobody counted.
     render_mode : str
         Rendering pipeline: ``"headless"`` (no rendering),
         ``"rtx_realtime"`` (fast, rasterization-based ``RayTracedLighting``),
