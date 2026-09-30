@@ -1,5 +1,5 @@
 ---
-description: The Isaac Sim backend: what it needs, how to construct it, USD and MJCF loading, and what differs from MuJoCo.
+description: The Isaac Sim backend: what it needs, how to construct it, USD and MJCF loading, what differs from MuJoCo.
 ---
 
 # Isaac Sim
@@ -18,7 +18,7 @@ Verified pip wheels: 6.0.1.0 and 6.1.0.0 (or `==6.1.*`). Both pin `numpy==2.3.1`
 
 ## What it is
 
-`IsaacSimulation` (`strands_robots/simulation/isaac/simulation.py`) implements `SimEngine` on NVIDIA Isaac Sim / Omniverse: photoreal rendering, synthetic data, GPU-rendered sensors, USD stages. It inherits the policy orchestration (`run_policy`, `eval_policy`, benchmarks, recording) from the base class and implements the physics primitives, loaders (`isaac/loaders.py`: URDF, MJCF and USD), mesh and MJCF asset conversion, motion primitives and recording.
+`IsaacSimulation` (`strands_robots/simulation/isaac/simulation.py`) implements `SimEngine` on NVIDIA Isaac Sim / Omniverse: photoreal rendering, synthetic data, GPU-rendered sensors, USD stages. It inherits the policy orchestration (`run_policy`, `eval_policy`, benchmarks, recording) from the base class and implements physics, loaders (`isaac/loaders.py`: URDF, MJCF, USD), asset conversion, motion primitives and recording.
 
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
@@ -55,22 +55,16 @@ sim.destroy()
 
 ## Threading
 
-Kit updates only on the `SimulationApp` thread; an unpumped worker-thread call is refused:
+Kit updates only on the `SimulationApp` thread; `run_agent` pumps it while agent tools run elsewhere:
 
 ```python
-import threading
-
-sim = create_simulation("isaac", headless=True)   # on the main thread
-sim.create_world()
-stop = threading.Event()
-
-def agent_worker():
-    sim.run_on_main(lambda: (sim.add_robot("so100"), sim.reset(), sim.step(60)))
-    stop.set()
-
-threading.Thread(target=agent_worker).start()
-sim.run_pump_forever(stop_event=stop)             # main thread runs worker jobs
+sim = create_simulation("isaac")
+sim.create_world(); sim.add_robot("so101")
+agent = Agent(tools=[sim])
+sim.run_agent(agent, "add a cube, reset, step 30, render")
 ```
+
+Unpumped worker calls are refused; manually: `run_pump_forever(stop_event=...)` plus `run_on_main(fn)`.
 
 ## Limits
 

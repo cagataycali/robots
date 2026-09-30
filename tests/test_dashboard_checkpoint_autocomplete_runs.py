@@ -95,11 +95,12 @@ def test_search_ranks_the_merged_rows_and_reports_the_robot(monkeypatch: pytest.
     assert checkpoints.search("act", limit=10)["robot"] is None
 
 
-def test_search_route_passes_the_robot_hint() -> None:
+def test_search_route_passes_the_robot_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
     from strands_robots.dashboard.server import create_app
+    from tests._dashboard_bootstrap import configure_bootstrap
 
     seen: dict[str, Any] = {}
 
@@ -108,7 +109,7 @@ def test_search_route_passes_the_robot_hint() -> None:
         return {"query": q, "robot": robot, "results": [], "total_matched": 0, "hub_problem": None, "hf_auth": {}}
 
     app = create_app()
-    with TestClient(app) as client, pytest.MonkeyPatch.context() as mp:
+    with TestClient(app, headers=configure_bootstrap(monkeypatch)) as client, pytest.MonkeyPatch.context() as mp:
         mp.setattr(checkpoints, "search", fake_search)
         assert client.get("/api/checkpoints/search?q=act&limit=5&robot=so101").status_code == 200
         assert seen == {"q": "act", "limit": 5, "robot": "so101"}

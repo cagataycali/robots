@@ -42,6 +42,7 @@ from strands_robots.simulation.base import (  # noqa: E402
     randomization_seed_error,
 )
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from tests._package_ast import parse_file  # noqa: E402
 
 CUBE_Z = 0.30
 
@@ -253,7 +254,7 @@ class TestBackendGuardParity:
 
     @staticmethod
     def _called_guards(module_path: Path, method: str) -> set[str]:
-        tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
+        tree = parse_file(module_path)
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name == method:
                 return {

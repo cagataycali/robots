@@ -44,6 +44,7 @@ from .embodiment import (
 from .processor import POSTPROCESSOR_CONFIG, PREPROCESSOR_CONFIG, ProcessorBridge
 from .resolution import (
     accepts_partial_images,
+    config_for_untagged_checkpoint,
     declared_action_dim,
     declared_image_features,
     resolve_policy_class_by_name,
@@ -1380,8 +1381,17 @@ class LerobotLocalPolicy(Policy):
             kwargs = {"revision": self.revision} if self.revision else {}
             config = PreTrainedConfig.from_pretrained(self.pretrained_name_or_path, **kwargs)
         except Exception as exc:  # noqa: BLE001 - optional pre-read; from_pretrained reports the real error
-            logger.debug("lerobot_local: config pre-read failed (%s); loading with the checkpoint's own", exc)
-            return None
+            # A checkpoint whose config.json has no draccus ``type`` tag cannot
+            # be read by from_pretrained alone; the caller named the type, so
+            # parse the config for it and hand it over.
+            config = (
+                config_for_untagged_checkpoint(self.pretrained_name_or_path, self.policy_type, revision=self.revision)
+                if self.policy_type
+                else None
+            )
+            if config is None:
+                logger.debug("lerobot_local: config pre-read failed (%s); loading with the checkpoint's own", exc)
+                return None
         device = self.requested_device or best_inference_device()
         shipped = getattr(config, "device", None)
         if not self.requested_device and shipped and str(shipped) != device:

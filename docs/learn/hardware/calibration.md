@@ -1,3 +1,7 @@
+---
+description: One calibration file gives every joint reading the same meaning here, in lerobot and in recorded datasets.
+---
+
 # Calibration
 
 At the end of this page every joint reading and every commanded degree on a serial arm means the same thing in this package, in lerobot and in your recorded datasets, because all three read one calibration file, and you know what the package does when that file is missing.
@@ -31,19 +35,19 @@ records = load_calibration(path)                                  # {motor: Moto
 arm = Robot("so101", mode="real", driver="strands", port="/dev/ttyACM0", calibration=records)
 ```
 
-`load_calibration` refuses a file with a missing or non-integer field instead of filling it from defaults: a completed record would report degrees against a travel nobody measured. Both names passed to `lerobot_calibration_path` must be bare path segments; a `..` or a separator is refused because both reach it from a tool call.
+`load_calibration` refuses a file with a missing or non-integer field instead of filling it from defaults: a completed record would report degrees against a travel nobody measured. Both names passed to `lerobot_calibration_path` must be bare path segments; `..` or a separator is refused, since both arrive from tool calls.
 
 ## Without a file
 
 The two drivers behave differently, and both say so:
 
-- **lerobot driver.** lerobot itself prompts to calibrate on `connect()`. In a `lerobot_teleoperate` session `auto_accept_calibration` answers that prompt. The read-only `get_state` action on the robot tool does not connect through lerobot at all; it reads raw ticks over the bus and reports degrees estimated as `(ticks - 2048) * 360 / 4096`, labelled as an estimate, so an agent can tell you the arm is uncalibrated instead of failing to read it. An arm whose calibration flag could not be read is reported as unread, not as uncalibrated.
+- **lerobot driver.** lerobot itself prompts to calibrate on `connect()`. In a `lerobot_teleoperate` session `auto_accept_calibration` answers that prompt. The read-only `get_state` action does not connect through lerobot; it reads raw ticks over the bus and reports degrees estimated as `(ticks - 2048) * 360 / 4096`, labelled an estimate, so an agent can report the arm uncalibrated instead of failing to read it. A calibration flag that could not be read is reported as unread, not as uncalibrated.
 - **native driver.** With no `calibration=` the bus uses `full_travel_calibration`: count 0 is one end of the servo's rotation and 4095 the other. Readings and targets are then off by however far your arm's mechanical stops sit inside that rotation. `get_status()` reports `calibration_source: None` so you can see which is in force.
 
 ## Why it matters for data
 
-A dataset recorded with one calibration and replayed on an arm with another moves to different physical positions for the same numbers. Keep the `id` stable per physical arm, record it in the dataset's metadata (see [record](../data/record.md)), and recalibrate only when you change a servo, because that changes the counts at the stops.
+A dataset recorded with one calibration and replayed on an arm with another moves to different physical positions for the same numbers. Keep the `id` stable per physical arm, record it in the dataset's metadata ([record](../data/record.md)), and recalibrate only when you change a servo, which changes the counts at the stops.
 
 ## Other robots
 
-Network arms (UR, Franka), DDS robots (Unitree, Booster) and daemon robots (Reachy Mini, Microduck) carry their calibration in their own controllers; the package reads joint values in the controller's units and has nothing to calibrate. The Robotiq gripper runs its own open-close calibration stroke during activation, which is why `connect_eagerly()` waits for `gSTA == ACTIVE` before reporting connected.
+Network arms (UR, Franka), DDS robots (Unitree, Booster) and daemon robots (Reachy Mini, Microduck) carry their calibration in their own controllers; the package reads joint values in the controller's units, nothing to calibrate. The Robotiq gripper runs its own open-close calibration stroke during activation, so `connect_eagerly()` waits for `gSTA == ACTIVE` before reporting connected.

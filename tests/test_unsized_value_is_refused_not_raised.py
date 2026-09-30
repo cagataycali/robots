@@ -79,6 +79,7 @@ from strands_robots.utils import (
     pose_vector_error,
     sequence_length,
 )
+from tests._package_ast import parse_file
 
 # A 0-d array: declares ``__len__``, raises from it, holds exactly one scalar.
 UNSIZED = np.array(0.5)
@@ -610,9 +611,7 @@ class TestNoDirectLengthProbe:
         branch on ``None``; use ``__getitem__`` when indexability is the question.
         """
         offenders = {
-            f"{path.name}:{line}"
-            for path in _package_modules()
-            for line in _hasattr_len_probes(ast.parse(path.read_text()))
+            f"{path.name}:{line}" for path in _package_modules() for line in _hasattr_len_probes(parse_file(path))
         }
         assert not offenders, f"use sequence_length() instead of a hasattr length probe: {sorted(offenders)}"
 

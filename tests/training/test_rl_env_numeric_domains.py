@@ -118,7 +118,7 @@ class TestEveryUnusableNumericIsRefused:
             _env(EngineStandIn(joints=("A", "B")), action_dim=value)
 
     def test_the_message_names_the_reason_not_only_the_parameter(self) -> None:
-        with pytest.raises(ValueError, match=r"action_scale must be > 0, got 0\.0"):
+        with pytest.raises(ValueError, match=r"action_scale must be a positive finite number, got 0\.0"):
             _env(EngineStandIn(joints=("A", "B")), action_scale=0.0)
         with pytest.raises(ValueError, match=r"max_episode_steps must be a positive whole number, got 0"):
             _env(EngineStandIn(joints=("A", "B")), max_episode_steps=0)

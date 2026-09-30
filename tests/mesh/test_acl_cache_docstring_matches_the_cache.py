@@ -47,6 +47,7 @@ from pathlib import Path
 import pytest
 
 from strands_robots.mesh import _acl_config
+from tests._package_ast import parse_file
 
 #: Count words a caller census can be written with, mapped to the number.
 _NUMBER_WORDS: dict[str, int] = {
@@ -122,7 +123,7 @@ def _external_call_sites(name: str) -> set[str]:
         if path == own:
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - the package parses
             continue
         for node in ast.walk(tree):
