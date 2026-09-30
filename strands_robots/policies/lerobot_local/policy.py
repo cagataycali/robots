@@ -572,6 +572,15 @@ class LerobotLocalPolicy(Policy):
             posture rather than scaling a quantity, so a truthy spelling of off
             (``"false"``, ``"no"``, ``"0"``) is refused rather than selecting
             the padding posture the word asks to skip.
+        out_of_range_actions: What to do with an action the checkpoint's own
+            action stats say it never produced: a value more than one recorded
+            range beyond the stats' ``[low, high]`` (``min``/``max``, else
+            ``q01``/``q99``). ``"warn"`` (the default) forwards it and logs it
+            once per episode with the columns and values; ``"clip"`` clips every
+            column to its recorded ``[low, high]``; ``"off"`` does neither. A
+            π0-FAST LIBERO checkpoint whose stats span ``[-0.94, 1.0]`` emitted
+            a pitch of 131 and a gripper of 2062 on an out-of-distribution
+            scene, and nothing said so.
     """
 
     def __init__(
@@ -596,6 +605,7 @@ class LerobotLocalPolicy(Policy):
         obs_rename_override: dict[str, str | None] | None = None,
         strict_keys: bool = False,
         pad_short_actions: bool = False,
+        out_of_range_actions: str = "warn",
         cache_model: bool = True,
         revision: str | None = None,
         compile_model: bool | None = None,
@@ -681,6 +691,15 @@ class LerobotLocalPolicy(Policy):
         if error := boolean_flag_error(pad_short_actions, "pad_short_actions", "lerobot_local"):
             raise ValueError(error)
         self.pad_short_actions = pad_short_actions
+        if out_of_range_actions not in ("warn", "clip", "off"):
+            raise ValueError(
+                f"lerobot_local: out_of_range_actions must be 'warn', 'clip' or 'off', got {out_of_range_actions!r}"
+            )
+        self.out_of_range_actions = out_of_range_actions
+        # Actions seen outside the checkpoint's recorded range this episode
+        # (count) and whether the warning has been logged.
+        self.out_of_range_action_count = 0
+        self._out_of_range_warned = False
         # Routing-degradation telemetry. The heuristic (non-declarative)
         # remap path can keep a run alive while silently producing
         # meaningless inputs - a camera routed to an arbitrary model image
@@ -1018,6 +1037,9 @@ class LerobotLocalPolicy(Policy):
                 seed that cannot be applied is refused rather than leaving the
                 caller believing the episode is reproducible.
         """
+        # A new episode may be in distribution again: warn afresh.
+        self.out_of_range_action_count = 0
+        self._out_of_range_warned = False
         reseed_client_rngs(seed)
         if self._policy is not None and hasattr(self._policy, "reset"):
             self._policy.reset()
@@ -4109,6 +4131,55 @@ class LerobotLocalPolicy(Policy):
             return True
         return type(policy).__name__ == "MolmoAct2Policy"
 
+    def _guard_action_range(self, actions_list: list[Any]) -> list[Any]:
+        """Flag (or clip) actions far outside the range the checkpoint's action stats record.
+
+        Runs on the model's actions after unnormalization and before any unit
+        conversion, so they are compared in the units the stats were recorded
+        in. Only the columns both the action and the stats have are compared:
+        a model padded to 32 dims (pi0 / pi05 / pi0-FAST) carries nothing past
+        its dataset's width.
+        """
+        if self.out_of_range_actions == "off" or not actions_list:
+            return actions_list
+        bridge = getattr(self, "_processor_bridge", None)
+        ranges_fn = getattr(bridge, "recorded_value_ranges", None)
+        ranges = ranges_fn("action") if callable(ranges_fn) else None
+        if not ranges:
+            return actions_list
+        lows = np.array([lo for lo, _ in ranges], dtype=float)
+        highs = np.array([hi for _, hi in ranges], dtype=float)
+        span = np.maximum(highs - lows, 1e-6)
+        out: list[Any] = []
+        flagged: dict[int, float] = {}
+        for action in actions_list:
+            values = np.asarray(action, dtype=float).copy()
+            n = min(values.shape[-1] if values.ndim else 0, len(lows))
+            if n:
+                head = values[..., :n]
+                far = (head < lows[:n] - span[:n]) | (head > highs[:n] + span[:n])
+                if far.any():
+                    self.out_of_range_action_count += 1
+                    for col in np.flatnonzero(far):
+                        flagged.setdefault(int(col), float(head[..., col]))
+                if self.out_of_range_actions == "clip":
+                    values[..., :n] = np.clip(head, lows[:n], highs[:n])
+            out.append(values)
+        if flagged and not self._out_of_range_warned:
+            self._out_of_range_warned = True
+            shown = ", ".join(
+                f"column {c} = {v:.4g} (recorded [{lows[c]:.4g}, {highs[c]:.4g}])" for c, v in sorted(flagged.items())
+            )
+            logger.warning(
+                "lerobot_local: %s emitted actions far outside the range its own action stats record: %s. "
+                "The scene is likely out of the checkpoint's distribution; %s. "
+                "Pass out_of_range_actions='clip' to clip to the recorded range, or 'off' to silence this.",
+                self.pretrained_name_or_path or "the policy",
+                shown,
+                "they were clipped" if self.out_of_range_actions == "clip" else "they were forwarded unchanged",
+            )
+        return out if self.out_of_range_actions == "clip" else actions_list
+
     def _tensor_to_action_dicts(
         self, action_tensor: torch.Tensor, hw_action_keys: list[str] | None = None
     ) -> list[dict[str, Any]]:
@@ -4169,6 +4240,7 @@ class LerobotLocalPolicy(Policy):
             if dim_msg:
                 logger.warning("lerobot_local: %s", dim_msg)
                 self._action_dim_warned = True
+        actions_list = self._guard_action_range(actions_list)
         max_abs = float(np.abs(action_array).max()) if action_array.size else 0.0
         zero_msg = self._zero_action_monitor.update(max_abs)
         if zero_msg:
