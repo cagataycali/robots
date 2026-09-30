@@ -15,7 +15,11 @@ description: "Hello Robot Stretch 3 (mobile manipulator)"
 from strands_robots import Robot
 
 robot = Robot("stretch3")
+print(robot.robot_joint_names("stretch3"))
+robot.cleanup()
 ```
+
+The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.
 
 Aliases: `hello_robot_stretch`, `hello_robot_stretch_3`.
 

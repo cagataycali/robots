@@ -15,7 +15,11 @@ The model has no public source to stream, so this page has no 3D view; the thumb
 from strands_robots import Robot
 
 robot = Robot("rby1")
+print(robot.robot_joint_names("rby1"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 Aliases: `rby1a`, `rainbow_rby1`.
 

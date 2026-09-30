@@ -13,11 +13,15 @@ URDF from [facebookresearch/differentiable-robot-model@d7bd1b3](https://github.c
 
 <img class="sr-thumb" src="../assets/img/robots/trifinger_edu.webp" alt="trifinger_edu, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("trifinger_edu")
+robot = Robot("trifinger_edu")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("trifinger_edu"))
+robot.cleanup()
 ```
+
+Add a cube and a camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ## Policies verified on this robot
 

@@ -13,11 +13,15 @@ URDF from [Gepetto/example-robot-data@d0d9098](https://github.com/Gepetto/exampl
 
 <img class="sr-thumb" src="../assets/img/robots/ur5.webp" alt="ur5, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("ur5")
+robot = Robot("ur5")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("ur5"))
+robot.cleanup()
 ```
+
+Add a cube and a camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ## Policies verified on this robot
 

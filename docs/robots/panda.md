@@ -15,7 +15,11 @@ description: "Franka Emika Panda (7-DOF + gripper)"
 from strands_robots import Robot
 
 robot = Robot("panda")
+print(robot.robot_joint_names("panda"))
+robot.cleanup()
 ```
+
+Add a cube and a camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ```python title="sketch"
 robot = Robot("panda", mode="real", driver="strands", port="172.16.0.2")  # FrankaDriver

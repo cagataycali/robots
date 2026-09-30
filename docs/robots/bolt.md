@@ -13,11 +13,15 @@ URDF from [Gepetto/example-robot-data@d0d9098](https://github.com/Gepetto/exampl
 
 <img class="sr-thumb" src="../assets/img/robots/bolt.webp" alt="bolt, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("bolt")
+robot = Robot("bolt")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("bolt"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

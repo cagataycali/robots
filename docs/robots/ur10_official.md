@@ -13,11 +13,15 @@ URDF from [UniversalRobots/Universal_Robots_ROS2_Description@22f055d](https://gi
 
 <img class="sr-thumb" src="../assets/img/robots/ur10_official.webp" alt="ur10_official, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("ur10_official")
+robot = Robot("ur10_official")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("ur10_official"))
+robot.cleanup()
 ```
+
+Add a cube and a camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ## Policies verified on this robot
 

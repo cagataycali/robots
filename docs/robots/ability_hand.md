@@ -15,7 +15,11 @@ description: "PSYONIC Ability Hand (5-finger prosthetic, 11-DOF)"
 from strands_robots import Robot
 
 robot = Robot("ability_hand")
+print(robot.robot_joint_names("ability_hand"))
+robot.cleanup()
 ```
+
+`robot_joint_names` lists the finger joints a policy drives; set them by name with `set_joint_positions` or from a [policy](../learn/policies/index.md).
 
 Aliases: `psyonic_ability_hand`.
 

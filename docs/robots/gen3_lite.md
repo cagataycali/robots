@@ -13,11 +13,15 @@ URDF from [Kinovarobotics/ros2_kortex@8bf2034](https://github.com/Kinovarobotics
 
 <img class="sr-thumb" src="../assets/img/robots/gen3_lite.webp" alt="gen3_lite, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("gen3_lite")
+robot = Robot("gen3_lite")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("gen3_lite"))
+robot.cleanup()
 ```
+
+Add a cube and a camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ## Policies verified on this robot
 
