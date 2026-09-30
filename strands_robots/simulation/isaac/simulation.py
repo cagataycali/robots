@@ -1976,10 +1976,18 @@ class IsaacSimulation(
                 # physics ran on the CPU - the falsehood above was invisible.
                 # They now read the resolved device off the physics context and
                 # report ``device_requested`` beside it, so the gap is legible.
+                # rendering_dt == physics_dt: one Kit app update integrates ONE
+                # physics step, so a rendering tick can BE the step's physics
+                # tick (see _physics_tick). Isaac's RTX products - every camera
+                # but the first - refresh only on an app update that advances the
+                # timeline, which is why a render-only refresh cannot light them
+                # and why the old refresh (an app update at rendering_dt = 4
+                # physics steps) silently advanced the scene on every
+                # multi-camera observation.
                 self._world = World(
                     stage_units_in_meters=1.0,
                     physics_dt=dt,
-                    rendering_dt=self._config.rendering_dt,
+                    rendering_dt=dt,
                 )
 
                 # Set gravity
@@ -2019,7 +2027,7 @@ class IsaacSimulation(
                 world_info = {
                     "physics_dt": resolved_dt if resolved_dt is not None else dt,
                     "physics_dt_requested": dt,
-                    "rendering_dt": self._config.rendering_dt,
+                    "rendering_dt": resolved_dt,  # the World renders with every rendered physics step
                     "gravity": list(grav),
                     "ground_plane": bool(ground_plane and self._config.ground_plane),
                     "stage_path": self._config.stage_path,
@@ -2490,6 +2498,12 @@ class IsaacSimulation(
                 wrenches = getattr(self, "_applied_wrenches", None)
                 if wrenches:
                     wrenches.clear()
+                if (
+                    self._world is not None
+                    and getattr(self, "_cameras", None)
+                    and self._config.render_mode != "headless"
+                ):
+                    self._light_cameras_after_reset()
                 self._rewind_clock()
 
                 # One wording, because there is one reset. The branch that used
@@ -2497,6 +2511,64 @@ class IsaacSimulation(
                 return {"status": "success", "content": [{"text": f"{flush_note}Full reset complete."}]}
 
         return self._marshal_main_thread_affine("reset", _reset_impl)
+
+    #: Upper bound on the rendering ticks a reset spends lighting its cameras.
+    _RESET_LIGHT_TICKS_MAX = 12
+
+    def _light_cameras_after_reset(self) -> None:
+        """Give every camera a frame of the reset scene before the first observation.
+
+        After ``world.reset()`` an RTX camera product - the second and later ones
+        especially - hands back an all-zero frame for the first ~6 rendered
+        updates, and only an app update that advances the timeline counts (a
+        render-only ``World.render`` never lights them). So the first
+        observation of every episode showed the policy a black wrist view
+        (measured: pi0.5's first batch had ``left_wrist_0_rgb`` all zeros). Up
+        to :attr:`_RESET_LIGHT_TICKS_MAX` rendering physics ticks are run until
+        every camera returns a non-black frame, then every velocity is zeroed
+        (:meth:`_settle_after_lighting`) and the caller rewinds the clock, so the
+        episode starts at rest at t = 0, from the pose those few ticks settled to.
+        """
+        for _ in range(self._RESET_LIGHT_TICKS_MAX):
+            self._physics_tick(render=True)
+            if all(self._camera_frame_is_lit(cam) for cam in self._cameras.values()):
+                break
+        self._settle_after_lighting()
+
+    @staticmethod
+    def _camera_frame_is_lit(cam: _CameraState) -> bool:
+        if cam.handle is None:
+            return True
+        try:
+            arr = np.asarray(cam.handle.get_rgba())
+        except (RuntimeError, ValueError, AttributeError, TypeError, IndexError):
+            return False
+        return bool(arr.ndim == 3 and arr.size and arr[..., :3].max() > 0)
+
+    def _settle_after_lighting(self) -> None:
+        """Zero every robot joint velocity and dynamic object velocity (best effort per body).
+
+        Positions are left where the lighting ticks put them - at most
+        :attr:`_RESET_LIGHT_TICKS_MAX` physics steps (0.1 s at 1/120 s) under the
+        drives - because writing them back teleports the bodies, and a teleport
+        blanks the RTX products for the next frames all over again.
+        """
+        for name, robot in self._robots.items():
+            art = getattr(robot, "articulation", None)
+            if art is None:
+                continue
+            try:
+                art.set_joint_velocities(np.zeros_like(np.asarray(art.get_joint_positions())))
+            except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                logger.debug("reset: could not zero robot %r's joint velocities: %s", name, exc)
+        for name, obj in self._objects.items():
+            if getattr(obj, "is_static", True) or obj.handle is None:
+                continue
+            try:
+                obj.handle.set_linear_velocity(np.zeros(3))
+                obj.handle.set_angular_velocity(np.zeros(3))
+            except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                logger.debug("reset: could not zero object %r's velocity: %s", name, exc)
 
     def _revive_articulations_after_reset(self) -> None:
         """Re-initialize robot articulation handles ``world.reset()`` killed.
@@ -2646,9 +2718,10 @@ class IsaacSimulation(
                         # registry reads as what it is - no latched wrenches.
                         if getattr(self, "_applied_wrenches", None):
                             self._reapply_wrenches()
-                        self._world.step(render=False)
-                        if render:
-                            self._render_world()
+                        # One app update = one physics_dt (rendering_dt == physics_dt,
+                        # see create_world) that also refreshes every camera.
+                        self._world.step(render=render)
+                        self._rendered_this_tick = render
                         self._sim_time = self._world_clock()
                         self._step_count += 1
                 remaining -= batch
@@ -2720,6 +2793,21 @@ class IsaacSimulation(
             except (TypeError, ValueError):
                 pass
         return self._sim_time + float(self._config.physics_dt)
+
+    def _physics_tick(self, *, render: bool) -> None:
+        """Advance physics by ONE ``physics_dt``; with ``render``, refresh every camera in that same tick.
+
+        With the World built at ``rendering_dt == physics_dt`` a rendering
+        ``World.step(render=True)`` is one Kit app update that integrates exactly
+        one physics step and renders every RTX product - the second and later
+        cameras included, which only refresh on an update that advances the
+        timeline. So the frame a caller reads after the tick is the frame of the
+        state the tick produced, and nothing is integrated that the clock does
+        not count. ``_rendered_this_tick`` tells ``get_observation`` whether the
+        products already hold this state's frame.
+        """
+        self._world.step(render=render)
+        self._rendered_this_tick = bool(render)
 
     def _render_world(self) -> None:
         """Refresh the renderer for one frame WITHOUT advancing physics.
@@ -5231,7 +5319,7 @@ class IsaacSimulation(
                 # camera's RTX render product accumulates a fresh frame before we
                 # read them back. Single-camera setups skip this (the substep
                 # render already warmed the one product) to stay fast.
-                if len(self._cameras) > 1:
+                if len(self._cameras) > 1 and not getattr(self, "_rendered_this_tick", False):
                     self._refresh_all_render_products()
                 for cam_name, cam in self._cameras.items():
                     if cam.handle is None:
@@ -6079,9 +6167,8 @@ class IsaacSimulation(
                         # does not re-push it is a tick the force is absent from.
                         if getattr(self, "_applied_wrenches", None):
                             self._reapply_wrenches()
-                        self._world.step(render=False)
-                        if render_on and last:
-                            self._render_world()
+                        self._world.step(render=render_on and last)
+                        self._rendered_this_tick = render_on and last
                         self._sim_time = self._world_clock()
                         self._step_count += 1
                         stepped += 1
@@ -6273,7 +6360,7 @@ class IsaacSimulation(
                 ``{robot_name: instruction}`` mapping.
             duration: Episode length in seconds (steps = duration x freq).
                 Used only when no ``n_steps`` / ``max_steps`` is given.
-            control_frequency: Target Hz for policy queries / physics steps.
+            control_frequency: Target Hz for policy queries. Each synchronized step advances one control period of physics, in whole ``physics_dt`` ticks, as ``run_policy`` does.
             action_horizon: Actions consumed from each policy's chunk before
                 re-querying it, as one int or a per-robot mapping.
             n_steps: Exact step horizon (overrides ``duration`` when set).
@@ -6451,6 +6538,13 @@ class IsaacSimulation(
         skip_images = not (any_needs_images or recording)
         render_on = self._config.render_mode != "headless"
         physics_dt = float(getattr(self._config, "physics_dt", 0.0) or 0.0)
+        # One synchronized step is one CONTROL period (MuJoCo parity, and what
+        # run_policy steps for the same rate): one physics tick at 1/120 s under
+        # a 50 Hz loop left each servo 42% of the way to its target, and a
+        # recording labelled at the control rate held frames 1/120 s apart.
+        from strands_robots.simulation.policy_runner import PolicyRunner
+
+        n_substeps = PolicyRunner(self)._control_substeps(control_frequency)
 
         # Honour the RESOLVED step count. ``_resolve_horizon`` above returns both
         # the wall-clock ``duration`` and the normalized ``n_steps``, and the
@@ -6497,7 +6591,7 @@ class IsaacSimulation(
             return per_obs, cams
 
         def _apply_all_and_step(per_robot_action: dict[str, dict[str, Any]]) -> None:
-            """Main-thread hop 2: apply EVERY robot's targets, step physics ONCE."""
+            """Main-thread hop 2: apply EVERY robot's targets, step one control period."""
             with self._lock:
                 # The preflight refused a view that was already stale; this
                 # catches one invalidated MID-rollout by a worker thread's
@@ -6519,11 +6613,16 @@ class IsaacSimulation(
                     self._apply_lockstep_action(rname, act, warned_unresolved)
                 # Same replay as ``step`` and ``send_action``: this tick advances
                 # ``_sim_time``, so a latched wrench has to act on it.
-                if getattr(self, "_applied_wrenches", None):
-                    self._reapply_wrenches()
-                self._world.step(render=render_on)
-                self._sim_time += physics_dt
-                self._step_count += 1
+                for tick in range(n_substeps):
+                    if getattr(self, "_applied_wrenches", None):
+                        self._reapply_wrenches()
+                    # Render once, after the last tick, as ``send_action`` does:
+                    # the frame read next is of the state this period ends in.
+                    self._world.step(render=False)
+                    if render_on and tick == n_substeps - 1:
+                        self._render_world()
+                    self._sim_time += physics_dt
+                    self._step_count += 1
 
         step_count = 0
         stopped_early = False
