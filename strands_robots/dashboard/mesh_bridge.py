@@ -16,6 +16,7 @@ import uuid
 from collections import deque
 from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from typing import Any, cast
 
 from strands_robots.dashboard import safety_state
@@ -24,6 +25,13 @@ from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_bytes_cap
 from strands_robots.utils import finite_number_error, refusal_repr
 
 logger = logging.getLogger(__name__)
+
+#: Appended to a lockout reason once, the first time a resume arrives that no wire
+#: identity vouches for; later unbound resumes leave the reason as it is.
+UNATTRIBUTED_RESUME_NOTE = (
+    "; a resume arrived that this dashboard could not attribute to any session, so it was not applied"
+    " - the lockout stands until a peer proves it clear"
+)
 
 
 def _env_float(name: str, default: str) -> float:
@@ -297,6 +305,35 @@ def wire_peer_id(sample: Any) -> str | None:
     if peer_id in _NOT_A_PEER_SEGMENT:
         return None
     return peer_id
+
+
+def bind_safety_sample(sample: Any, data: Mapping[str, Any]) -> tuple[str, str | None]:
+    """Bind a ``strands/safety/**`` envelope to the session that carried it.
+
+    The rule is the SDK's own (``Mesh._decode_bound_safety_envelope``): the
+    body's ``source_zid`` and the TLS-bound wire source
+    (``mesh.core._extract_sample_source_zid``) must agree in all three states.
+    ``("bound", zid)`` when both are present and equal, ``("unbound", None)``
+    when both are absent (a transport that carries no ``source_info``, or a
+    publisher that predates the binding on such a transport), and
+    ``("refused", why)`` for the three mismatched shapes: a body zid that is not
+    the wire's (a captured envelope replayed from another session), a body zid
+    with no wire zid (stripped ``source_info``), and a wire zid with no body zid
+    (a publisher that predates the binding on a transport that does carry it).
+    """
+    from strands_robots.mesh.core import _extract_sample_source_zid
+
+    wire_zid = _extract_sample_source_zid(sample)
+    body_zid = data.get("source_zid")
+    if wire_zid is not None and body_zid is not None:
+        if not isinstance(body_zid, str) or body_zid != wire_zid:
+            return "refused", "the body's source_zid is not the session that carried it (cross-session forgery)"
+        return "bound", wire_zid
+    if wire_zid is None and body_zid is not None:
+        return "refused", "the body names a source_zid but the wire carried none (source_info stripped)"
+    if wire_zid is not None and body_zid is None:
+        return "refused", "the wire carried a source_zid the body does not repeat (publisher predates the binding)"
+    return "unbound", None
 
 
 def peer_origins(
@@ -1109,6 +1146,17 @@ class MeshBridge:
         self._emit({"type": "lidar", "kind": kind, "peer_id": peer_id, "data": data})
 
     def _on_safety(self, sample: Any) -> None:
+        """Fold a ``strands/safety/**`` envelope into the fleet lockout, as far as it can be trusted.
+
+        The envelope is bound to the session that carried it first
+        (:func:`bind_safety_sample`); a mismatched one is dropped whatever it
+        says. An estop is applied even when the wire carried no identity, since
+        stopping must never get harder, and is marked unverified. A resume the
+        dashboard cannot attribute does not touch the lockout: the fleet stays
+        as it was until a peer proves it clear (``confirm_resume``, or a command
+        a peer accepts), and the trail says why. An attributed resume lands on
+        "unknown", as before: each peer verifies the override code itself.
+        """
         data = self._decode(sample)
         if not data:
             return
@@ -1122,14 +1170,42 @@ class MeshBridge:
             logger.warning("[safety] %s dropped: %s", kind, refusal)
             self.record_activity("safety", f"{kind}_refused", detail={"why": refusal}, ok=False)
             return
+        claimed = safety_state._source_of(data)
+        binding, detail = bind_safety_sample(sample, data)
+        trail: dict[str, Any] = {"claimed": claimed, "attributed": binding == "bound", "body": data}
+        if binding == "refused":
+            logger.warning("[safety] %s refused: %s", kind, detail)
+            self.record_activity("safety", f"{kind}_refused", detail={**trail, "why": detail}, ok=False)
+            return
+        if binding == "bound":
+            trail["wire_zid"] = detail
         # A five-second flash in the header was the ONLY representation of a lockout in
         # this product, so a reload erased it while two arms stayed locked for ten hours.
+        now = time.time()
         with self._peers_lock:
-            self._lockout = safety_state.apply_event(self._lockout, kind=kind, data=data, now=time.time())
-            if kind == "estop":
-                self._lockout_proof.clear()
-        self.record_activity("safety", kind, detail=data, ok=True)
-        self._emit({"type": "safety", "kind": kind, "data": data})
+            if kind == "resume" and binding != "bound":
+                # Not applied: whoever this was, nothing on the wire vouches for them.
+                # The note is appended once: an unbound resume can arrive at wire
+                # rate (or every few seconds from a legacy publisher for hours),
+                # and the reason is copied into every peer card of every
+                # snapshot, so an append per arrival would grow without bound.
+                if not self._lockout.reason.endswith(UNATTRIBUTED_RESUME_NOTE):
+                    self._lockout = replace(self._lockout, reason=f"{self._lockout.reason}{UNATTRIBUTED_RESUME_NOTE}")
+                applied = False
+            else:
+                self._lockout = safety_state.apply_event(self._lockout, kind=kind, data=data, now=now)
+                if kind == "estop" and binding != "bound":
+                    self._lockout = replace(
+                        self._lockout, reason=f"{self._lockout.reason} (sender unverified: no wire identity)"
+                    )
+                if kind == "estop":
+                    self._lockout_proof.clear()
+                applied = True
+        if applied:
+            self.record_activity("safety", kind, detail=trail, ok=True)
+        else:
+            self.record_activity("safety", "resume_unattributed", detail=trail, ok=False)
+        self._emit({"type": "safety", "kind": kind, "data": data, "applied": applied, "attributed": binding == "bound"})
 
     # ------------------------------------------------------------------ Commands (dashboard ->
     # robot).

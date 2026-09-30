@@ -1,6 +1,10 @@
+---
+description: A Reachy Mini over its daemon: four axes, the envelope that refuses the rest, the reachy_* agent verbs.
+---
+
 # Reachy Mini
 
-At the end of this page a Pollen Robotics Reachy Mini (Lite or Wireless) answers `Robot("reachy_mini", mode="real")` over its daemon, you know the four axes it accepts and the envelope that refuses the rest, and an agent has the `reachy_*` verbs for looking, expressing and listening.
+At the end of this page a Pollen Robotics Reachy Mini (Lite or Wireless) answers `Robot("reachy_mini", mode="real")` over its daemon, you know the four axes it accepts and the envelope that refuses the rest, and an agent has the `reachy_*` verbs to look, express and listen.
 
 This needs the Mini's daemon reachable (the robot's hostname, REST on `:8000`) and `pip install websockets` for the real-time link.
 
@@ -20,7 +24,7 @@ mini.send_action({"antenna_right": 30.0, "antenna_left": 30.0})
 | REST `:8000` | `/api/daemon/status` (reachability, variant), recorded moves, motion stop | `connect_eagerly` probes it first |
 | real-time | six Stewart leg positions, head IMU, battery | a WebSocket to the daemon (daemon 1.10.0, Lite and Wireless), or an explicitly supplied Zenoh bridge (`zenoh_prefix=`, `transport=`) on Wireless |
 
-Both come from `strands_robots.drivers.reachy_transport`; the driver runs them on one background asyncio loop and caches what arrives. `_imu` is the head IMU verbatim, `_pose` is the head orientation from that IMU (the IMU is in the head), `_battery` when the status payload carries one. No lidar, no forward kinematics of the platform: the legs are cached as legs (`_joints`) and the head orientation comes from the sensor, not from a model this repo does not have.
+Both come from `strands_robots.drivers.reachy_transport`; the driver runs them on one background asyncio loop and caches what arrives. `_imu` is the head IMU verbatim, `_pose` is the head orientation from that IMU (the IMU is in the head), `_battery` when the status payload carries one. No lidar and no platform kinematics: the legs are cached as legs (`_joints`) and the head orientation comes from the sensor.
 
 ## The envelope
 
@@ -34,7 +38,7 @@ Both come from `strands_robots.drivers.reachy_transport`; the driver runs them o
 | `body_yaw` | 160 degrees |
 | `head_yaw - body_yaw` | 65 degrees (`HEAD_BODY_YAW_DELTA_LIMIT_DEG`) |
 
-The head command is a whole pose, so `{"head_yaw": 20}` means "look 20 degrees left with pitch and roll zero", not "keep pitch and roll". A `body_yaw` alone is checked against the head yaw last commanded so the coupling limit holds. Antennas travel as a pair: an action with one antenna key and not the other is refused.
+The head command is a whole pose: `{"head_yaw": 20}` means "look 20 degrees left with pitch and roll zero", not "keep pitch and roll". A `body_yaw` alone is checked against the last commanded head yaw so the coupling limit holds. Antennas travel as a pair: an action with one antenna key and not the other is refused.
 
 ## Agent verbs
 
@@ -55,7 +59,7 @@ agent("Look at whoever is speaking and act curious.")
 | `reachy_wake`, `reachy_motors`, `reachy_stop` | wake or sleep, torque mode, stop motion |
 | `sensors`, `status`, `sleep`, `list_moves`, `say`, `set_volume`, `track_face`, `tracking_status`, `record_audio`, `turn_to_sound`, `turn_to_sound_status` | the rest of the driver's `action` enum, sent through the `mini` tool itself: raw caches and daemon status, the go-to-sleep move, the move library, speech (needs a TTS sidecar), speaker level (the daemon plays a short test sound on change), daemon face tracking and its status, a bounded microphone WAV (GStreamer), and turning toward a voice with its status |
 
-Each verb takes the live driver as its first argument and refuses anything else with the same sentence, so an agent handed a disconnected handle learns that rather than a traceback. The Mini's verbs are not in the motion gate table on the [agents](../agents.md) page: a desk robot's head is not a payload-bearing actuator, and its own envelope is the safety rail.
+Each verb takes the live driver as its first argument and refuses anything else with one sentence, so an agent handed a disconnected handle learns that, not a traceback. The Mini's verbs are not in the motion gate table on the [agents](../agents.md) page: a desk robot's head is not a payload-bearing actuator, and its own envelope is the safety rail.
 
 ## Simulation
 

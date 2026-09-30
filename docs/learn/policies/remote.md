@@ -1,5 +1,5 @@
 ---
-description: remote streams observations over a WebSocket to a PolicyServer on a GPU host and returns the action chunks it computes, so a CPU robot host runs any policy at control rate.
+description: remote streams observations over a WebSocket to a PolicyServer on a GPU host and returns its action chunks, so a CPU robot host runs any policy at control rate.
 ---
 
 # remote
@@ -19,7 +19,7 @@ from strands_robots.inference import PolicyServer
 from strands_robots.simulation import create_simulation
 
 server = PolicyServer(policy_provider="mock", port=0).start()   # port=0 asks the OS for a free port
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("so101")
 result = sim.run_policy(
@@ -37,7 +37,7 @@ sim.cleanup()
 
 {{providers:kwargs:remote}}
 
-`endpoint` supersedes `host` and `port`; without it the client dials `ws://host:port`. `host` is checked for delimiters and `port` must be an `int` in `[1, 65535]` before the URI exists, so a bad value is refused while you still hold it. `connect_timeout` and `request_timeout` are seconds and must be positive; `0`, a negative or `True` is a `ValueError` at construction.
+`endpoint` supersedes `host` and `port`; without it the client dials `ws://host:port`. `host` is checked for delimiters and `port` must be an `int` in `[1, 65535]` before the URI exists. `connect_timeout` and `request_timeout` are positive seconds; `0`, a negative or `True` is a `ValueError` at construction.
 
 ## The server
 

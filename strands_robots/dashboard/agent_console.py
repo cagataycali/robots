@@ -27,7 +27,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -58,6 +58,19 @@ world, use that robot's tool with the simulation action (a cube is add_object wi
 size, color, position). Joint positions are radians unless the peer's state says otherwise; joints
 are addressed by name or by 1-based index as strings. A move you request may be put to the operator
 first; if they decline, say so and stop. Never work around a refusal or an e-stop."""
+
+#: How the agent chooses a policy for a peer. Appended to the prompt; the facts it
+#: points at are on every ``fleet`` row (:mod:`strands_robots.dashboard.peer_policies`).
+POLICY_GUIDANCE = """Each fleet row carries `policies`: the robot the peer is and `can_run`, the providers that apply to
+it with the kwargs the wire accepts (types, bounds) and what each needs. For a motion request pick a
+provider from that list: a Unitree G1 walks with `wbc` (model_path = the checkpoint directory on the
+robot host, walk true, target_velocity [vx, vy, wz] within the bounds shown); an arm runs
+`lerobot_local` with pretrained_name_or_path and policy_type. `mock` is a sine test that proves the
+plumbing and never performs a task: use it only when the operator asks for it. When a provider needs
+a checkpoint or a server and none was given, ask for it instead of guessing or falling back to
+mock. Send only the kwargs listed for that provider; the robot host refuses anything else."""
+
+SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + POLICY_GUIDANCE
 
 #: agent tool name -> does it move the robot (and so asks the operator first)?
 MOTION_TOOLS: frozenset[str] = frozenset({"sim_set_joints"})
@@ -294,8 +307,8 @@ SPAWN_POLL_S = 0.25
 FLEET_TOOL_NAMES: tuple[str, ...] = ("fleet", "spawn_robot", "despawn_robot")
 
 
-def peer_summary(peer_id: str, peer: Mapping[str, Any]) -> dict[str, Any]:
-    """One fleet row for the agent: what the peer is, whether it is fresh, and its joints."""
+def peer_summary(peer_id: str, peer: Mapping[str, Any], managed: Iterable[Mapping[str, Any]] = ()) -> dict[str, Any]:
+    """One fleet row for the agent: what the peer is, whether it is fresh, its joints, and the policies it can run."""
     from strands_robots.dashboard.peer_tools import classify_peer, sanitize_tool_name
 
     presence = peer.get("presence") or {}
@@ -318,6 +331,9 @@ def peer_summary(peer_id: str, peer: Mapping[str, Any]) -> dict[str, Any]:
         row["status"] = state.get("status")
     if peer.get("cameras"):
         row["cameras"] = sorted(peer["cameras"])
+    from strands_robots.dashboard.peer_policies import peer_policies
+
+    row["policies"] = peer_policies(peer_id, peer, managed)
     return row
 
 
@@ -347,14 +363,14 @@ def build_fleet_tools(
         from strands_robots.dashboard.peer_tools import KIND_SKIP
 
         peers = _peers()
-        rows = [peer_summary(pid, p) for pid, p in peers.items()]
-        rows = [r for r in rows if r["kind"] != KIND_SKIP]
         managed = []
         if devices is not None:
             try:
                 managed = list(devices.managed_children())
             except Exception:  # noqa: BLE001 - the roster is a courtesy, the mesh is the truth
                 managed = []
+        rows = [peer_summary(pid, p, managed) for pid, p in peers.items()]
+        rows = [r for r in rows if r["kind"] != KIND_SKIP]
         return {"robots": rows, "count": len(rows), "managed_by_this_dashboard": managed}
 
     @tool
