@@ -118,13 +118,13 @@ from typing import NamedTuple
 import pytest
 
 import strands_robots
+from tests._docs_hooks import docs_hook
 
 PACKAGE = Path(strands_robots.__file__).parent
 REPO_ROOT = PACKAGE.parent
 PAGES = (REPO_ROOT / "README.md", *sorted((REPO_ROOT / "docs").rglob("*.md")))
 #: The generated configuration reference and the hook that fills its token.
 CONFIGURATION_PAGE = REPO_ROOT / "docs" / "reference" / "configuration.md"
-ENV_VARS_HOOK = REPO_ROOT / "docs" / "hooks" / "env_vars.py"
 
 #: Variables another project or the operating system defines. This package
 #: reads them, so their own documentation is the reference and a page here need
@@ -505,15 +505,8 @@ def documented_names(pages: dict[str, str]) -> set[str]:
 
 def _render_configuration(source: str) -> str:
     """``configuration.md`` with ``{{env_vars}}`` expanded by the shipped hook."""
-    import importlib.util
 
-    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", ENV_VARS_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = sys.modules.get(spec.name)
-    if module is None:
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+    module = docs_hook("env_vars")
     rendered = module.on_page_markdown(source, page=None, config=None, files=None)
     assert rendered != source, "docs/reference/configuration.md carries no {{env_vars}} token for the hook to expand"
     # the hook writes names as <code>NAME</code>; strip the tags so the name regex sees whole tokens
