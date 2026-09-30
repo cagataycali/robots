@@ -4,7 +4,7 @@ description: holosoma runs Amazon FAR's Holosoma ONNX locomotion controllers for
 
 # holosoma
 
-By the end of this page you can make a simulated Unitree G1 walk from a `[vx, vy, omega]` command with Amazon FAR's Holosoma controllers, know the weights' source and licence, and what this family shares with [wbc](wbc.md).
+By the end of this page you can make a simulated Unitree G1 walk from a `[vx, vy, omega]` command with Amazon FAR's Holosoma controllers, and know the weights' source and licence and what this family shares with [wbc](wbc.md).
 
 ```bash
 pip install 'strands-robots[holosoma]'    # onnxruntime + huggingface_hub; weights fetched on first use
@@ -12,9 +12,9 @@ pip install 'strands-robots[holosoma]'    # onnxruntime + huggingface_hub; weigh
 
 ## What it is
 
-`HolosomaPolicy` ports the deployment loop of `holosoma_inference` from [amazon-far/holosoma](https://github.com/amazon-far/holosoma): one ONNX actor (`fastsac_g1_29dof.onnx` or `ppo_g1_29dof.onnx`) with input `actor_obs [1, 100]` and output `action [1, 29]`. The checkpoint describes itself: joint names, per-joint PD gains and the command ranges ride in the ONNX metadata, and the provider reads them the way upstream does (a config override wins, then the metadata, otherwise a refusal). The controller drives all 29 joints; `requires_images` is `False`.
+`HolosomaPolicy` ports the deployment loop of `holosoma_inference` from [amazon-far/holosoma](https://github.com/amazon-far/holosoma): one ONNX actor (`fastsac_g1_29dof.onnx` or `ppo_g1_29dof.onnx`) with input `actor_obs [1, 100]` and output `action [1, 29]`. The checkpoint describes itself: joint names, per-joint PD gains and command ranges ride in the ONNX metadata, read the way upstream does (a config override wins, then the metadata, otherwise a refusal). The controller drives all 29 joints; `requires_images` is `False`.
 
-Code and weights are Apache-2.0 in the same git tree (`src/holosoma_inference/holosoma_inference/models/loco/g1_29dof/`). A bare file name is fetched from the Hub mirror `nepyope/holosoma_locomotion`, the one lerobot's `HolosomaLocomotionController` downloads.
+Code and weights are Apache-2.0 in the same git tree (`src/holosoma_inference/holosoma_inference/models/loco/g1_29dof/`). A bare file name is fetched from the Hub mirror `nepyope/holosoma_locomotion` (the one lerobot downloads) at a pinned commit, and its sha256 must match the released file; `revision=` moves the pin.
 
 ```python title="sketch"
 from strands_robots.policies import create_policy
@@ -28,11 +28,11 @@ local = create_policy("holosoma", checkpoint="./holosoma/src/holosoma_inference/
 
 {{providers:kwargs:holosoma}}
 
-`checkpoint` is a `.onnx` file, a directory holding the upstream file name for `algorithm`, or a bare Hub file name; a path with directories that does not exist is refused rather than downloaded. `driven_joints="legs_waist"` emits the first 15 targets only and `arm_observation="default"` feeds the network the nominal arm pose instead of the measured one; together they reproduce lerobot's arm-teleoperation convention. Defaults (`"all"`, `"live"`) are upstream's.
+`checkpoint` is a `.onnx` file, a directory holding the upstream file name for `algorithm`, or a bare Hub file name; a path with directories that does not exist is refused, not downloaded. `driven_joints="legs_waist"` emits the first 15 targets only and `arm_observation="default"` feeds the network the nominal arm pose, not the measured one; together they reproduce lerobot's arm-teleoperation convention. Defaults (`"all"`, `"live"`) are upstream's.
 
 ## Observation
 
-`build_actor_obs` in `strands_robots/policies/holosoma/observation.py` lays the 100 floats out in the order upstream does: the term names sorted alphabetically, so `actions(29)`, `base_ang_vel(3)` scaled by 0.25, `command_ang_vel(1)`, `command_lin_vel(2)`, `cos_phase(2)`, `dof_pos(29)` as the offset from the default stance, `dof_vel(29)` scaled by 0.05, `projected_gravity(3)`, `sin_phase(2)`. The two-foot gait clock advances `2 pi / 50` per tick with a one second period, pins both feet to `pi` when the commanded velocity is below 0.01, and restarts on the first moving tick. Joint state is read by name from the unified sim observation (`<name>`, `<name>.vel`, `base_quat`, `base_ang_vel`) or from the `Robot("g1")` snapshot (`joints[name]["q"]`, `imu["gyroscope"]`), so one object serves both.
+`build_actor_obs` in `strands_robots/policies/holosoma/observation.py` lays the 100 floats out in upstream's order, the term names sorted alphabetically: `actions(29)`, `base_ang_vel(3)` scaled by 0.25, `command_ang_vel(1)`, `command_lin_vel(2)`, `cos_phase(2)`, `dof_pos(29)` as the offset from the default stance, `dof_vel(29)` scaled by 0.05, `projected_gravity(3)`, `sin_phase(2)`. The two-foot gait clock advances `2 pi / 50` per tick with a one second period, pins both feet to `pi` when the commanded velocity is below 0.01, and restarts on the first moving tick. Joint state is read by name from the unified sim observation (`<name>`, `<name>.vel`, `base_quat`, `base_ang_vel`) or from the `Robot("g1")` snapshot (`joints[name]["q"]`, `imu["gyroscope"]`), so one object serves both.
 
 ## Goals
 
@@ -44,7 +44,7 @@ The raw action is clipped to `[-100, 100]`, scaled by 0.25 and added to the defa
 
 ## Run it
 
-`run_policy` on MuJoCo installs the same `WBCTorqueController` the wbc family uses, because a Holosoma checkpoint also emits joint-position targets that the stock position servos would override: the shim flips the driven actuators to torque, steps physics at 0.005 s four times per control tick, and applies the checkpoint's own `kp` and `kd`. Isaac and Newton cannot install it and refuse the rollout unless you pass `wbc_install_torque_control=False` against a torque-actuated scene.
+`run_policy` on MuJoCo installs the same `WBCTorqueController` the wbc family uses, because a Holosoma checkpoint also emits joint-position targets the stock position servos would override: the shim flips the driven actuators to torque, steps physics at 0.005 s four times per control tick, and applies the checkpoint's own `kp` and `kd`. Isaac and Newton cannot install it and refuse the rollout unless passed `wbc_install_torque_control=False` on a torque-actuated scene.
 
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
@@ -62,16 +62,16 @@ result = sim.run_policy(
 print(result["status"])
 ```
 
-Measured on the Menagerie G1 at 50 Hz on a laptop CPU, real time: fastsac walks 1.9 m in 5 s at a 0.5 m/s command with under 4 cm of lateral drift and the pelvis at 0.79 m; ppo walks 1.7 m; a zero command stands with 2 cm of creep; wbc on the same scene walks 1.9 m.
+Measured on the Menagerie G1 at 50 Hz on a laptop CPU in real time: fastsac walks 1.9 m in 5 s at a 0.5 m/s command with under 4 cm of lateral drift and the pelvis at 0.79 m; ppo walks 1.7 m; a zero command stands with 2 cm creep; wbc on the same scene walks 1.9 m.
 
 `Robot("g1")` on hardware takes the same `policy_provider`; the driver's 500 Hz loop re-gates every step.
 
 ## Next to wbc
 
-Both families drive the 29 joints of `WBC_G1_ALL_JOINTS` in the same order, emit absolute joint targets, run at 50 Hz over a 200 Hz PD loop, and share the torque shim through the `PDTorquePolicy` protocol. They differ in what the network sees and does: wbc observes 86 or 95 floats with a height and orientation command and drives 15 joints while the arms hold; holosoma observes 100 floats with a phase clock and drives all 29. Weights differ in licence: NVIDIA Open Model License for wbc, Apache-2.0 for holosoma.
+Both families drive the 29 joints of `WBC_G1_ALL_JOINTS` in the same order, emit absolute joint targets, run at 50 Hz over a 200 Hz PD loop, and share the torque shim via the `PDTorquePolicy` protocol. They differ in what the network sees and drives: wbc observes 86 or 95 floats with a height and orientation command and drives 15 joints while the arms hold; holosoma observes 100 floats with a phase clock and drives all 29. Licences differ: NVIDIA Open Model License for wbc, Apache-2.0 for holosoma.
 
 ## Limits
 
 - Unitree G1 only. `set_robot_state_keys` requires all 29 G1 joint names; the metadata `dof_names` of a checkpoint must be that table.
-- Locomotion only. The `*_dancing.onnx` whole-body-tracking files in the same upstream folder take a 58-wide motion command and are refused by input width.
+- Locomotion only. The `*_dancing.onnx` whole-body-tracking files in the same upstream folder take a 58-wide motion command; input width refuses them.
 - Upstream runs at 50 Hz with a one second gait period; lerobot's port runs 200 Hz with half a second. This provider follows upstream.

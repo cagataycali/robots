@@ -5,7 +5,8 @@ checkpoints (Apache-2.0, github.com/amazon-far/holosoma; `fastsac` default or
 `ppo`) in process with ONNX Runtime: the 100-wide alphabetical observation, the
 two-foot gait clock at 50 Hz, `default + 0.25 * clip(action)` for all 29 joints,
 and the PD gains read from the checkpoint's own metadata. Weights are fetched on
-first use from the Hub mirror behind the `[holosoma]` extra; nothing is bundled.
+first use from the Hub mirror behind the `[holosoma]` extra, at a pinned commit and checked
+against the released sha256; nothing is bundled.
 On MuJoCo the provider shares the GR00T-WBC torque shim: `WBCTorqueController`
 is now typed on a `PDTorquePolicy` protocol and the engine installs it for any
 policy in the tree that sets `pd_torque_shim = True`, so `run_policy(

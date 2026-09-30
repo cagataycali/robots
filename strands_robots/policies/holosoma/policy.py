@@ -26,6 +26,7 @@ through ``huggingface_hub`` (the ``[holosoma]`` extra) into the Hub cache.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -51,10 +52,25 @@ logger = logging.getLogger(__name__)
 #: https://github.com/amazon-far/holosoma (Apache-2.0).
 HOLOSOMA_HF_REPO = "nepyope/holosoma_locomotion"
 
+#: The mirror commit every default fetch is pinned to. The mirror is a personal
+#: Hub account, not the vendor's org, so a moving reference would let whoever
+#: holds that account swap the network that commands a humanoid; a commit pin
+#: plus :data:`HOLOSOMA_SHA256` closes that door. Pass ``revision=`` to move it.
+HOLOSOMA_HF_REVISION = "a5eaedd54270ef2d457bd395af0e15574f281e57"
+
 #: File name per algorithm, as shipped upstream and on the mirror.
 HOLOSOMA_FILES: dict[str, str] = {
     "fastsac": "fastsac_g1_29dof.onnx",
     "ppo": "ppo_g1_29dof.onnx",
+}
+
+#: sha256 of each released file, read from the authoritative Apache-2.0 tree
+#: (github.com/amazon-far/holosoma@d18d6cc5, src/holosoma_inference/holosoma_inference/models/loco/g1_29dof/)
+#: and identical on the mirror at :data:`HOLOSOMA_HF_REVISION`. A fetched file
+#: that hashes differently is refused before a session is built.
+HOLOSOMA_SHA256: dict[str, str] = {
+    "fastsac_g1_29dof.onnx": "8346fd90778439395922a8c7256f24125ae84b8dea949128bac9e23c02bc7717",
+    "ppo_g1_29dof.onnx": "c9d310f479c2da1e86f468de24f64e102a2a275c14eed0fa341473612d942294",
 }
 
 #: The 29 joints in ``dof_names`` order. Identical to the GR00T-WBC table, so
@@ -64,19 +80,33 @@ HOLOSOMA_G1_JOINTS: tuple[str, ...] = WBC_G1_ALL_JOINTS
 _ARM_JOINTS: frozenset[str] = frozenset(HOLOSOMA_G1_JOINTS[15:])
 
 
-def resolve_holosoma_checkpoint(checkpoint: str | Path | None, algorithm: str, *, revision: str | None = None) -> Path:
+def _sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def resolve_holosoma_checkpoint(
+    checkpoint: str | Path | None, algorithm: str, *, revision: str | None = HOLOSOMA_HF_REVISION
+) -> Path:
     """Return a local ``.onnx`` file for ``checkpoint``.
 
     * ``None`` -> :data:`HOLOSOMA_FILES`\\ ``[algorithm]`` fetched from
-      :data:`HOLOSOMA_HF_REPO`.
-    * An existing ``.onnx`` file -> itself.
+      :data:`HOLOSOMA_HF_REPO` at ``revision`` (default
+      :data:`HOLOSOMA_HF_REVISION`) and checked against :data:`HOLOSOMA_SHA256`.
+    * An existing ``.onnx`` file -> itself (a local file is the caller's claim;
+      it is not hashed).
     * An existing directory -> ``<dir>/<HOLOSOMA_FILES[algorithm]>``.
-    * A bare file name with no directory part -> fetched from the mirror.
+    * A bare file name with no directory part -> fetched from the mirror, and
+      hashed when :data:`HOLOSOMA_SHA256` knows the name.
     * A path with directories that does not exist -> refused; the caller made
       a claim about their filesystem and a download would hide a typo.
 
     Raises:
         FileNotFoundError: Naming the path or the mirror and the file asked for.
+        RuntimeError: A fetched file whose sha256 is not the released one.
         ImportError: When a download is needed and ``huggingface_hub`` is missing
             (the remedy names the ``[holosoma]`` extra).
     """
@@ -113,8 +143,18 @@ def resolve_holosoma_checkpoint(checkpoint: str | Path | None, algorithm: str, *
             "the Apache-2.0 tree at github.com/amazon-far/holosoma under "
             "src/holosoma_inference/holosoma_inference/models/loco/g1_29dof/; pass its local path."
         ) from exc
-    logger.info("Holosoma checkpoint %s fetched from %s", name, HOLOSOMA_HF_REPO)
-    return Path(downloaded)
+    fetched = Path(downloaded)
+    expected = HOLOSOMA_SHA256.get(name)
+    if expected is not None:
+        actual = _sha256_of(fetched)
+        if actual != expected:
+            raise RuntimeError(
+                f"Holosoma checkpoint {name!r} fetched from {HOLOSOMA_HF_REPO} at revision {revision} hashes to "
+                f"sha256 {actual}, not the released {expected} (github.com/amazon-far/holosoma). The file is not "
+                "used. Pass the path of a file you trust, or a revision of the mirror that carries the released bytes."
+            )
+    logger.info("Holosoma checkpoint %s fetched from %s at %s", name, HOLOSOMA_HF_REPO, revision)
+    return fetched
 
 
 def read_onnx_metadata(path: str | Path) -> dict[str, Any]:
@@ -145,6 +185,9 @@ class HolosomaPolicy(Policy):
             ``algorithm`` from :data:`HOLOSOMA_HF_REPO`.
         algorithm: ``"fastsac"`` (default) or ``"ppo"``; selects the file when
             ``checkpoint`` does not name one.
+        revision: The mirror commit a Hub fetch is pinned to; default
+            :data:`HOLOSOMA_HF_REVISION`. Every fetched file is also checked
+            against :data:`HOLOSOMA_SHA256`.
         config: A :class:`HolosomaConfig` or a dict of its fields. Gains
             in the config override the checkpoint's metadata (upstream order).
         target_velocity: Constructor-time default ``[vx, vy, omega]``
@@ -187,6 +230,7 @@ class HolosomaPolicy(Policy):
         algorithm: str = "fastsac",
         config: HolosomaConfig | dict[str, Any] | None = None,
         target_velocity: list[float] | None = None,
+        revision: str | None = HOLOSOMA_HF_REVISION,
         driven_joints: str = "all",
         arm_observation: str = "live",
         allow_missing_models: bool = False,
@@ -205,6 +249,7 @@ class HolosomaPolicy(Policy):
         elif not isinstance(config, HolosomaConfig):
             raise ValueError(f"HolosomaPolicy: config must be a HolosomaConfig or a dict, got {type(config).__name__}")
         self._config: HolosomaConfig = config
+        self._revision = revision
         self._driven_joints = driven_joints
         self._arm_observation = arm_observation
         self._default_command = self._validate_velocity(target_velocity) if target_velocity is not None else None
@@ -386,7 +431,7 @@ class HolosomaPolicy(Policy):
                 f"HolosomaPolicy requires onnxruntime (the [holosoma] extra) but it is not installed.\n{exc}"
             ) from exc
         try:
-            path = resolve_holosoma_checkpoint(checkpoint, self._config.algorithm)
+            path = resolve_holosoma_checkpoint(checkpoint, self._config.algorithm, revision=self._revision)
         except FileNotFoundError as exc:
             raise RuntimeError(str(exc)) from exc
         options = ort.SessionOptions()  # type: ignore[attr-defined]
@@ -555,6 +600,8 @@ __all__ = [
     "HOLOSOMA_FILES",
     "HOLOSOMA_G1_JOINTS",
     "HOLOSOMA_HF_REPO",
+    "HOLOSOMA_HF_REVISION",
+    "HOLOSOMA_SHA256",
     "HolosomaPolicy",
     "read_onnx_metadata",
     "resolve_holosoma_checkpoint",

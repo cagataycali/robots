@@ -14,6 +14,8 @@ from strands_robots.policies.holosoma import (
     HOLOSOMA_FILES,
     HOLOSOMA_G1_JOINTS,
     HOLOSOMA_HF_REPO,
+    HOLOSOMA_HF_REVISION,
+    HOLOSOMA_SHA256,
     HolosomaConfig,
     HolosomaPolicy,
     resolve_holosoma_checkpoint,
@@ -238,6 +240,65 @@ def test_checkpoint_resolution_paths(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="not found"):
         resolve_holosoma_checkpoint(tmp_path / "nope" / "x.onnx", "fastsac")
     assert HOLOSOMA_HF_REPO == "nepyope/holosoma_locomotion"
+
+
+class TestHubFetchIsPinned:
+    """The mirror is a personal account: every fetch names a commit and every file is hashed."""
+
+    @staticmethod
+    def _fake_hub(monkeypatch: pytest.MonkeyPatch, payload: bytes, tmp_path: Path) -> dict[str, Any]:
+        import huggingface_hub
+
+        captured: dict[str, Any] = {}
+
+        def _fake_download(repo_id: str, filename: str, revision: str | None = None, **_kw: Any) -> str:
+            captured.update(repo_id=repo_id, filename=filename, revision=revision)
+            target = tmp_path / filename
+            target.write_bytes(payload)
+            return str(target)
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", _fake_download)
+        return captured
+
+    def test_the_default_revision_is_a_full_commit_and_the_table_covers_both_files(self) -> None:
+        assert len(HOLOSOMA_HF_REVISION) == 40 and int(HOLOSOMA_HF_REVISION, 16) >= 0
+        assert set(HOLOSOMA_SHA256) == set(HOLOSOMA_FILES.values())
+        assert all(len(digest) == 64 for digest in HOLOSOMA_SHA256.values())
+
+    def test_a_fetched_file_with_the_released_bytes_passes_at_the_pinned_revision(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        import hashlib
+
+        from strands_robots.policies.holosoma import policy as module
+
+        payload = b"released bytes"
+        monkeypatch.setitem(module.HOLOSOMA_SHA256, "fastsac_g1_29dof.onnx", hashlib.sha256(payload).hexdigest())
+        captured = self._fake_hub(monkeypatch, payload, tmp_path)
+        resolved = resolve_holosoma_checkpoint(None, "fastsac")
+        assert resolved.read_bytes() == payload
+        assert captured == {
+            "repo_id": HOLOSOMA_HF_REPO,
+            "filename": "fastsac_g1_29dof.onnx",
+            "revision": HOLOSOMA_HF_REVISION,
+        }
+
+    def test_a_fetched_file_with_other_bytes_is_refused_and_names_both_hashes(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._fake_hub(monkeypatch, b"swapped network", tmp_path)
+        with pytest.raises(RuntimeError, match="not the released " + HOLOSOMA_SHA256["ppo_g1_29dof.onnx"]) as info:
+            resolve_holosoma_checkpoint("ppo_g1_29dof.onnx", "ppo")
+        assert HOLOSOMA_HF_REVISION in str(info.value)
+        assert "amazon-far/holosoma" in str(info.value)
+
+    def test_the_constructor_forwards_an_override_revision(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured = self._fake_hub(monkeypatch, b"whatever", tmp_path)
+        with pytest.raises(RuntimeError, match="hashes to"):
+            HolosomaPolicy(revision="feedface" * 5)
+        assert captured["revision"] == "feedface" * 5
 
 
 def test_config_domains() -> None:
