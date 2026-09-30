@@ -20,6 +20,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import mirror, routes_sim, settings, sim_session  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
+
+#: The dashboard's own page at the TestClient host: a browser always sends Origin on a socket handshake (f022).
+OWN_PAGE = {"origin": "http://testserver"}
 from tests.test_dashboard_sim_routes import FakeEngine  # noqa: E402
 
 REAL_PORT = "/dev/cu.usbmodem5AB01818061"
@@ -310,7 +313,7 @@ def client(tmp_path, monkeypatch, fake_bus):
     settings.clear_overrides()
     settings.load(refresh=True)
     app = create_app()
-    with TestClient(app) as c:
+    with TestClient(app, headers=OWN_PAGE) as c:
         yield c
     app.state.safety.store.shutdown()
 

@@ -34,7 +34,7 @@ Keys are unchanged on MQTT (`strands/<peer>/cmd` is a valid MQTT topic); wildcar
 
 ## The IoT trust model
 
-Each robot is a Thing whose name equals its mesh `peer_id` and its cert CN; the MQTT `client_id` is set to it so `${iot:Connection.Thing.ThingName}` in the IoT policy scopes every robot to its own topics. `provision_robot(thing_name, region=, cert_dir=, attributes=, allow_estop_publish=True)` generates the key locally, has AWS sign a CSR with `CN=<thing>, O=strands-robots`, and writes `<thing>.cert.pem`, `<thing>.private.key` and `AmazonRootCA1.pem` under `STRANDS_IOT_CERT_DIR` (default `~/.strands_robots/iot`). Re-running publishes a changed policy document as the new default version.
+Each robot is a Thing whose name equals its mesh `peer_id` and its cert CN; the MQTT `client_id` is set to it so `${iot:Connection.Thing.ThingName}` in the IoT policy scopes every robot to its own topics. `provision_robot(thing_name, region=, cert_dir=, attributes=, allow_estop_publish=False)` generates the key locally, has AWS sign a CSR with `CN=<thing>, O=strands-robots`, and writes `<thing>.cert.pem`, `<thing>.private.key` and `AmazonRootCA1.pem` under `STRANDS_IOT_CERT_DIR` (default `~/.strands_robots/iot`). Re-running publishes a changed policy document as the new default version.
 
 | variable | meaning |
 |---|---|

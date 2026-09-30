@@ -327,17 +327,20 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
 #: connection's ``iot:Publish`` grant), so the only policy-level mitigation is
 #: to NOT grant estop-publish to that cert at all.
 #:
-#: ``provision_robot(..., allow_estop_publish=False)`` swaps the ``strands-
-#: robot`` policy for ``strands-robot-no-estop``: identical to the default
-#: except the ``AllowSafetyEstop`` publish statement is removed. The robot can
+#: ``provision_robot(..., allow_estop_publish=True)`` swaps this policy for
+#: ``strands-robot``: identical except the ``AllowSafetyEstop`` publish
+#: statement is present. Without that statement the robot can
 #: STILL subscribe + receive both safety topics and obey fleet stops -- it
 #: simply cannot ORIGINATE either (and therefore cannot arm a Will on them).
 #: Dropping resume-publish alongside estop-publish is deliberate: a Will armed
 #: on ``strands/safety/resume`` is the same dead-man switch pointed the other
 #: way, clearing a legitimate lockout the instant a defender cuts the
 #: attacker's connection.
-#: Use this for robots that should obey but never issue fleet-wide stops
-#: (the common case); keep the default for designated safety-authority robots.
+#: This is the default: robots obey but never issue fleet-wide stops (the
+#: common case). ``allow_estop_publish=True`` opts a designated
+#: safety-authority robot into ``strands-robot``. The Fleet Provisioning
+#: template attaches this policy to every zero-touch device for the same
+#: reason; a safety authority is provisioned through ``provision_robot``.
 ROBOT_NO_ESTOP_POLICY_NAME = "strands-robot-no-estop"
 
 
@@ -568,7 +571,7 @@ def provision_robot(
     region: str | None = None,
     cert_dir: Path | str | None = None,
     attributes: dict[str, str] | None = None,
-    allow_estop_publish: bool = True,
+    allow_estop_publish: bool = False,
 ) -> ProvisionedThing:
     """Provision a robot Thing and write its credentials to disk.
 
@@ -594,14 +597,18 @@ def provision_robot(
             ``strands-mesh-role`` is refused rather than merged: it is the
             key the e-stop fan-out routes on, and any other value silently
             excludes the robot from every fleet-wide stop.
-        allow_estop_publish: When True (default) the robot certificate gets the
-            ``strands-robot`` policy, which may publish ``strands/safety/estop``
-            and therefore originate a fleet-wide stop. Pass False for the common
-            case - a robot that should obey fleet stops but never issue one - and
-            the certificate gets ``strands-robot-no-estop`` instead, identical
-            but without the ``AllowSafetyEstop`` publish grant. Must be a
-            boolean: the flag selects a posture rather than scaling a quantity,
-            so a truthy spelling of off is refused rather than read as True.
+        allow_estop_publish: False (the default) is the common case: the robot
+            certificate gets ``strands-robot-no-estop``, which subscribes to and
+            obeys every fleet stop but cannot originate one or clear one. Pass
+            True only for a designated safety-authority robot, whose certificate
+            gets ``strands-robot`` with the ``AllowSafetyEstop`` publish grant on
+            ``strands/safety/estop`` and ``strands/safety/resume``. Obeying a
+            stop needs only subscribe and receive, so the grant was an over-grant
+            as a default: one extracted robot certificate could halt the fleet,
+            arm an MQTT Will that halts it when the connection drops, or clear a
+            lockout a human engaged (f010). Must be a boolean: the flag selects a
+            posture rather than scaling a quantity, so a truthy spelling of off
+            is refused rather than read as True.
 
     Returns:
         :class:`ProvisionedThing` describing the artefacts.
@@ -1024,8 +1031,11 @@ def _ensure_policy(iot: Any, name: str, document: dict[str, Any]) -> str:
 
     if existing is not None:
         current_version = str(existing.get("defaultVersionId", "?"))
+        raw_doc = existing.get("policyDocument")
         try:
-            current_doc = json.loads(existing.get("policyDocument") or "{}")
+            # A document in a shape other than text is treated as differing,
+            # the same as unparseable text: a new version is then published.
+            current_doc = json.loads(raw_doc) if isinstance(raw_doc, str) else None
         except ValueError:
             current_doc = None
         if current_doc == document:
