@@ -169,7 +169,7 @@ class TestTimeoutDomain:
         result = _call(action="start", checkpoint_path="/ckpt", timeout=0)
         assert result["status"] == "error"
         assert "failed to start" not in _message(result)
-        assert "timeout must be > 0" in _message(result)
+        assert "timeout must be a positive finite number" in _message(result)
 
     def test_an_unbounded_timeout_never_enters_the_poll_loop(self, no_side_effects: dict[str, int]) -> None:
         """``inf`` satisfies ``elapsed < timeout`` forever, so it must not reach the loop.
@@ -180,7 +180,7 @@ class TestTimeoutDomain:
         """
         result = _call(action="start", checkpoint_path="/ckpt", timeout=math.inf)
         assert result["status"] == "error"
-        assert "timeout must be > 0" in _message(result)
+        assert "timeout must be a positive finite number" in _message(result)
 
 
 class TestEffectiveOptionsOnly:

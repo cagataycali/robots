@@ -208,7 +208,7 @@ class TestABudgetIsStillJudgedFirst:
     def test_an_unusable_budget_is_reported_before_the_port(self, hw: Any) -> None:
         result = hw._execute_task_sync("pick", policy_port=99999, duration=0)
 
-        assert "duration must be > 0" in _text(result)
+        assert "duration must be a positive finite number" in _text(result)
         assert "policy_port" not in _text(result)
         assert hw.connects == []
 

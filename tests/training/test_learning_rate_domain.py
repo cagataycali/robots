@@ -129,7 +129,7 @@ class TestEveryBackendRefusesAnUnusableLearningRate:
         problems = trainer_cls().validate(spec)
         named = [p for p in problems if "learning_rate" in p]
         assert named, f"{trainer_cls.__name__} accepted learning_rate={value!r}: {problems}"
-        assert "must be > 0" in named[0], named[0]
+        assert "must be a positive finite number" in named[0], named[0]
         assert repr(value) in named[0], named[0]
 
     @pytest.mark.parametrize("value", UNUSABLE)
@@ -138,7 +138,7 @@ class TestEveryBackendRefusesAnUnusableLearningRate:
             problems = trainer.validate(_rl_spec(tmp_path, value))
             named = [p for p in problems if "learning_rate" in p]
             assert named, f"{trainer.provider_name} accepted learning_rate={value!r}: {problems}"
-            assert "must be > 0" in named[0], named[0]
+            assert "must be a positive finite number" in named[0], named[0]
 
     @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
     def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
