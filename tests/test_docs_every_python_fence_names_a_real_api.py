@@ -15,15 +15,14 @@ Offline only: Hub ids and pip names that are not installed are recorded, not fet
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
+from tests._docs_hooks import docs_hook
+
 _REPO = Path(__file__).resolve().parents[1]
-_HOOK = _REPO / "docs" / "hooks" / "check_sketches.py"
 _BAD_PAGE = """# a page with defects
 
 ```python
@@ -42,16 +41,7 @@ strands-robots doctor --lits
 
 
 def _load_hook() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("docs_check_sketches_hook", _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    if str(_REPO) not in sys.path:
-        sys.path.insert(0, str(_REPO))
-    # The hook declares dataclasses under ``from __future__ import annotations``; the
-    # dataclass machinery looks the module up in sys.modules while building them.
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("check_sketches")
 
 
 @pytest.fixture(scope="module")
