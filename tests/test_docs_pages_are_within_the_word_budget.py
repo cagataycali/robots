@@ -67,8 +67,10 @@ _BUDGET: int = _hook().LIMIT
 #: learn/mesh, a variable row and a sentence on the pages that point at it, and the `iot`
 #: verbs on the command line page).
 #: Raised by 551 to 50,059 for the flux3_action provider page (one page per provider).
-#: Raised by 579 to 50,638 for the Foxglove page (learn/data/foxglove.md, live view and MCAP export) and its two index lines.
-_SITE_BUDGET = 50_638
+#: Lowered to 49,433 when the GR00T provider page left with the provider (GR00T N1.7
+#: is a section of lerobot-local now).
+#: Raised to 50,012 for the Foxglove page (learn/data/foxglove.md, live view and MCAP export) and its two index lines.
+_SITE_BUDGET = 50_012
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

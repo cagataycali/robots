@@ -109,6 +109,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "dataset_transfer",
             "episode_labels",
             "locomotion_envelope",
+            "recorder",
             "recording_errors",
             "refusal_codes",
             "rendering",
