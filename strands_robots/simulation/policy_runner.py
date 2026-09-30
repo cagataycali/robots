@@ -4951,7 +4951,6 @@ class PolicyRunner:
             self._discard_recorder_episode()
             if current_vwriter is not None:
                 current_vwriter.close()
-                current_vwriter = None
         except CooperativeStop:
             # A user/backend on_frame hook requested a graceful stop (the
             # same signal run() honors). End the benchmark over the episodes
