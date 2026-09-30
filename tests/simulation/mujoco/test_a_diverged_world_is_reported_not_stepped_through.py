@@ -96,6 +96,31 @@ class TestStep:
     def test_an_ordinary_long_run_is_not_flagged(self, sim):
         _ok(sim.step(5000), "step(5000)")
 
+    def test_a_second_divergence_of_the_same_kind_is_reported_too(self, sim):
+        """MuJoCo's autoreset leaves the flagged counter latched at exactly 1 (mj_resetData zeroes
+        every counter, then the check re-increments its own), so a second divergence of the same
+        kind reads as "no change" unless the baseline is cleared when the first is reported. The
+        caller that ignores the first error, or recovers with load_state (which does not touch
+        the counters), must not step through the second one as a success."""
+        _shove(sim)
+        _assert_reports_divergence(sim.step(50), "step")
+        _ok(sim.step(100), "clean steps after the autoreset")
+
+        _shove(sim)
+
+        _assert_reports_divergence(sim.step(50), "step")
+
+    def test_load_state_recovery_then_a_divergence_is_reported(self, sim):
+        _ok(sim.save_state("before"), "save_state")
+        _shove(sim)
+        _assert_reports_divergence(sim.step(50), "step")
+        _ok(sim.load_state("before"), "load_state")
+        _ok(sim.step(100), "steps after the recovery")
+
+        _shove(sim)
+
+        _assert_reports_divergence(sim.step(50), "step")
+
 
 class TestSendAction:
     def test_send_action_through_a_divergence_is_an_error(self, sim):

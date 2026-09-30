@@ -36,6 +36,12 @@ def instability_counts(mj: Any, data: Any) -> tuple[int, ...]:
     return tuple(int(data.warning[getattr(mj.mjtWarning, name)].number) for name, _ in _INSTABILITY_WARNINGS)
 
 
+def _clear_instability_counts(mj: Any, data: Any) -> None:
+    """Zero the three instability counters so the next read starts from a clean baseline."""
+    for name, _ in _INSTABILITY_WARNINGS:
+        data.warning[getattr(mj.mjtWarning, name)].number = 0
+
+
 def _state_is_finite(data: Any) -> bool:
     return bool(np.isfinite(data.qpos).all() and np.isfinite(data.qvel).all())
 
@@ -53,10 +59,20 @@ def divergence_error(mj: Any, model: Any, data: Any, before: tuple[int, ...], ve
     Returns:
         An error sentence naming what diverged, the joint, and how to recover;
         ``None`` when MuJoCo declared nothing and the state is finite.
+
+    Side effect: when a divergence is reported the three counters are zeroed,
+    because MuJoCo's autoreset leaves the flagged one latched at exactly 1
+    (``mj_resetData`` zeroes every counter, then the check re-increments its
+    own). Without that, a second divergence of the same kind after a caller
+    ignored the first, or recovered with ``load_state`` (``mj_setState`` never
+    touches ``data.warning``), would read as "no change" and step through as a
+    success, the very outcome this module exists to refuse. ``reset`` gives the
+    same clean baseline through ``mj_resetData``.
     """
     after = instability_counts(mj, data)
     if after == before and _state_is_finite(data):
         return None
+    _clear_instability_counts(mj, data)
     what, joint = "state", None
     for (name, label), was, now in zip(_INSTABILITY_WARNINGS, before, after, strict=True):
         stat = data.warning[getattr(mj.mjtWarning, name)]
