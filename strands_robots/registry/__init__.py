@@ -39,7 +39,11 @@ from .discovery import (
     descriptions_module,
     discover_robot,
     is_discoverable,
+    is_urdf_only,
     list_discoverable,
+    list_urdf_only,
+    urdf_registry,
+    urdf_registry_entry,
 )
 from .loader import (
     DEFAULT_DRIVER,
@@ -95,6 +99,10 @@ __all__ = [
     "descriptions_module",
     "is_discoverable",
     "list_discoverable",
+    "list_urdf_only",
+    "is_urdf_only",
+    "urdf_registry",
+    "urdf_registry_entry",
     "discover_robot",
     # Policy registry
     "get_policy_provider",
