@@ -75,7 +75,7 @@ class TrainingHistory:
 
     def record(self, metrics: dict[str, Any]) -> None:
         """Append one iteration's numeric metrics (non-finite values as null) and log it on the interval."""
-        row = {}
+        row: dict[str, float | None] = {}
         for key, value in metrics.items():
             try:
                 number = float(value)
@@ -89,7 +89,8 @@ class TrainingHistory:
             self._fh.write(json.dumps(row) + "\n")
             self._fh.flush()
         self.count += 1
-        it = int(row.get("iteration", self.count))
+        iteration = row.get("iteration")
+        it = self.count if iteration is None else int(iteration)
         if self._log_interval and (it == 1 or it % self._log_interval == 0 or it == self._num_iters):
             shown = ", ".join(f"{k}={v:.4g}" for k, v in row.items() if k != "iteration" and v is not None)
             logger.info("%s iteration %d/%d: %s", self._provider, it, self._num_iters, shown)
@@ -294,6 +295,7 @@ class BaseRLAlgo(Trainer):
     actor_critic: Any  # torch.nn.Module (actor-critic network)
     env: SimEnv | VecSimEnv
     device: torch.device
+    _history: TrainingHistory | None = None
 
     @abstractmethod
     def setup(self, spec: RLTrainSpec) -> None:
