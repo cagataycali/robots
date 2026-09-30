@@ -522,6 +522,21 @@ sim-mujoco = [
 # Bumping newton means re-reading its `[sim]` extra and moving both MuJoCo pins
 # with it. tests/test_dependency_audit.py grades the shape that has to hold for
 # any such bump, so it cannot be half-applied.
+# The URDF long tail of robot_descriptions (84 descriptions with no MJCF) is
+# compiled into MuJoCo assets by strands_robots.assets.urdf. Meshes that MuJoCo
+# does not decode (Collada .dae above all) are converted with trimesh, which
+# reads Collada through pycollada. Without this extra a URDF whose meshes are
+# all STL/OBJ still builds; one that needs a conversion is refused with the
+# sentence that names the extra. The trimesh floor matches [sim-newton]'s;
+# the ceiling admits 5.x, which is what the loader was graded on.
+sim-urdf = [
+    "strands-robots[sim-mujoco]",
+    "trimesh>=4.0.0,<6.0.0",
+    "pycollada>=0.8,<1.0",
+    # 23 descriptions ship xacro and no URDF; robot_descriptions renders them
+    # with xacrodoc (which brings xacro and rospkg) on first use.
+    "xacrodoc>=2.0.0,<3.0.0",
+]
 sim-newton = [
     "strands-robots[sim-mujoco]",
     "newton>=1.5.0,<1.6.0",
@@ -740,6 +755,7 @@ all = [
     "strands-robots[moveit2]",
     "strands-robots[lerobot]",
     "strands-robots[sim-mujoco]",
+    "strands-robots[sim-urdf]",
     "strands-robots[rl]",
     "strands-robots[mesh]",
     "strands-robots[mesh-iot]",

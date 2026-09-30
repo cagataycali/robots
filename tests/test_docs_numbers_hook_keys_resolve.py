@@ -9,7 +9,6 @@ the tree read independently here.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -47,8 +46,12 @@ def test_the_docs_use_the_hook_at_all() -> None:
 def test_robot_counts_match_the_registry() -> None:
     hook = _load_hook()
     values = hook.numbers()
-    robots = json.loads((_REPO / "strands_robots/registry/robots.json").read_text(encoding="utf-8"))["robots"]
+    # The union the hooks document: robots.json plus the robot_descriptions URDF tail.
+    robots = docs_hook("registry_view").merged()
+    curated = docs_hook("registry_view").curated()
     assert values["robots"] == len(robots)
+    assert values["robots_curated"] == len(curated)
+    assert values["urdf_robots"] == len(robots) - len(curated)
     assert values["categories"] == len({spec["category"] for spec in robots.values()})
     assert sum(values[c] for c in {spec["category"] for spec in robots.values()}) == len(robots)
 
