@@ -12,7 +12,7 @@ One `run_policy` call takes a provider name and a `policy_config`.
 
 | family | providers | ran first-hand |
 |---|---|---|
-| vision-language-action models: SmolVLA, ACT, Pi0, MolmoAct2, GR00T N1.x, FLUX 3 Action | [lerobot_local](lerobot-local.md), [groot](groot.md) | sim on a laptop ([First learned policy](../../start/first-policy.md), [so101](../../robots/so101.md)); the same call on the arm |
+| vision-language-action models: SmolVLA, ACT, Pi0, MolmoAct2, GR00T N1.7, FLUX 3 Action | [lerobot_local](lerobot-local.md), [remote](remote.md), [flux3_action](flux3-action.md) | sim on a laptop ([First learned policy](../../start/first-policy.md), [so101](../../robots/so101.md)); the same call on the arm |
 | world foundation models: Cosmos 3 | [cosmos3](cosmos3.md) | as a service, sim and hardware behind one endpoint |
 | whole-body controllers | [wbc](wbc.md), [protomotions](protomotions.md), [kimodo](kimodo.md) | sim ([unitree_g1](../../robots/unitree_g1.md)); the [G1 driver](../hardware/unitree.md) on hardware |
 | reinforcement learning | [rl](rl.md) | sim ([unitree_go2](../../robots/unitree_go2.md)) |
@@ -77,7 +77,7 @@ actions = policy.get_actions_sync({"shoulder_pan": 0.0, "elbow_flex": 0.0}, "wav
 print(len(actions), actions[0])
 ```
 
-Smart strings work too: a HuggingFace id resolves to `lerobot_local` (`groot` / `cosmos3` for the `nvidia` org), `zmq://` to `groot`, `ws://` to [`remote`](remote.md). A misspelled keyword is a `TypeError` before any download; `lerobot_local` and `kimodo` need `STRANDS_TRUST_REMOTE_CODE=1`.
+Smart strings work too: a HuggingFace id resolves to `lerobot_local` (`nvidia/cosmos3*` to `cosmos3`), `ws://` to [`remote`](remote.md); `"groot"` is refused, naming `lerobot_local(policy_type="groot")`. A misspelled keyword is a `TypeError` before any download; `lerobot_local` and `kimodo` need `STRANDS_TRUST_REMOTE_CODE=1`.
 
 ## Run one, then swap it
 

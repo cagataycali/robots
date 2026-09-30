@@ -23,7 +23,7 @@ import json
 import time
 import uuid
 
-from strands_robots.mesh.core import Mesh
+from strands_robots.mesh.core import Mesh, resume_proof_key
 
 
 def _make_mesh(peer_id="r-test"):
@@ -59,7 +59,7 @@ def _make_envelope(override_code, *, t=None, peer_id="op-1", proof_nonce=None, l
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
-    proof = hmac.new(override_code.encode(), mac_input, "sha256").hexdigest()
+    proof = hmac.new(resume_proof_key(override_code), mac_input, "sha256").hexdigest()
     return {
         "peer_id": peer_id,
         "t": envelope_t,
@@ -73,7 +73,7 @@ def test_replay_rejected_audit_oserror_is_swallowed_and_lockout_preserved(monkey
     """A disk failure while auditing a resume_replay_rejected event must not
     propagate out of the safety handler, and the rejected replay must leave
     the lockout engaged."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
 
     calls = []
@@ -85,7 +85,7 @@ def test_replay_rejected_audit_oserror_is_swallowed_and_lockout_preserved(monkey
 
     m.publish_safety_event = audit
 
-    env = _make_envelope("secret", peer_id="op-1")
+    env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-1")
 
     # First resume: accepted, clears the lockout.
     m._estop_lockout.set()
@@ -108,7 +108,7 @@ def test_per_issuer_cap_audit_valueerror_is_swallowed_and_cap_enforced(monkeypat
     resume_per_issuer_cap_exceeded event must not propagate, and the
     per-issuer fairness bound must still be enforced (the refused resume
     adds no cache slot and never clears the lockout)."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "8")  # cap = max(1, 8 // 4) == 2
     m = _make_mesh()
 
@@ -123,7 +123,7 @@ def test_per_issuer_cap_audit_valueerror_is_swallowed_and_cap_enforced(monkeypat
 
     # Two accepted resumes fill the issuer's cap; the third trips it.
     for _ in range(3):
-        env = _make_envelope("secret", peer_id="op-flooder", proof_nonce=uuid.uuid4().hex)
+        env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-flooder", proof_nonce=uuid.uuid4().hex)
         m._estop_lockout.set()
         m._on_safety_resume(_sample(env))  # third must not raise despite audit ValueError
 
@@ -146,7 +146,7 @@ def test_redundant_resume_audit_oserror_is_swallowed_and_lockout_stays_clear(mon
     best-effort: a flaky audit sink must not abort handling. The lockout was
     already clear and must stay clear.
     """
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
     m = _make_mesh()
 
     calls = []
@@ -160,7 +160,7 @@ def test_redundant_resume_audit_oserror_is_swallowed_and_lockout_stays_clear(mon
 
     # Lockout is NOT engaged, so a valid resume lands in the redundant branch.
     assert m._estop_lockout.is_set() is False
-    env = _make_envelope("secret", peer_id="op-1")
+    env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-1")
     m._on_safety_resume(_sample(env))  # must not raise despite the audit OSError
 
     redundant = [c for c in calls if c.get("event_type") == "remote_resume_redundant"]

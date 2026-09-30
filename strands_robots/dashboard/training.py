@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from strands_robots.dashboard.ttl_cache import TTLCache
+from strands_robots.training import _validate
 from strands_robots.utils import (
-    base_dir_path,
     non_negative_whole_number_error,
     positive_count_error,
     positive_finite_number_error,
@@ -32,7 +32,9 @@ logger = logging.getLogger(__name__)
 
 #: Moves the training output sandbox on its own, like the render and scene
 #: sandboxes carry their own variable; ``STRANDS_BASE_DIR`` moves the default.
-OUTPUT_HOME_ENV = "STRANDS_TRAIN_OUTPUT_DIR"
+#: :mod:`strands_robots.training._validate` owns the rule (the trainers' own preflight
+#: contains ``base_model`` with it); this module reads it.
+OUTPUT_HOME_ENV = _validate.OUTPUT_HOME_ENV
 
 
 class PathOutside(ValueError):
@@ -53,12 +55,7 @@ class PathOutside(ValueError):
         return {"error": str(self), "field": self.label, "homes": [str(h) for h in self.homes]}
 
 
-def output_home() -> Path:
-    """Where training runs may write: ``STRANDS_TRAIN_OUTPUT_DIR`` or ``<base dir>/training``."""
-    explicit = os.environ.get(OUTPUT_HOME_ENV, "").strip()
-    if explicit:
-        return Path(explicit).expanduser().resolve()
-    return (base_dir_path() / "training").resolve()
+output_home = _validate.output_home
 
 
 def dataset_homes() -> list[Path]:
@@ -114,29 +111,13 @@ def contain_dataset_root(path: str) -> Path:
     return contain(path, dataset_homes(), label="dataset_root")
 
 
-def looks_like_path(value: str) -> bool:
-    """Is this string a filesystem path rather than an ``org/name`` repo id?"""
-    v = (value or "").strip()
-    return v.startswith(("/", "~", ".")) or "\\" in v or v.count("/") > 1
-
-
-def hf_cache_root() -> Path:
-    """Where downloaded model snapshots live, honouring the env the CLI honours.
-
-    ``HF_HUB_CACHE`` points at the hub dir itself; ``HF_HOME`` contains it.
-    """
-    explicit = os.environ.get("HF_HUB_CACHE")
-    if explicit:
-        return Path(explicit).expanduser()
-    home = os.environ.get("HF_HOME")
-    if home:
-        return Path(home).expanduser() / "hub"
-    return Path.home() / ".cache" / "huggingface" / "hub"
+looks_like_path = _validate.looks_like_path
+hf_cache_root = _validate.hf_cache_root
 
 
 def contain_checkpoint_path(path: str) -> Path:
     """A checkpoint path the client named: a training output or a lerobot cache snapshot."""
-    return contain(path, [output_home(), hf_cache_root().resolve()], label="checkpoint path")
+    return contain(path, _validate.checkpoint_homes(), label="checkpoint path")
 
 
 def contain_checkpoint_ref(repo_id: str) -> str:

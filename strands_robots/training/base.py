@@ -6,15 +6,14 @@ model produces actions, ``Trainer`` hides how a model is post-tuned. The
 pipelines differ per provider:
 
 * **LeRobot** - build a ``TrainPipelineConfig``, call
-  ``lerobot.scripts.lerobot_train.train(cfg)``. HF-native checkpoints.
-* **GR00T N1.7** - build a ``FinetuneConfig`` -> ``Config``, call
-  ``gr00t.experiment.experiment.run(config)``.
+  ``lerobot.scripts.lerobot_train.train(cfg)``. HF-native checkpoints. GR00T
+  N1.7 trains here too, as ``policy_type="groot"`` (lerobot's native port).
 * **Cosmos3** - build the SFT ``Config`` via ``load_experiment_from_toml``,
   call ``cosmos_framework.scripts.train.launch(config, args)``, with a DCP
   checkpoint conversion prepare step and a DCP -> safetensors export step.
 * **SageMaker** - submit the same spec as one managed AWS training job.
 
-The first three are *local*: they run in-process and multi-GPU goes through
+The first two are *local*: they run in-process and multi-GPU goes through
 torch's programmatic ``elastic_launch``. SageMaker is pure *transport*: it
 imports no training library and its run outlives the submitting process, which
 is what decides each shape's :meth:`Trainer.train` return contract.
@@ -58,9 +57,9 @@ class TrainSpec:
         base_model: HF model id or local checkpoint path to post-tune from.
         output_dir: Directory for checkpoints, logs and the final artifact.
         embodiment: Embodiment tag / robot id - which state/action projector
-            head the run trains. Required by GR00T. On LeRobot it is read by
-            the policies whose config declares ``embodiment_tag`` (GR00T's
-            native port); every other LeRobot policy takes its state/action
+            head the run trains. On LeRobot it is read by the policies whose
+            config declares ``embodiment_tag`` (GR00T N1.7, where it is
+            required); every other LeRobot policy takes its state/action
             shape from the dataset features and has no such field, so a
             backend MUST refuse the request rather than train the default head
             while reporting success.
@@ -89,10 +88,9 @@ class TrainSpec:
             domain as ``lora_r``.
         lora_target_modules: Target modules, or ``None`` for the policy's
             built-in defaults.
-        tune: Component toggles for backends that expose them (GR00T:
-            ``{"llm", "visual", "projector", "diffusion"} -> bool``, both
-            through Isaac-GR00T's ``--tune_*`` flags and through LeRobot's
-            native ``GrootConfig.tune_*`` fields). A key naming no component,
+        tune: Component toggles for backends that expose them (GR00T N1.7:
+            ``{"llm", "visual", "projector", "diffusion"} -> bool``, through
+            LeRobot's native ``GrootConfig.tune_*`` fields). A key naming no component,
             or a component the policy cannot freeze, MUST be refused: an
             unforwarded toggle trains the config default, which is
             indistinguishable from never having asked.
@@ -104,9 +102,8 @@ class TrainSpec:
             fraction whose ceiling lerobot takes. A backend MUST make the
             reserved episodes produce a validation signal, not merely shrink
             the training set.
-        augmentation: Backend-specific data augmentation (GR00T
-            ``color_jitter_params`` / ``random_rotation_angle``; Cosmos
-            dataset filter dict).
+        augmentation: Backend-specific data augmentation (Cosmos dataset
+            filter dict).
         fps: Dataset control rate, when a backend needs it explicitly.
         extra: Raw passthrough; keys become backend-native flags or overrides
             (lerobot ``--key=value``, Cosmos Hydra ``key.path=value``). A value
@@ -152,7 +149,8 @@ class TrainResult:
     """Outcome of a training lifecycle call.
 
     Attributes:
-        status: ``"success"`` | ``"running"`` | ``"error"``.
+        status: ``"success"`` | ``"running"`` | ``"error"`` | ``"stopped"``
+            (ended by :meth:`Trainer.stop`; its checkpoints are kept).
         job_id: Stable id for this run (used by :meth:`Trainer.status`).
         checkpoint_dir: Where checkpoints are written (``None`` before any
             save / on validation failure).
@@ -184,8 +182,8 @@ class Trainer(ABC):
 
     Concrete trainers come in two shapes and neither reimplements training. A
     **local** trainer imports the backend package and calls its own training
-    function in-process (LeRobot ``train(cfg)``, GR00T
-    ``experiment.run(config)``, Cosmos ``train.launch(config, args)``), with
+    function in-process (LeRobot ``train(cfg)``, Cosmos
+    ``train.launch(config, args)``), with
     multi-GPU driven by torch's programmatic ``elastic_launch``. A
     **transport** trainer imports no training library: it submits the same
     :class:`TrainSpec` to a managed runner whose image packages a local trainer.
@@ -512,8 +510,8 @@ class Trainer(ABC):
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
 
-        Cosmos converts the base checkpoint to PyTorch DCP; GR00T registers a
-        modality-config ``.py``; LeRobot needs nothing here.
+        Cosmos converts the base checkpoint to PyTorch DCP; LeRobot needs
+        nothing here.
         """
         return None
 
@@ -530,8 +528,10 @@ class Trainer(ABC):
         A *local* trainer blocks until the run finishes and returns a terminal
         :class:`TrainResult` with ``metrics`` populated. A *transport* trainer
         MAY return ``running`` with a ``job_id`` that :meth:`status` polls and
-        no ``checkpoint_dir`` yet, so a caller must branch on all three
-        ``status`` values rather than read "not ``error``" as finished.
+        no ``checkpoint_dir`` yet, and a run it waits on can end ``stopped``
+        when :meth:`stop` ended it (its checkpoints kept), so a caller must
+        branch on every ``status`` value rather than read "not ``error``" as
+        finished.
         """
 
     def status(self, job_id: str) -> TrainResult:
@@ -539,8 +539,9 @@ class Trainer(ABC):
 
         Two kinds of job reach here: one launched out of band that a caller
         polls by id, and one a *transport* :meth:`train` handed back as
-        ``running`` because it outlives the submitting process. A local trainer
-        produces neither, so
+        ``running`` because it outlives the submitting process - which reads
+        ``stopped`` once :meth:`stop` has ended it. A local trainer produces
+        neither, so
         most backends inherit this default, which returns an informative
         ``error``. Backends that override read the runner's own job API
         (``sagemaker`` -> ``DescribeTrainingJob``) or parse their training logs.
@@ -551,6 +552,53 @@ class Trainer(ABC):
             message=(
                 f"{self.provider_name}: status() polling is not supported - "
                 "train() runs synchronously and already returns the metrics verdict."
+            ),
+        )
+
+    def stop(self, job_id: str) -> TrainResult:
+        """Stop a job still in flight and return its verdict, ``stopped``.
+
+        Only a *transport* trainer has a run to stop - one :meth:`train`
+        handed back as ``running``. The default returns an informative
+        ``error``, since a local trainer's run ends with the call that made it.
+        """
+        return TrainResult(
+            status="error",
+            job_id=job_id,
+            message=(
+                f"{self.provider_name}: stop() is not supported - train() runs synchronously, so there is "
+                "no run in flight to stop."
+            ),
+        )
+
+    def play(
+        self,
+        job_id: str,
+        *,
+        num_envs: int = 16,
+        video_length: int = 200,
+        timeout_s: float | None = 900.0,
+        wait: bool = False,
+    ) -> TrainResult:
+        """Play a finished job's policy back and record it; the verdict carries the video.
+
+        Only a trainer that owns a simulator to replay in implements this
+        (``isaaclab``). The default returns an informative ``error``.
+
+        Args:
+            job_id: The finished training job.
+            num_envs: Environments to play.
+            video_length: Frames in the clip.
+            timeout_s: Wall-clock limit for the playback.
+            wait: Block until the playback ends.
+        """
+        del num_envs, video_length, timeout_s, wait
+        return TrainResult(
+            status="error",
+            job_id=job_id,
+            message=(
+                f"{self.provider_name}: play() is not supported - roll the exported policy out with "
+                "run_policy / eval_policy instead."
             ),
         )
 

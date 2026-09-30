@@ -2,7 +2,7 @@
 
 Exposes the :class:`~strands_robots.training.base.Trainer` abstraction to an
 agent. One tool, provider-agnostic: the ``provider`` argument selects the
-backend (``lerobot_local`` / ``groot`` / ``cosmos3`` / ``mock``) and the SAME
+backend (``lerobot_local`` / ``cosmos3`` / ``mock``) and the SAME
 arguments map onto each backend's native pipeline via ``create_trainer`` +
 ``TrainSpec``.
 
@@ -18,6 +18,7 @@ convention (structured fields live in a ``{"json": ...}`` content block).
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from strands.tools.decorator import tool
@@ -27,7 +28,10 @@ from strands_robots.training import TrainSpec, create_trainer, list_trainers
 logger = logging.getLogger(__name__)
 
 #: The actions ``train_policy`` answers, in the order its docstring lists them.
-_ACTIONS: tuple[str, ...] = ("train", "validate", "status", "export", "list")
+_ACTIONS: tuple[str, ...] = ("train", "validate", "status", "stop", "play", "export", "list")
+
+#: ``extra`` keys ``action="play"`` reads, and the keyword each becomes.
+_PLAY_EXTRA_KEYS: tuple[str, ...] = ("num_envs", "video_length", "timeout_s", "wait")
 
 
 def _ok(text: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -118,11 +122,22 @@ def train_policy(
             - ``"train"``    : validate + launch training (default).
             - ``"validate"`` : pure preflight only; report problems, launch nothing.
             - ``"status"``   : "RUNNING != learning" verdict for a job (needs ``job_id``).
+                               Prefer ``metrics['success_rate']`` / ``task_metrics``
+                               over reward when a task reports them; a failed
+                               run names its cause in ``metrics['failure']``.
+            - ``"stop"``     : stop a running job, keeping its checkpoints
+                               (needs ``job_id``; ``isaaclab``).
+            - ``"play"``     : play a finished job's latest checkpoint back and
+                               record a video, with the physics it trained on
+                               (needs ``job_id``; ``isaaclab``; ``extra`` may set
+                               ``num_envs``, ``video_length``, ``timeout_s``,
+                               ``wait``). Poll the returned ``job_id`` with
+                               ``status``; ``metrics['video']`` is the clip.
             - ``"export"``   : produce a loadable artifact from a checkpoint
                                (needs ``output_dir``; uses the run's last checkpoint).
             - ``"list"``     : list available training providers.
         provider: Training backend / policy family - ``"lerobot_local"`` (act,
-            diffusion, smolvla, pi0, pi05, ...), ``"groot"`` (NVIDIA GR00T),
+            diffusion, smolvla, pi0, pi05, groot for NVIDIA GR00T N1.7, ...),
             ``"cosmos3"`` (NVIDIA Cosmos3), ``"isaaclab"`` (GPU-parallel RL in
             a separate Isaac Lab install; needs no dataset), or ``"mock"``. Same
             name as the inference provider in ``create_policy``.
@@ -136,19 +151,19 @@ def train_policy(
             ``StreamingLeRobotDataset``). With ``dataset_repo_id`` this streams
             Hub shards with bounded disk; with a local ``dataset_root`` it
             streams from disk with bounded RAM. lerobot only; ignored elsewhere.
-        base_model: HF id or local checkpoint to post-tune from. For GR00T this
-            is required (``--base_model_path``); ACT-from-scratch leaves it "".
+        base_model: HF id or local checkpoint to post-tune from. For GR00T N1.7
+            this is required (``nvidia/GR00T-N1.7-3B``); ACT-from-scratch leaves it "".
         output_dir: Where checkpoints + logs go.
         embodiment: Embodiment tag - which state/action projector head the run
-            trains. REQUIRED for GR00T, and read by any lerobot policy whose
-            config declares ``embodiment_tag`` (lerobot's native GR00T port);
+            trains. Read by any lerobot policy whose config declares
+            ``embodiment_tag`` (GR00T N1.7, where it is required);
             refused for a lerobot policy that has no such field, since those
             take their state/action shape from the dataset features.
         steps: Total optimizer steps.
         batch_size: Global batch size (summed across GPUs).
         learning_rate: Optimizer learning rate. ``None`` (default) uses the
             backend's own default (the policy training preset for lerobot,
-            GR00T's FinetuneConfig default, Cosmos's TOML default); an explicit
+            Cosmos's TOML default); an explicit
             value must be a positive finite number and is honored by every
             backend. ``0`` and ``inf`` are refused up front: the first trains
             for the whole run without updating a weight, the second writes a
@@ -176,9 +191,8 @@ def train_policy(
             attached to, read only when ``method="lora"``. Omit to keep the
             backend's default target set.
         tune: Fine-grained component toggles for GR00T
-            (``{"llm","visual","projector","diffusion"}``), honoured by the
-            ``groot`` provider and by ``lerobot_local`` with
-            ``extra={"policy_type": "groot"}``. A key naming no component
+            (``{"llm","visual","projector","diffusion"}``), honoured by
+            ``lerobot_local`` with ``extra={"policy_type": "groot"}``. A key naming no component
             (``vision`` for ``visual``) or a component the policy cannot freeze
             is refused by preflight, because an unforwarded toggle trains the
             config default and reports success.
@@ -194,13 +208,12 @@ def train_policy(
         augmentation: Backend-specific augmentation dict.
         fps: Dataset control rate (when a backend needs it).
         extra: Backend-specific passthrough. lerobot: ``policy_type``,
-            ``job_name``, any ``--key=value``. GR00T: ``groot_root``,
-            ``modality_config_path``. Cosmos: ``cosmos_root``, ``sft_toml``.
+            ``job_name``, any ``--key=value``. Cosmos: ``cosmos_root``, ``sft_toml``.
             Isaac Lab: ``task`` (required, e.g. ``"Isaac-Cartpole"``),
             ``num_envs``, ``physics`` (``"newton_mjwarp"`` / ``"isaacsim_physx"``),
             ``wait`` (block until the run ends), ``timeout_s``; ``steps`` is the
             PPO iteration count and ``status`` polls the returned ``job_id``.
-        job_id: Job identifier for ``action="status"``.
+        job_id: Job identifier for ``action="status"``, ``"stop"`` and ``"play"``.
 
     Returns:
         Canonical Strands result ``{status, content:[...]}`` (no sibling keys).
@@ -218,11 +231,12 @@ def train_policy(
           ``transformers>=5.4.0,<5.6.0`` (plus num2words / scipy); do NOT pin
           ``transformers==5.3.0`` - it conflicts with lerobot 0.6's transformers
           floor.
-        - ``groot``/``cosmos3``: install the upstream package into THIS
-          interpreter (the trainer imports it and calls its library functions
-          in-process - no subprocess). Point ``extra['groot_root']``/``GR00T_ROOT``
-          or ``extra['cosmos_root']``/``COSMOS_ROOT`` at the checkout for runtime
-          config/recipe resolution.
+        - ``lerobot_local`` + ``groot`` (GR00T N1.7): add lerobot's ``[groot]``
+          extra (``pip install 'strands-robots[groot]'``).
+        - ``cosmos3``: install the upstream package into THIS interpreter (the
+          trainer imports it and calls its library functions in-process - no
+          subprocess). Point ``extra['cosmos_root']``/``COSMOS_ROOT`` at the
+          checkout for runtime config/recipe resolution.
         - torchcodec's ``.so`` must match the installed torch build exactly; a
           torch nightly load-fails a stable torchcodec (``undefined symbol``)
           and lerobot silently yields zero frames. See docs/reference/training/overview.md.
@@ -242,18 +256,31 @@ def train_policy(
         if action == "list":
             return _ok("Available training providers:\n  " + "\n  ".join(list_trainers()))
 
-        if action == "status":
+        if action in ("status", "stop", "play"):
             if not job_id:
-                return _err("action='status' requires job_id")
+                return _err(f"action='{action}' requires job_id")
             trainer = create_trainer(provider)
-            res = trainer.status(job_id)
+            if action == "play":
+                unknown = sorted(str(k) for k in (extra or {}) if k not in _PLAY_EXTRA_KEYS)
+                if unknown:
+                    return _err(
+                        f"action='play' does not read extra key(s) {unknown}; accepted: {list(_PLAY_EXTRA_KEYS)}"
+                    )
+                res = trainer.play(job_id, **(extra or {}))
+            elif action == "status":
+                res = trainer.status(job_id)
+            else:
+                res = trainer.stop(job_id)
             return {
                 "status": "success" if res.status != "error" else "error",
                 "content": [
-                    {"text": f"[{provider}] job {job_id}: {res.status}\n{res.message}\nmetrics: {res.metrics}"},
+                    {
+                        "text": f"[{provider}] job {res.job_id or job_id}: {res.status}\n{res.message}\nmetrics: {res.metrics}"
+                    },
                     {
                         "json": {
-                            "job_id": job_id,
+                            # A playback is its own job: poll the id it returns.
+                            "job_id": res.job_id or job_id,
                             "provider": provider,
                             "status": res.status,
                             "checkpoint_dir": res.checkpoint_dir,
@@ -317,8 +344,15 @@ def train_policy(
             if not ckpt:
                 return _err(f"no checkpoint found under {output_dir} to export")
             exported = trainer.export(spec, ckpt)
+            # An RL actor (policy.pt + policy_meta.json) loads through the "rl"
+            # provider; every other artifact is a model id create_policy resolves.
+            load = (
+                f"create_policy('rl', checkpoint_dir='{exported}')"
+                if os.path.isfile(os.path.join(str(exported), "policy_meta.json"))
+                else f"create_policy('{exported}')"
+            )
             return _ok(
-                f"[{provider}] exported loadable artifact:\n{exported}\nLoad it with: create_policy('{exported}')",
+                f"[{provider}] exported loadable artifact:\n{exported}\nLoad it with: {load}",
                 data={"provider": provider, "exported_model": exported},
             )
 

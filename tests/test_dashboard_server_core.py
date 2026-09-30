@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import access, auth, settings  # noqa: E402
 from strands_robots.dashboard.server import create_app, redacted_settings  # noqa: E402
+from tests._dashboard_passkeys import issue_enrolled  # noqa: E402
 
 
 @pytest.fixture()
@@ -148,12 +149,12 @@ class TestSealed:
         assert client.get("/api/whoami", headers={"authorization": "Bearer eyJ.not.real"}).status_code == 401
 
     def test_a_real_session_is_admitted(self, client):
-        token = auth.issue_token("cred-1", name="owner")
+        token = issue_enrolled("cred-1", name="owner")
         body = client.get("/api/whoami", headers={"authorization": f"Bearer {token}"}).json()
         assert body == {"via": "passkey", "name": "owner", "sub": "cred-1"}
 
     def test_the_cookie_carries_the_session(self, client):
-        token = auth.issue_token("cred-1", name="owner")
+        token = issue_enrolled("cred-1", name="owner")
         client.cookies.set(access.COOKIE, token)
         assert client.get("/api/whoami").json()["via"] == "passkey"
 

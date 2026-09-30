@@ -84,7 +84,7 @@ def test_resume_cache_value_is_monotonic_not_wall_clock() -> None:
     # HMAC binds (peer_id, t, lockout_elapsed_s, proof_nonce).
     import json as _json
 
-    code = "test-override"
+    code = "test-override-code-1234567890"
     proof_nonce = "n1"
     wall_now = time.time()
     lockout_elapsed = 1.0
@@ -98,7 +98,7 @@ def test_resume_cache_value_is_monotonic_not_wall_clock() -> None:
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
-    proof = hmac_mod.new(code.encode(), mac_input, hashlib.sha256).hexdigest()
+    proof = hmac_mod.new(core.resume_proof_key(code), mac_input, hashlib.sha256).hexdigest()
 
     with mock.patch.dict(os.environ, {"STRANDS_MESH_OVERRIDE_CODE": code}):
         m._on_safety_resume(

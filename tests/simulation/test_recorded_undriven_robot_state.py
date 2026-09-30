@@ -45,6 +45,7 @@ pytest.importorskip("lerobot")
 
 from strands_robots.simulation.base import SimEngine  # noqa: E402
 from strands_robots.simulation.recording import RecordedFrame, undriven_robot_state  # noqa: E402
+from tests._recorder_stand_in import RecorderStandIn  # noqa: E402
 
 _ROBOT_XML = """
 <mujoco model="probe_arm">
@@ -370,16 +371,6 @@ class TestTheHelperReadsOnlyWhatItShould:
         assert engine.asked == [], "the refusal must precede any read"
 
 
-class _Recorder:
-    """Captures the one ``add_frame`` call :class:`RecordedFrame` makes."""
-
-    def __init__(self) -> None:
-        self.frames: list[dict[str, Any]] = []
-
-    def add_frame(self, **frame: Any) -> None:
-        self.frames.append(frame)
-
-
 class _KeyedEngine(TestTheHelperReadsOnlyWhatItShould._Engine):
     def __init__(self, states: dict[str, dict[str, Any]]) -> None:
         super().__init__(states)
@@ -423,7 +414,7 @@ def test_a_recorded_frame_is_the_schema_start_recording_declared(
 ) -> None:
     """Every entry point's frame: driven keys prefixed once the scene holds two robots, bystanders measured."""
     engine = _KeyedEngine({"alice": {"j": 1.0}, "bob": {"j": 2.0}, "carol": {"j": 3.0}})
-    recorder = _Recorder()
+    recorder = RecorderStandIn()
     frame = RecordedFrame(engine, driven, scene)
     states = {name: engine.states[name] for name in driven}
     actions = {name: {"j": round(0.1 * (index + 1), 1)} for index, name in enumerate(driven)}
@@ -433,6 +424,7 @@ def test_a_recorded_frame_is_the_schema_start_recording_declared(
         "observation": expected_observation,
         "action": expected_action,
         "task": "pick",
+        "camera_keys": None,
         "required_action_keys": expected_keys,
     }
     assert engine.key_reads == len(driven), "the action columns are resolved once per rollout, not per frame"
@@ -497,6 +489,21 @@ class TestEveryRecordingEntryPointConsultsTheSharedOwner:
             f"{backend}'s run_multi_policy does not write its frames through RecordedFrame "
             "alone, so a synchronized rollout that drives a subset of the scene can write "
             "the robots it does not drive as add_frame's 0.0 fill"
+        )
+
+    def test_the_step_clock_writes_through_the_shared_owner(self) -> None:
+        """MuJoCo's ``step`` under an open recording writes its frames here too.
+
+        ``step`` records the whole scene at the dataset rate without a policy,
+        so it is a third entry point beside the rollout hook and the merge
+        loop; a second writer there is one more copy of the frame schema.
+        """
+        from strands_robots.simulation.mujoco.simulation import MuJoCoSimulation
+
+        assert _calls_the_shared_owner(MuJoCoSimulation._record_step_frame), (
+            "MuJoCo's _record_step_frame does not write its frames through RecordedFrame "
+            "alone, so a frame recorded by step() is assembled by a second copy of the "
+            "schema start_recording declared"
         )
 
 

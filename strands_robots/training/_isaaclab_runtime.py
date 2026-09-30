@@ -22,6 +22,7 @@ reports it before anything launches.
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 import time
@@ -120,11 +121,77 @@ def runtime_problems(python: str | None, *, context: str) -> list[str]:
 
 
 def child_env() -> dict[str, str]:
-    """Return this process's environment without the variables that leak its packages."""
+    """Return this process's environment without the variables that leak its packages.
+
+    ``PYTHONUNBUFFERED=1`` keeps the log in the order things happened: with a
+    pipe for stdout, a crash's traceback (stderr, unbuffered) otherwise lands
+    above a block of iteration metrics flushed after it.
+    """
     env = dict(os.environ)
     for name in _LEAKED_ENV:
         env.pop(name, None)
+    env["PYTHONUNBUFFERED"] = "1"
     return env
+
+
+# ``gym.register(id="Isaac-Cartpole", ...)`` in an Isaac Lab task package.
+_REGISTER_ID_RE = re.compile(r"""\bid\s*=\s*["']([A-Za-z][A-Za-z0-9_.:-]{0,127})["']""")
+
+#: Task packages Isaac Lab registers its gym ids in.
+_TASK_PACKAGES = ("isaaclab_tasks", "isaaclab_tasks_experimental")
+
+_TASK_CACHE: dict[str, tuple[float, frozenset[str]]] = {}
+
+
+def registered_tasks(python: str) -> frozenset[str] | None:
+    """Return the task ids the Isaac Lab install behind *python* registers, or ``None``.
+
+    Read-only and without starting Isaac Lab: scans the ``gym.register(id=...)``
+    calls in the task packages of that interpreter's virtual environment
+    (``site-packages``, or a source checkout an editable install points at).
+    ``None`` when no task package is found, so the caller launches as before
+    and the run reports an unknown id itself.
+    """
+    roots = _task_package_roots(Path(python))
+    if not roots:
+        return None
+    stamp = max(root.stat().st_mtime for root in roots)
+    key = "|".join(str(r) for r in roots)
+    cached = _TASK_CACHE.get(key)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    ids: set[str] = set()
+    for root in roots:
+        for source in root.rglob("__init__.py"):
+            try:
+                text = source.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "register(" in text:
+                ids.update(_REGISTER_ID_RE.findall(text))
+    tasks = frozenset(ids)
+    _TASK_CACHE[key] = (stamp, tasks)
+    return tasks or None
+
+
+def _task_package_roots(python: Path) -> list[Path]:
+    """Directories of Isaac Lab's task packages in the venv that owns *python*."""
+    venv = python.expanduser().absolute().parent.parent
+    roots: list[Path] = []
+    for site in sorted(venv.glob("lib/python3*/site-packages")):
+        search = [site]
+        for pth in site.glob("*.pth"):
+            try:
+                lines = pth.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            search.extend(Path(line.strip()) for line in lines if line.strip().startswith("/"))
+        for base in search:
+            for name in _TASK_PACKAGES:
+                candidate = base / name
+                if (candidate / "__init__.py").is_file() and candidate not in roots:
+                    roots.append(candidate)
+    return roots
 
 
 def launch(cmd: list[str], *, cwd: Path, log_path: Path, exit_file: Path) -> subprocess.Popen[bytes]:

@@ -93,10 +93,6 @@ _NOTES: dict[str, Note] = {
         "{DEFAULT_BACKEND} with one warning per distinct typo.",
         default="DEFAULT_BACKEND",
     ),
-    "STRANDS_GROOT_WIRE_LOG": Note(
-        "strands_robots.policies.groot.policy",
-        "Directory the GR00T wire-payload dumps land in, e.g. `~/groot-wire`; unset means nothing is written.",
-    ),
 }
 
 _ROS_ALLOWLIST_NOTE = (
