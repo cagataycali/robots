@@ -90,25 +90,23 @@ reach this gate.
 from __future__ import annotations
 
 import ast
-import importlib.util
 import json
 import logging
 import pathlib
 import re
-import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from strands_robots.mesh import _acl_config
+from tests._docs_hooks import docs_hook
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PACKAGE = _ROOT / "strands_robots"
 _MODULE = _PACKAGE / "mesh" / "_acl_config.py"
 _PAGE = _ROOT / "docs" / "learn" / "mesh" / "bridges.md"
 _CONFIG_REFERENCE = _ROOT / "docs" / "reference" / "configuration.md"
-_ENV_HOOK = _ROOT / "docs" / "hooks" / "env_vars.py"
 
 _HEADING = "## The Zenoh ACL"
 _PREFIX = "STRANDS_MESH_ACCEPT_PERMISSIVE_ACL"
@@ -208,12 +206,7 @@ def _rendered_config_reference() -> str:
     The matrix is generated from every environment read in the package, so the
     page is graded as the reader sees it, with ``<code>`` cells folded to backticks.
     """
-    spec = importlib.util.spec_from_file_location("docs_hooks_env_vars", _ENV_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = sys.modules.get(spec.name) or importlib.util.module_from_spec(spec)
-    if spec.name not in sys.modules:
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+    module = docs_hook("env_vars")
     source = _CONFIG_REFERENCE.read_text(encoding="utf-8")
     rendered = module.on_page_markdown(source, page=None, config=None, files=None)
     assert rendered != source, "configuration.md carries no {{env_vars}} token for the hook to expand"
