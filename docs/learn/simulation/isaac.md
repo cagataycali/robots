@@ -55,22 +55,16 @@ sim.destroy()
 
 ## Threading
 
-Kit updates only on the `SimulationApp` thread; an unpumped worker-thread call is refused:
+Kit updates only on the `SimulationApp` thread; `run_agent` pumps it while agent tools run elsewhere:
 
 ```python
-import threading
-
-sim = create_simulation("isaac", headless=True)   # on the main thread
-sim.create_world()
-stop = threading.Event()
-
-def agent_worker():
-    sim.run_on_main(lambda: (sim.add_robot("so100"), sim.reset(), sim.step(60)))
-    stop.set()
-
-threading.Thread(target=agent_worker).start()
-sim.run_pump_forever(stop_event=stop)             # main thread runs worker jobs
+sim = create_simulation("isaac")
+sim.create_world(); sim.add_robot("so101")
+agent = Agent(tools=[sim])
+sim.run_agent(agent, "add a cube, reset, step 30, render")
 ```
+
+Unpumped worker calls are refused; manually: `run_pump_forever(stop_event=...)` plus `run_on_main(fn)`.
 
 ## Limits
 

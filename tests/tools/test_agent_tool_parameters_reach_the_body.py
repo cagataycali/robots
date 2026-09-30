@@ -52,6 +52,7 @@ import pathlib
 
 import pytest
 
+from tests._package_ast import parse_file
 from tests.tools.test_agent_tool_parameter_descriptions import _BOUND_TOOLS, _declared_parameters
 
 _PACKAGE_ROOT = pathlib.Path(__file__).resolve().parents[2] / "strands_robots"
@@ -77,7 +78,7 @@ def _agent_tools() -> list[tuple[str, str, ast.FunctionDef | ast.AsyncFunctionDe
     """Return ``(module_path, func_name, node)`` for every ``@tool`` in the package."""
     found: list[tuple[str, str, ast.FunctionDef | ast.AsyncFunctionDef]] = []
     for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and _is_agent_tool(node):
                 found.append((str(path.relative_to(_PACKAGE_ROOT.parent)), node.name, node))

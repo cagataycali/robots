@@ -22,13 +22,14 @@ import pytest
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac import _deprecated_api  # noqa: E402
+from tests._package_ast import parse_file
 
 _PKG = pathlib.Path(_deprecated_api.__file__).parent
 
 
 def _imports(path: pathlib.Path) -> list[tuple[int, str]]:
     found = []
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+    for node in ast.walk(parse_file(path)):
         if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
             found.append((node.lineno, node.module))
         elif isinstance(node, ast.Import):

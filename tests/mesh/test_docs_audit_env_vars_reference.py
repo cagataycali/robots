@@ -40,6 +40,7 @@ import pytest
 
 import strands_robots
 from strands_robots import audit
+from tests._package_ast import parse_file
 
 _AUDIT_MODULE = pathlib.Path(strands_robots.__file__).parent / "audit.py"
 _PAGE = pathlib.Path(strands_robots.__file__).parent.parent / "docs" / "learn" / "security.md"
@@ -64,7 +65,7 @@ def _audit_env_reads() -> set[str]:
         key in ``audit.py`` that starts with ``STRANDS_MESH_AUDIT_``.
     """
     found: set[str] = set()
-    tree = ast.parse(_AUDIT_MODULE.read_text(encoding="utf-8"))
+    tree = parse_file(_AUDIT_MODULE)
     for node in ast.walk(tree):
         name: str | None = None
         if isinstance(node, ast.Call) and ast.unparse(node.func) in (
@@ -263,7 +264,7 @@ def _log_safety_event_ast() -> ast.FunctionDef:
         function that decides both the persisted record schema and what happens
         when the destination cannot be written.
     """
-    tree = ast.parse(_AUDIT_MODULE.read_text(encoding="utf-8"))
+    tree = parse_file(_AUDIT_MODULE)
     for node in tree.body:
         if isinstance(node, ast.FunctionDef) and node.name == "log_safety_event":
             return node

@@ -23,6 +23,7 @@ import pytest
 
 import strands_robots.drivers as drivers_package
 from strands_robots.drivers.booster import parse_low_state
+from tests._package_ast import parse_file
 
 #: A humanoid mid-fall.  Every value is distinguishable from an empty vector and
 #: from what a bytes-like field would iterate into.
@@ -110,7 +111,7 @@ def test_no_driver_reads_a_telemetry_field_from_a_sequence_default() -> None:
     offenders = [
         f"{path.relative_to(root)}:{node.lineno}: {ast.unparse(node)}"
         for path in scanned
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        for node in ast.walk(parse_file(path))
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
