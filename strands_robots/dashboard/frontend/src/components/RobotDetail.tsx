@@ -38,7 +38,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
   onOpen?: (peerId: string) => void
   onClose: () => void
 }) {
-  const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin } = useTask(peer)
+  const { phase, outcome, running, busy, twinBusy, run, stop, reset, toggleTwin } = useTask(peer)
   const cams = Object.keys(peer.cameras ?? {})
   // R2: same words as the card, from the same pure module.
   const twin = twinButtonCopy({ peerId: peer.peer_id, twinLive, busy: twinBusy })
@@ -480,6 +480,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
               disabled={offline}
               onRun={run}
               onStop={stop}
+              onReset={reset}
             />
             {outcome && (
               <div className={outcome.ok ? 'result ok' : 'result bad'}>

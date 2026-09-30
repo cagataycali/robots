@@ -8,6 +8,7 @@ import type { Peer, StopResult } from '../types'
 import { HttpError, post } from './endpoints'
 import { findConsent, type ConsentNeed } from './consent'
 import { runFailure, stopFailure } from './taskOutcome'
+import { interpretReset, type ResetResponse } from './resetAction'
 import type { RunBody } from '../components/RunForm'
 
 /** What we believe about this robot's task. */
@@ -107,6 +108,34 @@ export function useTask(peer: Peer) {
     }
   }
 
+  /**
+   * Return every joint to the home pose. `confirmed` is true only when the card's confirm
+   * sheet was answered (a real arm); the server refuses a real arm without it, and refuses
+   * any peer with a task in flight, so the answer is always the server's sentence.
+   */
+  const reset = async (confirmed: boolean) => {
+    setPhase('starting'); setOutcome(null); setConsent(null)
+    try {
+      const res = await post<ResetResponse>(
+        `/api/robots/${encodeURIComponent(peer.peer_id)}/reset`,
+        confirmed ? { confirmed: true } : {},
+      )
+      if (!mounted.current) return
+      const v = interpretReset(res)
+      setOutcome(v)
+      setPhase(v.ok ? 'idle' : 'failed')
+      if (!v.ok) setConsent(findConsent(res))
+    } catch (e) {
+      if (!mounted.current) return
+      // a 403 is the gate's sentence, a 409 the task-in-flight one: both are shown as they were said
+      const body = e instanceof HttpError ? (e.body as any) : null
+      const said = body?.error?.error ?? body?.error ?? null
+      setOutcome(typeof said === 'string' ? { ok: false, text: said } : fail(e))
+      setPhase('failed')
+      if (e instanceof HttpError) setConsent(findConsent(body?.error ?? body))
+    }
+  }
+
   const toggleTwin = async () => {
     setTwinBusy(true)
     try {
@@ -119,7 +148,7 @@ export function useTask(peer: Peer) {
   }
 
   return {
-    phase, outcome, running, busy, twinBusy, run, stop, toggleTwin, setOutcome,
+    phase, outcome, running, busy, twinBusy, run, stop, reset, toggleTwin, setOutcome,
     consent, clearConsent: () => setConsent(null), retryLast,
   }
 }
