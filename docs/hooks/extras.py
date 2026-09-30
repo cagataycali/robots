@@ -29,6 +29,7 @@ _PIN = re.compile(r"^([A-Za-z0-9_.\-]+(?:\[[^\]]*\])?)")
 _PURPOSE: dict[str, str] = {
     "sim": "asset download through robot_descriptions",
     "sim-mujoco": "MuJoCo simulation, offscreen rendering, IK (the default sim)",
+    "sim-urdf": "URDF robots compiled for MuJoCo (Collada mesh conversion)",
     "sim-newton": "Newton GPU simulation on warp",
     "sim-isaac": "Isaac Sim backend (USD assets)",
     "sim-gs": "Gaussian splat rendering (gsplat)",
