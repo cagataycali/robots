@@ -64,7 +64,7 @@ The scene is an `MjSpec` that is recompiled after every structural change, so `a
 
 `create_world(timestep=0.002)` sets physics at 500 Hz. `run_policy(control_frequency=50.0)` steps `1 / (50 * timestep)` physics substeps per action; pass `control_substeps` to pin it. `step(n)` advances `n` physics steps. `physics_timestep()` reads the live value.
 
-When the physics diverges (a huge force, gain or timestep), MuJoCo resets the whole world to its initial pose and rewinds the clock. `step`, `send_action` and the motion primitives then answer `status="error"` with `{"diverged": true}`, naming the joint, and rollouts and evaluations stop there instead of scoring the reset world. `reset()` or `load_state(...)` recovers.
+If the physics diverges, MuJoCo resets the world; `step`, `send_action` and rollouts then return `status="error"` with `{"diverged": true}`. `reset()` recovers.
 
 ## Limits
 
