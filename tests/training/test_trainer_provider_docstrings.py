@@ -22,6 +22,7 @@ import ast
 from pathlib import Path
 
 import strands_robots.training as training_pkg
+from tests._package_ast import parse_file
 
 _PACKAGE_DIR = Path(training_pkg.__file__).parent
 
@@ -48,7 +49,7 @@ def _concrete_trainer_classes() -> dict[str, ast.ClassDef]:
     classes: dict[str, ast.ClassDef] = {}
     for module in _PROVIDER_MODULES:
         source_file = _PACKAGE_DIR / module
-        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        tree = parse_file(source_file)
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef) and node.name.endswith("Trainer"):
                 classes[f"{module}::{node.name}"] = node

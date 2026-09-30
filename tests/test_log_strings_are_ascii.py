@@ -44,6 +44,7 @@ import ast
 from pathlib import Path
 
 import strands_robots
+from tests._package_ast import parse_file
 
 _PACKAGE_DIR = Path(strands_robots.__file__).resolve().parent
 
@@ -198,7 +199,7 @@ def test_package_sources_discovered() -> None:
 
 def test_diagnostic_string_scan_finds_calls() -> None:
     """Sanity: the AST walk actually locates diagnostic strings to inspect."""
-    total = sum(len(_diagnostic_strings(ast.parse(p.read_text(encoding="utf-8")))) for p in _python_sources())
+    total = sum(len(_diagnostic_strings(parse_file(p))) for p in _python_sources())
     assert total > 100, "AST scan found suspiciously few logger/raise strings"
 
 
@@ -206,7 +207,7 @@ def test_log_and_error_strings_are_ascii() -> None:
     """No ``logger``/``raise``/``warnings.warn`` string literal may be non-ASCII."""
     offenders: list[str] = []
     for path in _python_sources():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for lineno, text in _diagnostic_strings(tree):
             if not text.isascii():
                 bad = sorted({f"U+{ord(c):04X}" for c in text if ord(c) > 0x7F})
@@ -219,7 +220,7 @@ def test_log_and_error_strings_are_ascii() -> None:
 
 def test_tool_result_scan_finds_text() -> None:
     """Sanity: the flow-following scan actually locates rendered result text."""
-    total = sum(len(_tool_result_strings(ast.parse(p.read_text(encoding="utf-8")))) for p in _python_sources())
+    total = sum(len(_tool_result_strings(parse_file(p))) for p in _python_sources())
     assert total > 500, f"AST scan found suspiciously few tool-result strings ({total})"
 
 
@@ -231,7 +232,7 @@ def test_tool_result_strings_are_ascii() -> None:
     """
     offenders: list[str] = []
     for path in _python_sources():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for lineno, text in _tool_result_strings(tree):
             if not text.isascii():
                 bad = sorted({f"U+{ord(c):04X}" for c in text if ord(c) > 0x7F})

@@ -40,6 +40,7 @@ import re
 from pathlib import Path
 
 import strands_robots
+from tests._package_ast import parse_file
 
 # A tracker reference qualified by a repository name: the slug, ``#``, a number.
 # A bare ``#2765`` does not match (no leading slug) and needs no owner - it is
@@ -75,7 +76,7 @@ def _caller_reachable_literals(path: Path) -> list[tuple[int, str]]:
     Docstrings are excluded: they are read by a maintainer with the repository
     checked out, not returned to a caller.
     """
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = parse_file(path)
     docstrings = _docstring_constant_ids(tree)
     return [
         (node.lineno, node.value)
@@ -155,7 +156,7 @@ def test_developer_facing_docstrings_are_deliberately_out_of_scope() -> None:
     """
     in_docstrings = 0
     for path in _python_sources():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         docstrings = _docstring_constant_ids(tree)
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) in docstrings:
