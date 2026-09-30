@@ -65,15 +65,21 @@ def transport() -> IotMqttTransport:
     return t
 
 
+def _client_of(transport: IotMqttTransport) -> _Client:
+    client = transport._client
+    assert isinstance(client, _Client)
+    return client
+
+
 def _subscribed(transport: IotMqttTransport, *keys: str) -> None:
     for key in keys:
         transport.declare_subscriber(key, lambda sample: None)
-    transport._client.subscribed.clear()
-    transport._client.seen.clear()
+    _client_of(transport).subscribed.clear()
+    _client_of(transport).seen.clear()
 
 
 def _wait_for_resubscribe(transport: IotMqttTransport) -> None:
-    assert transport._client.seen.wait(timeout=2.0), "no subscribe was re-issued after the reconnect"
+    assert _client_of(transport).seen.wait(timeout=2.0), "no subscribe was re-issued after the reconnect"
     transport.wait_for_resubscribe(timeout=2.0)
 
 
@@ -85,7 +91,7 @@ class TestAReconnectWithoutASessionReissuesEveryFilter:
         with caplog.at_level(logging.INFO, logger=LOGGER):
             transport._on_connection_success(_connack(session_present=False))
             _wait_for_resubscribe(transport)
-        reissued = sorted(f for batch in transport._client.subscribed for f in batch)
+        reissued = sorted(f for batch in _client_of(transport).subscribed for f in batch)
         assert reissued == sorted(
             ["strands/safety/estop", "strands/safety/resume", "strands/+/presence", "strands/ac-arm-01/cmd"]
         )
@@ -96,13 +102,13 @@ class TestAReconnectWithoutASessionReissuesEveryFilter:
         _subscribed(transport, "strands/safety/estop")
         transport._on_connection_success(_connack(session_present=None))
         _wait_for_resubscribe(transport)
-        assert transport._client.subscribed == [["strands/safety/estop"]]
+        assert _client_of(transport).subscribed == [["strands/safety/estop"]]
 
     def test_the_first_connect_has_nothing_to_reissue_and_stays_quiet(self, transport, caplog):
         with caplog.at_level(logging.INFO, logger=LOGGER):
             transport._on_connection_success(_connack(session_present=False))
             transport.wait_for_resubscribe(timeout=1.0)
-        assert transport._client.subscribed == []
+        assert _client_of(transport).subscribed == []
         assert not [r for r in caplog.records if r.levelno == logging.WARNING]
 
     def test_a_rejoined_session_keeps_its_subscriptions_and_is_not_touched(self, transport, caplog):
@@ -110,12 +116,12 @@ class TestAReconnectWithoutASessionReissuesEveryFilter:
         with caplog.at_level(logging.INFO, logger=LOGGER):
             transport._on_connection_success(_connack(session_present=True))
             transport.wait_for_resubscribe(timeout=1.0)
-        assert transport._client.subscribed == []
+        assert _client_of(transport).subscribed == []
         assert not [r for r in caplog.records if r.levelno == logging.WARNING]
 
     def test_a_refused_resubscribe_is_an_error_naming_the_filter_not_a_silent_success(self, transport, caplog):
         _subscribed(transport, "strands/safety/estop")
-        transport._client.fail = True
+        _client_of(transport).fail = True
         with caplog.at_level(logging.INFO, logger=LOGGER):
             transport._on_connection_success(_connack(session_present=False))
             _wait_for_resubscribe(transport)
@@ -127,7 +133,7 @@ class TestAReconnectWithoutASessionReissuesEveryFilter:
         )
 
     def test_declare_subscriber_reads_the_suback_verdict_too(self, transport):
-        transport._client.fail = True
+        _client_of(transport).fail = True
         with pytest.raises(RuntimeError, match="SUBACK reason code 135"):
             transport.declare_subscriber("strands/safety/estop", lambda sample: None)
         assert "strands/safety/estop" not in transport._handlers, "a refused filter leaves no handler behind"
@@ -137,7 +143,7 @@ class TestAReconnectWithoutASessionReissuesEveryFilter:
         # subscribe().result() there deadlocks the client. The reissue must
         # therefore not happen synchronously inside the callback.
         _subscribed(transport, "strands/safety/estop")
-        client = transport._client
+        client = _client_of(transport)
         caller = threading.current_thread()
         seen_on: list[threading.Thread] = []
         original = client.subscribe
