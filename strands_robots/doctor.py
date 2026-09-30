@@ -513,6 +513,19 @@ def _warp_cuda_report() -> tuple[tuple[int, ...], int, tuple[int, int], tuple[in
         warp = importlib.import_module("warp")
     except ImportError:
         return None
+    # The first device query runs ``wp.init()``, which prints Warp's 8-line
+    # "Warp 1.x initialized: ... Devices ... Kernel cache" banner to stdout -
+    # in the middle of the doctor's own report, between the torch and Warp
+    # checks. The PASS line this report feeds already carries what matters.
+    # Warp < 1.19 reads ``config.quiet``; 1.19+ prints the banner when
+    # ``config.log_level <= LOG_INFO``, so raise it to warnings for this probe.
+    config = getattr(warp, "config", None)
+    if config is not None:
+        if hasattr(config, "quiet"):
+            config.quiet = True
+        warning = getattr(warp, "LOG_WARNING", None)
+        if warning is not None and hasattr(config, "log_level") and config.log_level < warning:
+            config.log_level = warning
     if not warp.is_cuda_available() or warp.get_cuda_device_count() < 1:
         return None
     supported = tuple(int(arch) for arch in warp.get_cuda_supported_archs())

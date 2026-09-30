@@ -178,6 +178,16 @@ class ShadowMirror:
             logger.debug("[shadow] update %s failed: %s", self._update_topic, exc)
 
 
+#: Peer types that hold no robot and get no Device Shadow mirror. The shipped
+#: ``strands-operator`` policy grants an operator or gateway Thing no MQTT
+#: publish on ``$aws/things/<thing>/shadow/...`` (its shadow statement is the
+#: REST ``GetThingShadow``/``UpdateThingShadow`` pair), and AWS IoT answers an
+#: ungranted publish by ending the session, so a mirrored operator lost its
+#: ``response/#`` subscription about once a second and every direct reply with
+#: it (measured 2026-09-30: 5/5 status commands timed out; 226 ms without).
+NON_ROBOT_PEER_TYPES: frozenset[str] = frozenset({"operator", "gateway"})
+
+
 def enable_for_mesh(mesh: Any) -> ShadowMirror | None:
     """Convenience wiring: add a presence-shadow mirror to a running Mesh.
 
@@ -205,6 +215,16 @@ def enable_for_mesh(mesh: Any) -> ShadowMirror | None:
         logger.debug(
             "[shadow] %s is a child peer, not a Thing; no shadow mirror (the parent's shadow is the Thing's)",
             mesh.peer_id,
+        )
+        return None
+
+    peer_type = getattr(mesh, "peer_type", None)
+    if isinstance(peer_type, str) and peer_type in NON_ROBOT_PEER_TYPES:
+        logger.info(
+            "[shadow] %s (%s peer) holds no robot; no shadow mirror (the operator policy grants none, "
+            "and AWS IoT would end the session on the first update)",
+            mesh.peer_id,
+            peer_type,
         )
         return None
 
