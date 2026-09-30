@@ -15,7 +15,7 @@ had recorded one episode of four frames:
   ``total_episodes=1, total_frames=4`` to ``0, 0``) and returned
   ``run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0``.
 * The reason was already correct, just buried: every per-episode record read
-  ``run_policy: control_frequency must be > 0, got 0.0.``
+  ``run_policy: control_frequency must be a positive finite number, got 0.0.``
 
 The tool's own pre-flight block states the principle four times over - for
 ``seed`` ("reached NumPy inside the loop after step 2 had already created a
@@ -112,7 +112,7 @@ class TestUnusableKnobsAreRefused:
     def test_an_unusable_control_frequency_is_refused(self, value: Any) -> None:
         result = _run_tool(_FakeSim(), n_episodes=1, n_steps=4, control_frequency=value)
         assert result["status"] == "error"
-        assert _text(result) == f"run_policy: control_frequency must be > 0, got {value!r}."
+        assert _text(result) == f"run_policy: control_frequency must be a positive finite number, got {value!r}."
 
     @pytest.mark.parametrize("value", UNUSABLE_HORIZONS, ids=repr)
     def test_an_unusable_action_horizon_is_refused(self, value: Any) -> None:
@@ -149,7 +149,7 @@ class TestTheRefusalPrecedesTheRecording:
     def test_the_refusal_is_reported_at_the_top_level_not_per_episode(self) -> None:
         """Before the fix the reason was only inside ``episodes[0]["text"]``."""
         result = _run_tool(_FakeSim(), n_episodes=3, n_steps=4, control_frequency=0.0)
-        assert _text(result) == "run_policy: control_frequency must be > 0, got 0.0."
+        assert _text(result) == "run_policy: control_frequency must be a positive finite number, got 0.0."
         payload = next((b["json"] for b in result.get("content") or [] if "json" in b), None)
         assert payload is None, "a refused pre-flight reports no episode records"
 
