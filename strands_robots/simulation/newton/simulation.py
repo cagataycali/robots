@@ -182,6 +182,16 @@ def _is_zero_mass_sentinel(mass: Any) -> bool:
     return isinstance(mass, numbers.Real) and not is_boolean(mass) and float(mass) == 0.0
 
 
+#: Newton solvers whose control step replays as a captured CUDA graph. Each was
+#: measured bit-for-bit equal to the Python loop on an so100 through
+#: ``set_gravity``, ``add_object`` and ``set_timestep`` (10 and 7 substeps).
+#: ``SolverKamino`` is deliberately absent: its replay drifted from the loop by
+#: up to 2.4e-3 rad within 120 control steps, while each mode repeated itself
+#: exactly - host-side decisions inside its step are frozen by a capture. A
+#: solver not listed here steps from Python, as every solver did before.
+_GRAPH_REPLAY_SOLVERS = frozenset({"SolverMuJoCo", "SolverFeatherstone"})
+
+
 class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine):
     """GPU-native simulation backend built on Newton (Warp / MuJoCo-Warp).
 
@@ -2905,13 +2915,88 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             return
         dt = self._world.timestep / self.substeps
         for _ in range(max(1, n_steps)):
-            for _ in range(self.substeps):
-                self._state_0.clear_forces()
-                self._solver.step(self._state_0, self._state_1, self._control, None, dt)
-                self._state_0, self._state_1 = self._state_1, self._state_0
+            if not self._launch_control_step_graph(dt):
+                self._run_substeps(dt)
             self._world.sim_time += self._world.timestep
             self._world.step_count += 1
         self._sync_viewer()
+
+    def _run_substeps(self, dt: float) -> None:
+        """One control step's ``substeps`` solver steps, launched from Python."""
+        for _ in range(self.substeps):
+            self._state_0.clear_forces()
+            self._solver.step(self._state_0, self._state_1, self._control, None, dt)
+            self._state_0, self._state_1 = self._state_1, self._state_0
+
+    def _launch_control_step_graph(self, dt: float) -> bool:
+        """Replay one control step as a captured CUDA graph; ``False`` means use the Python loop.
+
+        A solver step is dozens of small kernels, and launching them from Python
+        costs far more than running them: measured on an L40S with one so100,
+        a 10-substep control step took 81.7 ms launched one kernel at a time and
+        4.1 ms replayed as a graph. Newton's own examples capture the same loop.
+
+        A graph records device pointers, so it is only valid for the exact
+        buffers it was captured on. The cache key is therefore the identity of
+        everything the loop reads or writes - solver, both states, control and
+        its target array, the model's gravity array - plus ``substeps`` and
+        ``dt``. A rebuild, ``set_gravity`` or ``set_timestep`` produces a new
+        key and a fresh capture, and the old graphs are dropped. With an odd
+        ``substeps`` the two states swap roles every control step, so two graphs
+        alternate under two keys. Only solvers whose replay was measured equal
+        to the loop are captured (:data:`_GRAPH_REPLAY_SOLVERS`). With any other
+        solver, a CPU device,
+        ``STRANDS_NEWTON_CUDA_GRAPH=0``, or a failed capture (a solver that
+        synchronises with the host mid-step), the Python loop runs instead; a
+        failed capture is not retried for that key.
+
+        Must be called with ``self._lock`` held.
+        """
+        if os.environ.get("STRANDS_NEWTON_CUDA_GRAPH", "1").strip() == "0":
+            return False
+        if type(self._solver).__name__ not in _GRAPH_REPLAY_SOLVERS:
+            return False
+        wp = self._wp
+        try:
+            if not wp.get_device(self._model.device).is_cuda:
+                return False
+        except Exception:  # noqa: BLE001 - an unknown device is not worth a graph
+            return False
+        control = self._control
+        key = (
+            id(self._solver),
+            id(self._state_0),
+            id(self._state_1),
+            id(control),
+            id(getattr(control, "joint_target_q", None)),
+            id(getattr(self._model, "gravity", None)),
+            self.substeps,
+            dt,
+        )
+        cache = self.__dict__.setdefault("_step_graphs", {})
+        if cache and next(iter(cache))[0] != key[0]:
+            cache.clear()  # a new solver: every graph captured on the old one is stale
+        graph = cache.get(key)
+        if graph is None and key not in cache:
+            first, second = self._state_0, self._state_1
+            try:
+                with wp.ScopedCapture(device=self._model.device) as capture:
+                    self._run_substeps(dt)
+                graph = capture.graph
+            except Exception as exc:  # noqa: BLE001 - capture is an optimisation, never a failure
+                logger.info("Newton: CUDA graph capture unavailable (%s); stepping from Python", exc)
+                graph = None
+            # Capture records the launches without running them, and the loop
+            # swapped the Python references while recording: put them back so
+            # the replay below starts from the state it was captured from.
+            self._state_0, self._state_1 = first, second
+            cache[key] = graph
+        if graph is None:
+            return False
+        wp.capture_launch(graph)
+        if self.substeps % 2:
+            self._state_0, self._state_1 = self._state_1, self._state_0
+        return True
 
     def _apply_gravity(self) -> None:
         """Write the world's gravity vec3 onto the finalized model.
@@ -2942,7 +3027,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             idx = self._joint_coord_index.get((robot_name, jname))
             if idx is not None and idx < len(tgt):
                 tgt[idx] = value
-        self._control.joint_target_q = self._wp.array(tgt, dtype=self._wp.float32, device=self._model.device)
+        # Written in place: a captured step graph holds this array's device
+        # pointer, so a new array would leave the graph driving stale targets.
+        self._control.joint_target_q.assign(tgt)
 
     def _apply_mjcf_servo_gains(self, builder: Any, model_path: str, first_joint: int) -> None:
         """Carry the MJCF's compiled servo damping and torque ceiling onto DOFs.

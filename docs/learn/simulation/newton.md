@@ -47,5 +47,6 @@ sim.destroy()
 ## Limits
 
 - NVIDIA GPU and CUDA-capable Warp. There is no CPU device for the articulated solvers at useful speed.
+- On CUDA, with the `mujoco` or `featherstone` solver, each control step replays one captured CUDA graph of its `substeps` solver steps, re-captured when the scene, gravity or timestep changes. `STRANDS_NEWTON_CUDA_GRAPH=0` launches from Python instead, which is about 20x slower per step.
 - Pinned to `mujoco>=3.11,<3.12` and `mujoco-warp` of the same series, while `[sim-mujoco]` allows any 3.5+. Install `[sim-newton]` in its own environment if you also want the newest MuJoCo release.
 - Rendering is ray-traced and tiled; per-frame cost is higher than MuJoCo's rasteriser, per-batch cost lower.
