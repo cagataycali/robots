@@ -98,6 +98,14 @@ logger = logging.getLogger(__name__)
 _SUBSTEPS_PER_TICK = 5
 
 
+#: ``move_to`` checks whether what the fingers held came along only when the
+#: end effector travelled at least this far - a settle or a nudge proves nothing.
+_CARRY_CHECK_MIN_TRAVEL_M = 0.02
+#: A held body that moved less than this fraction of the end effector's travel
+#: was left behind. A carried body follows the fingers almost one to one.
+_CARRY_FOLLOW_FRACTION = 0.5
+
+
 class MotionPrimitivesMixin(MotionPrimitivesCore):
     """Analytic motion primitives mixed into ``Simulation``.
 
@@ -815,6 +823,11 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         orientation_error: float | None = None if target_quat is None else math.inf
         ee_pos = target
         ee_quat = np.array([1.0, 0.0, 0.0, 0.0])
+        # What the fingers hold as the move starts, so the reply can say when
+        # it did not come along (a friction grasp that does not hold).
+        with self._lock:
+            ee_start, _ = self._frame_world_pose(model, data, frame_name, frame_type)
+            in_fingers = self._free_bodies_in_fingers(model, data, grip_acts)
         for _ in range(max_steps):
             with self._lock:
                 abort = self._primitive_abort_reason("move_to", robot_name, model)
@@ -842,6 +855,8 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         if not reached:
             with self._lock:
                 obstruction = self._servo_obstruction(model, data, arm_jact)
+        with self._lock:
+            left_behind = self._bodies_left_behind(model, data, in_fingers, ee_start, ee_pos, frame_name, frame_type)
 
         return self._move_to_result(
             robot_name,
@@ -860,7 +875,82 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             orientation_tol=orientation_tol,
             ik_orientation_residual=ik_orientation_residual,
             obstruction=obstruction,
+            left_behind=left_behind,
         )
+
+    def _free_bodies_in_fingers(self, model: Any, data: Any, gripper_acts: list[int]) -> dict[int, np.ndarray]:
+        """Free-floating bodies touching the fingers now, with their world positions.
+
+        Args:
+            model: The compiled model.
+            data: The live data.
+            gripper_acts: The robot's gripper actuator ids.
+
+        Returns:
+            Body id to a copy of its ``xpos``, for each body in finger contact
+            that owns a free joint (a scene fixture cannot be carried).
+        """
+        mj = self._mj
+        held = self._finger_contacts(model, data, gripper_acts) if gripper_acts else None
+        out: dict[int, np.ndarray] = {}
+        for name in held or {}:
+            body_id = int(mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, name))
+            if body_id < 0:
+                continue
+            adr, num = int(model.body_jntadr[body_id]), int(model.body_jntnum[body_id])
+            if any(int(model.jnt_type[j]) == int(mj.mjtJoint.mjJNT_FREE) for j in range(adr, adr + num)):
+                out[body_id] = np.array(data.xpos[body_id], dtype=float)
+        return out
+
+    def _bodies_left_behind(
+        self,
+        model: Any,
+        data: Any,
+        in_fingers: dict[int, np.ndarray],
+        ee_start: np.ndarray,
+        ee_end: np.ndarray,
+        frame_name: str,
+        frame_type: str,
+    ) -> list[dict[str, Any]]:
+        """The bodies that were in the fingers when ``move_to`` started and did not follow.
+
+        A body is left behind when the end effector travelled at least
+        :data:`_CARRY_CHECK_MIN_TRAVEL_M` and the body moved less than
+        :data:`_CARRY_FOLLOW_FRACTION` of that. The fingers closing on it is
+        not the same as holding it: on a model whose friction pinch does not
+        lift (the SO-100/SO-101 in MuJoCo), ``set_gripper`` reports contacts and
+        the lift reaches its target while the object stays on the table.
+
+        Args:
+            model: The compiled model.
+            data: The live data after the servo.
+            in_fingers: :meth:`_free_bodies_in_fingers` read before the servo.
+            ee_start: End-effector position before the servo.
+            ee_end: End-effector position after it.
+            frame_name: The end-effector frame, for the suggested weld parent.
+            frame_type: ``"site"`` or ``"body"``.
+
+        Returns:
+            One ``{"body", "ee_moved_m", "body_moved_m", "weld_parent"}`` record
+            per body left behind; empty when nothing was held or all of it came along.
+        """
+        travel = float(np.linalg.norm(np.asarray(ee_end, dtype=float) - ee_start))
+        if not in_fingers or travel < _CARRY_CHECK_MIN_TRAVEL_M:
+            return []
+        mj = self._mj
+        frame_body = (
+            int(model.site_bodyid[mj.mj_name2id(model, mj.mjtObj.mjOBJ_SITE, frame_name)])
+            if frame_type == "site"
+            else int(mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, frame_name))
+        )
+        parent = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, frame_body) or frame_name
+        out = []
+        for body_id, start in in_fingers.items():
+            moved = float(np.linalg.norm(np.array(data.xpos[body_id], dtype=float) - start))
+            if moved < _CARRY_FOLLOW_FRACTION * travel:
+                name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body_id) or f"body {body_id}"
+                out.append({"body": name, "ee_moved_m": travel, "body_moved_m": moved, "weld_parent": parent})
+        return out
 
     def _commanded_robot_body_ids(self, model: Any, commanded_joint_ids: Iterable[int]) -> set[int]:
         """Every body in the kinematic tree the commanded joints belong to.
