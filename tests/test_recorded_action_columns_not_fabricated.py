@@ -28,6 +28,7 @@ from strands_robots.dataset_recorder import (
     unrecordable_state_columns_error,
 )
 from strands_robots.policies import Policy
+from tests._recorder_stand_in import RecorderStandIn
 
 from .test_dataset_recorder import _CapturingDataset, _state_action_features
 
@@ -477,18 +478,8 @@ def test_a_recording_never_falls_back_to_fabricating_when_the_columns_are_unknow
     """
     pytest.importorskip("mujoco")
 
-    class _Recorder:
-        def __init__(self):
-            self.frames = 0
-
-        def add_frame(self, observation, action, task="", required_action_keys=None):
-            self.frames += 1
-
-        def save_episode(self):
-            return {"status": "success"}
-
     sim = _arm_sim(tmp_path, "unknown_cols_sim")
-    rec = _Recorder()
+    rec = RecorderStandIn()
     try:
         assert sim._world is not None
         sim._world._backend_state["recording"] = True
@@ -510,7 +501,7 @@ def test_a_recording_never_falls_back_to_fabricating_when_the_columns_are_unknow
     finally:
         sim.cleanup()
 
-    assert rec.frames == 0, "no frame may be recorded when the owed columns are unknown"
+    assert rec.frames == [], "no frame may be recorded when the owed columns are unknown"
 
 
 SO100 = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
