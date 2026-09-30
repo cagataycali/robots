@@ -31,60 +31,23 @@ pytest.importorskip("mujoco")
 
 from strands_robots.policies.mock import MockPolicy
 from strands_robots.simulation.mujoco.simulation import Simulation
+from tests._recorder_stand_in import RecorderStandIn
 
 
-class _CapturingRecorder:
-    """Stub recorder that records the observation handed to each ``add_frame``.
-
-    Mirrors only the surface the MuJoCo ``on_frame`` recording hook touches:
-    ``add_frame(observation=, action=, task=, required_action_keys=)``. The hook
-    forwards the raw sim
-    observation (per-joint scalar keys such as ``Rotation`` / ``Pitch`` plus
-    their ``.vel`` companions - the real ``DatasetRecorder`` packs these into
-    ``observation.state``). We snapshot the scalar proprioceptive vector per
-    frame so the test can assert the recorded trajectory advances instead of
-    being frozen across the chunk.
-    """
-
-    def __init__(self) -> None:
-        self.states: list[np.ndarray] = []
-        self.actions: list[dict[str, Any]] = []
-        self.required_action_keys: list[list[str]] = []
-        self.episode_frame_count = 0
-        self.frame_count = 0
-
-    @staticmethod
-    def _scalar_state(observation: dict[str, Any]) -> np.ndarray:
-        # Pack every scalar (non-image) observation value into a stable vector.
-        items = sorted(
-            (k, float(v)) for k, v in observation.items() if isinstance(v, (int, float)) and not isinstance(v, bool)
-        )
-        return np.array([v for _, v in items], dtype=float)
-
-    def add_frame(
-        self,
-        observation: dict[str, Any],
-        action: dict[str, Any],
-        task: str = "",
-        required_action_keys: list[str] | None = None,
-    ) -> None:
-        self.states.append(self._scalar_state(observation))
-        self.actions.append(dict(action))
-        self.required_action_keys.append(list(required_action_keys or []))
-        self.episode_frame_count += 1
-        self.frame_count += 1
-
-    def save_episode(self) -> dict[str, Any]:  # not exercised for n_episodes=1
-        self.episode_frame_count = 0
-        return {"status": "success"}
+def _scalar_state(observation: dict[str, Any]) -> np.ndarray:
+    """Every scalar (non-image) observation value, in a stable order."""
+    items = sorted(
+        (k, float(v)) for k, v in observation.items() if isinstance(v, (int, float)) and not isinstance(v, bool)
+    )
+    return np.array([v for _, v in items], dtype=float)
 
 
-def _make_recording_sim() -> tuple[Simulation, _CapturingRecorder]:
+def _make_recording_sim() -> tuple[Simulation, RecorderStandIn]:
     sim = Simulation(tool_name="chunk_obs_align", mesh=False)
     sim.create_world()
     sim.add_robot(name="arm", data_config="so100")
     assert sim._world is not None
-    rec = _CapturingRecorder()
+    rec = RecorderStandIn()
     # Open a recording session WITHOUT a real LeRobotDataset: the on_frame hook
     # only needs ``recording`` truthy and a recorder with ``add_frame``. This is
     # the same opaque-injection seam used by the episode-boundary regression.
@@ -124,8 +87,8 @@ def test_recorded_state_advances_within_a_single_chunk(async_rtc: bool) -> None:
         )
         assert result["status"] == "success", result
 
-        assert len(rec.states) == n_steps, f"expected {n_steps} recorded frames, got {len(rec.states)}"
-        states = np.stack(rec.states)
+        assert len(rec.frames) == n_steps, f"expected {n_steps} recorded frames, got {len(rec.frames)}"
+        states = np.stack([_scalar_state(frame["observation"]) for frame in rec.frames])
         # The recorded actions DO differ per step (this was never the bug).
         # The defect was the OBSERVATION being frozen against those actions.
         step_deltas = np.linalg.norm(np.diff(states, axis=0), axis=1)
@@ -166,5 +129,5 @@ def test_the_recording_hook_declares_the_driven_robots_action_columns() -> None:
     finally:
         sim.cleanup()
 
-    assert rec.required_action_keys, "no frame was recorded"
-    assert all(keys == expected for keys in rec.required_action_keys)
+    assert rec.frames, "no frame was recorded"
+    assert all(list(frame["required_action_keys"] or []) == expected for frame in rec.frames)

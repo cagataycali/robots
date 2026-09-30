@@ -80,11 +80,11 @@ def test_a_missing_instruction_is_still_refused(dispatched, action: str) -> None
 
 
 @pytest.mark.parametrize("action", ["execute", "start"])
-def test_the_real_dispatcher_still_refuses_groot_without_a_port(action: str) -> None:
-    """The judgement moved, it did not vanish: ``groot`` requires a port and says so."""
+def test_the_real_dispatcher_still_refuses_moveit2_without_a_port(action: str) -> None:
+    """The judgement moved, it did not vanish: ``moveit2`` requires a port and says so."""
     hw = _make_robot()
     method = hw._execute_task_sync if action == "execute" else hw.start_task
-    result = method("pick", policy_port=None, policy_provider="groot", duration=0.05)
+    result = method("pick", policy_port=None, policy_provider="moveit2", duration=0.05)
 
     assert result["status"] == "error"
     assert "policy_port is required" in result["content"][0]["text"]

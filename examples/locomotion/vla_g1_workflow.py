@@ -4,27 +4,27 @@
 Chains the three stages of the humanoid VLA pipeline on the Unitree G1:
 
 1. RECORD  - drive the G1 in sim, capture a LeRobotDataset (teleop data).
-2. TUNE    - post-train Isaac-GR00T N1.7 on the recorded data (optional/gated).
+2. TUNE    - post-train GR00T N1.7 through lerobot on the recorded data (optional/gated).
 3. DEPLOY  - deploy the (fine-tuned or pre-trained) checkpoint with WBC
              (SONIC whole-body control) for locomotion.
 
 Each stage is self-contained and gated:
 - By default only stages 1 + 3 run (record + deploy with a mock/pre-trained
   checkpoint). This completes in ~10 seconds on CPU with no external services.
-- Pass ``--tune`` to enable stage 2 (requires Docker + a GPU for Isaac-GR00T
-  fine-tuning; takes ~hours). The deploy stage then uses the fine-tuned output.
+- Pass ``--tune`` to enable stage 2 (requires a GPU and strands-robots[groot];
+  takes ~hours). The deploy stage then uses the fine-tuned output.
 - Pass ``--checkpoint /path/to/grootwbc-g1`` to skip recording + fine-tuning and
   jump straight to deploy with an existing SONIC checkpoint.
 
-This example proves the three pieces compose - dataset_recorder, GR00T Trainer,
-and WBCPolicy - as one coherent pipeline, the deploy stage of issue #471.
+This example proves the three pieces compose - dataset_recorder, the lerobot
+trainer with policy_type groot, and WBCPolicy - as one coherent pipeline, the deploy stage of issue #471.
 
 Upstream reference:
     https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/vla_workflow.html
 
 Dependencies:
-    pip install "strands-robots[sim-mujoco,lerobot,wbc]"
-    # For stage 2 (fine-tuning): Docker + GPU + pip install "strands-robots[groot-service]"
+    pip install "strands-robots[sim-mujoco,lerobot,wbc]" "lerobot[training]"
+    # For stage 2 (fine-tuning): GPU + pip install "strands-robots[groot]"
 
 Usage:
     # Quick demo (record + deploy with mock policy, ~10s):
@@ -148,12 +148,13 @@ def stage_record(dataset_root: str, n_episodes: int, steps_per_episode: int, che
 
 
 def stage_finetune(dataset_root: str, base_model: str, output_dir: str, steps: int) -> str:
-    """Post-train Isaac-GR00T N1.7 on the recorded G1 locomotion data.
+    """Post-train GR00T N1.7 on the recorded G1 locomotion data.
 
-    Uses the ``Trainer`` abstraction (``create_trainer("groot")``) which wraps
-    the ``gr00t_inference`` Docker tool's training pipeline under the hood.
-    This is the same interface ``07_post_tune_any_policy.py`` uses for any
-    provider - just with ``"groot"`` and a G1 dataset.
+    Uses the ``Trainer`` abstraction (``create_trainer("lerobot_local")`` with
+    ``extra={"policy_type": "groot"}``): lerobot's native N1.7 port, no
+    Isaac-GR00T checkout. This is the same interface
+    ``07_post_tune_any_policy.py`` uses for any provider - just with a G1
+    dataset and the GR00T policy type.
 
     Returns the fine-tuned checkpoint directory.
     """
@@ -165,17 +166,15 @@ def stage_finetune(dataset_root: str, base_model: str, output_dir: str, steps: i
     print(f"  Output:      {output_dir}")
     print(f"  Steps:       {steps}")
 
-    trainer = create_trainer("groot")
+    trainer = create_trainer("lerobot_local")
     spec = TrainSpec(
         dataset_root=dataset_root,
         base_model=base_model,
         output_dir=output_dir,
+        embodiment="unitree_g1",
         steps=steps,
         save_freq=max(1, steps // 4),
-        extra={
-            "embodiment": "unitree_g1",
-            "data_config": "unitree_g1",
-        },
+        extra={"policy_type": "groot"},
     )
 
     problems = trainer.validate(spec)

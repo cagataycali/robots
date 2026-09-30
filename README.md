@@ -62,7 +62,7 @@ uv pip install "strands-robots[sim-mujoco]"   # plain pip works too
 ```
 
 Python 3.12+. Everything else is an extra you pull in when you need it -
-`lerobot` (hardware, local VLA inference, recording), `groot-service`,
+`lerobot` (hardware, local VLA inference, recording), `groot` (GR00T N1.7),
 `cosmos3-service`, `mesh`, `mesh-iot`, `sim-newton`, `sim-isaac`, `wbc` -
 see [Installation](docs/start/install.md) for the full table.
 
@@ -83,9 +83,9 @@ in sim runs on the metal by changing `mode`.
 | | Read |
 |---|---|
 | **70+ robots across 8 categories** - arms, bimanual rigs, humanoids, quadrupeds, hands, drones - from one registry with asset auto-download | [Robots](docs/robots/index.md) |
-| **Any policy** behind one ABC: NVIDIA GR00T, Cosmos 3, LeRobot (ACT / Pi0 / SmolVLA / Diffusion), MolmoAct2, whole-body control, cuRobo, MoveIt2, scripted | [Policies](docs/learn/policies/index.md) |
+| **Any policy** behind one ABC: LeRobot (ACT / Pi0 / SmolVLA / Diffusion / GR00T N1.7), Cosmos 3, MolmoAct2, whole-body control, cuRobo, MoveIt2, scripted | [Policies](docs/learn/policies/index.md) |
 | **Teleoperate and record** LeRobotDataset episodes from leader arms, gamepads or WASD; stream to HF datasets or Storage Buckets | [Teleoperation](docs/learn/hardware/teleoperation.md), [Recording](docs/learn/data/record.md) |
-| **Train** with LeRobot, GR00T, Cosmos 3 or RL (PPO / FastSAC), locally or as a SageMaker job, then run the checkpoint in sim and on hardware | [Training](docs/learn/training/lerobot.md) |
+| **Train** with LeRobot (ACT to GR00T N1.7), Cosmos 3 or RL (PPO / FastSAC), locally or as a SageMaker job, then run the checkpoint in sim and on hardware | [Training](docs/learn/training/lerobot.md) |
 | **Simulate** with an agent-callable MuJoCo tool: worlds, terrain, domain randomization, rendering, dataset capture; Newton and Isaac backends | [Simulation](docs/learn/simulation/index.md) |
 | **Mesh** every robot as a Zenoh peer: `tell()` another robot what to do, broadcast an E-STOP, bridge fleets over AWS IoT Core | [Mesh](docs/learn/mesh/fleet.md) |
 | **ROS 2** - observe and command any graph (`use_ros`), act as a node without rclpy (`use_rtps`), expose a running sim | [ROS 2](docs/learn/ros2.md) |
