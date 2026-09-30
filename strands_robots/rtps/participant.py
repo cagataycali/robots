@@ -190,6 +190,27 @@ def _build_sample(idl_cls: Any, fields: dict[str, Any]) -> Any:
     return idl_cls(**kwargs)
 
 
+def _check_encodes(sample: Any, ros_type: str) -> None:
+    """Refuse a sample its own type cannot encode, before a writer joins the graph.
+
+    ``_build_sample`` checks field *names*; a value of the wrong kind (``3`` for
+    a nested message, ``"fast"`` for a float64) only fails inside cyclonedds'
+    encoder, which raises a bare ``Exception`` from ``writer.write``. Encoding
+    once here turns that into a ``ValueError`` naming the type and the member,
+    and nothing has been published or advertised when it is raised.
+
+    Raises:
+        ValueError: The sample does not encode as ``ros_type``.
+    """
+    serialize = getattr(sample, "serialize", None)
+    if serialize is None:  # not an IdlStruct (a stand-in type); the writer judges it
+        return
+    try:
+        serialize()
+    except Exception as exc:  # noqa: BLE001 - cyclonedds raises a bare Exception
+        raise ValueError(f"fields do not fit {ros_type}: {exc}") from exc
+
+
 def rtps_action(
     action: str,
     *,
@@ -287,6 +308,7 @@ def rtps_action(
                     return _err("publish requires topic and type")
                 idl_cls = get_type(type)
                 sample = _build_sample(idl_cls, fields)
+                _check_encodes(sample, type)
                 writer = _backend.writer(topic, type)
                 # Brief settle so freshly-matched readers receive the first sample.
                 time.sleep(0.3)
@@ -318,5 +340,8 @@ def rtps_action(
             return _err(f"unknown action: {action}")
     except ImportError as exc:
         return _err(str(exc))
-    except (KeyError, ValueError, AttributeError, TypeError) as exc:
+    except KeyError as exc:
+        # ``str(KeyError(msg))`` is ``repr(msg)``: the message would arrive quoted.
+        return _err(f"{action} failed: {exc.args[0] if exc.args else exc}")
+    except (ValueError, AttributeError, TypeError) as exc:
         return _err(f"{action} failed: {exc}")

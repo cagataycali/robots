@@ -30,8 +30,10 @@ and types bounded by the IDL bundle
 (``geometry_msgs/msg/Twist`` for ``drive``). This transport has no services and
 no actions, so an :class:`RtpsRobot` exposes no ``init_services`` handshake and
 no goal-level navigation - the base class asks the transport what it can do
-rather than assuming. Pose/scan read-back needs those messages in the bundle;
-until they are added, use ``RosBridgedRobot`` for echo.
+rather than assuming. Pose and scan read-back (``get_pose`` / ``get_scan``)
+work for ``nav_msgs/msg/Odometry``, ``geometry_msgs/msg/PoseStamped`` and
+``sensor_msgs/msg/LaserScan``, which the bundle carries; a custom message
+needs ``RosBridgedRobot``.
 """
 
 from __future__ import annotations
@@ -48,6 +50,8 @@ from strands_robots.rtps.participant import GATE_TOOL, never_gated, rtps_action
 from strands_robots.utils import partial_construction_repr
 
 _TWIST_TYPE = "geometry_msgs/msg/Twist"
+_ODOM_TYPE = "nav_msgs/msg/Odometry"
+_SCAN_TYPE = "sensor_msgs/msg/LaserScan"
 # The participant writes to a DDS topic directly, so a topic must be absolute -
 # a stricter grammar than the ROS 2 bridge's, which also accepts relative and
 # private (``~``) names for rclpy to resolve. Read from the mangling that maps
@@ -132,6 +136,14 @@ class RtpsRobot(MobileBaseRobot):
             class cannot know.
         max_angular: Optional angular-velocity clamp (rad/s). Unset by default.
         max_duration: Optional cap on a single :meth:`drive` hold, in seconds.
+        odom_topic: Optional odometry topic read by :meth:`get_pose` (and the
+            ``get_pose_<node_name>`` tool), e.g. ``/odom``.
+        scan_topic: Optional laser-scan topic read by :meth:`get_scan`, e.g. ``/scan``.
+        odom_type: Interface type of ``odom_topic`` (default
+            ``nav_msgs/msg/Odometry``; ``geometry_msgs/msg/PoseStamped`` also
+            works). A DDS reader needs the type up front - there is no live
+            graph to resolve it from, unlike the rclpy and rosbridge transports.
+        scan_type: Interface type of ``scan_topic`` (default ``sensor_msgs/msg/LaserScan``).
     """
 
     _NAME_RE = _RTPS_NAME_RE
@@ -156,6 +168,10 @@ class RtpsRobot(MobileBaseRobot):
         max_linear: float | None = None,
         max_angular: float | None = None,
         max_duration: float | None = None,
+        odom_topic: str | None = None,
+        scan_topic: str | None = None,
+        odom_type: str = _ODOM_TYPE,
+        scan_type: str = _SCAN_TYPE,
     ) -> None:
         super().__init__(
             node_name,
@@ -166,6 +182,10 @@ class RtpsRobot(MobileBaseRobot):
             max_angular=max_angular,
             max_duration=max_duration,
             publish_rate=publish_rate,
+            odom_topic=odom_topic,
+            scan_topic=scan_topic,
+            odom_type=odom_type,
+            scan_type=scan_type,
         )
 
     @classmethod

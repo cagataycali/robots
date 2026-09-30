@@ -7,7 +7,7 @@ from strands import Agent
 from strands_robots import use_ros, use_rosbridge, use_rtps
 
 agent = Agent(tools=[use_rtps])                  # no ROS install needed on this machine
-agent("List the topics on the graph, then echo /odom once.")
+agent("Echo /odom once and tell me where the robot is.")
 ```
 
 ## Three transports
@@ -20,7 +20,7 @@ agent("List the topics on the graph, then echo /odom once.")
 
 Pick `use_ros` on the robot or a ROS workstation when you need services or actions; `use_rosbridge` from a laptop when the robot already runs rosbridge; `use_rtps` when no ROS install is near the agent, or when the agent must *be* a robot: an RTPS participant advertises topics a real node consumes and subscribes to command topics.
 
-Types are resolved dynamically on `use_ros` (`rosidl_runtime_py`, any interface installed in the distro) and on `use_rosbridge` (ROS 1 style two-segment names, `geometry_msgs/Twist`). `use_rtps` must own a type definition locally, so it ships a curated IDL bundle of common messages (`strands_robots.rtps.idl`, listed by `action="types"`); a custom message is out of scope until dynamic types in cyclonedds mature. Graph metadata differs too; see [below](#what-a-ros-2-node-can-still-tell-apart).
+Types are resolved dynamically on `use_ros` (`rosidl_runtime_py`, any interface installed in the distro) and on `use_rosbridge` (ROS 1 style two-segment names, `geometry_msgs/Twist`). `use_rtps` must own a type definition locally, so it ships a curated IDL bundle of common messages (`strands_robots.rtps.idl`, listed by `action="types"`): the `std_msgs` scalars and `String`, `Twist`/`Pose` and their stamped and covariance forms, `nav_msgs/msg/Odometry`, `sensor_msgs/msg/JointState`, `Image`, `LaserScan` and `Imu`; a custom message is out of scope until dynamic types in cyclonedds mature. Graph metadata differs too; see [below](#what-a-ros-2-node-can-still-tell-apart).
 
 rosbridge is unauthenticated by default. Use it on a network you trust.
 

@@ -189,6 +189,126 @@ if _HAVE_CYCLONEDDS:
         }
     )
 
+    # --- the messages a mobile base and its operator exchange --------------
+    # std_msgs scalars (the graph's hello-world), the stamped / covariance
+    # geometry wrappers, nav_msgs/Odometry (``/odom``), sensor_msgs/LaserScan
+    # (``/scan``) and sensor_msgs/Imu. Layouts copied field for field from
+    # ``ros2 interface show --no-comments`` on Jazzy and checked on the wire
+    # against a real ROS 2 node in both directions; fixed-size arrays
+    # (``float64[36]``) are ``array[...]``, unbounded ones ``sequence[...]``.
+    from cyclonedds.idl.types import array, float32
+
+    @dataclass
+    class String(IdlStruct, typename="std_msgs::msg::dds_::String_"):
+        """``std_msgs/msg/String``: one ``data`` string."""
+
+        data: str = ""
+
+    @dataclass
+    class Bool(IdlStruct, typename="std_msgs::msg::dds_::Bool_"):
+        """``std_msgs/msg/Bool``: one ``data`` boolean."""
+
+        data: bool = False
+
+    @dataclass
+    class Int32(IdlStruct, typename="std_msgs::msg::dds_::Int32_"):
+        """``std_msgs/msg/Int32``: one ``data`` 32-bit signed integer."""
+
+        data: int32 = 0
+
+    @dataclass
+    class Float32(IdlStruct, typename="std_msgs::msg::dds_::Float32_"):
+        """``std_msgs/msg/Float32``: one ``data`` single-precision float."""
+
+        data: float32 = 0.0
+
+    @dataclass
+    class Float64(IdlStruct, typename="std_msgs::msg::dds_::Float64_"):
+        """``std_msgs/msg/Float64``: one ``data`` double-precision float."""
+
+        data: float64 = 0.0
+
+    @dataclass
+    class PoseStamped(IdlStruct, typename="geometry_msgs::msg::dds_::PoseStamped_"):
+        """``geometry_msgs/msg/PoseStamped``: a :class:`Pose` with a :class:`Header`."""
+
+        header: Header = field(default_factory=Header)
+        pose: Pose = field(default_factory=Pose)
+
+    @dataclass
+    class TwistStamped(IdlStruct, typename="geometry_msgs::msg::dds_::TwistStamped_"):
+        """``geometry_msgs/msg/TwistStamped``: a :class:`Twist` with a :class:`Header`."""
+
+        header: Header = field(default_factory=Header)
+        twist: Twist = field(default_factory=Twist)
+
+    @dataclass
+    class PoseWithCovariance(IdlStruct, typename="geometry_msgs::msg::dds_::PoseWithCovariance_"):
+        """``geometry_msgs/msg/PoseWithCovariance``: a :class:`Pose` and its row-major 6x6 ``covariance``."""
+
+        pose: Pose = field(default_factory=Pose)
+        covariance: array[float64, 36] = field(default_factory=lambda: [0.0] * 36)  # type: ignore[type-arg, assignment, valid-type]
+
+    @dataclass
+    class TwistWithCovariance(IdlStruct, typename="geometry_msgs::msg::dds_::TwistWithCovariance_"):
+        """``geometry_msgs/msg/TwistWithCovariance``: a :class:`Twist` and its row-major 6x6 ``covariance``."""
+
+        twist: Twist = field(default_factory=Twist)
+        covariance: array[float64, 36] = field(default_factory=lambda: [0.0] * 36)  # type: ignore[type-arg, assignment, valid-type]
+
+    @dataclass
+    class Odometry(IdlStruct, typename="nav_msgs::msg::dds_::Odometry_"):
+        """``nav_msgs/msg/Odometry``: pose in ``header.frame_id`` and twist in ``child_frame_id``, with covariances."""
+
+        header: Header = field(default_factory=Header)
+        child_frame_id: str = ""
+        pose: PoseWithCovariance = field(default_factory=PoseWithCovariance)
+        twist: TwistWithCovariance = field(default_factory=TwistWithCovariance)
+
+    @dataclass
+    class LaserScan(IdlStruct, typename="sensor_msgs::msg::dds_::LaserScan_"):
+        """``sensor_msgs/msg/LaserScan``: one planar sweep - angles, timing, range limits, ``ranges`` and ``intensities``."""
+
+        header: Header = field(default_factory=Header)
+        angle_min: float32 = 0.0
+        angle_max: float32 = 0.0
+        angle_increment: float32 = 0.0
+        time_increment: float32 = 0.0
+        scan_time: float32 = 0.0
+        range_min: float32 = 0.0
+        range_max: float32 = 0.0
+        ranges: sequence[float32] = field(default_factory=list)  # type: ignore[type-arg, assignment]
+        intensities: sequence[float32] = field(default_factory=list)  # type: ignore[type-arg, assignment]
+
+    @dataclass
+    class Imu(IdlStruct, typename="sensor_msgs::msg::dds_::Imu_"):
+        """``sensor_msgs/msg/Imu``: orientation, angular velocity and linear acceleration, each with a 3x3 covariance."""
+
+        header: Header = field(default_factory=Header)
+        orientation: Quaternion = field(default_factory=Quaternion)
+        orientation_covariance: array[float64, 9] = field(default_factory=lambda: [0.0] * 9)  # type: ignore[type-arg, assignment, valid-type]
+        angular_velocity: Vector3 = field(default_factory=Vector3)
+        angular_velocity_covariance: array[float64, 9] = field(default_factory=lambda: [0.0] * 9)  # type: ignore[type-arg, assignment, valid-type]
+        linear_acceleration: Vector3 = field(default_factory=Vector3)
+        linear_acceleration_covariance: array[float64, 9] = field(default_factory=lambda: [0.0] * 9)  # type: ignore[type-arg, assignment, valid-type]
+
+    REGISTRY.update(
+        {
+            "std_msgs/msg/String": String,
+            "std_msgs/msg/Bool": Bool,
+            "std_msgs/msg/Int32": Int32,
+            "std_msgs/msg/Float32": Float32,
+            "std_msgs/msg/Float64": Float64,
+            "geometry_msgs/msg/PoseStamped": PoseStamped,
+            "geometry_msgs/msg/TwistStamped": TwistStamped,
+            "geometry_msgs/msg/PoseWithCovariance": PoseWithCovariance,
+            "geometry_msgs/msg/TwistWithCovariance": TwistWithCovariance,
+            "nav_msgs/msg/Odometry": Odometry,
+            "sensor_msgs/msg/LaserScan": LaserScan,
+            "sensor_msgs/msg/Imu": Imu,
+        }
+    )
+
 
 def get_type(ros_type: str) -> Any:
     """Resolve a ROS 2 type string to its IDL dataclass.
