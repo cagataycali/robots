@@ -38,7 +38,6 @@ is what a reader sees anyway.
 from __future__ import annotations
 
 import ast
-import importlib.util
 import json
 import re
 from pathlib import Path
@@ -53,12 +52,12 @@ from strands_robots.hardware_robot import Robot as HardwareRobot
 from strands_robots.registry import list_robots
 from strands_robots.registry.user_registry import _load_user_registry
 from strands_robots.simulation.base import SimEngine
+from tests._docs_hooks import docs_hook
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MKDOCS_YML = REPO_ROOT / "mkdocs.yml"
 DOCS_DIR = REPO_ROOT / "docs"
 LANDING_PAGE = DOCS_DIR / "index.md"
-FACTS_HOOK = DOCS_DIR / "hooks" / "facts.py"
 VIEWER_MANIFEST = DOCS_DIR / "assets" / "viewer" / "robots.json"
 
 #: The tab strip: Home plus the five sections of the information architecture.
@@ -321,10 +320,7 @@ class TestTheLandingPageShowsTheProduct:
 
 def _facts() -> dict[str, int]:
     """The numbers hook's table, loaded by path: the docs venv is not the test venv."""
-    spec = importlib.util.spec_from_file_location("docs_facts_hook", FACTS_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = docs_hook("facts")
     return module.numbers()
 
 

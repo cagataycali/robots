@@ -75,15 +75,16 @@ class TestSimTimeReadsTheWorldClock:
         assert engine._sim_time == pytest.approx(engine._world.current_time)
 
     def test_a_rendering_step_advances_one_physics_tick_not_a_render_dt(self) -> None:
-        """A rendering step must step physics ONCE (render=False) and refresh the
-        frame separately, so it advances one physics_dt rather than a whole
-        rendering_dt of physics folded into World.step(render=True)."""
+        """A rendering step is ONE World.step(render=True): the World is built at
+        rendering_dt == physics_dt, so that app update integrates one physics_dt and
+        refreshes every camera in the same tick (a separate render-only refresh
+        cannot light the second and later RTX products)."""
         engine = _engine(render_mode="rtx_realtime", config_dt=1 / 120, world_dt=1 / 120)
 
         engine.step(3)
 
-        assert engine._world.step_render_args == [False, False, False]
-        assert engine._world.render_calls == 3
+        assert engine._world.step_render_args == [True, True, True]
+        assert engine._world.render_calls == 0
         assert engine._sim_time == pytest.approx(3 / 120)
 
     def test_send_action_reads_the_world_clock(self) -> None:

@@ -22,19 +22,17 @@ expectation tracks the code rather than a second copy of it.
 
 from __future__ import annotations
 
-import importlib.util
 import inspect
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
 from strands_robots.inference import RemotePolicy
+from tests._docs_hooks import docs_hook
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DOC = _REPO_ROOT / "docs" / "learn" / "policies" / "remote.md"
-_HOOK = _REPO_ROOT / "docs" / "hooks" / "providers.py"
 _REGISTRY = _REPO_ROOT / "strands_robots" / "registry" / "policies.json"
 
 #: A registry entry that had shrunk to a key or two would make every rule below
@@ -50,13 +48,7 @@ def _config_keys() -> list[str]:
 
 def _page() -> str:
     """The remote page with its ``{{providers:...}}`` tokens expanded by the shipped hook."""
-    spec = importlib.util.spec_from_file_location("docs_hooks_providers", _HOOK)
-    assert spec is not None and spec.loader is not None
-    module = sys.modules.get(spec.name)
-    if module is None:
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+    module = docs_hook("providers")
     source = _DOC.read_text(encoding="utf-8")
     rendered = module.substitute(source, "learn/policies/remote.md")
     assert rendered != source, "learn/policies/remote.md carries no {{providers:kwargs:remote}} token"
