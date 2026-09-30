@@ -72,13 +72,13 @@ robot.cleanup()
 
 ## Behind the gate
 
-Mounted as a tool, the real arm's `execute` and `start` actions carry the checkpoint in `policy_config` and stop for a human before anything is dispatched. `mock=True` gives the lerobot driver a mocked servo bus, so this runs on a laptop:
+Mounted as a tool, the real arm's `execute` and `start` actions carry the checkpoint in `policy_config` and stop for a human before anything is dispatched. The gate runs before the driver opens its port, so a laptop with no arm reaches it:
 
 ```python
 import asyncio
 from strands_robots import Robot
 
-arm = Robot("so101", mode="real", port="/dev/null", mock=True)
+arm = Robot("so101", mode="real", port="/dev/null")
 
 async def call(action, **fields):
     tool_use = {"toolUseId": "demo", "name": arm.tool_name, "input": {"action": action, **fields}}
