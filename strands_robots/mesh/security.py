@@ -1399,6 +1399,7 @@ COMMAND_KEYS: dict[str, frozenset[str]] = {
     "teleop_receive": frozenset({"source_peer_id", "device_name"}),
     "teleop_stop": frozenset({"device_name"}),
     "resume": frozenset({"override_code"}),
+    "stop": frozenset({"robot_name"}),
 }
 COMMAND_KEYS["start"] = COMMAND_KEYS["execute"]
 _ROUTING_KEYS = frozenset({"action", "turn_id", "sender_id"})
@@ -1680,6 +1681,14 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 "resume.override_code contains control characters (CRLF/NUL/C0). Use printable ASCII only."
             )
         out["override_code"] = override_code
+    elif action == "stop":
+        # Per-robot stop: Mesh._dispatch reads ``stop.robot_name`` to halt one
+        # sim rollout (``stop_policy(robot_name)``) instead of every one. A
+        # stop is the one command a refusal must never swallow, so the key
+        # travels, coerced like ``set_joints.robot_name``; a bare stop is the
+        # halt-everything shape and still passes untouched.
+        if "robot_name" in cmd:
+            out["robot_name"] = _coerce_robot_name(cmd["robot_name"])
     unread = sorted(key for key in cmd if key not in out and key not in _ROUTING_KEYS)
     if unread:
         raise ValidationError(_unread_keys_error(action, unread))

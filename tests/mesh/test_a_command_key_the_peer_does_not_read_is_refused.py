@@ -104,3 +104,16 @@ def test_the_key_table_names_exactly_what_the_validator_reads():
 
     assert read - {"action"} == tabled, (sorted(read - {"action"} - tabled), sorted(tabled - read))
     assert passthrough & tabled == set()
+
+
+def test_a_per_robot_stop_travels_because_the_peer_reads_its_robot_name():
+    """``stop`` is the one action where a refusal is fail-open: the peer's dispatcher reads
+    ``stop.robot_name`` (per-robot ``stop_policy``), so the key must reach it, coerced like
+    ``set_joints.robot_name`` is, and a stop with no robot name still passes untouched."""
+    out = validate_command({"action": "stop", "robot_name": "so101", "turn_id": "t-1"})
+
+    assert out["robot_name"] == "so101" and out["turn_id"] == "t-1"
+    assert validate_command({"action": "stop"}) == {"action": "stop"}
+    assert "robot_name" in COMMAND_KEYS["stop"]
+    with pytest.raises(ValidationError):
+        validate_command({"action": "stop", "robot_name": "../so101"})
