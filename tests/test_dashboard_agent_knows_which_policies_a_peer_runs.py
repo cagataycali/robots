@@ -13,9 +13,6 @@ locomotion envelope. Anything else is refused on the robot host.
 
 from __future__ import annotations
 
-import importlib.util
-import pathlib
-import sys
 from typing import Any
 
 import pytest
@@ -24,6 +21,7 @@ from strands_robots.dashboard import agent_console, peer_policies, peer_tools, r
 from strands_robots.mesh import Mesh, security
 from strands_robots.policies.factory import _resolve_policy_class
 from strands_robots.registry.policies import get_policy_provider, list_policy_providers
+from tests._docs_hooks import docs_hook
 
 G1_CHILD = ("g1-sim-1__unitree_g1", {"presence": {"robot_type": "sim", "parent": "g1-sim-1"}, "state": {"joints": {}}})
 SO101_CHILD = ("lane__so101", {"presence": {"robot_type": "sim", "parent": "lane"}})
@@ -90,16 +88,8 @@ def test_every_offered_provider_is_in_the_registry_with_a_hint() -> None:
 
 
 def test_the_embodiment_table_agrees_with_the_docs_coverage_witnesses() -> None:
-    """One truth about which provider loads which body; the docs hook is filesystem-only, so read it by path."""
-    hook = pathlib.Path(__file__).resolve().parents[1] / "docs" / "hooks" / "coverage.py"
-    name = "docs_coverage_hook"
-    module = sys.modules.get(name)
-    if module is None:
-        spec = importlib.util.spec_from_file_location(name, hook)
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module  # the hook's dataclass resolves its module by name
-        spec.loader.exec_module(module)
+    """One truth about which provider loads which body; the docs hook is loaded once per process by tests._docs_hooks."""
+    module = docs_hook("coverage")
     witnesses = {provider: tuple(robots) for provider, robots, _path, _needle in module.EMBODIMENT_WITNESSES}
     assert peer_policies.EMBODIMENT_BOUND == witnesses
 
