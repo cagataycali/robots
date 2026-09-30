@@ -4,13 +4,13 @@ description: Read a strands-robots doctor report row by row: what each check pro
 
 # Doctor
 
-At the end of this page you can read a `strands-robots doctor` report and know, for each row, what was probed and what to change when it is not `PASS`.
+At the end of this page you can read a `strands-robots doctor` report and know, per row, what was probed and what to change when it is not `PASS`.
 
 ```bash
 strands-robots doctor
 ```
 
-`python -m strands_robots doctor` is the same command; `--list` prints the probe names. Every probe is read-only and sub-second, none opens a serial port, only a configured `IoT Direct` or `IoT Child Peers` calls AWS, and each returns the verdict the runtime would reach: a `PASS` here never precedes a refusal there.
+`python -m strands_robots doctor` is the same; `--list` prints the probe names. Every probe is read-only and sub-second, none opens a serial port, only a configured `IoT Direct` or `IoT Child Peers` calls AWS, and each returns the runtime's own verdict: a `PASS` here never precedes a refusal there.
 
 ## A report
 
@@ -48,7 +48,7 @@ strands-robots doctor
 All checks passed. Ready to use strands-robots.
 ```
 
-A `FAIL` line carries a `Fix:` line under it and alone makes the exit code 1, so CI can gate on it. `WARN`: the package works, but one named path is narrowed. `SKIP`: the probe does not apply here, or its extra is missing.
+A `FAIL` line carries a `Fix:` line and alone makes the exit code 1, so CI can gate on it. `WARN`: the package works, one named path is narrowed. `SKIP`: the probe does not apply here, or the extra is missing.
 
 ## The probes
 
@@ -58,24 +58,24 @@ A `FAIL` line carries a `Fix:` line under it and alone makes the exit code 1, so
 | Package | `strands_robots` imports; version from its distribution | `FAIL` with the `sim-mujoco` install line |
 | Strands SDK | `strands` imports | `FAIL` with the install line |
 | MuJoCo | `mujoco` imports | `FAIL`: install `[sim-mujoco]` |
-| MuJoCo GL | the `MUJOCO_GL` value MuJoCo will read and whether that backend renders here | `FAIL` when the value disables rendering, is not built for this platform, or is unset with no display; `WARN` for `cgl` on macOS, which needs a logged-in session |
+| MuJoCo GL | the `MUJOCO_GL` value MuJoCo will read and whether that backend renders here | `FAIL` when the value disables rendering, is not built for this platform, or is unset with no display; `WARN` for `cgl` on macOS (needs a login session) |
 | LeRobot | `lerobot` is importable, is the package, and is at least 0.6.1 | `WARN`: install `[lerobot]`; `FAIL` below 0.6.1 |
-| Torchcodec | torchcodec loads against the installed torch and finds ffmpeg | `SKIP` without torch or torchcodec; `FAIL` on an ABI mismatch or missing ffmpeg |
-| CUDA/GPU | `torch.cuda.is_available()` against what the driver reports | `WARN` for no torch, a CPU-only build, or a torch blind to a present device |
-| Torch Arch | the torch build carries code for this GPU's `sm_` architecture | `SKIP` without a CUDA device; `FAIL` when the wheel targets others |
+| Torchcodec | torchcodec loads against the installed torch, finds ffmpeg | `SKIP` without torch or torchcodec; `FAIL` on an ABI mismatch or missing ffmpeg |
+| CUDA/GPU | `torch.cuda.is_available()` against what the driver reports | `WARN` for no torch, a CPU-only build, or torch blind to a present device |
+| Torch Arch | the torch build carries this GPU's `sm_` architecture | `SKIP` without a CUDA device; `FAIL` when the wheel targets others |
 | Warp Arch | the same for `warp` (the `sim-newton` extra) | `SKIP` without a CUDA device or warp |
-| Serial | Linux: the user is in `dialout`, each connected `/dev/ttyACM*`/`/dev/ttyUSB*` is readable | `SKIP` on macOS; `FAIL` when the group is missing or a device is unreadable |
+| Serial | Linux: the user is in `dialout`, every `/dev/ttyACM*`/`/dev/ttyUSB*` is readable | `SKIP` on macOS; `FAIL` when the group is missing or a device is unreadable |
 | HF Auth | `HF_TOKEN` is set, or a cached login token exists where `huggingface_hub` looks | `WARN`: private checkpoints and dataset pushes cannot authenticate |
-| Device Connect | the edge posture: authenticated transport, an explicit insecure opt-in, or neither | `SKIP` without the extra; `WARN` when `run()` would refuse; `FAIL` when online unencrypted with no caller restriction |
-| Mesh | zenoh is installed and `mesh=True` would start under the configured ACL and TLS posture | `WARN` without zenoh or when it would refuse, listing choices |
-| IoT Direct | `STRANDS_MESH_BACKEND=iot` or `bridge` only: one HTTPS `SendDirectMessage` to this identity's own reply topic | `SKIP` otherwise or with `STRANDS_MESH_IOT_DIRECT=0`; `FAIL` when the grant, thing name, endpoint or credential is missing; `WARN` on a transient error |
-| IoT Child Peers | `iot` or `bridge` only: the Thing's certificate grants `strands/<thing>__*/*`, where its child peers publish | `SKIP` otherwise or on an operator identity; `FAIL` with `strands-robots iot reprovision <thing>` when missing; `WARN` when unreadable |
-| Sim Test | `Robot("so100")` builds in sim and returns an observation | `FAIL` with the exception, pointing at `MUJOCO_GL` and the MuJoCo install |
+| Device Connect | the edge posture: authenticated transport, an explicit insecure opt-in, or neither | `SKIP` without the extra; `WARN` when `run()` would refuse; `FAIL` when online unencrypted, callers unrestricted |
+| Mesh | zenoh is installed and `mesh=True` would start under the configured ACL and TLS posture | `WARN` without zenoh or when it would refuse, with the choices |
+| IoT Direct | `STRANDS_MESH_BACKEND=iot` or `bridge` only: one HTTPS `SendDirectMessage` to this identity's own reply topic | `SKIP` otherwise or with `STRANDS_MESH_IOT_DIRECT=0`; `FAIL` when grant, thing name, endpoint or credential is missing; `WARN` on a transient error |
+| IoT Child Peers | `iot` or `bridge` only: the Thing's certificate grants `strands/<thing>__*/*`, where its child peers publish | `SKIP` otherwise or for an operator; `FAIL` (`strands-robots iot reprovision <thing>`) when missing; `WARN` when unreadable |
+| Sim Test | `Robot("so100")` builds in sim and returns an observation | `FAIL` with the exception, naming `MUJOCO_GL` and the MuJoCo install |
 
-A failed `[ros2]` install on a Jetson is the aarch64 build, not a doctor row: see [ROS 2](../learn/ros2.md#linux-aarch64-jetson).
+A failed `[ros2]` install on a Jetson is the aarch64 build, not a doctor row: [ROS 2](../learn/ros2.md#linux-aarch64-jetson).
 
-A bare `Robot("so101")` never starts a mesh, so the `Mesh` warning costs nothing until you pass `mesh=True`; [Fleet](../learn/mesh/fleet.md) explains the three postures it lists.
+A bare `Robot("so101")` never starts a mesh, so the `Mesh` warning costs nothing until `mesh=True`; [Fleet](../learn/mesh/fleet.md) explains the postures.
 
 ## When a fence on these pages fails
 
-Run the doctor first. A `FAIL` on `MuJoCo GL` or `Sim Test` explains a `Robot()` that raises; a `WARN` on `LeRobot` explains a `mode="real"` build with no driver. A clean report plus a failing fence is an issue: attach the report.
+Run the doctor first. A `FAIL` on `MuJoCo GL` or `Sim Test` explains a `Robot()` that raises; a `WARN` on `LeRobot` a driverless `mode="real"` build. A clean report plus a failing fence is an issue: attach the report.
