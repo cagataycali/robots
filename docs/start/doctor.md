@@ -54,7 +54,7 @@ Four verdicts. A `FAIL` line carries a `Fix:` line under it and alone makes the 
 | Strands SDK | `strands` imports | `FAIL` with the install line |
 | MuJoCo | `mujoco` imports | `FAIL`: install `[sim-mujoco]` |
 | MuJoCo GL | the value MuJoCo will read from `MUJOCO_GL` and whether that backend renders on this host | `FAIL` when the value disables rendering, is not built for this platform, or is unset with no display; `WARN` for `cgl` on macOS, which needs a logged-in session |
-| LeRobot | `lerobot` is importable and is the package, not an empty directory on the path | `WARN`: install `[lerobot]` |
+| LeRobot | `lerobot` is importable, is the package, and is at least 0.6.1 | `WARN`: install `[lerobot]`; `FAIL` below 0.6.1 |
 | Torchcodec | torchcodec loads against the installed torch and finds ffmpeg | `SKIP` without torch or torchcodec; `FAIL` on an ABI mismatch or missing ffmpeg |
 | CUDA/GPU | `torch.cuda.is_available()` against what the driver reports | `WARN` for no torch, a CPU-only build, or a torch blind to a present device |
 | Torch Arch | the torch build carries code for this GPU's `sm_` architecture | `SKIP` without a CUDA device; `FAIL` when the wheel was built for other architectures |
