@@ -26,6 +26,7 @@ import pytest
 
 import strands_robots.ros as ros_mod
 from strands_robots.drivers.ros import RosBridgedRobot
+from tests._package_ast import parse_file
 
 _COMMAND_METHODS = frozenset({"drive", "stop", "navigate_to"})
 _COMMAND_ACTIONS = frozenset({"publish", "service_call", "action_send_goal"})
@@ -112,7 +113,7 @@ def bridge_asts() -> list[tuple[Path, ast.Module]]:
     assert {"_mobile_base.py", "ros_bridge.py"} <= names, (
         f"the scan must reach both the shared base and the ROS 2 bridge, found {sorted(names)}"
     )
-    return [(path, ast.parse(path.read_text(encoding="utf-8"))) for path in sources]
+    return [(path, parse_file(path)) for path in sources]
 
 
 class TestBridgeCommandsReachTheGate:

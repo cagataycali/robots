@@ -27,6 +27,8 @@ from typing import Any
 
 import numpy as np
 
+from tests._package_ast import parse_file
+
 _EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "microduck" / "render_video.py"
 
 
@@ -78,7 +80,7 @@ class TestTheFreeCameraFrame:
     def test_the_rollout_never_collects_the_envelope(self) -> None:
         # Graded on the syntax tree, so the prose explaining the envelope is free
         # to name it while no call reaches it.
-        tree = ast.parse(_EXAMPLE.read_text(encoding="utf-8"))
+        tree = parse_file(_EXAMPLE)
         called = {
             node.func.attr
             for node in ast.walk(tree)
