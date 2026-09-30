@@ -243,6 +243,8 @@ class WBCLatentTorqueController:
                 float(action_dict.get(GRIPPER_KEYS[1], self.last_grippers[1])),
             )
         except (TypeError, ValueError):
+            # An unusable gripper value keeps the last commanded one; the arm
+            # joints above were already filtered the same way.
             pass
         for _ in range(self.physics_substeps_per_control):
             q = data.qpos[self.qpos_addrs]

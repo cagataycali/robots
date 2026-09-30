@@ -81,7 +81,7 @@ _INPUT_NAME = "obs_dict"
 # NVIDIA Open Model License, section 3.b. Logged once per process when a
 # session is built from the published weights.
 _ATTRIBUTION = "Licensed by NVIDIA Corporation under the NVIDIA Open Model License."
-_attribution_logged = False
+_attribution_state = {"logged": False}  # one attribution line per process, guarded by _attribution_lock
 _attribution_lock = threading.Lock()
 
 
@@ -190,10 +190,9 @@ def build_onnx_session(path: str | Path) -> DecoderSession:
             f"SonicDecoder: {path} emits {[list(o.shape) for o in outputs]}, expected one output of shape "
             f"[1, {NUM_JOINTS}] (one offset per G1 joint)."
         )
-    global _attribution_logged
     with _attribution_lock:
-        if not _attribution_logged:
-            _attribution_logged = True
+        if not _attribution_state["logged"]:
+            _attribution_state["logged"] = True
             logger.info("SonicDecoder weights: %s (%s)", _ATTRIBUTION, SONIC_REPO_ID)
     return session
 
