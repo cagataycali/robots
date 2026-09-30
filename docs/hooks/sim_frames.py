@@ -10,10 +10,13 @@ with ``{{sim:<id>|caption}}`` (see :mod:`visuals`), directly under the fence.
 
 Which fences produce a frame is declared in ``docs/hooks/data/sim_frames.json``::
 
-    {"first-robot-1": {"page": "start/first-robot.md", "fence": 2}}
+    {"first-robot-1": {"page": "start/first-robot.md", "fence": 2},
+     "talk-to-it": {"script": "docs/hooks/transcripts/talk_to_it.py", "page": "start/first-agent.md",
+                    "frames": ["talk-to-it-1", "talk-to-it-2"]}}
 
 ``fence`` is the 1-based index among the page's runnable fences, as
-``check_fences.py`` numbers them. Frames are committed: the build needs no GPU,
+``check_fences.py`` numbers them. A ``script`` entry runs a capture script (an agent
+transcript, say) that writes the listed frames itself. Frames are committed: the build needs no GPU,
 no display and no MuJoCo; ``--check`` reports a manifest entry with no frame or
 a frame with no entry, which is what ``tests/test_docs_visual_tokens_resolve.py``
 grades against the pages.
@@ -107,8 +110,48 @@ def runnable_fences(page: Path) -> list[str]:
     return [m.group(1) for m in FENCE.finditer(page.read_text(encoding="utf-8"))]
 
 
+def render_script(ident: str, entry: dict, python: str) -> bool:
+    """Run a capture script (``docs/hooks/transcripts/*.py``) that writes its own frames.
+
+    The script gets ``STRANDS_DOCS_FRAME_DIR`` and writes ``<ident>-<n>.png`` plus its
+    transcript; the manifest entry lists the frames it expects under ``frames``.
+    """
+    OUT.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env.update(
+        PYTHONPATH=str(REPO),
+        MUJOCO_GL=env.get("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl"),
+        STRANDS_DOCS_FRAME_DIR=str(OUT),
+    )
+    proc = subprocess.run(
+        [python, str(REPO / entry["script"])],
+        cwd=tempfile.gettempdir(),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=entry.get("timeout_s", 900),
+        check=False,
+    )
+    missing = [f for f in entry["frames"] if not (OUT / f"{f}.png").is_file()]
+    if proc.returncode != 0 or missing:
+        print(f"{ident}: FAIL (exit {proc.returncode}, missing {missing})\n{proc.stderr[-1500:]}")
+        return False
+    print(f"{ident}: {len(entry['frames'])} frames from {entry['script']}")
+    return True
+
+
+def expected_frames(manifest: dict) -> set[str]:
+    """Every frame id the manifest promises: one per fence entry, a list per script entry."""
+    out: set[str] = set()
+    for ident, entry in manifest.items():
+        out |= set(entry["frames"]) if "script" in entry else {ident}
+    return out
+
+
 def render_one(ident: str, entry: dict, python: str) -> bool:
     """Run one manifest entry's fence and write its frame; False when either fails."""
+    if "script" in entry:
+        return render_script(ident, entry, python)
     page = DOCS / entry["page"]
     fences = runnable_fences(page)
     index = int(entry["fence"])
@@ -141,8 +184,9 @@ def render_one(ident: str, entry: dict, python: str) -> bool:
 def check(manifest: dict) -> int:
     """Exit 1 when a manifest entry has no frame or a frame has no entry."""
     frames = {p.stem for p in OUT.glob("*.png")} if OUT.is_dir() else set()
-    missing = sorted(set(manifest) - frames)
-    extra = sorted(frames - set(manifest))
+    promised = expected_frames(manifest)
+    missing = sorted(promised - frames)
+    extra = sorted(frames - promised)
     for ident in missing:
         print(f"no frame for manifest entry {ident}: run docs/hooks/sim_frames.py {ident}")
     for ident in extra:

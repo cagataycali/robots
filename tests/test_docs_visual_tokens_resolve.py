@@ -97,13 +97,16 @@ def test_every_sim_frame_has_a_manifest_entry_and_every_entry_a_frame() -> None:
         return
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     frames = {p.stem for p in (_DOCS / "assets" / "sim").glob("*.png")}
-    assert sorted(set(manifest) - frames) == [], "manifest entries with no frame; run docs/hooks/sim_frames.py"
-    assert sorted(frames - set(manifest)) == [], (
+    promised: dict[str, str] = {}
+    for ident, entry in manifest.items():
+        for frame in entry["frames"] if "script" in entry else [ident]:
+            promised[frame] = entry["page"]
+    assert sorted(set(promised) - frames) == [], "manifest entries with no frame; run docs/hooks/sim_frames.py"
+    assert sorted(frames - set(promised)) == [], (
         "frames with no manifest entry; add them to docs/hooks/data/sim_frames.json"
     )
-    for ident, entry in manifest.items():
-        page = _DOCS / entry["page"]
-        assert page.is_file(), f"{ident}: page {entry['page']} does not exist"
-        assert f"{{{{sim:{ident}" in page.read_text(encoding="utf-8"), (
-            f"{ident}: {entry['page']} does not place its own frame"
-        )
+    placed = {ident for kind, ident in _references() if kind == "sim"}
+    for frame, page_path in promised.items():
+        page = _DOCS / page_path
+        assert page.is_file(), f"{frame}: page {page_path} does not exist"
+        assert frame in placed, f"{frame}: no page places {{{{sim:{frame}}}}} (the manifest names {page_path})"

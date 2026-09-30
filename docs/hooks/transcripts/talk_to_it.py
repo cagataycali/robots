@@ -64,7 +64,7 @@ def snapshot(engine: Any, label: str) -> None:
 
 def watch(engine: Any) -> None:
     """Snapshot after every scene-changing action the agent takes on the engine."""
-    for verb in ("add_camera", "add_object", "run_policy", "set_joint_positions", "move_to"):
+    for verb in ("add_object", "run_policy", "set_joint_positions", "move_to"):
         original = getattr(engine, verb)
 
         def wrapped(*a: Any, _orig: Any = original, _verb: str = verb, **k: Any) -> Any:

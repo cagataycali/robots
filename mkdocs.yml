@@ -339,12 +339,13 @@ nav:
   - Home: index.md
   - Start:
       - start/index.md
-      - start/install.md
-      - start/first-robot.md
-      - start/first-real-arm.md
-      - start/first-policy.md
-      - start/first-agent.md
-      - start/doctor.md
+      - See it: start/see-it.md
+      - Install: start/install.md
+      - Run it: start/first-robot.md
+      - Talk to it: start/first-agent.md
+      - Real arm: start/first-real-arm.md
+      - Same checkpoint: start/first-policy.md
+      - Doctor: start/doctor.md
   - Robots:
       - robots/index.md
       - Arms:

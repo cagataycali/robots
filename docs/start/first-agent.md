@@ -1,6 +1,10 @@
-# First agent
+---
+description: "Stage 2, ten minutes: the robot as a Strands Agent tool, a sentence that moves it, and the operator gate stopping a real rollout."
+---
 
-At the end of this page a Strands Agent has moved the simulated arm from a sentence you typed, and you have watched the same agent stop at the approval gate in front of a real one. The sim fences run without a model. The two fences that call `agent("...")` need a model provider configured for `strands-agents`; Bedrock is the default.
+# Talk to it
+
+At the end of this page a Strands Agent has moved the simulated arm from a sentence you typed, and you have watched the same agent stop at the approval gate in front of a real one. [See it](see-it.md) shows a captured run of exactly this; here you run it. The sim fences run without a model. The two fences that call `agent("...")` need a model provider configured for `strands-agents`; Bedrock is the default.
 
 ## The robot is a tool
 
@@ -28,7 +32,7 @@ Programmatic MuJoCo simulation environment (stateful session). One world per ins
 1 (shoulder_pan): pos=0.0000, vel=0.0000
 ```
 
-Nothing was wrapped. The object `Robot()` returned is a Strands `AgentTool`: it carries a name (`so101_sim` in sim, `so101` on hardware, or whatever `tool_name=` says), a description the model reads, and one `action` enum. `agent.tool.so101_sim(...)` calls it directly, no model in the loop, and returns the same envelope the methods on [First robot](first-robot.md) returned. Two robots in one agent need two names: `Robot("so101", tool_name="left")`.
+Nothing was wrapped. The object `Robot()` returned is a Strands `AgentTool`: a name (`so101_sim` in sim, `so101` on hardware, or whatever `tool_name=` says), a description the model reads, one `action` enum. `agent.tool.so101_sim(...)` calls it directly, no model in the loop, and returns the envelope [Run it](first-robot.md) showed. Two robots in one agent need two names: `Robot("so101", tool_name="left")`.
 
 ## Ask in words
 
@@ -43,9 +47,9 @@ print(result)
 robot.cleanup()
 ```
 
-The model calls `get_robot_state`, then `set_joint_positions` or `actuate_robot` with some `step` calls, then `get_robot_state` again, and writes what it found. On one run on this checkout the answer reported the gripper moving from `[+0.020, -0.376, +0.259]` to `[-0.150, -0.335, +0.237]`, a 17 cm sweep along -X for a 0.5 rad pan. Your model will pick its own actions and words; the joint it reports back is read from physics, not invented.
+The model calls `get_robot_state`, then `set_joint_positions` or `actuate_robot` with some `step` calls, then `get_robot_state` again, and writes what it found. One run on this checkout reported the gripper moving from `[+0.020, -0.376, +0.259]` to `[-0.150, -0.335, +0.237]`, a 17 cm sweep along -X for a 0.5 rad pan. Your model picks its own actions and words; the joint it reports is read from physics, not invented.
 
-Other tools mount the same way and are listed in the [tool reference](../reference/tools.md). `pose_tool` talks to a Feetech bus and needs `pip install pyserial` on top of the Start install:
+Other tools mount the same way ([tool reference](../reference/tools.md)); `pose_tool` talks to a Feetech bus and needs `pip install pyserial`:
 
 ```python
 from strands import Agent
@@ -121,4 +125,4 @@ The decision order is fixed and shared by every tool that can move a robot: `STR
 
 ## Where next
 
-[Agents](../learn/agents.md) covers what the model sees, multi-robot agents and the dashboard's approval flow. [Policies](../learn/policies/index.md) replaces `mock` with a model that acts on the words.
+You now have an agent that drives the simulated arm from a sentence, and you saw the operator gate stop a real rollout. Next rung: [Real arm](first-real-arm.md). [Agents and robots](../learn/agents.md) covers what the model sees, multi-robot agents and the dashboard's approval flow; [Policies](../learn/policies/index.md) replaces `mock` with a model that acts on the words.
