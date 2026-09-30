@@ -350,6 +350,70 @@ def matching_embodiments(observation_keys: Iterable[Any]) -> list[str]:
     )
 
 
+# A revolute joint recorded in radians never spans more than one full turn, so
+# a stats column wider than this was recorded in some other unit - for the
+# SO-arm datasets LeRobot's driver writes, degrees (and 0..100 on the gripper).
+DEGREE_LIKE_SPAN = 2 * math.pi
+
+
+def degree_like_columns(ranges: Iterable[tuple[float, float]], width: int) -> list[int]:
+    """Columns among the first *width* whose recorded span no radian joint can have.
+
+    A checkpoint's stats are the only record of the units its dataset was
+    recorded in. The SO-101 pi0.5 fine-tunes on the Hub, for example, record
+    ``observation.state`` spans of 41 to 179 per column (degrees, gripper
+    0..100), while the same arm's MuJoCo and Isaac joints never leave a
+    3.5-radian range. The verdict is the checkpoint's as a whole: at least two
+    columns, and at least half of the first *width*, must be wider than
+    :data:`DEGREE_LIKE_SPAN` before a caller treats the stats as degrees - a
+    radian dataset whose gripper alone is recorded 0..100 is not degree-trained.
+
+    Args:
+        ranges: ``(low, high)`` per stats column, as
+            :meth:`~strands_robots.policies.lerobot_local.processor.ProcessorBridge.recorded_value_ranges`
+            returns them. Columns past *width* (a padded 32-D model's unused
+            dims) are not read.
+        width: How many leading columns the robot actually fills.
+
+    Returns:
+        The indices of the wide columns when the stats read as degree-recorded
+        as a whole; an empty list otherwise.
+    """
+    spans = [high - low for low, high in list(ranges)[:width]]
+    wide = [index for index, span in enumerate(spans) if math.isfinite(span) and span > DEGREE_LIKE_SPAN]
+    if len(wide) >= 2 and 2 * len(wide) >= len(spans):
+        return wide
+    return []
+
+
+def registered_sim_embodiment(state_keys: Iterable[Any]) -> EmbodimentMap | None:
+    """The shipped SIMULATION embodiment whose ``state_keys`` are exactly *state_keys*.
+
+    The registry's SIM entries declare the bare joint names a MuJoCo / Isaac /
+    Newton model reports (``so101``: ``"1".."6"``), and those joints are radians
+    (metres for a prismatic one). A state keyed exactly like one is therefore a
+    simulated state in SI units - the evidence the joint-units guard needs
+    before it can say the state is NOT in the degrees a checkpoint was trained
+    on. ``*_real`` entries are excluded: they name LeRobot driver features,
+    which already speak the dataset's units.
+
+    Args:
+        state_keys: The keys the state vector is packed from, in any order.
+
+    Returns:
+        The one matching configuration, or ``None`` when none or several match.
+    """
+    wanted = {key for key in state_keys if isinstance(key, str)}
+    if not wanted:
+        return None
+    found = [
+        EMBODIMENT_MAP[name]
+        for name in sorted(_CONFIG_NAMES)
+        if not name.endswith("_real") and set(EMBODIMENT_MAP[name].state_keys) == wanted
+    ]
+    return found[0] if len(found) == 1 else None
+
+
 def state_key_remedy(observation_keys: Iterable[Any], *, normalization_inert: bool = False) -> str:
     """Advice for a state-key mismatch, chosen from what the observation contains.
 
@@ -1383,13 +1447,16 @@ def load_embodiment(embodiment: str | EmbodimentMap | dict) -> EmbodimentMap:
 __all__ = [
     "EmbodimentMap",
     "EMBODIMENT_MAP",
+    "DEGREE_LIKE_SPAN",
     "UNIT_FRAMES",
     "ZeroActionMonitor",
+    "degree_like_columns",
     "diagnose_action_dim",
     "load_embodiment",
     "matching_embodiments",
     "observed_state_keys",
     "reconcile_dim",
+    "registered_sim_embodiment",
     "register_pack_state_step",
     "state_key_remedy",
 ]

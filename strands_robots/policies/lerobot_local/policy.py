@@ -34,11 +34,14 @@ from .._log_safety import sanitize_log_value
 from .._rng import reseed_client_rngs
 from .._state_keys import drop_velocity_siblings
 from .embodiment import (
+    DEGREE_LIKE_SPAN,
     UNIT_FRAMES,
     ZeroActionMonitor,
+    degree_like_columns,
     diagnose_action_dim,
     hardware_pos_keys,
     observed_state_keys,
+    registered_sim_embodiment,
     state_key_remedy,
 )
 from .processor import POSTPROCESSOR_CONFIG, PREPROCESSOR_CONFIG, ProcessorBridge
@@ -643,6 +646,15 @@ class LerobotLocalPolicy(Policy):
             posture rather than scaling a quantity, so a truthy spelling of off
             (``"false"``, ``"no"``, ``"0"``) is refused rather than selecting
             the padding posture the word asks to skip.
+        out_of_range_actions: What to do with an action the checkpoint's own
+            action stats say it never produced: a value more than one recorded
+            range beyond the stats' ``[low, high]`` (``min``/``max``, else
+            ``q01``/``q99``). ``"warn"`` (the default) forwards it and logs it
+            once per episode with the columns and values; ``"clip"`` clips every
+            column to its recorded ``[low, high]``; ``"off"`` does neither. A
+            π0-FAST LIBERO checkpoint whose stats span ``[-0.94, 1.0]`` emitted
+            a pitch of 131 and a gripper of 2062 on an out-of-distribution
+            scene, and nothing said so.
     """
 
     def __init__(
@@ -667,6 +679,7 @@ class LerobotLocalPolicy(Policy):
         obs_rename_override: dict[str, str | None] | None = None,
         strict_keys: bool = False,
         pad_short_actions: bool = False,
+        out_of_range_actions: str = "warn",
         cache_model: bool = True,
         revision: str | None = None,
         compile_model: bool | None = None,
@@ -752,6 +765,15 @@ class LerobotLocalPolicy(Policy):
         if error := boolean_flag_error(pad_short_actions, "pad_short_actions", "lerobot_local"):
             raise ValueError(error)
         self.pad_short_actions = pad_short_actions
+        if out_of_range_actions not in ("warn", "clip", "off"):
+            raise ValueError(
+                f"lerobot_local: out_of_range_actions must be 'warn', 'clip' or 'off', got {out_of_range_actions!r}"
+            )
+        self.out_of_range_actions = out_of_range_actions
+        # Actions seen outside the checkpoint's recorded range this episode
+        # (count) and whether the warning has been logged.
+        self.out_of_range_action_count = 0
+        self._out_of_range_warned = False
         # Routing-degradation telemetry. The heuristic (non-declarative)
         # remap path can keep a run alive while silently producing
         # meaningless inputs - a camera routed to an arbitrary model image
@@ -802,6 +824,12 @@ class LerobotLocalPolicy(Policy):
         self.load_time_s: float = 0.0
         self.load_cache_hit: bool = False
         self._processor_bridge: ProcessorBridge | None = None
+        # The joint-units guard (_guard_joint_units) runs once per bound state
+        # ordering; the ordering it last passed is kept so a later
+        # set_robot_state_keys re-arms it. ``embodiment_adopted`` names the
+        # registered embodiment it applied on the caller's behalf, if any.
+        self._units_verified_for: tuple[str, ...] | None = None
+        self.embodiment_adopted: str | None = None
         self._tokenizer: Any = None
         # True when the active pipeline carries a TokenizerProcessorStep, i.e.
         # the model reads the instruction through it (see _pipeline_has_tokenizer).
@@ -1102,6 +1130,9 @@ class LerobotLocalPolicy(Policy):
                 seed that cannot be applied is refused rather than leaving the
                 caller believing the episode is reproducible.
         """
+        # A new episode may be in distribution again: warn afresh.
+        self.out_of_range_action_count = 0
+        self._out_of_range_warned = False
         reseed_client_rngs(seed)
         if self._policy is not None and hasattr(self._policy, "reset"):
             self._policy.reset()
@@ -1144,6 +1175,7 @@ class LerobotLocalPolicy(Policy):
             raise ValueError(error)
         if robot_state_keys:
             self.robot_state_keys = robot_state_keys
+            self._units_verified_for = None
             logger.info(
                 "LeRobot local state keys set: %d keys = %s%s",
                 len(self.robot_state_keys),
@@ -2978,6 +3010,8 @@ class LerobotLocalPolicy(Policy):
                     "No model loaded and no pretrained_name_or_path set. Create the policy with a model path."
                 )
 
+        self._guard_joint_units(observation_dict)
+
         observation = dict(observation_dict)
         if instruction and "task" not in observation:
             observation["task"] = instruction
@@ -3307,6 +3341,164 @@ class LerobotLocalPolicy(Policy):
         """
         bridge = self._processor_bridge
         return bool(bridge is not None and bridge.inert_normalization_features())
+
+    def _guard_joint_units(self, observation_dict: Mapping[str, Any]) -> None:
+        """Refuse to act when the state is in radians and the checkpoint speaks degrees.
+
+        LeRobot's SO-arm driver records joints in degrees (gripper 0..100) by
+        default, so most SO-100/SO-101 fine-tunes on the Hub are degree-trained,
+        while every simulator reports the same joints in radians. Nothing in a
+        checkpoint says so except the spans its stats record. Without this
+        guard the natural call - ``run_policy`` with only
+        ``pretrained_name_or_path`` - fed a pi0.5 SO-101 fine-tune radian state
+        and applied its degree actions as radians: 80 "degrees" commanded as
+        80 radians pinned joint 4 at its 1.658 rad limit for all 150 frames,
+        and the rollout reported success. On an arm that is a command into the
+        hard stops.
+
+        Runs once per bound state ordering, before the first inference, so
+        nothing is commanded before it has decided:
+
+        * The map in effect already converts units, the state comes from a
+          LeRobot driver (``'<motor>.pos'`` keys, the dataset's own units), or
+          the stats are absent or read as radians: nothing to do.
+        * The state is keyed exactly like a shipped SIMULATION embodiment that
+          converts units (``so101`` / ``so100``) and the caller declared none:
+          that embodiment is applied, as if the caller had passed it, with the
+          camera routing this policy would use anyway. ``embodiment_adopted``
+          names it and one warning says so. This is the call ``embodiment=
+          "so101"`` makes, reached without the caller having to know it.
+        * Otherwise - a declared map with native units on those sim keys, or
+          unrecognised keys whose values all sit within one turn of zero while
+          the stats span tens of units - it refuses with ``ValueError``, naming
+          the stats, the state and the embodiment that converts. A caller whose
+          own keys really are in the checkpoint's units says so by declaring an
+          embodiment for them; a declared map on unrecognised keys is trusted.
+
+        Args:
+            observation_dict: The observation of the step about to be predicted.
+
+        Raises:
+            ValueError: The state would reach a degree-trained checkpoint in
+                radians, or the registered embodiment could not be applied.
+        """
+        keys = self._units_state_keys(observation_dict)
+        if not keys or self._units_verified_for == keys:
+            return
+        bridge = self._processor_bridge
+        embodiment = self._embodiment
+        driver_keys = all(key.endswith(".pos") for key in keys)
+        if bridge is None or driver_keys or (embodiment is not None and embodiment.converts_units):
+            self._units_verified_for = keys
+            return
+        # A bridge that cannot report its stats (a duck-typed stand-in) has no
+        # evidence to judge by, the same as a checkpoint that ships none.
+        recorded = getattr(bridge, "recorded_value_ranges", None)
+        if not callable(recorded):
+            self._units_verified_for = keys
+            return
+        ranges = recorded("observation.state")
+        source = "observation.state"
+        if not ranges:
+            ranges, source = recorded("action"), "action"
+        wide = degree_like_columns(ranges or [], len(keys))
+        if not wide:
+            self._units_verified_for = keys
+            return
+        registered = registered_sim_embodiment(keys)
+        declared = self._embodiment_spec is not None
+        model = self.pretrained_name_or_path or "<model>"
+        assert ranges is not None
+        spans = ", ".join(f"{keys[i]!r} {ranges[i][0]:.1f}..{ranges[i][1]:.1f}" for i in wide[:6])
+        if registered is not None and registered.converts_units and not declared:
+            self._adopt_registered_embodiment(registered, model=model, spans=spans, source=source)
+            self._units_verified_for = keys
+            return
+        if registered is None:
+            values = self._units_state_values(observation_dict, keys)
+            if declared or any(abs(values[i]) > DEGREE_LIKE_SPAN for i in wide if i < len(values)):
+                self._units_verified_for = keys
+                return
+        remedy = (
+            f"pass embodiment={registered.name!r} (state_units={registered.state_units!r}, "
+            f"action_units={registered.action_units!r}), which converts both directions"
+            if registered is not None and registered.converts_units
+            else "declare an embodiment for these keys with state_units='degrees' and "
+            "action_units='degrees' (see the so101 entry of embodiments.json), or, if this "
+            "state really is recorded in the checkpoint's units, declare an embodiment for "
+            "these keys with state_units='native'"
+        )
+        raise ValueError(
+            f"lerobot_local: {model} was trained on degrees - its {source} stats span {spans} "
+            f"(wider than the {DEGREE_LIKE_SPAN:.2f} a radian joint can span) - but the state "
+            f"{list(keys)} would reach it in radians with no conversion, and its degree actions "
+            "would be applied as radians, driving the joints into their limits. Nothing was "
+            f"commanded. To run it, {remedy}."
+        )
+
+    def _units_state_keys(self, observation_dict: Mapping[str, Any]) -> tuple[str, ...]:
+        """The state ordering :meth:`_guard_joint_units` judges, as strings."""
+        if self._embodiment is not None and self._embodiment.state_keys:
+            return tuple(str(key) for key in self._embodiment.state_keys)
+        if self.robot_state_keys and not all(key.startswith("joint_") for key in self.robot_state_keys):
+            return tuple(str(key) for key in self.robot_state_keys)
+        pos_keys = hardware_pos_keys(dict(observation_dict))
+        return tuple(pos_keys) if pos_keys else tuple(observed_state_keys(observation_dict))
+
+    @staticmethod
+    def _units_state_values(observation_dict: Mapping[str, Any], keys: tuple[str, ...]) -> list[float]:
+        """The scalar value of each key, ``0.0`` where it is absent or not a number."""
+        values: list[float] = []
+        for key in keys:
+            try:
+                values.append(float(observation_dict[key]))
+            except (KeyError, TypeError, ValueError):
+                values.append(0.0)
+        return values
+
+    def _adopt_registered_embodiment(self, registered: Any, *, model: str, spans: str, source: str) -> None:
+        """Apply a shipped unit-converting embodiment the caller did not name.
+
+        The registered map's camera renames describe one camera layout (the
+        LIBERO-style ``image`` / ``wrist_image``), which a checkpoint trained on
+        other camera names does not declare - applying them would make the map
+        fail validation and discard the whole pipeline. So only its joint half
+        is adopted (state/action keys, units, gripper column and range, joint
+        mid-points) and the cameras keep the routing this policy synthesises
+        from the model's declared features, ``camera_key_map`` and
+        ``obs_rename_override`` included.
+
+        Raises:
+            ValueError: The adopted map cannot be configured on this checkpoint.
+        """
+        from dataclasses import replace
+
+        adopted = replace(registered, obs_rename=self._synthesized_camera_renames())
+        self._embodiment_spec = adopted
+        try:
+            self._configure_embodiment()
+        except ValueError as exc:
+            self._embodiment_spec = None
+            self._embodiment = None
+            raise ValueError(
+                f"lerobot_local: {model} was trained on degrees ({source} stats span {spans}) and "
+                f"this state is keyed like the registered {registered.name!r} simulation, whose "
+                f"embodiment converts radians to degrees - but applying it failed: {exc}. Nothing "
+                f"was commanded. Pass embodiment={registered.name!r} with camera_key_map= or "
+                "obs_rename_override= routing your cameras onto the model's image features."
+            ) from exc
+        self.embodiment_adopted = registered.name
+        logger.warning(
+            "lerobot_local: %s was trained on degrees (%s stats span %s); the state is keyed like "
+            "the registered %r simulation, so its embodiment was applied (state_units=%r, "
+            "action_units=%r). Pass embodiment= explicitly to choose another.",
+            sanitize_log_value(model),
+            source,
+            sanitize_log_value(spans),
+            registered.name,
+            registered.state_units,
+            registered.action_units,
+        )
 
     def _collect_state_values(self, observation_dict: dict[str, Any], order: list[str]) -> list[float]:
         """Pull the joint-state vector from ``observation_dict`` in ``order``.
@@ -4046,6 +4238,55 @@ class LerobotLocalPolicy(Policy):
             return True
         return type(policy).__name__ == "MolmoAct2Policy"
 
+    def _guard_action_range(self, actions_list: list[Any]) -> list[Any]:
+        """Flag (or clip) actions far outside the range the checkpoint's action stats record.
+
+        Runs on the model's actions after unnormalization and before any unit
+        conversion, so they are compared in the units the stats were recorded
+        in. Only the columns both the action and the stats have are compared:
+        a model padded to 32 dims (pi0 / pi05 / pi0-FAST) carries nothing past
+        its dataset's width.
+        """
+        if self.out_of_range_actions == "off" or not actions_list:
+            return actions_list
+        bridge = getattr(self, "_processor_bridge", None)
+        ranges_fn = getattr(bridge, "recorded_value_ranges", None)
+        ranges = ranges_fn("action") if callable(ranges_fn) else None
+        if not ranges:
+            return actions_list
+        lows = np.array([lo for lo, _ in ranges], dtype=float)
+        highs = np.array([hi for _, hi in ranges], dtype=float)
+        span = np.maximum(highs - lows, 1e-6)
+        out: list[Any] = []
+        flagged: dict[int, float] = {}
+        for action in actions_list:
+            values = np.asarray(action, dtype=float).copy()
+            n = min(values.shape[-1] if values.ndim else 0, len(lows))
+            if n:
+                head = values[..., :n]
+                far = (head < lows[:n] - span[:n]) | (head > highs[:n] + span[:n])
+                if far.any():
+                    self.out_of_range_action_count += 1
+                    for col in np.flatnonzero(far):
+                        flagged.setdefault(int(col), float(head[..., col]))
+                if self.out_of_range_actions == "clip":
+                    values[..., :n] = np.clip(head, lows[:n], highs[:n])
+            out.append(values)
+        if flagged and not self._out_of_range_warned:
+            self._out_of_range_warned = True
+            shown = ", ".join(
+                f"column {c} = {v:.4g} (recorded [{lows[c]:.4g}, {highs[c]:.4g}])" for c, v in sorted(flagged.items())
+            )
+            logger.warning(
+                "lerobot_local: %s emitted actions far outside the range its own action stats record: %s. "
+                "The scene is likely out of the checkpoint's distribution; %s. "
+                "Pass out_of_range_actions='clip' to clip to the recorded range, or 'off' to silence this.",
+                self.pretrained_name_or_path or "the policy",
+                shown,
+                "they were clipped" if self.out_of_range_actions == "clip" else "they were forwarded unchanged",
+            )
+        return out if self.out_of_range_actions == "clip" else actions_list
+
     def _tensor_to_action_dicts(
         self,
         action_tensor: torch.Tensor,
@@ -4109,6 +4350,7 @@ class LerobotLocalPolicy(Policy):
             if dim_msg:
                 logger.warning("lerobot_local: %s", dim_msg)
                 self._action_dim_warned = True
+        actions_list = self._guard_action_range(actions_list)
         max_abs = float(np.abs(action_array).max()) if action_array.size else 0.0
         zero_msg = self._zero_action_monitor.update(max_abs)
         if zero_msg:
