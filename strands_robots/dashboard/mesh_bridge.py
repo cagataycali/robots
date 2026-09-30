@@ -335,21 +335,39 @@ def camera_ref_url_error(url: Any) -> str | None:
 
 
 def _urlopen(url: str, timeout: float) -> Any:
-    """``urllib.request.urlopen`` behind a name a test can replace."""
-    from urllib.request import Request, urlopen
+    """GET *url* without following a redirect, behind a name a test can replace.
 
-    return urlopen(Request(url, method="GET"), timeout=timeout)  # noqa: S310 - scheme and host were checked by camera_ref_url_error
+    :func:`camera_ref_url_error` checks the scheme and host of the URL the
+    publisher typed; ``urllib`` would otherwise follow a 3xx from that origin
+    to any URL at all (plain http, a link-local metadata address, an internal
+    service), and nothing re-checks the hop. A presigned S3 GET is region
+    pinned and never redirects in normal operation, so the hop is refused.
+    """
+    from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+    class _RefuseRedirects(HTTPRedirectHandler):
+        def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> Any:
+            from urllib.parse import urlsplit
+
+            target = refusal_str((urlsplit(newurl).hostname or "").lower())
+            raise CameraRefError(f"camera reference redirected ({code}) to host {target}; a redirect is refused")
+
+    opener = build_opener(_RefuseRedirects)
+    return opener.open(Request(url, method="GET"), timeout=timeout)  # noqa: S310 - scheme and host were checked by camera_ref_url_error, redirects refused
 
 
 def fetch_camera_ref(url: str, *, timeout: float, max_bytes: int) -> bytes:
     """GET a presigned camera frame within *timeout* seconds and *max_bytes*.
 
     Raises:
-        CameraRefError: The request failed, or the body exceeds *max_bytes*.
+        CameraRefError: The request failed, the origin redirected, or the body
+            exceeds *max_bytes*.
     """
     try:
         with _urlopen(url, timeout) as response:
             body = response.read(max_bytes + 1)
+    except CameraRefError:
+        raise
     except Exception as exc:  # noqa: BLE001 - urllib raises URLError, HTTPError, socket.timeout, ssl errors
         raise CameraRefError(f"camera reference fetch failed: {type(exc).__name__}") from exc
     if len(body) > max_bytes:

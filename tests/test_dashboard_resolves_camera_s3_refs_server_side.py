@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 import time
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from unittest import mock
 
@@ -219,3 +222,58 @@ def test_stopping_the_bridge_closes_the_resolver_pool(monkeypatch: pytest.Monkey
     b.stop()
     with pytest.raises(RuntimeError):
         b._ref_pool.submit(lambda: None)
+
+
+class _RedirectingOrigin(BaseHTTPRequestHandler):
+    """A valid-looking origin that answers ``/frame`` with a hop elsewhere."""
+
+    def do_GET(self) -> None:  # noqa: N802 - http.server spelling
+        if self.path == "/frame":
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/followed")
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", "8")
+        self.end_headers()
+        self.wfile.write(b"followed")
+
+    def log_message(self, *args: Any) -> None:
+        return
+
+
+@pytest.fixture
+def redirecting_origin() -> Iterator[str]:
+    server = HTTPServer(("127.0.0.1", 0), _RedirectingOrigin)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_redirecting_origin_is_refused_before_the_hop_is_fetched(redirecting_origin: str) -> None:
+    """The allowlist checks the initial URL only, so a 3xx to anywhere must not be followed.
+
+    ``urlopen`` follows redirects by default; a `*.amazonaws.com` origin under
+    anyone's control could answer ``302 Location: http://169.254.169.254/...``
+    and turn the bridge into a GET-anything client with the operator's egress.
+    """
+    with pytest.raises(mesh_bridge.CameraRefError, match=r"redirect"):
+        mesh_bridge.fetch_camera_ref(f"{redirecting_origin}/frame", timeout=3.0, max_bytes=1024)
+
+
+def test_the_redirect_target_is_never_requested(redirecting_origin: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+    original = _RedirectingOrigin.do_GET
+
+    def spy(self: _RedirectingOrigin) -> None:
+        seen.append(self.path)
+        original(self)
+
+    monkeypatch.setattr(_RedirectingOrigin, "do_GET", spy)
+    with pytest.raises(mesh_bridge.CameraRefError):
+        mesh_bridge.fetch_camera_ref(f"{redirecting_origin}/frame", timeout=3.0, max_bytes=1024)
+    assert seen == ["/frame"], seen

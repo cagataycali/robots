@@ -6,7 +6,8 @@ state, the sensor strips, safety state, its advertised tool, run / stop / reset
 through the same gates, and its cameras. A camera S3 reference
 (`camera/<cam>/ref` from `camera_offload`) is resolved by the dashboard itself,
 server side, from an `https` URL on an `amazonaws.com` host within 3 s and 8 MB,
-one fetch in flight per camera; the presigned URL never reaches the browser.
+no redirect followed, one fetch in flight per camera; the presigned URL never
+reaches the browser.
 `STRANDS_MESH_IOT_CAMERA_INLINE=1` on a robot lets it publish JPEG frames under
 the 128 KB AWS payload cap instead (over the cap: dropped, one warning per topic).
 Every tile shows where the frame came from and the publisher to dashboard
