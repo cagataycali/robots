@@ -771,13 +771,26 @@ class MeshBridge:
             return False
         self.stop()
         with self._peers_lock:
+            departed = list(self.peers)
             self.peers.clear()
+        for pid in departed:
+            self._forget_grants(pid, "the mesh was re-pointed")
         with self._frames_lock:
             self.frames.clear()
         ok = self.start(loop)
         self.record_activity("mesh", "restart", detail=self._endpoints, ok=ok)
         self._emit({"type": "mesh_reconfigured", "ok": ok, "mesh": self.mesh_info()})
         return ok
+
+    def _forget_grants(self, peer_id: str, why: str) -> None:
+        """A human's yes about a peer leaves with the peer: drop its unspent motion grants."""
+        from strands_robots._motion_grants import forget_grants_for_peer
+
+        count = forget_grants_for_peer(peer_id)
+        if count:
+            self.record_activity(
+                "safety", "grants_forgotten", target=peer_id, detail={"count": count, "why": why}, ok=True
+            )
 
     def stop(self) -> None:
         """Leave the fleet: stop the safety rail, drop subscriptions, close the session.
@@ -1441,13 +1454,16 @@ class MeshBridge:
             peers = prune_peers(self.peers, now, PEER_TTL_S, protected)
             # Forget the aged-out peers for good: keeping them in self.peers
             # only feeds the same ghosts back on every later snapshot.
-            for pid in set(self.peers) - set(peers):
+            aged_out = set(self.peers) - set(peers)
+            for pid in aged_out:
                 self.peers.pop(pid, None)
                 # Drop coalescing bookkeeping too, so a peer that comes BACK with the same content as when it
                 # left is forwarded at once instead of waiting out a rate window against a memory of its
                 # former self.
                 with self._coalesce_lock:
                     self._coalescer.forget(pid)
+        for pid in aged_out:
+            self._forget_grants(pid, "aged out of the fleet")
         stamps: dict[str, float] = {}
         for m in self._managed_children():
             mid = getattr(m, "peer_id", None)
