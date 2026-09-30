@@ -153,6 +153,7 @@ WIRE_POLICY_CONFIG_KEYS: tuple[str, ...] = (
     "pretrained_name_or_path",
     "policy_host",
     "policy_port",
+    "walk",
 )
 
 

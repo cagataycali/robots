@@ -2896,7 +2896,7 @@ class Mesh(SensorLoopsMixin):
             duration = cmd.get("duration", 30.0)
             extra = {
                 k: cmd[k]
-                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path")
+                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path", "walk")
                 if k in cmd
             }
             # Sim peer? Route to Simulation.start_policy / run_policy.
