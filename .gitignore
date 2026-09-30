@@ -18,3 +18,5 @@ site/
 
 # The dashboard consent store (config_api.ENV_FILE, written by /api/consent): local state, never committed.
 .env
+# tool caches (playwright renders, scratch)
+.cache/
