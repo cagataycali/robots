@@ -253,12 +253,11 @@ def _optional_module_memo_holds_no_stand_in() -> Iterator[None]:
     fake the fixture already took away.
 
     Measured with ``tests/policies/moveit2/test_zmq_sidecar.py`` running ahead
-    of the groot client files (the ordering ``--dist loadfile`` produces and a
+    of the other ZMQ client files (the ordering ``--dist loadfile`` produces and a
     serial run does not): that file's ZMQ stand-in carries
     ``Context = SimpleNamespace(instance=...)``, the memo kept it, and 42 cells
-    across three files died in ``Gr00tInferenceClient.__init__`` /
-    ``MoveIt2Client`` on ``TypeError: 'types.SimpleNamespace' object is not
-    callable``.
+    across three files died in the ZMQ clients' ``__init__`` on
+    ``TypeError: 'types.SimpleNamespace' object is not callable``.
 
     Restoring here rather than in each caller makes it a property of the
     session: the memo a test fills is emptied by the session, not by every

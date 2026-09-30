@@ -19,11 +19,11 @@ dropped. That store is the only place a detached session's PID is written down
 ``tests.tools.test_the_session_store_keeps_a_live_pid`` pins it), so the
 process carries on driving the robot with no supported way left to stop it.
 
-The sibling teardown in the same package already refuses to do this:
-``gr00t_inference._stop_service`` rescans the port after the escalation and
-returns an error when anything still holds it, because "reporting success there
-would tell the caller the port is free when the next bind is about to fail".
-These tests hold the two session verbs to the same standard, on both modules, and
+A port-holding teardown must not do this: rescan the port after the
+escalation and return an error when anything still holds it, because reporting
+success there would tell the caller the port is free when the next bind is
+about to fail.
+These tests hold the two session verbs to that standard, on both modules, and
 additionally pin the identity half: the escalation is aimed at the process that
 was captured before the first signal, so a PID recycled during the grace period
 is not signalled a second time.
