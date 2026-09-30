@@ -8,6 +8,7 @@ import type { Peer, StopResult } from '../types'
 import { HttpError, post } from './endpoints'
 import { findConsent, type ConsentNeed } from './consent'
 import { runFailure, stopFailure } from './taskOutcome'
+import { interpretReset, type ResetResponse } from './resetAction'
 import type { RunBody } from '../components/RunForm'
 
 /** What we believe about this robot's task. */
@@ -25,7 +26,8 @@ export function useTask(peer: Peer) {
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const [twinBusy, setTwinBusy] = useState(false)
   const [consent, setConsent] = useState<ConsentNeed | null>(null)
-  const lastBody = useRef<RunBody | null>(null)
+  /** the last refused request, so a grant from the consent sheet can re-send exactly it */
+  const lastBody = useRef<{ kind: 'run'; body: RunBody } | { kind: 'reset'; confirmed: boolean } | null>(null)
   const mounted = useRef(true)
   useEffect(() => () => { mounted.current = false }, [])
 
@@ -61,7 +63,7 @@ export function useTask(peer: Peer) {
 
   const run = async (body: RunBody) => {
     setPhase('starting'); setOutcome(null); setConsent(null)
-    lastBody.current = body
+    lastBody.current = { kind: 'run', body }
     try {
       const res = await post<{ ok: boolean; result: any; routed_to?: string; mirrored_to_twin?: boolean }>(
         `/api/robots/${encodeURIComponent(peer.peer_id)}/task`,
@@ -89,7 +91,10 @@ export function useTask(peer: Peer) {
   /** Re-send the exact request that was refused (after a grant). */
   const retryLast = async () => {
     setConsent(null)
-    if (lastBody.current) await run(lastBody.current)
+    const last = lastBody.current
+    if (!last) return
+    if (last.kind === 'run') await run(last.body)
+    else await reset(last.confirmed)
   }
 
   const stop = async () => {
@@ -107,6 +112,35 @@ export function useTask(peer: Peer) {
     }
   }
 
+  /**
+   * Return every joint to the home pose. `confirmed` is true only when the card's confirm
+   * sheet was answered (a real arm); the server refuses a real arm without it, and refuses
+   * any peer with a task in flight, so the answer is always the server's sentence.
+   */
+  const reset = async (confirmed: boolean) => {
+    setPhase('starting'); setOutcome(null); setConsent(null)
+    lastBody.current = { kind: 'reset', confirmed }
+    try {
+      const res = await post<ResetResponse>(
+        `/api/robots/${encodeURIComponent(peer.peer_id)}/reset`,
+        confirmed ? { confirmed: true } : {},
+      )
+      if (!mounted.current) return
+      const v = interpretReset(res)
+      setOutcome(v)
+      setPhase(v.ok ? 'idle' : 'failed')
+      if (!v.ok) setConsent(findConsent(res))
+    } catch (e) {
+      if (!mounted.current) return
+      // a 403 is the gate's sentence, a 409 the task-in-flight one: both are shown as they were said
+      const body = e instanceof HttpError ? (e.body as any) : null
+      const said = body?.error?.error ?? body?.error ?? null
+      setOutcome(typeof said === 'string' ? { ok: false, text: said } : fail(e))
+      setPhase('failed')
+      if (e instanceof HttpError) setConsent(findConsent(body?.error ?? body))
+    }
+  }
+
   const toggleTwin = async () => {
     setTwinBusy(true)
     try {
@@ -119,7 +153,7 @@ export function useTask(peer: Peer) {
   }
 
   return {
-    phase, outcome, running, busy, twinBusy, run, stop, toggleTwin, setOutcome,
+    phase, outcome, running, busy, twinBusy, run, stop, reset, toggleTwin, setOutcome,
     consent, clearConsent: () => setConsent(null), retryLast,
   }
 }

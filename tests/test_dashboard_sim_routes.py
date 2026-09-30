@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import routes_sim, settings, sim_session  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
+from tests._dashboard_bootstrap import bootstrap_headers, configure_bootstrap  # noqa: E402
 
 #: The dashboard's own page at the TestClient host: a browser always sends Origin on a socket handshake (f022).
 OWN_PAGE = {"origin": "http://testserver"}
@@ -105,10 +106,11 @@ def client(tmp_path, monkeypatch, fake_factory):
     monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
     monkeypatch.delenv("STRANDS_DASH_AUTH_ENABLED", raising=False)
     monkeypatch.setattr(settings, "SETTINGS_FILE", tmp_path / "settings.json")
+    configure_bootstrap(monkeypatch)
     settings.clear_overrides()
     settings.load(refresh=True)
     app = create_app()
-    with TestClient(app, headers=OWN_PAGE) as c:
+    with TestClient(app, headers={**OWN_PAGE, **bootstrap_headers()}) as c:
         yield c
     app.state.safety.store.shutdown()
 

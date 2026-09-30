@@ -55,6 +55,7 @@ import re
 from pathlib import Path
 
 import strands_robots as package
+from tests._package_ast import parse_file
 
 # Derived from an imported symbol rather than a path literal, so a moved package
 # cannot leave this scanning an empty tree while reporting success.
@@ -245,7 +246,7 @@ def _surfaces(
     """Every function under ``root`` whose docstring has a ``Raises:`` block."""
     out = []
     for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         factories = _exception_factories(tree)
         owners: dict[int, str] = {}
         for node in ast.walk(tree):
@@ -287,7 +288,7 @@ class TestTheDaggerPreflightIsDocumented:
 
     def test_the_teleoperate_builder_documents_both_classes_it_raises(self) -> None:
         source = _PACKAGE_ROOT / "tools" / "lerobot_teleoperate.py"
-        tree = ast.parse(source.read_text(encoding="utf-8"))
+        tree = parse_file(source)
         builder = next(
             node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "build_lerobot_command"
         )

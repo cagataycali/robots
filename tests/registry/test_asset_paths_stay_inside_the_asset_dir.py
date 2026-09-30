@@ -38,6 +38,7 @@ import pytest
 from strands_robots.assets import download as dl
 from strands_robots.assets.manager import is_robot_asset_present, resolve_model_path
 from strands_robots.registry.user_registry import get_user_robots, register_robot
+from tests._package_ast import parse_file
 
 # A minimal model with no mesh references: present on disk means present, so a
 # containment verdict is never confused with a missing-mesh verdict.
@@ -160,7 +161,7 @@ def test_no_stored_asset_path_is_joined_raw() -> None:
     package = Path(dl.__file__).parent.parent
     raw: list[str] = []
     for path in sorted(package.rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(parse_file(path)):
             if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
                 joined = ast.unparse(node)
                 if any(field in joined for field in ("model_xml", "scene_xml", "xml_file")):

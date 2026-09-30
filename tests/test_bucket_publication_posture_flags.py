@@ -33,6 +33,7 @@ import pytest
 from strands_robots import dataset_recorder as recorder_mod
 from strands_robots import dataset_transfer as transfer_mod
 from strands_robots.utils import boolean_flag_error
+from tests._package_ast import parse_file
 
 #: Flags on this module's publication surface. Each selects a posture on a
 #: remote store: whether a bucket is created, whether it is private, and
@@ -360,7 +361,7 @@ _DOMAIN = "boolean_flag_error"
 def _module_trees(source: str | None = None) -> tuple[ast.Module, ...]:
     if source is not None:
         return (ast.parse(source),)
-    return tuple(ast.parse(path.read_text()) for path in _MODULE_PATHS)
+    return tuple(parse_file(path) for path in _MODULE_PATHS)
 
 
 def _boolean_flags(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:

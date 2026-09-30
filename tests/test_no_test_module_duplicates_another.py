@@ -34,6 +34,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_file
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: The areas that ship pytest modules, walked one at a time.
@@ -72,7 +74,7 @@ def _test_bodies(path: Path) -> dict[str, str]:
         One entry per ``test*`` function, at module scope or inside a class.
     """
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
     except (OSError, SyntaxError, UnicodeDecodeError):
         return {}
     found: dict[str, str] = {}
