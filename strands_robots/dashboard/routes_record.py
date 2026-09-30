@@ -154,6 +154,7 @@ WIRE_POLICY_CONFIG_KEYS: tuple[str, ...] = (
     "embodiment",
     "policy_host",
     "policy_port",
+    "walk",
 )
 
 
