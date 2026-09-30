@@ -828,7 +828,7 @@
    "driver": null,
    "joints": 16,
    "lfs_url": "https://media.githubusercontent.com/media/apirrone/Open_Duck_Mini/b23317a485b3cec7d8417f352478778b3475173c/mini_bdx/robots/open_duck_mini_v2/",
-   "model": "open_duck_mini_v2.xml",
+   "model": "robot_motors.xml",
    "name": "open_duck_mini",
    "palette": null,
    "raw_url": "https://raw.githubusercontent.com/apirrone/Open_Duck_Mini/b23317a485b3cec7d8417f352478778b3475173c/mini_bdx/robots/open_duck_mini_v2/",
