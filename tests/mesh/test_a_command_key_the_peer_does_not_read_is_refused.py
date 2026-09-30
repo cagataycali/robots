@@ -73,11 +73,14 @@ def _keys_read_by(function) -> set[str]:
             and node.func.value.id == "cmd"
             and node.args
             and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
         ):
             keys.add(node.args[0].value)
         elif isinstance(node, ast.Compare) and any(isinstance(op, ast.In) for op in node.ops):
-            if isinstance(node.left, ast.Constant) and any(
-                isinstance(c, ast.Name) and c.id == "cmd" for c in node.comparators
+            if (
+                isinstance(node.left, ast.Constant)
+                and isinstance(node.left.value, str)
+                and any(isinstance(c, ast.Name) and c.id == "cmd" for c in node.comparators)
             ):
                 keys.add(node.left.value)
         elif (
@@ -85,6 +88,7 @@ def _keys_read_by(function) -> set[str]:
             and isinstance(node.value, ast.Name)
             and node.value.id == "cmd"
             and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
         ):
             keys.add(node.slice.value)
     return keys
