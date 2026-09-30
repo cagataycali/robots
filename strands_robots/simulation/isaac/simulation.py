@@ -37,8 +37,10 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
+from strands.tools.tools import AgentTool
 
 from strands_robots.simulation.base import SimEngine, unknown_kwargs_error, unknown_model_msg
+from strands_robots.simulation.isaac.agent_tool import IsaacAgentToolMixin
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.introspection import IsaacIntrospectionMixin
 from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, mjcf_joint_names, urdf_joint_names
@@ -473,6 +475,12 @@ def _prim_world_pose(stage: Any, path: str) -> tuple[list[float], list[float]]:
         )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
+
+
+#: The pump's idle wait, in slices short enough that a queued worker call is
+#: picked up within one slice: 10 x 5 ms, the 50 ms the loop always idled for.
+_IDLE_SLICES = 10
+_IDLE_SLICE_S = 0.005
 
 
 def _round_shape_dims(size: list[float] | None) -> tuple[float, float]:
@@ -1092,6 +1100,80 @@ def _anchor_fixed_base_articulation(prim_path: str) -> str | None:
 #: ``get_observation`` carries no images, so a rollout or recording silently
 #: trains on black. Measured on an L40S: ``headless=True`` with
 #: ``render_mode="rtx_realtime"`` renders real frames at ~50 ms each.
+def _place_robot_container(prim_path: str, position: list[float] | None) -> bool:
+    """Author ``position`` as the translate of the robot's container prim; ``True`` when written.
+
+    The container (``/World/Robots/<name>``) is what a converted robot's world
+    weld is expressed against and what ``World.reset()`` re-reads, so moving it
+    moves the whole robot - base, weld anchor and links - and the move survives
+    resets. ``False`` (nothing written) when there is no stage or no usable
+    position; the caller then falls back to the articulation pose write.
+    """
+    if position is None:
+        return False
+    try:
+        values = [float(v) for v in position]
+    except (TypeError, ValueError):
+        return False
+    if len(values) != 3 or not all(np.isfinite(values)):
+        return False
+    try:
+        import omni.usd  # type: ignore[import-not-found]
+        from pxr import Gf, UsdGeom  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        prim = stage.GetPrimAtPath(prim_path) if stage is not None else None
+        if prim is None or not prim.IsValid():
+            return False
+        xformable = UsdGeom.Xformable(prim)
+        op = next((o for o in xformable.GetOrderedXformOps() if o.GetOpType() == UsdGeom.XformOp.TypeTranslate), None)
+        if op is None:
+            op = xformable.AddTranslateOp()
+        op.Set(Gf.Vec3d(*values))
+        return True
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _deactivate_imported_ground_planes(prim_path: str) -> list[str]:
+    """Deactivate infinite ground planes the MJCF converter imported inside a robot.
+
+    A menagerie ``scene.xml`` - what the registry points at - adds a ``floor``
+    plane to the worldbody, and the converter keeps it under the robot's
+    ``Geometry``: measured on so100, contacts reported the cube touching both
+    the world's ``GroundPlane`` and ``so100/Geometry/floor`` at the same point,
+    and once a robot is placed away from the origin its floor moves with it (a
+    go2 spawned at z=0.3 carried a floor at z=0.3 that wrecked a neighbour's
+    tracking). Only ``UsdGeom.Plane`` prims that are not part of any rigid body
+    qualify; a robot's own links are never touched. Returns the paths deactivated.
+    """
+    try:
+        import omni.usd  # type: ignore[import-not-found]
+        from pxr import Usd, UsdGeom, UsdPhysics  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        root = stage.GetPrimAtPath(prim_path) if stage is not None else None
+        if root is None or not root.IsValid():
+            return []
+        planes = []
+        for prim in Usd.PrimRange(root):
+            if not prim.IsA(UsdGeom.Plane):
+                continue
+            ancestor, in_body = prim, False
+            while ancestor and ancestor.IsValid() and ancestor != root:
+                if ancestor.HasAPI(UsdPhysics.RigidBodyAPI):
+                    in_body = True
+                    break
+                ancestor = ancestor.GetParent()
+            if not in_body:
+                planes.append(prim)
+        for prim in planes:
+            prim.SetActive(False)
+        return [str(p.GetPath()) for p in planes]
+    except (ImportError, AttributeError, RuntimeError):
+        return []
+
+
 _HEADLESS_RENDER_REMEDY = (
     'render_mode="headless" renders no pixels (all-zero frames, no images in observations); '
     'pass render_mode="rtx_realtime" (works with headless=True) for real camera frames'
@@ -1277,7 +1359,13 @@ class _ObjectState:
 
 
 class IsaacSimulation(
-    IsaacMotionPrimitivesMixin, IsaacRandomizationMixin, IsaacRecordingMixin, IsaacIntrospectionMixin, SimEngine
+    IsaacAgentToolMixin,
+    IsaacMotionPrimitivesMixin,
+    IsaacRandomizationMixin,
+    IsaacRecordingMixin,
+    IsaacIntrospectionMixin,
+    SimEngine,
+    AgentTool,
 ):
     """GPU-native simulation backend built on NVIDIA Isaac Sim.
 
@@ -1462,7 +1550,8 @@ class IsaacSimulation(
         if legacy_default_height is not None:
             config = dataclasses.replace(config, camera_height=legacy_default_height)
         self._config = config
-        # Tool-name is informational; some Strands tooling renders it.
+        # The name an agent calls this tool by (``IsaacAgentToolMixin``).
+        AgentTool.__init__(self)
         self.tool_name = legacy_tool_name
 
         # Simulation state (all lazy-initialized)
@@ -8756,6 +8845,23 @@ class IsaacSimulation(
         # of ``prim_path``; subsequent Articulation lookups walk that path.
         add_reference_to_stage(usd_path=usd_path, prim_path=prim_path)
         _select_physics_variant(prim_path)
+        # The MJCF path gets the same fixed-base fix the URDF path has had:
+        # the converter puts ArticulationRootAPI on the base rigid body and welds
+        # that body to the world with a separate FixedJoint, which PhysX reads as
+        # a FLOATING-base articulation held by a weld - so get_jacobian refused
+        # every converted arm ("Only fixed-base articulations are supported") and
+        # the delta-EEF controller failed on every action.
+        _anchor_fixed_base_articulation(prim_path)
+        # A menagerie ``scene.xml`` carries its own floor; the converter imports
+        # it inside the robot, a second infinite ground on top of the world's.
+        _deactivate_imported_ground_planes(prim_path)
+        # The requested position goes on the robot's CONTAINER prim, before the
+        # articulation is built. ``set_world_pose`` on the articulation moved
+        # the PhysX view only: USD kept the base at the origin, the world weld's
+        # anchor stayed at the origin and pulled it back, and ``World.reset()``
+        # re-read USD - so every MJCF robot spawned at [0, 0, 0] whatever it was
+        # asked, and two robots overlapped and dragged each other.
+        placed = _place_robot_container(prim_path, position)
 
         # Step 2-3: wrap + initialise. The articulation name has to be
         # unique within the scene's articulation registry, so derive it
@@ -8779,7 +8885,7 @@ class IsaacSimulation(
         # call set_world_pose when the caller actually wanted a non-default
         # placement. Saves a tensor round-trip on the common
         # ``position=[0, 0, 0]`` case.
-        if position is not None and any(p != 0.0 for p in position):
+        if not placed and position is not None and any(p != 0.0 for p in position):
             articulation.set_world_pose(position=np.asarray(position, dtype=float))
 
         # Step 5: joint names. ``dof_names`` is ``None`` if ``initialize``
@@ -9185,7 +9291,6 @@ class IsaacSimulation(
                     job = None
                 if job is not None:
                     job()
-                    last_idle_render_mono = None
                     continue
                 busy = not self._action_q.empty()
                 if busy:
@@ -9204,7 +9309,16 @@ class IsaacSimulation(
                 self.pump(render=do_render)
                 if do_render:
                     last_idle_render_mono = now_mono
-                time.sleep(0.05)
+                # Idle for the same 50 ms as before, but in 5 ms slices that end
+                # as soon as a worker queues a call (an agent tool call, a policy
+                # step). The single ``sleep(0.05)``, plus forcing an idle
+                # re-render after every job, capped worker-thread control at
+                # ~12 Hz - 81 ms median per marshalled send_action against 2 ms
+                # on the main thread (one L40S, Isaac Sim 6.1).
+                for _ in range(_IDLE_SLICES):
+                    if not self._main_jobs.empty() or not self._action_q.empty():
+                        break
+                    time.sleep(_IDLE_SLICE_S)
         finally:
             self._pump_running = False
 
@@ -9282,10 +9396,10 @@ class IsaacSimulation(
             f"IsaacSimulation.{method_name}() was called from a worker thread with no "
             "main-thread pump running. Isaac Sim only pumps kit updates on the thread "
             "that created SimulationApp, so this call would block forever. Either call "
-            "it from the owning thread, or have the owning thread run "
-            "`run_pump_forever(stop_event=...)` and submit the call from the worker via "
-            "`run_on_main(lambda: ...)` (see the Threading section of docs/learn/simulation/isaac.md "
-            "for the agent-driven shape)."
+            "it from the owning thread, drive a Strands agent with `sim.run_agent(agent, prompt)`, "
+            "or have the owning thread run `run_pump_forever(stop_event=...)` and submit the call "
+            "from the worker via `run_on_main(lambda: ...)` (see the Threading section of "
+            "docs/learn/simulation/isaac.md for the agent-driven shape)."
         )
 
     # --- joint targets / kinematic teleport --------------------------------
@@ -10070,6 +10184,17 @@ class IsaacSimulation(
         :meth:`gripper_frame_pose`) and searches the whole subtree for a
         prim named ``link_name``.
         """
+        # The robot's own subtree first. The walk-up below reaches the
+        # top-level prim (``/World``), which holds EVERY robot: with two
+        # so100s, ``get_body_state("arm_b/Base")`` answered arm_a's Base - the
+        # first match in stage order - so the second robot always read the
+        # first one's pose.
+        for own in dict.fromkeys(p for p in (r.prim_path, r.actual_prim_path) if p):
+            own_root = stage.GetPrimAtPath(own)
+            if own_root and own_root.IsValid():
+                for p in Usd.PrimRange(own_root):
+                    if p.GetName() == link_name and p.IsA(UsdGeom.Xformable):
+                        return p
         sdf_path = Sdf.Path(r.actual_prim_path)
         top = sdf_path
         while top.GetParentPath() != Sdf.Path.absoluteRootPath and top.GetParentPath() != Sdf.Path.emptyPath:
@@ -10126,25 +10251,32 @@ class IsaacSimulation(
             # ``/{robot_name}``). Walk up from there to the top-level
             # robot prim and search its whole subtree for the gripper
             # / tool link.
+            # The robot's own prim when it exists: the top-level walk reaches
+            # ``/World``, where the FIRST robot's gripper link answered for
+            # every robot (two so100s reported identical gripper poses).
             sdf_path = Sdf.Path(r.actual_prim_path)
             top = sdf_path
             while top.GetParentPath() != Sdf.Path.absoluteRootPath and top.GetParentPath() != Sdf.Path.emptyPath:
                 top = top.GetParentPath()
-            root = stage.GetPrimAtPath(top)
-            if not root or not root.IsValid():
-                return None
-            preferred = None
-            fallback = None
-            for p in Usd.PrimRange(root):
-                if not p.IsA(UsdGeom.Xformable):
+            prim = None
+            for search in dict.fromkeys(x for x in (r.prim_path, r.actual_prim_path, top) if x):
+                root = stage.GetPrimAtPath(search)
+                if not root or not root.IsValid():
                     continue
-                ln = p.GetName().lower()
-                if "gripper_frame" in ln or "tool" in ln:
-                    preferred = p
+                preferred = None
+                fallback = None
+                for p in Usd.PrimRange(root):
+                    if not p.IsA(UsdGeom.Xformable):
+                        continue
+                    ln = p.GetName().lower()
+                    if "gripper_frame" in ln or "tool" in ln:
+                        preferred = p
+                        break
+                    if "moving_jaw" in ln or "gripper" in ln:
+                        fallback = fallback or p
+                prim = preferred or fallback
+                if prim is not None:
                     break
-                if "moving_jaw" in ln or "gripper" in ln:
-                    fallback = fallback or p
-            prim = preferred or fallback
             if prim is None:
                 return None
             xf = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
