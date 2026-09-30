@@ -1226,9 +1226,11 @@ def check_iot_child_peers() -> str:
     session over) and passes when one grants
     ``strands/${iot:Connection.Thing.ThingName}__*/*``. Missing grant is the
     FAIL the runtime hits at its first child publish, and the fix is the
-    command that republishes the current policy. No credentials or no
-    ``boto3`` is a WARN: the verdict could not be read here, and the transport
-    still names the topic when the broker drops it.
+    command that republishes the current policy. An identity with no robot
+    policy attached (an operator, ``strands-operator`` alone) is a SKIP: it
+    attaches no child peer, and reprovision would not add the grant to it. No
+    credentials or no ``boto3`` is a WARN: the verdict could not be read here,
+    and the transport still names the topic when the broker drops it.
     """
     from strands_robots.mesh._backend_select import select_backend
 
@@ -1249,14 +1251,14 @@ def check_iot_child_peers() -> str:
             note='uv pip install "strands-robots[mesh-iot]"',
         )
 
-    from strands_robots.mesh.iot.provision import CHILD_PEER_SEPARATOR, child_key_space_granted
+    from strands_robots.mesh.iot.provision import CHILD_PEER_SEPARATOR, child_key_space_verdict
     from strands_robots.mesh.transport.iot_transport import _region_from_endpoint
 
     fix = f"strands-robots iot reprovision {thing} (republishes the policy; restart the robot after)"
     try:
         region = _region_from_endpoint(os.environ.get("STRANDS_IOT_ENDPOINT", ""))
         iot = boto3.client("iot", region_name=region) if region else boto3.client("iot")
-        granted, detail = child_key_space_granted(iot, thing)
+        granted, detail, robot_identity = child_key_space_verdict(iot, thing)
     except Exception as e:  # noqa: BLE001 - boto3 raises its own hierarchy plus socket errors; every one is "not readable here"
         return _warn(
             f"iot child peers: the policy could not be read ({type(e).__name__}: {e})",
@@ -1264,6 +1266,13 @@ def check_iot_child_peers() -> str:
         )
     if granted is None:
         return _fail(f"iot child peers: {detail}", fix=fix)
+    if not granted and not robot_identity:
+        # provision_operator() exports this same posture; an operator attaches
+        # no child peer, and reprovision adds the grant next to a robot policy
+        # only, so a FAIL here would be permanent and its Fix a no-op.
+        return _skip(
+            f"iot child peers: {detail}; no robot policy on {thing}, an operator identity attaches no child peer"
+        )
     if not granted:
         return _fail(
             f"iot child peers: {detail}; a child peer {thing}{CHILD_PEER_SEPARATOR}<robot> would reconnect the robot on every heartbeat",

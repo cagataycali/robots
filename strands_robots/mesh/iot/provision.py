@@ -629,6 +629,15 @@ def _grants_child_key_space(document: dict[str, Any]) -> bool:
 def child_key_space_granted(iot: Any, thing_name: str) -> tuple[bool | None, str]:
     """Whether the policies attached to *thing_name*'s certificates grant its child peers' key space.
 
+    The two-field form of :func:`child_key_space_verdict`.
+    """
+    granted, detail, _robot = child_key_space_verdict(iot, thing_name)
+    return granted, detail
+
+
+def child_key_space_verdict(iot: Any, thing_name: str) -> tuple[bool | None, str, bool]:
+    """Whether the policies attached to *thing_name*'s certificates grant its child peers' key space.
+
     Reads the default version of every policy attached to every certificate on
     the Thing (control plane only, no MQTT session) and looks for an Allow
     ``iot:Publish`` resource on ``strands/${iot:Connection.Thing.ThingName}__*/``.
@@ -641,14 +650,19 @@ def child_key_space_granted(iot: Any, thing_name: str) -> tuple[bool | None, str
         thing_name: The Thing whose attached policies are read.
 
     Returns:
-        ``(verdict, detail)``. ``True`` names the granting policy and its
-        default version; ``False`` names the policies read, none of which
-        grants it; ``None`` means nothing could be judged (no certificate or
-        no policy attached) and the detail says which.
+        ``(verdict, detail, robot_identity)``. ``True`` names the granting
+        policy and its default version; ``False`` names the policies read, none
+        of which grants it; ``None`` means nothing could be judged (no
+        certificate or no policy attached) and the detail says which.
+        ``robot_identity`` is whether one of the policies read is a robot
+        policy (:data:`_ROBOT_POLICY_NAMES`): an operator identity
+        (:func:`provision_operator`, ``strands-operator`` alone) attaches no
+        child peer, so a ``False`` verdict on it is not a fault, and
+        :func:`reprovision_thing` would not add the grant to it either.
     """
     principals = list(iot.list_thing_principals(thingName=thing_name).get("principals", []))
     if not principals:
-        return None, f"no certificate is attached to {thing_name}"
+        return None, f"no certificate is attached to {thing_name}", False
     seen: list[str] = []
     for cert_arn in principals:
         for pol in iot.list_attached_policies(target=cert_arn).get("policies", []):
@@ -664,10 +678,11 @@ def child_key_space_granted(iot: Any, thing_name: str) -> tuple[bool | None, str
             except ValueError:
                 document = {}
             if _grants_child_key_space(document):
-                return True, f"{name} v{version} grants strands/{thing_name}{CHILD_PEER_SEPARATOR}*/*"
+                return True, f"{name} v{version} grants strands/{thing_name}{CHILD_PEER_SEPARATOR}*/*", True
     if not seen:
-        return None, f"no policy is attached to {thing_name}'s certificates"
-    return False, f"{', '.join(seen)} grant strands/{thing_name}/* only"
+        return None, f"no policy is attached to {thing_name}'s certificates", False
+    robot_identity = bool(_ROBOT_POLICY_NAMES & set(seen))
+    return False, f"{', '.join(seen)} grant strands/{thing_name}/* only", robot_identity
 
 
 # Public API

@@ -39,6 +39,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import logging
+import time
 import types
 from typing import Any
 
@@ -277,6 +278,41 @@ class TestTheTransportNamesTheTopicsThatEndedTheSession:
         (w,) = self._warnings(caplog)
         assert "reason code" not in w
 
+    def test_a_disconnect_while_publishers_append_does_not_raise(self, transport, caplog):
+        """The read runs on the awscrt event-loop thread while ``put()`` appends from publishers.
+
+        A bounded deque mutated mid-iteration raises ``RuntimeError: deque
+        mutated during iteration``; inside the lifecycle callback that
+        traceback would replace the WARNING this method exists to emit, in
+        exactly the flapping-session state it diagnoses.
+        """
+        import sys
+        import threading
+
+        stop = threading.Event()
+        interval = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)  # hand the GIL over mid-comprehension, as a busy event loop does
+
+        def writer() -> None:
+            while not stop.is_set():
+                transport._recent_publishes.append((time.monotonic(), "strands/childfix-a__so101/state"))
+
+        threads = [threading.Thread(target=writer, daemon=True) for _ in range(4)]
+        for th in threads:
+            th.start()
+        try:
+            deadline = time.monotonic() + 1.0
+            with caplog.at_level(logging.WARNING, logger=iot_transport.__name__):
+                while time.monotonic() < deadline:
+                    transport._publish_disconnect_warned.clear()
+                    transport._warn_if_publish_ended_the_session(_disconnect(135))
+        finally:
+            stop.set()
+            sys.setswitchinterval(interval)
+            for th in threads:
+                th.join(timeout=2)
+        assert any("childfix-a__so101" in w for w in self._warnings(caplog))
+
     def test_the_window_is_a_second_and_the_memory_is_bounded(self, transport):
         assert DISCONNECT_AFTER_PUBLISH_WINDOW_S == 1.0
         assert iot_transport.DISCONNECT_AFTER_PUBLISH_WINDOW_S is DISCONNECT_AFTER_PUBLISH_WINDOW_S
@@ -446,6 +482,29 @@ class TestDoctorRow:
         assert "strands-robot-no-estop grant strands/childfix-a/* only" in out
         assert "childfix-a__<robot>" in out
         assert "Fix: strands-robots iot reprovision childfix-a" in out
+
+    def test_an_operator_identity_is_skipped_not_failed(self, iot_env, monkeypatch):
+        """``provision_operator`` exports this posture; an operator attaches no child peer.
+
+        Its certificate carries ``strands-operator`` alone, so the grant is
+        absent by design and ``reprovision`` would never add it (the carry-over
+        appends ``strands-robot-children`` only next to a robot policy). A FAIL
+        here made ``doctor`` exit 1 for every operator with a Fix that could not
+        clear it.
+        """
+        fake = _install_boto3(monkeypatch, _Account({"strands-operator": _OPERATOR_POLICY_DOC}))
+        out = doctor.check_iot_child_peers()
+        assert "SKIP" in out, out
+        assert "FAIL" not in out and "Fix:" not in out
+        assert "strands-operator" in out and "no robot policy" in out
+        assert fake.account.calls == ["list_thing_principals", "list_attached_policies", "get_policy"]
+
+    def test_a_robot_and_operator_policy_on_one_certificate_is_still_the_robots_verdict(self, iot_env, monkeypatch):
+        _install_boto3(
+            monkeypatch, _Account({"strands-operator": _OPERATOR_POLICY_DOC, "strands-robot-no-estop": OLD_DOC})
+        )
+        out = doctor.check_iot_child_peers()
+        assert "FAIL" in out and "Fix: strands-robots iot reprovision childfix-a" in out
 
     def test_fails_when_nothing_is_attached(self, iot_env, monkeypatch):
         _install_boto3(monkeypatch, _Account({}, principals=0))

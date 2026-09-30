@@ -1473,7 +1473,12 @@ class IotMqttTransport:
         ``strands-robots iot reprovision <thing>`` attaches.
         """
         now = time.monotonic()
-        recent = [(at, topic) for at, topic in self._recent_publishes if now - at <= DISCONNECT_AFTER_PUBLISH_WINDOW_S]
+        # ``list(deque)`` copies at C level with no bytecode in between, so a
+        # publisher thread appending in ``put()`` at the same instant (this runs
+        # on the awscrt event-loop thread) cannot raise "deque mutated during
+        # iteration" out of the lifecycle callback.
+        snapshot = list(self._recent_publishes)
+        recent = [(at, topic) for at, topic in snapshot if now - at <= DISCONNECT_AFTER_PUBLISH_WINDOW_S]
         if not recent:
             return
         recent.sort(key=lambda item: item[0], reverse=True)
