@@ -386,9 +386,14 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             # require a per-robot policy document, which explodes the
             # policy count linearly with fleet size. This fleet-wildcard
             # scope is deliberate, not an oversight.
+            # ``iot:Publish`` only: a RETAINED command is replayed to a robot
+            # at every subscribe, so a stored ``execute`` ran at every boot
+            # with nobody present (measured live). The robot refuses a
+            # retained command too; this keeps an operator cert from storing
+            # one in the first place.
             "Sid": "OperatorPublishToFleet",
             "Effect": "Allow",
-            "Action": ["iot:Publish", "iot:RetainPublish"],
+            "Action": "iot:Publish",
             "Resource": [
                 "arn:aws:iot:*:*:topic/strands/*/cmd",
                 "arn:aws:iot:*:*:topic/strands/broadcast",
