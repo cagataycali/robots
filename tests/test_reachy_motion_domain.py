@@ -60,6 +60,7 @@ from strands_robots.hardware_robot import Robot as HardwareRobot
 from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import finite_number_error
 from tests._device_connect_real import use_the_real_edge
+from tests._package_ast import parse_file
 
 # The RPCs graded here run as an allowlisted operator: authorization fails
 # closed and is graded in test_device_connect_hardening.py, not here.
@@ -309,7 +310,7 @@ class TestTheDelegationIsReal:
 
 def _exported_names(init_py: Path) -> list[str]:
     """The package's own ``__all__``, read without importing it."""
-    for node in ast.parse(init_py.read_text(encoding="utf-8")).body:
+    for node in parse_file(init_py).body:
         if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets):
             if isinstance(node.value, ast.List | ast.Tuple):
                 return [e.value for e in node.value.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]

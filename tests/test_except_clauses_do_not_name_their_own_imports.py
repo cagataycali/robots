@@ -55,6 +55,7 @@ from typing import Any
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_file
 
 #: The shipped package. Reached through the imported module so a layout change
 #: cannot silently narrow the scan to nothing.
@@ -128,7 +129,7 @@ class TestTheRuleHoldsAcrossThePackage:
         offenders: list[str] = []
         scanned = 0
         for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
             scanned += _guarded_import_count(tree)
             rel = path.relative_to(_PACKAGE_ROOT.parent)
             for handler_line, name, import_line in unevaluatable_handlers(tree):

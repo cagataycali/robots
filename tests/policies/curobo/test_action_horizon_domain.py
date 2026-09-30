@@ -50,6 +50,7 @@ from typing import Any
 import pytest
 
 from strands_robots.policies.curobo import CuroboPolicy
+from tests._package_ast import parse_file
 
 # ---------------------------------------------------------------------------
 # Stub planner - local to this module, as in every sibling curobo test file.
@@ -264,7 +265,7 @@ class TestNoProviderChunkCountSkipsTheSharedDomain:
         assert root.is_dir(), f"policies package not found at {root}"
         found: dict[str, set[str]] = {}
         for path in sorted(root.rglob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
             params: set[str] = set()
             for node in ast.walk(tree):
                 if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):

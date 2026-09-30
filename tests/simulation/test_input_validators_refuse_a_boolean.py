@@ -66,6 +66,7 @@ from strands_robots.simulation.base import (
     randomization_range_error,
 )
 from strands_robots.utils import is_boolean
+from tests._package_ast import parse_file
 
 # Every spelling of a boolean that can reach a validator: a python bool, a numpy
 # boolean scalar (what ``gripper > 0.5`` produces), and a 0-d boolean array (what
@@ -623,7 +624,7 @@ def _discovered_validators() -> dict[str, str]:
     )
     found: dict[str, str] = {}
     for path in sorted(package.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue

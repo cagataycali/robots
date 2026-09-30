@@ -32,6 +32,7 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_camera as cam_mod
+from tests._package_ast import parse_file
 from tests.tools._camera_stand_in import CONTRACTS
 
 #: The module whose camera calls are graded here.
@@ -78,7 +79,7 @@ class CameraCall:
 
 def _camera_calls() -> list[CameraCall]:
     """Every call on a camera this module builds, in source order."""
-    tree = ast.parse(_SOURCE.read_text(encoding="utf-8"))
+    tree = parse_file(_SOURCE)
     calls: list[CameraCall] = []
     for scope in ast.walk(tree):
         if not isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -134,7 +135,7 @@ def test_a_camera_call_binds_on_every_camera_it_can_reach(call: CameraCall) -> N
 
 def test_the_factory_is_called_the_way_it_declares() -> None:
     """The seam itself: every ``_create_camera`` call binds on its signature."""
-    tree = ast.parse(_SOURCE.read_text(encoding="utf-8"))
+    tree = parse_file(_SOURCE)
     signature = inspect.signature(cam_mod._create_camera)
     sites = [
         node
