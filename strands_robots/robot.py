@@ -272,6 +272,29 @@ def _tool_name_error(tool_name: Any) -> str | None:
     return None
 
 
+def _default_sim_tool_name(name: str) -> str:
+    """The tool name a sim robot gets when the caller passed no ``tool_name``.
+
+    The robot name is looked up whitespace- and case-tolerantly, so
+    ``Robot(" so100 ")`` finds ``so100``; the default tool name used to be built
+    from the raw string anyway, and ``" so100 _sim"`` registers with an Agent and
+    then fails the first model call with a provider ``ValidationException`` on
+    ``toolSpec.name``. A caller's explicit ``tool_name`` is refused by
+    :func:`_tool_name_error`; a default is ours to make valid, so every run of
+    characters a provider rejects becomes one ``_`` and the result is held to
+    :data:`_TOOL_NAME_MAX_LEN`.
+
+    Args:
+        name: The robot name as the caller passed it.
+
+    Returns:
+        ``<name>_sim`` in ``[A-Za-z0-9_-]``, at most :data:`_TOOL_NAME_MAX_LEN`
+        characters.
+    """
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", name.strip()).strip("_") or "robot"
+    return f"{stem[: _TOOL_NAME_MAX_LEN - len('_sim')]}_sim"
+
+
 def _reject_hardware_kwargs_in_sim(kwargs: Mapping[str, Any], canonical: str, requested_mode: str) -> None:
     """Refuse a hardware-only keyword on a simulated robot, naming the mode.
 
@@ -788,7 +811,9 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         # agnostic SimEngine ABC methods, so it works for every backend.
         # The sim-mode overloads contract a ``Simulation`` return; create_simulation
         # is typed to the SimEngine ABC, so cast to keep that public contract.
-        sim = cast("Simulation", create_simulation(backend, tool_name=tool_name or f"{name}_sim", **kwargs))
+        sim = cast(
+            "Simulation", create_simulation(backend, tool_name=tool_name or _default_sim_tool_name(name), **kwargs)
+        )
 
         try:
             result = sim.create_world()
