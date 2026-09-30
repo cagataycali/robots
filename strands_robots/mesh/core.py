@@ -937,6 +937,8 @@ class Mesh(SensorLoopsMixin):
         # shape and reuses _evict_replay_cache for bounding. Key shape:
         # ((sender_id, turn_id)) -> monotonic insert ts.
         self._cmd_replay_cache: dict[tuple[str, str], float] = {}
+        # Topics whose retained command this peer has already warned about.
+        self._retained_cmd_warned: set[str] = set()
         self._cmd_replay_lock = threading.Lock()
         # M-1: resume override-code brute-force throttle. The crypto
         # oracles (timing / content / length) are all closed, but the resume
@@ -2295,6 +2297,15 @@ class Mesh(SensorLoopsMixin):
         sender_id = data.get("sender_id", "")
         if sender_id == self.peer_id:
             return
+        if getattr(sample, "retain", False) is True:
+            # The broker stored this command and replays it to every new
+            # subscription: this peer subscribes ``cmd`` and ``broadcast`` at
+            # every start, and the replay cache is per process, so a stored
+            # command would run at every boot until someone cleared the topic
+            # (live: a retained ``execute`` ran a rollout with nobody present).
+            # A command is a live request or nothing.
+            self._refuse_retained_command(sample, data)
+            return
         # A command that arrived as an AWS IoT direct message names the
         # sender's reply address in the MQTT5 Response Topic. A zenoh.Sample
         # has no such attribute, so the default keeps the computed reply key.
@@ -2306,6 +2317,35 @@ class Mesh(SensorLoopsMixin):
             name=f"mesh-exec-{self.peer_id}",
             daemon=True,
         ).start()
+
+    def _refuse_retained_command(self, sample: Any, data: dict[str, Any]) -> None:
+        """Audit and WARN (once per topic) a command the broker delivered from storage."""
+        topic = str(getattr(sample, "key_expr", "") or "")
+        sender = data.get("sender_id", "")
+        turn = data.get("turn_id", "")
+        command = data.get("command")
+        action = command.get("action", "") if isinstance(command, dict) else ""
+        self._audit_local(
+            "command_refused",
+            {
+                "action": str(action)[:64],
+                "reason": "retained",
+                "sender": str(sender)[:128],
+                "turn_id": str(turn)[:128],
+                "topic": topic[:256],
+            },
+        )
+        if topic in self._retained_cmd_warned:
+            return
+        self._retained_cmd_warned.add(topic)
+        logger.warning(
+            "[mesh] %s: refused a retained command on %s (the broker stored it and replays it at every "
+            "subscribe; a command is a live request or nothing). Clear it with "
+            "`aws iot-data publish --topic %s --retain --payload ''` and find who stored it.",
+            self.peer_id,
+            topic,
+            topic,
+        )
 
     def _select_direct_sender(self, session: Any) -> DirectSender | None:
         """Return *session* as a :class:`DirectSender` when direct messaging applies.
@@ -2984,9 +3024,14 @@ class Mesh(SensorLoopsMixin):
                     )
                 }
             duration = cmd.get("duration", 30.0)
+            # ``embodiment`` rides with the checkpoint it belongs to: it names
+            # the unit frame and the renames the policy is built with, and a
+            # checkpoint that arrives without it runs in the peer's default
+            # frame (GH #4180). Validated as a registry name by
+            # :func:`~strands_robots.mesh.security.validate_command`.
             extra = {
                 k: cmd[k]
-                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path")
+                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path", "embodiment")
                 if k in cmd
             }
             # Sim peer? Route to Simulation.start_policy / run_policy.
