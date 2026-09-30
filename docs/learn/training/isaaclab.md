@@ -17,7 +17,7 @@ train_policy(action="train", provider="isaaclab", steps=50, output_dir="runs",
              extra={"task": "Isaac-Cartpole", "num_envs": 4096, "physics": "newton_mjwarp", "timeout_s": 600})
 ```
 
-It returns a `job_id`; `action="status"` reports rewards, `success_rate`, a failure's cause and `checkpoint_dir`; `action="stop"` ends it; `action="play"` records a video; `action="record"` writes a LeRobotDataset (`extra["dataset_dir"]`); `action="export"` writes what `create_policy("rl", checkpoint_dir=...)` loads. `extra['rl_library']` accepts only `rsl_rl`.
+It returns a `job_id`; `action="status"` reports rewards, `success_rate`, a failure's cause and `checkpoint_dir`; `action="stop"` ends it; `action="play"` records a video; `action="record"` writes a LeRobotDataset (`extra["dataset_dir"]`); `action="export"` writes what `create_policy("rl", checkpoint_dir=...)` loads. `extra['rl_library']` accepts only `rsl_rl`. Your own task package trains once the operator sets `STRANDS_ISAACLAB_TASK_PACKAGES=module:register_fn` (importable in the Isaac Lab venv).
 
 `extra['overrides']` (`env.*`/`agent.*`, checked against the task config), `agent`, `device`, `video`, `deterministic`, `base_model` and `resume` reach Isaac Lab; `learning_rate` pins `schedule=fixed`.
 
