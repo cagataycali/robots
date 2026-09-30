@@ -4787,11 +4787,6 @@ class Mesh(SensorLoopsMixin):
         with self._resume_bruteforce_lock:
             self._resume_fail_count = 0
             self._resume_locked_until_mono = 0.0
-        self.publish_safety_event(
-            event_type="resume_ok",
-            severity="info",
-            payload={"sender_id": self.peer_id, "lockout_elapsed_s": elapsed},
-        )
         proof_nonce = uuid.uuid4().hex
         envelope_t = time.time()
         wire_zid = self._safety_wire_zid("strands/safety/resume")
@@ -4822,7 +4817,22 @@ class Mesh(SensorLoopsMixin):
         }
         if wire_zid is not None:
             envelope["source_zid"] = wire_zid
+        # The envelope leaves BEFORE the ``resume_ok`` event, the order
+        # :meth:`emergency_stop` already uses. Every peer's ingress carries the
+        # ``**/safety/**`` downsampling rule from
+        # :func:`~strands_robots.mesh._zenoh_config.downsampling_block`, and
+        # Zenoh keeps one timestamp per rule per link, not per key: the second
+        # ``safety/**`` message from this peer inside one period is dropped
+        # before any subscriber runs. With the event first, the envelope was
+        # that second message, so the issuer cleared and every other peer
+        # stayed locked with nothing logged (GH #4171). The event copy may now
+        # be the one the wire loses; its audit record is written regardless.
         self._publish_safety_envelope("strands/safety/resume", envelope)
+        self.publish_safety_event(
+            event_type="resume_ok",
+            severity="info",
+            payload={"sender_id": self.peer_id, "lockout_elapsed_s": elapsed},
+        )
         logger.warning("[safety] %s: resume after %.1fs lockout", self.peer_id, elapsed)
         return {"status": "ok"}
 
