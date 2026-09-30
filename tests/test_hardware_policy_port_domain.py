@@ -172,11 +172,15 @@ class TestUnusablePortRefusedBeforeTheArmIsTouched:
 
     @pytest.mark.parametrize("entry", ["execute_task", "start_task"])
     def test_a_missing_port_is_reported_as_required(self, hw: Any, entry: str) -> None:
-        """``None`` is the "not supplied" spelling, so it says required - early."""
+        """``None`` is the "not supplied" spelling, so it says required - early.
+
+        Asked of a provider whose registry entry requires a port; the default
+        ``lerobot_local`` builds in process and would refuse on its checkpoint.
+        """
         if entry == "execute_task":
-            result = hw._execute_task_sync("pick", policy_port=None, duration=0.05)
+            result = hw._execute_task_sync("pick", policy_port=None, policy_provider="moveit2", duration=0.05)
         else:
-            result = hw.start_task("pick", policy_port=None, duration=0.05)
+            result = hw.start_task("pick", policy_port=None, policy_provider="moveit2", duration=0.05)
 
         assert result["status"] == "error"
         assert "policy_port is required" in _text(result)
@@ -233,7 +237,7 @@ class TestAPreBuiltPolicyMakesThePortInert:
 class TestAUsablePortStillRuns:
     """The guard refuses exactly the unusable ports and nothing else.
 
-    Driven through ``groot`` rather than ``mock``: the subject here is the
+    Driven through ``moveit2`` rather than ``mock``: the subject here is the
     numeric domain, and a provider that declares no ``port`` keyword refuses
     every port on separate grounds (see
     :class:`TestAPortTheProviderDoesNotReadIsRefused`). Asking ``mock`` whether
@@ -244,7 +248,7 @@ class TestAUsablePortStillRuns:
 
     @pytest.mark.parametrize("port", USABLE_PORTS, ids=repr)
     def test_a_usable_port_passes_the_guard(self, port: Any) -> None:
-        assert HwRobot._policy_port_error(port, "start_task", "groot") is None
+        assert HwRobot._policy_port_error(port, "start_task", "moveit2") is None
 
     def test_a_rollout_still_reaches_the_policy_build_and_the_loop(self, hw: Any) -> None:
         """The arm connects and the loop runs for a provider that needs no port."""
@@ -276,7 +280,7 @@ class TestTheDomainMatchesTheProviderThatDialsIt:
         declares no ``port`` keyword, so "what the provider accepts" is nothing.
         """
         shared_refuses = tcp_port_error(port, "policy_port", "start_task") is not None
-        entry_refuses = HwRobot._policy_port_error(port, "start_task", "groot") is not None
+        entry_refuses = HwRobot._policy_port_error(port, "start_task", "moveit2") is not None
 
         assert entry_refuses is shared_refuses, f"verdicts differ for policy_port={port!r}"
 
@@ -378,7 +382,7 @@ class TestEveryPortTakingSurfaceIsAccountedFor:
 
 
 # Providers whose registry entry declares a ``port`` keyword, and so read one.
-PORT_READING_PROVIDERS: tuple[str, ...] = ("cosmos3", "groot", "moveit2", "remote")
+PORT_READING_PROVIDERS: tuple[str, ...] = ("cosmos3", "moveit2", "remote")
 
 
 class TestAPortTheProviderDoesNotReadIsRefused:
@@ -386,7 +390,7 @@ class TestAPortTheProviderDoesNotReadIsRefused:
 
     The registry answers two different questions about a port from two different
     fields. ``requires`` lists what a caller must supply, so it judges a
-    *missing* port - and only ``groot`` / ``moveit2`` name it, because
+    *missing* port - and only ``moveit2`` names it, because
     ``cosmos3`` dials a server while defaulting its port. ``config_keys`` lists
     what the provider understands, so it is the only field that can judge a port
     that *was* supplied.
@@ -554,7 +558,7 @@ class TestTheDeviceConnectRelayDoesNotCollapseTheValue:
     """
 
     @staticmethod
-    def _relay(port: Any, provider: str = "groot") -> tuple[Any, dict[str, Any]]:
+    def _relay(port: Any, provider: str = "moveit2") -> tuple[Any, dict[str, Any]]:
         """Invoke the real ``execute`` RPC; report what ``start_task`` saw."""
         from tests._device_connect_real import use_the_real_edge
         from tests.test_device_connect_hardening import _run
@@ -572,7 +576,7 @@ class TestTheDeviceConnectRelayDoesNotCollapseTheValue:
                 instruction: str,
                 policy_port: Any = None,
                 policy_host: str = "localhost",
-                policy_provider: str = "groot",
+                policy_provider: str = "moveit2",
                 duration: float = 30.0,
                 **kw: Any,
             ) -> dict[str, Any]:
@@ -611,6 +615,6 @@ class TestTheDeviceConnectRelayDoesNotCollapseTheValue:
         assert result["status"] == "success", result
 
     def test_a_usable_port_is_handed_on_unchanged(self) -> None:
-        forwarded, result = self._relay(5556, provider="groot")
+        forwarded, result = self._relay(5556, provider="moveit2")
         assert forwarded == 5556
         assert result["status"] == "success", result

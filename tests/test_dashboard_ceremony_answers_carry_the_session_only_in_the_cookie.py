@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import auth, settings  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
+from tests._dashboard_passkeys import issue_enrolled  # noqa: E402
 
 CEREMONIES = [("/api/auth/register/finish", "finish_registration"), ("/api/auth/login/finish", "finish_authentication")]
 
@@ -51,7 +52,7 @@ def _cookie_value(response) -> str:
 @pytest.mark.parametrize("path,verb", CEREMONIES, ids=["register", "login"])
 class TestTheBodyDoesNotRepeatTheCookie:
     def test_the_token_is_in_the_cookie_and_not_in_the_body(self, isolated, monkeypatch, path, verb):
-        minted = auth.issue_token("owner", "Owner")
+        minted = issue_enrolled("owner", "Owner")  # a session is good only while its passkey is enrolled (f016)
         monkeypatch.setattr(
             auth, verb, lambda request, cid, cred: {"ok": True, "token": minted, "credential_id": "cred-1"}
         )
@@ -67,7 +68,7 @@ class TestTheBodyDoesNotRepeatTheCookie:
         assert body["ok"] is True and body["credential_id"] == "cred-1"
 
     def test_the_body_says_when_the_session_lapses(self, isolated, monkeypatch, path, verb):
-        minted = auth.issue_token("owner", "Owner")
+        minted = issue_enrolled("owner", "Owner")  # a session is good only while its passkey is enrolled (f016)
         monkeypatch.setattr(auth, verb, lambda request, cid, cred: {"ok": True, "token": minted})
         client = TestClient(create_app())
 
