@@ -1232,12 +1232,46 @@ def _cameras_recording_option_error(
 class _CameraState:
     """Internal bookkeeping for a camera in the Isaac simulation."""
 
-    def __init__(self, name: str, prim_path: str, width: int, height: int):
+    def __init__(
+        self,
+        name: str,
+        prim_path: str,
+        width: int,
+        height: int,
+        render_width: int | None = None,
+        render_height: int | None = None,
+    ):
         self.name = name
         self.prim_path = prim_path
+        # The size the caller asked for: every frame this camera hands out -
+        # render(), get_observation(), recordings - has this shape.
         self.width = width
         self.height = height
+        # The size the RTX product renders at, which is larger for a small
+        # request (``_MIN_RENDER_PX``, the DLSS ghosting floor).
+        self.render_width = render_width if render_width is not None else width
+        self.render_height = render_height if render_height is not None else height
         self.handle: Any = None
+
+
+def _frame_at_camera_size(cam: _CameraState, frame: np.ndarray, *, nearest: bool = False) -> np.ndarray:
+    """*frame* resampled to the size *cam* was added with, when the RTX product rendered it larger.
+
+    ``add_camera(width=224, height=224)`` renders at 640x640 so DLSS stays
+    above its temporal-ghost threshold, and every consumer used to receive that
+    640x640 frame: policies trained on 224x224 inputs and datasets whose
+    features read ``[640, 640, 3]`` where MuJoCo records ``[224, 224, 3]``.
+    ``INTER_AREA`` for colour (the downsample that does not alias), nearest for
+    depth (a blend of two surfaces is a depth neither has).
+    """
+    if frame.shape[0] == cam.height and frame.shape[1] == cam.width:
+        return frame
+    import cv2
+
+    interpolation = cv2.INTER_NEAREST if nearest else cv2.INTER_AREA
+    return np.asarray(
+        cv2.resize(np.ascontiguousarray(frame), (int(cam.width), int(cam.height)), interpolation=interpolation)
+    )
 
 
 class _ObjectState:
@@ -5224,7 +5258,7 @@ class IsaacSimulation(
                         # observation.
                         arr = np.asarray(rgba)
                         if arr.ndim == 3 and arr.shape[0] > 0 and arr.shape[1] > 0:
-                            obs[cam_name] = arr[..., :3].astype(np.uint8)
+                            obs[cam_name] = _frame_at_camera_size(cam, arr[..., :3].astype(np.uint8))
                     except (RuntimeError, ValueError, AttributeError, TypeError, IndexError) as e:
                         logger.debug("camera %r frame unavailable: %s", cam_name, e)
 
@@ -6962,8 +6996,14 @@ class IsaacSimulation(
                 logger.log(level, "Failed to render camera '%s': %s", camera_name, e)
                 return None, None, {"error": f"Failed to render camera '{camera_name}': {e}"}
 
+            # The product renders at render_width x render_height; the frame is
+            # the size the camera was added with (see _frame_at_camera_size).
+            rendered = [int(rgb.shape[1]), int(rgb.shape[0])]
+            rgb = _frame_at_camera_size(cam, rgb)
+            depth = _frame_at_camera_size(cam, depth, nearest=True)
             render_info = {
                 "rtx": True,
+                "render_resolution": rendered,
                 "prim_path": cam.prim_path,
                 "resolution": [int(rgb.shape[1]), int(rgb.shape[0])],
                 "render_mode": self._config.render_mode,
@@ -7370,19 +7410,15 @@ class IsaacSimulation(
             Image height in pixels; a positive integer. ``None`` (omitted)
             takes ``IsaacConfig.camera_height``.
         parent_body : str, optional
-            Body to mount the camera on, so it rides with that body instead
-            of standing still in the world. Declared here but NOT SUPPORTED
-            on this backend: the camera prim is parented to the stage's
-            camera scope, not to an articulation link, so a value is refused
-            with a structured error naming the backends that do mount
-            cameras rather than dropped. Mounting is what
-            :doc:`/policies/camera-naming` prescribes for a VLA's
-            ``observation.images.wrist_image`` feature, so a caller
-            following that guidance needs to be told which backend can
-            honour it -- not handed a static world-space view, and not a
-            bare ``TypeError`` naming neither the capability nor the
-            alternative. Omit it (the default) for a world-fixed camera,
-            which this backend does support.
+            Body to mount the camera on, so it rides with that body instead of
+            standing still in the world: a robot link (``"so101/gripper"`` or a
+            bare link name) or an absolute prim path, resolved the way
+            :meth:`get_body_state` resolves a body. ``position`` and ``target``
+            are then both required and are in that body's LOCAL frame, as on
+            the MuJoCo and Newton backends. The camera prim is authored as a
+            child of the link prim, so USD composes the link's pose onto it on
+            every frame. An unresolvable body is refused with the link names the
+            robots have.
 
         Validation
         ----------
@@ -7428,18 +7464,21 @@ class IsaacSimulation(
             computed ``focal_length`` so an agent can confirm the
             camera setup without re-querying.
         """
-        if parent_body is not None:
+        if parent_body is not None and (not isinstance(parent_body, str) or not parent_body.strip()):
+            return {
+                "status": "error",
+                "content": [{"text": f"add_camera: parent_body must be a body name, got {parent_body!r}"}],
+            }
+        if parent_body is not None and (position is None or target is None):
+            # The world-frame defaults would put a wrist camera 1.7 m from its
+            # link; the MuJoCo and Newton backends refuse the same call.
             return {
                 "status": "error",
                 "content": [
                     {
                         "text": (
-                            f"add_camera: parent_body={parent_body!r} is not supported on the Isaac "
-                            "backend (it parents camera prims to the stage camera scope, not to an "
-                            "articulation link, so the camera would not ride with the body). Omit "
-                            "parent_body for a world-fixed camera, or use "
-                            "create_simulation(backend='mujoco') / create_simulation(backend='newton') "
-                            "for a body-mounted (wrist) camera."
+                            f"add_camera: parent_body={parent_body!r} needs both position and target, in that "
+                            "body's frame (the world-frame defaults would put the camera 1.7 m from the body)"
                         )
                     }
                 ],
@@ -7533,6 +7572,7 @@ class IsaacSimulation(
 
             w = self._config.camera_width if width is None else width
             h = self._config.camera_height if height is None else height
+            req_w, req_h = int(w), int(h)
             fov_deg = float(fov)
 
             # RTX cameras: render at a higher NATIVE resolution if the
@@ -7547,17 +7587,33 @@ class IsaacSimulation(
                 h = int(round(h * scale))
 
             prim_path = f"{self._config.stage_path}/Cameras/{name}"
+            mount: tuple[str, list[float], list[float]] | None = None
+            if parent_body is not None:
+                resolved = self._mounted_camera_pose(parent_body, pos, tgt)
+                if isinstance(resolved, str):
+                    return {"status": "error", "content": [{"text": resolved}]}
+                link_path, world_pos, world_quat = resolved
+                # A child of the link prim, so USD composes the link's pose
+                # onto it every frame and the camera rides with the body.
+                prim_path = f"{link_path}/strands_camera_{name}"
+                mount = (parent_body, world_pos, world_quat)
 
             try:
                 handle, focal_length_mm = self._create_camera_prim(
                     name=name,
                     prim_path=prim_path,
-                    position=pos,
-                    target=tgt,
+                    position=pos if mount is None else mount[1],
+                    target=tgt if mount is None else None,
                     width=w,
                     height=h,
                     fov_deg=fov_deg,
                 )
+                if mount is not None:
+                    handle.set_world_pose(
+                        position=np.asarray(mount[1], dtype=float),
+                        orientation=np.asarray(mount[2], dtype=float),
+                        camera_axes="usd",
+                    )
             except (RuntimeError, ValueError, OSError, AttributeError, TypeError, ImportError) as e:
                 # Cleanup-clause shape mirrors create_world (#52 precedent)
                 # and add_object: the constructor or initialise / look-at
@@ -7570,7 +7626,9 @@ class IsaacSimulation(
                 }
 
             self._prim_registry.append(prim_path)
-            cam_state = _CameraState(name=name, prim_path=prim_path, width=w, height=h)
+            cam_state = _CameraState(
+                name=name, prim_path=prim_path, width=req_w, height=req_h, render_width=w, render_height=h
+            )
             cam_state.handle = handle
             self._cameras[name] = cam_state
 
@@ -7593,7 +7651,9 @@ class IsaacSimulation(
                 "renders_pixels": self._config.render_mode != "headless",
                 "position": pos,
                 "target": tgt,
-                "resolution": [w, h],
+                "resolution": [req_w, req_h],
+                "render_resolution": [w, h],
+                "parent_body": parent_body,
                 "fov": fov_deg,
                 "focal_length_mm": focal_length_mm,
             }
@@ -7611,13 +7671,81 @@ class IsaacSimulation(
                 "content": [
                     {
                         "text": (
-                            f"Camera '{name}' added at {pos}, resolution={w}x{h}, fov={fov_deg}"
+                            f"Camera '{name}' added at {pos}, resolution={req_w}x{req_h}, fov={fov_deg}"
                             + (f". NOTE: {_HEADLESS_RENDER_REMEDY}" if self._config.render_mode == "headless" else "")
                         ),
                         "json": cam_info,
                     }
                 ],
             }
+
+    def _mounted_camera_pose(
+        self, parent_body: str, position: list[float], target: list[float] | None
+    ) -> tuple[str, list[float], list[float]] | str:
+        """World pose now for a camera at *position*, looking at *target*, both in *parent_body*'s frame.
+
+        The same convention as the MuJoCo backend's ``parent_body``: position
+        and target are in the body's LOCAL frame. *target* ``None`` looks along
+        the body's local +X. Returns ``(link_prim_path, world_position,
+        world_quat_wxyz)`` for a USD camera (looking down its -Z, +Y up), or the
+        refusal text when the body cannot be resolved.
+        """
+        import omni.usd  # type: ignore[import-not-found]
+        from pxr import Gf, Sdf, Usd, UsdGeom  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        prim = self._resolve_body_prim(stage, parent_body, Sdf, Usd, UsdGeom) if stage is not None else None
+        if prim is None:
+            links = (
+                sorted(
+                    {
+                        p.GetName()
+                        for r in list(self._robots.values())
+                        for p in self._robot_link_prims(stage, r, Sdf, Usd, UsdGeom)
+                    }
+                )[:40]
+                if stage is not None
+                else []
+            )
+            return (
+                f"add_camera: parent_body={parent_body!r} names no robot link or prim on the stage; name a link "
+                f"(e.g. 'robot/link' or a bare link name){f', such as {links}' if links else ''}, or an absolute "
+                "prim path. position / target are in that body's frame."
+            )
+        xf = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+        local_target = (
+            list(target) if target is not None else [position[0] + 1.0, position[1], position[2]]
+        )  # defensive
+        eye = xf.Transform(Gf.Vec3d(*[float(v) for v in position]))
+        look = xf.Transform(Gf.Vec3d(*[float(v) for v in local_target]))
+        forward = np.array([look[0] - eye[0], look[1] - eye[1], look[2] - eye[2]], dtype=float)
+        forward /= np.linalg.norm(forward) or 1.0
+        up_hint = np.array([0.0, 0.0, 1.0]) if abs(forward[2]) < 0.99 else np.array([0.0, 1.0, 0.0])
+        right = np.cross(forward, up_hint)
+        right /= np.linalg.norm(right) or 1.0
+        up = np.cross(right, forward)
+        # USD camera: columns are the camera's x (right), y (up), z (backwards) in world.
+        rot = np.stack([right, up, -forward], axis=1)
+        quat = Gf.Quatd(Gf.Matrix3d(*rot.T.flatten().tolist()).ExtractRotation().GetQuat())
+        wxyz = [float(quat.GetReal()), *[float(c) for c in quat.GetImaginary()]]
+        return str(prim.GetPath()), [float(eye[0]), float(eye[1]), float(eye[2])], wxyz
+
+    @staticmethod
+    def _robot_link_prims(stage: Any, r: _RobotState, Sdf: Any, Usd: Any, UsdGeom: Any) -> list[Any]:  # noqa: N803
+        """Xformable prims under a robot's top-level subtree (the names a camera can mount on)."""
+        sdf_path = Sdf.Path(r.actual_prim_path)
+        top = sdf_path
+        while top.GetParentPath() != Sdf.Path.absoluteRootPath and top.GetParentPath() != Sdf.Path.emptyPath:
+            top = top.GetParentPath()
+        root = stage.GetPrimAtPath(top)
+        if not root or not root.IsValid():
+            return []
+        return [
+            p
+            for p in Usd.PrimRange(root)
+            if p.IsA(UsdGeom.Xformable)
+            and p.GetName().lower().endswith(("link", "gripper", "hand", "wrist", "jaw", "base"))
+        ]
 
     def remove_camera(self, name: str) -> dict[str, Any]:
         """Remove a camera from the scene.
@@ -9783,26 +9911,7 @@ class IsaacSimulation(
             if stage is None:
                 return None
 
-            prim = None
-            if body_name.startswith("/"):
-                p = stage.GetPrimAtPath(body_name)
-                if p and p.IsValid() and p.IsA(UsdGeom.Xformable):
-                    prim = p
-            elif "/" in body_name:
-                robot_name, _, link_name = body_name.partition("/")
-                r = registry_entry(self._robots, robot_name)
-                if r is not None and link_name:
-                    prim = self._find_robot_link_prim(stage, r, link_name, Sdf, Usd, UsdGeom)
-            else:
-                # Snapshotted: get_body_state runs this INLINE on the calling
-                # thread whenever no pump is engaged, so a worker reading a body
-                # while another thread calls add_robot walked a mutating dict.
-                with self._lock:
-                    robots_snapshot = list(self._robots.values())
-                for r in robots_snapshot:
-                    prim = self._find_robot_link_prim(stage, r, body_name, Sdf, Usd, UsdGeom)
-                    if prim is not None:
-                        break
+            prim = self._resolve_body_prim(stage, body_name, Sdf, Usd, UsdGeom)
             if prim is None:
                 return None
 
@@ -9832,6 +9941,34 @@ class IsaacSimulation(
         except (RuntimeError, ValueError, AttributeError, TypeError):
             logger.debug("get_body_state: USD read failed for %r", body_name, exc_info=True)
             return None
+
+    def _resolve_body_prim(self, stage: Any, body_name: str, Sdf: Any, Usd: Any, UsdGeom: Any) -> Any:  # noqa: N803 - pxr module objects passed by caller
+        """The Xformable prim *body_name* names: an absolute path, ``robot/link``, or a bare link name.
+
+        The resolution :meth:`get_body_state` and ``add_camera(parent_body=...)``
+        share, so a body one of them reads the other can mount on.
+        """
+        if body_name.startswith("/"):
+            p = stage.GetPrimAtPath(body_name)
+            return p if p and p.IsValid() and p.IsA(UsdGeom.Xformable) else None
+        if "/" in body_name:
+            robot_name, _, link_name = body_name.partition("/")
+            r = registry_entry(self._robots, robot_name)
+            return (
+                self._find_robot_link_prim(stage, r, link_name, Sdf, Usd, UsdGeom)
+                if r is not None and link_name
+                else None
+            )
+        # Snapshotted: get_body_state runs this INLINE on the calling thread
+        # whenever no pump is engaged, so a worker reading a body while another
+        # thread calls add_robot walked a mutating dict.
+        with self._lock:
+            robots_snapshot = list(self._robots.values())
+        for r in robots_snapshot:
+            prim = self._find_robot_link_prim(stage, r, body_name, Sdf, Usd, UsdGeom)
+            if prim is not None:
+                return prim
+        return None
 
     @staticmethod
     def _find_robot_link_prim(stage: Any, r: _RobotState, link_name: str, Sdf: Any, Usd: Any, UsdGeom: Any) -> Any:  # noqa: N803 - pxr module objects passed by caller
