@@ -12,14 +12,14 @@ description: "LeKiwi networked client (drives a remote LeKiwi host over ZMQ)"
 The registry ships no simulation asset for it, so `Robot("lekiwi_client")` in the default sim mode refuses by name.
 
 ```python title="sketch"
-robot = Robot("lekiwi_client", mode="real", port="/dev/ttyACM0")  # lerobot lekiwi_client
+robot = Robot("lekiwi_client", mode="real", remote_ip="192.168.1.50")  # lerobot lekiwi_client
 ```
 
 Aliases: `lekiwi_remote`, `lekiwi_net`.
 
 ## Hardware
 
-**lerobot.** `Robot("lekiwi_client", mode="real")` builds lerobot's `lekiwi_client` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
+**lerobot.** `Robot("lekiwi_client", mode="real")` builds lerobot's `lekiwi_client` with `pip install 'strands-robots[lerobot]'`; `remote_ip=` is the address of the Pi that runs `lekiwi`, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
 ## Policies verified on this robot
 

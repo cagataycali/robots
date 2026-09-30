@@ -45,6 +45,7 @@ import pytest
 pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from tests._package_ast import parse_file
 
 _EXAMPLE = pathlib.Path(__file__).resolve().parent.parent / "examples" / "09_procedural_terrain.py"
 
@@ -115,7 +116,7 @@ def _shipped_settle_budget() -> int:
     calling anything; it is read out of the argparse call instead. The assertion
     that uses it is a physical one - this only locates the number.
     """
-    tree = ast.parse(_EXAMPLE.read_text(encoding="utf-8"))
+    tree = parse_file(_EXAMPLE)
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_argument"):
             continue

@@ -27,6 +27,7 @@ import ast
 from pathlib import Path
 
 import strands_robots.simulation as simulation_pkg
+from tests._package_ast import parse_file
 
 _PACKAGE_DIR = Path(simulation_pkg.__file__).parent
 
@@ -77,7 +78,7 @@ def test_every_camera_flush_handles_an_encoder_refusal() -> None:
     for relative in _FLUSH_MODULES:
         module_path = _PACKAGE_DIR / relative
         assert module_path.exists(), f"{relative} moved; update this guard"
-        functions = _functions_calling_encode_clip(ast.parse(module_path.read_text(encoding="utf-8")))
+        functions = _functions_calling_encode_clip(parse_file(module_path))
         assert functions, f"{relative} no longer flushes through encode_clip; update this guard"
         for func in functions:
             missing = set(_REFUSALS) - _handled_refusals(func)

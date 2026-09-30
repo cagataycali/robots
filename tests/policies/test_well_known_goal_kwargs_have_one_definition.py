@@ -50,6 +50,7 @@ import pathlib
 import re
 
 from strands_robots.policies.base import Policy
+from tests._package_ast import parse_file
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _POLICIES_ROOT = _REPO_ROOT / "strands_robots" / "policies"
@@ -125,7 +126,7 @@ def _goal_kwargs_by_provider_family() -> dict[str, frozenset[str]]:
         if len(relative) < 2:
             continue  # policies/*.py is shared machinery, not a provider family
         family = relative[0]
-        for node in ast.walk(ast.parse(py.read_text(encoding="utf-8"))):
+        for node in ast.walk(parse_file(py)):
             key = _kwargs_key_read(node)
             if key is not None:
                 families[key].add(family)
@@ -143,7 +144,7 @@ def _run_policy_documented_goal_keys() -> frozenset[str]:
     Parsed from source rather than imported so the guard does not depend on the
     simulation backend's optional dependencies being installed.
     """
-    tree = ast.parse(_SIM_BASE.read_text(encoding="utf-8"))
+    tree = parse_file(_SIM_BASE)
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "run_policy":
             doc = ast.get_docstring(node) or ""
