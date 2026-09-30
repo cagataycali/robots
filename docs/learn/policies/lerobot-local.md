@@ -100,7 +100,7 @@ print(result["status"])
 sim.cleanup()
 ```
 
-A checkpoint fine-tuned on an SO-101 carries its stats; `embodiment="so101"` then converts units in sim and binds the arm's `.pos` keys on hardware ([First policy](../../start/first-policy.md)). A real arm's tool takes the same dict as `policy_config`:
+An SO-101 fine-tune carries degree stats. On the sim joints `1`..`6` the `so101` embodiment then applies even unnamed, converting both ways; any other radian state is refused before the first action. On hardware it binds the `.pos` keys ([First policy](../../start/first-policy.md)). A real arm's tool takes the same dict as `policy_config`; host/port stay `policy_host`/`policy_port`:
 
 ```json
 {"action": "execute", "policy_provider": "lerobot_local",
