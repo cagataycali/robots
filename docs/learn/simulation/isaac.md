@@ -1,5 +1,5 @@
 ---
-description: The Isaac Sim backend: what it needs, how to construct it, USD and MJCF loading, and what differs from MuJoCo.
+description: The Isaac Sim backend: what it needs, how to construct it, USD and MJCF loading, what differs from MuJoCo.
 ---
 
 # Isaac Sim
@@ -18,7 +18,7 @@ Verified pip wheels: 6.0.1.0 and 6.1.0.0 (or `==6.1.*`). Both pin `numpy==2.3.1`
 
 ## What it is
 
-`IsaacSimulation` (`strands_robots/simulation/isaac/simulation.py`) implements `SimEngine` on NVIDIA Isaac Sim / Omniverse: photoreal rendering, synthetic data, GPU-rendered sensors, USD stages. It inherits the policy orchestration (`run_policy`, `eval_policy`, benchmarks, recording) from the base class and implements the physics primitives, loaders (`isaac/loaders.py`: URDF, MJCF and USD), mesh and MJCF asset conversion, motion primitives and recording.
+`IsaacSimulation` (`strands_robots/simulation/isaac/simulation.py`) implements `SimEngine` on NVIDIA Isaac Sim / Omniverse: photoreal rendering, synthetic data, GPU-rendered sensors, USD stages. It inherits the policy orchestration (`run_policy`, `eval_policy`, benchmarks, recording) from the base class and implements physics, loaders (`isaac/loaders.py`: URDF, MJCF, USD), asset conversion, motion primitives and recording.
 
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
@@ -47,7 +47,7 @@ sim.destroy()
 |---|---|
 | assets | URDF, MJCF (converted, `isaac/mjcf_assets.py`) and USD; meshes through `isaac/mesh_assets.py` |
 | fixed base | robots import with the root welded (`fixed_base=True` by default) |
-| cameras | world-frame prims; `add_camera(parent_body=...)` is refused |
+| cameras | world-frame prims, or a link's children with `parent_body`; frames come back at the requested size |
 | physics rate | `physics_dt` and `rendering_dt` are separate clocks |
 | WBC | no MuJoCo torque shim; a policy declaring `requires_action_controller` (`wbc`) is refused |
 | motion primitives | its own implementation in `isaac/motion_primitives.py` |

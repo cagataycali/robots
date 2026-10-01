@@ -91,6 +91,7 @@ from strands_robots.simulation.base import (
     reject_misspelled_kwargs,
     reject_setup_kwargs,
     unknown_model_msg,
+    unknown_parameter_error,
 )
 from strands_robots.simulation.ik import (
     GRIPPER_BODY_HINTS,
@@ -126,6 +127,7 @@ from strands_robots.simulation.mujoco.backend import (
     pose_qpos_components,
     qpos_ceiling_error,
 )
+from strands_robots.simulation.mujoco.divergence import divergence_error, instability_counts
 from strands_robots.simulation.mujoco.manipulation import ManipulationMixin
 from strands_robots.simulation.mujoco.motion_primitives import MotionPrimitivesMixin
 from strands_robots.simulation.mujoco.physics import (
@@ -1292,8 +1294,12 @@ class MuJoCoSimEngine(
         assert action_map is not None  # narrow for mypy: no error implies a mapping
         with self._lock:
             self._unresolved_action_keys: list[str] = []
+            unstable_before = instability_counts(self._mj, self._world._data)
             self._apply_sim_action(robot_name, action_map, n_substeps=n_substeps)
             unresolved = self._unresolved_action_keys
+            diverged = divergence_error(self._mj, self._world._model, self._world._data, unstable_before, "send_action")
+        if diverged is not None:
+            return {"status": "error", "content": [{"text": diverged}, {"json": {"diverged": True}}]}
         applied = [k for k in action_map if k not in unresolved]
         if unresolved:
             # Surface the actual valid actuator names so the user can
@@ -3586,6 +3592,11 @@ class MuJoCoSimEngine(
         # WBCPolicy. Walk the declared tree instead of type-testing the argument.
         wbc_policy = next((p for p in iter_policy_tree(policy) if isinstance(p, WBCPolicy)), None)
         if wbc_policy is None:
+            # The SONIC latent decoder needs its own shim: the same PD-on-torque
+            # idea, on all 29 joints with the decoder's gains.
+            latent = self._maybe_install_wbc_latent_controller(policy, robot_name)
+            if latent is not None:
+                return latent
             # Any other declared controller is one this engine cannot install.
             return super()._maybe_install_action_controller(policy, robot_name)
         world = self._world
@@ -3609,6 +3620,52 @@ class MuJoCoSimEngine(
         # ``uninstall`` releases both halves of the install - the registration it
         # made and the actuator gains - so the caller of the *documented manual*
         # API gets the same teardown this hook does, from one implementation.
+        return controller.uninstall
+
+    def _maybe_install_wbc_latent_controller(self, policy: Any, robot_name: str) -> Callable[[], None] | str | None:
+        """Install the SONIC latent torque shim when a ``WBCLatentPolicy`` drives a servo scene.
+
+        The same contract as the WBC branch of
+        :meth:`_maybe_install_action_controller`, for
+        :class:`~strands_robots.policies.wbc_latent.WBCLatentPolicy`: its
+        decoder emits joint targets the stock ``kp=500`` servos would track with
+        gains 5x to 35x stiffer than the armature-derived ones the network was
+        trained with. Returns ``None`` when no ``WBCLatentPolicy`` is in the
+        tree (the caller falls through to the base refusal), when the ``[wbc]``
+        extra is missing, when no world is compiled, when a controller is
+        already registered (a manual install wins), or when the driven
+        actuators are already torque motors. Otherwise installs
+        :func:`~strands_robots.policies.wbc_latent.install_wbc_latent_torque_control`
+        and returns its ``uninstall``.
+        """
+        from strands_robots.policies.base import iter_policy_tree
+
+        try:
+            from strands_robots.policies.wbc_latent import (
+                WBCLatentPolicy,
+                install_wbc_latent_torque_control,
+                wbc_latent_uses_position_servo,
+            )
+        except ImportError:
+            return None
+        latent = next((p for p in iter_policy_tree(policy) if isinstance(p, WBCLatentPolicy)), None)
+        if latent is None:
+            return None
+        world = self._world
+        if world is None or world._model is None:
+            return None
+        backend_state = getattr(world, "_backend_state", None)
+        if isinstance(backend_state, dict) and backend_state.get("action_controller") is not None:
+            return None
+        if not wbc_latent_uses_position_servo(self, robot_name):
+            return None
+        controller = install_wbc_latent_torque_control(self, latent, robot_name)
+        logger.info(
+            "auto-installed wbc_latent torque control on %r (position-servo actuators detected): the SONIC "
+            "decoder's joint targets are tracked with its own per-joint PD gains on all 29 joints. Pass "
+            "wbc_install_torque_control=False to opt out.",
+            robot_name,
+        )
         return controller.uninstall
 
     def list_robots_info(self) -> dict[str, Any]:
@@ -5606,6 +5663,9 @@ class MuJoCoSimEngine(
         # lock; ``None`` when nothing is open or a rollout owns the recorder.
         recorded_frames = 0
         clock: _StepRecordingClock | None = None
+        # MuJoCo resets a diverged world and says so only on stderr; read its
+        # counters before, and after each batch, so the reset is reported.
+        unstable_before = instability_counts(mj, self._world._data)
         # Process in batches, releasing lock between batches so stop_policy
         # and other actions can interleave on long runs.
         remaining = n_steps
@@ -5665,6 +5725,16 @@ class MuJoCoSimEngine(
                     mj.mj_forward(self._world._model, self._world._data)
                 self._world.sim_time = self._world._data.time
                 self._world.step_count += batch
+                diverged = divergence_error(mj, self._world._model, self._world._data, unstable_before, "step")
+            if diverged is not None:
+                done = n_steps - remaining
+                return {
+                    "status": "error",
+                    "content": [
+                        {"text": f"{diverged} (advanced {done} of {n_steps} steps.)"},
+                        {"json": {"diverged": True, "steps_advanced": done}},
+                    ],
+                }
         self._publish_ros_telemetry()
         text = f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"
         if clock is not None:
@@ -7478,6 +7548,10 @@ class MuJoCoSimEngine(
         # chunk) leaves a dangling partial episode we must discard so the next
         # recording starts at frame 0 rather than appending to a half-episode.
         completed_cleanly = False
+        # Set when MuJoCo declares the physics unstable mid-rollout; the loop
+        # stops there, and the partial episode is discarded like any other
+        # unclean exit (its last frames would show the reset, not the task).
+        diverged: str | None = None
         # Pace on a DEADLINE, not a delay: ``time.sleep(1 / control_frequency)``
         # added each step's work - N policy queries, one camera render, the
         # recorder's frame write - to the period, so the loop ran at ``1 /
@@ -7562,6 +7636,7 @@ class MuJoCoSimEngine(
                             robot = self._world.robots[rname]
                             pfx = robot.namespace or ""
                             self._apply_action_by_name(self._world._model, self._world._data, act, pfx, mj, rname)
+                        unstable_before = instability_counts(mj, self._world._data)
                         for _ in range(n_substeps):
                             mj.mj_step(self._world._model, self._world._data)
                             # Kinematic attachments (attach_bodies mode="kinematic")
@@ -7573,6 +7648,11 @@ class MuJoCoSimEngine(
                         self._world.step_count += n_substeps
                         if hasattr(self, "_viewer_handle") and self._viewer_handle is not None:
                             self._viewer_handle.sync()
+                        diverged = divergence_error(
+                            mj, self._world._model, self._world._data, unstable_before, "run_multi_policy"
+                        )
+                    if diverged is not None:
+                        break
 
                     # --- 4. Record ONE merged frame (all robots + all cameras).
                     # ``recording`` already implies ``recorder is not None`` (see its
@@ -7598,7 +7678,7 @@ class MuJoCoSimEngine(
 
                     ticker.wait()
 
-            completed_cleanly = True
+            completed_cleanly = diverged is None
         except CooperativeStop:
             # A cooperative stop is a normal, user-requested halt: the frames
             # captured so far are valid and the caller will save_episode them.
@@ -7614,6 +7694,14 @@ class MuJoCoSimEngine(
             if not completed_cleanly and recording and recorder is not None:
                 recorder.clear_episode_buffer()
 
+        if diverged is not None:
+            text = f"{diverged} Stopped after {step_count} synchronized steps"
+            if recording:
+                text += "; the partial episode was discarded"
+            return {
+                "status": "error",
+                "content": [{"text": f"{text}."}, {"json": {"steps": step_count, "diverged": True}}],
+            }
         text = (
             f"{'stopped early' if stopped_early else 'completed'}: "
             f"run_multi_policy on {len(policies)} robots ({', '.join(policies)}) - "
@@ -7875,18 +7963,8 @@ class MuJoCoSimEngine(
             # ...and the nearest of them is named, the way an unknown action or
             # an unknown robot already is: ``policy`` is answered with
             # ``policy_provider, policy_config`` instead of a 20-name list to
-            # scan.
-            hint = close_match_hint(reported_unknown, valid_sorted)
-            return None, {
-                "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"Unknown parameter '{reported_unknown}' for action '{action}'.{hint} Valid: {valid_sorted}"
-                        )
-                    }
-                ],
-            }
+            # scan. The sentence is the one the real arm tool uses too.
+            return None, unknown_parameter_error([reported_unknown], action, valid_sorted)
 
         # 2) Scalar string type validation. The schema publishes these as
         # strings, and every value at this boundary arrives as JSON, so a

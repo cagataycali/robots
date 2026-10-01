@@ -613,6 +613,61 @@ def _read_config_json(pretrained_name_or_path: str, revision: str | None = None)
     return None
 
 
+def config_for_untagged_checkpoint(
+    pretrained_name_or_path: str, policy_type: str, revision: str | None = None
+) -> Any | None:
+    """Parse a checkpoint's ``config.json`` for ``policy_type`` when the file has no ``type`` tag.
+
+    ``PreTrainedConfig.from_pretrained`` reads the draccus ``type`` tag to pick
+    the config class and raises ``Missing 'type' field`` without it. A
+    checkpoint saved through ``save_pretrained`` on a training fork can carry
+    every field of ``PI05Config`` and no tag (``nepyope/pi05-can-to-martino-12k``
+    does); the caller already named the policy type, which is the information
+    the tag would have supplied.
+
+    Args:
+        pretrained_name_or_path: Local path or HF model ID.
+        policy_type: The LeRobot policy type the caller named (``"pi05"``).
+        revision: Optional Hub revision to pin the read to.
+
+    Returns:
+        The parsed config object to pass as ``from_pretrained(config=...)``, or
+        ``None`` when the file cannot be read, already carries a ``type`` tag
+        (the normal path handles it), or does not parse for that class.
+    """
+    raw = _read_config_json(pretrained_name_or_path, revision)
+    if not raw or raw.get("type") is not None:
+        return None
+    try:
+        import tempfile
+
+        import draccus  # type: ignore[import-not-found]
+        from lerobot.configs.policies import PreTrainedConfig  # type: ignore[import-not-found]
+
+        # The config class registers itself with draccus when its modeling
+        # module is imported; resolving the policy class does that import.
+        resolve_policy_class_by_name(policy_type)
+        config_cls = PreTrainedConfig.get_choice_class(policy_type)
+        with tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False, encoding="utf-8") as handle:
+            json.dump(raw, handle)
+            temp_path = handle.name
+        try:
+            with draccus.config_type("json"):
+                parsed = draccus.parse(config_cls, temp_path, args=[])
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
+    except Exception as exc:  # noqa: BLE001 - fall back to the normal loader, which reports its own error
+        logger.debug("config_for_untagged_checkpoint(%s, %s) failed: %s", pretrained_name_or_path, policy_type, exc)
+        return None
+    logger.info(
+        "%s: config.json carries no 'type' tag; parsed it as %s for policy_type=%r",
+        pretrained_name_or_path,
+        type(parsed).__name__,
+        policy_type,
+    )
+    return parsed
+
+
 def declared_image_features(pretrained_name_or_path: str, revision: str | None = None) -> set[str] | None:
     """The image features a checkpoint declares, read before its weights are.
 
@@ -640,6 +695,42 @@ def declared_image_features(pretrained_name_or_path: str, revision: str | None =
     if not isinstance(features, dict):
         return None
     return {name for name, spec in features.items() if isinstance(spec, dict) and spec.get("type") == "VISUAL"}
+
+
+def declared_action_dim(pretrained_name_or_path: str, revision: str | None = None) -> int | None:
+    """The action width a checkpoint declares, read before its weights are.
+
+    ``config.json`` records ``output_features.action.shape``, so whether an
+    embodiment's ``action_keys`` can be driven by this head is knowable before
+    the weight download. Read by ``LerobotLocalPolicy.preflight`` through
+    ``EmbodimentMap.action_dim_error``, the rule ``validate`` applies after the
+    load; the answer is the same, only earlier.
+
+    Args:
+        pretrained_name_or_path: Local path or HF model ID.
+        revision: Optional Hub revision to pin the read to.
+
+    Returns:
+        The declared width, or ``None`` when the checkpoint records no
+        ``output_features`` action shape or cannot be read. ``None`` means
+        "unknown" and must not be read as a width.
+    """
+    config = _read_config_json(pretrained_name_or_path, revision)
+    if config is None:
+        return None
+    features = config.get("output_features")
+    if not isinstance(features, dict):
+        return None
+    action = features.get("action")
+    if not isinstance(action, dict):
+        return None
+    shape = action.get("shape")
+    if not isinstance(shape, list) or not shape:
+        return None
+    width = shape[0]
+    if isinstance(width, bool) or not isinstance(width, int) or width < 1:
+        return None
+    return width
 
 
 #: LeRobot policy types whose image preparation accepts a batch carrying only

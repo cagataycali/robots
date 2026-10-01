@@ -27,13 +27,13 @@
   --md-default-fg-color--light: var(--sr-charcoal-2);
   --md-default-fg-color--lighter: #666464;
   --md-default-fg-color--lightest: rgba(0, 0, 0, 0.15);
-  --md-code-bg-color: #f6f8fa;
-  --md-code-fg-color: #24292e;
-  --md-code-hl-color: rgba(2, 164, 53, 0.16);
-  --md-code-hl-keyword-color: #d73a49; --md-code-hl-operator-color: #d73a49; --md-code-hl-string-color: #032f62;
-  --md-code-hl-function-color: #6f42c1; --md-code-hl-number-color: #005cc5; --md-code-hl-constant-color: #005cc5;
-  --md-code-hl-special-color: #e36209; --md-code-hl-generic-color: #22863a; --md-code-hl-comment-color: #6a737d;
-  --md-code-hl-name-color: var(--md-code-fg-color); --md-code-hl-variable-color: var(--md-code-fg-color); --md-code-hl-punctuation-color: var(--md-code-fg-color);
+  --md-code-bg-color: var(--sr-chip-bg);
+  --md-code-fg-color: var(--md-default-fg-color--light);
+  --md-code-hl-color: var(--sr-accent-soft);
+  --md-code-hl-keyword-color: var(--md-default-fg-color); --md-code-hl-operator-color: var(--md-default-fg-color--light); --md-code-hl-string-color: var(--sr-accent);
+  --md-code-hl-function-color: var(--md-default-fg-color); --md-code-hl-number-color: var(--md-default-fg-color--light); --md-code-hl-constant-color: var(--md-default-fg-color--light);
+  --md-code-hl-special-color: var(--md-default-fg-color); --md-code-hl-generic-color: var(--md-default-fg-color--light); --md-code-hl-comment-color: var(--sr-muted);
+  --md-code-hl-name-color: var(--md-default-fg-color); --md-code-hl-variable-color: var(--md-default-fg-color); --md-code-hl-punctuation-color: var(--md-default-fg-color--light);
   --md-typeset-color: var(--sr-charcoal-2);
   --md-typeset-kbd-color: #f4f4f4;
   --md-admonition-bg-color: #ffffff;
@@ -72,13 +72,13 @@
   --md-default-fg-color--light: #b6b6b6;
   --md-default-fg-color--lighter: #999696;
   --md-default-fg-color--lightest: var(--sr-charcoal-1);
-  --md-code-bg-color: #24292e;
-  --md-code-fg-color: #e1e4e8;
-  --md-code-hl-color: rgba(0, 204, 96, 0.16);
-  --md-code-hl-keyword-color: #f97583; --md-code-hl-operator-color: #f97583; --md-code-hl-string-color: #9ecbff;
-  --md-code-hl-function-color: #b392f0; --md-code-hl-number-color: #79b8ff; --md-code-hl-constant-color: #79b8ff;
-  --md-code-hl-special-color: #ffab70; --md-code-hl-generic-color: #85e89d; --md-code-hl-comment-color: #6a737d;
-  --md-code-hl-name-color: var(--md-code-fg-color); --md-code-hl-variable-color: var(--md-code-fg-color); --md-code-hl-punctuation-color: var(--md-code-fg-color);
+  --md-code-bg-color: var(--sr-chip-bg);
+  --md-code-fg-color: var(--md-default-fg-color--light);
+  --md-code-hl-color: var(--sr-accent-soft);
+  --md-code-hl-keyword-color: var(--md-default-fg-color); --md-code-hl-operator-color: var(--md-default-fg-color--light); --md-code-hl-string-color: var(--sr-accent);
+  --md-code-hl-function-color: var(--md-default-fg-color); --md-code-hl-number-color: var(--md-default-fg-color--light); --md-code-hl-constant-color: var(--md-default-fg-color--light);
+  --md-code-hl-special-color: var(--md-default-fg-color); --md-code-hl-generic-color: var(--md-default-fg-color--light); --md-code-hl-comment-color: var(--sr-muted);
+  --md-code-hl-name-color: var(--md-default-fg-color); --md-code-hl-variable-color: var(--md-default-fg-color); --md-code-hl-punctuation-color: var(--md-default-fg-color--light);
   --md-typeset-color: #b6b6b6;
   --md-typeset-kbd-color: var(--sr-charcoal-1);
   --md-admonition-bg-color: var(--sr-black);
@@ -101,7 +101,24 @@
 
 /* Material's slate theme paints code and hl in its own tokens; keep them on our surfaces. */
 [data-md-color-scheme="slate"] .md-typeset .highlight, [data-md-color-scheme="slate"] .md-typeset pre > code { background: var(--md-code-bg-color); }
-.md-typeset .highlight span.filename { background: var(--sr-term-head); color: var(--md-code-fg-color); }
+/* Fences are cards: chip surface, 1px border, the site radius; keywords in ink at weight 500, strings the one green. */
+.md-typeset .highlight { position: relative; }
+.md-typeset .highlight > pre > code, .md-typeset pre > code { border: 1px solid var(--sr-pill-border); border-radius: var(--sr-radius); padding-right: 2.6rem; }
+.md-typeset .highlight :is(.k, .kd, .kn, .kp, .kr, .kt, .ow, .nd) { font-weight: 500; }
+/* A title is not a filename tab: it is a mono chip on the fence's top edge, right of the copy button's column. */
+.md-typeset .highlight span.filename, .md-typeset .language-text.highlight::before { position: absolute; top: -0.62rem; right: 2.6rem; z-index: 1; margin: 0; padding: 0.1rem 0.55rem; font: 500 0.56rem/1.7 var(--sr-mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--sr-muted); background: var(--md-default-bg-color); border: 1px solid var(--sr-pill-border); border-radius: 999px; }
+.md-typeset .highlight span.filename + pre > code { border-radius: var(--sr-radius); }
+.md-typeset .language-text.highlight::before { content: "output"; }
+.md-typeset .highlight span.filename + pre, .md-typeset .language-text.highlight > pre { margin-top: 1.2em; }
+/* Mermaid fences (assets/mermaid.js): the theme paints ink on the page surface; the CSS gives 8px corners, 1px strokes, dashed clusters, filled heads. */
+.md-typeset .sr-mermaid { margin: 1.5rem auto; text-align: center; }
+.md-typeset .sr-mermaid svg { max-width: 100%; height: auto; font-family: var(--sr-mono); }
+.md-typeset .sr-mermaid svg :is(.node rect, .node polygon, .node path, .actor, rect.actor, .state-group rect, .statediagram-state rect, .note, .labelBox, .loopLine, .activation0, .activation1) { rx: 8px; ry: 8px; stroke-width: 1px !important; filter: none; }
+.md-typeset .sr-mermaid svg :is(.cluster rect, .cluster-label rect) { stroke: var(--sr-muted) !important; stroke-dasharray: 4 4; fill: var(--md-default-bg-color) !important; rx: 8px; ry: 8px; }
+.md-typeset .sr-mermaid svg :is(.edgePath path, .messageLine0, .messageLine1, .transition, .actor-line) { stroke-width: 1.5px !important; }
+.md-typeset .sr-mermaid svg :is(marker path, .arrowheadPath, .marker) { fill: var(--sr-fg) !important; stroke: var(--sr-fg) !important; }
+.md-typeset .sr-mermaid svg .messageLine1 { stroke-dasharray: 3 5; }
+.md-typeset .sr-mermaid svg .edgeLabel rect { fill: var(--md-default-bg-color); stroke: none; } /* sized by mermaid.js so a label never reads through its wire */
 
 /* Header: one row. Wordmark out to strandsagents.com, /robots home, the sections inline, then search, GitHub stars, Discord, theme. */
 .md-header { background: var(--md-default-bg-color); color: var(--sr-fg); box-shadow: none; border-bottom: 1px solid var(--md-default-fg-color--lightest); }
@@ -170,7 +187,6 @@
 .md-typeset a:hover { color: var(--sr-accent-bright); }
 .md-typeset code { border-radius: 3px; }
 .md-typeset :not(pre) > code { background: var(--sr-code-inline); }
-.md-typeset pre > code { border-radius: var(--sr-radius); }
 .md-typeset table:not([class]) { font-size: 0.72rem; border: 1px solid var(--md-default-fg-color--lightest); border-radius: var(--sr-radius); }
 .md-typeset table:not([class]) th { font-family: var(--sr-mono); font-weight: 600; color: var(--sr-fg); }
 .md-typeset .admonition, .md-typeset details { border-radius: var(--sr-radius); box-shadow: none; }
@@ -237,6 +253,8 @@
 /* Chips are the homepage's outlined pills: the colour is the outline and the text, never a fill. */
 .sr-chip { font-size: 0.58rem; line-height: 1; padding: 0.22rem 0.45rem; border-radius: 999px; border: 1px solid var(--sr-pill-border); color: var(--md-default-fg-color--light); letter-spacing: 0.02em; }
 .sr-chip-sim { border-color: var(--sr-accent); color: var(--sr-accent); }
+/* Local render shown on a robot page the browser viewer cannot stream (the URDF robots). */
+.sr-thumb { display: block; max-width: 640px; width: 100%; height: auto; margin: 0.5rem 0 1rem; border-radius: 0.5rem; background: var(--sr-stage, transparent); }
 .sr-chip-real { border-color: #946e00; color: #946e00; }
 [data-md-color-scheme="slate"] .sr-chip-real { border-color: #f6bc00; color: #f6bc00; }
 
@@ -363,3 +381,12 @@ body.sr-viewer-fullscreen { overflow: hidden; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
   html { scroll-behavior: auto; }
 }
+
+/* Drawings and simulation artifacts placed by docs/hooks/visuals.py. Each drawing ships a paper
+   and a dark SVG; the scheme attribute picks one (Material's own #only-* rules key on its default
+   scheme name, which this site does not use). */
+.md-typeset figure.sr-drawing, .md-typeset figure.sr-sim { width: 100%; max-width: 100%; margin: 1.2rem 0; }
+.md-typeset figure.sr-drawing img, .md-typeset figure.sr-sim img, .md-typeset figure.sr-sim video { display: block; width: 100%; height: auto; border: 1px solid var(--sr-pill-border); border-radius: var(--sr-radius); background: var(--md-default-bg-color); }
+.md-typeset figure.sr-sim figcaption { font-family: var(--sr-mono); font-style: normal; font-size: 0.68rem; color: var(--sr-muted); text-align: left; margin: 0.4rem 0 0; }
+[data-md-color-scheme="paper"] figure.sr-drawing img[src$="#only-dark"] { display: none; }
+[data-md-color-scheme="slate"] figure.sr-drawing img[src$="#only-light"] { display: none; }

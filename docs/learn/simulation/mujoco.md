@@ -4,7 +4,7 @@ description: The MuJoCo backend: install, offscreen rendering, physics queries, 
 
 # MuJoCo
 
-By the end of this page you can run the default backend headless on a laptop, read physics quantities, save and restore states, and know which calls are MuJoCo-only.
+By the end of this page you can run the default backend headless on a laptop, read physics quantities, save and restore states, and know the MuJoCo-only calls.
 
 ```bash
 pip install 'strands-robots[sim-mujoco]'   # mujoco, robot_descriptions, imageio(-ffmpeg), mink, qpsolvers[daqp]
@@ -13,12 +13,12 @@ export MUJOCO_GL=cgl                       # macOS. Linux without a display: egl
 
 ## What it is
 
-`MuJoCoSimEngine` (`strands_robots/simulation/mujoco/`) is CPU physics at 500 Hz by default plus offscreen rendering, assembled from mixins: `physics.py` (queries and state), `scene_ops.py` and `spec_builder.py` (MjSpec editing), `rendering.py` (cameras, observations), `manipulation.py` (attach, actuate), `randomization.py`, `motion_primitives.py`, `recording.py`. Robot models come from `robot_descriptions` and the bundled menagerie assets; `create_world` reports how many are available.
+`MuJoCoSimEngine` (`strands_robots/simulation/mujoco/`) is CPU physics at 500 Hz by default plus offscreen rendering, from mixins: `physics.py` (queries and state), `scene_ops.py` and `spec_builder.py` (MjSpec editing), `rendering.py` (cameras, observations), `manipulation.py` (attach, actuate), `randomization.py`, `motion_primitives.py`, `recording.py`. Robot models come from `robot_descriptions` and the bundled menagerie assets.
 
 ```python
 from strands_robots.simulation import create_simulation
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("so101")
 sim.add_object(name="cube", shape="box", size=[0.03, 0.03, 0.03], position=[0.25, 0.0, 0.15])
@@ -36,7 +36,7 @@ You should see the cube's `pos:` line with `z` near `0.015` (fallen and settled)
 
 ## Rendering
 
-`render(camera_name="default", width=None, height=None)` returns a PNG in the content list; `get_observation(robot)` returns the raw `(H, W, 3)` array per camera plus a scalar per joint and its `.vel` companion. `skip_images=True` skips rendering, the 10x throughput win a non-VLA policy gets from `requires_images = False`. `open_viewer()` opens the interactive MuJoCo viewer when a display exists; on macOS run the script with `mjpython` (installed by the mujoco wheel) or the call is refused naming it.
+`render(camera_name="default", width=None, height=None)` returns a PNG in the content list; `get_observation(robot)` returns the raw `(H, W, 3)` array per camera plus a scalar per joint and its `.vel` companion. `skip_images=True` skips rendering, the 10x throughput win a non-VLA policy gets from `requires_images = False`. `open_viewer()` opens the interactive MuJoCo viewer when a display exists; on macOS run the script with `mjpython` (from the mujoco wheel) or the call is refused naming it.
 
 ## Physics surface
 
@@ -58,14 +58,16 @@ You should see the cube's `pos:` line with `z` near `0.015` (fallen and settled)
 
 ## Scene editing
 
-The scene is an `MjSpec` that is recompiled after every structural change, so `add_robot`, `add_object` and `add_camera` work on a live world. `patch_scene_mjcf(ops)` applies `add_body`, `add_geom`, `add_site`, `set_body_pos`, `set_body_quat`, `delete_body` atomically; `replace_scene_mjcf(xml)` swaps the whole model; `load_scene(path)` starts from an MJCF file; `export_xml(path)` writes the current model out. Details and the size conventions are on [worlds and objects](worlds-and-objects.md).
+The scene is an `MjSpec` recompiled after every structural change, so `add_robot`, `add_object` and `add_camera` work on a live world. `patch_scene_mjcf`, `replace_scene_mjcf`, `load_scene` and `export_xml` edit, swap, load and write the model; details and size conventions: [worlds and objects](worlds-and-objects.md#scene-editing).
 
 ## Time
 
 `create_world(timestep=0.002)` sets physics at 500 Hz. `run_policy(control_frequency=50.0)` steps `1 / (50 * timestep)` physics substeps per action; `control_substeps` pins it. `step(n)` advances `n` physics steps; `physics_timestep()` reads the live value.
 
+If the physics diverges MuJoCo resets the world; `step`, `send_action` and rollouts return `status="error"` with `{"diverged": true}`; `reset()` recovers.
+
 ## Limits
 
 - CPU only, one world per process; batched environments use `newton` or `isaac`.
-- Offscreen rendering needs a GL backend; a headless Linux box without EGL sets `MUJOCO_GL=osmesa` and accepts slow frames.
+- Offscreen rendering needs a GL backend; a headless Linux box without EGL sets `MUJOCO_GL=osmesa`, accepting slow frames.
 - `mjx` is an alias for the same CPU engine; there is no JAX path.
