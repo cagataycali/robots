@@ -72,7 +72,7 @@ FAMILIES: dict[str, tuple[str, str]] = {
 #: Family -> the sentence a simulated robot page ends its fence with: what to do
 #: next with this kind of body, pointing at the guide that shows it.
 NEXT_STEPS: dict[str, str] = {
-    "arm": "Add a cube and a camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).",
+    "arm": "Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).",
     "bimanual": "One action dict drives both arms; [composition](../learn/policies/index.md) runs a policy per arm.",
     "hand": "`robot_joint_names` lists the finger joints a policy drives; set them by name with `set_joint_positions` or from a [policy](../learn/policies/index.md).",
     "humanoid": "Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).",
