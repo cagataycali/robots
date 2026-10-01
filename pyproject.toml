@@ -685,6 +685,16 @@ ros2 = [
 ollama = [
     "strands-agents[ollama]>=1.57.0,<2.0.0",
 ]
+# Live Foxglove view and MCAP recording (strands_robots/foxglove/). foxglove-sdk
+# is a Rust wheel (abi3, about 16 MB) that serves the Foxglove WebSocket
+# protocol and writes MCAP; mcap is the pure-Python reader used to verify a
+# file independently of the writer. The ceiling admits 0.25 to 0.27 so the
+# extra resolves next to lerobot[viz], which pins foxglove-sdk>=0.25.1,<0.26.0;
+# widen both together or the two extras stop installing into one environment.
+foxglove = [
+    "foxglove-sdk>=0.25.1,<0.28.0",
+    "mcap>=1.5.0,<2.0.0",
+]
 # Remote policy inference (client/server split): stream observations from a
 # CPU/edge robot host to a remote GPU PolicyServer and receive action chunks
 # back over a portable WS-JSON WebSocket protocol. Pulls only `websockets`
@@ -771,6 +781,7 @@ all = [
     "strands-robots[groot]",
     "strands-robots[ollama]",
     "strands-robots[inference]",
+    "strands-robots[foxglove]",
     "strands-robots[rosbridge]",
     "strands-robots[sagemaker]",
     "strands-robots[earthrover]",
