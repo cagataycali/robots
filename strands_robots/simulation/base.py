@@ -283,6 +283,33 @@ def close_match_hint(requested: object, known: Sequence[str]) -> str:
 DEFAULT_MODEL_DISCOVERY_HINT = " Use action='list_urdfs' to see all available robots."
 
 
+def unknown_parameter_error(unknown: Sequence[str], action: str, valid: Sequence[str]) -> dict[str, Any]:
+    """The tool result refusing an input key the action does not take.
+
+    One sentence for every robot tool: the sim tool built it inline and the
+    real arm tool did not check at all, so ``execute(..., bogus=1)`` went on
+    to the operator gate and the arm with the field silently dropped while the
+    sim refused the same mistake by name (GH #4167). ``unknown`` is named in
+    the caller's own spelling, ``valid`` is what the caller picks from next,
+    and the nearest of them is suggested through :func:`close_match_hint`.
+
+    Args:
+        unknown: The refused keys; the first is the one the sentence names.
+        action: The action the keys were sent with.
+        valid: The keys this action does take, already sorted by the caller.
+
+    Returns:
+        A ``{"status": "error", "content": [{"text": ...}]}`` tool result.
+    """
+    reported = unknown[0]
+    valid_sorted = list(valid)
+    hint = close_match_hint(reported, valid_sorted)
+    return {
+        "status": "error",
+        "content": [{"text": f"Unknown parameter '{reported}' for action '{action}'.{hint} Valid: {valid_sorted}"}],
+    }
+
+
 def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DISCOVERY_HINT) -> str:
     """Build the 'model could not be resolved' error for a robot name.
 
@@ -1395,6 +1422,31 @@ class SimEngine(ABC):
                 sole-robot default on this thread.
         """
         self._predicate_binding().robot = robot_name
+
+    def _bind_policy_state_keys(self, policy: Any, robot_name: str, *, prebuilt: bool) -> None:
+        """Bind *policy* to the robot's action keys - unless the caller already chose them.
+
+        A policy built here gets the robot's full ``robot_action_keys``. A
+        ``policy_object`` the caller configured keeps its own
+        ``robot_state_keys`` when every one of them is a key of this robot: the
+        rebinding used to overwrite them on every rollout, so a pi0.5-DROID
+        policy set to the panda's 7 arm joints + one gripper finger (8 of its
+        9 keys) was re-bound to all 9 and could not be driven as trained. Keys
+        that are not this robot's (or the generic ``joint_<i>`` placeholders a
+        checkpoint loads with) are replaced, as before.
+        """
+        robot_keys = list(self.robot_action_keys(robot_name))
+        chosen = list(getattr(policy, "robot_state_keys", None) or []) if prebuilt else []
+        if chosen and all(isinstance(k, str) for k in chosen) and set(chosen) <= set(robot_keys):
+            if chosen != robot_keys:
+                logger.info(
+                    "kept the %d robot_state_keys the caller set on the policy for %r (of the robot's %d)",
+                    len(chosen),
+                    robot_name,
+                    len(robot_keys),
+                )
+            return
+        policy.set_robot_state_keys(robot_keys)
 
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Give a policy the backend sim context it needs to close the loop.
@@ -3658,7 +3710,7 @@ class SimEngine(ABC):
         # matches the guarded binding in MujocoSimulation.run_policy's
         # multi-robot path.
         try:
-            policy.set_robot_state_keys(self.robot_action_keys(robot_name))
+            self._bind_policy_state_keys(policy, robot_name, prebuilt=policy_object is not None)
             self.bind_policy_sim_context(policy, robot_name)
         except Exception as exc:  # noqa: BLE001 - non-fatal policy configuration
             logger.debug("policy binding for %r failed: %s", robot_name, exc)
@@ -5486,6 +5538,13 @@ class SimEngine(ABC):
             than ``n_episodes``, and the aggregate covers only those episodes
             instead of averaging over ones whose data does not exist.
 
+            Physics: ``physics_error`` - ``None`` on every healthy evaluation,
+            and the backend's divergence report (episode, step, joint) when the
+            physics diverged and the backend reset the world mid-episode. The
+            evaluation stops there, the diverged episode is not counted and its
+            unsaved recording frames are discarded, and ``status`` is
+            ``"error"``.
+
             Video: ``video_paths`` (one MP4 per episode, empty when no
             recording was requested).
 
@@ -5656,7 +5715,7 @@ class SimEngine(ABC):
             # set robot_state_keys; we set defensively so semantics match the
             # provider path.
             policy = policy_object
-        policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
+        self._bind_policy_state_keys(policy, resolved_robot, prebuilt=policy_object is not None)
         self.bind_policy_sim_context(policy, resolved_robot)
         on_frame, recording_claim = self._evaluation_recording(resolved_robot, instruction, on_frame, "eval_policy")
 
@@ -5898,6 +5957,10 @@ class SimEngine(ABC):
             ``"error"`` - see :meth:`eval_policy`, which reports it the same
             way.
 
+            ``physics_error`` is ``None`` on every healthy run and carries the
+            divergence report when the physics diverged mid-episode; the
+            benchmark stops the same way :meth:`eval_policy` does.
+
             ``actions_applied`` (actions actually handed to ``send_action``),
             ``steps_advanced`` (control steps the benchmark advanced) and
             ``uncommanded_error`` report the same fact :meth:`eval_policy`
@@ -6089,7 +6152,7 @@ class SimEngine(ABC):
             # caller benchmark an already-loaded checkpoint (e.g. a multi-GB
             # VLA) without a create_policy round-trip / redundant reload.
             policy = policy_object
-        policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
+        self._bind_policy_state_keys(policy, resolved_robot, prebuilt=policy_object is not None)
         self.bind_policy_sim_context(policy, resolved_robot)
         # Frames are labelled with the instruction the POLICY is conditioned on:
         # the caller's, else the benchmark's own (#187 - LIBERO and friends ship
