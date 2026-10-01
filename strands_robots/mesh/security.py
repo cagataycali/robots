@@ -426,6 +426,8 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         # WBCGaitPolicy
         "wbc_gait",
         "sonic_gait",
+        # HolosomaPolicy (Amazon FAR Holosoma locomotion)
+        "holosoma",
         # WBCLatentPolicy (a VLA's SONIC motion tokens decoded into G1 joint targets)
         "wbc_latent",
         "sonic_latent",

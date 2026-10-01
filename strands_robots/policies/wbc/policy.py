@@ -225,6 +225,8 @@ class WBCPolicy(Policy):
             or the resolved config dimensions are inconsistent.
     """
 
+    #: Opts in to the MuJoCo PD-to-torque shim auto-install (see sim_control.PDTorquePolicy).
+    pd_torque_shim: ClassVar[bool] = True
     #: The controller reads joint state, the base IMU and the ``[vx, vy, omega]``
     #: command; the words of the task never shape a step. Declared so every
     #: envelope says so beside the instruction it echoes (#4159).
