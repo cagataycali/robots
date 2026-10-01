@@ -48,6 +48,7 @@ import re
 import subprocess
 import time
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -654,6 +655,8 @@ class IsaacLabTrainer(Trainer):
         exit_code = _read_exit_code(job_dir / runtime.EXIT_CODE_FILE)
         if record.get("kind") == "play":
             return self._play_status(job_id, job_dir, record, text, exit_code, alive)
+        if record.get("kind") == "record":
+            return self._record_status(job_id, job_dir, record, text, exit_code, alive)
         run_dir = find_run_dir(text, job_id)
         library = (record.get("run") or {}).get("rl_library")
         if library == "skrl":
@@ -861,6 +864,232 @@ class IsaacLabTrainer(Trainer):
             checkpoint_dir=trained.checkpoint_dir,
             metrics={"pid": proc.pid, "kind": "play", "of": job_id, "checkpoint": model},
             message=f"playing {Path(model).name} of {job_id} ({record['task']}, {num_envs} envs, {video_length} frames)",
+        )
+
+    def record(
+        self,
+        job_id: str,
+        dataset_dir: str,
+        *,
+        repo_id: str = "local/isaaclab_rollout",
+        episodes: int = 4,
+        frames: int = 300,
+        camera: bool = True,
+        camera_eye: Sequence[float] = (2.5, -2.5, 1.5),
+        camera_target: Sequence[float] = (0.0, 0.0, 0.3),
+        width: int = 320,
+        height: int = 240,
+        task_description: str | None = None,
+        timeout_s: float | None = None,
+        wait: bool = False,
+    ) -> TrainResult:
+        """Roll a finished run's policy out in Isaac Lab and record it as a LeRobotDataset.
+
+        Isaac Lab's own ``play`` writes one viewport mp4 and has no route to a
+        dataset, so every Isaac Lab dataset strands produced took an
+        out-of-tree harness running strands inside the Isaac Lab interpreter.
+        This launches :mod:`strands_robots.training._isaaclab_record_runner` - shipped with strands,
+        run by ``ISAACLAB_PYTHON``, importing no strands - which rolls the
+        newest checkpoint out in ``episodes`` parallel environments (env ``i``
+        is episode ``i``, from one reset to its first ``done`` or ``frames``)
+        in the physics preset and ``env.*`` overrides the run trained with, and
+        writes each episode's arrays. :meth:`status` of the returned job then
+        converts them here, with :class:`~strands_robots.dataset_recorder.DatasetRecorder`:
+
+        * ``observation.state`` - the robot's joint positions by name, then the
+          policy's own observation vector, the root position (from the env
+          origin) and the root quaternion as Isaac Lab reports it (x-y-z-w);
+        * ``action`` - the policy's action, named by the action terms' joints;
+        * ``observation.images.camera`` - a fixed camera per env at
+          ``camera_eye`` looking at ``camera_target`` (both from the env
+          origin), when ``camera``.
+
+        Returns:
+            ``running`` with the recording's own ``job_id``, or its verdict under
+            ``wait``; the verdict's ``metrics['dataset']`` is the dataset root.
+        """
+        ctx = self.provider_name
+        trained = self.status(job_id)
+        if trained.status == "running":
+            return TrainResult(status="error", job_id=job_id, message=f"{ctx}: job {job_id} is still training")
+        if trained.metrics.get("kind") in ("play", "record"):
+            return TrainResult(status="error", job_id=job_id, message=f"{ctx}: {job_id} is not a training job")
+        model = trained.metrics.get("latest_model")
+        if not trained.checkpoint_dir or not model:
+            return TrainResult(
+                status="error",
+                job_id=job_id,
+                message=f"{ctx}: job {job_id} has no checkpoint to record ({trained.message})",
+            )
+        for value, name in ((episodes, "episodes"), (frames, "frames"), (width, "width"), (height, "height")):
+            if (error := positive_count_error(value, name, ctx)) is not None:
+                return TrainResult(status="error", job_id=job_id, message=error)
+        if error := boolean_flag_error(camera, "camera", ctx):
+            return TrainResult(status="error", job_id=job_id, message=error)
+        points = {}
+        for point, name in ((camera_eye, "camera_eye"), (camera_target, "camera_target")):
+            if not (
+                isinstance(point, Sequence)
+                and len(point) == 3
+                and all(isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v) for v in point)
+            ):
+                return TrainResult(status="error", job_id=job_id, message=f"{ctx}: {name} must be three finite numbers")
+            points[name] = ",".join(repr(float(v)) for v in point)
+        if not isinstance(dataset_dir, str) or not dataset_dir.strip():
+            return TrainResult(status="error", job_id=job_id, message=f"{ctx}: dataset_dir must be a directory path")
+        if not isinstance(repo_id, str) or not re.match(r"^[\w.-]+/[\w.-]+\Z", repo_id):
+            return TrainResult(status="error", job_id=job_id, message=f"{ctx}: repo_id must be '<owner>/<name>'")
+        if timeout_s is not None and (error := positive_finite_number_error(timeout_s, "timeout_s", ctx)):
+            return TrainResult(status="error", job_id=job_id, message=error)
+        problems = runtime.runtime_problems(self._python, context=ctx)
+        if problems:
+            return TrainResult(status="error", job_id=job_id, message="; ".join(problems))
+        record = json.loads((self._jobs_dir / job_id / _JOB_FILE).read_text(encoding="utf-8"))
+        run = record.get("run") or {}
+        if run.get("rl_library", "rsl_rl") != "rsl_rl":
+            return TrainResult(
+                status="error",
+                job_id=job_id,
+                message=f"{ctx}: recording replays rsl_rl policies; this run used {run['rl_library']}",
+            )
+        rec_id = f"isaaclab-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{uuid.uuid4().hex[:12]}"
+        rec_dir = self._jobs_dir / rec_id
+        rec_dir.mkdir(parents=True, exist_ok=False)
+        runner_script = Path(__file__).with_name("_isaaclab_record_runner.py")
+        cmd = [
+            str(self._python),
+            str(runner_script),
+            "--task",
+            str(record["task"]),
+            "--checkpoint",
+            str(model),
+            "--agent",
+            str(run.get("agent") or "rsl_rl_cfg_entry_point"),
+            "--episodes",
+            str(int(episodes)),
+            "--frames",
+            str(int(frames)),
+            "--camera",
+            "fixed" if camera else "none",
+            "--eye",
+            points["camera_eye"],
+            "--target",
+            points["camera_target"],
+            "--width",
+            str(int(width)),
+            "--height",
+            str(int(height)),
+            "--out",
+            str(rec_dir / "rollout"),
+        ]
+        if run.get("seed") is not None:
+            cmd += ["--seed", str(run["seed"])]
+        # The environment the policy trained in, as play() replays it.
+        replay = [o for o in run.get("overrides") or [] if o.startswith(("physics=", "env."))]
+        if run.get("physics") and not any(o.startswith("physics=") for o in replay):
+            replay.insert(0, f"physics={run['physics']}")
+        for override in replay:
+            cmd += ["--override", override]
+        proc = runtime.launch(
+            cmd,
+            cwd=Path(record["cwd"]),
+            log_path=rec_dir / _LOG_FILE,
+            exit_file=rec_dir / runtime.EXIT_CODE_FILE,
+            timeout_s=float(timeout_s) if timeout_s is not None else None,
+            timed_out_file=rec_dir / _TIMED_OUT_FILE,
+        )
+        _CHILDREN[rec_id] = proc
+        started = time.time()
+        (rec_dir / _JOB_FILE).write_text(
+            json.dumps(
+                {
+                    "job_id": rec_id,
+                    "kind": "record",
+                    "of": job_id,
+                    "pid": proc.pid,
+                    "cmd": cmd,
+                    "cwd": record["cwd"],
+                    "started": started,
+                    "deadline": started + float(timeout_s) if timeout_s is not None else None,
+                    "task": record["task"],
+                    "run_dir": trained.checkpoint_dir,
+                    "checkpoint": model,
+                    "dataset_dir": str(Path(dataset_dir).expanduser().resolve()),
+                    "repo_id": repo_id,
+                    "task_description": task_description or f"{record['task']}: rollout of a trained rsl_rl policy",
+                },
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
+        logger.info("isaaclab: recording %s (pid %d): %s", model, proc.pid, " ".join(cmd))
+        if wait:
+            result = self.status(rec_id)
+            while result.status == "running":
+                time.sleep(self._poll_interval_s)
+                result = self.status(rec_id)
+            return result
+        return TrainResult(
+            status="running",
+            job_id=rec_id,
+            checkpoint_dir=trained.checkpoint_dir,
+            metrics={"pid": proc.pid, "kind": "record", "of": job_id, "checkpoint": model},
+            message=f"recording {episodes} episodes of {Path(model).name} ({record['task']})",
+        )
+
+    def _record_status(
+        self, job_id: str, job_dir: Path, record: dict[str, Any], text: str, exit_code: int | None, alive: bool
+    ) -> TrainResult:
+        """The verdict of a recording: the LeRobotDataset it wrote, converted here once the rollout ends."""
+        metrics: dict[str, Any] = {"kind": "record", "of": record.get("of"), "checkpoint": record.get("checkpoint")}
+        tail = "\n".join(text.strip().splitlines()[-_TAIL_LINES:])
+        if alive:
+            return TrainResult(status="running", job_id=job_id, metrics=metrics, message="recording the rollout")
+        done_file = job_dir / "dataset.json"
+        if done_file.is_file():
+            metrics.update(json.loads(done_file.read_text(encoding="utf-8")))
+            return TrainResult(
+                status="success",
+                job_id=job_id,
+                checkpoint_dir=record.get("run_dir"),
+                metrics=metrics,
+                message=_recorded_line(metrics),
+            )
+        raw = job_dir / "rollout"
+        if exit_code != 0 or not (raw / "meta.json").is_file():
+            failure, error_line = classify_failure(text, {})
+            if (job_dir / _TIMED_OUT_FILE).exists():
+                failure = "timeout"
+            metrics["failure"] = failure or "exit_status"
+            metrics["error"] = error_line or f"the rollout exited {exit_code} without its episodes"
+            return TrainResult(
+                status="error",
+                job_id=job_id,
+                checkpoint_dir=record.get("run_dir"),
+                metrics=metrics,
+                message=f"{self.provider_name}: recording failed: {metrics['error']}; log tail:\n{tail}",
+            )
+        try:
+            summary = rollout_to_dataset(
+                raw, record["dataset_dir"], repo_id=record["repo_id"], task=record["task_description"]
+            )
+        except (ImportError, OSError, ValueError, KeyError, RuntimeError) as exc:
+            metrics.update(failure="dataset", error=f"{type(exc).__name__}: {exc}")
+            return TrainResult(
+                status="error",
+                job_id=job_id,
+                checkpoint_dir=record.get("run_dir"),
+                metrics=metrics,
+                message=f"{self.provider_name}: the rollout finished but the dataset could not be written: {metrics['error']}",
+            )
+        done_file.write_text(json.dumps(summary, indent=1), encoding="utf-8")
+        metrics.update(summary)
+        return TrainResult(
+            status="success",
+            job_id=job_id,
+            checkpoint_dir=record.get("run_dir"),
+            metrics=metrics,
+            message=_recorded_line(metrics),
         )
 
     def _play_status(
@@ -1291,6 +1520,84 @@ def _extra_problems(extra: dict[str, Any], ctx: str) -> list[str]:
             elif not extra.get("video"):
                 problems.append(f"{ctx}: extra['{key}'] is read only with extra['video']=True")
     return problems
+
+
+def rollout_to_dataset(raw_dir: str | Path, dataset_dir: str, *, repo_id: str, task: str) -> dict[str, Any]:
+    """Convert what :mod:`strands_robots.training._isaaclab_record_runner` wrote into a LeRobotDataset at *dataset_dir*.
+
+    One dataset episode per rollout episode, with ``observation.state`` = joint
+    positions by name + ``policy_obs`` + ``root_pos`` + ``root_quat`` (x-y-z-w),
+    ``action`` named by the runner's action names, and
+    ``observation.images.camera`` when the rollout had a camera. An episode
+    with no frames is skipped. Returns what the dataset holds.
+    """
+    import numpy as np
+
+    from strands_robots.dataset_recorder import DatasetRecorder
+
+    raw = Path(raw_dir)
+    meta = json.loads((raw / "meta.json").read_text(encoding="utf-8"))
+    joints, actions = list(meta["joint_names"]), list(meta["action_names"])
+    cam = meta.get("camera")
+    recorder = DatasetRecorder.create(
+        repo_id=repo_id,
+        fps=int(meta["fps"]),
+        robot_type=str(meta["task"]),
+        joint_names=joints,
+        action_names=actions,
+        camera_keys=["camera"] if cam else None,
+        camera_dims={"camera": (int(cam["height"]), int(cam["width"]))} if cam else None,
+        extra_state_specs=[
+            ("policy_obs", [str(k) for k in range(int(meta["policy_obs_dim"]))]),
+            ("root_pos", ["x", "y", "z"]),
+            ("root_quat", ["x", "y", "z", "w"]),
+        ],
+        task=task,
+        root=dataset_dir,
+        use_videos=bool(cam),
+        overwrite=True,
+    )
+    saved, frames = [], 0
+    for i in range(int(meta["episodes"])):
+        ep = np.load(raw / f"episode_{i:03d}.npz")
+        n = int(ep["joint_pos"].shape[0])
+        if n == 0:
+            continue
+        for t in range(n):
+            observation: dict[str, Any] = {name: float(ep["joint_pos"][t, k]) for k, name in enumerate(joints)}
+            observation.update(policy_obs=ep["policy_obs"][t], root_pos=ep["root_pos"][t], root_quat=ep["root_quat"][t])
+            if cam:
+                observation["camera"] = ep["image"][t]
+            recorder.add_frame(
+                observation,
+                {name: float(ep["action"][t, k]) for k, name in enumerate(actions)},
+                task=task,
+                camera_keys=["camera"] if cam else None,
+            )
+        recorder.save_episode()
+        saved.append(i)
+        frames += n
+    recorder.finalize()
+    return {
+        "dataset": str(Path(dataset_dir)),
+        "repo_id": repo_id,
+        "episodes": len(saved),
+        "frames": frames,
+        "fps": int(meta["fps"]),
+        "episode_len": meta["episode_len"],
+        "episode_return": meta["episode_return"],
+        "episode_end": meta["episode_end"],
+        "camera": bool(cam),
+    }
+
+
+def _recorded_line(metrics: dict[str, Any]) -> str:
+    returns = metrics.get("episode_return") or []
+    mean = f"; mean return {sum(returns) / len(returns):.3f}" if returns else ""
+    return (
+        f"recorded {metrics.get('episodes')} episodes, {metrics.get('frames')} frames at {metrics.get('fps')} fps "
+        f"into {metrics.get('dataset')} ({metrics.get('repo_id')}){mean}"
+    )
 
 
 def _rl_library(extra: dict[str, Any]) -> str:
