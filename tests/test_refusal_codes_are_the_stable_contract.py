@@ -73,7 +73,7 @@ def _command(**overrides: Any) -> dict[str, Any]:
     cmd: dict[str, Any] = {
         "action": "execute",
         "instruction": "pick up the cube",
-        "sender": "operator",
+        "sender_id": "operator",
         "policy_provider": "mock",
     }
     cmd.update(overrides)

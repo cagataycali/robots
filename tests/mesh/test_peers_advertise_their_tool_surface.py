@@ -217,9 +217,7 @@ def _call(function: str, **params: Any) -> dict[str, Any]:
 
 def test_call_is_an_allowed_action_the_wire_bounds_by_shape_not_by_list() -> None:
     assert {"call", "describe_tool"} <= security.ALLOWED_ACTIONS
-    out = security.validate_command(
-        {"action": "call", "function": "nod", "params": {"times": 2}, "turn_id": "t", "instruction": "dropped"}
-    )
+    out = security.validate_command({"action": "call", "function": "nod", "params": {"times": 2}, "turn_id": "t"})
     assert out == {"action": "call", "function": "nod", "params": {"times": 2}, "turn_id": "t"}
     assert security.validate_command({"action": "call", "function": "list_objects", "params": None})["params"] == {}
 

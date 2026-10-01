@@ -27,7 +27,7 @@ Every process on one host meets at the local router on `STRANDS_MESH_PORT` (7447
 
 ## The command vocabulary
 
-Every command is a JSON dict whose `action` is in `ALLOWED_ACTIONS`; `strands_robots.mesh.security.validate_command` checks it on both ends. Unknown actions and keys never leave the process.
+Every command is a JSON dict whose `action` is in `ALLOWED_ACTIONS`; `strands_robots.mesh.security.validate_command` checks it on both ends. Unknown actions and keys are refused by name.
 
 | action | does |
 |---|---|

@@ -210,7 +210,10 @@ _SIM_VERB_FIELDS: dict[str, Any] = {
     },
     **_POLICY_PROPERTIES,
     "duration": {"type": "number", "description": "execute/start: seconds (positive, finite)"},
-    "robot_name": {"type": "string", "description": "a Simulation holding several robots: which one"},
+    "robot_name": {
+        "type": "string",
+        "description": "a Simulation holding several robots: which one, for set_joints/execute/start; state, reset, step and status take none",
+    },
 }
 
 
@@ -406,9 +409,9 @@ _REAL_FIELDS: dict[str, tuple[str, ...]] = {
 #: Fields the sim rail forwards per action; everything else is dropped before the wire.
 _SIM_FIELDS: dict[str, tuple[str, ...]] = {
     "status": (),
-    "state": ("robot_name",),
+    "state": (),  # the peer's own state; the dispatcher reads no robot_name here
     "set_joints": ("target_joints", "hold", "robot_name"),
-    "reset": ("robot_name",),
+    "reset": (),  # resets the whole world the peer serves; no robot_name is read
     "step": ("steps",),
     "stop": (),
     "execute": ("instruction", "policy_provider", "duration", "robot_name", *_POLICY_FIELDS),
