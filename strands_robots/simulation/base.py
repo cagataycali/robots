@@ -658,6 +658,38 @@ def finite_non_negative_error(value: Any, param: str, context: str) -> str | Non
 # ``py/unsafe-cyclic-import`` on all three names that line carries. The rollout
 # side reaches it through the function-local import it already uses for
 # ``randomization_seed_error``, so neither module gains a module-level edge.
+JOINT_RANGE_WRITE_TOLERANCE = 0.01
+"""How far past a limited joint's range a written position may sit (rad or m).
+
+Joint limits are soft: a servo held against a limit settles a little outside
+``jnt_range`` (an SO-101 wrist flex held at its lower limit rests 1.1e-3 rad past it),
+and :meth:`get_robot_state` reports that pose. A write guard with no slack
+refuses the pose the simulator itself produced. Inside this band the value is
+written as given, never clamped; a pose written at the band's edge comes back
+at under 0.2 rad/s, where the 99 rad write the guard exists for came back at
+23.8 rad/s. Capped at 1% of the range so a short slide joint keeps its band
+proportionate.
+"""
+
+
+def outside_joint_range(value: float, lo: float, hi: float) -> bool:
+    """Whether a position lies outside ``[lo, hi]`` by more than the write tolerance.
+
+    The one rule every backend's ``set_joint_positions`` range guard applies,
+    so a pose read back from any engine is writable on that engine.
+
+    Args:
+        value: The position the caller asked to write.
+        lo: Lower bound of the joint's range.
+        hi: Upper bound of the joint's range.
+
+    Returns:
+        ``True`` when the write must be refused.
+    """
+    slack = min(JOINT_RANGE_WRITE_TOLERANCE, 0.01 * (hi - lo))
+    return not lo - slack <= value <= hi + slack
+
+
 LIST_POLICIES_RUNNING_DESCRIBE_ENTRY = (
     "() -> dict  # name the robots a rollout is driving right now, read from "
     "the same in-flight population stop_policy derives its verdict from, so "
