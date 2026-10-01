@@ -1,5 +1,5 @@
 ---
-description: Read a strands-robots doctor report row by row: what each check probed and what to change when it is not PASS.
+description: "Read a strands-robots doctor report row by row: what each check probed and what to change when it is not PASS."
 ---
 
 # Doctor

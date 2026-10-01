@@ -15,7 +15,11 @@ description: "LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuat
 from strands_robots import Robot
 
 robot = Robot("lekiwi")
+print(robot.robot_joint_names("lekiwi"))
+robot.cleanup()
 ```
+
+The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.
 
 ```python title="sketch"
 robot = Robot("lekiwi", mode="real", port="/dev/ttyACM0")  # lerobot lekiwi

@@ -1225,21 +1225,55 @@ class EmbodimentMap:
         # 3. Action dim check (only when the model declares an action feature).
         action_feat = output_features.get("action")
         if action_feat is not None and getattr(action_feat, "shape", None) and self.action_keys:
-            adim = action_feat.shape[0]
-            # A padded model (pi0 / pi05 / pi0-FAST: max_action_dim 32) emits a
-            # vector wider than any robot; the columns past the robot's joints
-            # are padding. Two independent opt-ins accept that width: dim_policy
-            # "pad"/"truncate" (the state side's policy, applied to the action
-            # side too) and action_dim_policy="truncate" (names the leading
-            # columns, drops the tail). The default, strict, still demands an
-            # exact match, and a model narrower than the robot is always refused.
-            wider_ok = self.dim_policy in ("pad", "truncate") and adim > len(self.action_keys)
-            narrower_is_padding = self.action_dim_policy == "truncate" and len(self.action_keys) < adim
-            if len(self.action_keys) != adim and not (wider_ok or narrower_is_padding):
-                raise ValueError(
-                    f"Embodiment '{self.name}': {len(self.action_keys)} action_keys but model "
-                    f"action dim is {adim}. Action mapping would mis-index."
-                )
+            if error := self.action_dim_error(action_feat.shape[0]):
+                raise ValueError(error)
+
+    def action_dim_error(self, action_dim: int) -> str | None:
+        """Why a model action head of ``action_dim`` cannot drive ``action_keys``, or ``None``.
+
+        The one rule for the action width, read by :meth:`validate` after the
+        weights load and by ``LerobotLocalPolicy.preflight`` from the
+        checkpoint's ``config.json`` before they do. It follows ``dim_policy``
+        the way the state side does:
+
+        * ``strict``: the head must be exactly as wide as ``action_keys``.
+        * ``pad`` / ``truncate``: a WIDER head is accepted and its leading
+          ``len(action_keys)`` columns drive the actuators, which is how
+          ``align_action_values`` already consumes a long vector at runtime.
+        * ``action_dim_policy="truncate"`` (the DROID shape: ``max_action_dim``
+          32 for every embodiment) accepts a wider head the same way under a
+          strict ``dim_policy``; the columns past the robot's joints are padding.
+          ``lerobot/pi0_base`` and ``pi05_base`` ship a 32-wide padded head
+          for every embodiment; refusing them here made ``embodiment=`` unable
+          to drive them at all, and only after the two-minute load. A NARROWER
+          head is still refused: no policy widens a head, and a column the model
+          does not produce would leave its actuator undriven.
+
+        Args:
+            action_dim: The model's declared action width
+                (``output_features["action"].shape[0]``).
+
+        Returns:
+            The refusal, or ``None`` when the head can drive these keys.
+        """
+        n_keys = len(self.action_keys)
+        if not n_keys or action_dim == n_keys:
+            return None
+        if action_dim > n_keys and self.action_dim_policy == "truncate":
+            return None
+        if self.dim_policy == "strict":
+            return (
+                f"Embodiment '{self.name}': {n_keys} action_keys but model action dim is "
+                f"{action_dim}. Action mapping would mis-index. A wider head can drive the "
+                f"leading {n_keys} columns under dim_policy='pad' or 'truncate'."
+            )
+        if action_dim < n_keys:
+            return (
+                f"Embodiment '{self.name}': {n_keys} action_keys but model action dim is "
+                f"{action_dim}, narrower than the actuators it must drive. No dim_policy widens "
+                f"an action head; fix action_keys or use a checkpoint trained for this body."
+            )
+        return None
 
     def _convert_vector(self, values: list[float], *, to_model: bool) -> list[float]:
         """Convert an ordered joint vector between sim (radians / sim units) and

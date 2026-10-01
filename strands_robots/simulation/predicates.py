@@ -348,9 +348,10 @@ def _quat_rotate_inverse_wxyz(quat_wxyz: list[float], vec: list[float]) -> list[
     """Express a WORLD-frame 3-vector in the body frame given a (w,x,y,z) quaternion.
 
     Computes ``R(q)^T @ vec`` - the standard "rotate by the inverse". Pure Python
-    (no numpy) so predicates stay dependency-free. A near-zero-norm quaternion
-    returns ``vec`` unchanged. Matches the Newton backend's
-    ``_quat_rotate_inverse_wxyz`` used to body-frame the base angular velocity.
+    (no numpy) so predicates stay dependency-free. The quaternion is normalised
+    internally; a near-zero-norm quaternion returns ``vec`` unchanged, since an
+    unreadable orientation is no reason to scale a real velocity by garbage.
+    The Newton and Isaac backends import this one to body-frame ``base_ang_vel``.
     """
     w, x, y, z = (float(c) for c in quat_wxyz)
     norm = (w * w + x * x + y * y + z * z) ** 0.5

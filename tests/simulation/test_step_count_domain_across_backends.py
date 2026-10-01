@@ -365,6 +365,12 @@ class TestEveryRealGetsAVerdictAndNothingRaises:
 # --------------------------------------------------------------------------- #
 # Backend stand-ins (the guards precede every solver, stage and lock)         #
 # --------------------------------------------------------------------------- #
+# The three instability counters ``step`` reads (see mujoco/divergence.py),
+# never bumped: this stand-in's physics does not diverge.
+_MJ_WARNINGS = types.SimpleNamespace(mjWARN_BADQPOS=0, mjWARN_BADQVEL=1, mjWARN_BADQACC=2)
+_STABLE_WARNINGS = [types.SimpleNamespace(number=0, lastinfo=0) for _ in range(3)]
+
+
 def _mujoco_stub() -> tuple[Any, dict[str, int]]:
     """A MuJoCo stand-in counting ``mj_step`` calls, with no model compiled."""
     calls = {"n": 0}
@@ -376,12 +382,14 @@ def _mujoco_stub() -> tuple[Any, dict[str, int]]:
     stub = types.SimpleNamespace(
         _world=types.SimpleNamespace(
             _model=object(),
-            _data=types.SimpleNamespace(time=0.0),
+            # ``step`` reads MuJoCo's instability counters and the state's
+            # finiteness after each batch, so the stand-in carries both.
+            _data=types.SimpleNamespace(time=0.0, warning=_STABLE_WARNINGS, qpos=np.zeros(1), qvel=np.zeros(1)),
             sim_time=0.0,
             step_count=0,
             _backend_state={},
         ),
-        _mj=types.SimpleNamespace(mj_step=mj_step, mj_forward=lambda model, data: None),
+        _mj=types.SimpleNamespace(mj_step=mj_step, mj_forward=lambda model, data: None, mjtWarning=_MJ_WARNINGS),
         _lock=threading.RLock(),
         _MAX_STEPS_PER_CALL=MuJoCoSimEngine._MAX_STEPS_PER_CALL,
         _STEPS_PER_BATCH=MuJoCoSimEngine._STEPS_PER_BATCH,

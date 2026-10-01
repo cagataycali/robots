@@ -27,6 +27,7 @@ Environment variables:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import os
@@ -39,17 +40,28 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 import numpy as np
 from strands.tools.tools import AgentTool
 
-from strands_robots.simulation.base import SimEngine, unknown_kwargs_error, unknown_model_msg
+from strands_robots.simulation.base import (
+    SimEngine,
+    outside_joint_range,
+    unknown_kwargs_error,
+    unknown_model_msg,
+)
 from strands_robots.simulation.isaac.agent_tool import IsaacAgentToolMixin
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.introspection import IsaacIntrospectionMixin
-from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, mjcf_joint_names, urdf_joint_names
+from strands_robots.simulation.isaac.joint_names import (
+    demangle_usd_joint_names,
+    mjcf_joint_names,
+    mjcf_keyframe_joint_positions,
+    urdf_joint_names,
+)
 from strands_robots.simulation.isaac.loaders import mjcf_declares_floating_base
 from strands_robots.simulation.isaac.mjcf_assets import MJCF_EXTENSIONS, convert_mjcf_to_usd
 from strands_robots.simulation.isaac.motion_primitives import IsaacMotionPrimitivesMixin
 from strands_robots.simulation.isaac.randomization import IsaacRandomizationMixin
 from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
 from strands_robots.simulation.models import registered, registry_entry
+from strands_robots.simulation.predicates import _quat_rotate_inverse_wxyz
 from strands_robots.simulation.recording import RecordedFrame
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
@@ -125,32 +137,6 @@ def _vertical_fov_lens_mm(
     vertical_aperture_mm = horizontal_aperture_mm * float(height) / float(width)
     focal_length_mm = vertical_aperture_mm / (2.0 * math.tan(math.radians(fov_deg) / 2.0))
     return vertical_aperture_mm, focal_length_mm
-
-
-def _world_to_body_frame(quat_wxyz: Any, vec: Any) -> list[float]:
-    """Express a WORLD-frame 3-vector in the body frame given a (w,x,y,z) quaternion.
-
-    ``R(q)^T @ vec``. Used for ``base_ang_vel``, which this schema reports in the
-    BODY frame - the IMU-gyro convention a locomotion policy is trained against -
-    while Isaac's ``get_angular_velocity()`` returns the WORLD frame. ``base_pos``
-    and ``base_lin_vel`` stay world-frame on all three backends and are not routed
-    through here.
-
-    Equivalent to the Newton backend's ``_quat_rotate_inverse_wxyz``, where the
-    convention is documented; verified equal to 1.3e-15 over 400 random
-    (quaternion, vector) pairs. Kept as a separate implementation rather than an
-    import because importing the Newton backend would pull ``warp`` into Isaac's
-    import path.
-
-    A ~zero-norm quaternion returns ``vec`` unchanged, matching Newton: an
-    unreadable orientation is not grounds for scaling a real velocity by garbage,
-    and the caller already has ``base_quat`` to see it with.
-    """
-    q = np.asarray(quat_wxyz, dtype=np.float64)
-    if float(np.linalg.norm(q)) < 1e-8:
-        return [float(v) for v in np.asarray(vec, dtype=np.float64)]
-    rotated = _quat_wxyz_to_rotmat(q).T @ np.asarray(vec, dtype=np.float64)
-    return [float(v) for v in rotated]
 
 
 def _quat_wxyz_to_rotmat(quat: np.ndarray) -> np.ndarray:
@@ -474,6 +460,86 @@ def _prim_world_pose(stage: Any, path: str) -> tuple[list[float], list[float]]:
         )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
+
+
+def _diverged_robots_error(engine: Any, verb: str, robot_names: list[str] | None = None) -> dict[str, Any] | None:
+    """An error naming each robot whose joint state is no longer finite, or ``None``.
+
+    A diverged articulation (a joint driven through its limit, an
+    interpenetration PhysX could not resolve) reads back NaN, and every
+    call after it used to report success: ``step`` said "Stepped 1x",
+    ``get_observation`` returned NaN joints, ``render`` a near-white frame.
+    The state cannot recover by stepping, so the remedy is ``reset()``.
+    Read on the call's own thread, from the articulation it just stepped;
+    a read that fails is not evidence either way and is skipped. Module-level,
+    taking the engine, for the reason :func:`_physics_view_stale_error` is:
+    cross-backend suites drive ``step`` with a ``SimpleNamespace`` as ``self``.
+    """
+    # The callers release the engine lock after their last batch, and a worker
+    # thread's remove_object / add_object(is_static=False) may land before this
+    # runs; the stale flag is written under the lock, and reading through a
+    # stale view hangs or raises a bare Exception (#4076). So the stale check
+    # and every articulation read happen as one step under the same lock.
+    # ``getattr``: cross-backend suites drive this with a SimpleNamespace.
+    lock = getattr(engine, "_lock", None)
+    bad: list[str] = []
+    with lock if lock is not None else contextlib.nullcontext():
+        if _physics_view_stale_error(engine, verb) is not None:
+            return None
+        robots = getattr(engine, "_robots", None) or {}
+        names = robot_names if robot_names is not None else list(robots)
+        for name in names:
+            robot = registry_entry(robots, name)
+            articulation = getattr(robot, "articulation", None) if robot is not None else None
+            if articulation is None:
+                continue
+            try:
+                raw = articulation.get_joint_positions()
+                q = None if raw is None else np.asarray(raw.cpu().numpy() if hasattr(raw, "cpu") else raw, dtype=float)
+            except (RuntimeError, ValueError, AttributeError, TypeError):
+                q = None
+            if q is not None and q.size and not bool(np.all(np.isfinite(q))):
+                joints = list(getattr(robot, "joint_names", []) or [])
+                nan_joints = [
+                    joints[i] if i < len(joints) else str(i) for i in np.flatnonzero(~np.isfinite(q.reshape(-1)))
+                ]
+                bad.append(f"'{name}' ({', '.join(nan_joints[:6])}{', ...' if len(nan_joints) > 6 else ''})")
+    if not bad:
+        return None
+    return {
+        "status": "error",
+        "content": [
+            {
+                "text": (
+                    f"{verb}: the physics diverged - the joint state of {', '.join(bad)} is no longer "
+                    "finite (NaN/inf), so the robot is no longer being simulated and nothing it reports "
+                    "is meaningful. Call reset() to recover; then look for what drove it there (a "
+                    "joint target outside its range, overlapping bodies, a very large force)."
+                )
+            }
+        ],
+    }
+
+
+def _dof_units(articulation: Any, n_dofs: int) -> list[str]:
+    """Per-DOF unit, ``"rad"`` (revolute) or ``"m"`` (prismatic), ``""`` when unknown.
+
+    From the articulation's ``dof_properties["type"]`` (1 = rotation, 2 =
+    translation, the ``DofType`` codes); a view without the field reports
+    ``""`` for every DOF.
+    """
+    props = getattr(articulation, "dof_properties", None)
+    try:
+        types_ = [int(t) for t in np.asarray(props["type"]).reshape(-1)] if props is not None else []
+    except (KeyError, ValueError, IndexError, TypeError):
+        types_ = []
+    return [{1: "rad", 2: "m"}.get(types_[i], "") if i < len(types_) else "" for i in range(n_dofs)]
+
+
+#: Render-only ticks a camera read waits after physics moved: the RTX render
+#: product delivers one tick behind, so one tick still returned the pre-action
+#: frame and two returned the current one (measured on one L40S, Isaac Sim 6.1).
+_RENDER_LAG_TICKS = 2
 
 
 def _split_joint_action(
@@ -1115,27 +1181,30 @@ def _anchor_fixed_base_articulation(prim_path: str) -> str | None:
         if root is None or not root.IsValid():
             return None
         prims = list(Usd.PrimRange(root))
-        roots = [p for p in prims if p.HasAPI(UsdPhysics.ArticulationRootAPI)]
-        if len(roots) != 1 or not roots[0].HasAPI(UsdPhysics.RigidBodyAPI):
-            return None
-        body_path = roots[0].GetPath()
-        for joint_prim in prims:
-            if not joint_prim.IsA(UsdPhysics.FixedJoint):
-                continue
-            joint = UsdPhysics.FixedJoint(joint_prim)
-            body1 = joint.GetBody1Rel().GetTargets()
-            body0 = joint.GetBody0Rel().GetTargets()
-            if body1 != [body_path]:
-                continue
-            anchor = stage.GetPrimAtPath(body0[0]) if body0 else None
-            if anchor is not None and anchor.IsValid() and anchor.HasAPI(UsdPhysics.RigidBodyAPI):
-                continue  # welded to another body, not to the world
-            roots[0].RemoveAPI(UsdPhysics.ArticulationRootAPI)
-            UsdPhysics.ArticulationRootAPI.Apply(joint_prim)
-            return str(joint_prim.GetPath())
+        # Every root, not only a lone one: a two-arm robot (aloha) converts to
+        # two articulations, each on its own welded base body.
+        roots = [p for p in prims if p.HasAPI(UsdPhysics.ArticulationRootAPI) and p.HasAPI(UsdPhysics.RigidBodyAPI)]
+        moved: list[str] = []
+        for base in roots:
+            body_path = base.GetPath()
+            for joint_prim in prims:
+                if not joint_prim.IsA(UsdPhysics.FixedJoint):
+                    continue
+                joint = UsdPhysics.FixedJoint(joint_prim)
+                body1 = joint.GetBody1Rel().GetTargets()
+                body0 = joint.GetBody0Rel().GetTargets()
+                if body1 != [body_path]:
+                    continue
+                anchor = stage.GetPrimAtPath(body0[0]) if body0 else None
+                if anchor is not None and anchor.IsValid() and anchor.HasAPI(UsdPhysics.RigidBodyAPI):
+                    continue  # welded to another body, not to the world
+                base.RemoveAPI(UsdPhysics.ArticulationRootAPI)
+                UsdPhysics.ArticulationRootAPI.Apply(joint_prim)
+                moved.append(str(joint_prim.GetPath()))
+                break
+        return moved[0] if moved else None
     except (ImportError, AttributeError, RuntimeError, IndexError):
         return None
-    return None
 
 
 #: What a caller of a camera in ``render_mode="headless"`` needs to hear.
@@ -1219,6 +1288,126 @@ def _deactivate_imported_ground_planes(prim_path: str) -> list[str]:
         return []
 
 
+def _articulation_root_paths(prim_path: str) -> list[str]:
+    """Paths of every ``ArticulationRootAPI`` prim under ``prim_path``, in stage order; ``[]`` without a stage."""
+    try:
+        import omni.usd  # type: ignore[import-not-found]
+        from pxr import Usd, UsdPhysics  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        root = stage.GetPrimAtPath(prim_path) if stage is not None else None
+        if root is None or not root.IsValid():
+            return []
+        found = [str(p.GetPath()) for p in Usd.PrimRange(root) if p.HasAPI(UsdPhysics.ArticulationRootAPI)]
+    except (ImportError, AttributeError, RuntimeError):
+        return []
+    # A base body whose root was moved onto its world weld can still report the
+    # API from the converted asset's own layer; the weld below it is the root
+    # PhysX builds from. Keep the innermost root of each nested pair, so one
+    # arm is one articulation, not two handles over the same DOFs.
+    return [path for path in found if not any(other.startswith(path + "/") for other in found)]
+
+
+class _MultiArticulation:
+    """Several articulations of one robot presented as one, DOFs concatenated in root order.
+
+    Covers the surface this backend drives an articulation through: DOF
+    names, joint state reads and writes, ``apply_action`` with or without
+    ``joint_indices``, DOF limits and properties, and the base pose of the
+    first part. A whole-robot base move is refused rather than applied to one
+    arm; there is no Jacobian view, so ``get_jacobian`` reports that.
+    """
+
+    def __init__(self, parts: list[Any]) -> None:
+        self._parts = list(parts)
+
+    def initialize(self, *args: Any, **kwargs: Any) -> None:
+        for part in self._parts:
+            part.initialize(*args, **kwargs)
+
+    def _counts(self) -> list[int]:
+        return [len(list(p.dof_names or [])) for p in self._parts]
+
+    @property
+    def dof_names(self) -> list[str]:
+        return [n for p in self._parts for n in list(p.dof_names or [])]
+
+    @property
+    def num_dof(self) -> int:
+        return sum(self._counts())
+
+    def _gather(self, name: str) -> Any:
+        values = []
+        for part in self._parts:
+            raw = getattr(part, name)()
+            if raw is None:
+                return None
+            values.append(np.asarray(raw.cpu().numpy() if hasattr(raw, "cpu") else raw, dtype=np.float64).reshape(-1))
+        return np.concatenate(values) if values else np.zeros(0)
+
+    def get_joint_positions(self) -> Any:
+        return self._gather("get_joint_positions")
+
+    def get_joint_velocities(self) -> Any:
+        return self._gather("get_joint_velocities")
+
+    def _split(self, values: Any, joint_indices: Any) -> list[tuple[Any, Any, Any]]:
+        """``[(part, part_values, part_indices), ...]`` for a full or indexed DOF vector."""
+        vals = np.asarray(values, dtype=np.float32).reshape(-1)
+        idx = (
+            np.arange(self.num_dof) if joint_indices is None else np.asarray(joint_indices, dtype=np.int64).reshape(-1)
+        )
+        out = []
+        start = 0
+        for part, n in zip(self._parts, self._counts(), strict=True):
+            mask = (idx >= start) & (idx < start + n)
+            if mask.any():
+                out.append((part, vals[mask], (idx[mask] - start).astype(np.int32)))
+            start += n
+        return out
+
+    def set_joint_positions(self, positions: Any, joint_indices: Any = None) -> None:
+        for part, vals, idx in self._split(positions, joint_indices):
+            part.set_joint_positions(vals, joint_indices=idx)
+
+    def apply_action(self, action: Any) -> None:
+        fields = {k: getattr(action, k, None) for k in ("joint_positions", "joint_velocities", "joint_efforts")}
+        indices = getattr(action, "joint_indices", None)
+        per_part: dict[int, dict[str, Any]] = {}
+        for field_name, values in fields.items():
+            if values is None:
+                continue
+            for part, vals, idx in self._split(values, indices):
+                entry = per_part.setdefault(id(part), {"part": part, "joint_indices": idx})
+                entry[field_name] = vals
+        for entry in per_part.values():
+            part = entry.pop("part")
+            part.apply_action(type(action)(**entry))
+
+    def get_dof_limits(self) -> Any:
+        rows = []
+        for part in self._parts:
+            raw = part.get_dof_limits()
+            rows.append(np.asarray(raw.cpu().numpy() if hasattr(raw, "cpu") else raw, dtype=np.float64).reshape(-1, 2))
+        return np.concatenate(rows) if rows else np.zeros((0, 2))
+
+    @property
+    def dof_properties(self) -> Any:
+        props = [getattr(p, "dof_properties", None) for p in self._parts]
+        if any(p is None for p in props):
+            return None
+        return np.concatenate([p for p in props if p is not None])
+
+    def get_world_pose(self) -> Any:
+        return self._parts[0].get_world_pose()
+
+    def set_world_pose(self, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError(
+            "this robot is several articulations (one per arm); moving one base would tear it apart. "
+            "Place it with add_robot(position=...) instead."
+        )
+
+
 _HEADLESS_RENDER_REMEDY = (
     'render_mode="headless" renders no pixels (all-zero frames, no images in observations); '
     'pass render_mode="rtx_realtime" (works with headless=True) for real camera frames'
@@ -1263,6 +1452,9 @@ class _RobotState:
         #: this backend did not import: what the importer was told is knowable,
         #: what an arbitrary USD asset declares is not always.
         self.fixed_base = fixed_base
+        # Joint positions (USD DOF name -> value) a keyframe spawn made this
+        # robot's default state; None for the zero-configuration spawn.
+        self.spawn_joint_positions: dict[str, float] | None = None
         self.name = name
         self.prim_path = prim_path
         self.joint_names = joint_names
@@ -1319,12 +1511,46 @@ class _RobotState:
 class _CameraState:
     """Internal bookkeeping for a camera in the Isaac simulation."""
 
-    def __init__(self, name: str, prim_path: str, width: int, height: int):
+    def __init__(
+        self,
+        name: str,
+        prim_path: str,
+        width: int,
+        height: int,
+        render_width: int | None = None,
+        render_height: int | None = None,
+    ):
         self.name = name
         self.prim_path = prim_path
+        # The size the caller asked for: every frame this camera hands out -
+        # render(), get_observation(), recordings - has this shape.
         self.width = width
         self.height = height
+        # The size the RTX product renders at, which is larger for a small
+        # request (``_MIN_RENDER_PX``, the DLSS ghosting floor).
+        self.render_width = render_width if render_width is not None else width
+        self.render_height = render_height if render_height is not None else height
         self.handle: Any = None
+
+
+def _frame_at_camera_size(cam: _CameraState, frame: np.ndarray, *, nearest: bool = False) -> np.ndarray:
+    """*frame* resampled to the size *cam* was added with, when the RTX product rendered it larger.
+
+    ``add_camera(width=224, height=224)`` renders at 640x640 so DLSS stays
+    above its temporal-ghost threshold, and every consumer used to receive that
+    640x640 frame: policies trained on 224x224 inputs and datasets whose
+    features read ``[640, 640, 3]`` where MuJoCo records ``[224, 224, 3]``.
+    ``INTER_AREA`` for colour (the downsample that does not alias), nearest for
+    depth (a blend of two surfaces is a depth neither has).
+    """
+    if frame.shape[0] == cam.height and frame.shape[1] == cam.width:
+        return frame
+    import cv2
+
+    interpolation = cv2.INTER_NEAREST if nearest else cv2.INTER_AREA
+    return np.asarray(
+        cv2.resize(np.ascontiguousarray(frame), (int(cam.width), int(cam.height)), interpolation=interpolation)
+    )
 
 
 class _ObjectState:
@@ -2571,6 +2797,11 @@ class IsaacSimulation(
                 # all. Cleared here rather than at the top so a reset that failed
                 # to reach this point leaves the scene marked stale.
                 self._physics_view_stale = False
+                # After the flag, not before: the view above is genuinely fresh,
+                # and ``_restore_spawn_poses`` skips its writes while the flag is
+                # set. Restoring first silently left a keyframe-spawned robot's
+                # drive targets at zero on the first reset after an add_object.
+                self._restore_spawn_poses()
 
                 # reset() clears every latched wrench, matching the MuJoCo
                 # contract ("reset() clears every latched wrench in the world").
@@ -2810,6 +3041,8 @@ class IsaacSimulation(
             elapsed = time.perf_counter() - t0
             steps_per_sec = n_steps / elapsed if elapsed > 0 else float("inf")
 
+            if diverged := _diverged_robots_error(self, "step"):
+                return diverged
             return {
                 "status": "success",
                 "content": [
@@ -3078,21 +3311,10 @@ class IsaacSimulation(
         dict
             Status dict with robot info.
         """
-        if keyframe is not None:
+        if keyframe is not None and (isinstance(keyframe, bool) or not isinstance(keyframe, str | int)):
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"add_robot: keyframe={keyframe!r} is not supported on "
-                            "the Isaac backend (spawning at a MuJoCo <keyframe> pose "
-                            "is currently MuJoCo-only); use "
-                            "create_simulation(backend='mujoco') to spawn at a "
-                            "keyframe, or omit keyframe for the default zero-pose "
-                            "spawn."
-                        )
-                    }
-                ],
+                "content": [{"text": "add_robot: keyframe must be a keyframe name (str) or index (int), not a bool."}],
             }
         # Refuse two asset paths rather than picking one. Each of the three is
         # loaded by a different route, so a call naming two is a caller who
@@ -3308,6 +3530,21 @@ class IsaacSimulation(
             # refuses ``fix_base=False`` on that path rather than recording a claim
             # it cannot check.
             mjcf_floating_base = False
+            spawn_pose: dict[str, float] | None = None
+            if keyframe is not None:
+                # A keyframe lives in the MJCF; resolved before anything is
+                # converted or added, so an unknown one refuses with the scene
+                # untouched - the MuJoCo backend's order.
+                if mjcf_path is None or usd_path is not None or urdf_path is not None:
+                    return {
+                        "status": "error",
+                        "content": [
+                            {"text": f"add_robot: keyframe={keyframe!r} needs an MJCF description to read it from"}
+                        ],
+                    }
+                spawn_pose, kf_error = mjcf_keyframe_joint_positions(mjcf_path, keyframe)
+                if kf_error is not None:
+                    return {"status": "error", "content": [{"text": f"add_robot: {kf_error}"}]}
             if mjcf_path is not None and usd_path is None and urdf_path is None:
                 source_mjcf = mjcf_path
                 # MJCF can declare a floating base and URDF cannot, which is why
@@ -3404,6 +3641,8 @@ class IsaacSimulation(
                     fixed_base=not mjcf_floating_base,
                 )
                 self._robots[name] = robot_state
+                if spawn_pose is not None:
+                    self._apply_spawn_pose(robot_state, spawn_pose)
 
                 logger.info(
                     "Added robot '%s' (USD: %s, %d joints, articulation=%s, mjcf=%s)",
@@ -3428,6 +3667,8 @@ class IsaacSimulation(
                 }
                 if source_mjcf is not None:
                     payload["mjcf_path"] = source_mjcf
+                if spawn_pose is not None:
+                    payload["keyframe"] = keyframe
                 return {
                     "status": "success",
                     "content": [
@@ -5357,14 +5598,9 @@ class IsaacSimulation(
                         # and the error grows only as it turns - which is exactly
                         # when a locomotion policy is relying on it.
                         #
-                        # Expressed with this module's own quaternion primitive:
-                        # body-frame is R(q)^T @ v, and _world_to_body_frame wraps
-                        # that. Verified equal to the Newton backend's
-                        # _quat_rotate_inverse_wxyz to 1.3e-15 over 400 random
-                        # (quaternion, vector) pairs, so the two backends agree
-                        # numerically without Isaac importing Newton - which would
-                        # drag warp into this import path.
-                        obs["base_ang_vel"] = _world_to_body_frame(quat_wxyz, [float(v) for v in ang_vel])
+                        # Body-frame is R(q)^T @ v, through the one rotation
+                        # the Newton backend and the reward DSL also use.
+                        obs["base_ang_vel"] = _quat_rotate_inverse_wxyz(quat_wxyz, [float(v) for v in ang_vel])
 
             # Camera frames keyed by camera name (RGB HxWx3 uint8), so callers
             # (e.g. the SO-101 collector / Gradio render) get images the same way
@@ -5390,10 +5626,13 @@ class IsaacSimulation(
                 # blank buffer. When more than one camera is configured, tick the
                 # renderer a few extra times (holding the pose static) so EVERY
                 # camera's RTX render product accumulates a fresh frame before we
-                # read them back. Single-camera setups skip this (the substep
-                # render already warmed the one product) to stay fast.
-                if len(self._cameras) > 1 and not getattr(self, "_rendered_this_tick", False):
-                    self._refresh_all_render_products()
+                # read them back. Every camera count gets the same refresh
+                # once per physics step, but only when the last tick did not
+                # render: a rendering tick (rendering_dt == physics_dt) already
+                # holds this state's frame, while a physics-only tick leaves
+                # the products one tick behind (``_refresh_if_physics_moved``).
+                if not getattr(self, "_rendered_this_tick", False):
+                    self._refresh_if_physics_moved()
                 for cam_name, cam in self._cameras.items():
                     if cam.handle is None:
                         continue
@@ -5406,7 +5645,7 @@ class IsaacSimulation(
                         # observation.
                         arr = np.asarray(rgba)
                         if arr.ndim == 3 and arr.shape[0] > 0 and arr.shape[1] > 0:
-                            obs[cam_name] = arr[..., :3].astype(np.uint8)
+                            obs[cam_name] = _frame_at_camera_size(cam, arr[..., :3].astype(np.uint8))
                     except (RuntimeError, ValueError, AttributeError, TypeError, IndexError) as e:
                         logger.debug("camera %r frame unavailable: %s", cam_name, e)
 
@@ -6261,6 +6500,8 @@ class IsaacSimulation(
                     ],
                 }
 
+            if diverged := _diverged_robots_error(self, "send_action", [robot_name]):
+                return diverged
             return {
                 "status": "success",
                 "content": [{"text": f"Action applied to '{robot_name}', {n_substeps} substeps."}],
@@ -7068,6 +7309,7 @@ class IsaacSimulation(
 
             # Phase-2 RTX path: pull real frames from the Camera handle.
             try:
+                self._refresh_if_physics_moved()
                 rgba = cam.handle.get_rgba()
                 # ``get_rgba`` returns either ``(H, W, 4)`` or
                 # ``(H, W, 3)`` depending on the Isaac Sim build. A
@@ -7183,8 +7425,14 @@ class IsaacSimulation(
                 logger.log(level, "Failed to render camera '%s': %s", camera_name, e)
                 return None, None, {"error": f"Failed to render camera '{camera_name}': {e}"}
 
+            # The product renders at render_width x render_height; the frame is
+            # the size the camera was added with (see _frame_at_camera_size).
+            rendered = [int(rgb.shape[1]), int(rgb.shape[0])]
+            rgb = _frame_at_camera_size(cam, rgb)
+            depth = _frame_at_camera_size(cam, depth, nearest=True)
             render_info = {
                 "rtx": True,
+                "render_resolution": rendered,
                 "prim_path": cam.prim_path,
                 "resolution": [int(rgb.shape[1]), int(rgb.shape[0])],
                 "render_mode": self._config.render_mode,
@@ -7319,16 +7567,17 @@ class IsaacSimulation(
 
         Args:
             camera_name: a camera previously added via ``add_camera``.
-            width: must be ``None`` or the camera's native render width (the
-                handle's intrinsics are only valid at native resolution), and
-                a positive integer when supplied.
+            width: must be ``None`` or the width the camera was added with
+                (the size ``get_frame`` returns; the handle's render-pixel
+                intrinsics are rescaled to it), and a positive integer when
+                supplied.
             height: same contract as ``width``.
 
         Raises:
             RuntimeError: no world, or the camera has no live RTX handle.
             KeyError: unknown camera name.
             ValueError: ``width``/``height`` is not a positive integer, or
-                differs from the native render resolution.
+                differs from the size the camera was added with.
         """
         from strands_robots.rendering import CameraParams
 
@@ -7353,11 +7602,21 @@ class IsaacSimulation(
                         raise ValueError(dim_err)
                 if arg is not None and int(arg) != int(native):
                     raise ValueError(
-                        f"Isaac camera intrinsics are only valid at the native render resolution; "
+                        f"Isaac camera intrinsics are reported at the size the camera was added with; "
                         f"requested {arg_name}={arg} but camera '{camera_name}' renders at "
-                        f"{cam.width}x{cam.height}. Re-add the camera with the desired size."
+                        f"{cam.render_width}x{cam.render_height} and returns {cam.width}x{cam.height} "
+                        "frames. Re-add the camera with the desired size."
                     )
             K = np.asarray(cam.handle.get_intrinsics_matrix(), dtype=np.float64).reshape(3, 3)
+            # The handle's intrinsics are in RENDER pixels (the product renders at
+            # render_width x render_height); get_frame returns width x height, and
+            # the two are consumed as a pair (a compositor aligns a background off
+            # K and reads a frame at width x height), so K is rescaled to the size
+            # the frame comes back in. Identity when the two sizes agree.
+            sx = float(cam.width) / float(cam.render_width)
+            sy = float(cam.height) / float(cam.render_height)
+            if sx != 1.0 or sy != 1.0:
+                K = np.asarray(np.diag([sx, sy, 1.0]) @ K, dtype=np.float64).reshape(3, 3)
             position, quat_wxyz = cam.handle.get_world_pose()
             w_px, h_px = int(cam.width), int(cam.height)
 
@@ -7591,19 +7850,15 @@ class IsaacSimulation(
             Image height in pixels; a positive integer. ``None`` (omitted)
             takes ``IsaacConfig.camera_height``.
         parent_body : str, optional
-            Body to mount the camera on, so it rides with that body instead
-            of standing still in the world. Declared here but NOT SUPPORTED
-            on this backend: the camera prim is parented to the stage's
-            camera scope, not to an articulation link, so a value is refused
-            with a structured error naming the backends that do mount
-            cameras rather than dropped. Mounting is what
-            :doc:`/policies/camera-naming` prescribes for a VLA's
-            ``observation.images.wrist_image`` feature, so a caller
-            following that guidance needs to be told which backend can
-            honour it -- not handed a static world-space view, and not a
-            bare ``TypeError`` naming neither the capability nor the
-            alternative. Omit it (the default) for a world-fixed camera,
-            which this backend does support.
+            Body to mount the camera on, so it rides with that body instead of
+            standing still in the world: a robot link (``"so101/gripper"`` or a
+            bare link name) or an absolute prim path, resolved the way
+            :meth:`get_body_state` resolves a body. ``position`` and ``target``
+            are then both required and are in that body's LOCAL frame, as on
+            the MuJoCo and Newton backends. The camera prim is authored as a
+            child of the link prim, so USD composes the link's pose onto it on
+            every frame. An unresolvable body is refused with the link names the
+            robots have.
 
         Validation
         ----------
@@ -7649,18 +7904,21 @@ class IsaacSimulation(
             computed ``focal_length`` so an agent can confirm the
             camera setup without re-querying.
         """
-        if parent_body is not None:
+        if parent_body is not None and (not isinstance(parent_body, str) or not parent_body.strip()):
+            return {
+                "status": "error",
+                "content": [{"text": f"add_camera: parent_body must be a body name, got {parent_body!r}"}],
+            }
+        if parent_body is not None and (position is None or target is None):
+            # The world-frame defaults would put a wrist camera 1.7 m from its
+            # link; the MuJoCo and Newton backends refuse the same call.
             return {
                 "status": "error",
                 "content": [
                     {
                         "text": (
-                            f"add_camera: parent_body={parent_body!r} is not supported on the Isaac "
-                            "backend (it parents camera prims to the stage camera scope, not to an "
-                            "articulation link, so the camera would not ride with the body). Omit "
-                            "parent_body for a world-fixed camera, or use "
-                            "create_simulation(backend='mujoco') / create_simulation(backend='newton') "
-                            "for a body-mounted (wrist) camera."
+                            f"add_camera: parent_body={parent_body!r} needs both position and target, in that "
+                            "body's frame (the world-frame defaults would put the camera 1.7 m from the body)"
                         )
                     }
                 ],
@@ -7754,6 +8012,7 @@ class IsaacSimulation(
 
             w = self._config.camera_width if width is None else width
             h = self._config.camera_height if height is None else height
+            req_w, req_h = int(w), int(h)
             fov_deg = float(fov)
 
             # RTX cameras: render at a higher NATIVE resolution if the
@@ -7768,17 +8027,33 @@ class IsaacSimulation(
                 h = int(round(h * scale))
 
             prim_path = f"{self._config.stage_path}/Cameras/{name}"
+            mount: tuple[str, list[float], list[float]] | None = None
+            if parent_body is not None:
+                resolved = self._mounted_camera_pose(parent_body, pos, tgt)
+                if isinstance(resolved, str):
+                    return {"status": "error", "content": [{"text": resolved}]}
+                link_path, world_pos, world_quat = resolved
+                # A child of the link prim, so USD composes the link's pose
+                # onto it every frame and the camera rides with the body.
+                prim_path = f"{link_path}/strands_camera_{name}"
+                mount = (parent_body, world_pos, world_quat)
 
             try:
                 handle, focal_length_mm = self._create_camera_prim(
                     name=name,
                     prim_path=prim_path,
-                    position=pos,
-                    target=tgt,
+                    position=pos if mount is None else mount[1],
+                    target=tgt if mount is None else None,
                     width=w,
                     height=h,
                     fov_deg=fov_deg,
                 )
+                if mount is not None:
+                    handle.set_world_pose(
+                        position=np.asarray(mount[1], dtype=float),
+                        orientation=np.asarray(mount[2], dtype=float),
+                        camera_axes="usd",
+                    )
             except (RuntimeError, ValueError, OSError, AttributeError, TypeError, ImportError) as e:
                 # Cleanup-clause shape mirrors create_world (#52 precedent)
                 # and add_object: the constructor or initialise / look-at
@@ -7791,7 +8066,9 @@ class IsaacSimulation(
                 }
 
             self._prim_registry.append(prim_path)
-            cam_state = _CameraState(name=name, prim_path=prim_path, width=w, height=h)
+            cam_state = _CameraState(
+                name=name, prim_path=prim_path, width=req_w, height=req_h, render_width=w, render_height=h
+            )
             cam_state.handle = handle
             self._cameras[name] = cam_state
 
@@ -7814,7 +8091,9 @@ class IsaacSimulation(
                 "renders_pixels": self._config.render_mode != "headless",
                 "position": pos,
                 "target": tgt,
-                "resolution": [w, h],
+                "resolution": [req_w, req_h],
+                "render_resolution": [w, h],
+                "parent_body": parent_body,
                 "fov": fov_deg,
                 "focal_length_mm": focal_length_mm,
             }
@@ -7832,13 +8111,81 @@ class IsaacSimulation(
                 "content": [
                     {
                         "text": (
-                            f"Camera '{name}' added at {pos}, resolution={w}x{h}, fov={fov_deg}"
+                            f"Camera '{name}' added at {pos}, resolution={req_w}x{req_h}, fov={fov_deg}"
                             + (f". NOTE: {_HEADLESS_RENDER_REMEDY}" if self._config.render_mode == "headless" else "")
                         ),
                         "json": cam_info,
                     }
                 ],
             }
+
+    def _mounted_camera_pose(
+        self, parent_body: str, position: list[float], target: list[float] | None
+    ) -> tuple[str, list[float], list[float]] | str:
+        """World pose now for a camera at *position*, looking at *target*, both in *parent_body*'s frame.
+
+        The same convention as the MuJoCo backend's ``parent_body``: position
+        and target are in the body's LOCAL frame. *target* ``None`` looks along
+        the body's local +X. Returns ``(link_prim_path, world_position,
+        world_quat_wxyz)`` for a USD camera (looking down its -Z, +Y up), or the
+        refusal text when the body cannot be resolved.
+        """
+        import omni.usd  # type: ignore[import-not-found]
+        from pxr import Gf, Sdf, Usd, UsdGeom  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        prim = self._resolve_body_prim(stage, parent_body, Sdf, Usd, UsdGeom) if stage is not None else None
+        if prim is None:
+            links = (
+                sorted(
+                    {
+                        p.GetName()
+                        for r in list(self._robots.values())
+                        for p in self._robot_link_prims(stage, r, Sdf, Usd, UsdGeom)
+                    }
+                )[:40]
+                if stage is not None
+                else []
+            )
+            return (
+                f"add_camera: parent_body={parent_body!r} names no robot link or prim on the stage; name a link "
+                f"(e.g. 'robot/link' or a bare link name){f', such as {links}' if links else ''}, or an absolute "
+                "prim path. position / target are in that body's frame."
+            )
+        xf = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+        local_target = (
+            list(target) if target is not None else [position[0] + 1.0, position[1], position[2]]
+        )  # defensive
+        eye = xf.Transform(Gf.Vec3d(*[float(v) for v in position]))
+        look = xf.Transform(Gf.Vec3d(*[float(v) for v in local_target]))
+        forward = np.array([look[0] - eye[0], look[1] - eye[1], look[2] - eye[2]], dtype=float)
+        forward /= np.linalg.norm(forward) or 1.0
+        up_hint = np.array([0.0, 0.0, 1.0]) if abs(forward[2]) < 0.99 else np.array([0.0, 1.0, 0.0])
+        right = np.cross(forward, up_hint)
+        right /= np.linalg.norm(right) or 1.0
+        up = np.cross(right, forward)
+        # USD camera: columns are the camera's x (right), y (up), z (backwards) in world.
+        rot = np.stack([right, up, -forward], axis=1)
+        quat = Gf.Quatd(Gf.Matrix3d(*rot.T.flatten().tolist()).ExtractRotation().GetQuat())
+        wxyz = [float(quat.GetReal()), *[float(c) for c in quat.GetImaginary()]]
+        return str(prim.GetPath()), [float(eye[0]), float(eye[1]), float(eye[2])], wxyz
+
+    @staticmethod
+    def _robot_link_prims(stage: Any, r: _RobotState, Sdf: Any, Usd: Any, UsdGeom: Any) -> list[Any]:  # noqa: N803
+        """Xformable prims under a robot's top-level subtree (the names a camera can mount on)."""
+        sdf_path = Sdf.Path(r.actual_prim_path)
+        top = sdf_path
+        while top.GetParentPath() != Sdf.Path.absoluteRootPath and top.GetParentPath() != Sdf.Path.emptyPath:
+            top = top.GetParentPath()
+        root = stage.GetPrimAtPath(top)
+        if not root or not root.IsValid():
+            return []
+        return [
+            p
+            for p in Usd.PrimRange(root)
+            if p.IsA(UsdGeom.Xformable)
+            and p.GetName().lower().endswith(("link", "gripper", "hand", "wrist", "jaw", "base"))
+        ]
 
     def remove_camera(self, name: str) -> dict[str, Any]:
         """Remove a camera from the scene.
@@ -8708,6 +9055,50 @@ class IsaacSimulation(
 
     # --- Private Implementation ----------------------------------------------
 
+    def _apply_spawn_pose(self, robot: _RobotState, pose: dict[str, float]) -> None:
+        """Make *pose* (MJCF joint name -> position) the robot's default joint state and its drive targets.
+
+        As the default state, every ``reset()`` returns the robot to it (Isaac's
+        ``post_reset`` writes the default joint state); as the drive targets, the
+        arm holds it instead of being driven back to the zero configuration.
+        Joints the keyframe does not name keep zero.
+        """
+        art = robot.articulation
+        if art is None:
+            return
+        mjcf_of = robot.usd_to_urdf_joint_names or {}
+        dof_names = list(getattr(art, "dof_names", None) or robot.joint_names)
+        values = np.array([pose.get(mjcf_of.get(dof, dof), 0.0) for dof in dof_names], dtype=np.float32)
+        robot.spawn_joint_positions = dict(zip(dof_names, values.tolist(), strict=False))
+        try:
+            art.set_joints_default_state(positions=values)
+        except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+            logger.warning("add_robot: could not set %r's keyframe as its default state: %s", robot.name, exc)
+        self._restore_spawn_poses(only=robot.name)
+
+    def _restore_spawn_poses(self, only: str | None = None) -> None:
+        """Put every keyframe-spawned robot back in its keyframe: joint positions, zero velocity, drive targets."""
+        if not hasattr(self, "_robots") or self._physics_view_stale:
+            # An invalidated tensor view hangs or raises on a write; the next
+            # reset rebuilds it and restores the keyframe then.
+            return
+        for robot in list(getattr(self, "_robots", {}).values()):
+            if only is not None and robot.name != only:
+                continue
+            pose = getattr(robot, "spawn_joint_positions", None)
+            if not pose or robot.articulation is None:
+                continue
+            art = robot.articulation
+            values = np.array(list(pose.values()), dtype=np.float32)
+            try:
+                art.set_joint_positions(values)
+                art.set_joint_velocities(np.zeros_like(values))
+                from strands_robots.simulation.isaac._deprecated_api import ArticulationAction
+
+                art.apply_action(ArticulationAction(joint_positions=values))
+            except (RuntimeError, ValueError, AttributeError, TypeError, ImportError) as exc:
+                logger.warning("could not put %r in its keyframe: %s", robot.name, exc)
+
     def _load_usd_robot(self, prim_path: str, usd_path: str, position: list[float]) -> tuple[list[str], Any]:
         """Load a robot from a USD file. Returns ``(joint_names, articulation)``.
 
@@ -8777,7 +9168,17 @@ class IsaacSimulation(
         # ``add_robot`` ``name`` (the leaf of ``prim_path`` is the
         # caller-visible robot name by construction).
         articulation_name = prim_path.rsplit("/", 1)[-1]
-        articulation = Articulation(prim_path=prim_path, name=articulation_name)
+        roots = _articulation_root_paths(prim_path)
+        if len(roots) > 1:
+            # One robot, several articulations (aloha: one per arm). A single
+            # ``Articulation`` over the container bound the FIRST root only, so
+            # aloha loaded 8 of its 16 joints and the right arm was
+            # uncommandable. Each root gets its own handle, presented as one.
+            articulation = _MultiArticulation(
+                [Articulation(prim_path=root, name=f"{articulation_name}_{i}") for i, root in enumerate(roots)]
+            )
+        else:
+            articulation = Articulation(prim_path=prim_path, name=articulation_name)
         articulation.initialize()
         # USD reference: the prim path is exactly what the caller asked
         # for (``add_reference_to_stage`` honours ``prim_path``); record
@@ -9468,6 +9869,14 @@ class IsaacSimulation(
             coerced, err = self._coerce_joint_state_map(requested, "positions", "set_joint_positions")
             if err:
                 return err
+            # The joint's range, on the MuJoCo backend's terms: a write outside it
+            # is refused and nothing is written. Measured on one L40S (so100):
+            # ``{Elbow: 50}`` was reported "Set joint positions" and 60 steps
+            # later every joint was NaN; ``{Rotation: 2.5}`` on a [-1.92, 1.92]
+            # joint read back 2.5, then snapped to 1.82 and kicked Wrist_Roll
+            # from 0.02 to 1.17 rad.
+            if range_err := self._joint_range_error(r, joint_names, coerced):
+                return range_err
             targets = {index_of[jn]: value for jn, value in coerced.items()}
 
             def _apply() -> None:
@@ -10033,26 +10442,7 @@ class IsaacSimulation(
             if stage is None:
                 return None
 
-            prim = None
-            if body_name.startswith("/"):
-                p = stage.GetPrimAtPath(body_name)
-                if p and p.IsValid() and p.IsA(UsdGeom.Xformable):
-                    prim = p
-            elif "/" in body_name:
-                robot_name, _, link_name = body_name.partition("/")
-                r = registry_entry(self._robots, robot_name)
-                if r is not None and link_name:
-                    prim = self._find_robot_link_prim(stage, r, link_name, Sdf, Usd, UsdGeom)
-            else:
-                # Snapshotted: get_body_state runs this INLINE on the calling
-                # thread whenever no pump is engaged, so a worker reading a body
-                # while another thread calls add_robot walked a mutating dict.
-                with self._lock:
-                    robots_snapshot = list(self._robots.values())
-                for r in robots_snapshot:
-                    prim = self._find_robot_link_prim(stage, r, body_name, Sdf, Usd, UsdGeom)
-                    if prim is not None:
-                        break
+            prim = self._resolve_body_prim(stage, body_name, Sdf, Usd, UsdGeom)
             if prim is None:
                 return None
 
@@ -10082,6 +10472,34 @@ class IsaacSimulation(
         except (RuntimeError, ValueError, AttributeError, TypeError):
             logger.debug("get_body_state: USD read failed for %r", body_name, exc_info=True)
             return None
+
+    def _resolve_body_prim(self, stage: Any, body_name: str, Sdf: Any, Usd: Any, UsdGeom: Any) -> Any:  # noqa: N803 - pxr module objects passed by caller
+        """The Xformable prim *body_name* names: an absolute path, ``robot/link``, or a bare link name.
+
+        The resolution :meth:`get_body_state` and ``add_camera(parent_body=...)``
+        share, so a body one of them reads the other can mount on.
+        """
+        if body_name.startswith("/"):
+            p = stage.GetPrimAtPath(body_name)
+            return p if p and p.IsValid() and p.IsA(UsdGeom.Xformable) else None
+        if "/" in body_name:
+            robot_name, _, link_name = body_name.partition("/")
+            r = registry_entry(self._robots, robot_name)
+            return (
+                self._find_robot_link_prim(stage, r, link_name, Sdf, Usd, UsdGeom)
+                if r is not None and link_name
+                else None
+            )
+        # Snapshotted: get_body_state runs this INLINE on the calling thread
+        # whenever no pump is engaged, so a worker reading a body while another
+        # thread calls add_robot walked a mutating dict.
+        with self._lock:
+            robots_snapshot = list(self._robots.values())
+        for r in robots_snapshot:
+            prim = self._find_robot_link_prim(stage, r, body_name, Sdf, Usd, UsdGeom)
+            if prim is not None:
+                return prim
+        return None
 
     @staticmethod
     def _find_robot_link_prim(stage: Any, r: _RobotState, link_name: str, Sdf: Any, Usd: Any, UsdGeom: Any) -> Any:  # noqa: N803 - pxr module objects passed by caller
@@ -10238,6 +10656,83 @@ class IsaacSimulation(
                 update()
             else:
                 self._world.step(render=True)
+
+    def _joint_range_error(self, robot: Any, joint_names: list[str], values: dict[str, float]) -> dict[str, Any] | None:
+        """The refusal for joint values outside their articulation limits, or ``None``.
+
+        Same wording as the MuJoCo backend's ``set_joint_positions``, including
+        the degree hint when the value, read as degrees, lands inside a
+        revolute joint's range - a caller mirroring a real arm holds degrees,
+        and this write takes radians. A DOF with no usable limits (continuous,
+        or an articulation that reports none) is not checked.
+        """
+        limits = self._articulation_dof_limits(robot.articulation, len(joint_names))
+        units = _dof_units(robot.articulation, len(joint_names))
+        index_of = {jn: i for i, jn in enumerate(joint_names)}
+        out_of_range: list[str] = []
+        for name, value in values.items():
+            dof = index_of[name]
+            span = limits[dof] if dof < len(limits) else None
+            if span is None:
+                continue
+            lo, hi = span
+            if not outside_joint_range(float(value), lo, hi):
+                continue
+            unit = units[dof]
+            detail = f"{name}={float(value):.4g} outside [{lo:.4g}, {hi:.4g}]" + (f" {unit}" if unit else "")
+            if unit != "m" and lo <= float(np.radians(float(value))) <= hi:
+                detail += f" (radians, not degrees: {float(value):.4g} deg = {float(np.radians(float(value))):.4g} rad)"
+            out_of_range.append(detail)
+        if not out_of_range:
+            return None
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        "set_joint_positions: position outside the joint's range, nothing written: "
+                        + "; ".join(out_of_range)
+                        + ". Pass a value inside the range (see get_robot_state for the current pose)."
+                    )
+                }
+            ],
+        }
+
+    def _refresh_if_physics_moved(self) -> None:
+        """Tick the renderer twice if physics has stepped since the last camera read.
+
+        A camera read after ``send_action`` or ``step`` returned the frame from
+        BEFORE the action. Measured on one L40S (Isaac Sim 6.1, go2, one RTX
+        camera): ``send_action(n_substeps=40)`` folded the robot flat (base
+        0.44 -> 0.11 m) and ``render`` - and a second ``render`` - still showed
+        it standing. The render product delivers a tick behind: one
+        render-only tick after the action still returned a stale frame (mean
+        pixel difference 10.9 against the next step's frame), two returned the
+        current one (3.2, the difference one physics step makes). So an agent
+        that acted and then looked saw the world before its action, and with
+        one camera ``get_observation`` skipped even the single refresh
+        multi-camera scenes got.
+
+        Two ``SimulationApp.update()`` ticks, render-only (no physics step), and
+        keyed on the physics step count so repeated reads between steps cost
+        nothing. The key is ``(_contact_epoch, _step_count)``, as
+        ``_contact_cache`` is keyed, because ``_step_count`` is not monotonic:
+        ``create_world``, ``reset`` and ``destroy`` rewind it through
+        ``_rewind_clock``, which bumps the epoch, so a marker written at step 0
+        in one world cannot spare the first read at step 0 in the next.
+        """
+        step = getattr(self, "_step_count", None)
+        if step is None:
+            return
+        key = (getattr(self, "_contact_epoch", 0), step)
+        if getattr(self, "_rendered_at_step", None) == key:
+            return
+        try:
+            self._refresh_all_render_products(n=_RENDER_LAG_TICKS)
+        except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+            logger.debug("render refresh unavailable: %s", exc)
+            return
+        self._rendered_at_step = key
 
     def _converge_render(self, n: int = 8) -> None:
         """Render ``n`` ticks WITHOUT advancing physics, holding each robot's pose.

@@ -15,7 +15,11 @@ description: "Wonik Allegro Hand (16-DOF dexterous)"
 from strands_robots import Robot
 
 robot = Robot("allegro_hand")
+print(robot.robot_joint_names("allegro_hand"))
+robot.cleanup()
 ```
+
+`robot_joint_names` lists the finger joints a policy drives; set them by name with `set_joint_positions` or from a [policy](../learn/policies/index.md).
 
 Aliases: `wonik_allegro`.
 

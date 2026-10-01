@@ -15,7 +15,11 @@ description: "ANYbotics ANYmal C Quadruped (12-DOF)"
 from strands_robots import Robot
 
 robot = Robot("anymal_c")
+print(robot.robot_joint_names("anymal_c"))
+robot.cleanup()
 ```
+
+Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).
 
 Aliases: `anybotics_anymal_c`.
 

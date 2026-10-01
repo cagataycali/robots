@@ -40,7 +40,10 @@ _PORT_VERDICT = "MoveIt2Policy: invalid port: 70000"
 # A misspelling of a parameter the provider does read. Cosmos3Policy declares no
 # **kwargs sink and its signature is readable, so ``policy_kwargs_error`` judges
 # this keyword before anything is constructed and names the parameter meant.
-_UNBOUND_KEYWORD = {"hots": "127.0.0.1"}
+# ``robot`` answers the provider's own preflight (its DROID layout names no so101
+# actuator), which the facade runs ahead of the keyword screen, so the screen's
+# verdict is the one these cells reach.
+_UNBOUND_KEYWORD = {"hots": "127.0.0.1", "robot": "panda"}
 # The other arm. ``policy_kwargs_error`` screens against the constructor's own
 # signature, so a constructor that binds nothing at all leaves it with an empty
 # accepted set and nothing to screen -- the one route on which CPython's own

@@ -3797,14 +3797,38 @@ class Mesh(SensorLoopsMixin):
             )
             return None
         if envelope_t > now + forward_skew_s:
-            logger.warning(
-                f"[safety] %s: refusing remote {kind} -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
-                self.peer_id,
-                envelope_t,
-                forward_skew_s,
-                now,
-            )
-            return None
+            # A stop that arrives "early" is not a replay - a replay is by
+            # definition old - it is a robot whose clock lags the operator.
+            # Refusing it left a robot that obeyed every command (cmd
+            # envelopes carry no ``t``) and refused every stop (measured:
+            # 30 s lag, set_joints dispatched, estop refused). So an estop
+            # ahead of the clock by less than the freshness window still
+            # engages the lockout and the skew is audited, where an operator
+            # can see it; ``resume`` keeps the strict rule, since an early
+            # resume could pre-arm a replay that clears a lockout later.
+            if kind == "estop" and (envelope_t - now) <= freshness_window_s:
+                logger.warning(
+                    "[safety] %s: remote estop from %s is %.1f s ahead of this clock (forward_skew_s=%s); "
+                    "a stop that is early is still a stop, engaging the lockout. Check this host's clock.",
+                    self.peer_id,
+                    data.get("peer_id"),
+                    envelope_t - now,
+                    forward_skew_s,
+                )
+                self._audit(
+                    event_type="estop_clock_skew",
+                    severity="warning",
+                    payload={"issuer": str(data.get("peer_id"))[:128], "ahead_s": round(envelope_t - now, 3)},
+                )
+            else:
+                logger.warning(
+                    f"[safety] %s: refusing remote {kind} -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
+                    self.peer_id,
+                    envelope_t,
+                    forward_skew_s,
+                    now,
+                )
+                return None
         if (now - envelope_t) > freshness_window_s:
             logger.warning(
                 f"[safety] %s: refusing remote {kind} -- ``t``=%s too old (freshness_window_s=%s, now=%s)",

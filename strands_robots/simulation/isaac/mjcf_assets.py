@@ -324,7 +324,7 @@ def _importer_version() -> str:
 
 
 #: Bumped when the post-import fix-ups below change what a cache entry holds.
-_POSTPROCESS_VERSION = "drives-v4"
+_POSTPROCESS_VERSION = "drives-v4+worldgeoms-v1"
 
 
 def _position_servo_gains(mjcf_path: str) -> dict[str, tuple[float, float, float | None]]:
@@ -514,6 +514,64 @@ def mjcf_actuator_joints(mjcf_path: str | None) -> dict[str, tuple[str, ...]]:
     if not mjcf_path or not os.path.isfile(mjcf_path):
         return {}
     return _actuator_joints_cached(os.path.abspath(mjcf_path), os.path.getmtime(mjcf_path))
+
+
+def _worldbody_geom_names(mjcf_path: str) -> list[str]:
+    """Names of the geoms the MJCF places on ``<worldbody>`` itself - its floor, not its robot."""
+    try:
+        import mujoco
+    except ImportError:
+        return []
+    try:
+        model = mujoco.MjModel.from_xml_path(mjcf_path)
+    except Exception:  # noqa: BLE001 - the importer reports a model it cannot read
+        return []
+    names = []
+    for g in range(model.ngeom):
+        if int(model.geom_bodyid[g]) == 0:
+            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g)
+            if name:
+                names.append(name)
+    return names
+
+
+def _deactivate_worldbody_geoms(usd_file: str, mjcf_path: str) -> list[str]:
+    """Leave the MJCF's own floor out of the robot the importer wrote.
+
+    Menagerie's ``scene.xml`` - what ``add_robot`` resolves for nearly every
+    robot - puts a ``floor`` plane on ``<worldbody>``, and the importer writes it
+    under the robot's ``Geometry`` even with ``import_scene=False``. That floor
+    then sits exactly on ``create_world()``'s ground plane, and two coplanar
+    surfaces z-fight: every RTX frame of the floor is streak noise (measured on
+    so101: the mean pixel gradient over the floor fell from 4.5 to 0.1 once it
+    was gone). The robot is the robot's bodies; a geom attached to the
+    world is the scene's, which ``add_robot`` does not import. Deactivated (not
+    deleted) in the entry's root layer, so the prim is still there to inspect.
+    """
+    names = _worldbody_geom_names(mjcf_path)
+    if not names:
+        return []
+    from pxr import Usd, UsdPhysics  # type: ignore[import-not-found]
+
+    from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names
+
+    stage = Usd.Stage.Open(usd_file)
+    default = stage.GetDefaultPrim()
+    geometry = default.GetChild("Geometry") if default else None
+    if not geometry:
+        return []
+    children = [c for c in geometry.GetChildren() if not c.HasAPI(UsdPhysics.RigidBodyAPI)]
+    decoded, _ = demangle_usd_joint_names([c.GetName() for c in children], names)
+    wanted = set(names)
+    stage.SetEditTarget(stage.GetRootLayer())
+    dropped = []
+    for prim, name in zip(children, decoded, strict=True):
+        if name in wanted:
+            prim.SetActive(False)
+            dropped.append(name)
+    if dropped:
+        stage.GetRootLayer().Save()
+    return dropped
 
 
 def _author_position_drives(usd_file: str, mjcf_path: str) -> list[str]:
@@ -787,6 +845,26 @@ def _flatten_attached_models(mjcf_path: str, work_dir: str) -> str:
     return flat
 
 
+def _post_import_fixups(usd_file: str, mjcf_path: str, *, import_scene: bool) -> None:
+    """Author what the importer leaves out, on the USD it just wrote.
+
+    Position drives are authored for every conversion. The ``<worldbody>`` geoms
+    are deactivated only when the caller did NOT ask for the scene: with
+    ``import_scene=True`` the floor and furniture are what was requested, and
+    importing them only to switch them off would hand back a success that
+    contains nothing of the kind (and publish it into the shared USD cache under
+    the ``import_scene=True`` key, where every later caller would be served it).
+
+    Args:
+        usd_file: The USD the importer produced.
+        mjcf_path: The MJCF it was converted from.
+        import_scene: Whether the caller asked for the description's scene.
+    """
+    _author_position_drives(usd_file, mjcf_path)
+    if not import_scene:
+        _deactivate_worldbody_geoms(usd_file, mjcf_path)
+
+
 def convert_mjcf_to_usd(
     mjcf_path: str,
     cache_dir: str | None = None,
@@ -931,7 +1009,7 @@ def convert_mjcf_to_usd(
         )
 
     try:
-        _author_position_drives(resolved, mjcf_path)
+        _post_import_fixups(resolved, mjcf_path, import_scene=import_scene)
     except BaseException:
         _remove_tree(staging)
         raise

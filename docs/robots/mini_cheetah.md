@@ -13,11 +13,15 @@ URDF from [Derek-TH-Wang/mini_cheetah_urdf@1988bce](https://github.com/Derek-TH-
 
 <img class="sr-thumb" src="../assets/img/robots/mini_cheetah.webp" alt="mini_cheetah, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("mini_cheetah")
+robot = Robot("mini_cheetah")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("mini_cheetah"))
+robot.cleanup()
 ```
+
+Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

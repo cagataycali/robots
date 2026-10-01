@@ -26,6 +26,7 @@ import tomllib
 from importlib import metadata
 from pathlib import Path
 
+import pytest
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
@@ -190,7 +191,7 @@ def test_lerobot_local_docs_do_not_claim_molmoact2_needs_source() -> None:
 # instead) and no troubleshooting table (start/doctor.md documents the probe
 # report). The claims below therefore attach to the pages that now carry the
 # lerobot floor, the install lines and the accelerate refusal.
-_ARCHITECTURE = _DOCS / "project" / "architecture.md"
+_ARCHITECTURE = _DOCS / "concepts" / "architecture.md"
 _DOCTOR = _DOCS / "start" / "doctor.md"
 _STREAM_AND_SYNC = _DOCS / "learn" / "data" / "stream-and-sync.md"
 _POLICY_MATRIX = _DOCS / "learn" / "policies" / "index.md"  # absorbed molmoact2.md
@@ -601,3 +602,57 @@ def test_no_docs_install_command_pins_a_numpy_lerobot_forbids() -> None:
         "docs install command pins a numpy that the installed lerobot "
         f"({_lerobot_numpy_specifier()}) forbids, so the same command line undoes it: " + "; ".join(offenders)
     )
+
+
+# --- #4196: the lerobot_local page lists the policy types [lerobot] runs; diffusion is not one ---
+
+
+def _strands_lerobot_extras() -> set[str]:
+    """Every ``lerobot[...]`` extra some strands extra installs (``feetech``, ``dataset``, ``smolvla``, ...)."""
+    installed: set[str] = set()
+    for reqs in _extras().values():
+        for req in map(Requirement, reqs):
+            if req.name == "lerobot":
+                installed |= set(req.extras)
+    return installed
+
+
+def test_no_strands_extra_installs_lerobot_diffusion() -> None:
+    """The premise of the page's install line: if a strands extra ever covers it, rewrite the line."""
+    assert "diffusion" not in _strands_lerobot_extras(), (
+        "a strands extra now installs lerobot[diffusion]; the lerobot_local install fence says none does"
+    )
+
+
+def test_lerobot_local_page_names_lerobots_own_diffusion_extra() -> None:
+    """A diffusion checkpoint refuses at construction without ``diffusers``; the page names the extra that brings it."""
+    text = _LEROBOT_LOCAL.read_text()
+    fence = text.split("```bash", 1)[1].split("```", 1)[0]
+    assert "pip install 'lerobot[diffusion]'" in fence, (
+        "the install fence does not name lerobot's own [diffusion] extra"
+    )
+    assert "lerobot[pi]" in fence, (
+        "pi0 has the same shape (transformers + scipy through lerobot[pi]); the fence names it"
+    )
+    # The sentence that lists the types must not read as if [lerobot] alone runs them.
+    intro = next(line for line in text.splitlines() if "(ACT, diffusion" in line)
+    assert "diffusion" in intro and "extra" in intro, intro
+
+
+def _lerobot_provided_extras_or_skip() -> set[str]:
+    """The ``Provides-Extra`` names of the installed lerobot; skips the test without one."""
+    try:
+        return set(metadata.metadata("lerobot").get_all("Provides-Extra") or [])
+    except metadata.PackageNotFoundError:
+        pytest.skip("lerobot is not installed here")
+
+
+def test_the_extras_the_page_names_exist_in_lerobot() -> None:
+    """Every ``lerobot[<extra>]`` the fence names is an extra the installed lerobot declares."""
+    provided = _lerobot_provided_extras_or_skip()
+    fence = _LEROBOT_LOCAL.read_text().split("```bash", 1)[1].split("```", 1)[0]
+    named = set(re.findall(r"lerobot\[([a-z0-9_,-]+)\]", fence))
+    named = {part for group in named for part in group.split(",")}
+    assert named, "the fence names no lerobot extra"
+    missing = sorted(named - provided)
+    assert not missing, f"the page names lerobot extras the installed lerobot does not declare: {missing}"
