@@ -476,6 +476,52 @@ def _prim_world_pose(stage: Any, path: str) -> tuple[list[float], list[float]]:
         return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
 
 
+def _split_joint_action(
+    robot: Any, action_map: dict[str, Any]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split an action into joint position targets and joint efforts.
+
+    A joint whose MJCF actuator is a ``<motor>`` takes the action value as that
+    actuator's ``ctrl``, as the MuJoCo backend does: clipped to ``ctrlrange``
+    and applied as a joint effort of ``gear * ctrl``. Every other named joint
+    takes it as a position target, as before. Measured on one L40S (Isaac Sim
+    6.1, go2): sent as position targets, the motor joints' zero-gain force
+    drives did nothing - the base fell from 0.44 m to 0.09 m in 240 steps and
+    +5 on FL_calf moved nothing - while every call reported success.
+
+    Only the named joints are commanded, as before: an unnamed joint keeps its
+    current target (or effort). Returns ``(position_values, position_indices,
+    effort_values, effort_indices)``.
+    """
+    from strands_robots.simulation.isaac.mjcf_assets import mjcf_motor_joints
+
+    motors = mjcf_motor_joints(getattr(robot, "description_path", None))
+    pos_idx: list[int] = []
+    pos_val: list[float] = []
+    eff_idx: list[int] = []
+    eff_val: list[float] = []
+    for i, jname in enumerate(robot.joint_names):
+        if jname not in action_map:
+            continue
+        value = float(action_map[jname])
+        motor = motors.get(jname)
+        if motor is None:
+            pos_idx.append(i)
+            pos_val.append(value)
+            continue
+        gear, lo, hi = motor
+        if lo is not None and hi is not None:
+            value = min(max(value, lo), hi)
+        eff_idx.append(i)
+        eff_val.append(gear * value)
+    return (
+        np.array(pos_val, dtype=np.float32),
+        np.array(pos_idx, dtype=np.int32),
+        np.array(eff_val, dtype=np.float32),
+        np.array(eff_idx, dtype=np.int32),
+    )
+
+
 #: The pump's idle wait, in slices short enough that a queued worker call is
 #: picked up within one slice: 10 x 5 ms, the 50 ms the loop always idled for.
 _IDLE_SLICES = 10
@@ -1099,6 +1145,80 @@ def _anchor_fixed_base_articulation(prim_path: str) -> str | None:
 #: ``get_observation`` carries no images, so a rollout or recording silently
 #: trains on black. Measured on an L40S: ``headless=True`` with
 #: ``render_mode="rtx_realtime"`` renders real frames at ~50 ms each.
+def _place_robot_container(prim_path: str, position: list[float] | None) -> bool:
+    """Author ``position`` as the translate of the robot's container prim; ``True`` when written.
+
+    The container (``/World/Robots/<name>``) is what a converted robot's world
+    weld is expressed against and what ``World.reset()`` re-reads, so moving it
+    moves the whole robot - base, weld anchor and links - and the move survives
+    resets. ``False`` (nothing written) when there is no stage or no usable
+    position; the caller then falls back to the articulation pose write.
+    """
+    if position is None:
+        return False
+    try:
+        values = [float(v) for v in position]
+    except (TypeError, ValueError):
+        return False
+    if len(values) != 3 or not all(np.isfinite(values)):
+        return False
+    try:
+        import omni.usd  # type: ignore[import-not-found]
+        from pxr import Gf, UsdGeom  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        prim = stage.GetPrimAtPath(prim_path) if stage is not None else None
+        if prim is None or not prim.IsValid():
+            return False
+        xformable = UsdGeom.Xformable(prim)
+        op = next((o for o in xformable.GetOrderedXformOps() if o.GetOpType() == UsdGeom.XformOp.TypeTranslate), None)
+        if op is None:
+            op = xformable.AddTranslateOp()
+        op.Set(Gf.Vec3d(*values))
+        return True
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _deactivate_imported_ground_planes(prim_path: str) -> list[str]:
+    """Deactivate infinite ground planes the MJCF converter imported inside a robot.
+
+    A menagerie ``scene.xml`` - what the registry points at - adds a ``floor``
+    plane to the worldbody, and the converter keeps it under the robot's
+    ``Geometry``: measured on so100, contacts reported the cube touching both
+    the world's ``GroundPlane`` and ``so100/Geometry/floor`` at the same point,
+    and once a robot is placed away from the origin its floor moves with it (a
+    go2 spawned at z=0.3 carried a floor at z=0.3 that wrecked a neighbour's
+    tracking). Only ``UsdGeom.Plane`` prims that are not part of any rigid body
+    qualify; a robot's own links are never touched. Returns the paths deactivated.
+    """
+    try:
+        import omni.usd  # type: ignore[import-not-found]
+        from pxr import Usd, UsdGeom, UsdPhysics  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        root = stage.GetPrimAtPath(prim_path) if stage is not None else None
+        if root is None or not root.IsValid():
+            return []
+        planes = []
+        for prim in Usd.PrimRange(root):
+            if not prim.IsA(UsdGeom.Plane):
+                continue
+            ancestor, in_body = prim, False
+            while ancestor and ancestor.IsValid() and ancestor != root:
+                if ancestor.HasAPI(UsdPhysics.RigidBodyAPI):
+                    in_body = True
+                    break
+                ancestor = ancestor.GetParent()
+            if not in_body:
+                planes.append(prim)
+        for prim in planes:
+            prim.SetActive(False)
+        return [str(p.GetPath()) for p in planes]
+    except (ImportError, AttributeError, RuntimeError):
+        return []
+
+
 _HEADLESS_RENDER_REMEDY = (
     'render_mode="headless" renders no pixels (all-zero frames, no images in observations); '
     'pass render_mode="rtx_realtime" (works with headless=True) for real camera frames'
@@ -1194,47 +1314,6 @@ class _RobotState:
         self.policy_running = False
         self.policy_instruction = ""
         self.policy_steps = 0
-
-
-def _cameras_recording_option_error(
-    method: str,
-    fps: Any,
-    max_frames_per_camera: Any,
-) -> dict[str, Any] | None:
-    """Reject a rollout-video option the Isaac recorder cannot honor.
-
-    Pre-flight guard for :meth:`IsaacSimulation.start_cameras_recording`,
-    mirroring the MuJoCo backend's guard of the same name
-    (:func:`strands_robots.simulation.mujoco.rendering._cameras_recording_option_error`)
-    against the one shared domain
-    (:func:`~strands_robots.utils.positive_whole_number_error`), so the two
-    recording surfaces cannot disagree on what a usable ``fps`` is. Isaac takes
-    no ``width``/``height`` here - each camera carries its own resolution from
-    :meth:`IsaacSimulation.add_camera` - so only the two frame counts are
-    checked.
-
-    Refusing at ``start`` is what keeps the flush honest: ``fps`` is stored in
-    the recording state and handed to
-    :func:`~strands_robots.rendering.encode_clip` by
-    :meth:`IsaacSimulation.stop_cameras_recording`, which refuses a rate it
-    cannot encode at. Validating only at flush time would surface the mistake
-    after a whole rollout's frames had been buffered, and
-    ``max_frames_per_camera=0`` would drop every frame while both calls still
-    reported success.
-
-    Args:
-        method: Public method name, used to prefix the error message.
-        fps: Encoded MP4 frame rate.
-        max_frames_per_camera: In-memory per-camera frame cap.
-
-    Returns:
-        A structured ``{"status": "error", ...}`` dict naming the first
-        offending parameter, or ``None`` when both options are usable.
-    """
-    for param, value in (("fps", fps), ("max_frames_per_camera", max_frames_per_camera)):
-        if text := positive_whole_number_error(value, param, method):
-            return {"status": "error", "content": [{"text": text}]}
-    return None
 
 
 class _CameraState:
@@ -5560,14 +5639,13 @@ class IsaacSimulation(
                         pos = tuple(float(v) for v in np.asarray(state.handle.get_world_pose()[0]).reshape(-1))
                     physx.apply_force_at_pos(stage_id, body_int, tuple(f_vec), pos)
                 if any(t_vec):
-                    # Negated: measured on isaacsim 6.0.1, this binding spins a
-                    # body OPPOSITE to the right-handed world torque it is
-                    # handed - +0.3 z gave wz = -0.458 rad/s and -0.3 z gave
-                    # wz = +0.538, a clean mirror in both directions from rest.
-                    # The cross-backend contract (MuJoCo's xfrc_applied) is
-                    # right-handed world-frame, so the flip is applied here,
-                    # once, at the boundary to the binding that disagrees.
-                    physx.apply_torque(stage_id, body_int, tuple(-v for v in t_vec))
+                    # Handed over as is: the binding is right-handed world-frame,
+                    # like MuJoCo's xfrc_applied. Measured on Isaac Sim 6.0.1 and
+                    # 6.1 with a 1 kg, 10 cm cube in zero gravity: torque +0.01 z
+                    # for 0.5 s spins it to wz +3.0 (I_zz = 1/600 kg m^2), and a
+                    # +y force at +x off the centre spins it +z as well. The
+                    # negation this used to apply spun every body backwards.
+                    physx.apply_torque(stage_id, body_int, tuple(t_vec))
             except (RuntimeError, ValueError, AttributeError, TypeError) as e:
                 del self._applied_wrenches[name]
                 logger.error("apply_force: dropping the latched wrench on '%s' - reapply failed: %s", name, e)
@@ -6084,12 +6162,7 @@ class IsaacSimulation(
             # over every joint, so the indices then address every DOF in
             # articulation order - what the raw vector path expressed by passing
             # ``None``.
-            named = [i for i, jname in enumerate(robot.joint_names) if jname in action_map]
-            action_array: np.ndarray = np.array(
-                [float(action_map[robot.joint_names[i]]) for i in named],
-                dtype=np.float32,
-            )
-            joint_indices: np.ndarray = np.array(named, dtype=np.int32)
+            action_array, joint_indices, effort_array, effort_indices = _split_joint_action(robot, action_map)
 
         # Nested (not a separate method) so the write-and-step runs on the
         # ``SimulationApp``-owning thread and the lock is released every
@@ -6114,15 +6187,20 @@ class IsaacSimulation(
                 # exist on the 6.0 class (the #101 ``omni.isaac.* -> isaacsim.*``
                 # migration renamed imports but missed this articulation method).
                 # See ``set_joint_positions`` for the teleport (non-PD) counterpart.
-                if robot.articulation is not None and action_array.size > 0:
+                if robot.articulation is not None and (action_array.size > 0 or effort_array.size > 0):
                     try:
                         from strands_robots.simulation.isaac._deprecated_api import (
                             ArticulationAction,
                         )
 
-                        robot.articulation.apply_action(
-                            ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
-                        )
+                        if action_array.size > 0:
+                            robot.articulation.apply_action(
+                                ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
+                            )
+                        if effort_array.size > 0:
+                            robot.articulation.apply_action(
+                                ArticulationAction(joint_efforts=effort_array, joint_indices=effort_indices)
+                            )
                     except (RuntimeError, ValueError, AttributeError, ImportError) as e:
                         # apply_action raises RuntimeError on a torn-down
                         # articulation, ValueError on shape mismatch, AttributeError
@@ -6196,6 +6274,35 @@ class IsaacSimulation(
 
     # --- SimEngine: Synchronized multi-robot rollout -------------------------
 
+    def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
+        """Hand a policy that opts in (``set_sim_context``) the robot's compiled source MJCF.
+
+        The MuJoCo backend hands its live ``MjModel``; this backend has none,
+        but a robot converted from MJCF records the file it came from, and the
+        compiled model carries the same actuator table. ``MockPolicy`` reads its
+        ctrl ranges from it to keep its sinusoid inside them - without this, on
+        Isaac it commanded (and recorded) +-0.5 on so100 joints whose ranges are
+        [-3.32, 0.174] and [-0.174, 1.75], so a replay could not follow its own
+        dataset (0.325 rad worst-case error vs 0.106 on MuJoCo). No-op for a
+        robot loaded from plain USD or URDF, and never fails a rollout.
+        """
+        ctx = getattr(policy, "set_sim_context", None)
+        if not callable(ctx):
+            return
+        robot = registry_entry(self._robots, robot_name)
+        path = getattr(robot, "description_path", None) if robot is not None else None
+        if not path or not str(path).lower().endswith(".xml"):
+            return
+        from strands_robots.simulation.isaac.mjcf_assets import compiled_mjcf_model
+
+        model = compiled_mjcf_model(str(path))
+        if model is None:
+            return
+        try:
+            ctx(model, "")
+        except Exception as exc:  # noqa: BLE001 - non-fatal, as on the MuJoCo backend
+            logger.debug("bind_policy_sim_context(%s) failed: %s", robot_name, exc)
+
     def _apply_lockstep_action(self, robot_name: str, action: dict[str, Any], warned_unresolved: set[str]) -> None:
         """Apply one robot's action WITHOUT stepping physics (lockstep half of send_action).
 
@@ -6254,22 +6361,22 @@ class IsaacSimulation(
 
         # Command ONLY the named joints (see send_action for why a full
         # zero-filled vector would slam unnamed joints to 0.0).
-        named = [i for i, jname in enumerate(robot.joint_names) if jname in action_map]
-        if robot.articulation is None or not named:
+        action_array, joint_indices, effort_array, effort_indices = _split_joint_action(robot, action_map)
+        if robot.articulation is None or (action_array.size == 0 and effort_array.size == 0):
             return
-        action_array: np.ndarray = np.array(
-            [float(action_map[robot.joint_names[i]]) for i in named],
-            dtype=np.float32,
-        )
-        joint_indices: np.ndarray = np.array(named, dtype=np.int32)
         try:
             from strands_robots.simulation.isaac._deprecated_api import (
                 ArticulationAction,
             )
 
-            robot.articulation.apply_action(
-                ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
-            )
+            if action_array.size > 0:
+                robot.articulation.apply_action(
+                    ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
+                )
+            if effort_array.size > 0:
+                robot.articulation.apply_action(
+                    ArticulationAction(joint_efforts=effort_array, joint_indices=effort_indices)
+                )
         except (RuntimeError, ValueError, AttributeError, ImportError) as e:
             # Same expected-failure set as send_action's apply path; a failed
             # apply mid-lockstep must halt the loop, not leave this robot
@@ -7874,7 +7981,11 @@ class IsaacSimulation(
         # or buffer work: ``fps`` reaches ``encode_clip`` at flush time, which
         # refuses a rate it cannot encode at, and a non-positive frame cap
         # drops every captured frame.
-        if error := _cameras_recording_option_error("start_cameras_recording", fps, max_frames_per_camera):
+        from strands_robots.rendering.video import cameras_recording_option_error
+
+        if error := cameras_recording_option_error(
+            "start_cameras_recording", fps=fps, max_frames_per_camera=max_frames_per_camera
+        ):
             return error
         # ``cameras`` names an ordered list of DISTINCT camera names, so it is
         # refused on the shared name-list domain before any filesystem or buffer work. Neither
@@ -8642,6 +8753,23 @@ class IsaacSimulation(
         # of ``prim_path``; subsequent Articulation lookups walk that path.
         add_reference_to_stage(usd_path=usd_path, prim_path=prim_path)
         _select_physics_variant(prim_path)
+        # The MJCF path gets the same fixed-base fix the URDF path has had:
+        # the converter puts ArticulationRootAPI on the base rigid body and welds
+        # that body to the world with a separate FixedJoint, which PhysX reads as
+        # a FLOATING-base articulation held by a weld - so get_jacobian refused
+        # every converted arm ("Only fixed-base articulations are supported") and
+        # the delta-EEF controller failed on every action.
+        _anchor_fixed_base_articulation(prim_path)
+        # A menagerie ``scene.xml`` carries its own floor; the converter imports
+        # it inside the robot, a second infinite ground on top of the world's.
+        _deactivate_imported_ground_planes(prim_path)
+        # The requested position goes on the robot's CONTAINER prim, before the
+        # articulation is built. ``set_world_pose`` on the articulation moved
+        # the PhysX view only: USD kept the base at the origin, the world weld's
+        # anchor stayed at the origin and pulled it back, and ``World.reset()``
+        # re-read USD - so every MJCF robot spawned at [0, 0, 0] whatever it was
+        # asked, and two robots overlapped and dragged each other.
+        placed = _place_robot_container(prim_path, position)
 
         # Step 2-3: wrap + initialise. The articulation name has to be
         # unique within the scene's articulation registry, so derive it
@@ -8665,7 +8793,7 @@ class IsaacSimulation(
         # call set_world_pose when the caller actually wanted a non-default
         # placement. Saves a tensor round-trip on the common
         # ``position=[0, 0, 0]`` case.
-        if position is not None and any(p != 0.0 for p in position):
+        if not placed and position is not None and any(p != 0.0 for p in position):
             articulation.set_world_pose(position=np.asarray(position, dtype=float))
 
         # Step 5: joint names. ``dof_names`` is ``None`` if ``initialize``
@@ -9964,6 +10092,17 @@ class IsaacSimulation(
         :meth:`gripper_frame_pose`) and searches the whole subtree for a
         prim named ``link_name``.
         """
+        # The robot's own subtree first. The walk-up below reaches the
+        # top-level prim (``/World``), which holds EVERY robot: with two
+        # so100s, ``get_body_state("arm_b/Base")`` answered arm_a's Base - the
+        # first match in stage order - so the second robot always read the
+        # first one's pose.
+        for own in dict.fromkeys(p for p in (r.prim_path, r.actual_prim_path) if p):
+            own_root = stage.GetPrimAtPath(own)
+            if own_root and own_root.IsValid():
+                for p in Usd.PrimRange(own_root):
+                    if p.GetName() == link_name and p.IsA(UsdGeom.Xformable):
+                        return p
         sdf_path = Sdf.Path(r.actual_prim_path)
         top = sdf_path
         while top.GetParentPath() != Sdf.Path.absoluteRootPath and top.GetParentPath() != Sdf.Path.emptyPath:
@@ -10020,25 +10159,32 @@ class IsaacSimulation(
             # ``/{robot_name}``). Walk up from there to the top-level
             # robot prim and search its whole subtree for the gripper
             # / tool link.
+            # The robot's own prim when it exists: the top-level walk reaches
+            # ``/World``, where the FIRST robot's gripper link answered for
+            # every robot (two so100s reported identical gripper poses).
             sdf_path = Sdf.Path(r.actual_prim_path)
             top = sdf_path
             while top.GetParentPath() != Sdf.Path.absoluteRootPath and top.GetParentPath() != Sdf.Path.emptyPath:
                 top = top.GetParentPath()
-            root = stage.GetPrimAtPath(top)
-            if not root or not root.IsValid():
-                return None
-            preferred = None
-            fallback = None
-            for p in Usd.PrimRange(root):
-                if not p.IsA(UsdGeom.Xformable):
+            prim = None
+            for search in dict.fromkeys(x for x in (r.prim_path, r.actual_prim_path, top) if x):
+                root = stage.GetPrimAtPath(search)
+                if not root or not root.IsValid():
                     continue
-                ln = p.GetName().lower()
-                if "gripper_frame" in ln or "tool" in ln:
-                    preferred = p
+                preferred = None
+                fallback = None
+                for p in Usd.PrimRange(root):
+                    if not p.IsA(UsdGeom.Xformable):
+                        continue
+                    ln = p.GetName().lower()
+                    if "gripper_frame" in ln or "tool" in ln:
+                        preferred = p
+                        break
+                    if "moving_jaw" in ln or "gripper" in ln:
+                        fallback = fallback or p
+                prim = preferred or fallback
+                if prim is not None:
                     break
-                if "moving_jaw" in ln or "gripper" in ln:
-                    fallback = fallback or p
-            prim = preferred or fallback
             if prim is None:
                 return None
             xf = UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())

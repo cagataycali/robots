@@ -13,7 +13,7 @@ import tempfile
 from strands_robots.simulation import create_simulation
 from strands_robots.simulation.predicates import PREDICATE_REGISTRY, make_predicate
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("so101")
 sim.add_object(name="cube", shape="box", size=[0.03, 0.03, 0.03], position=[0.25, 0.0, 0.015])

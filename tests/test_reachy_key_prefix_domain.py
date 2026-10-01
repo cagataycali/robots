@@ -46,6 +46,7 @@ import pytest
 import strands_robots
 from strands_robots.mesh.security import MAX_PEER_ID_LEN
 from tests._device_connect_real import use_the_real_edge
+from tests._package_ast import parse_file
 
 # Prefixes that cannot address a single robot's key expressions. The four
 # wildcards are the dangerous half -- Zenoh accepts every one of them, so they
@@ -389,7 +390,7 @@ class TestMultiSegmentNamespacingIsPreserved:
 
 def _exported_names(package_init: Path) -> list[str]:
     """The names listed in ``__all__`` of a package's ``__init__``."""
-    for node in ast.parse(package_init.read_text(encoding="utf-8")).body:
+    for node in parse_file(package_init).body:
         if not isinstance(node, ast.Assign):
             continue
         if not any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets):

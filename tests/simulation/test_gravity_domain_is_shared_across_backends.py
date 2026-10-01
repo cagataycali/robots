@@ -54,6 +54,7 @@ from strands_robots.simulation import base as sim_base
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.simulation.models import SimWorld
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
+from tests._package_ast import parse_file
 from tests.simulation._isaac_engine import isaac_engine
 
 from .test_input_validators_refuse_a_boolean import _BOOLEAN_IDS, _BOOLEANS
@@ -373,7 +374,7 @@ def _discovered_gravity_surfaces() -> dict[tuple[str, str, str], bool]:
     found: dict[tuple[str, str, str], bool] = {}
     for backend in _BACKENDS:
         for path in sorted((_SIM_PACKAGE / backend).glob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
             for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
                 for fn in ast.iter_child_nodes(cls):
                     if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):

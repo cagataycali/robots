@@ -298,70 +298,6 @@ def _save_render_png(output_path: str, png_bytes: bytes, sandbox_root: Path | No
     return str(safe)
 
 
-def _cameras_recording_option_error(
-    method: str,
-    fps: Any,
-    width: Any,
-    height: Any,
-    max_frames_per_camera: Any,
-) -> dict[str, Any] | None:
-    """Reject a plain-MP4 recording option the recorder cannot honor.
-
-    Pre-flight guard shared by both plain-MP4 entry points
-    (:meth:`RenderingMixin.start_cameras_recording` and
-    :meth:`RenderingMixin.start_cameras_recording_synchronous`). Every one of
-    these knobs is a frame count or a pixel count, so the accepted domain is the
-    shared one the ``run_policy(video=...)`` dict already enforces
-    (:func:`~strands_robots.utils.positive_whole_number_error`)
-    - a single source of truth, so the two recording surfaces cannot disagree on
-    what a usable ``fps`` is.
-
-    Without this guard each unusable value produced a ``status="success"``
-    recording that wrote no MP4 at all: ``fps=0`` killed the capture thread on
-    its first ``1 / fps``, ``fps=-1`` / ``nan`` / ``inf`` were refused by the
-    ffmpeg writer at flush time, ``fps="30"`` raised a ``TypeError`` on the
-    capture thread, ``max_frames_per_camera=0`` made ``len(buffer) >= cap`` true
-    for every frame, and a non-positive ``width``/``height`` failed every render
-    call - all reported as success by both ``start`` and ``stop``.
-
-    The accepted domain admits any real scalar with an integral value, so
-    passing this guard is a promise the value *can* be honored, not that it is
-    already in the form its consumer needs. Callers must therefore normalize
-    the pixel counts to plain ``int`` before handing them to ``render``, which
-    requires a true ``int``: accepting ``640.0`` here and forwarding it
-    verbatim reproduced the very empty-recording-reported-as-success failure
-    this guard exists to prevent.
-
-    Args:
-        method: Public method name, used to prefix the error message.
-        fps: Capture/encode frame rate.
-        width: Per-frame width, or ``None`` for the camera/renderer default.
-        height: Per-frame height, or ``None`` for the camera/renderer default.
-        max_frames_per_camera: In-memory per-camera frame cap.
-
-    Returns:
-        A structured ``{"status": "error", ...}`` dict naming the first
-        offending parameter, or ``None`` when every option is usable.
-    """
-    from strands_robots.utils import positive_whole_number_error
-
-    # ``width``/``height`` are ``int | None``: ``None`` means "use the camera's
-    # configured resolution, else the renderer default", so it is skipped rather
-    # than rejected. ``fps`` and the frame cap have no such opt-out.
-    checks: tuple[tuple[str, Any], ...] = (
-        ("fps", fps),
-        ("max_frames_per_camera", max_frames_per_camera),
-        ("width", width),
-        ("height", height),
-    )
-    for param, value in checks:
-        if value is None and param in ("width", "height"):
-            continue
-        if text := positive_whole_number_error(value, param, method):
-            return {"status": "error", "content": [{"text": text}]}
-    return None
-
-
 #: Fraction of a range that absorbs boundary rounding in the out-of-range
 #: warning. A position servo commanded exactly at a limit routinely lands a
 #: float epsilon outside it, and that is not a unit mismatch.
@@ -2772,8 +2708,10 @@ class RenderingMixin:
         # Reject a frame/pixel count the recorder cannot honor before any
         # filesystem or capture-thread work: every one of these produced an
         # empty recording that still reported success.
-        if error := _cameras_recording_option_error(
-            "start_cameras_recording", fps, width, height, max_frames_per_camera
+        from strands_robots.rendering.video import cameras_recording_option_error
+
+        if error := cameras_recording_option_error(
+            "start_cameras_recording", fps=fps, max_frames_per_camera=max_frames_per_camera, width=width, height=height
         ):
             return error
         # The guard above accepts any real scalar with an integral value, so a
@@ -3402,8 +3340,14 @@ class RenderingMixin:
         # Reject a frame/pixel count the recorder cannot honor before any
         # filesystem or capture-thread work: every one of these produced an
         # empty recording that still reported success.
-        if error := _cameras_recording_option_error(
-            "start_cameras_recording_synchronous", fps, width, height, max_frames_per_camera
+        from strands_robots.rendering.video import cameras_recording_option_error
+
+        if error := cameras_recording_option_error(
+            "start_cameras_recording_synchronous",
+            fps=fps,
+            max_frames_per_camera=max_frames_per_camera,
+            width=width,
+            height=height,
         ):
             return error
         # ``cameras`` names an ordered list of DISTINCT camera names, so it is

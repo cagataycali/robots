@@ -18,7 +18,7 @@ export STRANDS_TRUST_REMOTE_CODE=1      # the diffusers pipeline loads with trus
 
 `KimodoPolicy` wraps NVIDIA's Kimodo (`nvidia/Kimodo-G1-RP-v1`), a text-conditioned motion diffusion model. One diffusion pass samples a per-frame full-body `qpos` sequence for the G1; the policy resamples it from the model's native frame rate to the control rate and emits one action dict per tick, keyed by the canonical WBC joint ordering for all 29 leg, waist and arm joints. Any English motion description is a goal; there is no fixed clip vocabulary. `requires_images` is `False`.
 
-Standalone in MuJoCo the targets are applied directly, which is the faithful kinematic reference. Closing the loop through physics needs a controller that tracks that reference over the same 29 joints. That is a cascade, and `CompositePolicy` (which merges disjoint joint groups) cannot express it. [protomotions](protomotions.md) is the tracker; `wbc` cannot track a pose because its only input is a base velocity.
+Standalone in MuJoCo the targets are applied directly: the faithful kinematic reference. Closing the loop through physics needs a controller tracking that reference over the same 29 joints, a cascade `CompositePolicy` (which merges disjoint joint groups) cannot express. [protomotions](protomotions.md) is the tracker; `wbc` cannot track a pose, its only input is a base velocity.
 
 ```python title="sketch"
 from strands_robots.policies import create_policy
@@ -31,7 +31,7 @@ policy = create_policy("text2motion")   # same provider, all defaults
 
 {{providers:kwargs:kimodo}}
 
-Everything after `config` is keyword-only and mirrors a `KimodoConfig` field; an explicit keyword wins over the config object. No `**kwargs`: a misspelled keyword is a `TypeError`, but a misspelled key inside `config={...}` is dropped silently by `KimodoConfig.from_dict`. Defaults: `model_id="nvidia/Kimodo-G1-RP-v1"`, `diffusion_steps=100`, `guidance_scale=7.5`, `num_frames=120`, `dtype="fp16"` (`bf16` and `fp32` accepted). `motion_agent` injects a sampler and is how NVIDIA's bare-weights checkpoint, which targets its own runtime rather than a `diffusers` pipeline, is driven.
+Everything after `config` is keyword-only and mirrors a `KimodoConfig` field; an explicit keyword wins over the config object. No `**kwargs`: a misspelled keyword is a `TypeError`, while a misspelled key inside `config={...}` is dropped silently by `KimodoConfig.from_dict`. Defaults: `model_id="nvidia/Kimodo-G1-RP-v1"`, `diffusion_steps=100`, `guidance_scale=7.5`, `num_frames=120`, `dtype="fp16"` (`bf16` and `fp32` accepted). `motion_agent` injects a sampler; it is how NVIDIA's bare-weights checkpoint, built for its own runtime rather than a `diffusers` pipeline, is driven.
 
 ## Per-call keywords
 
@@ -48,7 +48,7 @@ Needs the extra, the environment gate, a CUDA GPU and a first-use download.
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("g1")
 result = sim.run_policy(
@@ -103,5 +103,5 @@ sim.run_policy(robot_name="g1", policy_object=KimodoPolicy(motion_agent=NativeKi
 
 - Unitree G1 only; the output is the G1's 29-joint layout.
 - Kinematic, not dynamic. Played directly, the reference ignores contact and balance. Track it with [protomotions](protomotions.md) for physics.
-- A sample is one diffusion pass over `num_frames` at the native rate, so a long prompt is a long first call; `transition_frames` blends consecutive samples.
+- A sample is one diffusion pass over `num_frames` at the native rate, so the first call is long; `transition_frames` blends consecutive samples.
 - `trust_remote_code=True` is how the `diffusers` pipeline loads, hence the environment gate.

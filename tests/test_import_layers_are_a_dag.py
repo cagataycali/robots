@@ -42,6 +42,8 @@ from typing import Any
 
 import pytest
 
+from tests._package_ast import parse_file
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPT = _REPO_ROOT / "scripts" / "check_import_layers.py"
 _PACKAGE_ROOT = _REPO_ROOT / "strands_robots"
@@ -390,8 +392,42 @@ class TestTheContract:
         offenders = sorted(
             (path.relative_to(_PACKAGE_ROOT).as_posix(), node.value)
             for path in (_PACKAGE_ROOT / "drivers").rglob("*.py")
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            for node in ast.walk(parse_file(path))
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and sibling.fullmatch(node.value)
+        )
+        assert offenders == []
+
+    def test_no_module_imports_a_location_kept_only_for_one_minor(self, graph: Any) -> None:
+        """A move is finished when nothing in the package still uses the old path.
+
+        A moved module leaves a shim behind that warns on import and is deleted
+        a minor later; a package caller left on the shim warns every user and
+        breaks on that deletion. The dashboard read ``Ticker`` through
+        ``strands_robots.mesh.pacing`` after it moved to ``_pacing``. The old
+        locations are read from the tree: a module whose body warns
+        ``DeprecationWarning``, and the mesh's moved ROS names and stems.
+        """
+        shims = {
+            name
+            for name, path in graph.modules.items()
+            for node in parse_file(path).body
+            if isinstance(node, ast.Expr) and "DeprecationWarning" in ast.unparse(node.value)
+        }
+        mesh = "strands_robots.mesh"
+        moved = next(
+            ast.literal_eval(node.value)
+            for node in parse_file(graph.modules[mesh]).body
+            if isinstance(node, ast.AnnAssign) and node.value and ast.unparse(node.target) == "_MOVED_TO_DRIVERS"
+        )
+        old = shims | {f"{mesh}.{key}" for key in (*moved, *moved.values())}
+        assert "strands_robots.mesh.pacing" in old and f"{mesh}.Transport" in old, "no old location found: vacuous"
+        offenders = sorted(
+            (importer, target)
+            for importer, path in graph.modules.items()
+            for node in ast.walk(parse_file(path))
+            if isinstance(node, ast.Import | ast.ImportFrom)
+            for target in mod._import_targets(importer, node, is_package=path.name == "__init__.py")
+            if target in old or target.rpartition(".")[0] in shims
         )
         assert offenders == []
 

@@ -37,6 +37,7 @@ from strands_robots.drivers import go2 as go2_module
 from strands_robots.drivers.base import decode_motor_state
 from strands_robots.drivers.g1 import _G1_JOINT_INDEX, G1Driver, _ControlLoop
 from strands_robots.drivers.go2 import GO2_JOINT_INDEX, Go2Driver
+from tests._package_ast import parse_file
 
 #: The record every joint reports, on either robot.
 _JOINT_FIELDS = frozenset({"q", "dq", "tau_est", "temperature"})
@@ -232,7 +233,7 @@ class TestOneDecoderForBothTwins:
         offenders: list[str] = []
         for module in (g1_module, go2_module):
             path = pathlib.Path(inspect.getfile(module))
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            for node in ast.walk(parse_file(path)):
                 if isinstance(node, ast.Constant) and node.value == "tau_est":
                     offenders.append(f"{path.name}:{node.lineno}")
         assert offenders == [], f"a private motor decode reappeared: {offenders}"
