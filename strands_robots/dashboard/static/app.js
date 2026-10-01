@@ -430,7 +430,7 @@ function absorbUrl() {
         nextToken: token,
         pageHost: pageHost()
       });
-      const moving = verdict2.kind === "token_follows_host" && needsConfirm(verdict2);
+      const moving = needsConfirm(verdict2);
       urlBase = next;
       if (moving) {
         urlVerdict = verdict2;
@@ -487,8 +487,10 @@ function authToken() {
   absorbUrl();
   const token = storedToken();
   if (!token) return "";
+  const base = backendBase();
+  if (urlVerdict !== null) return "";
   const issuer = (localStorage.getItem(TOKEN_HOST_KEY) ?? "").trim();
-  if (issuer !== hostOfBase(backendBase())) return "";
+  if (issuer !== hostOfBase(base)) return "";
   return token;
 }
 const URL_TOKEN_VIA = "handoff";
@@ -10790,15 +10792,12 @@ function AuthGate({ children }) {
       "The dashboard API did not answer. ",
       error && /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: error })
     ] }),
-    pending && pending.kind === "token_follows_host" && /* A ?backend= in the address bar asked this page to dial another host. The sign-in this
-    browser holds was NOT sent there (finding f003): it goes only if the operator says so,
-    the same question the Settings drawer asks for a typed address. */
+    pending && (pending.kind === "token_follows_host" || pending.kind === "cleartext_token") && /* A ?backend= in the address bar asked this page to dial another host, or the same host
+    over clear text. The sign-in this browser holds was NOT sent (finding f003): it goes
+    only if the operator says so, the same question the Settings drawer asks for a typed
+    address. */
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "result bad", role: "alert", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("b", { children: [
-        "Send this token to ",
-        pending.toHost,
-        "?"
-      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: pending.kind === "cleartext_token" ? `Send this token to ${pending.toHost} in clear text?` : `Send this token to ${pending.toHost}?` }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: pending.detail }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sheet-actions", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "btn ghost danger", type: "button", onClick: () => {

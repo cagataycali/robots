@@ -289,6 +289,58 @@ out({{ before, authorization: sent.map(s => s.headers.Authorization ?? null) }})
 
 
 @requires_node
+class TestTheDowngradeIsTheSameQuestion:
+    """``?backend=http://<same host>`` on a page bound to ``https://<same host>`` (review on #4297).
+
+    ``hostOf`` ignores the scheme, so the drawer's verdict is ``cleartext_token``
+    rather than ``token_follows_host``; it needs the operator's yes just the same
+    (``needsConfirm``). The URL gate used to honour only the first kind: the http
+    origin was persisted and scrubbed, and the host-bound bearer rode the first
+    request over clear text to a non-local host, silently, on every reload.
+    """
+
+    BOUND_HTTPS = SIGNED_IN + "localStorage.setItem('strands.backend', 'https://robot.example:8090')\n"
+    BOUND_HTTPS += "localStorage.setItem('strands.token.host', 'robot.example:8090')\n"
+    DOWNGRADE = "http://robot.example:8090"
+
+    def test_the_downgraded_dial_carries_no_bearer_and_persists_nothing(self) -> None:
+        got = _authorization_sent_to(self.BOUND_HTTPS, page=f"http://robot.lan:8090/?backend={self.DOWNGRADE}")
+        assert got["urls"] == [f"{self.DOWNGRADE}/api/fleet"], got
+        assert got["authorization"] == [None], f"the bearer went over clear text to robot.example: {got}"
+        assert got["stored_base"] == "https://robot.example:8090", f"the http origin was persisted unconfirmed: {got}"
+        assert all("backend=" in (url or "") for url in got["replaced"]), (
+            f"?backend= was scrubbed from the address bar while unconfirmed: {got['replaced']}"
+        )
+
+    def test_the_pending_verdict_is_the_drawers_cleartext_token(self) -> None:
+        got = run_frontend(
+            self.BOUND_HTTPS
+            + """
+const m = await import('./endpoints.ts')
+m.backendBase()
+const v = m.urlBackendVerdict()
+out({ kind: v && v.kind, to: v && v.toHost, auth: m.authToken() })
+""",
+            page=f"http://robot.lan:8090/?backend={self.DOWNGRADE}",
+        )
+        assert got == {"kind": "cleartext_token", "to": "robot.example:8090", "auth": ""}
+
+    def test_the_operators_yes_sends_it_and_persists_the_http_origin(self) -> None:
+        got = run_frontend(
+            self.BOUND_HTTPS
+            + """
+const m = await import('./endpoints.ts')
+m.carryTokenToBackend()
+await m.api('/api/fleet').catch(() => null)
+out({ authorization: sent.map(s => s.headers.Authorization ?? null), stored_base: localStorage.getItem('strands.backend'),
+      verdict: m.urlBackendVerdict() })
+""",
+            page=f"http://robot.lan:8090/?backend={self.DOWNGRADE}",
+        )
+        assert got == {"authorization": [f"Bearer {TOKEN}"], "stored_base": self.DOWNGRADE, "verdict": None}
+
+
+@requires_node
 class TestOnlyAnHttpOriginIsDialled:
     def test_a_scheme_fetch_cannot_speak_is_refused_and_the_page_stays_home(self) -> None:
         for raw in ("javascript:alert(1)", "file:///etc/passwd", "ftp://evil.example", "data:text/html,x"):
@@ -310,6 +362,13 @@ class TestTheUrlPathReadsTheDrawersRule:
         body = body[: body.index("\nexport function backendBase")]
         assert "connectionChange(" in body, "absorbUrl() decides a ?backend= without connectionChange()"
         assert "needsConfirm(" in body, "absorbUrl() does not ask whether the verdict needs the operator"
+        assert re.search(r"const moving = needsConfirm\(verdict\)", body), (
+            "absorbUrl() gates only one of the drawer's confirm-required verdicts (the https->http downgrade slips through)"
+        )
+        gate = ENDPOINTS.parent.parent / "components" / "AuthGate.tsx"
+        assert "pending.kind === 'token_follows_host' && (" not in gate.read_text(encoding="utf-8"), (
+            "AuthGate renders the URL question for one verdict kind only"
+        )
 
     def test_the_token_is_bound_to_a_host_in_storage(self) -> None:
         source = ENDPOINTS.read_text(encoding="utf-8")

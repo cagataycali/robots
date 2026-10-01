@@ -205,12 +205,17 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           </p>
         )}
 
-        {pending && pending.kind === 'token_follows_host' && (
-          /* A ?backend= in the address bar asked this page to dial another host. The sign-in this
-             browser holds was NOT sent there (finding f003): it goes only if the operator says so,
-             the same question the Settings drawer asks for a typed address. */
+        {pending && (pending.kind === 'token_follows_host' || pending.kind === 'cleartext_token') && (
+          /* A ?backend= in the address bar asked this page to dial another host, or the same host
+             over clear text. The sign-in this browser holds was NOT sent (finding f003): it goes
+             only if the operator says so, the same question the Settings drawer asks for a typed
+             address. */
           <div className="result bad" role="alert">
-            <b>Send this token to {pending.toHost}?</b>
+            <b>
+              {pending.kind === 'cleartext_token'
+                ? `Send this token to ${pending.toHost} in clear text?`
+                : `Send this token to ${pending.toHost}?`}
+            </b>
             <p>{pending.detail}</p>
             <div className="sheet-actions">
               <button className="btn ghost danger" type="button" onClick={() => { carryTokenToBackend(); location.reload() }}>

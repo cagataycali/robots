@@ -106,7 +106,9 @@ function absorbUrl(): void {
         nextToken: token,
         pageHost: pageHost(),
       })
-      const moving = verdict.kind === 'token_follows_host' && needsConfirm(verdict)
+      // Either confirm-required verdict pends: the token moving to another host, or the same host
+      // reached over clear text (a `?backend=http://` beside a stored https:// origin).
+      const moving = needsConfirm(verdict)
       urlBase = next
       if (moving) {
         // The evidence stays visible and nothing is persisted: a reload asks the same question.
@@ -172,10 +174,14 @@ export function authToken(): string {
   absorbUrl()
   const token = storedToken()
   if (!token) return ''
+  const base = backendBase()
+  // While a `?backend=` is waiting on the operator the dial goes out bare whatever the host: the
+  // binding below is by host, and an https->http downgrade keeps the host.
+  if (urlVerdict !== null) return ''
   const issuer = (localStorage.getItem(TOKEN_HOST_KEY) ?? '').trim()
   // A credential for one machine is not handed to another: the request goes out bare and the
   // operator lands on the sign-in for that host instead.
-  if (issuer !== hostOfBase(backendBase())) return ''
+  if (issuer !== hostOfBase(base)) return ''
   return token
 }
 
