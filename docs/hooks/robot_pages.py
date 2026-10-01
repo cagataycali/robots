@@ -46,7 +46,6 @@ _REPO = _HERE.parents[1]
 _DOCS = _REPO / "docs"
 _OUT = _DOCS / "robots"
 _MANIFEST = _DOCS / "assets" / "viewer" / "robots.json"
-_REGISTRY = _REPO / "strands_robots" / "registry" / "robots.json"
 _CHECKPOINTS = _HERE / "data" / "checkpoints.json"
 _CDN = "https://cdn.jsdelivr.net/gh/"
 
