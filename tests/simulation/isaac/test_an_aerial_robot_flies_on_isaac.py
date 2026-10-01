@@ -16,6 +16,7 @@ import pytest
 mujoco = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.isaac.site_drives import (  # noqa: E402
+    SiteDriveError,
     _quat_to_matrix,
     mjcf_site_drive,
     site_wrenches,
@@ -115,3 +116,48 @@ def test_anything_else_stays_on_the_articulation_path(tmp_path, xml) -> None:
     path = tmp_path / "m.xml"
     path.write_text(xml)
     assert mjcf_site_drive(str(path)) is None
+
+
+# A site actuator whose force is NOT gear * ctrl: the backend drives only the
+# <motor> shape (fixed gain 1, no bias, no activation dynamics). Anything else
+# would be flown with the wrong force and no signal; it is refused by name.
+_SERVO_SITE = (
+    '<mujoco><worldbody><body><freejoint/><geom size=".1"/><site name="s"/></body></worldbody>'
+    '<actuator><position name="hover" site="s" gear="0 0 1 0 0 0" kp="10"/></actuator></mujoco>'
+)
+_FILTERED_ROTOR = (
+    '<mujoco><worldbody><body><freejoint/><geom size=".1"/><site name="s"/></body></worldbody>'
+    '<actuator><general name="rotor" site="s" gear="0 0 1 0 0 0" dyntype="filter" dynprm="0.05"/>'
+    "</actuator></mujoco>"
+)
+_SCALED_MOTOR = (
+    '<mujoco><worldbody><body><freejoint/><geom size=".1"/><site name="s"/></body></worldbody>'
+    '<actuator><general name="scaled" site="s" gear="0 0 1 0 0 0" gainprm="2.5"/></actuator></mujoco>'
+)
+
+
+@pytest.mark.parametrize(
+    ("xml", "name", "why"),
+    [
+        (_SERVO_SITE, "hover", "bias"),
+        (_FILTERED_ROTOR, "rotor", "dyntype"),
+        (_SCALED_MOTOR, "scaled", "gainprm"),
+    ],
+    ids=["position-servo", "filtered-rotor", "scaled-gain"],
+)
+def test_a_site_actuator_the_backend_cannot_drive_faithfully_is_refused_by_name(tmp_path, xml, name, why) -> None:
+    path = tmp_path / "m.xml"
+    path.write_text(xml)
+    with pytest.raises(SiteDriveError, match=rf"(?s){name}.*{why}.*gear \* ctrl") as info:
+        mjcf_site_drive(str(path))
+    assert "MuJoCo" in str(info.value)  # what the caller is told the sim would diverge from
+
+
+def test_a_plain_motor_with_an_explicit_unit_gain_is_still_a_motor(tmp_path) -> None:
+    path = tmp_path / "m.xml"
+    path.write_text(
+        '<mujoco><worldbody><body><freejoint/><geom size=".1"/><site name="s"/></body></worldbody>'
+        '<actuator><general name="m" site="s" gear="0 0 1 0 0 0" gainprm="1"/></actuator></mujoco>'
+    )
+    drive = mjcf_site_drive(str(path))
+    assert drive is not None and [a.name for a in drive.actuators] == ["m"]

@@ -21,6 +21,18 @@ from dataclasses import dataclass, field
 import numpy as np
 
 
+class SiteDriveError(ValueError):
+    """A site actuator this backend cannot drive as MuJoCo would.
+
+    The rigid-body path applies ``force = gear * ctrl`` per motor and nothing
+    else. A site actuator with a gain other than 1, a bias (a ``<position>`` or
+    ``<velocity>`` servo on a site) or activation dynamics (``dyntype``, the
+    rotor-lag model) has a different force law in MuJoCo; flying it with the
+    motor law would diverge from MuJoCo with every value valid and nothing
+    refusing, so it is refused here by name instead.
+    """
+
+
 @dataclass(frozen=True)
 class SiteActuator:
     """One ``<motor site=...>`` of a free body, in that body's frame."""
@@ -60,6 +72,17 @@ def mjcf_site_drive(mjcf_path: str) -> SiteDrive | None:
     and every actuator is a site transmission on one and the same free body.
     Anything else - a joint, a tendon or joint actuator, motors on two bodies -
     is left to the articulation path, which reports on it itself.
+
+    Args:
+        mjcf_path: The MJCF file the robot was loaded from.
+
+    Returns:
+        The drive, or None when the model is not a site-actuated free body.
+
+    Raises:
+        SiteDriveError: If a site actuator is not the plain ``<motor>`` shape
+            (``force = gear * ctrl``): a servo, a scaled gain or activation
+            dynamics would fly differently from MuJoCo with no signal.
     """
     try:
         import mujoco
@@ -84,6 +107,7 @@ def mjcf_site_drive(mjcf_path: str) -> SiteDrive | None:
         return None  # a welded body cannot fly; nothing to drive
     actuators = []
     for i in range(model.nu):
+        _refuse_unless_motor_law(model, i)
         site = int(model.actuator_trnid[i, 0])
         limited = bool(model.actuator_ctrllimited[i])
         actuators.append(
@@ -98,6 +122,40 @@ def mjcf_site_drive(mjcf_path: str) -> SiteDrive | None:
             )
         )
     return SiteDrive(body_name=mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body) or "", actuators=actuators)
+
+
+def _refuse_unless_motor_law(model: object, i: int) -> None:
+    """Raise :class:`SiteDriveError` unless actuator *i* is the plain ``<motor>`` shape.
+
+    MuJoCo's ``<motor>`` is ``gaintype=fixed`` with ``gainprm[0] == 1``,
+    ``biastype=none`` and ``dyntype=none``: its force is exactly ``gear * ctrl``,
+    which is what :func:`site_wrenches` applies. The site transmission alone does
+    not say so - a ``<position site=...>`` servo or a ``<general dyntype="filter">``
+    rotor is also a site transmission - so each of the three is checked.
+    """
+    import mujoco
+
+    name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, i) or f"actuator{i}"
+    problems: list[str] = []
+    dyntype = int(model.actuator_dyntype[i])  # type: ignore[attr-defined]
+    if dyntype != int(mujoco.mjtDyn.mjDYN_NONE):
+        problems.append(f"dyntype={mujoco.mjtDyn(dyntype).name} (MuJoCo integrates an activation state)")
+    gaintype = int(model.actuator_gaintype[i])  # type: ignore[attr-defined]
+    gain = float(model.actuator_gainprm[i, 0])  # type: ignore[attr-defined]
+    if gaintype != int(mujoco.mjtGain.mjGAIN_FIXED):
+        problems.append(f"gaintype={mujoco.mjtGain(gaintype).name}")
+    elif gain != 1.0:
+        problems.append(f"gainprm[0]={gain:g} (MuJoCo scales ctrl by it)")
+    biastype = int(model.actuator_biastype[i])  # type: ignore[attr-defined]
+    if biastype != int(mujoco.mjtBias.mjBIAS_NONE):
+        problems.append(f"biastype={mujoco.mjtBias(biastype).name} (a servo: MuJoCo adds a bias term)")
+    if problems:
+        raise SiteDriveError(
+            f"site actuator {name!r} is not a plain <motor>: {'; '.join(problems)}. The Isaac rigid-body path "
+            "applies force = gear * ctrl per motor and nothing else, so this robot would fly differently from "
+            "MuJoCo with no error. Model it as <motor site=...> (fixed unit gain, no bias, no dynamics), or "
+            "load it on MuJoCo."
+        )
 
 
 def _quat_to_matrix(q: tuple[float, ...] | np.ndarray) -> np.ndarray:
