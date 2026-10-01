@@ -882,7 +882,11 @@ def test_a_declared_floor_written_without_its_trailing_zeros_is_not_read_as_unde
                 f"{name}>={abbreviated} names the declared floor {floor} itself, not a release below it"
             )
 
-    assert graded >= len(floors), f"only {graded} abbreviations graded for {len(floors)} declared floors"
+    # A floor ending in a non-zero component (``strands-agents>=1.57.2``) has no
+    # shorter spelling, so only the floors that end in zero are counted.
+    abbreviable = [name for name, floor in floors.items() if floor.split(".")[-1] == "0"]
+    assert abbreviable, "no declared floor ends in a zero component; the cell grades nothing"
+    assert graded >= len(abbreviable), f"only {graded} abbreviations graded for {len(abbreviable)} abbreviable floors"
 
 
 # Headers that mean "the extra you install". A column merely containing the word
