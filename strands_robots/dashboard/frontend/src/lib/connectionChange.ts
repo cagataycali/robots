@@ -34,7 +34,8 @@ export type ConnectionVerdict =
 
 const LOCAL = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'])
 
-function hostOf(base: string, pageHost = ''): string {
+/** The host a base means; '' means the origin that served the page (`pageHost`). */
+export function hostOf(base: string, pageHost = ''): string {
   const v = (base ?? '').trim()
   if (!v) return (pageHost || '').toLowerCase() // empty means "the origin that served this page"
   try {
