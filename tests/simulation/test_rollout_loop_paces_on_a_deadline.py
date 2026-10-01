@@ -50,6 +50,7 @@ import pytest
 from strands_robots.policies.mock import MockPolicy
 from strands_robots.simulation.observers import RunPolicyStep
 from strands_robots.simulation.policy_runner import PolicyRunner
+from tests._package_ast import parse_file
 from tests.simulation.test_policy_runner import FakeSim
 
 _PACKAGE = Path(__file__).resolve().parents[2] / "strands_robots"
@@ -254,7 +255,7 @@ def _function_source(rel_path: str, qualified: str) -> str:
     that reads its own documentation punishes documenting.
     """
     path = _PACKAGE / rel_path
-    tree = ast.parse(path.read_text())
+    tree = parse_file(path)
     cls_name, _, fn_name = qualified.rpartition(".")
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef) or node.name != cls_name:
@@ -310,7 +311,7 @@ def test_no_loop_in_the_simulation_package_paces_on_a_rate_derived_sleep() -> No
     """
     offenders: dict[tuple[str, int], str] = {}
     for path in sorted((_PACKAGE / "simulation").rglob("*.py")):
-        tree = ast.parse(path.read_text())
+        tree = parse_file(path)
         for fn in ast.walk(tree):
             if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue

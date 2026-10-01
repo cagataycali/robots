@@ -32,6 +32,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_file
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OBJECTS_PAGE = REPO_ROOT / "docs" / "learn" / "simulation" / "worlds-and-objects.md"
 TOOLS_DIR = REPO_ROOT / "strands_robots" / "tools"
@@ -57,7 +59,7 @@ def _import_time_guarded_tools() -> dict[str, str]:
     """Map each tool that needs a dependency to import to its ``pip install`` token."""
     guarded: dict[str, str] = {}
     for path in sorted(TOOLS_DIR.glob("*.py")):
-        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        for node in parse_file(path).body:
             call = _require_optional_call(node)
             if call is None:
                 continue

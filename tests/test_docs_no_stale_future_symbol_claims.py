@@ -39,6 +39,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_file
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DOCS_DIR = REPO_ROOT / "docs"
 PACKAGE_DIR = REPO_ROOT / "strands_robots"
@@ -77,7 +79,7 @@ def _defined_symbols() -> dict[str, str]:
     found: dict[str, str] = {}
     for path in sorted(PACKAGE_DIR.rglob("*.py")):
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - a syntax error is another test's
             continue
         for node in tree.body:

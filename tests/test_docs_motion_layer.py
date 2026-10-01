@@ -37,7 +37,8 @@ def _declared_scripts() -> list[Path]:
     block = re.search(r"^extra_javascript:\s*$(.*?)^\S", text, re.M | re.S)
     assert block, "mkdocs.yml declares no extra_javascript block"
     paths = re.findall(r"^\s+-\s+(?:path:\s+)?(\S+\.js)\s*$", block.group(1), re.M)
-    return [DOCS_DIR / p for p in paths]
+    # A CDN script (mermaid) is not ours to grade; the local wrapper that drives it is.
+    return [DOCS_DIR / p for p in paths if not p.startswith(("https://", "http://"))]
 
 
 def _features() -> list[str]:

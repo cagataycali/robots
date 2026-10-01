@@ -65,6 +65,58 @@ _ENCODER_EXTRA = "sim-mujoco"
 _GIF_SUFFIX = ".gif"
 
 
+def cameras_recording_option_error(
+    method: str,
+    *,
+    fps: Any,
+    max_frames_per_camera: Any,
+    width: Any = None,
+    height: Any = None,
+) -> dict[str, Any] | None:
+    """Reject a camera-recording option no backend's recorder can honor.
+
+    The one pre-flight every ``start_cameras_recording`` entry point runs
+    (MuJoCo's daemon-thread and synchronous recorders, Isaac's ``on_frame``
+    recorder) before it touches the filesystem or buffers a frame. Every knob is
+    a frame count or a pixel count, so the domain is the shared
+    :func:`~strands_robots.utils.positive_whole_number_error` one that
+    ``run_policy(video=...)`` enforces too: the recording surfaces cannot
+    disagree on what a usable ``fps`` is.
+
+    Each value refused here used to start a recording that wrote no MP4 while
+    ``start`` and ``stop`` both reported success: ``fps=0`` killed the capture
+    thread on its first ``1 / fps``, a negative or non-finite rate was refused
+    by the encoder only at flush time (after a whole rollout was buffered),
+    ``max_frames_per_camera=0`` dropped every frame, and a non-positive pixel
+    count failed every render.
+
+    Passing is a promise the value *can* be honored, not that it is already a
+    plain ``int``: a caller forwarding ``width``/``height`` to a renderer
+    normalizes them first.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        fps: Capture/encode frame rate.
+        max_frames_per_camera: In-memory per-camera frame cap.
+        width: Per-frame width, or ``None`` for the camera's own resolution
+            (always ``None`` on a backend whose cameras carry their size).
+        height: Per-frame height, or ``None`` likewise.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict naming the first
+        offending parameter, or ``None`` when every option is usable.
+    """
+    # ``None`` is the "camera's own resolution" opt-out for a pixel count only;
+    # ``fps`` and the frame cap have none.
+    checks = (("fps", fps), ("max_frames_per_camera", max_frames_per_camera), ("width", width), ("height", height))
+    for param, value in checks:
+        if value is None and param in ("width", "height"):
+            continue
+        if text := positive_whole_number_error(value, param, method):
+            return {"status": "error", "content": [{"text": text}]}
+    return None
+
+
 def require_clip_encoder(path: str | Path, purpose: str = "video encoding") -> Any:
     """Require the encoder modules a clip at ``path`` needs, and return ``imageio``.
 

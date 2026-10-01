@@ -29,8 +29,8 @@ function decodeSegment(seg: string): string | null {
   }
 }
 
-/** The `exp` claim in seconds, or null when this token does not carry one. */
-export function tokenExpiry(token: string | null | undefined): number | null {
+/** The claims a JWT-shaped token carries, or null when it is not one this browser can read. */
+export function tokenClaims(token: string | null | undefined): Record<string, unknown> | null {
   const raw = (token ?? '').trim()
   if (!raw) return null
   const parts = raw.split('.')
@@ -38,12 +38,19 @@ export function tokenExpiry(token: string | null | undefined): number | null {
   const json = decodeSegment(parts[1])
   if (!json) return null
   try {
-    const claims = JSON.parse(json) as { exp?: unknown }
-    const exp = claims?.exp
-    return typeof exp === 'number' && Number.isFinite(exp) ? exp : null
+    const claims: unknown = JSON.parse(json)
+    return claims !== null && typeof claims === 'object' && !Array.isArray(claims)
+      ? (claims as Record<string, unknown>)
+      : null
   } catch {
     return null
   }
+}
+
+/** The `exp` claim in seconds, or null when this token does not carry one. */
+export function tokenExpiry(token: string | null | undefined): number | null {
+  const exp = tokenClaims(token)?.exp
+  return typeof exp === 'number' && Number.isFinite(exp) ? exp : null
 }
 
 /** "19.3 hours", "4 minutes", "40 seconds" — for a sentence, not for arithmetic. */

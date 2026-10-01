@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests._package_ast import parse_file
+
 if TYPE_CHECKING:
     import networkx as nx  # type: ignore[import-untyped]
 else:
@@ -104,7 +106,7 @@ def _build_import_graph(root: Path) -> nx.DiGraph:
         mod = ".".join(p.relative_to(root.parent).with_suffix("").parts)
         G.add_node(mod)
         try:
-            tree = ast.parse(p.read_text(errors="ignore"))
+            tree = parse_file(p)
         except SyntaxError:
             continue
         deferred = _deferred_import_nodes(tree)

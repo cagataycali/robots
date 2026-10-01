@@ -69,6 +69,7 @@ import pytest
 
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import FREE_CAMERA_TOKENS, camera_name_error, reserved_camera_name_error
+from tests._package_ast import parse_file
 from tests.simulation._isaac_engine import isaac_engine
 
 #: The tokens that are also *addressable* strings, so only the reserved-name rule
@@ -552,7 +553,7 @@ class TestTheComposedRuleIsTheOnlyNameGuard:
         """
         readers, offenders = [], []
         for path in sorted(_package_root().rglob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
             for node in ast.walk(tree):
                 if not (isinstance(node, ast.FunctionDef) and node.name == "add_camera"):
                     continue
