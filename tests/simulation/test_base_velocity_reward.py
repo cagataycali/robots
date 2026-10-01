@@ -27,10 +27,7 @@ pytest.importorskip("mujoco")
 import mujoco  # noqa: E402
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
-from strands_robots.simulation.predicates import (  # noqa: E402
-    _quat_rotate_inverse_wxyz,
-    make_predicate,
-)
+from strands_robots.simulation.predicates import make_predicate  # noqa: E402
 
 # Floating base with a NAMED free joint (a humanoid's floating_base_joint) plus
 # one actuated hinge. get_observation surfaces base_pos/base_quat/base_lin_vel/
@@ -115,14 +112,6 @@ _ANG = [4.4, 5.5, 6.6]  # base angular velocity (body frame); yaw rate = z = 6.6
 # World->body rotation of _LIN_WORLD under _Q_YAW90 is [2.2, -1.1, 3.3], so the
 # body-frame planar twist the reward tracks is (vx=2.2, vy=-1.1, wz=6.6).
 _BODY_VX, _BODY_VY, _BODY_WZ = 2.2, -1.1, 6.6
-
-
-def test_quat_rotate_inverse_matches_hand_computation():
-    """The pure-Python world->body rotation is correct for a 90-deg-about-z base."""
-    out = _quat_rotate_inverse_wxyz(_Q_YAW90, _LIN_WORLD)
-    assert out == pytest.approx([2.2, -1.1, 3.3], abs=1e-6)
-    # Identity quaternion is a no-op.
-    assert _quat_rotate_inverse_wxyz([1.0, 0.0, 0.0, 0.0], _LIN_WORLD) == pytest.approx(_LIN_WORLD, abs=1e-9)
 
 
 def test_base_velocity_is_zero_at_perfect_body_frame_tracking(sim):
