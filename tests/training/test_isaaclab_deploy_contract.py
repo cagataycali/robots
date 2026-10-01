@@ -374,3 +374,57 @@ class TestARealEnvYamlKeepsItsClip:
         parsed = json.loads(out.stdout)
         assert parsed["observations"]["policy"]["height_scan"]["clip"] == [-1.0, 1.0]
         assert parsed["observations"]["policy"]["joint_pos"]["noise"] is None
+
+
+class TestAnUnreadableDescriptorFileIsAReasonNotACrash:
+    """``_read_yaml`` raises ``ValueError`` for every way a file fails to parse.
+
+    The export path degrades to ``deploy_contract_missing`` on ``(OSError,
+    ValueError)``; PyYAML's ``YAMLError`` and the interpreter fallback's
+    ``CalledProcessError`` / ``TimeoutExpired`` are neither, so a truncated
+    ``IO_descriptors.yaml`` (a run killed during Isaac Lab's startup write)
+    crashed ``export`` with a traceback instead of exporting the actor with
+    the reason recorded.
+    """
+
+    _TRUNCATED = "observations:\n  policy:\n    - name: joint_pos\n      shape: [1, 12\n"  # cut mid-list
+
+    def test_malformed_yaml_is_a_value_error_naming_the_file(self, tmp_path: Path) -> None:
+        pytest.importorskip("yaml")
+        path = tmp_path / "IO_descriptors.yaml"
+        path.write_text(self._TRUNCATED)
+        with pytest.raises(ValueError, match=r"IO_descriptors\.yaml.*could not be parsed as YAML"):
+            _trainer()._read_yaml(path)
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            lambda cmd: (_ for _ in ()).throw(
+                __import__("subprocess").CalledProcessError(1, cmd, stderr=b"yaml.scanner.ScannerError")
+            ),
+            lambda cmd: (_ for _ in ()).throw(__import__("subprocess").TimeoutExpired(cmd, 120)),
+        ],
+        ids=["child-failed", "child-timed-out"],
+    )
+    def test_the_interpreter_fallback_failures_are_value_errors_too(self, tmp_path: Path, monkeypatch, failure) -> None:
+        import subprocess
+        import sys
+
+        monkeypatch.setitem(sys.modules, "yaml", None)  # the no-PyYAML branch
+        monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: failure(cmd))
+        path = tmp_path / "IO_descriptors.yaml"
+        path.write_text(self._TRUNCATED)
+        with pytest.raises(ValueError, match=r"IO_descriptors\.yaml"):
+            _trainer()._read_yaml(path)
+
+    def test_export_records_the_reason_and_still_writes_the_actor(self, fake_python: Path, tmp_path: Path) -> None:  # noqa: F811
+        pytest.importorskip("yaml")
+        run = _train_and_write_actor(tmp_path)
+        descriptors = run / "io_descriptors" / "IO_descriptors.yaml"
+        descriptors.parent.mkdir(parents=True, exist_ok=True)
+        descriptors.write_text(self._TRUNCATED)
+
+        meta = json.loads((Path(_json_block(_export(tmp_path))["exported_model"]) / "policy_meta.json").read_text())
+
+        assert "could not be read as IO descriptors" in meta["deploy_contract_missing"]
+        assert "could not be parsed as YAML" in meta["deploy_contract_missing"]

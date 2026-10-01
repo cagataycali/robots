@@ -1048,25 +1048,43 @@ class IsaacLabTrainer(Trainer):
     def _read_yaml(self, path: Path) -> dict[str, Any]:
         """Parse a YAML file with PyYAML when installed, else with the Isaac Lab interpreter's.
 
-        Isaac Lab's ``params/env.yaml`` carries ``!!python/...`` tags. A tagged
-        SEQUENCE is read as a plain list: ``class_to_dict`` keeps an ObsTerm's
-        ``clip=(-1.0, 1.0)`` a tuple and the default Dumper writes it as
-        ``!!python/tuple``, and that clip is the only record of the range a
-        ``height_scan`` actor trained on, so nulling it would bake ``clip: null``
-        into every exported contract. Every other tagged node (objects, slices,
-        callables) is read as ``None``; nothing is ever constructed from a tag.
+        Every way the file fails to parse is a ``ValueError`` naming the path:
+        PyYAML's ``YAMLError`` (a truncated ``IO_descriptors.yaml`` from a run
+        killed during Isaac Lab's startup write, or a tag ``safe_load`` refuses)
+        and the interpreter fallback's ``CalledProcessError`` / ``TimeoutExpired``
+        are normalised here, so the callers' ``except (OSError, ValueError)``
+        degrade to a recorded reason instead of a traceback.
+
+        Raises:
+            ValueError: If the file is not YAML, the interpreter could not parse
+                it (or timed out), or the document is not a mapping.
+            OSError: If the file cannot be read.
         """
         try:
             import yaml  # type: ignore[import-untyped]
         except ImportError:
-            done = subprocess.run(  # noqa: S603 - argv, no shell
-                [str(self._python), "-c", _YAML_TO_JSON, str(path)],
-                env=runtime.child_env(),
-                capture_output=True,
-                timeout=120,
-                check=True,
-            )
-            parsed = json.loads(done.stdout)
+            try:
+                done = subprocess.run(  # noqa: S603 - argv, no shell
+                    [str(self._python), "-c", _YAML_TO_JSON, str(path)],
+                    env=runtime.child_env(),
+                    capture_output=True,
+                    timeout=120,
+                    check=True,
+                )
+                parsed = json.loads(done.stdout)
+            except subprocess.CalledProcessError as exc:
+                tail = (exc.stderr or b"").decode(errors="replace").strip().splitlines()[-1:] or [""]
+                raise ValueError(
+                    f"{path} could not be parsed as YAML by {self._python} (exit {exc.returncode}): {tail[0]}"
+                ) from exc
+            except subprocess.TimeoutExpired as exc:
+                raise ValueError(
+                    f"{path} could not be parsed as YAML: {self._python} gave no answer in {exc.timeout} s"
+                ) from exc
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"{path} could not be parsed as YAML: the interpreter printed no JSON ({exc})"
+                ) from exc
         else:
 
             class _Loader(yaml.SafeLoader):
@@ -1078,7 +1096,10 @@ class IsaacLabTrainer(Trainer):
                     loader.construct_sequence(node, deep=True) if isinstance(node, yaml.SequenceNode) else None
                 ),
             )
-            parsed = yaml.load(path.read_text(encoding="utf-8"), Loader=_Loader)  # noqa: S506 - SafeLoader subclass
+            try:
+                parsed = yaml.load(path.read_text(encoding="utf-8"), Loader=_Loader)  # noqa: S506 - SafeLoader subclass
+            except yaml.YAMLError as exc:
+                raise ValueError(f"{path} could not be parsed as YAML: {exc}") from exc
         if not isinstance(parsed, dict):
             raise ValueError(f"{path} is not a YAML mapping")
         return parsed
