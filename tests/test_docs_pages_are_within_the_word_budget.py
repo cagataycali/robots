@@ -83,7 +83,9 @@ _BUDGET: int = _hook().LIMIT
 #: or its own raise.
 #: Raised by 576 to 66,127 for the Foxglove page carried in from main (learn/data/foxglove.md and
 #: its line on the Learn index). Banked to the exact total.
-_SITE_BUDGET = 66_127
+#: Raised by 1,754 to 67,881 for the two humanoid design pages (whole-body teleoperation, driver
+#: composition, under reference/project here) plus their index rows, carried in from main. Banked to the exact total.
+_SITE_BUDGET = 67_881
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

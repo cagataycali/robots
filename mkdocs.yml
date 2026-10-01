@@ -622,3 +622,5 @@ nav:
           - Contributing: reference/project/contributing.md
           - Roadmap: reference/project/roadmap.md
           - Security policy: reference/project/security-policy.md
+          - Whole-body teleoperation design: reference/project/design-wholebody-teleop.md
+          - Driver composition design: reference/project/design-driver-composition.md
