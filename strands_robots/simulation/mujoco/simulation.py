@@ -3681,6 +3681,7 @@ class MuJoCoSimEngine(
 
         try:
             from strands_robots.policies.wbc import (
+                PDTorquePolicy,
                 WBCPolicy,
                 install_wbc_torque_control,
                 wbc_uses_position_servo,
@@ -3689,10 +3690,21 @@ class MuJoCoSimEngine(
             # Without [wbc] no shim can be installed, so a declaring policy is refused.
             return super()._maybe_install_action_controller(policy, robot_name)
 
-        # The shim is keyed on the WBC policy actually driving the joints, which
-        # may sit inside a wrapper (composite / persistent) that is not itself a
-        # WBCPolicy. Walk the declared tree instead of type-testing the argument.
-        wbc_policy = next((p for p in iter_policy_tree(policy) if isinstance(p, WBCPolicy)), None)
+        # The shim is keyed on the PD-law policy actually driving the joints,
+        # which may sit inside a wrapper (composite / persistent) that is not
+        # itself one. Walk the declared tree instead of type-testing the
+        # argument. Two families opt in: WBCPolicy (GR00T-WBC) and any class
+        # that sets ``pd_torque_shim = True`` (HolosomaPolicy) and satisfies
+        # the shim's PDTorquePolicy protocol.
+        wbc_policy = next(
+            (
+                p
+                for p in iter_policy_tree(policy)
+                if isinstance(p, WBCPolicy)
+                or (getattr(type(p), "pd_torque_shim", False) and isinstance(p, PDTorquePolicy))
+            ),
+            None,
+        )
         if wbc_policy is None:
             # The SONIC latent decoder needs its own shim: the same PD-on-torque
             # idea, on all 29 joints with the decoder's gains.

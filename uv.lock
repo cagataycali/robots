@@ -4595,6 +4595,10 @@ groot = [
     { name = "lerobot", extra = ["dataset", "feetech", "groot"] },
     { name = "psutil" },
 ]
+holosoma = [
+    { name = "huggingface-hub" },
+    { name = "onnxruntime" },
+]
 inference = [
     { name = "websockets" },
 ]
@@ -4761,6 +4765,7 @@ requires-dist = [
     { name = "gymnasium", marker = "extra == 'rl'", specifier = ">=0.29,<2.0" },
     { name = "huggingface-hub", marker = "extra == 'all'", specifier = ">=1.5,<2.0.0" },
     { name = "huggingface-hub", marker = "extra == 'dashboard'", specifier = ">=1.5,<2.0.0" },
+    { name = "huggingface-hub", marker = "extra == 'holosoma'", specifier = ">=1.5,<2.0.0" },
     { name = "huggingface-hub", marker = "extra == 'kimodo'", specifier = ">=1.5,<2.0.0" },
     { name = "huggingface-hub", marker = "extra == 'microduck'", specifier = ">=1.5,<2.0.0" },
     { name = "huggingface-hub", marker = "extra == 'protomotions'", specifier = ">=1.5,<2.0.0" },
@@ -4816,6 +4821,7 @@ requires-dist = [
     { name = "newton", marker = "extra == 'sim-newton'", specifier = ">=1.5.0,<1.6.0" },
     { name = "numpy", specifier = ">=1.21.0,<3.0.0" },
     { name = "onnxruntime", marker = "extra == 'all'", specifier = ">=1.17.0,<2.0.0" },
+    { name = "onnxruntime", marker = "extra == 'holosoma'", specifier = ">=1.17.0,<2.0.0" },
     { name = "onnxruntime", marker = "extra == 'microduck'", specifier = ">=1.17.0,<2.0.0" },
     { name = "onnxruntime", marker = "extra == 'protomotions'", specifier = ">=1.17.0,<2.0.0" },
     { name = "onnxruntime", marker = "extra == 'wbc'", specifier = ">=1.17.0,<2.0.0" },
@@ -4895,7 +4901,7 @@ requires-dist = [
     { name = "xacrodoc", marker = "extra == 'all'", specifier = ">=2.0.0,<3.0.0" },
     { name = "xacrodoc", marker = "extra == 'sim-urdf'", specifier = ">=2.0.0,<3.0.0" },
 ]
-provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "flux3", "foxglove", "groot", "inference", "kimodo", "lerobot", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "rl", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mujoco", "sim-newton", "sim-urdf", "smolvla", "ur", "voice", "wbc"]
+provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "flux3", "foxglove", "groot", "holosoma", "inference", "kimodo", "lerobot", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "rl", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mujoco", "sim-newton", "sim-urdf", "smolvla", "ur", "voice", "wbc"]
 
 [[package]]
 name = "sympy"

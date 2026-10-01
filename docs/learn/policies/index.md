@@ -13,7 +13,7 @@ After this page you can pick a provider for what you have, build one with `creat
 | nothing yet, a laptop | `mock` | no download; it proves the loop and its report says it did not read the instruction |
 | a Hub checkpoint for your arm (ACT, SmolVLA, Pi0, MolmoAct2) | [`lerobot_local`](lerobot-local.md) with `embodiment=` | runs in this process; the [embodiment map](../../concepts/embodiments.md) speaks sim and real |
 | a GPU on another machine | [`remote`](remote.md), `create_policy("ws://gpu:8765")` | the robot host keeps the loop and the gate, the GPU host runs the model |
-| a G1 or another humanoid | [`wbc`](wbc.md) | velocity commands in, whole-body joint targets out |
+| a G1 or another humanoid | [`wbc`](wbc.md), [`holosoma`](holosoma.md) | velocity commands in, whole-body joint targets out |
 | a target pose, no model | [`curobo`](curobo.md) | a planner reads `target_pose`, not words |
 | a Cosmos endpoint | [`cosmos3`](cosmos3.md) | a world model behind one URL |
 | a task the arm has never seen | [Teach it](../../start/teach-it.md) | no checkpoint learns your task from a page; record and train first |
