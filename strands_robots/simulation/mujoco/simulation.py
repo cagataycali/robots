@@ -2258,6 +2258,40 @@ class MuJoCoSimEngine(
             return None
         return self._unknown_robot_msg(robot_name)
 
+    def _teleop_apply(self, action: dict[str, Any], robot_name: str | None, period: float) -> dict[str, Any]:
+        """Apply one teleop frame, then advance the world to the end of its period.
+
+        :meth:`send_action` takes one physics step, so a 30 Hz session used to
+        advance the world 2 ms per 33 ms tick: the follower lagged the leader ten
+        to one, and no frame ever reached an open recording, because only
+        :meth:`step` feeds one. The rest of the period goes through :meth:`step`,
+        so sim time keeps pace with the session and a recording captures one
+        frame per ``1/fps`` seconds of it.
+
+        Args:
+            action: The merged, slew-checked frame.
+            robot_name: The follower, or ``None`` for the world's single robot.
+            period: The session's control period in seconds (``1 / hz``).
+
+        Returns:
+            :meth:`send_action`'s reply, or :meth:`step`'s when the step failed.
+        """
+        result = self.send_action(action, robot_name=robot_name)
+        world, timestep = self._world, self.physics_timestep()
+        if world is None or world._data is None or not timestep:
+            return result
+        # Stepped to the next multiple of ``period`` in sim time rather than a
+        # rounded count per tick, so a period that is not a whole number of
+        # physics steps (1/30 s at 2 ms) does not drift the clock.
+        now = float(world._data.time)
+        boundary = (math.floor(now / period + 1e-9) + 1) * period
+        remaining = max(0, math.ceil((boundary - now) / timestep - 1e-9))
+        if remaining:
+            stepped = self.step(remaining)
+            if stepped.get("status") == "error" and result.get("status") != "error":
+                return stepped
+        return result
+
     def _unknown_action_msg(self, requested: str) -> str:
         """Actionable 'unknown action' message: name it, offer a close-match over
         the published enum, and point at where that enum is written - consistent
@@ -4255,7 +4289,8 @@ class MuJoCoSimEngine(
             "(*, names=None, robot_name=None, hz=50.0, publish=False, "
             "block=False, duration=None) -> dict  # drive the sim from its "
             "attached teleoperator(s): each tick polls get_action(), applies "
-            "map_fn, merges (last-wins), and send_action()s the result. "
+            "map_fn, merges (last-wins), send_action()s the result and steps "
+            "the world one control period, so an open recording captures it. "
             "block=False runs a background loop and returns immediately; "
             "duration stops it after N seconds; publish=True also mirrors the "
             "stream to the mesh. The human-driven sibling of run_policy"

@@ -61,7 +61,8 @@ class RecordingMixin(DatasetRecordingMixin):
         "(one dataset episode per evaluation episode) or run_multi_policy "
         "(several robots into one merged frame) - or by stepping a scripted motion: "
         "set_joint_positions(hold=True) + step records one frame per 1/{fps}s "
-        "of sim time. teleoperate and replay_episode do not feed the "
+        "of sim time, and teleoperate steps the world the same way, so a "
+        "teleoperated session records too. replay_episode does not feed the "
         "recorder. Then stop_recording to save the open episode"
     )
 
