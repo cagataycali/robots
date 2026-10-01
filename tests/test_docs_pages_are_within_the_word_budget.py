@@ -72,7 +72,9 @@ _BUDGET: int = _hook().LIMIT
 #: Raised by 3,420 to 60,685 when every simulated robot page (the 81 URDF pages included) gained
 #: a fence that prints its joints and a next-step sentence, and the front-matter descriptions
 #: were quoted. Banked to the exact total.
-_SITE_BUDGET = 60_685
+#: Lowered to 60,626 when the arm pages' next-step sentence dropped one word (x60 pages) to pay
+#: for main's new registry aliases. Banked to the exact total.
+_SITE_BUDGET = 60_626
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
