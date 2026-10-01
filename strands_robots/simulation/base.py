@@ -5511,6 +5511,13 @@ class SimEngine(ABC):
             than ``n_episodes``, and the aggregate covers only those episodes
             instead of averaging over ones whose data does not exist.
 
+            Physics: ``physics_error`` - ``None`` on every healthy evaluation,
+            and the backend's divergence report (episode, step, joint) when the
+            physics diverged and the backend reset the world mid-episode. The
+            evaluation stops there, the diverged episode is not counted and its
+            unsaved recording frames are discarded, and ``status`` is
+            ``"error"``.
+
             Video: ``video_paths`` (one MP4 per episode, empty when no
             recording was requested).
 
@@ -5922,6 +5929,10 @@ class SimEngine(ABC):
             which case the benchmark stops at that episode and ``status`` is
             ``"error"`` - see :meth:`eval_policy`, which reports it the same
             way.
+
+            ``physics_error`` is ``None`` on every healthy run and carries the
+            divergence report when the physics diverged mid-episode; the
+            benchmark stops the same way :meth:`eval_policy` does.
 
             ``actions_applied`` (actions actually handed to ``send_action``),
             ``steps_advanced`` (control steps the benchmark advanced) and
