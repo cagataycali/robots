@@ -44,6 +44,7 @@ _PURPOSE: dict[str, str] = {
     "device-connect": "device-connect edge agent",
     "ros2": "pure DDS (cyclonedds) ROS 2 bridge",
     "rosbridge": "rosbridge WebSocket client",
+    "foxglove": "live Foxglove view and MCAP recording",
     "groot": "GR00T N1.7 through lerobot (policy_type groot)",
     "cosmos3-service": "Cosmos 3 service client",
     "cosmos3-diffusers": "Cosmos 3 through diffusers",

@@ -69,8 +69,9 @@ _BUDGET: int = _hook().LIMIT
 #: learn page that explains the loader once.
 #: Banked to the exact total, 57,265, when the Start index said what a sketch fence's label
 #: means (one word) on a main that sat 5 over its own ceiling.
-#: Raised for the mjlab backend page (learn/simulation/mjlab.md) and its cross-links.
-_SITE_BUDGET = 57_792
+#: Raised for the Foxglove page (learn/data/foxglove.md) and its two index lines, then for the
+#: mjlab backend page (learn/simulation/mjlab.md) and its cross-links; banked to the exact merge total.
+_SITE_BUDGET = 58_373
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
