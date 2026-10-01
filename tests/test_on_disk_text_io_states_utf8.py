@@ -32,6 +32,7 @@ from typing import Any
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_file
 
 PACKAGE = Path(strands_robots.__file__).parent
 
@@ -90,7 +91,7 @@ def _scan() -> tuple[list[str], int]:
     unstated: list[str] = []
     stated = 0
     for module in sorted(PACKAGE.rglob("*.py")):
-        for node in ast.walk(ast.parse(module.read_text(encoding="utf-8"))):
+        for node in ast.walk(parse_file(module)):
             if not isinstance(node, ast.Call):
                 continue
             if any(keyword.arg == "encoding" for keyword in node.keywords):

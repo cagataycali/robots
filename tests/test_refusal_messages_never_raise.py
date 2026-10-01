@@ -557,7 +557,10 @@ class TestTheTextIsUnchangedForAValueThatCanBeRendered:
 
     def test_the_exact_text_of_one_message_per_guard(self) -> None:
         """Spelled out, so a reworded message is a diff here rather than a surprise."""
-        assert positive_finite_number_error(0, "hz", "teleoperate") == "teleoperate: hz must be > 0, got 0."
+        assert (
+            positive_finite_number_error(0, "hz", "teleoperate")
+            == "teleoperate: hz must be a positive finite number, got 0."
+        )
         assert finite_number_error("x", "linear", "drive") == "drive: linear must be a finite number, got 'x'."
         assert positive_whole_number_error(0, "fps", "video") == "video: fps must be a positive whole number, got 0."
         assert (

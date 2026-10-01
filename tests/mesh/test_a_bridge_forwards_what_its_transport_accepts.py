@@ -33,6 +33,7 @@ import strands_robots.drivers.ros as ros_pkg
 from strands_robots.ros import ros_action
 from strands_robots.rosbridge import rosbridge_action
 from strands_robots.rtps.participant import rtps_action
+from tests._package_ast import parse_file
 from tests.mesh._transport_stand_in import OFF_THE_WIRE, Transport, stands_in_for
 
 #: The transport callables a bridge can forward to, by the name it imports.
@@ -74,7 +75,7 @@ def _forward_sites() -> list[_Forward]:
     """
     found: list[_Forward] = []
     for path in sorted(_ROS_DIR.glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         imported = {
             alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) for alias in node.names
         } & set(_TRANSPORTS)

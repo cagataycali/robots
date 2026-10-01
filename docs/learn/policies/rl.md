@@ -14,7 +14,7 @@ pip install 'strands-robots[rl]'    # torch + gymnasium + the MuJoCo backend
 
 `RLCheckpointPolicy` is the inference half of the RL loop. `create_trainer("ppo" | "fast_sac" | "fast_td3")` trains against a `SimEnv` and writes `policy.pt` plus `policy_meta.json`; this provider loads that pair and presents it as an ordinary `Policy`. Rollout is deterministic: the actor's mean action, no sampling. `requires_images` is `False`.
 
-The checkpoint's `actor_obs_keys` are read from the observation by name, in the trained order, because the order is part of the weights. A key the observation does not carry is refused rather than defaulted; a zero would command a real robot from a fabricated state.
+The checkpoint's `actor_obs_keys` are read from the observation by name, in the trained order, because the order is part of the weights. A key the observation does not carry is refused, not defaulted: a zero would command a real robot from a fabricated state.
 
 ```python
 from strands_robots.policies import create_policy
@@ -50,7 +50,7 @@ from strands_robots.training.rl import RLTrainSpec, SimEnv
 
 
 def make_env() -> SimEnv:
-    sim = create_simulation("mujoco", mesh=False)
+    sim = create_simulation("mujoco")
     sim.create_world()
     sim.add_robot("so101")
     return SimEnv(sim, actor_obs_keys=["1", "2", "3", "4", "5", "6"], reward_terms=[_joint_progress("1", 0.5)], max_episode_steps=50, action_scale=0.15)
@@ -60,7 +60,7 @@ spec = RLTrainSpec(env_factory=make_env, output_dir=tempfile.mkdtemp(), total_ti
 result = create_trainer("ppo").train(spec)
 print(result.status, sorted(os.listdir(result.checkpoint_dir)))
 
-sim = create_simulation("mujoco", mesh=False)
+sim = create_simulation("mujoco")
 sim.create_world()
 sim.add_robot("so101")
 out = sim.run_policy(robot_name="so101", policy_provider="rl", policy_config={"checkpoint_dir": result.checkpoint_dir}, n_steps=20, control_frequency=50.0)
@@ -75,7 +75,7 @@ success ['policy.pt', 'policy_meta.json']
 success
 ```
 
-A few `[sim] action value ... outside the range` warnings on the gripper are expected: the actor is untrained. Six optimizer iterations train nothing useful; the point is that the checkpoint a trainer writes is the value `rl` takes. Real runs use `total_timesteps` in the hundreds of thousands.
+A few `[sim] action value ... outside the range` warnings on the gripper are expected: the actor is untrained. Six optimizer iterations train nothing useful; the point is that the checkpoint a trainer writes is what `rl` takes. Real runs use `total_timesteps` in the hundreds of thousands.
 
 The trainers, their fields and what `policy_meta.json` records are on the [RL training](../training/rl.md) page.
 

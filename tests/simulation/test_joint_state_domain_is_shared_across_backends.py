@@ -38,6 +38,7 @@ import pytest
 from strands_robots.simulation import base as sim_base
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.simulation import IsaacSimulation, _RobotState
+from tests._package_ast import parse_file
 from tests.simulation._isaac_engine import isaac_engine
 
 JOINTS = ["shoulder", "elbow", "wrist"]
@@ -319,7 +320,7 @@ def _joint_state_writers() -> dict[tuple[str, str], str]:
         backend = path.parent.name
         if backend == package.name:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
             for fn in ast.iter_child_nodes(cls):
                 if not isinstance(fn, ast.FunctionDef):
@@ -339,6 +340,7 @@ class TestEveryBackendJointStateWriterAppliesTheSharedDomain:
             ("mujoco", "set_joint_positions"),
             ("mujoco", "set_joint_velocities"),
             ("isaac", "set_joint_positions"),
+            ("newton", "set_joint_positions"),
         }
 
     def test_every_writer_calls_the_shared_domain(self) -> None:

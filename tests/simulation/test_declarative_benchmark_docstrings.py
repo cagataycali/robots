@@ -23,6 +23,7 @@ import ast
 from pathlib import Path
 
 import strands_robots.simulation as simulation_pkg
+from tests._package_ast import parse_file
 
 _PACKAGE_DIR = Path(simulation_pkg.__file__).parent
 
@@ -61,7 +62,7 @@ def _benchmark_classes() -> dict[str, ast.ClassDef]:
     classes: dict[str, ast.ClassDef] = {}
     for module in _MODULES:
         source_file = _PACKAGE_DIR / module
-        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        tree = parse_file(source_file)
         for node in tree.body:
             if isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
                 classes[f"{module}::{node.name}"] = node

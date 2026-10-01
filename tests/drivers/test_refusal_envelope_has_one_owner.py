@@ -14,6 +14,7 @@ from pathlib import Path
 
 import strands_robots.drivers as drivers_pkg
 from strands_robots.drivers.base import refuse
+from tests._package_ast import parse_file
 
 _DRIVERS = Path(drivers_pkg.__file__).parent
 
@@ -31,7 +32,7 @@ def _builds_the_envelope(fn: ast.FunctionDef) -> bool:
 def _envelope_builders() -> list[str]:
     found = []
     for path in sorted(_DRIVERS.rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(parse_file(path)):
             if isinstance(node, ast.FunctionDef) and _builds_the_envelope(node):
                 found.append(f"{path.relative_to(_DRIVERS)}:{node.name}")
     return found

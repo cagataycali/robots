@@ -1,3 +1,7 @@
+---
+description: A UR5e or UR10e streams joint setpoints over RTDE: the two gates every write passes, how a rollout runs.
+---
+
 # Universal Robots e-Series
 
 At the end of this page a UR5e or UR10e streams joint setpoints from `Robot("ur5e", mode="real")` over RTDE, you know the two gates every write passes, and you know how a policy rollout runs on it.
@@ -19,20 +23,20 @@ arm.send_action({"shoulder_pan_joint": 0.0, "wrist_3_joint": 1.57})   # radians,
 
 ## Joint names and units
 
-Radians, in the order the wire and the MuJoCo assets both use: `shoulder_pan_joint`, `shoulder_lift_joint`, `elbow_joint`, `wrist_1_joint`, `wrist_2_joint`, `wrist_3_joint`. A recorded sim action indexes onto the wire without a remap. Every e-Series joint travels plus or minus 2 pi (`JOINT_LIMIT_RAD`).
+Radians, in the order the wire and the MuJoCo assets share: `shoulder_pan_joint`, `shoulder_lift_joint`, `elbow_joint`, `wrist_1_joint`, `wrist_2_joint`, `wrist_3_joint`. A recorded sim action indexes onto the wire unchanged. Every e-Series joint travels plus or minus 2 pi (`JOINT_LIMIT_RAD`).
 
 ## Two gates on every write
 
 A UR controller does not refuse the way a servo bus does: it accepts the register write and does nothing. So the driver checks before it writes:
 
-1. **Controller mode.** `connect_eagerly` opens the receive interface first because it answers whether commanding is possible at all. A controller in `PROTECTIVE_STOP` accepts an RTDE connection and moves nothing, so the driver refuses there and names the mode.
+1. **Controller mode.** `connect_eagerly` opens the receive interface first because it answers whether commanding is possible. A controller in `PROTECTIVE_STOP` accepts an RTDE connection and moves nothing, so the driver refuses there and names the mode.
 2. **Step size.** The commanded step is checked against the model's per-joint maximum speed at `control_frequency` (default 125 Hz). A step the arm cannot make in one period is refused, not queued.
 
 `send_action` uses `servoJ` (speed `0.5`, acceleration `0.5`, lookahead `0.1` s, gain `300`) rather than `moveJ`, because a policy streams setpoints and a stream of planned trajectories fights itself.
 
 ## Rollouts
 
-`run_policy(policy)` rolls a caller-built policy at `control_frequency`; `start_task(instruction, ...)`, removed in 0.8, builds one from the provider registry on a background thread. `get_task_status()` reports the live snapshot, `stop_task()` halts the loop. Both share the rollout class with the Feetech driver rather than copying it.
+`run_policy(policy)` rolls a caller-built policy at `control_frequency`; `start_task(instruction, policy_provider=...)`, which built one in the driver, leaves in 0.8. `get_task_status()` reports the live snapshot, `stop_task()` halts the loop; both share the Feetech driver's rollout class.
 
 ## Deliberately absent
 

@@ -1,7 +1,8 @@
 """TeleopMixin - attach/drive teleoperators on any robot or simulation.
 
-Shared by :class:`strands_robots.hardware_robot.Robot` and the MuJoCo
-:class:`strands_robots.simulation.Simulation`. The only contract a host
+Shared by :class:`strands_robots.hardware_robot.Robot`, the MuJoCo
+:class:`strands_robots.simulation.Simulation` and the native
+:class:`strands_robots.drivers.feetech.driver.FeetechDriver`. The only contract a host
 class must satisfy is a ``send_action(action: dict, robot_name: str | None
 = None) -> dict`` method (both already have it) and, for mesh publishing,
 the ``mesh`` / ``peer_id`` attributes (both already have them). A host that
@@ -260,6 +261,27 @@ class TeleopMixin:
         """
         return None
 
+    def _teleop_device_error(self, device: Any, map_fn: MapFn | None) -> str | None:
+        """Refusal text when ``device``'s frames cannot be applied to this host.
+
+        The sibling of :meth:`_teleop_target_error`, asked by
+        :meth:`attach_teleop` before a device is registered. A frame is a
+        mapping of joint name to value, and a host whose ``send_action`` reads
+        those values in a unit the device does not report in would move the
+        follower somewhere the leader never went. Returns ``None`` by default:
+        both hosts that shipped the mixin first take the lerobot units a
+        lerobot leader reports. A host with its own units overrides this.
+
+        Args:
+            device: The built teleoperator.
+            map_fn: The caller's remap. A caller who passes one has taken
+                charge of the frame, units included.
+
+        Returns:
+            The refusal text, or ``None`` when the device's frames apply.
+        """
+        return None
+
     def send_action(self, action: ActionDict, robot_name: str | None = None) -> dict[str, Any]:
         """Apply ``action`` to the host robot/sim. Implemented by the host."""
         raise NotImplementedError(
@@ -357,6 +379,8 @@ class TeleopMixin:
         # always graded is the same one ``start_teleop_publish`` and
         # ``InputPublisher`` consume, so it is stated once.
         if error := teleoperator_contract_error(device, "device_or_spec", "attach_teleop"):
+            raise ValueError(error)
+        if error := self._teleop_device_error(device, map_fn):
             raise ValueError(error)
 
         # Resolve a stable name: explicit > lerobot id > lerobot type > 'leader'.

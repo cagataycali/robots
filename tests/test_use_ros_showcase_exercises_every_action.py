@@ -32,6 +32,7 @@ from pathlib import Path
 
 import strands_robots
 from strands_robots.tools.use_ros import use_ros
+from tests._package_ast import parse_file
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _SHOWCASE = _REPO_ROOT / "examples" / "ros2" / "use_ros" / "showcase.py"
@@ -63,7 +64,7 @@ def _dispatched_actions() -> set[str]:
     """Every action value the tool or its transport compares against."""
     found: set[str] = set()
     for path in _DISPATCHERS:
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(parse_file(path)):
             if not isinstance(node, ast.Compare):
                 continue
             operands = [node.left, *node.comparators]

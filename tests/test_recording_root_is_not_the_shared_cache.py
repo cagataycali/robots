@@ -96,6 +96,8 @@ import ast
 import functools
 from pathlib import Path
 
+from tests._package_ast import parse_file
+
 _TESTS_ROOT = Path(__file__).resolve().parent
 
 # `start_recording` is reimplemented per backend and always reached through an
@@ -180,7 +182,7 @@ def _literal_root(call: ast.Call) -> str | None:
 
 def _recording_calls(path: Path) -> list[tuple[ast.Call, bool, set[str]]]:
     """Every recording-entry call in ``path``, with how it was reached."""
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = parse_file(path)
     forwarders = _kwarg_forwarders(tree)
     found = []
     for node in ast.walk(tree):
