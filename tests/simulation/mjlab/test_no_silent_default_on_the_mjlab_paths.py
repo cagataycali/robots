@@ -167,6 +167,32 @@ class TestSendActionRefusesWhatEveryBackendRefuses:
         assert res["status"] == "error"
         assert "nan/inf" in res["content"][0]["text"]
 
+    @pytest.mark.parametrize("bad", [0, -1, 2.7, True, "2"])
+    def test_a_batch_with_a_non_positive_or_fractional_substep_count_is_refused_before_any_write(
+        self, engine: _StandInEngine, bad: Any
+    ) -> None:
+        """Same floor as ``send_action`` (review on #4229): a success that advanced 0 steps leaves a
+        target the world never integrates, and the vec_eval recorder would keep the row. ``2.7`` used
+        to be floored to 2 silently; ``round(1 / (dt * control_hz))`` yields 0 above 250 Hz."""
+        engine._ensure_built()
+        before = engine._sim.data.ctrl.clone()
+        res = engine.send_action_batch(np.array([[0.1, 0.2]], dtype=np.float32), "arm", n_substeps=bad)
+        assert res["status"] == "error", res
+        assert "n_substeps" in res["content"][0]["text"] and "send_action_batch" in res["content"][0]["text"]
+        assert engine._sim.data.ctrl.tolist() == before.tolist(), "ctrl was written before the refusal"
+        assert engine._step_count == 0
+
+    def test_the_substep_guard_runs_before_the_shape_check(self, engine: _StandInEngine) -> None:
+        """A wrong shape AND a bad count: the count is named (nothing was converted or compared)."""
+        res = engine.send_action_batch(np.zeros((3, 7), dtype=np.float32), "arm", n_substeps=0)
+        assert res["status"] == "error"
+        assert "n_substeps" in res["content"][0]["text"]
+
+    def test_a_batch_with_a_positive_count_still_advances(self, engine: _StandInEngine) -> None:
+        res = engine.send_action_batch(np.array([[0.1, 0.2]], dtype=np.float32), "arm", n_substeps=3)
+        assert res["status"] == "success", res
+        assert engine._step_count == 3
+
 
 def test_add_robot_consults_the_frozen_schema_guard_first(monkeypatch: pytest.MonkeyPatch) -> None:
     engine = _StandInEngine(["j0", "j1"])

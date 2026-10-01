@@ -871,7 +871,16 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
     def send_action_batch(
         self, action: torch.Tensor | np.ndarray, robot_name: str | None = None, n_substeps: int = 1
     ) -> dict[str, Any]:
-        """Write an ``(N, nu)`` ctrl block (one row per world) and advance ``n_substeps`` steps."""
+        """Write an ``(N, nu)`` ctrl block (one row per world) and advance ``n_substeps`` steps.
+
+        ``n_substeps`` has the floor every backend applies (see ``send_action`` in
+        ``base.py``): a call that advanced nothing would leave a target the world never
+        integrates while a recorder keeps the row, so ``0``, a negative, a bool or a
+        fraction is refused here, before anything is written.
+        """
+        err = positive_count_error(n_substeps, "n_substeps", "send_action_batch")
+        if err:
+            return {"status": "error", "content": [{"text": err}]}
         import torch
 
         with self._lock:
