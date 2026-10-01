@@ -69,6 +69,7 @@ _BUDGET: int = _hook().LIMIT
 #: learn page that explains the loader once.
 #: Banked to the exact total, 57,265, when the Start index said what a sketch fence's label
 #: means (one word) on a main that sat 5 over its own ceiling.
+#: Raised to 50,012 for the Foxglove page (learn/data/foxglove.md, live view and MCAP export) and its two index lines.
 #: Raised by 3,420 to 60,685 when every simulated robot page (the 81 URDF pages included) gained
 #: a fence that prints its joints and a next-step sentence, and the front-matter descriptions
 #: were quoted. Banked to the exact total.
@@ -80,7 +81,9 @@ _BUDGET: int = _hook().LIMIT
 #: decision table. Pictures enter through one-word {{drawing:}} / {{sim:}} tokens, so the
 #: raise is words, not images. Banked to the exact total; the next page needs an equal cut
 #: or its own raise.
-_SITE_BUDGET = 65_551
+#: Raised by 576 to 66,127 for the Foxglove page carried in from main (learn/data/foxglove.md and
+#: its line on the Learn index). Banked to the exact total.
+_SITE_BUDGET = 66_127
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
