@@ -1953,8 +1953,23 @@ class Robot(TeleopMixin, AgentTool):
             # refuses and closes the port. A driver with no notion of
             # calibration is calibrated by lerobot's own contract for the
             # property: "should be always True if not applicable".
+            #
+            # Under the device's bus lock, like ``connect()`` above and every
+            # other reader of the bus. ``is_calibrated`` on a lerobot arm is a
+            # serial conversation (``read_calibration()`` reads the position
+            # limits of every servo), and by this point ``connect()`` has made
+            # ``is_connected`` True -- which is the exact condition the mesh's
+            # ``hw_joints`` probe and camera publisher wait for before they
+            # take the lock and read. Unlocked, this read collided with theirs
+            # on the SDK's single port handler: ``Failed to read
+            # 'Min_Position_Limit' on id_=1 ... Port is in use!``, after which
+            # the handler below closed the port and reported the arm as a bus
+            # that "did not open". Measured on an SO-101 spawned from the
+            # dashboard, 3 of 3 attempts, with six healthy servos answering
+            # ``broadcast_ping`` from a bare bus in the same venv.
             try:
-                is_calibrated = self.robot.is_calibrated
+                with bus_lock(self.robot):
+                    is_calibrated = self.robot.is_calibrated
             except AttributeError:
                 if hasattr(type(self.robot), "is_calibrated"):
                     raise  # the property exists; its own read failed
