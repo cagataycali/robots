@@ -122,12 +122,7 @@ def _read_marker(marker: str) -> str | None:
     return cached if cached and os.path.isfile(cached) else None
 
 
-#: Attached-model paths whose closure is being computed; a cyclic ``<model>``
-#: reference contributes its path once and no bytes, like a cyclic include.
-_closing: set[str] = set()
-
-
-def _referenced_files(mjcf_path: str) -> list[str]:
+def _referenced_files(mjcf_path: str, _closing: frozenset[str] = frozenset()) -> list[str]:
     """Every file *mjcf_path* pulls in, transitively and absolute.
 
     An MJCF reaches outside its own directory in two ways, and the shipped
@@ -231,13 +226,14 @@ def _referenced_files(mjcf_path: str) -> list[str]:
     attached: list[str] = []
     _walk(entry, entry_dir, frozenset({entry}))
     for model_path in attached:
+        # ``_closing`` holds the attached models this call tree is already
+        # closing over, so a cyclic ``<model>`` contributes its path once and no
+        # bytes, like a cyclic include. It is a parameter, not module state:
+        # concurrent digests of models attaching the same file must not see
+        # each other's walk and drop that file from their key.
         if model_path not in _closing:
-            _closing.add(model_path)
-            try:
-                includes.append(model_path)
-                includes.extend(_referenced_files(model_path))
-            finally:
-                _closing.discard(model_path)
+            includes.append(model_path)
+            includes.extend(_referenced_files(model_path, _closing | {model_path}))
 
     def _base_for(tag: str) -> str:
         """The directory MuJoCo resolves a ``tag`` asset's relative file against.

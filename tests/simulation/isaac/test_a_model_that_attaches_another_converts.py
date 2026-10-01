@@ -293,6 +293,23 @@ class TestTheCacheKeyCoversTheAttachedModel:
             fh.write("\n")
         assert mjcf_assets._asset_digest(two_arms) != before, edit
 
+    def test_a_closure_computed_while_another_walks_the_same_arm_still_covers_it(self, two_arms, monkeypatch) -> None:
+        # Two digests running at once (threads of one process) interleave like
+        # this: the second starts while the first is inside armA's closure. A
+        # cycle guard shared across calls made the second omit armA entirely.
+        arm_a = os.path.join(os.path.dirname(os.path.dirname(two_arms)), "armA", "arm.xml")
+        real, nested = mjcf_assets._referenced_files, {}
+
+        def _walk(path, *args):
+            if path == arm_a and "second" not in nested:
+                nested["second"] = set()
+                nested["second"] = set(real(two_arms))
+            return real(path, *args)
+
+        monkeypatch.setattr(mjcf_assets, "_referenced_files", _walk)
+        assert set(real(two_arms)) == nested["second"]
+        assert arm_a in nested["second"]
+
 
 # An arm whose physics settings live ONLY on its root default (no named class),
 # attached with an EMPTY prefix. MjSpec.to_xml writes that root default as a
