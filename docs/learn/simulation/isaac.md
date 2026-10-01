@@ -47,7 +47,7 @@ sim.destroy()
 |---|---|
 | assets | URDF, MJCF (converted, `isaac/mjcf_assets.py`) and USD; meshes through `isaac/mesh_assets.py` |
 | fixed base | robots import with the root welded (`fixed_base=True` by default) |
-| cameras | world-frame prims; `add_camera(parent_body=...)` is refused |
+| cameras | world-frame prims, or a link's children with `parent_body`; frames come back at the requested size |
 | physics rate | `physics_dt` and `rendering_dt` are separate clocks |
 | WBC | no MuJoCo torque shim; a policy declaring `requires_action_controller` (`wbc`) is refused |
 | motion primitives | its own implementation in `isaac/motion_primitives.py` |
