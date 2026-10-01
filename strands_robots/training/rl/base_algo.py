@@ -22,7 +22,10 @@ https://github.com/amazon-far/holosoma), re-homed onto the strands-robots
 
 from __future__ import annotations
 
+import json
 import logging
+import math
+import os
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -39,6 +42,67 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from strands_robots.training.rl.vec_env import VecSimEnv
 
 logger = logging.getLogger(__name__)
+
+#: Per-iteration training scalars, one JSON object per line, beside the checkpoints.
+METRICS_FILENAME = "metrics.jsonl"
+
+
+class TrainingHistory:
+    """Every iteration's metrics, kept so a run can be judged after it ends.
+
+    The training loops kept only the LAST iteration (``TrainResult.metrics``)
+    and logged nothing per iteration, so whether a PPO / FastSAC / FastTD3 run
+    learned - reward rising, losses settling - could not be told afterwards;
+    the lerobot and isaaclab trainers both leave a curve. Each iteration is
+    appended to ``<output_dir>/metrics.jsonl`` (flushed per line, so a run that
+    dies still leaves its curve up to the last iteration) and logged at INFO
+    every ``log_interval`` iterations.
+    """
+
+    def __init__(self, provider: str, output_dir: str, num_iters: int, log_interval: int) -> None:
+        self._provider = provider
+        self._num_iters = num_iters
+        self._log_interval = log_interval
+        self.count = 0
+        self.path: str | None = None
+        self._fh: Any = None
+        if output_dir:  # no output directory: logged, not written
+            os.makedirs(output_dir, exist_ok=True)
+            self.path = os.path.join(output_dir, METRICS_FILENAME)
+            # One file per run: a rerun into the same directory starts a new
+            # curve rather than appending onto the last one.
+            self._fh = open(self.path, "w", encoding="utf-8")  # noqa: SIM115 - closed by close()
+
+    def record(self, metrics: dict[str, Any]) -> None:
+        """Append one iteration's numeric metrics (non-finite values as null) and log it on the interval."""
+        row: dict[str, float | None] = {}
+        for key, value in metrics.items():
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(value, int) and not isinstance(value, bool):
+                row[key] = value  # counts stay counts
+            else:
+                row[key] = number if math.isfinite(number) else None
+        if self._fh is not None:
+            self._fh.write(json.dumps(row) + "\n")
+            self._fh.flush()
+        self.count += 1
+        iteration = row.get("iteration")
+        it = self.count if iteration is None else int(iteration)
+        if self._log_interval and (it == 1 or it % self._log_interval == 0 or it == self._num_iters):
+            shown = ", ".join(f"{k}={v:.4g}" for k, v in row.items() if k != "iteration" and v is not None)
+            logger.info("%s iteration %d/%d: %s", self._provider, it, self._num_iters, shown)
+
+    def close(self) -> None:
+        """Close the file; idempotent, so every exit path may call it."""
+        if self._fh is not None and not self._fh.closed:
+            self._fh.close()
+
+    def summary(self) -> dict[str, Any]:
+        """What ``TrainResult.metrics`` carries about the curve: where it is and how long."""
+        return {"metrics_path": self.path, "iterations_recorded": self.count}
 
 
 @dataclass
@@ -231,6 +295,7 @@ class BaseRLAlgo(Trainer):
     actor_critic: Any  # torch.nn.Module (actor-critic network)
     env: SimEnv | VecSimEnv
     device: torch.device
+    _history: TrainingHistory | None = None
 
     @abstractmethod
     def setup(self, spec: RLTrainSpec) -> None:
@@ -277,17 +342,20 @@ class BaseRLAlgo(Trainer):
 
             job_id = f"{self.provider_name}-{id(self):x}"
             last_metrics: dict[str, Any] = {}
+            history = self._history = TrainingHistory(self.provider_name, spec.output_dir, num_iters, spec.log_interval)
             ckpt_dir: str | None = None
             for it in range(num_iters):
                 rollout_metrics = self.collect_rollout()
                 loss_metrics = self.update()
                 last_metrics = {**rollout_metrics, **loss_metrics, "iteration": it + 1}
+                history.record(last_metrics)
                 if spec.log_interval and (it % spec.log_interval == 0 or it == num_iters - 1):
                     ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=it + 1)
             if ckpt_dir is None:
                 ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=num_iters)
 
             last_metrics.setdefault("latest_step", num_iters * steps_per_iter)
+            last_metrics.update(history.summary())
             return TrainResult(
                 status="success",
                 job_id=job_id,
@@ -324,6 +392,10 @@ class BaseRLAlgo(Trainer):
           working; ``evaluate`` itself never closes, because it leaves the
           trainer live for exactly that reuse.
         """
+        history = getattr(self, "_history", None)
+        if history is not None:
+            history.close()
+            self._history = None
         env = getattr(self, "env", None)
         if env is not None:
             env.close()
@@ -591,7 +663,6 @@ class BaseRLAlgo(Trainer):
         Raises:
             FileNotFoundError: When ``policy.pt`` is absent from the directory.
         """
-        import os
 
         import torch
 
