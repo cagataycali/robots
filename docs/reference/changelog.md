@@ -26,4 +26,4 @@ Released 2026-08-04, 806 commits over v0.4.1: the NVIDIA Isaac Sim backend, anal
 
 ## Versioning
 
-The version comes from the nearest release tag (`git describe --match 'v[0-9]*'`); a checkout with no reachable tag builds as `0.1.dev...`, and `git fetch upstream --tags` restores the number. `strands-robots --version` prints what is installed. The road to 1.0 is the [roadmap](../project/roadmap.md).
+The version comes from the nearest release tag (`git describe --match 'v[0-9]*'`); a checkout with no reachable tag builds as `0.1.dev...`, and `git fetch upstream --tags` restores the number. `strands-robots --version` prints what is installed. The road to 1.0 is the [roadmap](project/roadmap.md).

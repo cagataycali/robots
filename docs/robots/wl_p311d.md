@@ -13,11 +13,15 @@ URDF from [limxdynamics/robot-description@a097533](https://github.com/limxdynami
 
 <img class="sr-thumb" src="../assets/img/robots/wl_p311d.webp" alt="wl_p311d, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("wl_p311d")
+robot = Robot("wl_p311d")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("wl_p311d"))
+robot.cleanup()
 ```
+
+Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

@@ -15,7 +15,11 @@ description: "Agility Cassie Bipedal Robot"
 from strands_robots import Robot
 
 robot = Robot("cassie")
+print(robot.robot_joint_names("cassie"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 Aliases: `agility_cassie`.
 

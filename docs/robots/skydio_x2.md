@@ -15,7 +15,11 @@ description: "Skydio X2 Autonomous Drone"
 from strands_robots import Robot
 
 robot = Robot("skydio_x2")
+print(robot.robot_joint_names("skydio_x2"))
+robot.cleanup()
 ```
+
+Commanded as a setpoint stream; [simulation](../learn/simulation/index.md) covers gravity, timestep and cameras.
 
 ## Policies verified on this robot
 

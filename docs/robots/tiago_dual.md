@@ -15,7 +15,11 @@ description: "PAL Robotics TIAGo++ Dual-Arm Mobile (26-DOF)"
 from strands_robots import Robot
 
 robot = Robot("tiago_dual")
+print(robot.robot_joint_names("tiago_dual"))
+robot.cleanup()
 ```
+
+The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.
 
 Aliases: `pal_tiago_dual`, `tiago`, `tiago++`, `tiago_pp`.
 

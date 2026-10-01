@@ -15,7 +15,11 @@ description: "JVRC-1 Humanoid (HRP-based, 45-DOF)"
 from strands_robots import Robot
 
 robot = Robot("jvrc")
+print(robot.robot_joint_names("jvrc"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 Aliases: `jvrc1`.
 

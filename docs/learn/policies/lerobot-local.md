@@ -50,7 +50,7 @@ Without `set_robot_state_keys`, the policy infers the state vector from the obse
 
 A checkpoint declares image features such as `observation.images.image`. The embodiment's `obs_rename` maps the camera key you attach onto that feature. Name a sim camera after the model card (`realsense_top`) rather than the embodiment's source key (`front`) and the rename never fires; `preflight` refuses before any download, naming the expected source keys.
 
-Generated from `embodiments.json`:
+From `embodiments.json`:
 
 {{providers:cameras}}
 
@@ -78,7 +78,7 @@ sim.run_policy(
 
 ## Run it
 
-Needs the extra and an 865 MB download. `smolvla_base` declares `camera1..3` and ships no SO-101 stats, so `embodiment="so101"` (degrees) is refused; an inline embodiment with native units runs:
+Needs the extra and an 865 MB download. `smolvla_base` declares `camera1..3` and ships no SO-101 stats, so `embodiment="so101"` (degrees) is refused; an inline native-unit embodiment runs:
 
 ```python
 import os
@@ -101,8 +101,7 @@ print(result["status"])
 sim.cleanup()
 ```
 
-An SO-101 fine-tune carries degree stats. On the sim joints `1`..`6` the `so101` embodiment applies even unnamed, converting both ways; other radian state is refused before the first action. On hardware it binds the `.pos` keys ([First policy](../../start/first-policy.md)). A real arm's tool takes the same `policy_config` dict:
-
+An SO-101 fine-tune carries degree stats. On the sim joints `1`..`6` the `so101` embodiment applies even unnamed, converting both ways; other radian state is refused before the first action. On hardware it binds the `.pos` keys. `robotfuel/act_so101_t16b` applied 90 of 90 steps at 30 Hz through `run_policy(policy_object=...)` on a laptop CPU; arm moved, no cube lifted. A real arm's tool takes the same `policy_config` dict:
 
 ```json
 {"action": "execute", "policy_provider": "lerobot_local",
@@ -112,9 +111,9 @@ An SO-101 fine-tune carries degree stats. On the sim joints `1`..`6` the `so101`
 
 ## GR00T N1.7 through lerobot
 
-`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` policy type and load here like any checkpoint, no Isaac-GR00T checkout, no ZMQ service. `embodiment_tag` comes from the checkpoint config.
+`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` type and load like any checkpoint, without an Isaac-GR00T checkout or ZMQ service. `embodiment_tag` comes from the checkpoint config.
 
-```python
+```python title="sketch: groot extra, 3B download"
 from strands_robots.policies import create_policy
 
 policy = create_policy("nvidia/GR00T-N1.7-3B", policy_type="groot", embodiment="so101")
@@ -131,6 +130,6 @@ policy = create_policy("ws://gpu-box:8765")                                     
 
 ## Limits
 
-- `trust_remote_code=True` is unconditional here, hence the environment gate; load checkpoints only from organisations you trust.
-- `dim_policy="pad"` / `"truncate"` adapt the state width and take the first N values of a wider action (32-D pi0/pi0.5); `strict` refuses. An embodiment the pipeline cannot take is refused at load.
-- An embodiment not in `embodiments.json` needs its own entry (state keys, action keys, camera renames); [training](../training/lerobot.md) shows how a checkpoint carries those names.
+- `trust_remote_code=True` is unconditional here, hence the environment gate; load only checkpoints from organisations you trust.
+- `dim_policy="pad"` / `"truncate"` adapt the state width and take the first N values of a wider action (32-D pi0/pi0.5); `strict` refuses. One the pipeline cannot take is refused at load.
+- An embodiment not in `embodiments.json` needs its own entry (state keys, action keys, camera renames); [training](../training/lerobot.md) shows how a checkpoint carries them.
