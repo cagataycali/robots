@@ -14,7 +14,7 @@ pip install 'strands-robots[rl]'    # torch + gymnasium + MuJoCo
 
 `RLCheckpointPolicy` is the inference half of the RL loop. `create_trainer("ppo" | "fast_sac" | "fast_td3")` trains against a `SimEnv` and writes `policy.pt` plus `policy_meta.json`; this provider presents that pair as a `Policy`. Rollout is the actor's mean action. `requires_images` is `False`.
 
-The checkpoint's `actor_obs_keys` are read from the observation by name, in trained order (part of the weights); a missing key is refused, never defaulted to a zero that would command a robot from a fabricated state.
+The checkpoint's `actor_obs_keys` are read from the observation by name, in trained order (part of the weights); a missing key is refused, never defaulted to a zero commanding a robot from a fabricated state.
 
 ## Three shapes of `checkpoint_dir`
 
@@ -70,6 +70,6 @@ Trainers and `policy_meta.json` fields: [RL training](../training/rl.md). Isaac 
 
 ## Limits
 
-- The observation must carry every `actor_obs_keys` name unless an Isaac Lab export builds it from robot state (`command=` sets the velocity command; on MuJoCo torque motors the run's PD drives the joints); differently named joints are refused.
+- The observation must carry every `actor_obs_keys` name unless an Isaac Lab export builds it from robot state (`command=` sets the velocity command; on MuJoCo torque motors the run's PD drives joints); differently named joints are refused.
 - Deterministic mean action only.
-- Only strands pairs and rsl_rl 5.x actors (`actor_state_dict`, `mlp.<i>` layers) load; anything else is a `FileNotFoundError`.
+- Only strands pairs and rsl_rl 5.x actors (`actor_state_dict`, `mlp.<i>` layers) load; anything else is `FileNotFoundError`.
