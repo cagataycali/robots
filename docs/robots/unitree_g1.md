@@ -15,7 +15,11 @@ description: "Unitree G1 Humanoid (29-DOF + dexterous hands)"
 from strands_robots import Robot
 
 robot = Robot("unitree_g1")
+print(robot.robot_joint_names("unitree_g1"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ```python title="sketch"
 robot = Robot("unitree_g1", mode="real", driver="lerobot", robot_ip="192.168.123.164")  # lerobot unitree_g1

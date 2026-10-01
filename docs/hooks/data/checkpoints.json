@@ -13,16 +13,16 @@
         "kind": "SmolVLA",
         "provider": "lerobot_local",
         "where": "sim, laptop (Apple GPU) and NVIDIA L40S",
-        "result": "60 of 60 actions applied, 0 errors, 1.2 s inference per 50-action chunk on the laptop, 300 ms on the L40S. Needs the inline native embodiment: the base checkpoint ships no SO-101 stats, so the motion shows the plumbing, not a task",
-        "source": "docs/start/first-policy.md fence 1 (runs under docs/hooks/check_fences.py); interface sweep 2026-09-28 script sim-policies/03c and issue #4157; policy matrix 2026-09-28 smolvla-01.log"
+        "result": "90 of 90 actions applied through run_policy(policy_object=...) on a laptop CPU; 1.2 s per 50-action chunk on the laptop GPU, 300 ms on the L40S. Needs the inline native embodiment: the base checkpoint ships no SO-101 stats, so the motion shows the plumbing, not a task",
+        "source": "docs/start/first-policy.md fence 1 and docs/learn/policies/lerobot-local.md fence (run under docs/hooks/check_fences.py); interface sweep 2026-09-28 script sim-policies/03c and issue #4157"
       },
       {
         "checkpoint": "robotfuel/act_so101_t16b",
         "kind": "ACT, trained on a real SO-101",
         "provider": "lerobot_local",
         "where": "sim, laptop and L40S; also through the agent tool",
-        "result": "300 of 300 actions applied at 30 Hz with embodiment so101 converting degrees to radians, 405 ms per 30-action chunk on the laptop, 15 ms on the L40S; wrist camera routed with obs_rename_override. The report says instruction_read=True for a policy that has no language input (#4159)",
-        "source": "docs/learn/policies/lerobot-local.md fence (check_fences.py); interface sweep 2026-09-28 script sim-policies/03e-routed and issues #4158, #4159; policy matrix 2026-09-28 act-02.log, tool-01.log"
+        "result": "300 of 300 actions applied at 30 Hz with embodiment so101 converting degrees to radians, 405 ms per 30-action chunk on the laptop, 15 ms on the L40S; wrist camera routed with obs_rename_override. 90 of 90 on a laptop CPU through run_policy(policy_object=...), the hardware call shape, 2026-09-30",
+        "source": "docs/learn/policies/lerobot-local.md; interface sweep 2026-09-28 script sim-policies/03e-routed and issues #4158, #4159; policy matrix 2026-09-28 act-02.log, tool-01.log"
       },
       {
         "checkpoint": "allenai/MolmoAct2-SO100_101",

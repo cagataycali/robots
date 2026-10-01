@@ -42,6 +42,10 @@ Ruff runs at line length 120 targeting `py312`; mypy runs with `disallow_untyped
 | a new policy provider ships an integration test with real inference | mocks cannot grade a checkpoint |
 | no dead code; test behaviour, not implementation | the tree is graded for both |
 
+## Pictures in the docs
+
+A drawing is a scene module, `docs/drawings/scenes/<id>.py`, built from `box`, `chip`, `arrow`, `section` and `footnote` calls; `python docs/drawings/_tools/scene.py --all` renders both palettes to `docs/assets/drawings/`, a page places it with `{{drawing:<id>}}`, and a grader refuses a stale SVG. A sequence, state machine or small flow is a ```` ```mermaid ```` fence the theme paints at render time: no colours, no `style`, `classDef` or `%%{init}%%` line, at most one node tagged `:::accent`. `python docs/hooks/check_mermaid.py` renders every fence headless.
+
 ## Log the change
 
 Every pull request that changes behaviour adds one file under `changelog.d/`, `<pr-number>-<slug>.md`, with the `### <Category>: <summary>` heading and body that would have gone into `CHANGELOG.md`. Never edit `## [Unreleased]` directly; the `Guards` step (`scripts/ci_guards.py`) refuses a PR that does, and refuses the placeholders `0000` and `999x`. Push the fragment right after opening the PR, or open as a draft and add it before marking ready: a push after approval dismisses the approval.

@@ -15,7 +15,11 @@ description: "Robot Soccer Kit (multi-robot soccer, 65-DOF total)"
 from strands_robots import Robot
 
 robot = Robot("robot_soccer_kit")
+print(robot.robot_joint_names("robot_soccer_kit"))
+robot.cleanup()
 ```
+
+Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).
 
 Aliases: `rsk`.
 

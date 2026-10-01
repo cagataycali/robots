@@ -22,6 +22,7 @@ Keys (all derived, none configured):
 * ``sim_backends``      simulation backend packages (mujoco, newton, isaac)
 * ``policy_providers``  providers in ``registry/policies.json``
 * ``native_drivers``    entries in ``_SHIPPED_DRIVERS`` (drivers/__init__.py)
+* ``embodiments``       configs in policies/lerobot_local/embodiments.json
 * ``sim_assets``        robots with an ``asset`` block (renderable in the viewer)
 
 An unknown key fails the build (``mkdocs build --strict`` treats the hook's
@@ -63,6 +64,9 @@ def numbers() -> dict[str, int]:
         if p.is_dir() and not p.name.startswith("_") and p.name not in _SIM_NON_BACKENDS
     )
     providers = json.loads((_PKG / "registry" / "policies.json").read_text(encoding="utf-8"))["providers"]
+    embodiments = len(
+        json.loads((_PKG / "policies" / "lerobot_local" / "embodiments.json").read_text(encoding="utf-8"))["configs"]
+    )
     native_drivers = len(
         re.findall(
             r'^\s+\("strands_robots\.drivers\.', (_PKG / "drivers" / "__init__.py").read_text(encoding="utf-8"), re.M
@@ -81,6 +85,7 @@ def numbers() -> dict[str, int]:
         "sim_backends": len(sim_backends),
         "policy_providers": len(providers),
         "native_drivers": native_drivers,
+        "embodiments": embodiments,
         "sim_assets": sum(1 for spec in robots.values() if spec.get("asset")),
     }
     for category, count in categories.items():

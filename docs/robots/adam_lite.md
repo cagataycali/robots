@@ -15,7 +15,11 @@ description: "PNDbotics Adam Lite Humanoid (26-DOF)"
 from strands_robots import Robot
 
 robot = Robot("adam_lite")
+print(robot.robot_joint_names("adam_lite"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 Aliases: `pndbotics_adam_lite`.
 

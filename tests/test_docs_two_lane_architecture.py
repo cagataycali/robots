@@ -3,8 +3,9 @@
 A reader arriving from a link and an agent resolving a symbol want opposite
 things from the same site. The site used to serve both with two lanes: a short
 nav for newcomers and a generated index for the reference tree. The rewrite
-folds both into one nav of six tabs (Home, Start, Robots, Learn, Reference,
-Project), each tab a directory under ``docs/``, so the URL and the sidebar
+folds both into one nav of six tabs (Home, Start, Concepts, Robots, Learn,
+Reference), each tab a directory under ``docs/``; the project pages live under
+``reference/project/``, so the URL and the sidebar
 say the same thing about a page. The reference lane is now the ``Reference``
 tab: a hand-written index that points at the API, tool, CLI, configuration and
 refusal-code pages, every one of them generated from the source.
@@ -45,10 +46,10 @@ _MKDOCS = _REPO / "mkdocs.yml"
 TABS: dict[str, str] = {
     "Home": "index.md",
     "Start": "start/",
+    "Concepts": "concepts/",
     "Robots": "robots/",
     "Learn": "learn/",
     "Reference": "reference/",
-    "Project": "project/",
 }
 
 #: The reference index and the API index are hand-written tables; each names

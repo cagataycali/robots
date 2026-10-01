@@ -13,11 +13,15 @@ URDF from [shbang91/draco3_description@5afd197](https://github.com/shbang91/drac
 
 <img class="sr-thumb" src="../assets/img/robots/draco3.webp" alt="draco3, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("draco3")
+robot = Robot("draco3")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("draco3"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

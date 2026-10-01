@@ -20,13 +20,34 @@ No runnable fence on this page, on purpose: an e-stop reaches every peer the ses
 
 ## What an e-stop does
 
+{{drawing:d07_estop}}
+
 1. Engages the local lockout and records the time.
 2. Stops the robot in this process through the same `_dispatch({"action": "stop"})` path a remote peer would run. `broadcast` never reaches its sender, so without this step the fan-out misses the robot the operator stands next to.
 3. Broadcasts `{"action": "stop"}` and collects replies for 3 s.
 4. Publishes the event on `strands/safety/estop` (fleet-wide lockout) and `strands/<peer>/safety/event`.
 5. Writes `emergency_stop` to the audit log.
 
-The return value is every reply, the local one first. A reply counts as "stopped" only if it says so: a peer whose robot exposes no `stop_task` answers `{"ok": False}`, is logged at CRITICAL and listed in `peers_not_stopped`. Counting it as an acknowledgement would report a halted fleet while a robot moved. A mesh that is not running raises `RuntimeError` instead of returning `[]`: "asked nobody" cannot look like "asked, nobody answered".
+Three stops, two resumes:
+
+```mermaid
+sequenceDiagram
+    participant O as operator
+    participant A as arm-a
+    participant B as arm-b
+    O->>A: emergency_stop()
+    Note over A: lockout, stop
+    A->>B: broadcast stop
+    B-->>A: stopped
+    A->>B: strands/safety/estop
+    Note over B: lockout
+    O->>B: resume, override_code
+    B-->>O: ok
+    B->>A: strands/safety/resume, override_proof
+    Note over A: lockout cleared
+```
+
+The return value is every reply, the local one first. A reply counts as "stopped" only if it says so: a peer whose robot exposes no `stop_task` answers `{"ok": False}`, is logged at CRITICAL and listed in `peers_not_stopped`. Counting it as an acknowledgement would report a halted fleet while a robot still moved. A mesh that is not running raises `RuntimeError` rather than returning `[]`: "asked nobody" cannot look like "asked, nobody answered".
 
 ## The lockout
 
@@ -35,7 +56,6 @@ While engaged, a peer answers only `status`, `ping`, `resume` and `stop`. `stop`
 A peer receiving `strands/safety/estop` from another peer engages its own lockout; the log line reads `lockout engaged via remote estop from <issuer>`.
 
 Replay defence there: the envelope's `t` must be fresh (`STRANDS_MESH_RESUME_FRESHNESS_S`, default 60 s), a per-receiver cache refuses a repeated `t`, issuers are capped per window. Refusing a cache slot never refuses the stop, nor does a receiver clock behind the operator: an estop up to a window early latches and audits `estop_clock_skew`; only `resume` keeps the forward-skew rule (5 s).
-
 
 ## Resume
 

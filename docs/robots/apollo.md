@@ -15,7 +15,11 @@ description: "Apptronik Apollo Humanoid (34-DOF)"
 from strands_robots import Robot
 
 robot = Robot("apollo")
+print(robot.robot_joint_names("apollo"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 Aliases: `apptronik_apollo`.
 
