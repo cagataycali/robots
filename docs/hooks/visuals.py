@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Expand ``{{drawing:<id>}}`` and ``{{sim:<id>}}`` tokens into the site's pictures, and label sketches.
+"""Expand ``{{drawing:<id>}}`` and ``{{sim:<id>}}`` tokens into the site's pictures, and unmark sketches.
 
 A drawing is a scene module under ``docs/drawings/scenes/<id>.py`` rendered by
 ``docs/drawings/_tools/scene.py`` to ``docs/assets/drawings/<id>.paper.svg`` and
@@ -18,12 +18,10 @@ convention swaps them with the palette toggle. Every image loads lazily. An unkn
 id is a build warning, which ``mkdocs build --strict`` turns into an error, so a
 token cannot ship as literal text.
 
-The same pass relabels the fences the docs never run. A fence written
-``python title="sketch"`` is the machine marker ``docs/hooks/check_sketches.py`` and the
-graders key on; a reader is told what it means instead: the label becomes
-"python, not run on this page: needs a robot on USB". An author who knows the reason
-writes ``title="sketch: needs a GPU"`` and that reason replaces the default. The label
-renders as the site's chip on the fence's edge (``extra.css``), not as a filename tab.
+The same pass strips the marker off the fences the docs never run. A fence written
+``python title="sketch"`` (or ``title="sketch: <reason>"``) is the machine marker
+``docs/hooks/check_sketches.py`` and the graders key on; the reader sees a plain
+highlighted fence, and the page's prose says what the fence needs.
 """
 
 from __future__ import annotations
@@ -41,18 +39,12 @@ _DRAWING_SVGS = _DOCS / "assets" / "drawings"
 _SVG_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.DOTALL)
 _SIM = _DOCS / "assets" / "sim"
 _TOKEN = re.compile(r"\{\{(drawing|sim):([A-Za-z0-9_-]+)(?:\|([^}]*))?\}\}")
-_SKETCH = re.compile(r'^(```+\s*python\b[^\n]*?\btitle=)"sketch(?::\s*([^"]+))?"', re.MULTILINE)
-SKETCH_DEFAULT_REASON = "needs a robot on USB"
+_SKETCH = re.compile(r'^(```+\s*python\b[^\n]*?)\s+title="sketch(?::[^"]*)?"', re.MULTILINE)
 
 
-def sketch_label(reason: str | None) -> str:
-    """The label a reader sees on a fence the page did not run."""
-    return f"python, not run on this page: {(reason or SKETCH_DEFAULT_REASON).strip()}"
-
-
-def relabel_sketches(markdown: str) -> str:
-    """``title="sketch"`` and ``title="sketch: <reason>"`` become the reader's label."""
-    return _SKETCH.sub(lambda m: f'{m.group(1)}"{sketch_label(m.group(2))}"', markdown)
+def unmark_sketches(markdown: str) -> str:
+    """Drop ``title="sketch"`` / ``title="sketch: <reason>"`` so the fence renders untitled."""
+    return _SKETCH.sub(r"\1", markdown)
 
 
 def drawing_alt(drawing_id: str) -> str | None:
@@ -124,5 +116,5 @@ def referenced_ids(markdown: str) -> set[tuple[str, str]]:
 
 
 def on_page_markdown(markdown: str, page, config, files) -> str:  # noqa: ANN001 - mkdocs signature
-    """mkdocs hook entry point: expand every visual token, then label the sketches."""
-    return relabel_sketches(substitute(markdown, page.file.src_path))
+    """mkdocs hook entry point: expand every visual token, then unmark the sketches."""
+    return unmark_sketches(substitute(markdown, page.file.src_path))

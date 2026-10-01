@@ -111,9 +111,9 @@ An SO-101 fine-tune carries degree stats. On the sim joints `1`..`6` the `so101`
 
 ## GR00T N1.7 through lerobot
 
-`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` type and load like any checkpoint, without an Isaac-GR00T checkout or ZMQ service. `embodiment_tag` comes from the checkpoint config.
+`nvidia/GR00T-N1.7-3B` and its fine-tunes are lerobot's native `groot` type and load like any checkpoint, without an Isaac-GR00T checkout or ZMQ service. `embodiment_tag` comes from the checkpoint config; install the `groot` extra.
 
-```python title="sketch: groot extra, 3B download"
+```python title="sketch"
 from strands_robots.policies import create_policy
 
 policy = create_policy("nvidia/GR00T-N1.7-3B", policy_type="groot", embodiment="so101")
