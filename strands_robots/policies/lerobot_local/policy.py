@@ -27,21 +27,27 @@ from ...utils import (
     name_list_error,
     positive_count_error,
     positive_finite_number_error,
+    refusal_repr,
 )
 from .. import Policy, align_action_values, chunk_count_error
 from .._log_safety import sanitize_log_value
 from .._rng import reseed_client_rngs
 from .._state_keys import drop_velocity_siblings
 from .embodiment import (
+    DEGREE_LIKE_SPAN,
+    UNIT_FRAMES,
     ZeroActionMonitor,
+    degree_like_columns,
     diagnose_action_dim,
     hardware_pos_keys,
     observed_state_keys,
+    registered_sim_embodiment,
     state_key_remedy,
 )
 from .processor import POSTPROCESSOR_CONFIG, PREPROCESSOR_CONFIG, ProcessorBridge
 from .resolution import (
     accepts_partial_images,
+    config_for_untagged_checkpoint,
     declared_image_features,
     resolve_policy_class_by_name,
     resolve_policy_class_from_hub,
@@ -121,6 +127,42 @@ def _declared_feature_is_image(name: str, feature: Any = None) -> bool:
     return "image" in name
 
 
+def embodiment_spec_error(spec: Any) -> str | None:
+    """Why ``embodiment=`` cannot be resolved to an :class:`EmbodimentMap`, or ``None``.
+
+    The one resolution rule for the two places that read the spec before any
+    weights move: :meth:`LerobotLocalPolicy.preflight` (the rollout surfaces'
+    pre-build hook) and the constructor. Both used to leave an unresolvable spec
+    to the load path, where ``_configure_embodiment`` runs AFTER
+    ``_load_model``: ``embodiment="so102"`` was refused only once the checkpoint
+    had downloaded and loaded (18 s cold, 2 s cached), as a raised
+    ``RuntimeError``, while a misspelt keyword was refused in 0.09 s as an
+    envelope. The registry lookup costs nothing, so the verdict moves ahead of
+    the download.
+
+    Args:
+        spec: The ``embodiment`` keyword as the caller passed it: a registry
+            name, an inline dict, an :class:`EmbodimentMap`, or ``None``.
+
+    Returns:
+        ``None`` when ``spec`` is ``None`` or resolves (a known name, a dict
+        :class:`EmbodimentMap` accepts, an instance); otherwise the reason,
+        which for a name lists the registered embodiments.
+    """
+    if spec is None:
+        return None
+    from .embodiment import load_embodiment
+
+    try:
+        load_embodiment(spec)
+    except (TypeError, ValueError) as exc:
+        # ValueError is the unknown-name / wrong-type verdict from
+        # ``load_embodiment``; TypeError is ``EmbodimentMap(**dict)`` refusing a
+        # field the map does not declare.
+        return f"lerobot_local: {exc}"
+    return None
+
+
 def _merge_obs_rename(base: dict[str, str], override: dict[str, str | None] | None) -> dict[str, str]:
     """Merge an ``obs_rename_override`` over an embodiment's ``obs_rename``.
 
@@ -180,9 +222,8 @@ def _inapplicable_image_target_error(
 
     For such a pair no camera name can satisfy the target, so the source-key
     remedy cannot be followed, and ``EmbodimentMap.validate`` refuses the same
-    rename after the weight download - discarding the whole processor pipeline,
-    including the embodiment's state/action unit conversion, and falling back to
-    the raw flow. That is the verdict this reports up front instead, naming the
+    rename after the weight download, and the load is refused. That is the
+    verdict this reports up front instead, before the download, naming the
     ``obs_rename_override`` drop that :func:`_merge_obs_rename` documents as the
     only way to remove a rename whose target the model never declares.
 
@@ -251,9 +292,8 @@ def _inapplicable_image_target_error(
         f"Embodiment {embodiment_name!r} feeds image feature(s) {sorted(inapplicable)}, which "
         f"{reference!r} does not declare - it declares {sorted(declared)}. A pretrained checkpoint "
         f"records its own input_features, so renaming a camera cannot create the missing feature: "
-        f"this same rename is refused by the embodiment's own validation after the weight download, "
-        f"and the whole processor pipeline - including the embodiment's state/action unit "
-        f"conversion - is then discarded for the raw flow. Route the features it does declare "
+        f"this same rename is refused by the embodiment's own validation after the weight download. "
+        f"Route the features it does declare "
         f"instead: policy_config={{'obs_rename_override': {override!r}}} - a falsy value drops a "
         f"rename this checkpoint cannot accept.{trailer}"
     )
@@ -403,6 +443,16 @@ _MODEL_CACHE: dict[tuple[Any, ...], Any] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 
 
+def best_inference_device() -> str:
+    """``"cuda"`` when a CUDA device is visible, else ``"mps"`` when available, else ``"cpu"``."""
+    if torch.cuda.is_available():
+        return "cuda"
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def clear_model_cache(pretrained_name_or_path: str | None = None) -> int:
     """Evict cached lerobot_local models, freeing their held memory.
 
@@ -474,6 +524,41 @@ def list_cached_models() -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+#: Embodiment fields a caller has passed as constructor keywords, by mistake.
+EMBODIMENT_UNIT_FIELDS: tuple[str, ...] = ("state_units", "action_units")
+
+
+def embodiment_units_kwarg_error(kwargs: Mapping[str, Any]) -> str | None:
+    """Why ``kwargs`` names a unit frame the constructor cannot bind, or ``None``.
+
+    ``state_units`` and ``action_units`` are fields of an embodiment map, not
+    constructor keywords. Under the pass-through rule they were dropped with a
+    WARNING, and ``run_policy`` then reported ``success`` with the unit frame
+    unchanged (#4164). The message names where the field goes and the two
+    frames it takes (:data:`~strands_robots.policies.lerobot_local.embodiment.UNIT_FRAMES`);
+    ``radians`` is not one of them, because ``native`` already means the values
+    the robot emits, which a MuJoCo simulation reports in radians.
+
+    Args:
+        kwargs: The constructor keywords the signature did not bind.
+
+    Returns:
+        The refusal, or ``None`` when neither name is present.
+    """
+    misplaced = [name for name in EMBODIMENT_UNIT_FIELDS if name in kwargs]
+    if not misplaced:
+        return None
+    given = ", ".join(f"{name}={refusal_repr(kwargs[name])}" for name in misplaced)
+    return (
+        f"LerobotLocalPolicy does not take {given}: units live on the embodiment, not on the "
+        f"constructor. Pass embodiment={{'name': ..., 'state_keys': [...], 'action_keys': [...], "
+        f"'state_units': 'degrees', 'action_units': 'degrees'}} or a registry embodiment that "
+        f"declares them (so100 and so101 declare 'degrees'). A unit frame is one of "
+        f"{sorted(UNIT_FRAMES)}: 'native' means the values the robot emits (radians in MuJoCo, "
+        f"normalized .pos values on a real arm); 'radians' is not a frame."
+    )
 
 
 class LerobotLocalPolicy(Policy):
@@ -561,6 +646,15 @@ class LerobotLocalPolicy(Policy):
             posture rather than scaling a quantity, so a truthy spelling of off
             (``"false"``, ``"no"``, ``"0"``) is refused rather than selecting
             the padding posture the word asks to skip.
+        out_of_range_actions: What to do with an action the checkpoint's own
+            action stats say it never produced: a value more than one recorded
+            range beyond the stats' ``[low, high]`` (``min``/``max``, else
+            ``q01``/``q99``). ``"warn"`` (the default) forwards it and logs it
+            once per episode with the columns and values; ``"clip"`` clips every
+            column to its recorded ``[low, high]``; ``"off"`` does neither. A
+            π0-FAST LIBERO checkpoint whose stats span ``[-0.94, 1.0]`` emitted
+            a pitch of 131 and a gripper of 2062 on an out-of-distribution
+            scene, and nothing said so.
     """
 
     def __init__(
@@ -585,14 +679,27 @@ class LerobotLocalPolicy(Policy):
         obs_rename_override: dict[str, str | None] | None = None,
         strict_keys: bool = False,
         pad_short_actions: bool = False,
+        out_of_range_actions: str = "warn",
         cache_model: bool = True,
         revision: str | None = None,
+        compile_model: bool | None = None,
         **ignored_kwargs: Any,
     ):
         self.pretrained_name_or_path = pretrained_name_or_path
         # Optional Hub revision (branch, tag, or commit SHA) to pin the
         # checkpoint to a reproducible version. None loads the default branch.
         self.revision = revision
+        # torch.compile of the model, which several checkpoints ask for in their
+        # config (the LIBERO pi0 / pi0.5 / pi0-FAST fine-tunes ship
+        # ``compile_model: true, compile_mode: max-autotune``). ``None`` (the
+        # default) turns it OFF for inference: the first ``select_action``
+        # would otherwise spend 8+ minutes in inductor autotuning inside the
+        # control loop, logging nothing, and the rollout reads as hung. ``True``
+        # keeps the checkpoint's compile (and says it will take minutes);
+        # ``False`` is the default made explicit.
+        if compile_model is not None and (error := boolean_flag_error(compile_model, "compile_model", "lerobot_local")):
+            raise ValueError(error)
+        self.compile_model = compile_model
         self.policy_type = policy_type
         self.requested_device = device
         # Validated here, where the caller's value arrives and before any
@@ -658,6 +765,15 @@ class LerobotLocalPolicy(Policy):
         if error := boolean_flag_error(pad_short_actions, "pad_short_actions", "lerobot_local"):
             raise ValueError(error)
         self.pad_short_actions = pad_short_actions
+        if out_of_range_actions not in ("warn", "clip", "off"):
+            raise ValueError(
+                f"lerobot_local: out_of_range_actions must be 'warn', 'clip' or 'off', got {out_of_range_actions!r}"
+            )
+        self.out_of_range_actions = out_of_range_actions
+        # Actions seen outside the checkpoint's recorded range this episode
+        # (count) and whether the warning has been logged.
+        self.out_of_range_action_count = 0
+        self._out_of_range_warned = False
         # Routing-degradation telemetry. The heuristic (non-declarative)
         # remap path can keep a run alive while silently producing
         # meaningless inputs - a camera routed to an arbitrary model image
@@ -708,13 +824,15 @@ class LerobotLocalPolicy(Policy):
         self.load_time_s: float = 0.0
         self.load_cache_hit: bool = False
         self._processor_bridge: ProcessorBridge | None = None
-        # Set True when the pipeline loaded and was active but the caller's
-        # embodiment / image_keys were incompatible with the model's declared
-        # features, so the bridge was discarded (see _load_processor_bridge).
-        self._embodiment_config_failed = False
+        # The joint-units guard (_guard_joint_units) runs once per bound state
+        # ordering; the ordering it last passed is kept so a later
+        # set_robot_state_keys re-arms it. ``embodiment_adopted`` names the
+        # registered embodiment it applied on the caller's behalf, if any.
+        self._units_verified_for: tuple[str, ...] | None = None
+        self.embodiment_adopted: str | None = None
         self._tokenizer: Any = None
-        # True once a discarded pipeline's TokenizerProcessorStep lent its
-        # tokenizer to the raw flow (see _adopt_pipeline_tokenizer).
+        # True when the active pipeline carries a TokenizerProcessorStep, i.e.
+        # the model reads the instruction through it (see _pipeline_has_tokenizer).
         self._pipeline_tokenized = False
         # Refused where the caller's value arrives, and before any checkpoint is
         # downloaded: the tokenizer reads this as a slice bound over the encoded
@@ -850,6 +968,14 @@ class LerobotLocalPolicy(Policy):
         self._zero_action_monitor = ZeroActionMonitor()
         self._action_dim_warned = False
 
+        # Two names are refused rather than tolerated: ``state_units`` and
+        # ``action_units`` are embodiment fields, and a caller who passes them
+        # here is following an older docs sentence that placed them beside
+        # ``processor_overrides``. Dropped (the pass-through rule below), the
+        # rollout reported success with the unit frame unchanged (#4164).
+        misplaced = embodiment_units_kwarg_error(ignored_kwargs)
+        if misplaced:
+            raise TypeError(misplaced)
         # Same contract as every provider: create_policy forwards one shared
         # kwargs bag to all of them, so a key this provider does not own is
         # tolerated - but named. Dropped silently, a misspelt option (``rtc=``
@@ -864,8 +990,19 @@ class LerobotLocalPolicy(Policy):
                 pretrained_name_or_path or "no checkpoint yet",
             )
 
+        # Resolved before the download for the caller who builds the policy
+        # directly rather than through a rollout surface's ``preflight``: the
+        # same registry lookup, the same words, ahead of the same download.
+        if spec_error := embodiment_spec_error(embodiment):
+            raise ValueError(spec_error)
+
         if pretrained_name_or_path:
             self._load_model()
+
+    #: The factory's pre-construction hook (:func:`~strands_robots.policies.factory.policy_kwargs_error`):
+    #: an embodiment field passed as a constructor keyword is refused before the
+    #: trust gate, with the same message the constructor gives.
+    misplaced_kwargs_error = staticmethod(embodiment_units_kwarg_error)
 
     @property
     def provider_name(self) -> str:
@@ -937,9 +1074,9 @@ class LerobotLocalPolicy(Policy):
     def is_chunk_emitting(self) -> bool:
         """Whether this LeRobot policy returns multi-action chunks per inference.
 
-        Extends :meth:`Policy.is_chunk_emitting` so the async-RTC pipeline
-        auto-enables latency masking for every chunk-emitting LeRobot model, not
-        only those whose chunk shape is visible through ``execution_horizon``:
+        Extends :meth:`Policy.is_chunk_emitting` to every chunk-emitting LeRobot
+        model, not only those whose chunk shape is visible through
+        ``execution_horizon``:
 
         * ``execution_horizon > 1`` covers ACT, diffusion, pi0, pi0.5, pi0-FAST
           and SmolVLA, whose trained chunk (or RTC horizon) is more than one
@@ -993,6 +1130,9 @@ class LerobotLocalPolicy(Policy):
                 seed that cannot be applied is refused rather than leaving the
                 caller believing the episode is reproducible.
         """
+        # A new episode may be in distribution again: warn afresh.
+        self.out_of_range_action_count = 0
+        self._out_of_range_warned = False
         reseed_client_rngs(seed)
         if self._policy is not None and hasattr(self._policy, "reset"):
             self._policy.reset()
@@ -1035,6 +1175,7 @@ class LerobotLocalPolicy(Policy):
             raise ValueError(error)
         if robot_state_keys:
             self.robot_state_keys = robot_state_keys
+            self._units_verified_for = None
             logger.info(
                 "LeRobot local state keys set: %d keys = %s%s",
                 len(self.robot_state_keys),
@@ -1077,49 +1218,26 @@ class LerobotLocalPolicy(Policy):
 
     # Tokenizer resolution (VLA language token injection)
 
-    def _adopt_pipeline_tokenizer(self, bridge: Any) -> None:
-        """Keep a discarded pipeline's tokenizer so the raw flow can still tokenize.
+    @staticmethod
+    def _pipeline_has_tokenizer(bridge: Any) -> bool:
+        """Whether *bridge*'s preprocessor tokenizes the instruction (LeRobot's ``TokenizerProcessorStep``).
 
-        LeRobot's ``TokenizerProcessorStep`` owns the tokenizer for the
-        PaliGemma-based policies (pi0, pi05): their ``config`` carries neither
-        ``tokenizer_name`` nor ``vlm_model_name``, so :meth:`_resolve_tokenizer`
-        finds nothing and :meth:`_needs_language_tokens` answers False, yet
-        ``predict_action_chunk`` reads ``observation.language.tokens``
-        unconditionally. The step is read for its live tokenizer, max length
-        and padding side; a pipeline without such a step leaves the policy as
-        it was. Called right before the bridge reference is dropped.
-
-        Args:
-            bridge: The :class:`ProcessorBridge` about to be discarded.
+        pi0 / pi05 hold the PaliGemma tokenizer only there - their config names
+        neither ``tokenizer_name`` nor ``vlm_model_name`` - so without asking the
+        pipeline, :meth:`reads_instruction` answered ``False`` for a model whose
+        prompt is ``Task: <instruction>, State: ...``, and ``run_policy`` told the
+        agent the instruction was never read.
         """
         if bridge is None:
-            return
-        # ``ProcessorBridge.preprocessor_steps`` is a property returning the
-        # step list; a fake may expose it as a method, so both shapes are read.
+            return False
         steps = getattr(bridge, "preprocessor_steps", None)
         if callable(steps):
             steps = steps()
         for step in steps or ():
-            # ``input_tokenizer`` is the loaded object (set in __post_init__ from
-            # ``tokenizer`` or ``tokenizer_name``); ``tokenizer`` is only set when
-            # the step was built from an object.
             tokenizer = getattr(step, "input_tokenizer", None) or getattr(step, "tokenizer", None)
-            if tokenizer is None or not callable(tokenizer):
-                continue
-            self._tokenizer = tokenizer
-            max_length = getattr(step, "max_length", None)
-            if isinstance(max_length, int) and max_length > 0:
-                self._tokenizer_max_length = max_length
-            padding_side = getattr(step, "padding_side", None)
-            if padding_side in ("left", "right"):
-                self._tokenizer_padding_side = padding_side
-            self._pipeline_tokenized = True
-            logger.info(
-                "lerobot_local: kept the pipeline's tokenizer (%s, max_length=%d) for the raw obs/action flow",
-                getattr(step, "tokenizer_name", None) or type(tokenizer).__name__,
-                self._tokenizer_max_length,
-            )
-            return
+            if tokenizer is not None and callable(tokenizer):
+                return True
+        return False
 
     def _resolve_tokenizer(self) -> Any | None:
         """Resolve and cache the tokenizer for VLA language token injection.
@@ -1252,6 +1370,67 @@ class LerobotLocalPolicy(Policy):
 
     # Model loading
 
+    def _inference_config(self) -> Any | None:
+        """The checkpoint's config with this process's device and compile choice, or ``None``.
+
+        Loaded here - rather than inside ``from_pretrained`` - so the two
+        inference-time decisions are made before the policy is built: the
+        device the weights load onto, and ``compile_model``, which a policy's
+        constructor reads to wrap ``sample_actions`` in ``torch.compile``.
+        ``None`` when lerobot's config loader is unavailable or the checkpoint
+        has no lerobot config (the caller's ``from_pretrained`` then loads as
+        before).
+        """
+        try:
+            from lerobot.configs.policies import PreTrainedConfig
+        except ImportError:
+            return None
+        try:
+            kwargs = {"revision": self.revision} if self.revision else {}
+            config = PreTrainedConfig.from_pretrained(self.pretrained_name_or_path, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - optional pre-read; from_pretrained reports the real error
+            # A checkpoint whose config.json has no draccus ``type`` tag cannot
+            # be read by from_pretrained alone; the caller named the type, so
+            # parse the config for it and hand it over.
+            config = (
+                config_for_untagged_checkpoint(self.pretrained_name_or_path, self.policy_type, revision=self.revision)
+                if self.policy_type
+                else None
+            )
+            if config is None:
+                logger.debug("lerobot_local: config pre-read failed (%s); loading with the checkpoint's own", exc)
+                return None
+        device = self.requested_device or best_inference_device()
+        shipped = getattr(config, "device", None)
+        if not self.requested_device and shipped and str(shipped) != device:
+            logger.warning(
+                "lerobot_local: %s's config names device %r (where it was trained or saved); running it on %r, "
+                "the best device here. Pass device= to choose.",
+                self.pretrained_name_or_path,
+                shipped,
+                device,
+            )
+        if hasattr(config, "device"):
+            config.device = device
+        if getattr(config, "compile_model", False) and self.compile_model is not True:
+            logger.warning(
+                "lerobot_local: %s's config enables torch.compile (mode %r), which compiles for minutes on the "
+                "first inference, inside the control loop; it is off for inference. Pass compile_model=True to "
+                "keep it.",
+                self.pretrained_name_or_path,
+                getattr(config, "compile_mode", None),
+            )
+            config.compile_model = False
+        elif getattr(config, "compile_model", False):
+            logger.warning(
+                "lerobot_local: compiling %s with torch.compile (mode %r): the first inference takes minutes.",
+                self.pretrained_name_or_path,
+                getattr(config, "compile_mode", None),
+            )
+        elif self.compile_model is True and hasattr(config, "compile_model"):
+            config.compile_model = True
+        return config
+
     def _model_cache_key(self, namespace: str, *extra: Any) -> tuple[Any, ...] | None:
         """Build the process-cache key for the underlying model load.
 
@@ -1276,6 +1455,7 @@ class LerobotLocalPolicy(Policy):
             self.requested_device,
             *self._rtc_identity,
             *extra,
+            ("compile_model", self.compile_model),
         )
 
     def _cache_get(self, key: tuple[Any, ...] | None) -> Any:
@@ -1365,20 +1545,24 @@ class LerobotLocalPolicy(Policy):
             # Pass revision only when set so the call matches lerobot's
             # default (revision=None) and stays compatible with policy
             # classes whose from_pretrained does not accept the kwarg.
-            from_pretrained_kwargs = {"revision": self.revision} if self.revision else {}
+            from_pretrained_kwargs: dict[str, Any] = {"revision": self.revision} if self.revision else {}
+            config = self._inference_config()
+            if config is not None:
+                from_pretrained_kwargs["config"] = config
             self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path, **from_pretrained_kwargs)
             assert self._policy is not None
 
             self._policy.eval()
             self._cache_put(cache_key, (self._policy, self.policy_type))
 
-        # Resolve device: prefer user-requested, then config.device, fallback to first param
+        # Resolve device: the caller's, else the best this machine has. The
+        # checkpoint's ``config.device`` is where it was TRAINED (or saved), not
+        # a request: lerobot/pi05_droid ships "cpu", and honouring it ran a
+        # 4-billion-parameter pi0.5 at 6.6-10 s per chunk on an idle L40S.
         if self.requested_device:
             self._device = torch.device(self.requested_device)
-        elif hasattr(self._policy, "config") and hasattr(self._policy.config, "device"):
-            self._device = torch.device(self._policy.config.device)
         else:
-            self._device = next(self._policy.parameters()).device
+            self._device = torch.device(best_inference_device())
 
         # Move the model onto the resolved device. LeRobot's from_pretrained
         # places weights on config.device (e.g. 'mps'/'cuda' baked into the
@@ -1450,18 +1634,15 @@ class LerobotLocalPolicy(Policy):
           it - either the embodiment / ``image_keys`` are incompatible with the
           model's declared features, or the active bridge carries no preprocessor
           for the rename + pack-state steps to be injected into (a checkpoint
-          shipping only ``policy_postprocessor.json``). Discarding it silently degrades a
-          WORKING normalization pipeline to the raw flow AND misdirects the
-          downstream "no policy_postprocessor.json" diagnostic (the checkpoint
-          shipped one - it was discarded here). Surface the real cause as a
-          warning, or raise when ``processor_overrides`` were given (mirroring the
-          from_pretrained path).
+          shipping only ``policy_postprocessor.json``). Discarding the pipeline
+          would run the model without its normalization (and, for pi0 / pi05,
+          without the state-in-the-prompt tokenizer) while the caller asked for
+          the map, so it is refused with ``ValueError``.
 
         A malformed embodiment *spec* (bad name / dict) raises ``RuntimeError``
         from ``load_embodiment`` and is intentionally NOT caught here - that is a
         caller error that should abort the load loudly.
         """
-        self._embodiment_config_failed = False
         if not (self.use_processor and self.pretrained_name_or_path):
             return
 
@@ -1493,35 +1674,27 @@ class LerobotLocalPolicy(Policy):
                 try:
                     self._configure_embodiment()
                 except ValueError as exc:
-                    # The pipeline loaded and was active, but the embodiment /
-                    # image_keys do not match the model's declared features. Do NOT
-                    # swallow this at debug: discarding an otherwise-working
-                    # normalization pipeline is a silent behaviour change, and the
-                    # missing-postprocessor warning below would misattribute it to a
-                    # checkpoint lacking a policy_postprocessor.json.
-                    if self.processor_overrides:
-                        raise RuntimeError(
-                            f"Embodiment configuration failed but processor_overrides were specified: {exc}"
-                        ) from exc
-                    logger.warning(
-                        "lerobot_local: %s loaded an ACTIVE processor pipeline but its "
-                        "embodiment could not be configured (%s). The pipeline (including "
-                        "normalization) was discarded and the policy falls back to the raw "
-                        "obs/action flow -- align the embodiment / image_keys with the "
-                        "model's declared input/output features.",
-                        self.pretrained_name_or_path or "<model>",
-                        exc,
-                    )
-                    # The raw flow has to tokenize the instruction itself, and for a
-                    # checkpoint whose config names no tokenizer (pi0 / pi05 carry
-                    # the PaliGemma tokenizer only as a pipeline step) the only
-                    # place that knowledge exists is the pipeline being discarded.
-                    # Keep the step's tokenizer, or the fallback hands the model a
-                    # batch without ``observation.language.tokens`` and it dies
-                    # with a KeyError at the first inference.
-                    self._adopt_pipeline_tokenizer(self._processor_bridge)
-                    self._processor_bridge = None
-                    self._embodiment_config_failed = True
+                    # The pipeline loaded and is ACTIVE, but the caller's DECLARED
+                    # embodiment cannot be configured onto it. Discarding the
+                    # pipeline and falling back to the raw flow used to be the
+                    # answer, with a warning; for pi0 / pi05 that silently dropped
+                    # the normalization and the state-in-the-prompt tokenizer, and
+                    # the run continued on a model fed raw radians and a bare
+                    # instruction. The caller asked for this map, so say it cannot
+                    # be honoured instead of running something else.
+                    raise ValueError(
+                        f"lerobot_local: {self.pretrained_name_or_path or '<model>'} has an active processor "
+                        f"pipeline (normalization, tokenizer), but the declared embodiment cannot be configured "
+                        f"onto it: {exc}. It is refused rather than run without the pipeline. Route the "
+                        "cameras onto the model's declared image features with camera_key_map= or "
+                        "obs_rename_override=, adjust the embodiment, or drop embodiment= and bind the joints "
+                        "with set_robot_state_keys([...])."
+                    ) from exc
+                if self._pipeline_has_tokenizer(self._processor_bridge):
+                    # pi0 / pi05 carry the PaliGemma tokenizer only as a pipeline
+                    # step (their config names none), so the model reads the
+                    # instruction through the pipeline - say so to reads_instruction.
+                    self._pipeline_tokenized = True
             else:
                 # An inactive bridge is benign: the checkpoint ships no processor
                 # configs, so there is genuinely nothing to apply.
@@ -1534,10 +1707,7 @@ class LerobotLocalPolicy(Policy):
         # normalized actions (~[-1, 1] or z-scored) straight to the robot. Fed
         # to a radian-joint sim those are micro-motions and the arm barely
         # moves. Warn once at load so this isn't debugged as a frozen policy.
-        # Skipped when the pipeline was discarded by an embodiment-config failure
-        # above (already warned with the accurate cause), so we do not emit the
-        # misleading "no policy_postprocessor.json" message for that case.
-        if self.use_processor and not self._embodiment_config_failed:
+        if self.use_processor:
             bridge = self._processor_bridge
             # Stats present at the wrong width raise from inside LeRobot's
             # broadcast on the FIRST inference - after the rollout started and
@@ -1949,9 +2119,10 @@ class LerobotLocalPolicy(Policy):
         applies to the MolmoAct2 load path only.
 
         No-op when no ``embodiment`` is configured (the policy then uses the
-        legacy heuristic camera routing, which this hook cannot reason about),
-        or when the embodiment name/spec cannot be resolved (``create_policy``
-        surfaces that error authoritatively).
+        legacy heuristic camera routing, which this hook cannot reason about).
+        An ``embodiment`` that cannot be resolved (an unknown name, a dict the
+        map refuses) is refused here, naming the registered embodiments, so it
+        costs no download - see :func:`embodiment_spec_error`.
 
         The parameter-shape guards below (``actions_per_step``, ``image_keys``,
         ``rtc_execution_horizon``) run before that early-return, because all
@@ -1965,8 +2136,8 @@ class LerobotLocalPolicy(Policy):
         Raises:
             ValueError: When ``actions_per_step`` or ``rtc_execution_horizon``
                 is not a positive whole number, when ``image_keys`` is not a
-                list of distinct non-blank names,
-                when a model image feature has no satisfiable source camera key
+                list of distinct non-blank names, when ``embodiment`` cannot
+                be resolved, when a model image feature has no satisfiable source camera key
                 in ``observation_keys``, or when an explicit ``image_keys``
                 withholds a feature the embodiment feeds.
         """
@@ -2021,12 +2192,16 @@ class LerobotLocalPolicy(Policy):
         spec = policy_config.get("embodiment")
         if spec is None:
             return
+        # An unresolvable spec is refused here, not left to the constructor:
+        # the constructor resolves it too (:func:`embodiment_spec_error`), but
+        # this hook is what the rollout surfaces run before the download, and it
+        # is the difference between a sub-second envelope naming the registered
+        # embodiments and a RuntimeError after the weights have loaded.
+        if spec_error := embodiment_spec_error(spec):
+            raise ValueError(spec_error)
         from .embodiment import load_embodiment
 
-        try:
-            embodiment = load_embodiment(spec)
-        except Exception:  # noqa: BLE001 - unknown/odd spec; create_policy reports it
-            return
+        embodiment = load_embodiment(spec)
 
         # ``camera_key_map`` is routing rung 1 (see :func:`_route_camera_key_map`),
         # so it is applied before the availability check below: a caller who
@@ -2211,9 +2386,8 @@ class LerobotLocalPolicy(Policy):
         # MuJoCo arm) and binds cameras by name/position rather than by the declared
         # ``obs_rename``, while ``_tensor_to_action_dicts`` still converts the
         # returned action with ``model_action_to_sim`` - so exactly half of a
-        # ``*_units="degrees"`` embodiment (so100 / so101) is applied. Refuse, and
-        # let the caller's own error path fall back to the raw obs/action flow with
-        # both halves consistent.
+        # ``*_units="degrees"`` embodiment (so100 / so101) is applied. Refuse: the
+        # load raises (see _load_processor_bridge) rather than half-apply it.
         #
         # Only a DECLARED spec is refused: the map synthesised from
         # ``robot_state_keys`` above carries native units and the same keys the
@@ -2836,6 +3010,8 @@ class LerobotLocalPolicy(Policy):
                     "No model loaded and no pretrained_name_or_path set. Create the policy with a model path."
                 )
 
+        self._guard_joint_units(observation_dict)
+
         observation = dict(observation_dict)
         if instruction and "task" not in observation:
             observation["task"] = instruction
@@ -2928,7 +3104,7 @@ class LerobotLocalPolicy(Policy):
         if self._processor_bridge and self._processor_bridge.has_postprocessor:
             action_tensor = self._processor_bridge.postprocess(action_tensor)
 
-        return self._tensor_to_action_dicts(action_tensor, hw_action_keys=_hw_action_keys)
+        return self._tensor_to_action_dicts(action_tensor, hw_action_keys=_hw_action_keys, observation=observation)
 
     # Observation batch building
 
@@ -3137,11 +3313,7 @@ class LerobotLocalPolicy(Policy):
             # and, once a declared embodiment has already been rejected at load
             # time, no embodiment at all, since re-passing that one is the same
             # loop reached through obs_rename rather than state_keys.
-            + state_key_remedy(
-                scalar_keys,
-                embodiment_rejected=self._embodiment_config_failed,
-                normalization_inert=self._normalization_is_inert(),
-            )
+            + state_key_remedy(scalar_keys, normalization_inert=self._normalization_is_inert())
         )
         if self.strict_keys:
             raise ValueError("strict_keys=True: " + msg)
@@ -3169,6 +3341,164 @@ class LerobotLocalPolicy(Policy):
         """
         bridge = self._processor_bridge
         return bool(bridge is not None and bridge.inert_normalization_features())
+
+    def _guard_joint_units(self, observation_dict: Mapping[str, Any]) -> None:
+        """Refuse to act when the state is in radians and the checkpoint speaks degrees.
+
+        LeRobot's SO-arm driver records joints in degrees (gripper 0..100) by
+        default, so most SO-100/SO-101 fine-tunes on the Hub are degree-trained,
+        while every simulator reports the same joints in radians. Nothing in a
+        checkpoint says so except the spans its stats record. Without this
+        guard the natural call - ``run_policy`` with only
+        ``pretrained_name_or_path`` - fed a pi0.5 SO-101 fine-tune radian state
+        and applied its degree actions as radians: 80 "degrees" commanded as
+        80 radians pinned joint 4 at its 1.658 rad limit for all 150 frames,
+        and the rollout reported success. On an arm that is a command into the
+        hard stops.
+
+        Runs once per bound state ordering, before the first inference, so
+        nothing is commanded before it has decided:
+
+        * The map in effect already converts units, the state comes from a
+          LeRobot driver (``'<motor>.pos'`` keys, the dataset's own units), or
+          the stats are absent or read as radians: nothing to do.
+        * The state is keyed exactly like a shipped SIMULATION embodiment that
+          converts units (``so101`` / ``so100``) and the caller declared none:
+          that embodiment is applied, as if the caller had passed it, with the
+          camera routing this policy would use anyway. ``embodiment_adopted``
+          names it and one warning says so. This is the call ``embodiment=
+          "so101"`` makes, reached without the caller having to know it.
+        * Otherwise - a declared map with native units on those sim keys, or
+          unrecognised keys whose values all sit within one turn of zero while
+          the stats span tens of units - it refuses with ``ValueError``, naming
+          the stats, the state and the embodiment that converts. A caller whose
+          own keys really are in the checkpoint's units says so by declaring an
+          embodiment for them; a declared map on unrecognised keys is trusted.
+
+        Args:
+            observation_dict: The observation of the step about to be predicted.
+
+        Raises:
+            ValueError: The state would reach a degree-trained checkpoint in
+                radians, or the registered embodiment could not be applied.
+        """
+        keys = self._units_state_keys(observation_dict)
+        if not keys or self._units_verified_for == keys:
+            return
+        bridge = self._processor_bridge
+        embodiment = self._embodiment
+        driver_keys = all(key.endswith(".pos") for key in keys)
+        if bridge is None or driver_keys or (embodiment is not None and embodiment.converts_units):
+            self._units_verified_for = keys
+            return
+        # A bridge that cannot report its stats (a duck-typed stand-in) has no
+        # evidence to judge by, the same as a checkpoint that ships none.
+        recorded = getattr(bridge, "recorded_value_ranges", None)
+        if not callable(recorded):
+            self._units_verified_for = keys
+            return
+        ranges = recorded("observation.state")
+        source = "observation.state"
+        if not ranges:
+            ranges, source = recorded("action"), "action"
+        wide = degree_like_columns(ranges or [], len(keys))
+        if not wide:
+            self._units_verified_for = keys
+            return
+        registered = registered_sim_embodiment(keys)
+        declared = self._embodiment_spec is not None
+        model = self.pretrained_name_or_path or "<model>"
+        assert ranges is not None
+        spans = ", ".join(f"{keys[i]!r} {ranges[i][0]:.1f}..{ranges[i][1]:.1f}" for i in wide[:6])
+        if registered is not None and registered.converts_units and not declared:
+            self._adopt_registered_embodiment(registered, model=model, spans=spans, source=source)
+            self._units_verified_for = keys
+            return
+        if registered is None:
+            values = self._units_state_values(observation_dict, keys)
+            if declared or any(abs(values[i]) > DEGREE_LIKE_SPAN for i in wide if i < len(values)):
+                self._units_verified_for = keys
+                return
+        remedy = (
+            f"pass embodiment={registered.name!r} (state_units={registered.state_units!r}, "
+            f"action_units={registered.action_units!r}), which converts both directions"
+            if registered is not None and registered.converts_units
+            else "declare an embodiment for these keys with state_units='degrees' and "
+            "action_units='degrees' (see the so101 entry of embodiments.json), or, if this "
+            "state really is recorded in the checkpoint's units, declare an embodiment for "
+            "these keys with state_units='native'"
+        )
+        raise ValueError(
+            f"lerobot_local: {model} was trained on degrees - its {source} stats span {spans} "
+            f"(wider than the {DEGREE_LIKE_SPAN:.2f} a radian joint can span) - but the state "
+            f"{list(keys)} would reach it in radians with no conversion, and its degree actions "
+            "would be applied as radians, driving the joints into their limits. Nothing was "
+            f"commanded. To run it, {remedy}."
+        )
+
+    def _units_state_keys(self, observation_dict: Mapping[str, Any]) -> tuple[str, ...]:
+        """The state ordering :meth:`_guard_joint_units` judges, as strings."""
+        if self._embodiment is not None and self._embodiment.state_keys:
+            return tuple(str(key) for key in self._embodiment.state_keys)
+        if self.robot_state_keys and not all(key.startswith("joint_") for key in self.robot_state_keys):
+            return tuple(str(key) for key in self.robot_state_keys)
+        pos_keys = hardware_pos_keys(dict(observation_dict))
+        return tuple(pos_keys) if pos_keys else tuple(observed_state_keys(observation_dict))
+
+    @staticmethod
+    def _units_state_values(observation_dict: Mapping[str, Any], keys: tuple[str, ...]) -> list[float]:
+        """The scalar value of each key, ``0.0`` where it is absent or not a number."""
+        values: list[float] = []
+        for key in keys:
+            try:
+                values.append(float(observation_dict[key]))
+            except (KeyError, TypeError, ValueError):
+                values.append(0.0)
+        return values
+
+    def _adopt_registered_embodiment(self, registered: Any, *, model: str, spans: str, source: str) -> None:
+        """Apply a shipped unit-converting embodiment the caller did not name.
+
+        The registered map's camera renames describe one camera layout (the
+        LIBERO-style ``image`` / ``wrist_image``), which a checkpoint trained on
+        other camera names does not declare - applying them would make the map
+        fail validation and discard the whole pipeline. So only its joint half
+        is adopted (state/action keys, units, gripper column and range, joint
+        mid-points) and the cameras keep the routing this policy synthesises
+        from the model's declared features, ``camera_key_map`` and
+        ``obs_rename_override`` included.
+
+        Raises:
+            ValueError: The adopted map cannot be configured on this checkpoint.
+        """
+        from dataclasses import replace
+
+        adopted = replace(registered, obs_rename=self._synthesized_camera_renames())
+        self._embodiment_spec = adopted
+        try:
+            self._configure_embodiment()
+        except ValueError as exc:
+            self._embodiment_spec = None
+            self._embodiment = None
+            raise ValueError(
+                f"lerobot_local: {model} was trained on degrees ({source} stats span {spans}) and "
+                f"this state is keyed like the registered {registered.name!r} simulation, whose "
+                f"embodiment converts radians to degrees - but applying it failed: {exc}. Nothing "
+                f"was commanded. Pass embodiment={registered.name!r} with camera_key_map= or "
+                "obs_rename_override= routing your cameras onto the model's image features."
+            ) from exc
+        self.embodiment_adopted = registered.name
+        logger.warning(
+            "lerobot_local: %s was trained on degrees (%s stats span %s); the state is keyed like "
+            "the registered %r simulation, so its embodiment was applied (state_units=%r, "
+            "action_units=%r). Pass embodiment= explicitly to choose another.",
+            sanitize_log_value(model),
+            source,
+            sanitize_log_value(spans),
+            registered.name,
+            registered.state_units,
+            registered.action_units,
+        )
 
     def _collect_state_values(self, observation_dict: dict[str, Any], order: list[str]) -> list[float]:
         """Pull the joint-state vector from ``observation_dict`` in ``order``.
@@ -3233,9 +3563,7 @@ class LerobotLocalPolicy(Policy):
                 "those joints - commonly a mimic/tendon gripper whose actuator name differs "
                 "from the observation's finger-joint names. "
                 + state_key_remedy(
-                    observed_state_keys(observation_dict),
-                    embodiment_rejected=self._embodiment_config_failed,
-                    normalization_inert=self._normalization_is_inert(),
+                    observed_state_keys(observation_dict), normalization_inert=self._normalization_is_inert()
                 )
                 # Same registry-checked remedy as the all-missing guard, so one
                 # rule serves both degradations.
@@ -3502,8 +3830,14 @@ class LerobotLocalPolicy(Policy):
 
         # Validate required image features are present. Missing images would
         # cause the model to produce garbage outputs silently.
+        # pi0 / pi05 / smolvla prepare the views they are given and mask the rest
+        # (resolution.accepts_partial_images), so a partial camera set is theirs to
+        # handle; none at all is still refused.
+        partial_ok = accepts_partial_images(self.policy_type) and any(
+            "image" in key for key in batch if key in self._input_features
+        )
         for feat_name in self._input_features:
-            if feat_name not in batch and "image" in feat_name:
+            if feat_name not in batch and "image" in feat_name and not partial_ok:
                 raise ValueError(
                     f"Missing required image feature '{feat_name}' in observation. "
                     f"The model expects this camera input. Provide it in the observation dict "
@@ -3904,8 +4238,60 @@ class LerobotLocalPolicy(Policy):
             return True
         return type(policy).__name__ == "MolmoAct2Policy"
 
+    def _guard_action_range(self, actions_list: list[Any]) -> list[Any]:
+        """Flag (or clip) actions far outside the range the checkpoint's action stats record.
+
+        Runs on the model's actions after unnormalization and before any unit
+        conversion, so they are compared in the units the stats were recorded
+        in. Only the columns both the action and the stats have are compared:
+        a model padded to 32 dims (pi0 / pi05 / pi0-FAST) carries nothing past
+        its dataset's width.
+        """
+        if self.out_of_range_actions == "off" or not actions_list:
+            return actions_list
+        bridge = getattr(self, "_processor_bridge", None)
+        ranges_fn = getattr(bridge, "recorded_value_ranges", None)
+        ranges = ranges_fn("action") if callable(ranges_fn) else None
+        if not ranges:
+            return actions_list
+        lows = np.array([lo for lo, _ in ranges], dtype=float)
+        highs = np.array([hi for _, hi in ranges], dtype=float)
+        span = np.maximum(highs - lows, 1e-6)
+        out: list[Any] = []
+        flagged: dict[int, float] = {}
+        for action in actions_list:
+            values = np.asarray(action, dtype=float).copy()
+            n = min(values.shape[-1] if values.ndim else 0, len(lows))
+            if n:
+                head = values[..., :n]
+                far = (head < lows[:n] - span[:n]) | (head > highs[:n] + span[:n])
+                if far.any():
+                    self.out_of_range_action_count += 1
+                    for col in np.flatnonzero(far):
+                        flagged.setdefault(int(col), float(head[..., col]))
+                if self.out_of_range_actions == "clip":
+                    values[..., :n] = np.clip(head, lows[:n], highs[:n])
+            out.append(values)
+        if flagged and not self._out_of_range_warned:
+            self._out_of_range_warned = True
+            shown = ", ".join(
+                f"column {c} = {v:.4g} (recorded [{lows[c]:.4g}, {highs[c]:.4g}])" for c, v in sorted(flagged.items())
+            )
+            logger.warning(
+                "lerobot_local: %s emitted actions far outside the range its own action stats record: %s. "
+                "The scene is likely out of the checkpoint's distribution; %s. "
+                "Pass out_of_range_actions='clip' to clip to the recorded range, or 'off' to silence this.",
+                self.pretrained_name_or_path or "the policy",
+                shown,
+                "they were clipped" if self.out_of_range_actions == "clip" else "they were forwarded unchanged",
+            )
+        return out if self.out_of_range_actions == "clip" else actions_list
+
     def _tensor_to_action_dicts(
-        self, action_tensor: torch.Tensor, hw_action_keys: list[str] | None = None
+        self,
+        action_tensor: torch.Tensor,
+        hw_action_keys: list[str] | None = None,
+        observation: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Convert action tensor to list of robot action dicts.
 
@@ -3964,6 +4350,7 @@ class LerobotLocalPolicy(Policy):
             if dim_msg:
                 logger.warning("lerobot_local: %s", dim_msg)
                 self._action_dim_warned = True
+        actions_list = self._guard_action_range(actions_list)
         max_abs = float(np.abs(action_array).max()) if action_array.size else 0.0
         zero_msg = self._zero_action_monitor.update(max_abs)
         if zero_msg:
@@ -3990,7 +4377,19 @@ class LerobotLocalPolicy(Policy):
             convert = False
         else:
             out_keys = list(self.robot_state_keys)
-            convert = emb is not None and getattr(emb, "action_units", "native") != "native"
+            convert = emb is not None and emb.converts_actions
+
+        # A velocity-trained model (DROID) emits joint velocities; integrate the
+        # chunk from the measured joints into the position targets send_action
+        # takes, before any unit conversion (see EmbodimentMap.velocities_to_targets).
+        if not hw_action_keys and emb is not None and emb.action_mode == "velocity":
+            obs = observation or {}
+            current = [obs.get(k) for k in out_keys]
+            current = [float(v) if isinstance(v, int | float) and not isinstance(v, bool) else None for v in current]
+            # Only the columns an actuator receives: a padded model width
+            # (pi05's 32) carries nothing past them to integrate.
+            width = len(out_keys)
+            actions_list = emb.velocities_to_targets([[float(v) for v in a][:width] for a in actions_list], current)
 
         result = []
         for action_values in actions_list:
@@ -4003,6 +4402,9 @@ class LerobotLocalPolicy(Policy):
             if convert and emb is not None:
                 vals = emb.model_action_to_sim(vals)
             action_dict = dict(zip(keys, vals, strict=True))
+            if not hw_action_keys and emb is not None and emb.gripper_followers and 0 <= emb.gripper_index < len(vals):
+                for follower in emb.gripper_followers:
+                    action_dict[follower] = vals[emb.gripper_index]
             result.append(action_dict)
 
         return result

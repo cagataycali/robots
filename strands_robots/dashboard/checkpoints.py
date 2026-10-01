@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from strands_robots.dashboard._hub import hub_unavailable_reason
 from strands_robots.dashboard.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
@@ -185,8 +186,7 @@ def hub_search(query: str, limit: int = 12) -> tuple[list[dict[str, Any]], str |
     except Exception as exc:  # noqa: BLE001 - hub outage degrades to local-only
         logger.warning("hub checkpoint search failed: %r", exc)
         # do NOT cache a failure - the next keystroke should retry
-        kind = type(exc).__name__
-        return [], f"Hub search unavailable ({kind}) - showing local cache only"
+        return [], f"Hub search unavailable ({hub_unavailable_reason(exc)}) - showing local cache only"
     _CACHE.put(key, rows)
     return rows, None
 

@@ -350,7 +350,6 @@ def test_a_state_key_mismatch_names_the_observation_keys_on_one_record(
         strict_keys=False,
         generic_state_keys_used=False,
         _state_key_mismatch_warned=False,
-        _embodiment_config_failed=False,
         # The remedy's unit half: read as an attribute off this stand-in.
         _normalization_is_inert=lambda: False,
     )
@@ -371,7 +370,6 @@ def test_missing_state_keys_name_the_absent_keys_on_one_record(caplog: pytest.Lo
         strict_keys=False,
         missing_state_keys_used=False,
         _state_missing_keys_warned=False,
-        _embodiment_config_failed=False,
         _normalization_is_inert=lambda: False,
     )
     with caplog.at_level(logging.WARNING):
@@ -414,6 +412,10 @@ _SANITIZED_SINKS: dict[str, dict[str, list[str]]] = {
         # policy type off the checkpoint's own config - the same provenance
         # ``feat`` already carries above.
         "LerobotLocalPolicy._under_supplied_cameras_error": ["feat", "name", "self.policy_type"],
+        # Alert 1367, outside the #2853 census: the adopted-embodiment WARN names
+        # the model id (a caller-supplied Hub name or path) and the stat spans
+        # rendered from the checkpoint's own dataset statistics.
+        "LerobotLocalPolicy._adopt_registered_embodiment": ["model", "spans"],
     },
     "curobo/policy.py": {
         "CuroboPolicy._apply_world_update": ["repr(shown)"],

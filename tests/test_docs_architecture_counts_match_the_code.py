@@ -36,16 +36,16 @@ once the waist turns.
 from __future__ import annotations
 
 import ast
-import importlib.util
 import inspect
 import json
 import re
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
 from strands_robots.policies.base import Policy
+from tests._docs_hooks import docs_hook
+from tests._package_ast import parse_file
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = REPO_ROOT / "strands_robots"
@@ -59,15 +59,6 @@ _SEAM_PHRASE = "policy declares, runtime supplies"
 
 #: Words a count qualifies on the architecture page; each must be a token, not a literal.
 _COUNTED_NOUNS = ("robots", "categories", "aliases", "providers", "drivers", "tools", "backends", "actions")
-
-
-def _hook(name: str) -> ModuleType:
-    """Load ``docs/hooks/<name>.py`` the way mkdocs does: as a file, not a package."""
-    spec = importlib.util.spec_from_file_location(f"docs_hook_{name}", DOCS / "hooks" / f"{name}.py")
-    assert spec is not None and spec.loader is not None, f"docs/hooks/{name}.py is missing"
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _architecture() -> str:
@@ -91,7 +82,7 @@ def _tool_count() -> int:
     """``@tool``-decorated functions anywhere under ``strands_robots/``."""
     total = 0
     for path in sorted(PACKAGE.rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(parse_file(path)):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             if any(ast.unparse(d).split("(")[0].strip() == "tool" for d in node.decorator_list):
@@ -144,7 +135,7 @@ def _policy_implementations() -> frozenset[str]:
     """
     bases: dict[str, set[str]] = {}
     for path in sorted((PACKAGE / "policies").rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(parse_file(path)):
             if isinstance(node, ast.ClassDef):
                 bases[node.name] = {ast.unparse(b).split(".")[-1] for b in node.bases}
     reached = {"Policy"}
@@ -226,7 +217,7 @@ def test_the_architecture_page_uses_the_facts_hook() -> None:
 def test_the_providers_fact_is_the_number_of_providers_that_ship() -> None:
     """``{{n:policy_providers}}`` is read as "providers", so it is ``policies.json``'s count."""
     providers = _shipped_providers()
-    stated = _hook("facts").numbers()["policy_providers"]
+    stated = docs_hook("facts").numbers()["policy_providers"]
     assert stated == len(providers), (
         f"docs/hooks/facts.py derives policy_providers = {stated}, but registry/policies.json ships "
         f"{len(providers)} providers: {providers}. The pages print the token next to the word "
@@ -237,7 +228,7 @@ def test_the_providers_fact_is_the_number_of_providers_that_ship() -> None:
 def test_the_tools_fact_is_the_number_of_tool_helpers_that_ship() -> None:
     """``{{n:tools}}`` is the ``@tool``-decorated functions that exist."""
     expected = _tool_count()
-    stated = _hook("facts").numbers()["tools"]
+    stated = docs_hook("facts").numbers()["tools"]
     assert stated == expected, (
         f"docs/hooks/facts.py derives tools = {stated}; an AST walk of strands_robots/ finds {expected}"
     )
@@ -246,7 +237,7 @@ def test_the_tools_fact_is_the_number_of_tool_helpers_that_ship() -> None:
 def test_the_drivers_fact_is_the_number_of_shipped_drivers() -> None:
     """``{{n:native_drivers}}`` is the ``_SHIPPED_DRIVERS`` roster length."""
     expected = _shipped_drivers()
-    stated = _hook("facts").numbers()["native_drivers"]
+    stated = docs_hook("facts").numbers()["native_drivers"]
     assert stated == expected, (
         f"docs/hooks/facts.py derives native_drivers = {stated}; _SHIPPED_DRIVERS has {expected} entries"
     )
@@ -254,7 +245,7 @@ def test_the_drivers_fact_is_the_number_of_shipped_drivers() -> None:
 
 def test_the_module_map_covers_every_top_level_member() -> None:
     """The generated module table names every module and package, and nothing that is not there."""
-    rows = _hook("module_map").rows()
+    rows = docs_hook("module_map").rows()
     mapped = {member for _, members, _ in rows for member, _ in members}
     real = {
         p.stem if p.is_file() else p.name
@@ -366,7 +357,7 @@ def test_the_provider_table_is_the_whole_registry() -> None:
     The new page's matrix is generated, so the guard is on the generator: one
     row per provider ``policies.json`` ships, none missing, none invented.
     """
-    table = _hook("providers").table()
+    table = docs_hook("providers").table()
     rows = [line for line in table.splitlines() if line.startswith("| ") and not line.startswith("| provider")]
     named = {re.sub(r"[\[\]`]", "", cell.split("]")[0]).strip() for cell in (row.split("|")[1] for row in rows)}
     providers = set(_shipped_providers())

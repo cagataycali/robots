@@ -976,3 +976,73 @@ def _remove_tree(path: str) -> None:
             # distinction this helper exists to keep - and the install's own
             # rename reports separately if it could not publish.
             pass
+
+
+@functools.lru_cache(maxsize=32)
+def _motor_joints_cached(mjcf_path: str, mtime: float) -> dict[str, tuple[float, float | None, float | None]]:
+    del mtime  # part of the cache key only: an edited file is read again
+    try:
+        import mujoco
+    except ImportError:
+        return {}
+    try:
+        model = mujoco.MjModel.from_xml_path(mjcf_path)
+    except (ValueError, OSError, RuntimeError):
+        return {}
+    out: dict[str, tuple[float, float | None, float | None]] = {}
+    for i in range(model.nu):
+        if int(model.actuator_trntype[i]) != int(mujoco.mjtTrn.mjTRN_JOINT):
+            continue
+        if int(model.actuator_gaintype[i]) != int(mujoco.mjtGain.mjGAIN_FIXED):
+            continue
+        if int(model.actuator_biastype[i]) != int(mujoco.mjtBias.mjBIAS_NONE):
+            continue
+        if int(model.actuator_dyntype[i]) != int(mujoco.mjtDyn.mjDYN_NONE):
+            continue
+        joint = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, int(model.actuator_trnid[i][0]))
+        if not joint:
+            continue
+        gear = float(model.actuator_gear[i][0]) * float(model.actuator_gainprm[i][0])
+        limited = bool(model.actuator_ctrllimited[i])
+        lo, hi = (float(v) for v in model.actuator_ctrlrange[i]) if limited else (None, None)
+        out[joint] = (gear, lo, hi)
+    return out
+
+
+def mjcf_motor_joints(mjcf_path: str | None) -> dict[str, tuple[float, float | None, float | None]]:
+    """``{joint: (torque per unit ctrl, ctrl_lo, ctrl_hi)}`` for every MJCF ``<motor>`` actuator.
+
+    A ``<motor>`` (fixed gain, no bias, no dynamics, on one joint) makes its
+    ``ctrl`` a torque, ``gear * gain * ctrl``, clipped to ``ctrlrange`` when the
+    actuator is ``ctrllimited``. The Isaac MJCF importer turns it into a PhysX
+    FORCE drive with ``stiffness=0, damping=0``, so a joint position target sent
+    to it moves nothing - every menagerie quadruped and humanoid (go2, unitree_h1,
+    openarm, ...) is one. The engine reads this table to apply such an action as
+    a joint effort instead. ``{}`` when MuJoCo is not importable or the file does
+    not compile.
+    """
+    if not mjcf_path or not os.path.isfile(mjcf_path):
+        return {}
+    return _motor_joints_cached(os.path.abspath(mjcf_path), os.path.getmtime(mjcf_path))
+
+
+@functools.lru_cache(maxsize=8)
+def _compiled_model_cached(mjcf_path: str, mtime: float) -> Any:
+    del mtime  # part of the cache key only
+    import mujoco
+
+    return mujoco.MjModel.from_xml_path(mjcf_path)
+
+
+def compiled_mjcf_model(mjcf_path: str | None) -> Any:
+    """The robot's source MJCF compiled by MuJoCo, cached by path and mtime; ``None`` when unavailable.
+
+    The converted USD drops the actuator table (ranges, gains, gears). What
+    reads it on Isaac - a policy's ``set_sim_context`` - reads it from here.
+    """
+    if not mjcf_path or not os.path.isfile(mjcf_path):
+        return None
+    try:
+        return _compiled_model_cached(os.path.abspath(mjcf_path), os.path.getmtime(mjcf_path))
+    except (ImportError, ValueError, OSError, RuntimeError):
+        return None

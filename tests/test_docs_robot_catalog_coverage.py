@@ -27,26 +27,27 @@ graded here is the seam between the two:
   the word "robots" anywhere under ``docs/`` is a count someone typed, and it
   fails here rather than becoming the next stale number.
 
-Counts are derived from ``robots.json`` directly rather than from
-:func:`~strands_robots.registry.list_robots`, because ``list_robots()`` also
-returns robots registered at runtime through ``register_robot()`` and from the
-user registry on disk, neither of which the docs describe. This mirrors the
+Counts are derived from ``robots.json`` and ``urdf_robots.json`` directly rather
+than from :func:`~strands_robots.registry.list_robots`, because ``list_robots()``
+also returns robots registered at runtime through ``register_robot()`` and from
+the user registry on disk, neither of which the docs describe. This mirrors the
 reasoning in ``tests/test_docs_policy_coverage.py``.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
 from collections import Counter
 from pathlib import Path
 
+from tests._docs_hooks import docs_hook
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ROBOTS_JSON = REPO_ROOT / "strands_robots" / "registry" / "robots.json"
+URDF_ROBOTS_JSON = REPO_ROOT / "strands_robots" / "registry" / "urdf_robots.json"
 DOCS = REPO_ROOT / "docs"
 README = REPO_ROOT / "README.md"
-FACTS_HOOK = DOCS / "hooks" / "facts.py"
 CATALOG = DOCS / "robots" / "index.md"
 
 #: Claims that count something other than registry entries, so they are not
@@ -65,8 +66,18 @@ COUNT_CLAIM_RE = re.compile(r"(?:^|[^0-9A-Za-z_])(\d+)\+? robots\b")
 
 
 def _registry() -> dict[str, dict]:
-    """Return the built-in robot registry, keyed by canonical name."""
-    return json.loads(ROBOTS_JSON.read_text(encoding="utf-8"))["robots"]
+    """Every robot ``Robot("<name>")`` accepts by name, keyed by canonical name.
+
+    ``robots.json`` (curated) plus ``urdf_robots.json`` (the ``robot_descriptions``
+    URDF tail the MuJoCo backend compiles on first use); a curated name wins.
+    That union is what ``list_robots()`` reports and what the catalog shows, so
+    it is the number the docs may state.
+    """
+    robots = dict(json.loads(ROBOTS_JSON.read_text(encoding="utf-8"))["robots"])
+    if URDF_ROBOTS_JSON.exists():
+        for name, rec in json.loads(URDF_ROBOTS_JSON.read_text(encoding="utf-8"))["robots"].items():
+            robots.setdefault(name, {"category": rec["category"], "source": "urdf"})
+    return robots
 
 
 def _category_counts() -> Counter[str]:
@@ -76,10 +87,7 @@ def _category_counts() -> Counter[str]:
 
 def _facts() -> dict[str, int]:
     """The numbers hook's table, loaded by path: the docs venv is not the test venv."""
-    spec = importlib.util.spec_from_file_location("docs_facts_hook", FACTS_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = docs_hook("facts")
     return module.numbers()
 
 

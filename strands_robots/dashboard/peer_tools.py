@@ -151,6 +151,39 @@ def sanitize_tool_name(peer_id: str, taken: frozenset[str] | set[str] = frozense
 #: as ``mesh.core._dispatch`` serves them for a Simulation or its child SimRobot).
 SIM_ACTIONS: tuple[str, ...] = ("status", "state", "set_joints", "reset", "step", "stop", "execute", "start")
 
+#: The policy keys both proxy schemas offer on execute/start (forwarded as ``_POLICY_FIELDS``).
+_POLICY_PROPERTIES: dict[str, Any] = {
+    "model_path": {
+        "type": "string",
+        "description": "execute/start: a checkpoint directory on the robot host (wbc, wbc_gait, rl)",
+    },
+    "walk": {
+        "type": "boolean",
+        "description": "execute/start with wbc: true loads the walk policy too (default), false balances only",
+    },
+    "target_velocity": {
+        "type": "array",
+        "items": {"type": "number"},
+        "description": (
+            "execute/start with wbc or wbc_gait: [vx, vy, wz] in m/s, m/s, rad/s; refused outside the "
+            "locomotion envelope (2 m/s, 2 rad/s by default)"
+        ),
+    },
+    "pretrained_name_or_path": {
+        "type": "string",
+        "description": "execute/start with lerobot_local: the Hub checkpoint, e.g. lerobot/smolvla_base",
+    },
+    "policy_type": {"type": "string", "description": "execute/start with lerobot_local: act, smolvla, pi0, ..."},
+    "embodiment": {
+        "type": "string",
+        "description": (
+            "execute/start with lerobot_local: the registry embodiment the checkpoint was trained for "
+            "(e.g. so101); it carries the unit frame and the camera renames, so a degrees trained "
+            "checkpoint is not applied in radians"
+        ),
+    },
+}
+
 _SIM_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -173,13 +206,13 @@ _SIM_INPUT_SCHEMA: dict[str, Any] = {
         "instruction": {"type": "string", "description": "execute/start: natural language task"},
         "policy_provider": {
             "type": "string",
-            "description": "execute/start: which policy backend, e.g. mock, lerobot_local, cosmos3 (default mock)",
+            "description": (
+                "execute/start: which policy backend. Pick from this peer's `policies.can_run` in the fleet "
+                "listing, e.g. wbc, lerobot_local. A Unitree G1 walks with wbc; an arm runs lerobot_local "
+                "with a checkpoint; mock is a sine test, not a task (default mock)"
+            ),
         },
-        "pretrained_name_or_path": {
-            "type": "string",
-            "description": "execute/start with lerobot_local: the Hub checkpoint, e.g. lerobot/smolvla_base",
-        },
-        "policy_type": {"type": "string", "description": "execute/start with lerobot_local: act, smolvla, pi0, ..."},
+        **_POLICY_PROPERTIES,
         "duration": {"type": "number", "description": "execute/start: seconds (positive, finite)"},
         "robot_name": {"type": "string", "description": "a Simulation holding several robots: which one"},
     },
@@ -237,13 +270,14 @@ def peer_tool_spec(peer_id: str, kind: str, tool_name: str) -> dict[str, Any] | 
                             "type": "string",
                             "description": (
                                 "Which policy backend the peer runs: one of cosmos3, curobo, flux3_action, kimodo, "
-                                "lerobot_local, microduck, mock, moveit2, protomotions, remote, rl, wbc, wbc_gait. "
+                                "lerobot_local, microduck, mock, moveit2, protomotions, remote, rl, wbc, wbc_gait, wbc_latent. "
                                 "lerobot_local (default) runs a local checkpoint on the peer and needs "
                                 "pretrained_name_or_path; moveit2 (needs policy_port) and remote dial a server. "
                                 "An unknown name is refused by the peer listing its registry."
                             ),
                             "default": "lerobot_local",
                         },
+                        **_POLICY_PROPERTIES,
                         "duration": {
                             "type": "number",
                             "description": "Maximum execution time in seconds (positive, finite)",
@@ -279,12 +313,25 @@ def peer_tool_spec(peer_id: str, kind: str, tool_name: str) -> dict[str, Any] | 
 
 # ── invocation -> mesh command (pure) ────────────────────────────────────────
 
+#: The policy keys both rails forward on execute/start: the constructor keys the
+#: wire carries (``pretrained_name_or_path``, ``policy_type``, ``model_path``,
+#: ``walk``) and the per-call goal ``target_velocity``. Each has a validator in
+#: ``mesh/security.validate_command`` on the robot host; nothing else crosses.
+_POLICY_FIELDS: tuple[str, ...] = (
+    "pretrained_name_or_path",
+    "policy_type",
+    "embodiment",
+    "model_path",
+    "walk",
+    "target_velocity",
+)
+
 #: Fields the real-robot rail forwards. Everything else is refused by
 #: mesh/security.validate_command anyway; dropping them here makes the
 #: refusal happen with a better sentence and no wire round trip.
 _REAL_FIELDS: dict[str, tuple[str, ...]] = {
-    "execute": ("instruction", "policy_port", "policy_host", "policy_provider", "duration"),
-    "start": ("instruction", "policy_port", "policy_host", "policy_provider", "duration"),
+    "execute": ("instruction", "policy_port", "policy_host", "policy_provider", "duration", *_POLICY_FIELDS),
+    "start": ("instruction", "policy_port", "policy_host", "policy_provider", "duration", *_POLICY_FIELDS),
     "status": (),
     "stop": (),
 }
@@ -298,8 +345,8 @@ _SIM_FIELDS: dict[str, tuple[str, ...]] = {
     "reset": ("robot_name",),
     "step": ("steps",),
     "stop": (),
-    "execute": ("instruction", "policy_provider", "pretrained_name_or_path", "policy_type", "duration", "robot_name"),
-    "start": ("instruction", "policy_provider", "pretrained_name_or_path", "policy_type", "duration", "robot_name"),
+    "execute": ("instruction", "policy_provider", "duration", "robot_name", *_POLICY_FIELDS),
+    "start": ("instruction", "policy_provider", "duration", "robot_name", *_POLICY_FIELDS),
 }
 
 

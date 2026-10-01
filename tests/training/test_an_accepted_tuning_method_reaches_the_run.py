@@ -46,6 +46,7 @@ import pytest
 
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
+from tests._package_ast import parse_file
 from tests.training._spec_field_reads import reads_spec_field
 
 # Strategies that ask for something other than a full fine-tune.
@@ -189,7 +190,7 @@ def _backends_that_declare_their_methods() -> dict[str, ast.Module]:
     root = pathlib.Path(inspect.getfile(Trainer)).parent
     found: dict[str, ast.Module] = {}
     for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text())
+        tree = parse_file(path)
         declares = any(
             isinstance(node, ast.Assign)
             and any(getattr(target, "id", "") == "_SUPPORTED_METHODS" for target in node.targets)

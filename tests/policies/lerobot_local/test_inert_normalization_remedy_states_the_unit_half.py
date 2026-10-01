@@ -23,17 +23,16 @@ a unit-converting embodiment whose stats are inert.
 from __future__ import annotations
 
 import dataclasses
-import importlib.util
 import logging
 import pathlib
 import re
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from strands_robots.policies.lerobot_local.embodiment import EMBODIMENT_MAP
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
+from tests._docs_hooks import docs_hook
 
 # lerobot/smolvla_base ships its normalizer stats under the training dataset's
 # key ('so100.buffer.action'), in SO-100 servo units - arm joints in degrees,
@@ -56,18 +55,11 @@ SO101_RANGE_RAD = [
 #: by docs/hooks/providers.py, so the page is read with the token expanded.
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 _DOC = _REPO_ROOT / "docs" / "learn" / "policies" / "lerobot-local.md"
-_PROVIDERS_HOOK = _REPO_ROOT / "docs" / "hooks" / "providers.py"
 
 
 def _rendered_doc() -> str:
     """The lerobot_local page as the reader sees it, tokens expanded by the shipped hook."""
-    spec = importlib.util.spec_from_file_location("docs_hooks_providers", _PROVIDERS_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = sys.modules.get(spec.name)
-    if module is None:
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+    module = docs_hook("providers")
     return module.substitute(_DOC.read_text(encoding="utf-8"), "learn/policies/lerobot-local.md")
 
 

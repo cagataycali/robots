@@ -358,6 +358,7 @@ def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DIS
     # listing cannot mask the more specific diagnosis, and vice versa.
     asset_gap: tuple[str, str, str, bool, list[str]] | None = None
     hardware_only: tuple[str, str] | None = None
+    urdf_refused: tuple[str, str] | None = None
     try:
         from strands_robots.assets.manager import get_search_paths, is_robot_asset_present
         from strands_robots.registry import get_robot as _get_robot
@@ -378,6 +379,10 @@ def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DIS
                 asset.get("auto_download") is False,
                 [str(path) for path in get_search_paths()],
             )
+        elif entry and not asset and entry.get("source") == "urdf":
+            # A robot_descriptions URDF the loader could not compile; the sweep
+            # recorded why, and that sentence is the whole diagnosis.
+            urdf_refused = (canonical, str(entry.get("refusal") or "the description does not build"))
         elif entry and not asset:
             # Registered, correct, and simply not a simulation robot. The LeRobot
             # type is what the hardware route is keyed on, so it is quoted when
@@ -386,6 +391,7 @@ def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DIS
     except Exception:  # noqa: BLE001 - the diagnosis is best-effort
         asset_gap = None
         hardware_only = None
+        urdf_refused = None
 
     if asset_gap is not None:
         canonical, asset_dir, model_xml, never_downloads, search_paths = asset_gap
@@ -407,6 +413,14 @@ def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DIS
         else:
             msg += f" Fetch it with the download_assets tool (robots='{canonical}')."
         return msg
+
+    if urdf_refused is not None:
+        canonical, refusal = urdf_refused
+        return (
+            f"Robot '{requested}' is a robot_descriptions URDF that does not compile for MuJoCo: {refusal}. "
+            f"The name is correct; pass urdf_path= to supply a model of your own, or use "
+            f"list_robots(mode='sim') to see the robots this backend can spawn."
+        )
 
     if hardware_only is not None:
         canonical, lerobot_type = hardware_only
@@ -1381,6 +1395,31 @@ class SimEngine(ABC):
                 sole-robot default on this thread.
         """
         self._predicate_binding().robot = robot_name
+
+    def _bind_policy_state_keys(self, policy: Any, robot_name: str, *, prebuilt: bool) -> None:
+        """Bind *policy* to the robot's action keys - unless the caller already chose them.
+
+        A policy built here gets the robot's full ``robot_action_keys``. A
+        ``policy_object`` the caller configured keeps its own
+        ``robot_state_keys`` when every one of them is a key of this robot: the
+        rebinding used to overwrite them on every rollout, so a pi0.5-DROID
+        policy set to the panda's 7 arm joints + one gripper finger (8 of its
+        9 keys) was re-bound to all 9 and could not be driven as trained. Keys
+        that are not this robot's (or the generic ``joint_<i>`` placeholders a
+        checkpoint loads with) are replaced, as before.
+        """
+        robot_keys = list(self.robot_action_keys(robot_name))
+        chosen = list(getattr(policy, "robot_state_keys", None) or []) if prebuilt else []
+        if chosen and all(isinstance(k, str) for k in chosen) and set(chosen) <= set(robot_keys):
+            if chosen != robot_keys:
+                logger.info(
+                    "kept the %d robot_state_keys the caller set on the policy for %r (of the robot's %d)",
+                    len(chosen),
+                    robot_name,
+                    len(robot_keys),
+                )
+            return
+        policy.set_robot_state_keys(robot_keys)
 
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Give a policy the backend sim context it needs to close the loop.
@@ -3016,6 +3055,42 @@ class SimEngine(ABC):
             return None
         return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
 
+    @staticmethod
+    def _validate_rollout_target(robot_name: Any, instruction: Any, method: str) -> dict[str, Any] | None:
+        """Reject a ``robot_name`` or ``instruction`` that is not a string.
+
+        Both were used as given. A non-string ``instruction`` (``None`` from a
+        ``task`` lookup, a nested list) ran to ``status="success"`` and was
+        written into the result metadata and the recorded ``task`` column,
+        while ``run_multi_policy`` refused the same value. A :class:`Policy`
+        passed first - the hardware ``run_policy(policy, ...)`` call shape -
+        bound to ``robot_name`` and was reported as an unknown robot named by
+        its ``repr``.
+
+        Args:
+            robot_name: The caller-supplied robot name, or ``None``.
+            instruction: The caller-supplied instruction.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            A structured ``{"status": "error", ...}`` dict, or ``None`` when
+            both values are usable.
+        """
+        from strands_robots.policies import Policy
+
+        if isinstance(robot_name, Policy):
+            message = (
+                f"'robot_name' got a {type(robot_name).__name__} instance; pass a pre-built policy as "
+                "policy_object=, e.g. run_policy(policy_object=policy, instruction=...)."
+            )
+        elif robot_name is not None and not isinstance(robot_name, str):
+            message = f"'robot_name' must be a robot name string or None, got {type(robot_name).__name__}."
+        elif not isinstance(instruction, str):
+            message = f"'instruction' must be a string, got {type(instruction).__name__}."
+        else:
+            return None
+        return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
+
     def run_policy(
         self,
         robot_name: str | None = None,
@@ -3164,9 +3239,17 @@ class SimEngine(ABC):
                 When set, reseeds Python / NumPy / torch / cuDNN and forwards
                 ``policy.reset(seed=...)`` so a stochastic policy (VLA action-
                 chunk sampling, diffusion noise) produces the same trajectory
-                on re-run of the same scene. ``None`` (default) leaves RNG
-                state untouched. Mirrors the per-episode reseed in
-                :meth:`eval_policy`.
+                on re-run of the same scene. Reproducible means bit-exact for
+                a state-only policy (``mock`` re-runs byte for byte), and to a
+                render tolerance for a policy that reads camera frames on GPU
+                rendering: under ``MUJOCO_GL=egl`` a static scene renders with
+                1 LSB differences between frames (measured 2 to 9 pixels per
+                640x480 frame), a VLA reads them, and two seeded ACT rollouts
+                ended 0.006 to 0.3 rad apart after 90 to 150 steps. Compare
+                seeded camera-policy runs by their outcome, not by equality;
+                a policy that reads no frame is exact on any renderer. ``None``
+                (default) leaves RNG state untouched. Mirrors the per-episode
+                reseed in :meth:`eval_policy`.
             policy_kwargs: Optional per-call goal payload forwarded verbatim to
                 every ``policy.get_actions(obs, instruction, **policy_kwargs)``
                 call. Carries the well-known #300 goal keys
@@ -3208,10 +3291,10 @@ class SimEngine(ABC):
                 execution so the next action chunk is computed in the
                 background while the current chunk is still draining (latency
                 masking). ``False`` keeps the synchronous chunk-then-drain loop.
-                ``None`` (default) auto-resolves from ``policy.is_chunk_emitting()``
-                so chunk-emitting VLA/flow-matching policies (pi0, pi0.5,
-                pi0-FAST, SmolVLA, MolmoAct2) get latency masking automatically
-                while single-step policies stay synchronous; an explicit
+                ``None`` (default) enables it only for a chunk-emitting
+                policy that blends the seam (``supports_rtc``), since a
+                prefetched chunk without RTC starts from a stale observation;
+                every other policy stays synchronous; an explicit
                 ``True``/``False`` always wins, and a supplied value must be one
                 of those two: any other type is reported as a structured caller
                 error rather than read by truthiness, since a truthy ``"false"``
@@ -3472,6 +3555,8 @@ class SimEngine(ABC):
         if async_rtc is not None and (err := self._validate_posture_flags("run_policy", async_rtc=async_rtc)):
             return err
 
+        if err := self._validate_rollout_target(robot_name, instruction, "run_policy"):
+            return err
         robot_name = self._resolve_single_robot(robot_name)
 
         control_frequency = self._resolve_control_frequency(control_frequency)
@@ -3598,7 +3683,7 @@ class SimEngine(ABC):
         # matches the guarded binding in MujocoSimulation.run_policy's
         # multi-robot path.
         try:
-            policy.set_robot_state_keys(self.robot_action_keys(robot_name))
+            self._bind_policy_state_keys(policy, robot_name, prebuilt=policy_object is not None)
             self.bind_policy_sim_context(policy, robot_name)
         except Exception as exc:  # noqa: BLE001 - non-fatal policy configuration
             logger.debug("policy binding for %r failed: %s", robot_name, exc)
@@ -5237,7 +5322,12 @@ class SimEngine(ABC):
         rollout: the client RNGs are reseeded once from it and then per episode
         from a master RNG derived from it, and each per-episode seed is
         forwarded to ``policy.reset`` so a service-mode policy can reseed its
-        own process. Two evals at the same seed replay identically; ``None``
+        own process. Two evals at the same seed replay identically for a
+        state-only policy (bit-exact), and to a render tolerance for a camera
+        policy on GPU rendering, where ``MUJOCO_GL=egl`` renders a static scene
+        with 1 LSB differences between frames and a VLA's trajectory drifts
+        from them (see :meth:`run_policy`); compare such evals by
+        ``success_rate``, not frame by frame. ``None``
         leaves RNG state untouched. Only a non-negative integer can seed those
         RNGs, so anything else is refused here rather than at the first draw.
         Each episode's record in the returned ``episodes`` list reports the
@@ -5465,6 +5555,9 @@ class SimEngine(ABC):
         if hook_error := optional_callable_error(on_frame, "on_frame", "eval_policy"):
             return {"status": "error", "content": [{"text": hook_error}]}
 
+        if err := self._validate_rollout_target(robot_name, instruction, "eval_policy"):
+            return err
+
         robots = self.list_robots()
         if not robots:
             return {"status": "error", "content": [{"text": "No robots in sim. Add one first."}]}
@@ -5588,7 +5681,7 @@ class SimEngine(ABC):
             # set robot_state_keys; we set defensively so semantics match the
             # provider path.
             policy = policy_object
-        policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
+        self._bind_policy_state_keys(policy, resolved_robot, prebuilt=policy_object is not None)
         self.bind_policy_sim_context(policy, resolved_robot)
         on_frame, recording_claim = self._evaluation_recording(resolved_robot, instruction, on_frame, "eval_policy")
 
@@ -5886,6 +5979,8 @@ class SimEngine(ABC):
             "evaluate_benchmark", wbc_install_torque_control=wbc_install_torque_control
         ):
             return err
+        if err := self._validate_rollout_target(robot_name, instruction, "evaluate_benchmark"):
+            return err
         if err := self._validate_video_config(video, "evaluate_benchmark"):
             return err
         if err := self._validate_policy_object(policy_object, "evaluate_benchmark"):
@@ -6019,7 +6114,7 @@ class SimEngine(ABC):
             # caller benchmark an already-loaded checkpoint (e.g. a multi-GB
             # VLA) without a create_policy round-trip / redundant reload.
             policy = policy_object
-        policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
+        self._bind_policy_state_keys(policy, resolved_robot, prebuilt=policy_object is not None)
         self.bind_policy_sim_context(policy, resolved_robot)
         # Frames are labelled with the instruction the POLICY is conditioned on:
         # the caller's, else the benchmark's own (#187 - LIBERO and friends ship

@@ -56,6 +56,7 @@ from strands_robots.training.lerobot import (
     _dataset_quantile_stats_present,
 )
 from strands_robots.verify_dataset import verify_dataset
+from tests._package_ast import parse_file
 
 _HEALTHY: dict[str, Any] = {
     "total_episodes": 2,
@@ -323,7 +324,7 @@ def _metadata_json_reads() -> list[tuple[str, int, str]]:
     package = Path(strands_robots.__file__).parent
     found: list[tuple[str, int, str]] = []
     for module in sorted(package.rglob("*.py")):
-        tree = ast.parse(module.read_text(encoding="utf-8"))
+        tree = parse_file(module)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Try):
                 continue

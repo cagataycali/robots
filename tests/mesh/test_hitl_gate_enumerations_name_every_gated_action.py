@@ -30,20 +30,19 @@ names it.
 from __future__ import annotations
 
 import ast
-import importlib.util
 import inspect
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 import strands_robots.tools.robot_mesh as rmt
+from tests._docs_hooks import docs_hook
+from tests._package_ast import parse_file
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MESH_TOOL_SOURCE = Path(inspect.getsourcefile(rmt) or "")
 _CONFIGURATION = _REPO_ROOT / "docs" / "reference" / "configuration.md"
-_ENV_VARS_HOOK = _REPO_ROOT / "docs" / "hooks" / "env_vars.py"
 _CONFIGURATION_ANCHOR = "| <code>STRANDS_MESH_HITL_ACTIONS</code> |"
 
 # Cap on how far an enumeration may wrap past its anchor line. Wide enough
@@ -131,11 +130,7 @@ def _rendered(path: Path) -> str:
     text = path.read_text(encoding="utf-8")
     if path != _CONFIGURATION:
         return text
-    spec = importlib.util.spec_from_file_location("docs_env_vars_hook_hitl", _ENV_VARS_HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = docs_hook("env_vars")
     assert "{{env_vars}}" in text, "docs/reference/configuration.md must carry the {{env_vars}} token"
     rendered = module.on_page_markdown(text, page=None, config=None, files=None)
     assert "{{env_vars}}" not in rendered, "the env_vars hook left the token unexpanded"
@@ -215,7 +210,7 @@ def test_rpc_is_a_gated_actuation_action_the_dispatcher_audits() -> None:
     """Premise: ``rpc`` really is gated by default and really is audited."""
     assert "rpc" in rmt._GATEABLE_ACTIONS
     assert "rpc" in rmt._DEFAULT_INTERRUPT_ACTIONS
-    tree = ast.parse(_MESH_TOOL_SOURCE.read_text(encoding="utf-8"))
+    tree = parse_file(_MESH_TOOL_SOURCE)
     branches = [
         node
         for node in ast.walk(tree)

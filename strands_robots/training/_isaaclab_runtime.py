@@ -21,6 +21,8 @@ reports it before anything launches.
 
 from __future__ import annotations
 
+import logging
+import math
 import os
 import re
 import signal
@@ -50,11 +52,33 @@ EXIT_CODE_FILE = "exit_code"
 #: the path never enters the shell text.
 _EXIT_FILE_ENV = "STRANDS_ISAACLAB_EXIT_FILE"
 
+#: Environment variables the launch wrapper reads its deadline from: the
+#: seconds the run may take, and the marker file it writes when they pass.
+_DEADLINE_ENV = "STRANDS_ISAACLAB_DEADLINE_S"
+_TIMED_OUT_FILE_ENV = "STRANDS_ISAACLAB_TIMED_OUT_FILE"
+
 # ``"$@"`` runs the argv the wrapper was given, unquoted by no shell: every
 # token reaches the child verbatim. The status lands in the file only after the
 # child exits, so its absence while the process group is gone means the run was
 # killed.
-_WRAPPER = 'status=0; "$@" || status=$?; echo "$status" > "$STRANDS_ISAACLAB_EXIT_FILE"'
+#
+# With a deadline, a watchdog in the same process group enforces it whether or
+# not anyone polls: it writes the timed-out marker, sends SIGTERM to the whole
+# group (the wrapper leads it, see ``start_new_session``), gives the run up to
+# 15 s to exit, then sends SIGKILL to whatever is left - itself included. It
+# ignores SIGTERM so it survives to do that, and it checks every second that
+# the run is still alive, so it leaves within a second of a run that ends on
+# its own. Before, the deadline was checked only inside ``status()``: an agent
+# that died left a ``timeout_s=30`` run holding the GPU for as long as it liked.
+_WRAPPER = (
+    '"$@" & child=$!; '
+    'if [ -n "$STRANDS_ISAACLAB_DEADLINE_S" ]; then ( trap "" TERM; left="$STRANDS_ISAACLAB_DEADLINE_S"; '
+    'while [ "$left" -gt 0 ]; do sleep 1; kill -0 "$child" 2>/dev/null || exit 0; left=$((left - 1)); done; '
+    'date +%s > "$STRANDS_ISAACLAB_TIMED_OUT_FILE"; kill -TERM -$$ 2>/dev/null; grace=15; '
+    'while [ "$grace" -gt 0 ] && kill -0 "$child" 2>/dev/null; do sleep 1; grace=$((grace - 1)); done; '
+    "kill -KILL -$$ 2>/dev/null ) & fi; "
+    'status=0; wait "$child" || status=$?; echo "$status" > "$STRANDS_ISAACLAB_EXIT_FILE"'
+)
 
 
 def resolve_python(explicit: str | None = None) -> str | None:
@@ -82,7 +106,10 @@ def default_jobs_dir(explicit: str | None = None) -> Path:
     """
     configured = explicit or os.environ.get(JOBS_DIR_ENV)
     if configured:
-        return Path(configured).expanduser()
+        # Absolute, now: the launch wrapper runs in the run's output_dir, so a
+        # relative jobs dir named a different directory there and every run
+        # ended "killed" with no exit status to read.
+        return Path(configured).expanduser().resolve()
     return Path.home() / ".cache" / "strands_robots" / "isaaclab" / "jobs"
 
 
@@ -140,6 +167,34 @@ _REGISTER_ID_RE = re.compile(r"""\bid\s*=\s*["']([A-Za-z][A-Za-z0-9_.:-]{0,127})
 #: Task packages Isaac Lab registers its gym ids in.
 _TASK_PACKAGES = ("isaaclab_tasks", "isaaclab_tasks_experimental")
 
+#: Environment variable through which the OPERATOR names their own task
+#: packages: ``"acme_tasks:register_tasks,other_tasks"`` - each a module
+#: importable in the Isaac Lab venv (installed, or on a ``.pth`` there),
+#: optionally with the function Isaac Lab's ``--external_callback`` calls to
+#: register its gym ids. Operator-owned like ``ISAACLAB_PYTHON``: an agent can
+#: train these tasks but cannot point the Isaac Lab process at other code.
+TASK_PACKAGES_ENV = "STRANDS_ISAACLAB_TASK_PACKAGES"
+
+_TASK_PACKAGE_ENTRY_RE = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(?::([A-Za-z_][A-Za-z0-9_]*))?\Z"
+)
+
+
+def operator_task_packages() -> dict[str, str | None]:
+    """``{module: callback-or-None}`` from :data:`TASK_PACKAGES_ENV`; malformed entries are skipped (logged)."""
+    out: dict[str, str | None] = {}
+    for raw in os.environ.get(TASK_PACKAGES_ENV, "").split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+        match = _TASK_PACKAGE_ENTRY_RE.match(entry)
+        if match is None:
+            logging.getLogger(__name__).warning("%s: ignoring malformed entry %r", TASK_PACKAGES_ENV, entry)
+            continue
+        out[match.group(1)] = match.group(2)
+    return out
+
+
 _TASK_CACHE: dict[str, tuple[float, frozenset[str]]] = {}
 
 
@@ -152,7 +207,7 @@ def registered_tasks(python: str) -> frozenset[str] | None:
     ``None`` when no task package is found, so the caller launches as before
     and the run reports an unknown id itself.
     """
-    roots = _task_package_roots(Path(python))
+    roots = _task_package_roots(Path(python)) + [root for root, _ in _operator_package_roots(Path(python))]
     if not roots:
         return None
     stamp = max(root.stat().st_mtime for root in roots)
@@ -172,6 +227,50 @@ def registered_tasks(python: str) -> frozenset[str] | None:
     tasks = frozenset(ids)
     _TASK_CACHE[key] = (stamp, tasks)
     return tasks or None
+
+
+def task_package_of(python: str, task: str) -> tuple[str, str | None] | None:
+    """The operator package (and its callback) whose sources register *task*, or ``None``.
+
+    ``None`` too when *task* is Isaac Lab's own: those need no callback.
+    """
+    for root, module in _operator_package_roots(Path(python)):
+        for source in root.rglob("*.py"):
+            try:
+                text = source.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if task in _REGISTER_ID_RE.findall(text):
+                return module, operator_task_packages().get(module)
+    return None
+
+
+def _operator_package_roots(python: Path) -> list[tuple[Path, str]]:
+    """``(directory, module)`` of each :data:`TASK_PACKAGES_ENV` package found in the venv."""
+    found: list[tuple[Path, str]] = []
+    for module in operator_task_packages():
+        relative = Path(*module.split("."))
+        for base in _site_search_paths(python):
+            candidate = base / relative
+            if (candidate / "__init__.py").is_file():
+                found.append((candidate, module))
+                break
+    return found
+
+
+def _site_search_paths(python: Path) -> list[Path]:
+    """The venv's ``site-packages`` plus every absolute path its ``.pth`` files add."""
+    venv = python.expanduser().absolute().parent.parent
+    search: list[Path] = []
+    for site in sorted(venv.glob("lib/python3*/site-packages")):
+        search.append(site)
+        for pth in site.glob("*.pth"):
+            try:
+                lines = pth.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            search.extend(Path(line.strip()) for line in lines if line.strip().startswith("/"))
+    return search
 
 
 def _task_package_roots(python: Path) -> list[Path]:
@@ -194,7 +293,15 @@ def _task_package_roots(python: Path) -> list[Path]:
     return roots
 
 
-def launch(cmd: list[str], *, cwd: Path, log_path: Path, exit_file: Path) -> subprocess.Popen[bytes]:
+def launch(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    log_path: Path,
+    exit_file: Path,
+    timeout_s: float | None = None,
+    timed_out_file: Path | None = None,
+) -> subprocess.Popen[bytes]:
     """Start *cmd* detached in its own session, logging to *log_path*.
 
     The child gets no stdin (a prompt fails instead of hanging), and a
@@ -205,12 +312,21 @@ def launch(cmd: list[str], *, cwd: Path, log_path: Path, exit_file: Path) -> sub
         cwd: Working directory (Isaac Lab writes ``logs/`` under it).
         log_path: File receiving stdout and stderr.
         exit_file: File the wrapper writes the exit status to.
+        timeout_s: Wall-clock limit the wrapper itself enforces on the whole
+            process group, polled or not. ``None`` = no limit.
+        timed_out_file: Marker the wrapper writes when *timeout_s* passes;
+            required with *timeout_s*.
 
     Returns:
         The wrapper process, leader of a new process group.
     """
     env = child_env()
-    env[_EXIT_FILE_ENV] = str(exit_file)
+    env[_EXIT_FILE_ENV] = str(Path(exit_file).resolve())
+    if timeout_s is not None:
+        if timed_out_file is None:
+            raise ValueError("launch: timeout_s needs a timed_out_file to mark the run with")
+        env[_DEADLINE_ENV] = str(max(1, math.ceil(float(timeout_s))))
+        env[_TIMED_OUT_FILE_ENV] = str(Path(timed_out_file).resolve())
     with open(log_path, "wb") as log:
         return subprocess.Popen(  # noqa: S603 - fixed argv, no shell interpolation of any token
             ["/bin/sh", "-c", _WRAPPER, "isaaclab-run", *cmd],

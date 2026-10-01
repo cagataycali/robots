@@ -132,6 +132,16 @@ def test_the_keys_the_route_forwards_are_the_keys_the_mesh_forwards():
         "server_address",
         "policy_type",
         "pretrained_name_or_path",
+        "embodiment",
         "policy_host",
         "policy_port",
+        "walk",
     }
+
+
+def test_walk_is_carried_as_a_bool_and_nothing_else(homes):
+    """The whole-body controllers' posture flag crosses the wire only as a real boolean."""
+    _provider, config = routes_record.contained_policy_request("wbc", {"walk": False})
+    assert config == {"walk": False}
+    exc = _refusal("wbc", {"walk": "false"})
+    assert exc.status_code == 422 and "walk must be a bool" in str(exc.detail)

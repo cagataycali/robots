@@ -164,6 +164,8 @@ from packaging.requirements import Requirement  # noqa: E402
 from packaging.version import Version  # noqa: E402
 
 from tests._blocked_module import blocked  # noqa: E402
+from tests._docs_hooks import docs_hook  # noqa: E402
+from tests._package_ast import parse_file  # noqa: E402
 
 
 def _lerobot_extra_requirement() -> Requirement:
@@ -946,13 +948,7 @@ def _rendered_markdown(path: Path) -> str:
     if "docs" not in path.relative_to(_REPO_ROOT).parts or "{{" not in text:
         return text
     for name in _TABLE_HOOKS:
-        hook_path = _REPO_ROOT / "docs" / "hooks" / f"{name}.py"
-        spec = importlib.util.spec_from_file_location(f"docs_{name}_hook_dependency_audit", hook_path)
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-        text = module.substitute(text, path.relative_to(_REPO_ROOT / "docs").as_posix())
+        text = docs_hook(name).substitute(text, path.relative_to(_REPO_ROOT / "docs").as_posix())
     return text
 
 
@@ -1063,7 +1059,7 @@ def test_require_optional_call_sites_name_declared_extras() -> None:
     for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -1095,7 +1091,7 @@ def _literal_extra_call_sites() -> list[tuple[str, str]]:
     for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -1637,7 +1633,7 @@ def _require_optional_call_sites() -> list[tuple[str, int, str, dict[str, ast.ex
     for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = parse_file(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue

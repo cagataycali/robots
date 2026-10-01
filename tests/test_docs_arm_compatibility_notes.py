@@ -33,19 +33,16 @@ drive hardware.
 
 from __future__ import annotations
 
-import importlib.util
-import json
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
+from tests._docs_hooks import docs_hook
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ROBOTS_JSON = REPO_ROOT / "strands_robots" / "registry" / "robots.json"
 ROBOTS_DIR = REPO_ROOT / "docs" / "robots"
 ARMS_PAGE = ROBOTS_DIR / "arm" / "index.md"
-HOOK = REPO_ROOT / "docs" / "hooks" / "robot_pages.py"
 TABLE_TOKEN = "{{robot_family_table:arm}}"
 
 #: One rendered row: robot link, description, joints, Sim, Real, Drivers.
@@ -55,20 +52,12 @@ _CODE = re.compile(r"`([^`]+)`")
 
 def _hook():
     """The robot pages hook, loaded from the docs tree the build loads it from."""
-    name = "docs_robot_pages_hook"
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, HOOK)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+    return docs_hook("robot_pages")
 
 
 def _registry() -> dict[str, dict]:
-    """Return the built-in robot registry, keyed by canonical name."""
-    return json.loads(ROBOTS_JSON.read_text(encoding="utf-8"))["robots"]
+    """Every shipped robot: ``robots.json`` plus the ``robot_descriptions`` URDF tail (``registry_view.py``)."""
+    return dict(docs_hook("registry_view").merged())
 
 
 def _arm_names() -> set[str]:

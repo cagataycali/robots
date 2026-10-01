@@ -72,6 +72,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_file
 from tests.test_source_strings_resolve_their_issue_references import (
     _PACKAGE_DIR,
     _caller_reachable_literals,
@@ -293,7 +294,7 @@ def _docstring_sentences(path: Path) -> list[tuple[int, str, str]]:
     token to the reference pattern.
     """
     found: list[tuple[int, str, str]] = []
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+    for node in ast.walk(parse_file(path)):
         if not isinstance(node, _DOCUMENTED_NODES):
             continue
         docstring = ast.get_docstring(node, clean=False)
