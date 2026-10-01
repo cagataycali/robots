@@ -1,7 +1,7 @@
 """``extra["run_name"]`` is agent-supplied and names a directory under the operator's ``output_dir``.
 
 Review on #4229: it flowed unvalidated into ``log_root / f"{stamp}_{run_name}"`` and then
-``mkdir`` + ``write_text``, so ``run_name="x/../../../../home/user/anything"`` escaped the
+``mkdir`` + ``write_text``, so ``run_name="x/../../../../tmp/anything"`` escaped the
 root the operator approved. ``validate_train_inputs`` allowlists ``extra`` *keys* only. The
 trainer now refuses any run name that is not a plain token, in ``validate()`` (the gate the
 ``Trainer`` contract promises runs before any config is built) and again at the write site.
@@ -17,7 +17,7 @@ from strands_robots.training import TrainSpec
 from strands_robots.training.rsl_rl import RslRlTrainer, run_name_problem
 
 TRAVERSALS = [
-    "x/../../../../home/user/anything",
+    "x/../../../../tmp/anything",
     "../up",
     "a/b",
     "a\\b",
@@ -47,7 +47,7 @@ def test_validate_reports_it_before_anything_is_built(tmp_path) -> None:
         dataset_root="",
         output_dir=str(tmp_path),
         embodiment="unitree_g1",
-        extra={"run_name": "x/../../../../home/user/anything"},
+        extra={"run_name": "x/../../../../tmp/anything"},
     )
     problems = RslRlTrainer().validate(spec)
     assert any("run_name" in p for p in problems), problems
