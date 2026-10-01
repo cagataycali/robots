@@ -10,8 +10,9 @@ extra for step 4, a sourced ROS 2 distro for step 5) was covered by
 The Start section is five pages now, and the claims moved with it:
 
 * ``start/index.md``: "Every ``python`` fence on these pages ran against this
-  commit on a laptop with no GPU. Fences that need an arm on USB are marked
-  ``sketch``."
+  commit on a laptop with no GPU. Fences that need an arm on USB are labelled,
+  not run." (the Markdown marker is ``title="sketch"``; the reader sees the label
+  ``docs/hooks/visuals.py`` writes from it)
 * ``start/first-robot.md``: "No hardware, no GPU."
 * ``start/first-agent.md``: "The sim fences run without a model. The two fences
   that call ``agent("...")`` need a model provider."
@@ -69,7 +70,9 @@ def _needs_hardware(body: str) -> bool:
 def test_the_index_makes_the_sketch_promise() -> None:
     text = (START / "index.md").read_text(encoding="utf-8")
     assert "no GPU" in text, "start/index.md lost the 'no GPU' claim about its fences"
-    assert "marked `sketch`" in text, "start/index.md lost the promise that hardware fences are marked sketch"
+    assert "arm on USB are labelled, not run" in text, (
+        "start/index.md lost the promise that hardware fences are labelled and were not run"
+    )
 
 
 def test_every_fence_that_opens_a_serial_port_is_a_sketch() -> None:

@@ -58,6 +58,7 @@ pytest.importorskip("strands_robots.simulation.isaac")
 from strands_robots.simulation.isaac.simulation import (  # noqa: E402 - after importorskip
     _RobotState,
 )
+from tests._package_ast import parse_file
 from tests.simulation._isaac_engine import isaac_engine
 
 #: What ``remove_object`` measured the backend raising when it does not hang. Not a
@@ -433,6 +434,13 @@ class TestEveryArticulationTouchConsultsTheGate:
         # _revive_articulations_after_reset), zeroing the velocities the camera
         # lighting ticks left - the same structural exemption.
         "_settle_after_lighting": "reset() itself, after the view is rebuilt",
+        # _MultiArticulation's methods forward one articulation call to each of
+        # a multi-root robot's parts. They are reached only through the gated
+        # call sites that drive ``robot.articulation`` (send_action,
+        # set_joint_positions, the primitives), exactly as a single
+        # articulation's own methods are.
+        "apply_action": "the gated callers of robot.articulation (send_action, primitives)",
+        "set_joint_positions": "IsaacSimulation.set_joint_positions, which consults the gate",
     }
 
     @staticmethod
@@ -484,7 +492,7 @@ class TestEveryArticulationTouchConsultsTheGate:
         touched: dict[str, set[str]] = {}
         gated: set[str] = set()
         for path in self._sources():
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = parse_file(path)
             funcs = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)]
             for node in ast.walk(tree):
                 if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):

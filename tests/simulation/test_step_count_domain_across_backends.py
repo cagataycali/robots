@@ -134,6 +134,7 @@ from strands_robots.simulation.models import SimWorld
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import non_negative_whole_number_error, positive_whole_number_error
+from tests._package_ast import parse_file
 
 NAN = float("nan")
 INF = float("inf")
@@ -364,6 +365,12 @@ class TestEveryRealGetsAVerdictAndNothingRaises:
 # --------------------------------------------------------------------------- #
 # Backend stand-ins (the guards precede every solver, stage and lock)         #
 # --------------------------------------------------------------------------- #
+# The three instability counters ``step`` reads (see mujoco/divergence.py),
+# never bumped: this stand-in's physics does not diverge.
+_MJ_WARNINGS = types.SimpleNamespace(mjWARN_BADQPOS=0, mjWARN_BADQVEL=1, mjWARN_BADQACC=2)
+_STABLE_WARNINGS = [types.SimpleNamespace(number=0, lastinfo=0) for _ in range(3)]
+
+
 def _mujoco_stub() -> tuple[Any, dict[str, int]]:
     """A MuJoCo stand-in counting ``mj_step`` calls, with no model compiled."""
     calls = {"n": 0}
@@ -375,12 +382,14 @@ def _mujoco_stub() -> tuple[Any, dict[str, int]]:
     stub = types.SimpleNamespace(
         _world=types.SimpleNamespace(
             _model=object(),
-            _data=types.SimpleNamespace(time=0.0),
+            # ``step`` reads MuJoCo's instability counters and the state's
+            # finiteness after each batch, so the stand-in carries both.
+            _data=types.SimpleNamespace(time=0.0, warning=_STABLE_WARNINGS, qpos=np.zeros(1), qvel=np.zeros(1)),
             sim_time=0.0,
             step_count=0,
             _backend_state={},
         ),
-        _mj=types.SimpleNamespace(mj_step=mj_step, mj_forward=lambda model, data: None),
+        _mj=types.SimpleNamespace(mj_step=mj_step, mj_forward=lambda model, data: None, mjtWarning=_MJ_WARNINGS),
         _lock=threading.RLock(),
         _MAX_STEPS_PER_CALL=MuJoCoSimEngine._MAX_STEPS_PER_CALL,
         _STEPS_PER_BATCH=MuJoCoSimEngine._STEPS_PER_BATCH,
@@ -757,7 +766,7 @@ def _scan_step_count_surfaces(
     adrift: list[str] = []
     for backend in ("mujoco", "newton", "isaac"):
         for path in sorted((root / backend).glob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
             for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
                 for fn in [n for n in ast.iter_child_nodes(cls) if isinstance(n, ast.FunctionDef)]:
                     if fn.name.startswith("_"):

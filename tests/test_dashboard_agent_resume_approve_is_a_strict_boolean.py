@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import agent_console, routes_agent, sim_session  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
+from tests._dashboard_bootstrap import bootstrap_headers, configure_bootstrap  # noqa: E402
 from tests.test_dashboard_sim_routes import FakeEngine  # noqa: E402
 
 #: A browser always sends Origin on a socket handshake; this is the dashboard's own page.
@@ -54,6 +55,7 @@ class RecordingConsole:
 @pytest.fixture()
 def app(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Iterator[Any]:
     monkeypatch.setenv("DASHBOARD_SETTINGS_FILE", str(tmp_path / "settings.json"))
+    configure_bootstrap(monkeypatch)  # a fresh install admits its own page only with the bootstrap proof
     monkeypatch.setattr(sim_session, "_default_factory", FakeEngine)
     built = create_app()
     yield built
@@ -64,7 +66,10 @@ def app(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Iterator[Any]:
 def _answer(app: Any, approve: Any, always: Any = False) -> dict[str, Any]:
     console = RecordingConsole()
     app.state.console_factory = lambda: console
-    with TestClient(app, headers=OWN_PAGE) as client, client.websocket_connect("/ws/agent") as ws:
+    with (
+        TestClient(app, headers={**OWN_PAGE, **bootstrap_headers()}) as client,
+        client.websocket_connect("/ws/agent") as ws,
+    ):
         ws.send_json({"type": "say", "text": "raise joint 2"})
         assert ws.receive_json()["type"] == "text"
         assert ws.receive_json()["type"] == "interrupt"
