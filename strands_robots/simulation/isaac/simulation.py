@@ -543,6 +543,21 @@ def _dof_units(articulation: Any, n_dofs: int) -> list[str]:
 _RENDER_LAG_TICKS = 2
 
 
+def _raw_world_clock(world: Any) -> float | None:
+    """``World.current_time`` as a float, or ``None`` when the runtime does not expose it.
+
+    Module-level for the reason :func:`_physics_view_stale_error` is: the
+    cross-backend suites step a ``SimpleNamespace`` engine.
+    """
+    current = getattr(world, "current_time", None)
+    if current is None:
+        return None
+    try:
+        return float(current)
+    except (TypeError, ValueError):
+        return None
+
+
 def _split_joint_action(
     robot: Any, action_map: dict[str, Any]
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -2838,6 +2853,7 @@ class IsaacSimulation(
                     and self._config.render_mode != "headless"
                 ):
                     self._light_cameras_after_reset()
+                self._settle_after_reset()
                 self._rewind_clock()
 
                 # One wording, because there is one reset. The branch that used
@@ -2845,6 +2861,47 @@ class IsaacSimulation(
                 return {"status": "success", "content": [{"text": f"{flush_note}Full reset complete."}]}
 
         return self._marshal_main_thread_affine("reset", _reset_impl)
+
+    def _settle_after_reset(self) -> None:
+        """Zero every robot's and dynamic object's velocity after ``world.reset()``.
+
+        ``World.reset()`` integrates warm-up physics steps from the authored
+        pose, so the first observation of every episode already carried the
+        velocity gravity gave it in that time: so100 ``Pitch.vel`` 0.075 rad/s,
+        a go2 base falling at 0.187 m/s at t=0 (MuJoCo: exact zeros). Recorded
+        datasets therefore began each episode off the reset state. Poses are
+        left where the reset put them; only velocities are zeroed. Best-effort
+        per body: a handle that cannot be written is skipped, never fails the
+        reset.
+        """
+        for robot in list(getattr(self, "_robots", {}).values()):
+            articulation = getattr(robot, "articulation", None)
+            if articulation is None:
+                continue
+            n = len(getattr(robot, "joint_names", []) or [])
+            for write, value in (
+                ("set_joint_velocities", np.zeros(n, dtype=np.float32) if n else None),
+                ("set_linear_velocity", np.zeros(3, dtype=np.float32)),
+                ("set_angular_velocity", np.zeros(3, dtype=np.float32)),
+            ):
+                fn = getattr(articulation, write, None)
+                if fn is None or value is None:
+                    continue
+                try:
+                    fn(value)
+                except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                    logger.debug("reset: %s on robot %r failed: %s", write, getattr(robot, "name", "?"), exc)
+        for obj in list(getattr(self, "_objects", {}).values()):
+            if getattr(obj, "is_static", True) or getattr(obj, "handle", None) is None:
+                continue
+            for write in ("set_linear_velocity", "set_angular_velocity"):
+                fn = getattr(obj.handle, write, None)
+                if fn is None:
+                    continue
+                try:
+                    fn(np.zeros(3, dtype=np.float32))
+                except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                    logger.debug("reset: %s on object %r failed: %s", write, getattr(obj, "name", "?"), exc)
 
     #: Upper bound on the rendering ticks a reset spends lighting its cameras.
     _RESET_LIGHT_TICKS_MAX = 12
@@ -3108,6 +3165,14 @@ class IsaacSimulation(
         self._sim_time = 0.0
         self._step_count = 0
         self._contact_epoch += 1
+        # The World's own clock is not rewound with ours: ``World.reset()`` runs
+        # warm-up physics steps and leaves ``current_time`` past zero, and
+        # ``_world_clock`` read it as-is, so every episode's clock started ahead.
+        # Measured on one L40S (Isaac Sim 6.1, ``timestep=1/500``): ``step(10)``
+        # right after ``reset()`` reported ``sim_time=0.024`` with
+        # ``step_count=10``, and 500 steps 1.004 s. The clock is now measured
+        # from where the World stood at this rewind.
+        self._clock_origin = _raw_world_clock(getattr(self, "_world", None)) or 0.0
 
     def _world_clock(self) -> float:
         """The simulated time the World has integrated to, in seconds.
@@ -3122,12 +3187,9 @@ class IsaacSimulation(
         accumulation when the runtime does not expose the clock (the stubbed worlds
         the unit tests build), where every tick advances exactly one ``physics_dt``.
         """
-        current = getattr(self._world, "current_time", None)
+        current = _raw_world_clock(getattr(self, "_world", None))
         if current is not None:
-            try:
-                return float(current)
-            except (TypeError, ValueError):
-                pass
+            return max(0.0, current - float(getattr(self, "_clock_origin", 0.0) or 0.0))
         return self._sim_time + float(self._config.physics_dt)
 
     def _physics_tick(self, *, render: bool) -> None:
