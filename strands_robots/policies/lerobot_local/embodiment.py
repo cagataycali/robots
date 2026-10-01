@@ -90,6 +90,29 @@ def reconcile_dim(values: list[float], expected_dim: int, dim_policy: str, *, la
 # one instead of storing it.
 UNIT_FRAMES: frozenset[str] = frozenset({"native", "degrees"})
 
+#: What a model's arm action columns are: joint position targets (every
+#: LeRobot checkpoint strands shipped with) or joint velocities, which DROID-trained
+#: policies (pi05_droid) emit and :meth:`EmbodimentMap.velocities_to_targets`
+#: integrates into the position targets ``send_action`` takes.
+ACTION_MODES: frozenset[str] = frozenset({"position", "velocity"})
+
+
+def gripper_to_fraction(value: float, fraction_range: list[float]) -> float:
+    """A gripper joint value as the fraction closed, ``0`` = open and ``1`` = closed.
+
+    ``fraction_range`` is ``[open, closed]`` in the joint's own units, so either
+    direction of travel is expressible (a Panda finger opens as it grows).
+    """
+    open_v, closed_v = float(fraction_range[0]), float(fraction_range[1])
+    return (float(value) - open_v) / (closed_v - open_v)
+
+
+def fraction_to_gripper(fraction: float, fraction_range: list[float]) -> float:
+    """The inverse of :func:`gripper_to_fraction`, clipped to ``[open, closed]``."""
+    open_v, closed_v = float(fraction_range[0]), float(fraction_range[1])
+    f = min(max(float(fraction), 0.0), 1.0)
+    return open_v + f * (closed_v - open_v)
+
 
 def _require_unit_frame(frame: str, *, field_name: str, owner: str) -> None:
     """Refuse a unit frame no conversion site can honor.
@@ -801,6 +824,10 @@ def register_pack_state_step() -> type | None:
             gripper_joint_range: The sim gripper joint's ``[min, max]`` radians,
                 used to map that column onto 0..100. Empty (the default) =
                 convert the gripper like an arm joint.
+            gripper_fraction: ``[open, closed]`` of the gripper joint when the
+                model reads the gripper as the fraction closed (DROID); the
+                packed gripper column is then that fraction. Empty (the default)
+                = off.
             joint_mids: Per-joint calibration mid-points in degrees, aligned to
                 ``state_keys``, subtracted from the arm columns so the packed
                 state is mid-centered like LeRobot's ``DEGREES`` mode. Empty
@@ -827,6 +854,9 @@ def register_pack_state_step() -> type | None:
         state_units: str = "native"
         gripper_index: int = -1
         gripper_joint_range: list[float] = field(default_factory=list)
+        # [open, closed] of the gripper column's joint when the model reads it
+        # as the fraction closed (EmbodimentMap.gripper_fraction). Empty = off.
+        gripper_fraction: list[float] = field(default_factory=list)
         # Per-joint calibration mid-points in DEGREES (aligned to state_keys);
         # subtracted from arm columns so observation.state is mid-centered like
         # lerobot motors_bus DEGREES mode. Empty = mid 0 (prior behavior).
@@ -937,6 +967,9 @@ def register_pack_state_step() -> type | None:
                     gripper_joint_range=self.gripper_joint_range,
                     joint_mids=self.joint_mids,
                 )
+            elif self.gripper_fraction and 0 <= self.gripper_index < len(vals):
+                vals = list(vals)
+                vals[self.gripper_index] = gripper_to_fraction(vals[self.gripper_index], self.gripper_fraction)
 
             target = self.expected_dim or len(vals)
             vals = reconcile_dim(vals, target, self.dim_policy, label="observation.state")
@@ -1031,6 +1064,22 @@ class EmbodimentMap:
             ``state_keys`` / ``action_keys``, because LeRobot's ``DEGREES`` mode
             is mid-point-centered. Empty (the default) = mid 0, i.e. sim
             ``qpos=0`` is assumed to be the calibration mid.
+        action_mode: What the model's arm action columns are: ``"position"``
+            targets (the default) or joint ``"velocity"`` (DROID: rad/s),
+            integrated into the position targets ``send_action`` takes.
+        action_dt: Seconds one velocity action integrates over; required
+            (positive) when ``action_mode`` is ``"velocity"``.
+        gripper_fraction: ``[open, closed]`` of the gripper column's sim joint
+            when the model speaks the gripper as the fraction closed, ``0`` =
+            open .. ``1`` = closed (DROID); applies to the ``gripper_index``
+            column on both sides. Empty (the default) = off.
+        gripper_followers: Sim action keys that also receive the gripper
+            column's command: one model gripper dimension driving a two-finger
+            hand (Panda ``finger_joint1`` + ``finger_joint2``). Empty (the
+            default) = the column alone.
+        action_dim_policy: ``"strict"`` (the default): the model's action width
+            must equal ``action_keys``; ``"truncate"``: a wider (padded) head's
+            leading ``len(action_keys)`` columns are the actions.
     """
 
     name: str = ""
@@ -1076,16 +1125,73 @@ class EmbodimentMap:
     # (RANGE_0_100). Empty (default) = mid 0, i.e. sim qpos=0 is assumed to be
     # the calibration mid (the prior absolute-degrees behavior).
     joint_mids: list[float] = field(default_factory=list)
+    # The model's arm action columns: "position" targets (the default) or joint
+    # "velocity" (DROID: rad/s), integrated at action_dt seconds per action into
+    # the position targets send_action takes (see velocities_to_targets).
+    action_mode: str = "position"
+    action_dt: float = 0.0
+    # [open, closed] of the gripper column's sim joint when the model speaks the
+    # gripper as the fraction closed, 0 = open .. 1 = closed (DROID). Applies to
+    # the gripper_index column on both sides; empty (the default) = off.
+    gripper_fraction: list[float] = field(default_factory=list)
+    # Sim action keys that receive the gripper column's command too: a model
+    # with ONE gripper dimension driving a two-finger hand (Panda
+    # finger_joint1 + finger_joint2). Empty (the default) = the column alone.
+    gripper_followers: list[str] = field(default_factory=list)
+    # "strict" (the default): the model's action width must equal action_keys.
+    # "truncate": the model is wider (padded, e.g. pi05's 32) and only the
+    # leading len(action_keys) columns are actions; the rest are dropped.
+    action_dim_policy: str = "strict"
 
     def __post_init__(self) -> None:
-        """Refuse a unit frame no conversion site can honor.
+        """Refuse a unit frame, action mode or gripper fraction no conversion site can honor.
 
         Raises:
             ValueError: ``state_units`` or ``action_units`` names a frame outside
-                :data:`UNIT_FRAMES`.
+                :data:`UNIT_FRAMES`; ``action_mode`` is outside
+                :data:`ACTION_MODES`, or is ``"velocity"`` without a positive
+                finite ``action_dt``; ``gripper_fraction`` is not ``[open,
+                closed]`` with two distinct finite values, names no
+                ``gripper_index``, or is combined with a ``"degrees"`` frame
+                (whose gripper column is already ``RANGE_0_100``).
         """
+
+        owner = f"embodiment {self.name!r}"
         for attr in ("state_units", "action_units"):
-            _require_unit_frame(getattr(self, attr), field_name=attr, owner=f"embodiment {self.name!r}")
+            _require_unit_frame(getattr(self, attr), field_name=attr, owner=owner)
+        if self.action_dim_policy not in ("strict", "truncate"):
+            raise ValueError(f"{owner}: action_dim_policy {self.action_dim_policy!r} is not 'strict' or 'truncate'")
+        if self.action_mode not in ACTION_MODES:
+            raise ValueError(f"{owner}: action_mode {self.action_mode!r} is not one of {sorted(ACTION_MODES)}")
+        if self.action_mode == "velocity":
+            dt = self.action_dt
+            if isinstance(dt, bool) or not isinstance(dt, int | float) or not math.isfinite(dt) or dt <= 0:
+                raise ValueError(
+                    f"{owner}: action_mode='velocity' integrates each action over action_dt seconds; "
+                    f"give a positive action_dt (the control period the model was trained at), got {dt!r}"
+                )
+        if self.gripper_fraction:
+            fr = self.gripper_fraction
+            if (
+                len(fr) != 2
+                or any(isinstance(v, bool) or not isinstance(v, int | float) or not math.isfinite(v) for v in fr)
+                or fr[0] == fr[1]
+            ):
+                raise ValueError(f"{owner}: gripper_fraction must be [open, closed], two distinct numbers, got {fr!r}")
+            if self.gripper_index < 0:
+                raise ValueError(f"{owner}: gripper_fraction needs gripper_index, the column it applies to")
+        if self.gripper_followers:
+            if self.gripper_index < 0 or not all(isinstance(k, str) and k for k in self.gripper_followers):
+                raise ValueError(
+                    f"{owner}: gripper_followers must be action key names and needs gripper_index, "
+                    f"got {self.gripper_followers!r}"
+                )
+        if self.gripper_fraction:
+            if "degrees" in (self.state_units, self.action_units):
+                raise ValueError(
+                    f"{owner}: gripper_fraction and a 'degrees' frame both claim the gripper column "
+                    "(the degrees frame speaks it as RANGE_0_100); declare one"
+                )
 
     def validate(self, input_features: dict[str, Any], output_features: dict[str, Any]) -> None:
         """Fail-fast validation against the model's declared features.
@@ -1134,6 +1240,9 @@ class EmbodimentMap:
         * ``pad`` / ``truncate``: a WIDER head is accepted and its leading
           ``len(action_keys)`` columns drive the actuators, which is how
           ``align_action_values`` already consumes a long vector at runtime.
+        * ``action_dim_policy="truncate"`` (the DROID shape: ``max_action_dim``
+          32 for every embodiment) accepts a wider head the same way under a
+          strict ``dim_policy``; the columns past the robot's joints are padding.
           ``lerobot/pi0_base`` and ``pi05_base`` ship a 32-wide padded head
           for every embodiment; refusing them here made ``embodiment=`` unable
           to drive them at all, and only after the two-minute load. A NARROWER
@@ -1149,6 +1258,8 @@ class EmbodimentMap:
         """
         n_keys = len(self.action_keys)
         if not n_keys or action_dim == n_keys:
+            return None
+        if action_dim > n_keys and self.action_dim_policy == "truncate":
             return None
         if self.dim_policy == "strict":
             return (
@@ -1211,8 +1322,13 @@ class EmbodimentMap:
     def sim_state_to_model(self, values: list[float]) -> list[float]:
         """Convert a sim state vector into the model's training units.
 
-        No-op unless ``state_units == "degrees"``.
+        No-op unless ``state_units == "degrees"`` or ``gripper_fraction`` is set.
         """
+        if self.gripper_fraction:
+            out = list(values)
+            if 0 <= self.gripper_index < len(out):
+                out[self.gripper_index] = gripper_to_fraction(out[self.gripper_index], self.gripper_fraction)
+            return out
         if self.state_units != "degrees":
             return list(values)
         return self._convert_vector(values, to_model=True)
@@ -1220,11 +1336,55 @@ class EmbodimentMap:
     def model_action_to_sim(self, values: list[float]) -> list[float]:
         """Convert a model action vector into sim (radian) units.
 
-        No-op unless ``action_units == "degrees"``.
+        No-op unless ``action_units == "degrees"`` or ``gripper_fraction`` is set.
         """
+        if self.gripper_fraction:
+            out = list(values)
+            if 0 <= self.gripper_index < len(out):
+                out[self.gripper_index] = fraction_to_gripper(out[self.gripper_index], self.gripper_fraction)
+            return out
         if self.action_units != "degrees":
             return list(values)
         return self._convert_vector(values, to_model=False)
+
+    @property
+    def converts_actions(self) -> bool:
+        """Whether :meth:`model_action_to_sim` changes an action vector."""
+        return self.action_units != "native" or bool(self.gripper_fraction)
+
+    def velocities_to_targets(self, chunk: list[list[float]], current: list[float | None]) -> list[list[float]]:
+        """Integrate a chunk of velocity actions into position targets from the measured joints.
+
+        Action ``i`` of the chunk is the target ``q_i = q_now + action_dt *
+        sum(v_0..v_i)`` - each action is the velocity held over one control
+        period, so the chunk is a trajectory from where the arm is now. The
+        gripper column (``gripper_index``) is a position already and is left
+        alone. No-op in ``"position"`` mode.
+
+        Raises:
+            ValueError: A velocity column has no measured position to integrate
+                from - a target made up from 0 would drive that joint to 0.
+        """
+        if self.action_mode != "velocity":
+            return [list(v) for v in chunk]
+        width = max((len(v) for v in chunk), default=0)
+        missing = [i for i in range(width) if i != self.gripper_index and (i >= len(current) or current[i] is None)]
+        if missing:
+            raise ValueError(
+                f"embodiment {self.name!r}: action_mode='velocity' needs each joint's measured position to "
+                f"integrate from; the observation has none for action column(s) {missing}"
+            )
+        running = [float(c) if i < len(current) and (c := current[i]) is not None else 0.0 for i in range(width)]
+        out: list[list[float]] = []
+        for step in chunk:
+            row = list(step)
+            for i, v in enumerate(step):
+                if i == self.gripper_index:
+                    continue
+                running[i] += self.action_dt * float(v)
+                row[i] = running[i]
+            out.append(row)
+        return out
 
     def expected_state_dim(self, input_features: dict[str, Any]) -> int:
         """Return the model's declared state dim, or len(state_keys) if absent."""

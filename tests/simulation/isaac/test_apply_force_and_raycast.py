@@ -165,12 +165,10 @@ class TestTheLatch:
         engine.apply_force("cube", force=[5.0, 0.0, 0.0], point=[0.3, 0.0, 1.06])
         engine.step(1)
         assert len(fake_physx["torque"]) == 1
-        # The binding-level value is NEGATED: measured on isaacsim 6.0.1,
-        # apply_torque spins a body opposite to the right-handed world torque
-        # it is handed (+0.3 z -> wz -0.458; -0.3 z -> wz +0.538), so the
-        # latched (0, +5, 0) reaches the binding as (0, -5, 0) and the CUBE
-        # spins the way the caller asked.
-        assert fake_physx["torque"][0][1] == pytest.approx((0.0, -5.0, 0.0))
+        # The binding is right-handed world-frame (measured on Isaac Sim 6.0.1
+        # and 6.1: +0.01 z spins a cube +z), so the latched (0, +5, 0) reaches
+        # it unchanged. Negating it spun every body the opposite way.
+        assert fake_physx["torque"][0][1] == pytest.approx((0.0, 5.0, 0.0))
 
     def test_a_zero_wrench_clears_the_latch(self, fake_physx: dict) -> None:
         engine = _engine()
