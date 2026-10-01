@@ -76,6 +76,12 @@ _FAKE = textwrap.dedent(
     root = Path.cwd() / "logs" / "rsl_rl" / "cartpole"
     run = root / ("2026-09-29_01-00-00_" + flags["--run_name"])
     run.mkdir(parents=True)
+    if "--export_io_descriptors" in argv:
+        if os.environ.get("FAKE_IO_DESCRIPTORS"):
+            (run / "io_descriptors").mkdir()
+            (run / "io_descriptors" / "IO_descriptors.yaml").write_text(os.environ["FAKE_IO_DESCRIPTORS"])
+        else:
+            print("[WARNING] IO descriptors are only supported for manager based RL environments.", flush=True)
     print("[INFO] Logging experiment in directory: " + str(root), flush=True)
     block = {block!r}
     for it in range(total):
@@ -649,11 +655,13 @@ class TestATrainedRunCanBePlayedBack:
 
 class TestATrainedRunExportsWhatCreatePolicyLoads:
     def test_export_converts_the_newest_checkpoint_and_names_the_rl_provider(
-        self, fake_python: Path, tmp_path: Path
+        self, fake_python: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         torch = pytest.importorskip("torch")
+        from tests.training.test_isaaclab_deploy_contract import fake_io_descriptors
         from tests.training.test_rsl_rl_actor_export import write_rsl_rl_run
 
+        monkeypatch.setenv("FAKE_IO_DESCRIPTORS", json.dumps(fake_io_descriptors()))
         trainer = _trainer()
         trained = _poll(trainer, trainer.train(_spec(tmp_path, physics="isaacsim_physx")).job_id)
         write_rsl_rl_run(Path(trained.checkpoint_dir), iteration=2, normalize=True)
@@ -674,11 +682,11 @@ class TestATrainedRunExportsWhatCreatePolicyLoads:
         from strands_robots.policies import create_policy
 
         policy = create_policy("rl", checkpoint_dir=path)
-        policy.set_robot_state_keys(["cart", "pole"])
+        policy.set_robot_state_keys(["slider_to_cart", "cart_to_pole"])
         import asyncio
 
         action = asyncio.run(policy.get_actions({"policy_obs": [0.1, -0.2, 0.3, 0.0]}, ""))[0]
-        assert set(action) == {"cart", "pole"} and all(isinstance(v, float) for v in action.values())
+        assert set(action) == {"slider_to_cart", "cart_to_pole"} and all(isinstance(v, float) for v in action.values())
         del torch
 
 

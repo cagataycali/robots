@@ -72,6 +72,12 @@ class DeployableActor:
         module: The loaded ``nn.Module``, in eval mode.
         normalizer: The frozen observation normalizer, or ``None`` when the run
             trained with ``normalize_obs=False``.
+        deploy_contract: For an exported Isaac Lab run, what the outputs and
+            inputs mean (joint order, action scale/offset/clip, observation
+            layout, control period, conventions), per
+            :mod:`strands_robots.training.rl.deploy_contract`; ``None`` otherwise.
+        isaaclab_task: The Isaac Lab task an exported run trained on, or
+            ``None`` for a checkpoint strands trained itself.
     """
 
     provider: str
@@ -81,6 +87,8 @@ class DeployableActor:
     iteration: int | None
     module: Any
     normalizer: Any
+    deploy_contract: dict[str, Any] | None = None
+    isaaclab_task: str | None = None
 
     def act(self, actor_obs: torch.Tensor) -> torch.Tensor:
         """Return the deterministic action for a batch of actor observations.
@@ -207,4 +215,6 @@ def load_deployable_actor(checkpoint_dir: str, device: str = "cpu") -> Deployabl
         iteration=meta.get("iteration"),
         module=module,
         normalizer=normalizer,
+        deploy_contract=meta.get("deploy_contract") if isinstance(meta.get("deploy_contract"), dict) else None,
+        isaaclab_task=str(meta["task"]) if meta.get("provider") == "rsl_rl" and meta.get("task") else None,
     )
