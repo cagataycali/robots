@@ -33,9 +33,13 @@ EMBODIMENT_BOUND: dict[str, tuple[str, ...]] = {
 }
 
 #: Providers a fleet row never offers: they need a server the dashboard cannot
-#: start (a port on the robot host) or are removed in 0.7. ``remote`` stays: the
-#: wire carries its ``server_address``.
-NOT_OFFERED: frozenset[str] = frozenset({"cosmos3", "moveit2", "curobo", "kimodo", "protomotions", "flux3_action"})
+#: start (a port on the robot host), are removed in 0.7, or need a constructor
+#: key the wire does not carry (``rsl_rl_onnx`` needs ``onnx_path``: an ONNX file or
+#: ``hf://`` id, which no wire key stands for). ``remote`` stays: the wire carries
+#: its ``server_address``.
+NOT_OFFERED: frozenset[str] = frozenset(
+    {"cosmos3", "moveit2", "curobo", "kimodo", "protomotions", "flux3_action", "rsl_rl_onnx"}
+)
 
 #: One line per provider for the agent. A provider without a line gets the
 #: registry description.
