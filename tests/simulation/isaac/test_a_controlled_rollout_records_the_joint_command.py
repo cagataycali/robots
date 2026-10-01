@@ -118,3 +118,51 @@ def test_the_recording_hook_hands_the_recorder_joint_columns(engine) -> None:
     assert frames[0]["action"] == pytest.approx({"j0": 0.1, "j1": 0.5, "j2": 0.3})
     # The trajectory keeps the policy's own task-space action.
     assert state["trajectory"][0].action == {"x": 0.01, "gripper": 1.0}
+
+
+class _BlindArticulation(_Articulation):
+    """A read that fails, as it does while the physics view is being rebuilt."""
+
+    def get_joint_positions(self) -> np.ndarray:
+        raise RuntimeError("physics view not ready")
+
+
+class _MuteArticulation(_Articulation):
+    def get_joint_positions(self) -> None:  # type: ignore[override]
+        return None
+
+
+@pytest.mark.parametrize("articulation", [_BlindArticulation, _MuteArticulation], ids=["raises", "none"])
+def test_a_failed_measured_read_seeds_only_the_joints_the_command_names(engine, articulation, caplog) -> None:
+    """No zero stands in for a position nobody measured (Key Conventions #6).
+
+    The standing targets are seeded from the measured positions. When that read
+    fails, the unnamed joints have NO target: the recorder refuses the frame
+    for the columns without a value, instead of a fabricated home pose of
+    zeros flowing into every frame of the episode.
+    """
+    engine._robots["arm"].articulation = articulation()
+    engine._action_controllers["arm"] = _Controller()
+
+    with caplog.at_level("WARNING", logger="strands_robots.simulation.isaac.simulation"):
+        assert engine.send_action({"x": 0.01}, robot_name="arm")["status"] == "success"
+
+    recorded = engine._recorded_action("arm", {"x": 0.01})
+    assert dict(recorded) == pytest.approx({"j1": 0.5}), recorded
+    assert "j0" not in recorded and "j2" not in recorded
+    assert any("measured positions" in r.message and "arm" in r.message for r in caplog.records), caplog.text
+
+
+def test_a_failed_seed_is_retried_on_the_next_command(engine) -> None:
+    """Once the read works, the still-unnamed joints get their real standing target."""
+    engine._robots["arm"].articulation = _BlindArticulation()
+    controller = _Controller()
+    engine._action_controllers["arm"] = controller
+    engine.send_action({"x": 0.01}, robot_name="arm")
+    assert dict(engine._recorded_action("arm", {"x": 0.01})) == pytest.approx({"j1": 0.5})
+
+    engine._robots["arm"].articulation = _Articulation()
+    controller.out = {"j2": -0.4}
+    engine.send_action({"z": -0.01}, robot_name="arm")
+
+    assert engine._recorded_action("arm", {"z": -0.01}) == pytest.approx({"j0": 0.1, "j1": 0.5, "j2": -0.4})

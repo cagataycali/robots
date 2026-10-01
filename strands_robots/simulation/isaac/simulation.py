@@ -1267,6 +1267,9 @@ class _RobotState:
         # command an installed action controller converted, by joint name - the
         # command a recording stores as ``action`` (see _recorded_action).
         self.commanded_targets: dict[str, float] | None = None
+        # Whether the targets were seeded from a successful measured read; until
+        # then the joints no command named have no target (and no zero).
+        self.commanded_targets_seeded = False
         self.name = name
         self.prim_path = prim_path
         self.joint_names = joint_names
@@ -2573,6 +2576,7 @@ class IsaacSimulation(
                     # next command re-seeds from the measured positions.
                     for _robot in self._robots.values():
                         _robot.commanded_targets = None
+                        _robot.commanded_targets_seeded = False
 
                 # ``world.reset()`` rebuilds the PhysX tensor view, which is what
                 # makes a body added or deleted since the last reset simulate at
@@ -8730,15 +8734,38 @@ class IsaacSimulation(
         it. Seeded from the measured positions - what the drives hold before any
         command - and updated with each command, on the thread that applied it.
         """
-        if robot.commanded_targets is None:
+        if robot.commanded_targets is None or not robot.commanded_targets_seeded:
+            # Seed from the measured positions. When that read fails, the joints
+            # this command does not name get NO target rather than a zero: a
+            # zero here is a home pose nothing commanded, and it would flow into
+            # every recorded frame's action column with nothing to tell it apart
+            # (Key Conventions #6). Left absent, the recorder refuses the frame
+            # for the columns without a value, and the seed is retried on the
+            # next command.
             q = None
+            why = "the physics view is stale"
             if not self._physics_view_stale:  # both callers gate first; this read keeps its own
                 try:
                     q = robot.articulation.get_joint_positions()  # type: ignore[union-attr]
-                except (RuntimeError, ValueError, AttributeError, TypeError):
-                    q = None
-            q = np.asarray(q if q is not None else np.zeros(len(robot.joint_names)), dtype=float).reshape(-1)
-            robot.commanded_targets = {n: float(q[i]) for i, n in enumerate(robot.joint_names) if i < q.size}
+                    why = "get_joint_positions() returned None"
+                except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                    why = f"get_joint_positions() raised {type(exc).__name__}: {exc}"
+            if robot.commanded_targets is None:
+                robot.commanded_targets = {}
+            if q is None:
+                logger.warning(
+                    "isaac: %s's measured positions could not be read (%s); the standing target of "
+                    "every joint this command does not name stays absent until a read succeeds, so a "
+                    "recorded frame refuses those columns instead of carrying zeros nobody commanded",
+                    robot.name,
+                    why,
+                )
+            else:
+                measured = np.asarray(q, dtype=float).reshape(-1)
+                for i, name in enumerate(robot.joint_names):
+                    if i < measured.size:
+                        robot.commanded_targets.setdefault(name, float(measured[i]))
+                robot.commanded_targets_seeded = True
         for idx, value in zip(joint_indices.tolist(), values.tolist(), strict=False):
             if 0 <= idx < len(robot.joint_names):
                 robot.commanded_targets[robot.joint_names[idx]] = float(value)
