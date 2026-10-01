@@ -919,6 +919,11 @@ constraint-dependencies = [
     # GHSA-hxp9-w8x3-p566 (MEDIUM): permessage-deflate bypasses
     # maxMessagePayloadSize, < 26.7.1 (under roslibpy).
     "autobahn>=26.7.1",
+    # GHSA-8988-9cw3-xx77 (HIGH): HTTPS proxy TLS configuration ignored or
+    # overridden; GHSA-vxq7-64xx-v4gw (HIGH): read_chunked() buffers an unbounded
+    # chunk-size line; GHSA-gh4c-6fx4-qh6g (MEDIUM): chunked Deflate streaming
+    # infinite loop. All < 2.8.0 (under botocore / requests).
+    "urllib3>=2.8.0",
 ]
 override-dependencies = [
         # SECURITY + CAPABILITY: diffusers <0.36 is vulnerable to a GHSA

@@ -44,6 +44,7 @@ constraints = [
     { name = "setuptools", specifier = ">=83.0.0" },
     { name = "twisted", specifier = ">=26.4.0" },
     { name = "ujson", specifier = ">=5.12.1" },
+    { name = "urllib3", specifier = ">=2.8.0" },
 ]
 overrides = [
     { name = "diffusers", specifier = ">=0.39" },
