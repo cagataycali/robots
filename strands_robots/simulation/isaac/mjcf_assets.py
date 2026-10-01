@@ -120,6 +120,11 @@ def _read_marker(marker: str) -> str | None:
     return cached if cached and os.path.isfile(cached) else None
 
 
+#: Attached-model paths whose closure is being computed; a cyclic ``<model>``
+#: reference contributes its path once and no bytes, like a cyclic include.
+_closing: set[str] = set()
+
+
 def _referenced_files(mjcf_path: str) -> list[str]:
     """Every file *mjcf_path* pulls in, transitively and absolute.
 
@@ -131,6 +136,9 @@ def _referenced_files(mjcf_path: str) -> list[str]:
       does this, so the whole arm's joints and geoms live in a sibling directory.
     * ``<compiler meshdir="../assets/meshes"/>`` - ``asimov_v0`` does this, so
       every mesh PhysX simulates is outside the entry directory.
+    * ``<asset><model file="../so_arm100/so_arm100.xml"/>`` + ``<attach>`` -
+      ``lekiwi`` composes the arm this way; the attached model is its own spec,
+      so it is closed over as a separate entry (its meshes against ITS dirs).
 
     Resolution follows MuJoCo's own rules, matching
     :func:`strands_robots.simulation.isaac.loaders._mjcf_model_toplevel` and
@@ -202,8 +210,32 @@ def _referenced_files(mjcf_path: str) -> list[str]:
                     continue
                 includes.append(target)
                 _walk(target, os.path.dirname(target), seen | {target})
+            elif element.tag == "model":
+                # ``<asset><model file=...>`` attaches another MJCF as its OWN
+                # spec: its meshes resolve against ITS compiler dirs, so it is
+                # closed over as a separate entry rather than walked into this
+                # one's ``declared_dirs`` (which would mis-base every mesh).
+                # Path rule as for an include: relative to the declaring file.
+                value = element.get("file")
+                if not value:
+                    continue
+                target = os.path.normpath(
+                    os.path.abspath(value if os.path.isabs(value) else os.path.join(base_dir, value))
+                )
+                if target in seen or target in attached:
+                    continue
+                attached.append(target)
 
+    attached: list[str] = []
     _walk(entry, entry_dir, frozenset({entry}))
+    for model_path in attached:
+        if model_path not in _closing:
+            _closing.add(model_path)
+            try:
+                includes.append(model_path)
+                includes.extend(_referenced_files(model_path))
+            finally:
+                _closing.discard(model_path)
 
     def _base_for(tag: str) -> str:
         """The directory MuJoCo resolves a ``tag`` asset's relative file against.
@@ -812,12 +844,17 @@ def _flatten_attached_models(mjcf_path: str, work_dir: str) -> str:
     pdir = os.path.dirname(os.path.abspath(mjcf_path))
 
     def _resolve(kind: str, asset: object, file: str, subdir: str) -> str:
-        own = _spec_asset_path(pdir, subdir, file)
-        if os.path.isfile(own):
-            return own
+        # Name FIRST: an asset a composed name claims is the attached model's,
+        # whatever file of that name the entry model happens to ship (MuJoCo
+        # refuses duplicate asset names at from_file, so an entry asset's name
+        # can never appear in by_name). Checking the entry's file first handed
+        # the arm's ``link.obj`` the base's ``link.obj`` under ``status: success``.
         named = by_name.get((kind, _asset_name(asset, file)))
         if named is not None:
             return named
+        own = _spec_asset_path(pdir, subdir, file)
+        if os.path.isfile(own):
+            return own
         return _resolve_shared_asset_file(file, by_file) or own  # None: not an attached asset; compile names it
 
     for kind in ("meshes", "hfields", "skins"):

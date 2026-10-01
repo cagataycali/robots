@@ -218,3 +218,77 @@ def test_an_asset_file_string_shared_by_two_models_that_no_prefix_tells_apart_is
                 ]
             },
         )
+
+
+# The entry model ships its OWN assets/link.obj (mesh `plate`) and attaches an
+# arm whose assets/link.obj is a different tetrahedron. The composed `A_link` is
+# the arm's by name; a file-existence check first handed it the entry's file.
+_ENTRY_WITH_SAME_FILE = """<mujoco model="base">
+  <compiler angle="radian" meshdir="assets/"/>
+  <asset>
+    <mesh name="plate" file="link.obj"/>
+    <model name="armA" file="../armA/arm.xml"/>
+  </asset>
+  <worldbody>
+    <body name="chassis">
+      <freejoint/>
+      <geom type="mesh" mesh="plate"/>
+      <body name="left" pos="0.2 0 0.05"><attach model="armA" body="Base" prefix="A_"/></body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+@pytest.fixture
+def entry_shares_a_file_name(tmp_path) -> str:
+    root = tmp_path / "shared"
+    (root / "armA" / "assets").mkdir(parents=True)
+    (root / "armA" / "assets" / "link.obj").write_text(_OBJ_B)  # the arm's, larger
+    (root / "armA" / "arm.xml").write_text(_ARM)
+    (root / "base" / "assets").mkdir(parents=True)
+    (root / "base" / "assets" / "link.obj").write_text(_OBJ)  # the entry's, smaller
+    (root / "base" / "base.xml").write_text(_ENTRY_WITH_SAME_FILE)
+    return str(root / "base" / "base.xml")
+
+
+def test_an_attached_asset_keeps_its_own_file_even_when_the_entry_has_one_of_that_name(
+    entry_shares_a_file_name, tmp_path
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    flat = mjcf_assets._flatten_attached_models(entry_shares_a_file_name, str(work))
+
+    spec = mujoco.MjSpec.from_file(flat)
+    files = {m.name: m.file for m in spec.meshes}
+    root = os.path.dirname(os.path.dirname(entry_shares_a_file_name))
+    assert files["A_link"] == os.path.join(root, "armA", "assets", "link.obj")
+    assert files["plate"] == os.path.join(root, "base", "assets", "link.obj")
+    a, b = mujoco.MjModel.from_xml_path(entry_shares_a_file_name), mujoco.MjModel.from_xml_path(flat)
+    np.testing.assert_allclose(a.mesh_vert, b.mesh_vert)
+
+
+class TestTheCacheKeyCoversTheAttachedModel:
+    """``_asset_digest`` follows ``<model file=...>`` outside the entry directory.
+
+    The directory walk already covers a model attached from inside the entry
+    directory; lekiwi's shape is an arm in a SIBLING directory, which only the
+    referenced-files closure can reach, and that closure followed ``<include>``
+    and the four asset tags but not ``<model>``.
+    """
+
+    def test_the_attached_xml_and_its_meshes_are_referenced(self, two_arms) -> None:
+        referenced = set(mjcf_assets._referenced_files(two_arms))
+        root = os.path.dirname(os.path.dirname(two_arms))
+        for arm in ("armA", "armB"):
+            assert os.path.join(root, arm, "arm.xml") in referenced, arm
+            # resolved against the ARM's own meshdir, not the entry's
+            assert os.path.join(root, arm, "assets", "link.obj") in referenced, arm
+
+    @pytest.mark.parametrize("edit", ["arm.xml", "assets/link.obj"], ids=["arm-xml", "arm-mesh"])
+    def test_editing_a_sibling_attached_model_moves_the_digest(self, two_arms, edit) -> None:
+        before = mjcf_assets._asset_digest(two_arms)
+        target = os.path.join(os.path.dirname(os.path.dirname(two_arms)), "armB", edit)
+        with open(target, "a") as fh:
+            fh.write("\n")
+        assert mjcf_assets._asset_digest(two_arms) != before, edit
