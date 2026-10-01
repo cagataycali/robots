@@ -288,3 +288,40 @@ def _tf_make_valid_identifier(name: str) -> str:
     out = [first if (first.isascii() and (first.isalpha() or first == "_")) else "_"]
     out.extend(ch if _BASIC_CHAR_RE.match(ch) else "_" for ch in name[1:])
     return "".join(out)
+
+
+def mjcf_keyframe_joint_positions(mjcf_path: str, keyframe: str | int) -> tuple[dict[str, float] | None, str | None]:
+    """The hinge/slide joint positions an MJCF ``<keyframe>`` declares, by joint name.
+
+    Resolved the way MuJoCo resolves a keyframe (``mj_resetDataKeyframe`` on the
+    compiled model), so ``<include>``, defaults and free joints are handled as
+    the MuJoCo backend handles them. Returns ``(positions, None)``, or
+    ``(None, reason)`` naming the available keyframes when the name or index is
+    unknown, the model declares none, or it does not compile.
+    """
+    if isinstance(keyframe, bool) or not isinstance(keyframe, str | int):
+        return None, "keyframe must be a keyframe name (str) or index (int)"
+    try:
+        import mujoco
+    except ImportError:
+        return None, "reading an MJCF <keyframe> needs the mujoco package"
+    try:
+        model = mujoco.MjModel.from_xml_path(mjcf_path)
+    except Exception as exc:  # noqa: BLE001 - the compile error is the answer
+        return None, f"cannot read a keyframe from {mjcf_path}: {exc}"
+    names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_KEY, i) or str(i) for i in range(model.nkey)]
+    if model.nkey == 0:
+        return None, f"{mjcf_path} declares no <keyframe>"
+    index = keyframe if isinstance(keyframe, int) else (names.index(keyframe) if keyframe in names else -1)
+    if not 0 <= index < model.nkey:
+        return None, f"keyframe {keyframe!r} is not in {mjcf_path}; it declares {names}"
+    data = mujoco.MjData(model)
+    mujoco.mj_resetDataKeyframe(model, data, index)
+    movable = {int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE)}
+    positions: dict[str, float] = {}
+    for j in range(model.njnt):
+        if int(model.jnt_type[j]) in movable:
+            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
+            if name:
+                positions[name] = float(data.qpos[model.jnt_qposadr[j]])
+    return positions, None
