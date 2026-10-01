@@ -323,13 +323,14 @@ class TestPolicyOverridesPreflight:
         [
             ("mock", False),
             ("lerobot_local", True),
+            ("cosmos3", True),
             ("nonexistent_provider_xyz_123", False),
         ],
     )
     def test_the_shipped_verdicts(self, provider, overrides):
-        """``lerobot_local`` is the one shipped provider with a real hook. An
-        unresolvable name reports no hook, matching ``preflight_policy``, which
-        degrades to a no-op for a name it cannot resolve.
+        """``lerobot_local`` and ``cosmos3`` ship a real hook (camera routing, action
+        targets); ``mock`` does not. An unresolvable name reports no hook, matching
+        ``preflight_policy``, which degrades to a no-op for a name it cannot resolve.
         """
         assert policy_overrides_preflight(provider) is overrides
 
