@@ -89,7 +89,8 @@ _BUDGET: int = _hook().LIMIT
 #: six (#4446, #4450), carried in by merge. Banked to the exact total.
 #: Raised for the mjlab backend page (learn/simulation/mjlab.md) and its cross-links, carried in
 #: by merge. Banked to the exact total.
-_SITE_BUDGET = 68_404
+#: Raised by 16 to 68,420 for main's isaaclab and rl training pages (#4402, #4427), carried in by merge.
+_SITE_BUDGET = 68_420
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
