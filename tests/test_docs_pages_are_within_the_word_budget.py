@@ -69,7 +69,8 @@ _BUDGET: int = _hook().LIMIT
 #: learn page that explains the loader once.
 #: Banked to the exact total, 57,265, when the Start index said what a sketch fence's label
 #: means (one word) on a main that sat 5 over its own ceiling.
-_SITE_BUDGET = 57_265
+#: Raised to 50,012 for the Foxglove page (learn/data/foxglove.md, live view and MCAP export) and its two index lines.
+_SITE_BUDGET = 57_832
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
