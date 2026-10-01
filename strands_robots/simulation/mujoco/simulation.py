@@ -91,6 +91,7 @@ from strands_robots.simulation.base import (
     reject_misspelled_kwargs,
     reject_setup_kwargs,
     unknown_model_msg,
+    unknown_parameter_error,
 )
 from strands_robots.simulation.ik import (
     GRIPPER_BODY_HINTS,
@@ -7997,18 +7998,8 @@ class MuJoCoSimEngine(
             # ...and the nearest of them is named, the way an unknown action or
             # an unknown robot already is: ``policy`` is answered with
             # ``policy_provider, policy_config`` instead of a 20-name list to
-            # scan.
-            hint = close_match_hint(reported_unknown, valid_sorted)
-            return None, {
-                "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"Unknown parameter '{reported_unknown}' for action '{action}'.{hint} Valid: {valid_sorted}"
-                        )
-                    }
-                ],
-            }
+            # scan. The sentence is the one the real arm tool uses too.
+            return None, unknown_parameter_error([reported_unknown], action, valid_sorted)
 
         # 2) Scalar string type validation. The schema publishes these as
         # strings, and every value at this boundary arrives as JSON, so a
