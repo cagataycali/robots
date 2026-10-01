@@ -78,7 +78,9 @@ _BUDGET: int = _hook().LIMIT
 #: Raised by 567 for the Foxglove page carried in from main, then banked to the exact total, 61,202.
 #: Raised by 1,754 to 62,956 for the two humanoid design pages under project/ (whole-body
 #: teleoperation, driver composition) plus their index rows, carried in from main. Banked to the exact total.
-_SITE_BUDGET = 62_956
+#: Raised by 1 to 62,957 when main's teleoperation page gained seven words and the Foxglove page lost
+#: six (#4446, #4450), carried in by merge. Banked to the exact total.
+_SITE_BUDGET = 62_957
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
