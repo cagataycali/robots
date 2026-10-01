@@ -67,9 +67,11 @@ _BUDGET: int = _hook().LIMIT
 #: Raised by 733, to 50,166, for learn/policies/wbc-latent.md (the wbc_latent provider).
 #: Raised to 57,259 for the 81 robot_descriptions URDF robots: one generated page each and the
 #: learn page that explains the loader once.
+#: Banked to the exact total, 57,265, when the Start index said what a sketch fence's label
+#: means (one word) on a main that sat 5 over its own ceiling.
 #: Raised to 51,187 for the two humanoid design pages under project/ (whole-body teleoperation,
 #: driver composition) plus their index rows.
-_SITE_BUDGET = 59_018
+_SITE_BUDGET = 59_010
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
