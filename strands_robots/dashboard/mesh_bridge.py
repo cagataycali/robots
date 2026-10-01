@@ -388,11 +388,19 @@ def absent_children(
 
 
 def route_task_target(target: str, cmd: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Route commands aimed at a child sim peer to its parent Simulation peer."""
+    """Route commands aimed at a child sim peer to its parent Simulation peer.
+
+    ``robot_name`` is injected only for the actions whose dispatcher reads it
+    (:data:`strands_robots.mesh.security.COMMAND_KEYS`): the wire validator
+    refuses a key no dispatcher reads, so sending it on ``reset`` / ``state`` /
+    ``status`` / ``step`` would have the parent refuse the whole command. Those
+    act on the parent world as documented (a reset resets every robot it holds).
+    """
     if "__" in target and not cmd.get("robot_name"):
         parent, _, robot_name = target.partition("__")
         if parent and robot_name:
-            cmd = {**cmd, "robot_name": robot_name}
+            if "robot_name" in _security.COMMAND_KEYS.get(str(cmd.get("action", "")), frozenset()):
+                cmd = {**cmd, "robot_name": robot_name}
             target = parent
     return target, cmd
 

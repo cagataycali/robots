@@ -85,7 +85,9 @@ def test_a_sim_child_resets_ungated_through_its_parent_world(client) -> None:
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["ok"] is True and body["routed_to"] == "lane"
-    assert bridge.sent == [("lane", {"action": "reset", "robot_name": "so101"})]
+    # No robot_name: the parent's reset dispatcher reads none, and the wire
+    # validator refuses a key no dispatcher reads (#4397).
+    assert bridge.sent == [("lane", {"action": "reset"})]
 
 
 def test_a_real_arm_is_refused_without_the_browsers_confirmation_and_nothing_is_sent(client) -> None:

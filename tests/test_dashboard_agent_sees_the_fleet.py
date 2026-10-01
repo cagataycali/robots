@@ -152,7 +152,7 @@ def test_sim_proxy_advertises_only_what_the_wire_carries() -> None:
             {"action": "set_joints", "target_joints": {"2": 0.2}, "hold": True},
             {"action": "set_joints", "target_joints": {"2": 0.2}, "hold": True},
         ),
-        ({"action": "state", "robot_name": "so101", "steps": 3}, {"action": "state", "robot_name": "so101"}),
+        ({"action": "state", "robot_name": "so101", "steps": 3}, {"action": "state"}),
         ({"action": "step", "steps": 3}, {"action": "step", "steps": 3}),
         (
             {
