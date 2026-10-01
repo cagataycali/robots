@@ -459,6 +459,46 @@ def sequence_length(value: Any) -> int | None:
         return None
 
 
+#: The key shapes that carry a credential: a configuration key containing one of
+#: these (case-insensitive) is rendered as ``<redacted>`` wherever a mapping is
+#: echoed back to a caller (:func:`redact_config_pairs`), and the dashboard's log
+#: rail (``strands_robots.dashboard.log_redaction``) redacts values behind the
+#: same words on the way to a log line. One tuple, so the two cannot diverge.
+CREDENTIAL_KEY_WORDS: Final[tuple[str, ...]] = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "passphrase",
+    "api_key",
+    "apikey",
+    "access_code",
+    "auth",
+    "authorization",
+    "credential",
+)
+
+
+def is_credential_key(key: object) -> bool:
+    """Whether ``key`` names a credential: it contains one of :data:`CREDENTIAL_KEY_WORDS`."""
+    lowered = str(key).lower()
+    return any(word in lowered for word in CREDENTIAL_KEY_WORDS)
+
+
+def redact_config_pairs(config: Mapping[str, Any]) -> str:
+    """Render ``config`` as ``key=value`` pairs for a caller-facing message, credentials withheld.
+
+    Values are rendered with :func:`refusal_repr`; a key :func:`is_credential_key`
+    accepts (``api_token``, ``api_key``, ``password`` ...) is rendered as
+    ``<redacted>`` whatever its value, because the message is a tool result that
+    reaches the model, the transcript and every log of tool output.
+    """
+    return ", ".join(
+        f"{key}=<redacted>" if is_credential_key(key) else f"{key}={refusal_repr(value)}"
+        for key, value in config.items()
+    )
+
+
 def refusal_repr(value: Any) -> str:
     """``repr(value)`` for a refusal message, or a description when it cannot be built.
 
