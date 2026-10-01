@@ -85,7 +85,9 @@ _BUDGET: int = _hook().LIMIT
 #: its line on the Learn index). Banked to the exact total.
 #: Raised by 1,754 to 67,881 for the two humanoid design pages (whole-body teleoperation, driver
 #: composition, under reference/project here) plus their index rows, carried in from main. Banked to the exact total.
-_SITE_BUDGET = 67_881
+#: Raised by 1 to 67,882 when main's teleoperation page gained seven words and the Foxglove page lost
+#: six (#4446, #4450), carried in by merge. Banked to the exact total.
+_SITE_BUDGET = 67_882
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

@@ -282,6 +282,15 @@ class TeleopMixin:
         """
         return None
 
+    def _teleop_apply(self, action: ActionDict, robot_name: str | None, period: float) -> dict[str, Any]:
+        """Apply one merged teleop frame; the loop calls this once per tick.
+
+        The default is :meth:`send_action`: hardware moves on its own clock. A
+        simulated host overrides it to also advance its world by ``period``
+        seconds, so sim time keeps pace with the session.
+        """
+        return self.send_action(action, robot_name=robot_name)
+
     def send_action(self, action: ActionDict, robot_name: str | None = None) -> dict[str, Any]:
         """Apply ``action`` to the host robot/sim. Implemented by the host."""
         raise NotImplementedError(
@@ -1073,7 +1082,7 @@ class TeleopMixin:
                             if self._teleop_slew_rejected <= 5:
                                 logger.warning("[teleop] frame refused: %s", slew_reason)
                         else:
-                            result = self.send_action(merged, robot_name=robot_name)
+                            result = self._teleop_apply(merged, robot_name, period)
                             if isinstance(result, dict) and result.get("status") == "error":
                                 self._teleop_errors += 1
                                 if self._teleop_errors <= 5:
