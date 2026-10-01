@@ -69,3 +69,31 @@ def test_the_floor_is_deactivated_and_the_robot_is_left_alone(converted) -> None
 def test_the_cache_key_moves_so_old_entries_are_rebuilt() -> None:
     # Entries converted before this fix carry the floor; the key has to change.
     assert "worldgeoms" in mjcf_assets._POSTPROCESS_VERSION
+
+
+def _position_drives_are_not_the_point(monkeypatch) -> None:
+    monkeypatch.setattr(mjcf_assets, "_author_position_drives", lambda usd, mjcf: None)
+
+
+def test_a_conversion_that_asked_for_the_scene_keeps_its_floor(converted, monkeypatch) -> None:
+    """``import_scene=True`` is a request for the floor; the fix-up must not undo it."""
+    mjcf, usd = converted
+    _position_drives_are_not_the_point(monkeypatch)
+
+    mjcf_assets._post_import_fixups(usd, mjcf, import_scene=True)
+
+    stage = Usd.Stage.Open(usd)
+    assert stage.GetPrimAtPath("/probe/Geometry/floor").IsActive()
+    assert stage.GetPrimAtPath("/probe/Geometry/tn__tabletop_rA").IsActive()
+
+
+def test_a_robot_only_conversion_still_drops_its_floor(converted, monkeypatch) -> None:
+    mjcf, usd = converted
+    _position_drives_are_not_the_point(monkeypatch)
+
+    mjcf_assets._post_import_fixups(usd, mjcf, import_scene=False)
+
+    stage = Usd.Stage.Open(usd)
+    assert not stage.GetPrimAtPath("/probe/Geometry/floor").IsActive()
+    assert stage.GetPrimAtPath("/probe/Geometry/base").IsActive()
+

@@ -646,6 +646,26 @@ def _author_position_drives(usd_file: str, mjcf_path: str) -> list[str]:
     return written
 
 
+def _post_import_fixups(usd_file: str, mjcf_path: str, *, import_scene: bool) -> None:
+    """Author what the importer leaves out, on the USD it just wrote.
+
+    Position drives are authored for every conversion. The ``<worldbody>`` geoms
+    are deactivated only when the caller did NOT ask for the scene: with
+    ``import_scene=True`` the floor and furniture are what was requested, and
+    importing them only to switch them off would hand back a success that
+    contains nothing of the kind (and publish it into the shared USD cache under
+    the ``import_scene=True`` key, where every later caller would be served it).
+
+    Args:
+        usd_file: The USD the importer produced.
+        mjcf_path: The MJCF it was converted from.
+        import_scene: Whether the caller asked for the description's scene.
+    """
+    _author_position_drives(usd_file, mjcf_path)
+    if not import_scene:
+        _deactivate_worldbody_geoms(usd_file, mjcf_path)
+
+
 def convert_mjcf_to_usd(
     mjcf_path: str,
     cache_dir: str | None = None,
@@ -786,8 +806,7 @@ def convert_mjcf_to_usd(
         )
 
     try:
-        _author_position_drives(resolved, mjcf_path)
-        _deactivate_worldbody_geoms(resolved, mjcf_path)
+        _post_import_fixups(resolved, mjcf_path, import_scene=import_scene)
     except BaseException:
         _remove_tree(staging)
         raise
